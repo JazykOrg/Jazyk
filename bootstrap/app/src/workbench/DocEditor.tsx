@@ -16,6 +16,7 @@ import { relTo } from '../lib/mdlinks'
 import CmHost, { docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
+import { serverBase } from '../lib/backend'
 import MarkdownView from '../components/MarkdownView'
 import '../ide/ide.css'
 import '../components/markdown.css'
@@ -141,12 +142,15 @@ export default function DocEditor() {
   const hasLsp = caps.data?.lsp === true
   useEffect(() => {
     if (!hasLsp) return
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    // Read the token per dial: a replacement token entered after a server
-    // restart must reach the re-dial, not the URL captured at mount.
+    // The socket is the connected server's (`ws://127.0.0.1:<port>/lsp`), the page
+    // being on another origin (docs/frontends/gui.md#connecting-to-a-local-jazyk).
+    // Read the base and the token per dial: a replacement token entered after a
+    // server restart must reach the re-dial, not the URL captured at mount.
     lsp.connect(() => {
+      const base = serverBase()
+      if (!base) return ''
       const qs = tokenParam()
-      return `${proto}://${location.host}/lsp${qs ? `?${qs}` : ''}`
+      return `${base.replace(/^http/, 'ws')}/lsp${qs ? `?${qs}` : ''}`
     })
     return () => lsp.dispose()
   }, [lsp, hasLsp])

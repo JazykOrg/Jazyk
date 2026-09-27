@@ -11,6 +11,7 @@ import { useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { shapeWords, verdictWords } from '../lib/words'
 import Wizard, { useSettingsExists } from './Wizard'
+import ConnectCard from './ConnectCard'
 
 // The bundled examples (docs/frontends/gui.md#home). The editor entry fetches the
 // fixture named by the id.
@@ -62,6 +63,7 @@ function ProjectRow({ p, dev }: { p: ProjectSummary; dev: boolean }) {
 function kindWords(r: RecentEntry): string {
   if (r.kind === 'demo') return r.edited ? 'demo with your edits' : 'demo'
   if (r.kind === 'browser') return 'browser project · only in this browser'
+  if (r.kind === 'server') return `jazyk on this computer · port ${r.port ?? r.id.slice('server:'.length)}`
   const kept = r.kept ?? 0
   const mode = `folder · ${r.mode === 'write' ? 'writing' : 'read-only'}`
   return kept > 0 ? `${mode} · ${kept} change${kept === 1 ? '' : 's'} kept in this browser` : mode
@@ -72,7 +74,9 @@ function kindWords(r: RecentEntry): string {
 // forgets it, deleting what the browser stored for it after asking.
 function RecentRow({ r }: { r: RecentEntry }) {
   const title =
-    r.kind === 'folder'
+    r.kind === 'server'
+      ? `reconnect; run jazyk gui in ${r.root ?? 'the project'} if it is not running`
+      : r.kind === 'folder'
       ? 'reopen; the browser asks for access again'
       : r.kind === 'browser'
         ? 'reopen; this project is stored in this browser only'
@@ -186,7 +190,7 @@ export default function Home() {
           </div>
         )}
 
-        {kind === 'bundled' && recent.length > 0 && (
+        {recent.length > 0 && (
           <>
             <h2>Recent</h2>
             {recent.map((r) => (
@@ -233,6 +237,7 @@ export default function Home() {
               )}
             </div>
             {naming && <NewProjectForm onClose={() => setNaming(false)} />}
+            <ConnectCard />
             {!canStore && (
               <div className="banner home-nostore">
                 This browser offers no storage to this page (a private window may not), so a new project could not survive a reload.

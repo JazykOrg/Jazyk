@@ -1742,3 +1742,24 @@ a.trail-step:hover .trail-label {
 .home .home-nofolder {
   border-left-color: var(--warn);
 }
+
+/* Home's Connect to jazyk on this computer card (docs/frontends/gui.md#home). */
+.home .home-card {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.home .home-card h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+.home .home-card p {
+  margin: 0 0 8px;
+}
+.home .home-port {
+  width: 7em;
+}
+.home .home-hint {
+  font-size: 0.85em;
+}

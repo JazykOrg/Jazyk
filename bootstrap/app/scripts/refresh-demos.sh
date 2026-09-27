@@ -93,4 +93,4 @@ if [ ${#limited} -gt 0 ]; then
   echo "Rate limited: ${limited[*]}. Run again when the quota is back; nothing of theirs was packed."
   exit 1
 fi
-echo "Next: cd bootstrap/app && npm run build:demo && PW_CHANNEL=chrome npx playwright test, then commit bootstrap/app/public/demos."
+echo "Next: cd bootstrap/app && npm run build && PW_CHANNEL=chrome npx playwright test, then commit bootstrap/app/public/demos."

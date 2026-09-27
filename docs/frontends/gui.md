@@ -1,10 +1,11 @@
 # GUI
 
-`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]` starts one
-local process: an HTTP server that serves the GUI web app, a JSON API over the
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]` starts one
+local process: an HTTP server with a JSON API over the
 [graph store](../compiler/graph.md), a live event stream, and the
-[language server](./lsp.md) over WebSocket. It then opens the browser at the served
-address. The GUI is the front door of a jazyk project: read and edit the documents,
+[language server](./lsp.md) over WebSocket. It then opens the page at
+[jazyk.dev](../site.md#the-editor), which connects to it
+([serving](#serving)). The GUI is the front door of a jazyk project: read and edit the documents,
 see what the compiler understood and what it asks, walk the model and its diagrams,
 review the product against the documents, and talk to the agent. The compiler's own
 workbench (the board, the runs, the prompts) sits behind the

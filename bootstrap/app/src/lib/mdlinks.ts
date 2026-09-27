@@ -3,7 +3,7 @@
 // directory, the docs glob, the deliverable) and turned into an app route or an
 // asset URL (docs/frontends/gui.md#markdown-preview).
 import { useCallback, useMemo } from 'react'
-import { tokenParam, type Project } from './api'
+import { apiUrl, type Project } from './api'
 import { useDocs, useProject } from './queries'
 import { delivHref, docHref, outHref } from './nav'
 
@@ -89,8 +89,7 @@ export function locate(abs: string, project: Project, docs: { path: string }[]):
 // The raw bytes of a file under the out directory: an image element sends no
 // bearer header, so the token rides in the query.
 export function outFileUrl(rel: string): string {
-  const qs = tokenParam()
-  return `/api/out/file?path=${encodeURIComponent(rel)}${qs ? `&${qs}` : ''}`
+  return apiUrl(`/api/out/file?path=${encodeURIComponent(rel)}`)
 }
 
 export interface LinkResolver {

@@ -20,15 +20,21 @@ import { applyTheme, useApp } from './lib/store'
 import { pushTraceEvents, pushWireEvent, refreshAfterWrite } from './lib/events'
 import { probeStorage } from './lib/browser-store'
 import { installLocalProjects } from './lib/local-projects'
+import { installConnect } from './lib/connect'
+import { registerServiceWorker } from './lib/sw'
 import { DEMOS } from './shell/Home'
 import './tokens.css'
 import './app.css'
 
 applyTheme()
+registerServiceWorker()
 
 const qc = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  // `networkMode: 'always'`: the backends are in this tab or on the loopback
+  // address, so a query runs with the browser offline too (docs/frontends/wasm.md#offline).
+  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, networkMode: 'always' }, mutations: { networkMode: 'always' } },
 })
+installConnect({ qc })
 
 const root = ReactDOM.createRoot(document.getElementById('root')!)
 

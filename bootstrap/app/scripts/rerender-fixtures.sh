@@ -1,7 +1,7 @@
 #!/bin/sh
 # Redraw every committed demo fixture's diagrams with the given jazyk binary and pack
 # them back in place. Free and deterministic: no model runs, only the renderer.
-# The deploy runs it on dist-demo/demos, so a renderer change reaches jazyk.dev
+# The deploy runs it on dist/demos, so a renderer change reaches jazyk.dev
 # without a rebuild of the examples. See docs/frontends/wasm.md#keeping-the-demos-current.
 #
 #   sh rerender-fixtures.sh <jazyk binary> <demos dir>

@@ -54,7 +54,7 @@ The bucket is reachable only through CloudFront.
 
 [jazyk.dev](https://jazyk.dev), the editor in the browser, is hosted the same way from
 `bootstrap/app`: `hosting.sh` there creates its pieces and `deploy.sh` publishes
-`dist-demo/`, specified in [`../docs/site.md`](../docs/site.md#the-editor).
+`dist/`, specified in [`../docs/site.md`](../docs/site.md#the-editor).
 
 ## DNS
 

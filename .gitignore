@@ -27,7 +27,7 @@ project2/
 /bootstrap/app/src/wasm-backend/jazyk_bg.wasm
 /bootstrap/app/src/wasm-backend/bridge.js
 /bootstrap/app/src/wasm-backend/snippets/
-/bootstrap/app/dist-demo/
+/bootstrap/app/dist/
 
 # Playwright output (bootstrap/app/e2e).
 /bootstrap/app/test-results/

@@ -9,6 +9,7 @@ import Navigator from './shell/Navigator'
 import Home from './shell/Home'
 import CommandPalette from './components/CommandPalette'
 import ConnectionGuard from './components/ConnectionGuard'
+import ConnectRoute from './components/ConnectRoute'
 import { useApp } from './lib/store'
 import { useInspector } from './lib/nav'
 import { ExploreHistory } from './lib/explore'
@@ -115,7 +116,8 @@ export default function App() {
   const loc = useLocation()
   const { node, openNode, closeNode } = useInspector()
   const [palette, setPalette] = useState(0)
-  const home = loc.pathname === '/'
+  // The connect route needs no project either: it is how one gets opened.
+  const home = loc.pathname === '/' || loc.pathname === '/connect'
   const open = useProjectOpen()
   const narrow = useNarrow()
   // On a narrow screen the navigator is a drawer, closed again by any navigation.
@@ -137,6 +139,7 @@ export default function App() {
             ) : !home && open === undefined ? null : (
             <Routes>
               <Route path="/" element={<Home />} />
+              <Route path="/connect" element={<ConnectRoute />} />
               <Route path="/docs" element={<DocsHome />} />
               <Route path="/docs/*" element={<DocEditor />} />
               <Route path="/model" element={<ModelHome />} />

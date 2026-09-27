@@ -164,8 +164,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   events), regex, agent-client-protocol (ACP; futures + async-io driven by a `block_on`
   on a dedicated thread), plantuml-little + graphviz-anywhere (the in-process
   renderer; `bootstrap/.cargo/config.toml` opts into the prebuilt Graphviz archive
-  download), resvg (raster), tokio + axum (gui only), include_dir (the embedded GUI
-  dist). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
+  download), resvg (raster), tokio + axum + tower-http (gui only: the server and its
+  CORS layer). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
   crates; hand-roll only domain logic. Do not reimplement transports, parsers for
   standard formats, or platform APIs.
 - Examples, each a project with its own `jazyk.toml`: `bootstrap/example/f1` (small)
@@ -181,11 +181,12 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 - `cd bootstrap && cargo build --release` (binary at `bootstrap/target/release/jazyk`),
   `cargo test`.
 - The owner's `jazyk` command is a symlink to `bootstrap/target/release/jazyk`. After
-  ANY change to the GUI frontend or the binary, always finish with
-  `cd bootstrap/app && npm run build` then `cargo build --release`: the built frontend
-  (`app/dist`) embeds into the binary at compile time, so a stale release build serves
-  the old GUI. A running `jazyk gui` keeps its embedded assets; it needs a restart to
-  pick up a new binary.
+  ANY change to the binary, finish with `cargo build --release`; a running `jazyk gui`
+  needs a restart to pick up a new binary. The binary carries no page: `jazyk gui`
+  serves the API and opens jazyk.dev (or `--gui-url`, e.g. a `vite` dev server), which
+  connects to it (`docs/frontends/gui.md#connecting-to-a-local-jazyk`). The page is
+  `cd bootstrap/app && npm run build` (`dist/`, never committed), deployed by
+  `.github/workflows/editor.yml`.
 - `jazyk compile [path...]` (live trace; `--verbose` the cascade and full prompts,
   `--quiet` summary), `check`, `watch`, `status`, `preview [goal|target]`,
   `explain [goal|target]`, `ripple <target|generation|doc> [--back]`,

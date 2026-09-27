@@ -595,8 +595,9 @@ output and its tests), with the tests run and their results in the ledger.
   headers. `dist/` is build output, never committed: the binary embeds nothing.
 
 `npm run test:e2e` runs the editor's browser tests (`app/e2e/`, Playwright) against
-the built `dist/` served with the isolation headers. They drive the page the
-way a visitor does: every route but Home redirects until a project is open, each
+the built `dist/` served with the isolation headers (`PW_PORT` picks the port, so
+two checkouts run them side by side; `PW_CHANNEL=chrome` runs them in the installed
+Chrome). They drive the page the way a visitor does: every route but Home redirects until a project is open, each
 demo opens with only its own documents, the Model pages read by name with no ids,
 a requirement keeps the Requirements list, a diagram shows its picture, the
 Product pages list a demo's product files and open one with its text, the trace

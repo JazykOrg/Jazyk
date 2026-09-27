@@ -1,7 +1,8 @@
-// The live spine: one SSE connection drives query invalidation and the zustand
-// slices. A dropped connection falls back to polling /api/status until it heals.
+// The live spine: one SSE connection to the connected server drives query
+// invalidation and the zustand slices. A dropped connection falls back to polling
+// /api/status until it heals.
 import { QueryClient } from '@tanstack/react-query'
-import { get, tokenParam, type Job, type Status, type TraceEvent } from './api'
+import { apiUrl, get, type Job, type Status, type TraceEvent } from './api'
 import { useApp } from './store'
 
 type WireEvent = {
@@ -197,8 +198,10 @@ export function startEventStream(qc: QueryClient) {
   }
 
   const connect = () => {
-    // EventSource cannot set headers; the token rides the query string.
-    es = new EventSource(`/api/events?${tokenParam()}`)
+    // EventSource cannot set headers; the token rides the query string. The URL is
+    // the server's own: the page is on another origin
+    // (docs/frontends/gui.md#connecting-to-a-local-jazyk).
+    es = new EventSource(apiUrl('/api/events'))
     es.onopen = () => {
       useApp.getState().setConnected(true)
       stopPolling()

@@ -1,6 +1,6 @@
 // The browser's own recent list (docs/frontends/gui.md#home): every demo, browser
-// project, and folder opened in this browser, newest first, in local storage under
-// `jazyk.recent`. A folder's directory handle cannot be written as text, so it lives
+// project, folder, and server opened in this browser, newest first, in local
+// storage under `jazyk.recent`. A folder's directory handle cannot be written as text, so it lives
 // in IndexedDB under the entry's id; a stored project's files live in browser storage
 // (lib/browser-store.ts). Storage that is absent or refuses is simply not remembered.
 import { useSyncExternalStore } from 'react'
@@ -9,10 +9,14 @@ import { del as idbDel, get as idbGet, keys as idbKeys, set as idbSet } from 'id
 export type FolderMode = 'read' | 'write'
 
 export interface RecentEntry {
-  // `demo:<id>`, `browser:<uuid>`, or `folder:<uuid>`.
+  // `demo:<id>`, `browser:<uuid>`, `folder:<uuid>`, or `server:<port>`.
   id: string
-  kind: 'demo' | 'browser' | 'folder'
+  kind: 'demo' | 'browser' | 'folder' | 'server'
   name: string
+  // A server on this computer (docs/frontends/gui.md#connecting-to-a-local-jazyk):
+  // its port, and the project root it served when last seen.
+  port?: number
+  root?: string
   // A folder's mode when it was last left.
   mode?: FolderMode
   // A demo whose edited copy is in browser storage.

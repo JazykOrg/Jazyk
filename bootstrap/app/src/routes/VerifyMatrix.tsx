@@ -3,7 +3,7 @@
 // that runs no tests shows the rows without the actions
 // (docs/frontends/wasm.md#the-product).
 import { useState } from 'react'
-import { getText, post, tokenParam, type VerifyRow } from '../lib/api'
+import { apiUrl, getText, post, type VerifyRow } from '../lib/api'
 import { backend } from '../lib/backend'
 import { useCanRun } from '../lib/capabilities'
 import { useStatus } from '../lib/queries'
@@ -27,7 +27,7 @@ export default function VerifyMatrix() {
   const canRun = useCanRun()
   const canVerify = canRun('verify')
   const canGen = canRun('gen')
-  const exportHref = (fmt: string) => `/api/verify/matrix?format=${fmt}${tokenParam() ? `&${tokenParam()}` : ''}`
+  const exportHref = (fmt: string) => apiUrl(`/api/verify/matrix?format=${fmt}`)
   // The server answers the link itself; a backend in the tab has no URL to link to,
   // so the page reads the export through it and saves the text as a file.
   const saveExport = (fmt: string) => async (e: React.MouseEvent) => {

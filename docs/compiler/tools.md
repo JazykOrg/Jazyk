@@ -536,6 +536,31 @@ log.
 The reply is `{recorded, note}`. The note tells the model to continue with its best
 judgment: feedback is not an escape from the goal.
 
+## Spend tool
+
+`report_spend({tokens, cached?})` records what an external agent's run billed for the
+open batch. A session the embedded agent runs measures its own spend from the response
+usage ([budgets](./sessions.md#budgets)); a session an external agent drives over MCP
+([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)) spends tokens only its
+driver can see, so its journal entry carries none unless the agent says what it billed.
+
+- `tokens`: the tokens the agent's endpoint billed for this batch, input and output of
+  every round. A whole number above zero.
+- `cached`: the input tokens among them the endpoint served from its prompt cache.
+  Optional, at most `tokens`.
+
+The figure is the agent's own report of its bill, never an estimate by jazyk; an agent
+that does not know its usage does not call the tool. The reply is
+`{recorded, tokens, cached}`. A second call in the same batch replaces the first: the
+figure is the batch's whole spend so far, not an increment. At the batch's commit the
+`session` entry's `tokens` and `cachedTokens` take the reported figure and
+`tokensSource: agent` says where it came from ([journal](./graph.md#journal)), so the
+cost report can count it apart from measured spend. The tool stages no mutation,
+counts against no mutation budget, and passes no gate beyond the number check. It is in
+every [toolset](#toolsets), the read-only servings included; outside an open batch it
+is refused toward [`jazyk spend`](../frontends/cli.md#jazyk-spend), which stamps a
+committed entry after the fact.
+
 ## Compilation tools
 
 Compilation over MCP is goal-based: the agent claims goal batches from
@@ -779,9 +804,9 @@ The named errors a caller meets beyond the gates:
 
 Sessions see subsets, not the whole catalog: the union of the batch's goal kinds'
 toolsets ([toolsets](./sessions.md#toolsets)). Every subset carries the
-[read tools](#read-tools), the [goal tools](#goal-tools), and
-[`report_feedback`](#feedback-tool); they are listed once here, not per kind. Each
-kind's page under `goals/` repeats its slice.
+[read tools](#read-tools), the [goal tools](#goal-tools),
+[`report_feedback`](#feedback-tool), and [`report_spend`](#spend-tool); they are listed
+once here, not per kind. Each kind's page under `goals/` repeats its slice.
 
 Compile goals:
 

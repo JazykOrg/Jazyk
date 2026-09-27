@@ -46,7 +46,10 @@ pub fn report_at(out: &Path) -> Value {
 
 pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
     let mut sessions = 0u64;
+    // Sessions carrying a figure: measured by the harness, or reported by the agent
+    // (`tokensSource: agent`); `reported` is the part of `measured` the agent priced.
     let mut measured = 0u64;
+    let mut reported = 0u64;
     let mut tokens = 0u64;
     // Cached input over the measured sessions; an entry without the field adds 0.
     let mut cached = 0u64;
@@ -56,6 +59,9 @@ pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
         sessions += 1;
         if let Some(t) = e.tokens {
             measured += 1;
+            if e.tokens_source.as_deref() == Some(crate::model::TOKENS_SOURCE_AGENT) {
+                reported += 1;
+            }
             tokens += t;
             cached += e.cached_tokens.unwrap_or(0);
         }
@@ -113,7 +119,8 @@ pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
         "first": gens.iter().min(),
         "last": gens.iter().max(),
         "sessions": sessions,
-        "measured": measured,
+        "measured": measured - reported,
+        "reported": reported,
         "unmeasured": sessions - measured,
         "tokens": if measured > 0 { json!(tokens) } else { Value::Null },
         "cached": if measured > 0 { json!(cached) } else { Value::Null },
@@ -203,9 +210,14 @@ pub fn render(r: &Value) -> String {
     }
     let mut out = String::new();
     let range = format!("g{}..g{}", r["first"], r["last"]);
+    // The agent-reported count prints only when there is one.
+    let reported = match r["reported"].as_u64() {
+        Some(n) if n > 0 => format!(", {} agent-reported", n),
+        _ => String::new(),
+    };
     let head = format!(
-        "cost: {}, {} sessions ({} measured, {} unmeasured)",
-        range, sessions, r["measured"], r["unmeasured"]
+        "cost: {}, {} sessions ({} measured{}, {} unmeasured)",
+        range, sessions, r["measured"], reported, r["unmeasured"]
     );
     // The cached figure and its column print only when some entry carried one: a
     // journal from endpoints that report no cache read looks as it always did.
@@ -508,5 +520,35 @@ mod tests {
         assert!(!text.contains("cached"), "{}", text);
         let kline = text.lines().find(|l| l.trim_start().starts_with("reconcile-section")).unwrap();
         assert_eq!(kline.split_whitespace().collect::<Vec<_>>(), ["reconcile-section", "1", "1000", "1000", "0"]);
+    }
+
+    // A session the agent priced itself (tokensSource: agent) counts in the tokens like
+    // a measured one and apart from it in the session counts.
+    // Mirrors docs/frontends/cli.md#jazyk-status.
+    #[test]
+    fn an_agent_reported_session_counts_in_the_tokens_and_apart_in_the_sessions() {
+        let mut reported = session(3, &["g:review-entity:ent:a"], Some(2000));
+        reported.tokens_source = Some("agent".into());
+        reported.cached_tokens = Some(500);
+        let r = report(
+            &[
+                session(2, &["g:reconcile-section:docs/a.md#/a"], Some(1000)),
+                reported,
+                session(4, &["g:curate-view:view:x"], None),
+            ],
+            &Graph::default(),
+        );
+        assert_eq!(r["sessions"], 3);
+        assert_eq!(r["measured"], 1);
+        assert_eq!(r["reported"], 1);
+        assert_eq!(r["unmeasured"], 1);
+        assert_eq!(r["tokens"], 3000);
+        assert_eq!(r["cached"], 500);
+        let text = render(&r);
+        assert!(
+            text.starts_with("cost: g2..g4, 3 sessions (1 measured, 1 agent-reported, 1 unmeasured), 3000 tokens, 500 cached (17%)\n"),
+            "{}",
+            text
+        );
     }
 }

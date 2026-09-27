@@ -521,7 +521,13 @@ The entry kinds:
   external agent drove ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp))
   spends tokens the harness never sees, so its entry carries no `tokens` at all rather
   than claiming zero: reading `tokens: 0` on every session, a person would price a build
-  at nothing. `rounds` counts the session's rounds, or an external agent's tool calls.
+  at nothing. The agent can report its own bill instead:
+  [`report_spend`](./tools.md#spend-tool) during the batch, or
+  [`jazyk spend`](../frontends/cli.md#jazyk-spend) on the committed entry, sets `tokens`
+  (and `cachedTokens`) to the agent's figure and marks it `tokensSource: agent`, so the
+  cost report counts it apart from what the harness measured. An entry without
+  `tokensSource` was measured by the harness. `rounds` counts the session's rounds, or
+  an external agent's tool calls.
 - `edit`: a human save that dirtied sections. Written at the start of a build when the
   parse finds changes, one mutation per dirtied or removed section, so the root of every
   ripple is itself a generation. Carries `dirtied`.

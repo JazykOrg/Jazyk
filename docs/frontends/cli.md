@@ -386,8 +386,10 @@ report covers every build, where `costs` in `status.yaml` covers the last one.
   per goal, per requirement, and per criterion figures are costs, not output alone. The
   spend splits evenly across the goals the entry resolved (the goals of its `batch`
   when it resolved none).
-- `cost`: the journal's generation range, the session entries (measured and
-  unmeasured), the measured tokens, and, when any entry carries `cachedTokens`, the
+- `cost`: the journal's generation range, the session entries (measured, and
+  agent-reported when any entry carries `tokensSource: agent`, see
+  [spend](#jazyk-spend), and unmeasured), the tokens of both, and, when any entry
+  carries `cachedTokens`, the
   cached input tokens with their share of the spend
   ([budgets](../compiler/sessions.md#budgets)). An entry without `cachedTokens`
   contributes no cached tokens: older entries and endpoints that report no cache read
@@ -434,12 +436,51 @@ The `cached` figure and its share print only when some entry carries `cachedToke
 a journal without one prints the line and the tables as before, without the cached
 column.
 
+A `session` entry the agent priced itself (`tokensSource: agent`) counts in the tokens
+like a measured one, and apart from it in the session counts: the line reads
+`38 sessions (35 measured, 1 agent-reported, 2 unmeasured)`, the agent-reported count
+printed only when there is one.
+
 `--costs --json` prints one JSON object with the same content: `first`, `last`,
-`sessions`, `measured`, `unmeasured`, `tokens`, `cached` (the cached input tokens
+`sessions`, `measured`, `reported` (the agent-reported sessions), `unmeasured`,
+`tokens`, `cached` (the cached input tokens
 over the measured sessions, `0` when none reported any), `by_kind` and `by_document`
 (each a list of `{name, goals, tokens, cached, unmeasured}`, heaviest first),
 `requirements`, `criteria`, `per_requirement`, `per_criterion`. A figure no session
 measured is `null` (and `-` in the text), never `0`. Exit `0`.
+
+### jazyk spend
+
+`jazyk spend <generation> <tokens> [--cached N]` records what an external agent's
+session billed on its journal entry after the fact. A session an external agent drove
+over MCP carries no `tokens` unless the agent called
+[`report_spend`](../compiler/tools.md#spend-tool) during the batch; a driver that learns
+its usage only after the run (Codex prints per-turn usage in its JSON output) stamps it
+here.
+
+- `<generation>`: the `session` entry to stamp, `g42` or `42`.
+- `<tokens>`: the tokens the agent's endpoint billed for that session, input and output
+  of every round. A whole number above zero.
+- `--cached N`: the input tokens among them the endpoint served from its prompt cache.
+  At most `<tokens>`.
+
+The entry takes `tokens`, `cachedTokens` when given, and `tokensSource: agent`
+([journal](../compiler/graph.md#journal)), so `jazyk status --costs` counts the session
+as agent-reported, apart from measured spend. The command refuses an entry that already
+carries a figure, measured or reported, and says what it carries: a stamp never
+overwrites what the harness measured, and a driver that reports twice is told so. It
+refuses a generation that is not a `session` entry, and one the journal does not hold.
+It reads the one journal file and writes it back: no board, no LLM call, no other write.
+
+E.g.:
+
+```
+$ jazyk spend g42 18400 --cached 9100
+g42: 18400 tokens, 9100 cached, reported by the agent
+```
+
+Exit codes: `0`; `1` when the entry is missing, is not a session, or already carries a
+figure; `2` on a bad argument.
 
 ### jazyk preview
 
@@ -756,7 +797,7 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
   a person types most at the top and what programs spawn at the bottom:
   - Start here: `init`, `launch`, `gui`, `status`, `compile`, `benchmark`.
   - Actions on the project: `check`, `watch`, `gen`, `test`, `decompile`, `docsgen`,
-    `release`, `answer`.
+    `release`, `answer`, `spend`.
   - Inspect: `preview`, `explain`, `ripple`, `context`, `query`, `viewer`.
   - Run by IDEs and agents, not by hand: `mcp`, `acp`, `lsp`, `agent`, `monitor`.
 - `jazyk <command> --help` prints that command's usage: its arguments, the options it

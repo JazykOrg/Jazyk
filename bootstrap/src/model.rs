@@ -749,6 +749,8 @@ impl WorkItem {
             resolved: Vec::new(),
             rounds,
             tokens,
+            cached: None,
+            tokens_source: None,
             all_or_nothing: false,
         }
     }
@@ -1040,7 +1042,14 @@ pub struct JournalEntry {
     // (docs/compiler/sessions.md#budgets).
     #[serde(rename = "cachedTokens", default, skip_serializing_if = "Option::is_none")]
     pub cached_tokens: Option<u64>,
+    // `agent` when an external agent reported its own bill (report_spend, jazyk spend);
+    // absent when the harness measured it (docs/compiler/graph.md#journal).
+    #[serde(rename = "tokensSource", default, skip_serializing_if = "Option::is_none")]
+    pub tokens_source: Option<String>,
 }
+
+// The value of a journal entry's `tokensSource` when the agent reported its own bill.
+pub const TOKENS_SOURCE_AGENT: &str = "agent";
 
 // The budgets the last build used.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

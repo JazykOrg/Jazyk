@@ -207,8 +207,8 @@ harness ([toolsets](./tools.md#toolsets)), so a batch of extraction goals still 
 small toolset. Every session sees, on top of its kinds' slices:
 
 - the [read tools](./tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,
-  `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`, and
-  `report_feedback`,
+  `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`,
+  `report_feedback`, and `report_spend`,
 - the [goal tools](./tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
   `load_skill`, `done`.
 

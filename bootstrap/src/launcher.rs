@@ -48,6 +48,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("docsgen", "render the requirements documents, entity cards, level and diagram pages"),
         ("release [compile|generate]", "approve gated goals in manual mode without running anything"),
         ("answer <diag|goal> [--option N | --text T]", "answer a prompted diagnostic; without a reply, list its options"),
+        ("spend <generation> <tokens> [--cached N]", "record what an external agent's session billed on its journal entry"),
     ]),
     ("inspect", &[
         ("preview [goal|target|batch]", "the next session's prompt, exactly as the model receives it"),
@@ -149,6 +150,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--text",
     "--build-token",
     "--edit-sink",
+    "--cached",
 ];
 
 // How many positional arguments a command takes (None: any number), and the
@@ -191,6 +193,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "monitor" => (Some(0), &["--json", "--once"]),
         "release" => (Some(1), &[]),
         "answer" => (Some(1), &["--option", "--text"]),
+        "spend" => (Some(2), &["--cached"]),
         "acp" => (Some(2), &["--ide"]),
         "benchmark" => (None, &["--project", "--goal", "--force"]),
         "replay" => (None, &[]),
@@ -278,6 +281,25 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              document, per requirement and per criterion, across every build,\n            \
              unmeasured sessions counted apart\n\
              {}",
+            COMMON_OUT
+        ),
+        "spend" => format!(
+            "usage: jazyk spend <generation> <tokens> [--cached N]\n\n\
+             Record what an external agent's session billed on its journal entry, after\n\
+             the fact: a session an external agent drove over MCP carries no tokens\n\
+             unless the agent reported them (report_spend during the batch, or this\n\
+             command on the committed entry). The entry takes tokens, cachedTokens when\n\
+             given, and tokensSource: agent, so `jazyk status --costs` counts it as\n\
+             agent-reported. Refuses an entry that already carries a figure, a\n\
+             generation that is not a session entry, and one the journal does not hold.\n\
+             Makes no LLM call; writes the one journal file.\n\n\
+             arguments:\n  \
+             <generation>   the session entry, g42 or 42\n  \
+             <tokens>       the tokens the agent's endpoint billed, input and output\n\n\
+             options:\n  \
+             --cached N   the input tokens among them served from the prompt cache\n\
+             {}\n\n\
+             exit: 0; 1 when the entry is missing, is not a session, or already carries a figure; 2 on a bad argument",
             COMMON_OUT
         ),
         "preview" => format!(
@@ -575,6 +597,7 @@ pub fn run() {
                 "--text" => opts.text = Some(v),
                 "--build-token" => opts.build_token = Some(v),
                 "--edit-sink" => opts.edit_sink = Some(v),
+                "--cached" => opts.cached = number(arg, &v, &mut errors),
                 _ => unreachable!("every value option is matched"),
             }
             i += 1;
@@ -691,6 +714,7 @@ pub fn run() {
         "preview" => cli::run_preview(&positional, &opts),
         "explain" => cli::run_explain(&positional, &opts),
         "ripple" => cli::run_ripple(&positional, &opts),
+        "spend" => cli::run_spend(&positional, &opts),
         "context" => match positional.first() {
             Some(target) => cli::run_context(&opts, target),
             None => usage_error(

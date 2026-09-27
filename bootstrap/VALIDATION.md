@@ -974,6 +974,42 @@ The loop continued onto the org corpus and onto generation:
   it; the targeted rerun on the fixed binary scored edges, converge, split-view, and
   gen-basic 1.00 on both codecs.
 
+- The 36-case baseline on qwen3.8:27b (2026-09-26, both codecs, `known-results.yaml`):
+  native 148/152 and text 150/152; review, structure, generation, and verification 1.00
+  on both codecs, extraction 0.95 and 0.98. The three misses (a Store entity not minted,
+  a Stance entity minted to carry an arc, a bookshop left outside its town) each passed
+  in a targeted re-grade; the stance and containment rules landed in the extraction
+  skill after failing cases, with neutral examples so the skill never carries a case's
+  answer. Cost of the run: about 145k output tokens per codec over seven hours at 11 to
+  12 tokens per second.
+- A second session (the GUI side) worked the same checkout under a file split and its
+  paid gpt-5.5 example builds exposed harness defects on the compiler side, each fixed
+  from a single trace and verified without a rerun: a rate limit parked 302 novel goals
+  on attempts no model made (the breaker trips at the first 429 and a session that spent
+  nothing counts no attempt); `jazyk gen` bound all 34 erp requirements and then every
+  generate session read "awaiting release" against a release stamped before its own
+  bindings committed (a run's sessions pass the release gate, and gen re-stamps after
+  binding); the medium decision blamed an empty field for a 429; criteria files an
+  external worker wrote under the deliverable were reconciled as documents under a
+  `**/*.md` glob (a recorded test artifact is never doc input); a generate session that
+  died on a 429 was printed as "generated" because the ledger held the day before's
+  record (the record carries `recordedAt` and a session counts only what it moved); and
+  the in-process renderer drew no actor and no undirected link in a component diagram
+  without an interface (the conversion adapts, the emitted source stays standard).
+- Under the observation doctrine the paid erp generation built a real stack: a
+  `package.json` listing `express` and `pg`, a server importing Express and opening a
+  PostgreSQL pool, and technology tests reading the manifest and the import, where the
+  earlier Codex run had passed the same criteria on a `node:http` server whose health
+  endpoint answered "Express". The local model's binding on the `tech-constraint` case
+  read the manifest alone, so the case now plants a manifest that lists `express`
+  beside a server that never imports it.
+- What a round costs, measured on a three-sentence document the local model compiled
+  for 401k billed tokens across three sessions: tool results resent were a tenth of it;
+  the rest is the prefix every round resends, about 48k characters (the skill 22.5k,
+  the batch's 24 tool schemas 16.4k, the contract 6k, the goal block 3k to 4k). The
+  prefix is identical across rounds, so a provider cache applies; whether to shorten the
+  payloads is recorded in `docs/TODO.md` as an owner decision to measure, not guess.
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

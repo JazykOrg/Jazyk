@@ -186,6 +186,21 @@ never the verdict the session claimed:
   a deliverable that carries nothing reads a description. See
   [bind-descriptor](./cases/bind-descriptor.md).
 
+Two more read the deliverable's files, for the
+[conventions](../consumers/gen.md#file-ownership-and-conventions) a generated
+deliverable follows (a pinned manifest, a package named for its owner, one entry
+point), which no test the model writes grades:
+
+- `fileMatches {path, pattern, min?, max?}`: the number of matches of the pattern in
+  the deliverable file at `path` (deliverable-relative) is within bounds. A missing
+  file fails the check. `max: 0` over `"(latest|\*)"` says no dependency is
+  unpinned; `min: 1` over a `"name"` pattern says the package is named for its owner.
+- `fileCount {pathPattern, excludePattern?, min?, max?}`: the number of files under
+  the deliverable whose deliverable-relative path matches `pathPattern`, and does not
+  match `excludePattern` when one is given, is within bounds. `max: 1` over the
+  modules that are not tests says the deliverable has one entry point and no duplicate
+  of it. See [gen-node](./cases/gen-node.md).
+
 ## Execution
 
 - Each case runs in a fresh sandbox store seeded from `given`. The project graph is
@@ -300,6 +315,8 @@ Generation tier:
 
 - [gen-basic](./cases/gen-basic.md): product and manifest honesty, test
   falsifiability.
+- [gen-node](./cases/gen-node.md): a Node package pins its dependencies, is named for
+  its owning entity, and has one entry point.
 - [bind-descriptor](./cases/bind-descriptor.md): a test that reads a descriptor object
   is never bound as the evidence a requirement is met.
 - [tech-constraint](./cases/tech-constraint.md): a technology constraint is bound to the

@@ -293,7 +293,8 @@ manifest.
   range. A generation of a Node deliverable once pinned every dependency to `latest`
   with every test green; the tests judged the statements, and a manifest that installs
   a different program on every install is a defect no statement names, so the
-  [contract](../compiler/goals/prompts/generate-contract.md) states it.
+  [contract](../compiler/goals/prompts/generate-contract.md) states it and the
+  [gen-node](../benchmark/cases/gen-node.md) case grades it.
 - The package or module is named for the deliverable or the entity that owns it, never
   for one part of it. The same generation named the package that held the backend
   beside the frontend after the frontend alone.

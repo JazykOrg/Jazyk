@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 30] = [
+const CASE_FILES: [&str; 31] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -41,6 +41,7 @@ const CASE_FILES: [&str; 30] = [
     include_str!("../../docs/benchmark/cases/machine-subject.md"),
     include_str!("../../docs/benchmark/cases/stated-containment.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
+    include_str!("../../docs/benchmark/cases/gen-node.md"),
     include_str!("../../docs/benchmark/cases/bind-descriptor.md"),
     include_str!("../../docs/benchmark/cases/tech-constraint.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
@@ -1201,7 +1202,7 @@ pub fn tier_key(t: &str) -> &'static str {
 // Generation and verification checks: deterministic code over the ledger, the files on
 // disk, and the exit codes of recorded commands. Mirrors
 // docs/benchmark/benchmark.md#deterministic-grading.
-pub const WORKFLOW_CHECKS: [&str; 7] = [
+pub const WORKFLOW_CHECKS: [&str; 9] = [
     "generationRecorded",
     "rowPerRequirement",
     "testsPass",
@@ -1209,7 +1210,51 @@ pub const WORKFLOW_CHECKS: [&str; 7] = [
     "verdictIs",
     "statusIn",
     "testsFail",
+    "fileMatches",
+    "fileCount",
 ];
+
+// Every file under the deliverable as a deliverable-relative path with `/` separators,
+// sorted, so a path pattern reads the same on every platform.
+fn deliverable_files(root: &std::path::Path) -> Vec<String> {
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(rd) = crate::vfs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if e.is_dir() {
+                walk(&p, root, out);
+            } else if let Ok(rel) = p.strip_prefix(root) {
+                let rel: Vec<String> = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                    .collect();
+                out.push(rel.join("/"));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
+
+// A count against the check's optional `min` and `max`, worded for the failure.
+fn within_bounds(arg: &Value, n: usize, what: &str) -> Option<String> {
+    let min = arg["min"].as_u64().map(|m| m as usize);
+    let max = arg["max"].as_u64().map(|m| m as usize);
+    if min.is_some_and(|m| n < m) || max.is_some_and(|m| n > m) {
+        let bounds = match (min, max) {
+            (Some(a), Some(b)) => format!("{}..={}", a, b),
+            (Some(a), None) => format!("at least {}", a),
+            (None, Some(b)) => format!("at most {}", b),
+            (None, None) => "any".into(),
+        };
+        return Some(format!("{} {}, expected {}", n, what, bounds));
+    }
+    None
+}
 
 pub fn eval_workflow_check(
     kind: &str,
@@ -1374,6 +1419,39 @@ pub fn eval_workflow_check(
                 }
             }
             None
+        }
+        // The conventions a generated deliverable follows are graded over its files,
+        // since every test the model writes can be green while the manifest says
+        // `latest`. Mirrors docs/benchmark/cases.md#checks.
+        "fileMatches" => {
+            let path = arg["path"].as_str().unwrap_or_default();
+            let re = match compile(arg["pattern"].as_str().unwrap_or_default()) {
+                Ok(re) => re,
+                Err(e) => return Some(e),
+            };
+            let Ok(text) = crate::vfs::read_to_string(gs.deliverable.join(path)) else {
+                return Some(format!("deliverable file `{}` does not exist", path));
+            };
+            let n = re.find_iter(&text).count();
+            within_bounds(arg, n, &format!("matches of the pattern in `{}`", path))
+        }
+        "fileCount" => {
+            let re = match compile(arg["pathPattern"].as_str().unwrap_or_default()) {
+                Ok(re) => re,
+                Err(e) => return Some(e),
+            };
+            let exclude = match arg["excludePattern"].as_str() {
+                Some(p) => match compile(p) {
+                    Ok(re) => Some(re),
+                    Err(e) => return Some(e),
+                },
+                None => None,
+            };
+            let files: Vec<String> = deliverable_files(&gs.deliverable)
+                .into_iter()
+                .filter(|f| re.is_match(f) && !exclude.as_ref().is_some_and(|x| x.is_match(f)))
+                .collect();
+            within_bounds(arg, files.len(), &format!("files match ({})", files.join(", ")))
         }
         other => Some(format!("unknown workflow check `{}`", other)),
     }
@@ -2689,17 +2767,104 @@ mod tests {
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 
+    // fileMatches counts a pattern in one deliverable file and fileCount counts the
+    // files whose relative path matches, minus the excluded: the conventions a
+    // generated deliverable follows, graded over its files. Mirrors
+    // docs/benchmark/cases.md#checks.
+    #[test]
+    fn file_checks_read_the_deliverable() {
+        let tmp = own_dir("file-checks");
+        let s = Store {
+            out: tmp.join("out"),
+            ..Default::default()
+        };
+        let gs = crate::gen::GenSettings {
+            configured: true,
+            deliverable: tmp.join("deliverable"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        let write = |rel: &str, text: &str| {
+            let p = gs.deliverable.join(rel);
+            crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
+            crate::vfs::write(&p, text).unwrap();
+        };
+        let check = |k: &str, arg: Value| eval_workflow_check(k, &arg, &s, &gs, "ent:greeter");
+        let named = serde_json::json!({"path": "package.json", "pattern": r#""name"\s*:\s*"[^"]*greeter[^"]*""#, "min": 1});
+        let unpinned = serde_json::json!({"path": "package.json", "pattern": r#""\s*:\s*"(latest|\*)""#, "max": 0});
+        // No file yet: a missing file fails, whatever the bounds.
+        let why = check("fileMatches", named.clone());
+        assert!(why.as_deref().is_some_and(|w| w.contains("does not exist")), "{:?}", why);
+        assert!(check("fileMatches", unpinned.clone()).is_some());
+        // The erp shape: named for one part, every dependency at latest.
+        write(
+            "package.json",
+            "{\n  \"name\": \"warehouse-erp-frontend\",\n  \"main\": \"server.js\",\n  \"dependencies\": { \"express\": \"latest\", \"pg\": \"*\" }\n}\n",
+        );
+        let why = check("fileMatches", named.clone());
+        assert!(why.as_deref().is_some_and(|w| w.contains("0 matches") && w.contains("at least 1")), "{:?}", why);
+        let why = check("fileMatches", unpinned.clone());
+        assert!(why.as_deref().is_some_and(|w| w.contains("2 matches") && w.contains("at most 0")), "{:?}", why);
+        // Pinned and named for the owner: both pass, case-insensitively.
+        write(
+            "package.json",
+            "{\n  \"name\": \"@acme/Greeter\",\n  \"main\": \"src/index.js\",\n  \"dependencies\": { \"express\": \"^4.19.2\" }\n}\n",
+        );
+        assert_eq!(check("fileMatches", named), None);
+        assert_eq!(check("fileMatches", unpinned), None);
+        // A bad pattern fails the check, never passes it silently.
+        assert!(check("fileMatches", serde_json::json!({"path": "package.json", "pattern": "(", "max": 0})).is_some());
+
+        // Modules: the entry point, its test, a fixture under test/, and a second
+        // entry point beside the first.
+        write("src/index.js", "module.exports = {};\n");
+        write("src/index.test.js", "require('node:test');\n");
+        write("test/helper.js", "\n");
+        write("node_modules/left/over.js", "\n");
+        let modules = |max: u64| {
+            serde_json::json!({
+                "pathPattern": r"\.(js|mjs|cjs)$",
+                "excludePattern": r"(^|/)(test|tests|__tests__|node_modules)/|\.(test|spec)\.(js|mjs|cjs)$",
+                "min": 1,
+                "max": max,
+            })
+        };
+        assert_eq!(check("fileCount", modules(1)), None);
+        // Every .js file counts without the exclusion, and the failure names them.
+        let why = check("fileCount", serde_json::json!({"pathPattern": r"\.js$", "max": 1}));
+        assert!(why.as_deref().is_some_and(|w| w.contains("4 files") && w.contains("test/helper.js")), "{:?}", why);
+        write("src/app.js", "module.exports = {};\n");
+        let why = check("fileCount", modules(1));
+        assert!(why.as_deref().is_some_and(|w| w.contains("2 files") && w.contains("src/app.js") && w.contains("src/index.js")), "{:?}", why);
+        assert_eq!(check("fileCount", modules(2)), None);
+        // An empty match is a count of zero, so min bites and max 0 passes.
+        assert!(check("fileCount", serde_json::json!({"pathPattern": r"\.py$", "min": 1})).is_some());
+        assert_eq!(check("fileCount", serde_json::json!({"pathPattern": r"\.py$", "max": 0})), None);
+        assert!(check("fileCount", serde_json::json!({"pathPattern": "(", "max": 0})).is_some());
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Thirty files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Thirty-one files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 36);
+        assert_eq!(cases.len(), 37);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
         assert_eq!(gen.task_type, "generate-entity");
         assert_eq!(gen.par_rounds, 10);
+        // The Node conventions case is a generation of the same kind, with no external
+        // dependency so its recorded commands run offline.
+        let node = cases.iter().find(|c| c.name == "gen-node").unwrap();
+        assert_eq!(node.tier, "generation");
+        assert_eq!(node.task_type, "generate-entity");
+        assert_eq!(node.requirements.len(), 4);
+        assert_eq!(node.checks.len(), 10);
+        assert!(node.deliverable.is_empty());
+        assert!(node.checks.iter().any(|(k, _)| k == "fileCount"));
+        assert_eq!(node.checks.iter().filter(|(k, _)| k == "fileMatches").count(), 5);
         let steps = cases.iter().find(|c| c.name == "steps").unwrap();
         assert_eq!(steps.checks.len(), 5); // an inner fence must not sever the asserts
         assert!(
@@ -2744,9 +2909,14 @@ mod tests {
                     }
                     "requirementExists" | "facetCount" => arg["statementPattern"].as_str(),
                     "viewExists" => arg["titlePattern"].as_str(),
+                    "fileMatches" => arg["pattern"].as_str(),
+                    "fileCount" => arg["pathPattern"].as_str(),
                     _ => None,
                 };
                 if let Some(pat) = pat {
+                    assert!(compile(pat).is_ok(), "{}: {}", case.name, pat);
+                }
+                if let Some(pat) = arg["excludePattern"].as_str() {
                     assert!(compile(pat).is_ok(), "{}: {}", case.name, pat);
                 }
             }

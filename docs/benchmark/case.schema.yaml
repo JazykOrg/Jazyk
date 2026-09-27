@@ -267,6 +267,10 @@ definitions:
         $ref: '#/definitions/statusIn'
       testsFail:
         $ref: '#/definitions/testsFail'
+      fileMatches:
+        $ref: '#/definitions/fileMatches'
+      fileCount:
+        $ref: '#/definitions/fileCount'
   entityExists:
     description: An entity with this exact name or alias exists in the resulting graph
     type: object
@@ -732,3 +736,45 @@ definitions:
     properties:
       requirement:
         type: string
+  fileMatches:
+    description: >-
+      The number of matches of the pattern in the deliverable file at path is within
+      bounds; a missing file fails the check
+    type: object
+    required: [path, pattern]
+    minProperties: 3
+    additionalProperties: false
+    properties:
+      path:
+        description: A deliverable-relative file path
+        type: string
+      pattern:
+        description: Regular expression counted over the file's text
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  fileCount:
+    description: >-
+      The number of files under the deliverable whose deliverable-relative path matches
+      pathPattern, and not excludePattern when given, is within bounds
+    type: object
+    required: [pathPattern]
+    minProperties: 2
+    additionalProperties: false
+    properties:
+      pathPattern:
+        description: Regular expression tested against each file's deliverable-relative path
+        type: string
+      excludePattern:
+        description: Regular expression whose matches are left out of the count
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0

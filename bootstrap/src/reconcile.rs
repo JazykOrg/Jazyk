@@ -2349,6 +2349,7 @@ pub fn compile_with(
             gen_before,
             crate::store::read_generation(out),
             report.tokens,
+            report.cached,
         );
         reload(&mut store, out, &parsed);
         sweep(&mut store, trace);

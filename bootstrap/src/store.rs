@@ -353,6 +353,10 @@ pub struct Commit {
     // None when an external agent drove the session: its spend is unknowable here
     // (docs/compiler/graph.md#journal).
     pub tokens: Option<u64>,
+    // The cached input among `tokens`, and `agent` when the agent reported the figure
+    // itself through report_spend (docs/compiler/tools.md#spend-tool).
+    pub cached: Option<u64>,
+    pub tokens_source: Option<String>,
     // A changeset that lands whole or not at all: one skipped op rolls the graph
     // back and nothing is journaled (a retract, docs/compiler/goals/ratify.md#retract).
     pub all_or_nothing: bool,
@@ -375,6 +379,8 @@ impl Commit {
             resolved: Vec::new(),
             rounds,
             tokens,
+            cached: None,
+            tokens_source: None,
             all_or_nothing: false,
         }
     }
@@ -1030,14 +1036,18 @@ impl Store {
             opened_goals: Vec::new(),
             rounds: commit.rounds,
             tokens: commit.tokens,
+            cached_tokens: commit.cached,
+            tokens_source: commit.tokens_source.clone(),
             ..Default::default()
         }
     }
 
     // Stamp the session's measured spend onto the entries a session just wrote: the
     // entry commits inside the serving, before the runner knows what the turn cost.
+    // `cached` is the input among `tokens` the endpoint served from its prompt cache,
+    // split the same way; 0 leaves the field absent.
     // Mirrors docs/compiler/graph.md#journal.
-    pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64) {
+    pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64, cached: u64) {
         if tokens == 0 || to <= from {
             return;
         }
@@ -1055,14 +1065,74 @@ impl Store {
         if n == 0 {
             return;
         }
-        let share = tokens / n;
+        // The remainder rides on the last entry.
+        let split = |total: u64, i: usize| {
+            let share = total / n;
+            if i as u64 + 1 == n { total - share * (n - 1) } else { share }
+        };
         for (i, (p, mut entry)) in entries.into_iter().enumerate() {
-            // The remainder rides on the last entry.
-            entry.tokens = Some(if i as u64 + 1 == n { tokens - share * (n - 1) } else { share });
+            entry.tokens = Some(split(tokens, i));
+            entry.cached_tokens = (cached > 0).then(|| split(cached, i));
             if let Ok(out_text) = serde_norway::to_string(&entry) {
                 crate::vfs::write(&p, out_text).ok();
             }
         }
+    }
+
+    // Stamp an external agent's own report of its bill onto one committed session
+    // entry (`jazyk spend`). Refuses a generation the journal does not hold, an entry
+    // that is not a session, and an entry that already carries a figure, measured or
+    // reported: a stamp never overwrites what the harness measured.
+    // Mirrors docs/frontends/cli.md#jazyk-spend.
+    pub fn stamp_reported(
+        out: &Path,
+        generation: u64,
+        tokens: u64,
+        cached: Option<u64>,
+    ) -> Result<JournalEntry, String> {
+        if tokens == 0 {
+            return Err("tokens must be a whole number above zero".to_string());
+        }
+        if cached.is_some_and(|c| c > tokens) {
+            return Err(format!(
+                "cached ({}) cannot exceed tokens ({}): the cached input is a share of the bill",
+                cached.unwrap_or(0),
+                tokens
+            ));
+        }
+        let p = out.join("journal").join(format!("g{}.yaml", generation));
+        let text = crate::vfs::read_to_string(&p)
+            .map_err(|_| format!("no journal entry g{} under {}", generation, out.display()))?;
+        let mut entry = serde_norway::from_str::<JournalEntry>(&text)
+            .map_err(|e| format!("journal entry g{} does not parse: {}", generation, e))?;
+        if entry.kind != "session" {
+            return Err(format!(
+                "g{} is a {} entry, not a session; only a session entry carries a spend",
+                generation, entry.kind
+            ));
+        }
+        if let Some(t) = entry.tokens {
+            let source = match entry.tokens_source.as_deref() {
+                Some(crate::model::TOKENS_SOURCE_AGENT) => "reported by the agent",
+                _ => "measured by the harness",
+            };
+            return Err(format!(
+                "g{} already carries {} tokens{} ({}); a stamp never overwrites a figure",
+                generation,
+                t,
+                entry
+                    .cached_tokens
+                    .map(|c| format!(", {} cached", c))
+                    .unwrap_or_default(),
+                source
+            ));
+        }
+        entry.tokens = Some(tokens);
+        entry.cached_tokens = cached.filter(|c| *c > 0);
+        entry.tokens_source = Some(crate::model::TOKENS_SOURCE_AGENT.to_string());
+        let out_text = serde_norway::to_string(&entry).map_err(|e| e.to_string())?;
+        crate::vfs::write(&p, out_text).map_err(|e| format!("write {}: {}", p.display(), e))?;
+        Ok(entry)
     }
 
     fn journal_path(&self, generation: u64) -> PathBuf {
@@ -8027,7 +8097,7 @@ mod tests {
         write(1, "edit", None);
         write(2, "session", None);
         write(3, "session", None);
-        Store::stamp_tokens(&out, 1, 3, 901);
+        Store::stamp_tokens(&out, 1, 3, 901, 601);
         let read = |g: u64| -> JournalEntry {
             serde_norway::from_str(
                 &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g)))
@@ -8035,21 +8105,90 @@ mod tests {
             )
             .unwrap()
         };
-        // The two session entries carry the whole spend between them; the edit entry,
-        // which no session wrote, stays without one.
+        // The two session entries carry the whole spend between them, the cached input
+        // split the same way; the edit entry, which no session wrote, stays without one.
         assert_eq!(read(2).tokens, Some(450));
         assert_eq!(read(3).tokens, Some(451));
+        assert_eq!(read(2).cached_tokens, Some(300));
+        assert_eq!(read(3).cached_tokens, Some(301));
         assert_eq!(read(1).tokens, None);
         // A second stamp over the same generations leaves the first one's numbers.
-        Store::stamp_tokens(&out, 1, 3, 100);
+        Store::stamp_tokens(&out, 1, 3, 100, 0);
         assert_eq!(read(2).tokens, Some(450));
+        assert_eq!(read(2).cached_tokens, Some(300));
         // A checks entry after the session's own takes no share: the session entry
         // carries the whole spend (a split once dropped half a criteria session's).
+        // An endpoint that reported no cache read leaves the field absent, not zero.
         write(4, "session", None);
         write(5, "checks", None);
-        Store::stamp_tokens(&out, 3, 5, 12051);
+        Store::stamp_tokens(&out, 3, 5, 12051, 0);
         assert_eq!(read(4).tokens, Some(12051));
+        assert_eq!(read(4).cached_tokens, None);
+        assert!(
+            !crate::vfs::read_to_string(out.join("journal/g4.yaml")).unwrap().contains("cachedTokens")
+        );
         assert_eq!(read(5).tokens, None);
+    }
+
+    // `jazyk spend` stamps an external agent's own report onto a committed session
+    // entry lacking a figure, marked tokensSource: agent, and refuses an entry that
+    // already carries one (measured or reported), a non-session entry, a missing
+    // generation, and a cached figure above the bill.
+    // Mirrors docs/frontends/cli.md#jazyk-spend.
+    #[test]
+    fn an_agent_report_stamps_one_unmeasured_session_entry_and_refuses_the_rest() {
+        let out = own_dir("stamp-reported");
+        crate::vfs::create_dir_all(out.join("journal")).unwrap();
+        let write = |g: u64, kind: &str, tokens: Option<u64>| {
+            let entry = JournalEntry {
+                build: format!("g{}", g),
+                generation: g,
+                kind: kind.to_string(),
+                tokens,
+                ..Default::default()
+            };
+            crate::vfs::write(
+                out.join("journal").join(format!("g{}.yaml", g)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        };
+        write(1, "edit", None);
+        write(2, "session", None);
+        write(3, "session", Some(9800));
+        let read = |g: u64| -> JournalEntry {
+            serde_norway::from_str(
+                &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g)))
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let stamped = Store::stamp_reported(&out, 2, 18400, Some(9100)).unwrap();
+        assert_eq!(stamped.tokens, Some(18400));
+        let e = read(2);
+        assert_eq!(e.tokens, Some(18400));
+        assert_eq!(e.cached_tokens, Some(9100));
+        assert_eq!(e.tokens_source.as_deref(), Some("agent"));
+        let text = crate::vfs::read_to_string(out.join("journal/g2.yaml")).unwrap();
+        assert!(text.contains("tokensSource: agent") && text.contains("cachedTokens: 9100"), "{}", text);
+        // A second report on the same entry is refused and names the standing figure.
+        let err = Store::stamp_reported(&out, 2, 100, None).unwrap_err();
+        assert!(err.contains("18400 tokens") && err.contains("reported by the agent"), "{}", err);
+        assert_eq!(read(2).tokens, Some(18400));
+        // A measured entry is never overwritten.
+        let err = Store::stamp_reported(&out, 3, 100, None).unwrap_err();
+        assert!(err.contains("9800 tokens") && err.contains("measured by the harness"), "{}", err);
+        assert_eq!(read(3).tokens_source, None);
+        // Not a session, not there, not a bill.
+        assert!(Store::stamp_reported(&out, 1, 100, None).unwrap_err().contains("not a session"));
+        assert!(Store::stamp_reported(&out, 9, 100, None).unwrap_err().contains("no journal entry g9"));
+        assert!(Store::stamp_reported(&out, 2, 0, None).is_err());
+        write(4, "session", None);
+        assert!(Store::stamp_reported(&out, 4, 100, Some(101)).unwrap_err().contains("cannot exceed"));
+        assert_eq!(read(4).tokens, None);
+        // A zero cached figure leaves the field absent rather than writing 0.
+        Store::stamp_reported(&out, 4, 100, Some(0)).unwrap();
+        assert_eq!(read(4).cached_tokens, None);
     }
 
     #[test]

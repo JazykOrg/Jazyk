@@ -234,15 +234,16 @@ pub fn run() -> i32 {
                                     .raw_output(json!(result));
                                 notify(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields)));
                             }
-                            AgentEvent::Usage { tokens } => {
+                            AgentEvent::Usage { tokens, cached } => {
                                 total_tokens += tokens;
                                 // `used`/`size` describe the context window, which an
                                 // OpenAI-compatible endpoint does not report; the meta
                                 // carries what it does: the tokens the round billed,
-                                // input and output (docs/compiler/sessions.md#budgets).
+                                // input and output, and the input it served from its
+                                // prompt cache (docs/compiler/sessions.md#budgets).
                                 let usage = UsageUpdate::new(0, 0).meta(
                                     serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({
-                                        "jazyk": {"tokens": tokens, "totalTokens": total_tokens}
+                                        "jazyk": {"tokens": tokens, "cachedTokens": cached, "totalTokens": total_tokens}
                                     }))
                                     .ok(),
                                 );

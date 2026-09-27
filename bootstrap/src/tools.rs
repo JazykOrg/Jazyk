@@ -415,6 +415,17 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "report_spend",
+            description: "Record what YOUR run billed for the open batch, when you know it: tokens is the input plus output tokens your endpoint billed across every round of this batch, cached the input tokens among them served from its prompt cache. Your own figure, never an estimate; do not call it if you do not know your usage. A second call replaces the first (the batch's whole spend so far, not an increment). At done the batch's journal entry takes the figure as tokens and cachedTokens with tokensSource agent. Stages nothing and touches no graph state. Outside an open batch it is refused; `jazyk spend <generation> <tokens>` stamps a committed entry instead.",
+            parameters: obj(
+                json!({
+                    "tokens": {"type": "integer", "minimum": 1},
+                    "cached": {"type": "integer", "minimum": 0}
+                }),
+                &["tokens"],
+            ),
+        },
+        ToolDef {
             name: "report_feedback",
             description: "Report that jazyk's own prompt, tool, schema, or error message is ambiguous, wrong, confusing, or missing something. It appends one line to the project's own jazyk-out/feedback.jsonl, read later by jazyk's developers, not this project's authors; nothing is transmitted anywhere. It never touches the graph. Use it for what blocked YOU; problems in the documents are diagnostics, not feedback. kind: ambiguous, wrong, confusing, missing, or other. subject names the tool, argument, or instruction. message says what was unclear and what would have helped. Then continue the task with your best judgment.",
             parameters: obj(
@@ -677,6 +688,10 @@ pub const FEEDBACK_TOOL: &str = "report_feedback";
 // Feedback entries one session may record. Past it the call is acknowledged without a
 // record, so a confused model cannot flood the log.
 pub const FEEDBACK_LIMIT: usize = 5;
+// An external agent's own report of what its run billed, recorded on the open batch's
+// journal entry: served in every toolset, read-only MCP included.
+// See docs/compiler/tools.md#spend-tool.
+pub const SPEND_TOOL: &str = "report_spend";
 
 // The session toolset for a goal batch: the union of the kinds' write slices plus
 // the always-on set (the read tools, the goal tools, report_feedback).
@@ -698,6 +713,7 @@ pub fn toolset_for_kinds(kinds: &[&str]) -> Vec<&'static str> {
         }
     }
     v.push(FEEDBACK_TOOL);
+    v.push(SPEND_TOOL);
     v
 }
 
@@ -783,6 +799,9 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
     };
     if !v.contains(&FEEDBACK_TOOL) {
         v.push(FEEDBACK_TOOL);
+    }
+    if !v.contains(&SPEND_TOOL) {
+        v.push(SPEND_TOOL);
     }
     v
 }
@@ -1412,6 +1431,10 @@ pub struct ToolSession {
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
     feedback_count: usize,
+    // What an external agent reported its run billed for this batch, (tokens, cached);
+    // the commit takes it when the harness measured nothing
+    // (docs/compiler/tools.md#spend-tool).
+    reported_spend: Option<(u64, u64)>,
     // What a review's word-match verdicts staged, said once on the mark's reply.
     review_staged_note: Option<String>,
     // Goal lines already previewed this session: a repeat is counted, not repeated.
@@ -1474,6 +1497,7 @@ impl ToolSession {
             last_answers: Default::default(),
             refusals: 0,
             feedback_count: 0,
+            reported_spend: None,
             review_staged_note: None,
             previewed: std::collections::BTreeSet::new(),
             mutation_limit,
@@ -1508,12 +1532,25 @@ impl ToolSession {
                 GoalOutcome::Failed { .. } => None,
             })
             .collect();
+        // The harness's measurement wins; an external agent's own report fills in
+        // when there is none (docs/compiler/tools.md#spend-tool).
+        let (tokens, cached, tokens_source) = match (tokens, self.reported_spend) {
+            (Some(t), _) => (Some(t), None, None),
+            (None, Some((t, c))) => (
+                Some(t),
+                (c > 0).then_some(c),
+                Some(crate::model::TOKENS_SOURCE_AGENT.to_string()),
+            ),
+            (None, None) => (None, None, None),
+        };
         crate::store::Commit {
             kind: "session".to_string(),
             batch: self.scope.goal_ids(),
             resolved,
             rounds,
             tokens,
+            cached,
+            tokens_source,
             all_or_nothing: false,
         }
     }
@@ -7319,6 +7356,38 @@ impl ToolSession {
             "read_text_file" | "write_text_file" | "list_files" | "run_command" => {
                 self.file_tool(name, args)
             }
+            // An external agent's own report of what its run billed for the open batch.
+            // It stages nothing; the commit takes the figure when the harness measured
+            // none. Mirrors docs/compiler/tools.md#spend-tool.
+            "report_spend" => {
+                if self.scope.goals.is_empty() {
+                    return Err(ToolError::new(
+                        "no-open-batch",
+                        "report_spend records a spend on the open batch's journal entry and no batch is open; `jazyk spend <generation> <tokens> [--cached N]` stamps a committed entry instead".into(),
+                    ));
+                }
+                let tokens = args["tokens"].as_u64().unwrap_or(0);
+                if tokens == 0 {
+                    return Err(ToolError::new(
+                        "invalid-argument",
+                        "report_spend needs tokens: the whole number of tokens your endpoint billed for this batch, above zero".into(),
+                    ));
+                }
+                let cached = args["cached"].as_u64().unwrap_or(0);
+                if cached > tokens {
+                    return Err(ToolError::new(
+                        "invalid-argument",
+                        format!("cached ({}) cannot exceed tokens ({}): the cached input is a share of the bill, not an addition to it", cached, tokens),
+                    ));
+                }
+                let replaced = self.reported_spend.is_some();
+                self.reported_spend = Some((tokens, cached));
+                let mut v = json!({"recorded": true, "tokens": tokens, "cached": cached});
+                if replaced {
+                    v["note"] = json!("replaced the earlier report for this batch");
+                }
+                return Ok(v);
+            }
             // Feedback about jazyk's own prompts and tools. It stages nothing, spends no
             // mutation budget, and passes no gate beyond a non-empty message: a model
             // asking for help is never bounced. Mirrors docs/compiler/tools.md#feedback-tool.
@@ -10607,6 +10676,40 @@ mod tests {
         t.dispatch("done", &json!({"summary": "revised and re-anchored"}))
             .unwrap();
         assert!(t.done.is_some());
+    }
+
+    // report_spend records an external agent's own bill on the open batch: the commit
+    // takes it when the harness measured nothing, a measurement wins when it did, a
+    // later call replaces an earlier one, and outside a batch the call is refused
+    // toward `jazyk spend`. Mirrors docs/compiler/tools.md#spend-tool.
+    #[test]
+    fn reported_spend_rides_the_commit_when_nothing_was_measured() {
+        let mut t = session();
+        let ok = t.dispatch("report_spend", &json!({"tokens": 18400, "cached": 9100})).unwrap();
+        assert_eq!(ok["recorded"], json!(true));
+        assert!(t.staged.is_empty(), "the report stages no mutation");
+        let commit = t.commit(3, None);
+        assert_eq!(commit.tokens, Some(18400));
+        assert_eq!(commit.cached, Some(9100));
+        assert_eq!(commit.tokens_source.as_deref(), Some("agent"));
+        // The harness's own measurement wins over the report.
+        let commit = t.commit(3, Some(500));
+        assert_eq!((commit.tokens, commit.cached, commit.tokens_source), (Some(500), None, None));
+        // A second call replaces the first and says so; a zero cached leaves the field out.
+        let again = t.dispatch("report_spend", &json!({"tokens": 20000})).unwrap();
+        assert!(again["note"].as_str().unwrap_or("").contains("replaced"), "{}", again);
+        let commit = t.commit(3, None);
+        assert_eq!((commit.tokens, commit.cached), (Some(20000), None));
+        // Bad numbers are refused and leave the report standing.
+        assert_eq!(t.dispatch("report_spend", &json!({"tokens": 0})).unwrap_err().rule, "invalid-argument");
+        assert_eq!(t.dispatch("report_spend", &json!({"tokens": 10, "cached": 11})).unwrap_err().rule, "invalid-argument");
+        assert_eq!(t.commit(3, None).tokens, Some(20000));
+        // Outside an open batch the call is refused toward the CLI form.
+        let mut serving = ToolSession::new(Store::default(), WorkScope::serving("mcp-read"), 64, 24000);
+        let err = serving.dispatch("report_spend", &json!({"tokens": 10})).unwrap_err();
+        assert_eq!(err.rule, "no-open-batch");
+        assert!(err.message.contains("jazyk spend"), "{}", err.message);
+        assert_eq!(serving.commit(1, None).tokens, None);
     }
 
     #[test]

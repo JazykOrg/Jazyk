@@ -207,8 +207,8 @@ harness ([toolsets](./tools.md#toolsets)), so a batch of extraction goals still 
 small toolset. Every session sees, on top of its kinds' slices:
 
 - the [read tools](./tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,
-  `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`, and
-  `report_feedback`,
+  `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`,
+  `report_feedback`, and `report_spend`,
 - the [goal tools](./tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
   `load_skill`, `done`.
 
@@ -473,6 +473,18 @@ throughput and efficiency the [benchmark](../benchmark/benchmark.md) reports, an
 `llmResponse` trace event. An agent loop resends its whole history every round, so the
 input tokens are most of a session's bill; one build counted output alone and reported
 13k tokens where the endpoint saw 29k of input.
+
+Cached input tokens ride beside the bill. A provider that caches the prompt prefix
+reports how much of the input it served from that cache: OpenAI chat completions in
+`usage.prompt_tokens_details.cached_tokens`, an Anthropic-compatible endpoint in
+`usage.cache_read_input_tokens`. Both response paths (a body, a stream) read both
+names; an endpoint that reports neither counts 0. The figure is a share of the input,
+not a deduction from it: the bill stays what the endpoint billed, and the cached share
+says how much of it was priced at the cache rate. The embedded agent reports both per
+round in its usage update's meta (`jazyk.tokens`, `jazyk.cachedTokens`), the runner sums
+them over the turn, and the journal entry carries them as `tokens` and `cachedTokens`
+([journal](./graph.md#journal)); `jazyk status --costs` prints the cached share beside
+the spend ([status](../frontends/cli.md#jazyk-status)).
 
 ## Snapshots
 

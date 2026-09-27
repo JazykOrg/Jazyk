@@ -59,7 +59,8 @@ separated; each adds its tools to the union:
 Every serving includes the [read tools](../compiler/tools.md#read-tools) (`load`,
 `expand`, `unload`, `graph_status`, `search`, `read_section`, `get_entity`,
 `get_view`, `diagnostics`), [`report_feedback`](../compiler/tools.md#feedback-tool),
-and `await_changes` (below). The reads maintain the
+[`report_spend`](../compiler/tools.md#spend-tool) (what an external agent's run
+billed, recorded on the open batch's journal entry), and `await_changes` (below). The reads maintain the
 [loaded set](../compiler/context.md#the-loaded-set) per open batch, and every
 mutating reply carries its condensed status block. A reply's text content is the JSON
 object pretty-printed ([tools](../compiler/tools.md)), so the agent's user reads it in

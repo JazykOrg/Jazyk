@@ -17,6 +17,8 @@ pub const NO_DOCUMENT: &str = "(no document)";
 struct Line {
     goals: u64,
     tokens: f64,
+    // The cached input among the tokens (docs/compiler/sessions.md#budgets).
+    cached: f64,
     unmeasured: u64,
 }
 
@@ -27,12 +29,12 @@ impl Line {
 
     fn to_json(&self) -> Value {
         // A line with no measured goal has an unknown spend, never a zero one.
-        let tokens = if self.measured() > 0 {
-            json!(self.tokens.round() as u64)
+        let (tokens, cached) = if self.measured() > 0 {
+            (json!(self.tokens.round() as u64), json!(self.cached.round() as u64))
         } else {
-            Value::Null
+            (Value::Null, Value::Null)
         };
-        json!({"goals": self.goals, "tokens": tokens, "unmeasured": self.unmeasured})
+        json!({"goals": self.goals, "tokens": tokens, "cached": cached, "unmeasured": self.unmeasured})
     }
 }
 
@@ -44,15 +46,24 @@ pub fn report_at(out: &Path) -> Value {
 
 pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
     let mut sessions = 0u64;
+    // Sessions carrying a figure: measured by the harness, or reported by the agent
+    // (`tokensSource: agent`); `reported` is the part of `measured` the agent priced.
     let mut measured = 0u64;
+    let mut reported = 0u64;
     let mut tokens = 0u64;
+    // Cached input over the measured sessions; an entry without the field adds 0.
+    let mut cached = 0u64;
     let mut by_kind: BTreeMap<String, Line> = BTreeMap::new();
     let mut by_doc: BTreeMap<String, Line> = BTreeMap::new();
     for e in entries.iter().filter(|e| e.kind == "session") {
         sessions += 1;
         if let Some(t) = e.tokens {
             measured += 1;
+            if e.tokens_source.as_deref() == Some(crate::model::TOKENS_SOURCE_AGENT) {
+                reported += 1;
+            }
             tokens += t;
+            cached += e.cached_tokens.unwrap_or(0);
         }
         let mut goals: Vec<&str> = e.resolved_goals.iter().map(|r| r.goal.as_str()).collect();
         if goals.is_empty() {
@@ -60,7 +71,10 @@ pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
         }
         // A session that names no goal still spent: it lands under its own kind.
         let goals = if goals.is_empty() { vec![""] } else { goals };
-        let share = e.tokens.map(|t| t as f64 / goals.len() as f64);
+        let n_goals = goals.len() as f64;
+        let share = e
+            .tokens
+            .map(|t| (t as f64 / n_goals, e.cached_tokens.unwrap_or(0) as f64 / n_goals));
         for goal in goals {
             let (kind, target) =
                 crate::goals::parse_goal_id(goal).unwrap_or(("(no goal)", ""));
@@ -105,9 +119,11 @@ pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
         "first": gens.iter().min(),
         "last": gens.iter().max(),
         "sessions": sessions,
-        "measured": measured,
+        "measured": measured - reported,
+        "reported": reported,
         "unmeasured": sessions - measured,
         "tokens": if measured > 0 { json!(tokens) } else { Value::Null },
+        "cached": if measured > 0 { json!(cached) } else { Value::Null },
         "by_kind": lines(&by_kind),
         "by_document": lines(&by_doc),
         "requirements": graph.requirements.len(),
@@ -117,10 +133,15 @@ pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
     })
 }
 
-fn charge(line: &mut Line, share: Option<f64>, frac: f64) {
+// `share` is one goal's (tokens, cached) slice of its session's spend, or None for
+// an unmeasured session.
+fn charge(line: &mut Line, share: Option<(f64, f64)>, frac: f64) {
     line.goals += 1;
     match share {
-        Some(s) => line.tokens += s * frac,
+        Some((t, c)) => {
+            line.tokens += t * frac;
+            line.cached += c * frac;
+        }
         None => line.unmeasured += 1,
     }
 }
@@ -189,15 +210,33 @@ pub fn render(r: &Value) -> String {
     }
     let mut out = String::new();
     let range = format!("g{}..g{}", r["first"], r["last"]);
+    // The agent-reported count prints only when there is one.
+    let reported = match r["reported"].as_u64() {
+        Some(n) if n > 0 => format!(", {} agent-reported", n),
+        _ => String::new(),
+    };
     let head = format!(
-        "cost: {}, {} sessions ({} measured, {} unmeasured)",
-        range, sessions, r["measured"], r["unmeasured"]
+        "cost: {}, {} sessions ({} measured{}, {} unmeasured)",
+        range, sessions, r["measured"], reported, r["unmeasured"]
     );
+    // The cached figure and its column print only when some entry carried one: a
+    // journal from endpoints that report no cache read looks as it always did.
+    let cached_total = r["cached"].as_u64().unwrap_or(0);
+    let show_cached = cached_total > 0;
     match r["tokens"].as_u64() {
+        Some(t) if show_cached => out.push_str(&format!(
+            "{}, {} tokens, {} cached ({}%)\n",
+            head,
+            t,
+            cached_total,
+            (cached_total as f64 * 100.0 / t.max(1) as f64).round() as u64
+        )),
         Some(t) => out.push_str(&format!("{}, {} tokens\n", head, t)),
         None => out.push_str(&format!("{}, spend unknown\n", head)),
     }
     let num = |v: &Value| v.as_u64().map(|n| n.to_string()).unwrap_or_else(|| "-".into());
+    let cached_col = |l: &Value| if show_cached { format!("{:>9}", num(&l["cached"])) } else { String::new() };
+    let cached_head = if show_cached { format!("{:>9}", "cached") } else { String::new() };
     let width = |key: &str| {
         r[key]
             .as_array()
@@ -207,10 +246,11 @@ pub fn render(r: &Value) -> String {
     };
     let w = width("by_kind");
     out.push_str(&format!(
-        "by kind:{:pad$}{:>7}{:>9}{:>10}{:>12}\n",
+        "by kind:{:pad$}{:>7}{:>9}{}{:>10}{:>12}\n",
         "",
         "goals",
         "tokens",
+        cached_head,
         "per goal",
         "unmeasured",
         pad = w + 2 - "by kind:".len()
@@ -225,10 +265,11 @@ pub fn render(r: &Value) -> String {
             _ => "-".into(),
         };
         out.push_str(&format!(
-            "  {:w$}{:>7}{:>9}{:>10}{:>12}\n",
+            "  {:w$}{:>7}{:>9}{}{:>10}{:>12}\n",
             l["name"].as_str().unwrap_or(""),
             goals,
             num(&l["tokens"]),
+            cached_col(l),
             per_goal,
             unmeasured,
             w = w
@@ -236,19 +277,21 @@ pub fn render(r: &Value) -> String {
     }
     let w = width("by_document");
     out.push_str(&format!(
-        "by document:{:pad$}{:>7}{:>9}{:>12}\n",
+        "by document:{:pad$}{:>7}{:>9}{}{:>12}\n",
         "",
         "goals",
         "tokens",
+        cached_head,
         "unmeasured",
         pad = w + 2 - "by document:".len()
     ));
     for l in r["by_document"].as_array().into_iter().flatten() {
         out.push_str(&format!(
-            "  {:w$}{:>7}{:>9}{:>12}\n",
+            "  {:w$}{:>7}{:>9}{}{:>12}\n",
             l["name"].as_str().unwrap_or(""),
             num(&l["goals"]),
             num(&l["tokens"]),
+            cached_col(l),
             num(&l["unmeasured"]),
             w = w
         ));
@@ -347,7 +390,7 @@ mod tests {
         // A merged requirement resolves to its survivor's document.
         g.redirects.insert("req:orders-9".into(), "req:orders-1".into());
         store.save();
-        let entries = vec![
+        let mut entries = vec![
             JournalEntry {
                 build: "g1".into(),
                 generation: 1,
@@ -373,6 +416,10 @@ mod tests {
             session(4, &["g:derive-criteria:crit:pay-1", "g:curate-view:view:x"], None),
             session(5, &["g:curate-view:view:x"], Some(100)),
         ];
+        // Two entries carry a cached input figure; the rest predate the field or
+        // came from an endpoint that reports none, and add 0 cached.
+        entries[1].cached_tokens = Some(400);
+        entries[4].cached_tokens = Some(50);
         crate::vfs::create_dir_all(out.join("journal")).unwrap();
         for e in &entries {
             crate::vfs::write(
@@ -388,6 +435,7 @@ mod tests {
         assert_eq!(r["measured"], 3);
         assert_eq!(r["unmeasured"], 1);
         assert_eq!(r["tokens"], 1700);
+        assert_eq!(r["cached"], 450);
         let line = |key: &str, name: &str| -> Value {
             r[key]
                 .as_array()
@@ -401,6 +449,12 @@ mod tests {
         assert_eq!((k["goals"].clone(), k["tokens"].clone(), k["unmeasured"].clone()), (json!(2), json!(1000), json!(0)));
         assert_eq!(line("by_kind", "rejudge-pair")["tokens"], 300);
         assert_eq!(line("by_kind", "review-entity")["tokens"], 300);
+        // Cached input follows the same split: 400 over two reconcile goals, none on
+        // the pair whose entry lacks the field, 50 on the one measured curate goal.
+        assert_eq!(k["cached"], 400);
+        assert_eq!(line("by_kind", "rejudge-pair")["cached"], 0);
+        assert_eq!(line("by_kind", "curate-view")["cached"], 50);
+        assert_eq!(line("by_kind", "derive-criteria")["cached"], Value::Null);
         let dc = line("by_kind", "derive-criteria");
         assert_eq!((dc["goals"].clone(), dc["tokens"].clone(), dc["unmeasured"].clone()), (json!(1), Value::Null, json!(1)));
         let cv = line("by_kind", "curate-view");
@@ -420,10 +474,16 @@ mod tests {
         assert_eq!(r["per_requirement"], 850);
         assert_eq!(r["per_criterion"], 1700);
         let text = render(&r);
-        assert!(text.starts_with("cost: g1..g5, 4 sessions (3 measured, 1 unmeasured), 1700 tokens\n"), "{}", text);
+        assert!(
+            text.starts_with("cost: g1..g5, 4 sessions (3 measured, 1 unmeasured), 1700 tokens, 450 cached (26%)\n"),
+            "{}",
+            text
+        );
+        let kline = text.lines().find(|l| l.trim_start().starts_with("reconcile-section")).unwrap();
+        assert_eq!(kline.split_whitespace().collect::<Vec<_>>(), ["reconcile-section", "2", "1000", "400", "500", "0"]);
         assert!(text.contains("per requirement: 850 tokens (2 requirements)"), "{}", text);
         let oline = text.lines().find(|l| l.trim_start().starts_with("docs/orders.md")).unwrap();
-        assert_eq!(oline.split_whitespace().collect::<Vec<_>>(), ["docs/orders.md", "3", "950", "0"]);
+        assert_eq!(oline.split_whitespace().collect::<Vec<_>>(), ["docs/orders.md", "3", "950", "200", "0"]);
         // A kind no session measured prints no number, not a zero.
         let dline = text.lines().find(|l| l.trim_start().starts_with("derive-criteria")).unwrap();
         assert!(dline.contains(" - "), "{}", dline);
@@ -438,5 +498,57 @@ mod tests {
         let text = render(&r);
         assert!(text.contains("spend unknown"), "{}", text);
         assert!(text.contains("unknown, no session was measured"), "{}", text);
+        assert_eq!(r["cached"], Value::Null);
+    }
+
+    // A journal whose entries carry no cachedTokens (older entries, endpoints that
+    // report no cache read) prints as before: no cached figure, no cached column, and
+    // the JSON says 0 cached over the measured sessions, not unknown.
+    #[test]
+    fn a_journal_without_cached_tokens_prints_no_cached_column() {
+        let r = report(
+            &[
+                session(2, &["g:reconcile-section:docs/a.md#/a"], Some(1000)),
+                session(3, &["g:review-entity:ent:a"], None),
+            ],
+            &Graph::default(),
+        );
+        assert_eq!(r["cached"], 0);
+        assert_eq!(r["by_kind"][0]["cached"], 0);
+        let text = render(&r);
+        assert!(text.starts_with("cost: g2..g3, 2 sessions (1 measured, 1 unmeasured), 1000 tokens\n"), "{}", text);
+        assert!(!text.contains("cached"), "{}", text);
+        let kline = text.lines().find(|l| l.trim_start().starts_with("reconcile-section")).unwrap();
+        assert_eq!(kline.split_whitespace().collect::<Vec<_>>(), ["reconcile-section", "1", "1000", "1000", "0"]);
+    }
+
+    // A session the agent priced itself (tokensSource: agent) counts in the tokens like
+    // a measured one and apart from it in the session counts.
+    // Mirrors docs/frontends/cli.md#jazyk-status.
+    #[test]
+    fn an_agent_reported_session_counts_in_the_tokens_and_apart_in_the_sessions() {
+        let mut reported = session(3, &["g:review-entity:ent:a"], Some(2000));
+        reported.tokens_source = Some("agent".into());
+        reported.cached_tokens = Some(500);
+        let r = report(
+            &[
+                session(2, &["g:reconcile-section:docs/a.md#/a"], Some(1000)),
+                reported,
+                session(4, &["g:curate-view:view:x"], None),
+            ],
+            &Graph::default(),
+        );
+        assert_eq!(r["sessions"], 3);
+        assert_eq!(r["measured"], 1);
+        assert_eq!(r["reported"], 1);
+        assert_eq!(r["unmeasured"], 1);
+        assert_eq!(r["tokens"], 3000);
+        assert_eq!(r["cached"], 500);
+        let text = render(&r);
+        assert!(
+            text.starts_with("cost: g2..g4, 3 sessions (1 measured, 1 agent-reported, 1 unmeasured), 3000 tokens, 500 cached (17%)\n"),
+            "{}",
+            text
+        );
     }
 }

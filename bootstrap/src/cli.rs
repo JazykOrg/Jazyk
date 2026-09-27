@@ -6,7 +6,7 @@ use crate::project::{self, Project};
 use crate::reconcile;
 use crate::session::{Trace, TraceLevel};
 use crate::store::Store;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct Options {
@@ -36,6 +36,9 @@ pub struct Options {
     pub json: bool,
     // `jazyk status --costs`: the journal's cost report (docs/frontends/cli.md#jazyk-status).
     pub costs: bool,
+    // `jazyk spend <generation> <tokens> --cached N`: the cached input among the
+    // reported tokens (docs/frontends/cli.md#jazyk-spend).
+    pub cached: Option<u64>,
     pub once: bool,
     // ACP: the agent profile (--agent), and the flags of bridge-spawned MCP servings
     // (docs/frontends/mcp.md#mcp-into-acp-sessions).
@@ -85,6 +88,7 @@ impl Default for Options {
             mcp: None,
             json: false,
             costs: false,
+            cached: None,
             once: false,
             agent: None,
             acp_ide: None,
@@ -1402,6 +1406,58 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
 // status.yaml and the board: the store version, the last verdict with its counts,
 // the live board counts, coverage, diagnostics, the last build's cost, and the
 // unclaimed report. Mirrors docs/frontends/cli.md#jazyk-status.
+// `jazyk spend <generation> <tokens> [--cached N]`: an external agent's own report of
+// its bill, stamped on a committed session entry that carries none.
+// Mirrors docs/frontends/cli.md#jazyk-spend.
+pub fn run_spend(args: &[String], opts: &Options) -> i32 {
+    let (generation, tokens) = match (args.first(), args.get(1)) {
+        (Some(g), Some(t)) => (g.as_str(), t.as_str()),
+        _ => {
+            eprintln!("jazyk spend: takes a generation (g42 or 42) and the tokens billed; see `jazyk spend --help`");
+            return 2;
+        }
+    };
+    let generation = match generation.trim_start_matches('g').parse::<u64>() {
+        Ok(g) => g,
+        Err(_) => {
+            eprintln!("jazyk spend: `{}` is not a generation (g42 or 42)", generation);
+            return 2;
+        }
+    };
+    let tokens = match tokens.parse::<u64>() {
+        Ok(t) if t > 0 => t,
+        _ => {
+            eprintln!("jazyk spend: tokens takes a whole number above zero, got `{}`", tokens);
+            return 2;
+        }
+    };
+    let (_proj, _llm, out) = resolve(&[], opts);
+    match spend_at(&out, generation, tokens, opts.cached) {
+        Ok(line) => {
+            println!("{}", line);
+            0
+        }
+        Err(e) => {
+            eprintln!("jazyk spend: {}", e);
+            1
+        }
+    }
+}
+
+// The stamp and its one-line report, over an out directory.
+fn spend_at(out: &Path, generation: u64, tokens: u64, cached: Option<u64>) -> Result<String, String> {
+    let entry = Store::stamp_reported(out, generation, tokens, cached)?;
+    Ok(format!(
+        "g{}: {} tokens{}, reported by the agent",
+        generation,
+        tokens,
+        entry
+            .cached_tokens
+            .map(|c| format!(", {} cached", c))
+            .unwrap_or_default()
+    ))
+}
+
 pub fn run_status(opts: &Options) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (proj, _llm, out) = resolve(&[], opts);
@@ -2555,6 +2611,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    // `jazyk spend` stamps an agent's report on a session entry that carries no figure
+    // and refuses one that does, saying what it carries.
+    // Mirrors docs/frontends/cli.md#jazyk-spend.
+    #[test]
+    fn spend_stamps_an_unmeasured_session_and_refuses_a_measured_one() {
+        let out = std::env::temp_dir().join(format!("jazyk-cli-spend-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(out.join("journal")).unwrap();
+        for (g, tokens) in [(7u64, None), (8, Some(9800u64))] {
+            let entry = crate::model::JournalEntry {
+                build: format!("g{}", g),
+                generation: g,
+                kind: "session".into(),
+                tokens,
+                ..Default::default()
+            };
+            crate::vfs::write(
+                out.join("journal").join(format!("g{}.yaml", g)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            spend_at(&out, 7, 18400, Some(9100)).unwrap(),
+            "g7: 18400 tokens, 9100 cached, reported by the agent"
+        );
+        let r = crate::costs::report_at(&out);
+        assert_eq!(
+            (r["measured"].clone(), r["reported"].clone(), r["tokens"].clone()),
+            (serde_json::json!(1), serde_json::json!(1), serde_json::json!(28200))
+        );
+        let err = spend_at(&out, 8, 100, None).unwrap_err();
+        assert!(err.contains("already carries 9800 tokens"), "{}", err);
+        assert!(spend_at(&out, 7, 100, None).unwrap_err().contains("reported by the agent"));
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // A one-document project in a temp dir: the smallest board with a ready batch.

@@ -212,7 +212,9 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
          instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
          report_feedback: it appends a line to the project's local jazyk-out/feedback.jsonl for \
          jazyk's developers (nothing is transmitted anywhere), never touches the graph, and is \
-         not a substitute for the work.",
+         not a substitute for the work. If you know what your run billed for a batch, \
+         report_spend records it on the batch's journal entry (your own figure, never an \
+         estimate).",
     );
     s
 }
@@ -771,6 +773,7 @@ impl McpServer {
                 !crate::tools::READ_TOOLS.contains(t)
                     && !crate::tools::GOAL_TOOLS.contains(t)
                     && *t != crate::tools::FEEDBACK_TOOL
+                    && *t != crate::tools::SPEND_TOOL
             })
             .collect();
         let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
@@ -2004,7 +2007,7 @@ impl McpServer {
                             json!({"error": {"rule": "wrong-toolset", "message": format!(
                                 "`{}` is not part of a {} batch; this batch's write tools: {}",
                                 name, kinds.join("+"),
-                                allowed.iter().filter(|t| !crate::tools::READ_TOOLS.contains(t) && !crate::tools::GOAL_TOOLS.contains(t) && **t != crate::tools::FEEDBACK_TOOL).cloned().collect::<Vec<_>>().join(", "))}}),
+                                allowed.iter().filter(|t| !crate::tools::READ_TOOLS.contains(t) && !crate::tools::GOAL_TOOLS.contains(t) && **t != crate::tools::FEEDBACK_TOOL && **t != crate::tools::SPEND_TOOL).cloned().collect::<Vec<_>>().join(", "))}}),
                             true,
                         ));
                     }
@@ -2234,6 +2237,7 @@ impl McpServer {
                     && store.graph.entities.is_empty()
                     && !self.modes.iter().any(|m| m == "compile")
                     && name != "report_feedback"
+                    && name != crate::tools::SPEND_TOOL
                 {
                     return Ok(text_result(
                         json!({"error": {"rule": "no-build", "message": "no graph found; run `jazyk compile` first (or connect a compile serving)"}}),
@@ -3206,6 +3210,32 @@ mod tests {
         let a = server.abandon_goals(&json!({"arguments": {"reason": "test"}}));
         assert_eq!(a["abandoned"], json!(batch));
         assert!(crate::control::leases(&out).is_empty());
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // report_spend is served with every toolset, the read-only graph serving included,
+    // and outside an open batch it is refused toward `jazyk spend`.
+    // Mirrors docs/compiler/tools.md#spend-tool.
+    #[test]
+    fn report_spend_is_served_everywhere_and_refused_outside_a_batch() {
+        let dir = bare_dir("spend-tool");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let graph = McpServer::new(crate::project::Project::load(&dir), out.clone(), vec!["graph".into()], false);
+        assert!(tool_names(&graph).iter().any(|n| n == "report_spend"));
+        let r = graph
+            .handle("tools/call", &json!({"name": "report_spend", "arguments": {"tokens": 500}}))
+            .unwrap();
+        assert_eq!(r["isError"], true);
+        let text = r["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("no-open-batch") && text.contains("jazyk spend"), "{}", text);
+        let compile = McpServer::new(project, out, vec!["compile".into()], false);
+        assert!(tool_names(&compile).iter().any(|n| n == "report_spend"));
+        let r = compile
+            .handle("tools/call", &json!({"name": "report_spend", "arguments": {"tokens": 500}}))
+            .unwrap();
+        assert_eq!(r["isError"], true);
+        assert!(r["content"][0]["text"].as_str().unwrap().contains("no-open-batch"));
         crate::vfs::remove_dir_all(&dir).ok();
     }
 

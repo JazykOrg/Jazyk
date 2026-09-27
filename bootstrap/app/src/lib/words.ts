@@ -8,11 +8,11 @@ export interface Words {
   dev: boolean
   sync: string
   build: string
-  check: string
+  review: string
   document: string
   syncing: string
   building: string
-  checking: string
+  reviewing: string
   upToDate: string
   syncOnSave: string
   syncOnRequest: string
@@ -59,11 +59,11 @@ function make(dev: boolean): Words {
     dev,
     sync: both('Sync', 'compile'),
     build: both('Build', 'generate'),
-    check: both('Check', 'verify'),
+    review: both('Review', 'verify'),
     document: both('Document', 'decompile'),
     syncing: both('Syncing', 'compiling'),
     building: both('Building', 'generating'),
-    checking: both('Checking', 'verifying'),
+    reviewing: both('Reviewing', 'verifying'),
     upToDate: both('Up to date', 'converged'),
     syncOnSave: both('Sync on save', 'compile: auto'),
     syncOnRequest: both('Sync on request', 'compile: manual'),

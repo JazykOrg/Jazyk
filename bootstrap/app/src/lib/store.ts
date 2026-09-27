@@ -93,6 +93,9 @@ export interface FolderState {
   storeError: string | null
 }
 
+// The action the split button runs (docs/frontends/gui.md#the-action-button).
+export type ActionChoice = 'compile' | 'gen' | 'verify'
+
 export interface StoredState {
   // The recent entry's id: `demo:<id>` or `browser:<uuid>`.
   id: string
@@ -139,6 +142,15 @@ interface AppStore {
   // The in-page model's load, while it runs or after it failed
   // (docs/frontends/wasm.md#the-demo).
   modelLoad: { text: string; failed?: boolean } | null
+  // The action the split button's main part runs, when one was chosen from its
+  // list; null takes the default for the state (docs/frontends/gui.md#the-action-button).
+  action: ActionChoice | null
+  // The remembered project is being reopened on page load: the routes wait
+  // (docs/frontends/gui.md#the-open-project).
+  reopening: boolean
+  // A remembered folder that needs the browser's permission again: the workspace
+  // shows one card, `Continue with <folder>`, whose click asks.
+  pendingFolder: { id: string; name: string } | null
   turns: Record<string, TurnProgress>
   goalNotes: Record<string, GoalNote>
   noteGoal: (goal: string, event: string, text: string) => void
@@ -181,6 +193,15 @@ interface AppStore {
   setFolder: (f: FolderState | null) => void
   setStored: (s: StoredState | null) => void
   setModelLoad: (m: { text: string; failed?: boolean } | null) => void
+  setAction: (a: ActionChoice | null) => void
+  setReopening: (v: boolean) => void
+  setPendingFolder: (f: { id: string; name: string } | null) => void
+}
+
+const ACTIONS: ActionChoice[] = ['compile', 'gen', 'verify']
+function readAction(): ActionChoice | null {
+  const v = readPref('jazyk-action')
+  return ACTIONS.includes(v as ActionChoice) ? (v as ActionChoice) : null
 }
 
 export const useApp = create<AppStore>((set) => ({
@@ -200,6 +221,9 @@ export const useApp = create<AppStore>((set) => ({
   folder: null,
   stored: null,
   modelLoad: null,
+  action: readAction(),
+  reopening: false,
+  pendingFolder: null,
   chatOpen: readPref('jazyk-chat') !== 'closed',
   chatFollow: false,
   chatSelected: null,
@@ -259,6 +283,19 @@ export const useApp = create<AppStore>((set) => ({
   setFolder: (folder) => set({ folder }),
   setStored: (stored) => set({ stored }),
   setModelLoad: (modelLoad) => set({ modelLoad }),
+  setAction: (action) => {
+    if (action) writePref('jazyk-action', action)
+    else {
+      try {
+        localStorage.removeItem('jazyk-action')
+      } catch {
+        // not remembered
+      }
+    }
+    set({ action })
+  },
+  setReopening: (reopening) => set({ reopening }),
+  setPendingFolder: (pendingFolder) => set({ pendingFolder }),
   turns: {},
   goalNotes: {},
   noteGoal: (goal, event, text) =>

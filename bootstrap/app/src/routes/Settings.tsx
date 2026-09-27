@@ -8,6 +8,8 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { get, put } from '../lib/api'
 import { useProject } from '../lib/queries'
 import { useCapabilities } from '../lib/capabilities'
+import { useApp } from '../lib/store'
+import { useWords } from '../lib/words'
 import './routes.css'
 
 interface SettingsPayload {
@@ -366,6 +368,38 @@ function ProjectSettings() {
   )
 }
 
+// The workflow modes (docs/frontends/gui.md#workflow-modes): control-plane state,
+// shared with every agent, here as Sync on save or on request and Build after sync
+// or on request. A tab has no control plane to set.
+function Workflow() {
+  const w = useWords()
+  const watchMode = useApp((a) => a.watchMode)
+  const genMode = useApp((a) => a.genMode)
+  const manual = watchMode !== 'watch'
+  return (
+    <section className="settings-workflow">
+      <h1>Workflow</h1>
+      <div className="settings-grid">
+        <label title="On save: every saved change syncs (spends model budget). On request: changes wait in the Inbox until you run a sync. Shared with attached agents.">
+          Sync
+          <select value={manual ? 'queue' : 'watch'} onChange={(e) => put('/api/watch', { mode: e.target.value })}>
+            <option value="queue">{w.syncOnRequest}</option>
+            <option value="watch">{w.syncOnSave}</option>
+          </select>
+        </label>
+        <label title="After sync: a finished sync with entities to build queues a build. On request: building is a click.">
+          Build
+          <select value={genMode} onChange={(e) => put('/api/watch', { gen: e.target.value })}>
+            <option value="manual">{w.buildOnRequest}</option>
+            <option value="auto">{w.buildAfterSync}</option>
+          </select>
+        </label>
+      </div>
+      <p className="muted">Automatic modes spend model budget, so both are on request unless changed.</p>
+    </section>
+  )
+}
+
 // In the browser the model is this browser's choice, not the project's: it leads the
 // page (docs/frontends/wasm.md#model-sources).
 export default function Settings() {
@@ -380,6 +414,7 @@ export default function Settings() {
         </section>
       )}
       <ProjectSettings />
+      {!browser && <Workflow />}
     </>
   )
 }

@@ -91,7 +91,7 @@ export default function VerifyMatrix() {
       <div className="actionrow">
         {canVerify && (
           <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'verify', targets: [] })} title="run every test whose row asks for it">
-            {w.check} everything pending
+            {w.review} everything pending
           </button>
         )}
         {canRun('audit') && (

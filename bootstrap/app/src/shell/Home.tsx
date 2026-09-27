@@ -1,10 +1,13 @@
-// Home: the project picker (docs/frontends/gui.md#home). The backend decides which
-// entries exist; the served project is the first row.
+// Home: the project picker (docs/frontends/gui.md#home). Short, with the ways in
+// as the prominent thing: Open now when a project is open, four cards side by
+// side, then Recent. The backend decides which entries exist.
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { storageAvailable } from '../lib/browser-store'
 import { useCapabilities } from '../lib/capabilities'
 import { folderPickerAvailable } from '../lib/folder'
+import { useProjectOpen } from '../lib/open'
+import { whereChangesGo } from '../lib/place'
 import { holdsData, readOnlyPref, setReadOnlyPref, useRecent, type RecentEntry } from '../lib/recent'
 import { useProjects, type ProjectSummary } from '../lib/product'
 import { useProject } from '../lib/queries'
@@ -103,53 +106,123 @@ function RecentRow({ r }: { r: RecentEntry }) {
   )
 }
 
-// New project: a name, then Create. The project starts in browser storage
-// (docs/frontends/wasm.md#a-project-in-the-browser).
-function NewProjectForm({ onClose }: { onClose: () => void }) {
-  const [name, setName] = useState('')
+// Try a demo: one row per bundled example. Works everywhere.
+function DemoCard({ canStore }: { canStore: boolean }) {
   return (
-    <form
-      className="home-new"
-      onSubmit={(e) => {
-        e.preventDefault()
-        send('jazyk:new-project', { name: name.trim() || 'Untitled project' })
-        onClose()
-      }}
-    >
-      <div className="home-new-row">
-        <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name, e.g. Garden planner" aria-label="Project name" />
-        <button type="submit" className="primary">
-          Create
-        </button>
-        <button type="button" onClick={onClose}>
-          Cancel
-        </button>
+    <section className="home-card">
+      <h2>Try a demo</h2>
+      <p className="muted">A bundled example, opened in this tab. Nothing is uploaded.</p>
+      <div className="demos">
+        {DEMOS.map((d) => (
+          <button
+            key={d.id}
+            className="demo"
+            onClick={() => send('jazyk:open-demo', d.id)}
+            title={canStore ? 'opens in this tab; your edits are kept in this browser' : 'opens in this tab; changes stay in the tab'}
+          >
+            <span className="name">{d.name}</span>
+            <span className="blurb">{d.blurb}</span>
+          </button>
+        ))}
       </div>
-      <p className="muted">
-        It starts with a <span className="mono">jazyk.toml</span> and a <span className="mono">docs/README.md</span> to write in, and it is kept in
-        this browser only. Save it to a folder or download it whenever you like.
-      </p>
-    </form>
+    </section>
   )
 }
 
-// Where changes go, from the descriptor (docs/frontends/gui.md#backends-and-capabilities).
-function Banner({ backend, persistence }: { backend?: string; persistence?: string }) {
-  if (backend === 'demo')
+// Start a project in this browser: a name, then Create. It starts in browser
+// storage (docs/frontends/wasm.md#a-project-in-the-browser).
+function NewProjectCard({ canStore }: { canStore: boolean }) {
+  const [name, setName] = useState('')
+  return (
+    <section className={`home-card${canStore ? '' : ' home-nostore'}`}>
+      <h2>Start a project in this browser</h2>
+      <p className="muted">
+        A <span className="mono">jazyk.toml</span> and a <span className="mono">docs/README.md</span> to write in, kept in this browser only. Save it to a folder
+        or download it whenever you like.
+      </p>
+      {canStore ? (
+        <form
+          className="home-new-row"
+          onSubmit={(e) => {
+            e.preventDefault()
+            send('jazyk:new-project', { name: name.trim() || 'Untitled project' })
+          }}
+        >
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name, e.g. Garden planner" aria-label="Project name" />
+          <button type="submit" className="primary">
+            Create
+          </button>
+        </form>
+      ) : (
+        <p className="muted">This browser offers no storage to this page (a private window may not), so a project started here could not survive a reload.</p>
+      )}
+    </section>
+  )
+}
+
+// Open a folder on this computer, with the read-only choice
+// (docs/frontends/wasm.md#a-folder-on-disk). A browser without the File System
+// Access API says what it needs and points at the next card.
+function FolderCard({ picker }: { picker: boolean }) {
+  const [readOnly, setReadOnly] = useState(readOnlyPref)
+  if (!picker)
     return (
-      <div className="banner">
-        {persistence === 'memory' ? 'Demo: changes stay in this tab.' : 'Demos keep your edits in this browser until you reset them.'}
-      </div>
+      <section className="home-card home-nofolder">
+        <h2>Open a folder on this computer</h2>
+        <p className="muted">
+          Opening a folder needs Chrome, Edge, or another Chromium browser. To work on a folder from this browser, connect to jazyk on this computer
+          (the next card).
+        </p>
+      </section>
     )
-  if (backend === 'wasm' && persistence === 'folder')
-    return <div className="banner">Running in this browser over a folder on your computer. Nothing leaves the machine.</div>
-  if (backend === 'wasm' && persistence === 'browser')
-    return (
-      <div className="banner">
-        Running in this browser over a project stored in this browser only. Save it to a folder or download it to keep a copy on disk.
+  return (
+    <section className="home-card">
+      <h2>Open a folder on this computer</h2>
+      <p className="muted">
+        A folder with a <span className="mono">jazyk.toml</span> at its top. Everything runs here, in this browser.
+      </p>
+      <div className="actions">
+        <button
+          className="primary"
+          onClick={() => send('jazyk:pick-folder', { mode: readOnly ? 'read' : 'write' })}
+          title={readOnly ? 'changes stay in this browser until you write them' : 'edits and syncs write back into the folder'}
+        >
+          Open folder…
+        </button>
+        <label className="muted home-readonly" title="keep every change in this browser until you choose to write it">
+          <input
+            type="checkbox"
+            checked={readOnly}
+            onChange={(e) => {
+              setReadOnly(e.target.checked)
+              setReadOnlyPref(e.target.checked)
+            }}
+          />{' '}
+          read-only
+        </label>
       </div>
-    )
-  return null
+    </section>
+  )
+}
+
+// Open now: the project open in this tab, where its changes go, and the way back
+// (docs/frontends/gui.md#home).
+function OpenNow({ name }: { name: string }) {
+  const caps = useCapabilities()
+  const folder = useApp((a) => a.folder)
+  const stored = useApp((a) => a.stored)
+  return (
+    <section className="home-open">
+      <h2>Open now</h2>
+      <p>
+        <b className="name">{name}</b>
+        <span className="muted"> · {whereChangesGo(caps.data, folder, stored)}</span>
+      </p>
+      <Link to="/docs" className="btn primary">
+        Back to the project
+      </Link>
+    </section>
+  )
 }
 
 export default function Home() {
@@ -160,13 +233,13 @@ export default function Home() {
   // In the browser the open project's own name, not its root in the tab's tree.
   const placeName = useApp((a) => a.folder?.name ?? a.stored?.name)
   const kind = caps.data?.projects ?? 'list'
+  const open = useProjectOpen() === true
   const settings = useSettingsExists()
   const needsSetup = settings.data ? !settings.data.exists : false
   const recent = useRecent()
-  const [readOnly, setReadOnly] = useState(readOnlyPref)
-  const [naming, setNaming] = useState(false)
   const canStore = storageAvailable()
   const picker = kind === 'folder-picker' || (kind === 'bundled' && folderPickerAvailable())
+  const name = placeName ?? proj?.root.replace(/\/+$/, '').split('/').pop() ?? 'the project'
 
   return (
     <div className="ws-scroll">
@@ -174,15 +247,23 @@ export default function Home() {
         <h1>jazyk</h1>
         <p className="tag">Documents that compile. Open a project to read, edit, and build from its documents.</p>
 
-        <Banner backend={caps.data?.backend} persistence={caps.data?.persistence} />
-
         {needsSetup && proj && settings.data && <Wizard payload={settings.data} root={proj.root} />}
 
-        {proj && !needsSetup && (
-          <div className="actions">
-            <Link to="/docs" className="btn">
-              Open {placeName ?? proj.root.replace(/\/+$/, '').split('/').pop()} →
-            </Link>
+        {open && !needsSetup && <OpenNow name={name} />}
+
+        {(kind === 'bundled' || kind === 'folder-picker') && (
+          <div className="home-cards">
+            <DemoCard canStore={canStore} />
+            <NewProjectCard canStore={canStore} />
+            <FolderCard picker={picker} />
+            {/* ConnectCard */}
+            <section className="home-card home-connect">
+              <h2>Connect to jazyk on this computer</h2>
+              <p className="muted">
+                Install the CLI, run <span className="mono">jazyk gui</span> in the project's folder, and the page opens itself. This is the way to every
+                job kind, the language server, and an agent.
+              </p>
+            </section>
           </div>
         )}
 
@@ -192,77 +273,6 @@ export default function Home() {
             {recent.map((r) => (
               <RecentRow key={r.id} r={r} />
             ))}
-          </>
-        )}
-
-        {(kind === 'bundled' || kind === 'folder-picker') && (
-          <>
-            <h2>Local project</h2>
-            <p className="muted">
-              Start a new project kept in this browser, or open a folder on this computer that has a <span className="mono">jazyk.toml</span> at
-              its top. Everything runs here, in this browser; nothing is uploaded.
-            </p>
-            <div className="actions">
-              <button
-                onClick={() => setNaming(true)}
-                disabled={!canStore || naming}
-                title={canStore ? 'start a project from scratch, stored in this browser' : 'this browser offers no storage to this page'}
-              >
-                New project
-              </button>
-              {picker && (
-                <>
-                  <button
-                    onClick={() => send('jazyk:pick-folder', { mode: readOnly ? 'read' : 'write' })}
-                    title={readOnly ? 'changes stay in this browser until you write them' : 'edits and syncs write back into the folder'}
-                  >
-                    Open folder…
-                  </button>
-                  <label className="muted home-readonly" title="keep every change in this browser until you choose to write it">
-                    <input
-                      type="checkbox"
-                      checked={readOnly}
-                      onChange={(e) => {
-                        setReadOnly(e.target.checked)
-                        setReadOnlyPref(e.target.checked)
-                      }}
-                    />{' '}
-                    read-only
-                  </label>
-                </>
-              )}
-            </div>
-            {naming && <NewProjectForm onClose={() => setNaming(false)} />}
-            {!canStore && (
-              <div className="banner home-nostore">
-                This browser offers no storage to this page (a private window may not), so a new project could not survive a reload.
-              </div>
-            )}
-            {!picker && (
-              <div className="banner home-nofolder">
-                This browser cannot open a folder: it has no File System Access API. Use Chrome, Edge, or another Chromium browser to open a
-                local project. New projects and the demos work here.
-              </div>
-            )}
-          </>
-        )}
-
-        {kind === 'bundled' && (
-          <>
-            <h2>Demos</h2>
-            <div className="demos">
-              {DEMOS.map((d) => (
-                <button
-                  key={d.id}
-                  className="demo"
-                  onClick={() => send('jazyk:open-demo', d.id)}
-                  title={canStore ? 'opens in this tab; your edits are kept in this browser' : 'opens in this tab; changes stay in the tab'}
-                >
-                  <span className="name">{d.name}</span>
-                  <span className="blurb">{d.blurb}</span>
-                </button>
-              ))}
-            </div>
           </>
         )}
 

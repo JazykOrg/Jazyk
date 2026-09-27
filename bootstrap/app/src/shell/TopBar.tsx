@@ -1,14 +1,13 @@
-// The top bar: the project switcher, the three lenses, Inbox with its count,
-// History, the command palette, the action button, settings
-// (docs/frontends/gui.md#layout). Until a project is open, the switcher alone. In the
-// browser it also says where the project's changes go (Place).
-import { Link, NavLink, useLocation } from 'react-router'
+// The top bar: the project menu, the three lenses, Inbox with its count, History,
+// the command palette, the action button, settings (docs/frontends/gui.md#layout).
+// Until a project is open, the project menu alone.
+import { NavLink, useLocation } from 'react-router'
 import { useProject } from '../lib/queries'
 import { useInbox } from '../lib/product'
 import { useApp } from '../lib/store'
 import { useWords } from '../lib/words'
 import ActionButton from './ActionSheet'
-import Place from './Place'
+import ProjectMenu from './ProjectMenu'
 
 function projectName(root: string | undefined): string {
   if (!root) return 'jazyk'
@@ -35,12 +34,7 @@ export default function TopBar({
   const errors = inbox.data?.problems?.error ?? 0
   const lens = (p: string) => loc.pathname === p || loc.pathname.startsWith(p + '/')
 
-  const project = (
-    <Link to="/" className="ws-project" title={proj?.root ?? 'choose a project'}>
-      <span className="ws-mark">J</span>
-      <span>{open ? (placeName ?? projectName(proj?.root)) : 'jazyk'}</span>
-    </Link>
-  )
+  const project = <ProjectMenu open={open} name={placeName ?? projectName(proj?.root)} root={proj?.root} />
   if (!open) return <header className="ws-top">{project}</header>
 
   return (
@@ -73,7 +67,6 @@ export default function TopBar({
         )}
       </nav>
       <span className="ws-spacer" />
-      <Place />
       <button className="ws-palette" onClick={openPalette} title="search the model (⌘K)">
         search… <span className="muted">⌘K</span>
       </button>

@@ -510,8 +510,9 @@ can emit no lifecycle. The page keeps the job list and emits the lifecycle aroun
 the call: `POST /api/jobs` mints the job id and posts `job.queued` and
 `job.started`, every trace event the worker posts while the call runs carries that
 id as `job.trace`, and the return posts `job.finished` with the verdict.
-`GET /api/jobs` answers the page's list, newest first, kept for the life of the tab.
-So the [action button](./gui.md#the-action-button) shows the run's progress and the
+`GET /api/jobs` answers the page's list, newest first, kept for the life of the tab;
+opening another project empties it, since its threads belong to the project that ran
+them. So the [action button](./gui.md#the-action-button) shows the run's progress and the
 [chat column](./gui.md#chat) opens its build thread in a tab exactly as on a server.
 
 The model loads only when asked, because every read works without one and only a

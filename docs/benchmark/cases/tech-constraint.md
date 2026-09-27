@@ -6,8 +6,10 @@ framework), never a field the running product reports about itself. A Codex gene
 of the erp corpus served a plain `node:http` server with no dependency manifest whose
 health endpoint answered `framework: "Express"` and `database: PostgreSQL, connected:
 true`, and its technology criteria passed by asserting those strings. Here the
-deliverable carries that server and that passing test; a correct binding leaves the row
-unimplemented or failing (see [criteria](../../compiler/skills/criteria.md) and
+deliverable carries that server, that passing test, and a `package.json` that lists
+`express` without the server importing it, so a test that reads the manifest alone
+passes too; a correct binding reads the import as well and leaves the row unimplemented
+or failing (see [criteria](../../compiler/skills/criteria.md) and
 [bind](../../compiler/goals/bind.md)).
 
 ```yaml
@@ -47,6 +49,13 @@ given:
     coverage:
       docs/backend.md#/backend: covered
   deliverable:
+    package.json: |
+      {
+        "name": "shop-backend",
+        "private": true,
+        "dependencies": { "express": "^4.19.0" },
+        "scripts": { "test": "node --test" }
+      }
     src/server.js: |
       // The backend of the shop.
       const http = require('node:http');

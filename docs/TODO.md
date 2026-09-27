@@ -62,6 +62,18 @@ This scratch space is a live document to outline the work for this documentation
   signal. One candidate: the [medium](./consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
   records a start or smoke command for a software deliverable, and a row cannot read
   verified while that command fails. Owner decision.
+- The fixed cost of a round. A three-sentence document compiled on the local model
+  billed 401k tokens across three sessions; tool results resent were about a tenth of
+  it. Each round resends roughly 48k characters before any history: the active skill
+  (extraction, 22.5k), the batch's tool schemas (the reconcile toolset, 24 tools,
+  16.4k; the whole catalog of 52 is 37.7k), the agent contract (about 6k), and the goal
+  block with the loaded set (3k to 4k). The prefix is byte-identical across a
+  session's rounds, so a provider's prompt cache applies to it; the accounting does not
+  yet show cached input (Ollama reports none, and whether LocalRouter forwards
+  `prompt_tokens_details` is unmeasured). Shorter tool descriptions or skills would cut
+  the rest, against the explicitness the gates and benchmarks were tuned on: an owner
+  decision, to be measured case by case with `jazyk status --costs` and the benchmark's
+  token figures, never guessed.
 - Parallel sessions. Compilation is sequential by design (one build under the build
   lease, one session at a time, [execution](./compiler/sessions.md#execution)); nothing
   depends on parallelism, so it is an optimization measured on the dogfood, not a

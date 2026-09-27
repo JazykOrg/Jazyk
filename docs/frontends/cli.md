@@ -713,10 +713,14 @@ The same render runs after every committed changeset. See
 
 ### jazyk gui
 
-`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]` starts the
-[GUI](./gui.md): one local server with the web app, the JSON API, the event stream, and
-the language server over WebSocket, then opens the browser. `--no-open` skips opening
-the browser. `--watch` starts in the automatic
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]` starts the
+[GUI](./gui.md)'s server: the JSON API, the event stream, and the language server over
+WebSocket, then opens the editor page at [jazyk.dev](../site.md#the-editor) with the
+port and the token in the address, so the page connects to this server
+([connecting to a local jazyk](./gui.md#connecting-to-a-local-jazyk)). The binary
+carries no page. `--no-open` prints the address instead of opening the browser.
+`--gui-url URL` (or `JAZYK_GUI_URL`) opens another copy of the page (a dev server, a
+fork) and admits that origin. `--watch` starts in the automatic
 [compile mode](./gui.md#workflow-modes) (default:
 changes queue and compiling is an explicit click). Binds `127.0.0.1` only.
 

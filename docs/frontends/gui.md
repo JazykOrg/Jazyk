@@ -23,22 +23,35 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   startup line probes the occupant and names which project it serves. A stale tab is
   self-evident too: the app titles itself with the project directory and shows the
   root in the status bar.
-- The web app is embedded in the binary at compile time from the built frontend
-  (`bootstrap/app/dist`, committed). `--gui-dist DIR` (or `JAZYK_GUI_DIST`) serves from
-  a directory on disk instead, for frontend development.
-- Unknown non-API paths serve the app's `index.html`, so app routes are addressable
-  URLs.
+- The server serves the API alone. The app is the page at
+  [jazyk.dev](../site.md#the-editor), and `jazyk gui` opens it at
+  `https://jazyk.dev/#/connect?port=<port>&token=<token>`, so the page connects to
+  the server on this computer ([connecting to a local jazyk](#connecting-to-a-local-jazyk)).
+  Nothing of the app ships in the binary. `--gui-url URL` (or `JAZYK_GUI_URL`) opens
+  another copy of the page instead (a `vite` dev server, a fork), and that origin is
+  the one the server admits.
+- The page runs on a different origin than the server, so every API response
+  carries `Access-Control-Allow-Origin` for the admitted page origin only
+  (`https://jazyk.dev` by default), the headers and methods the app uses,
+  `Access-Control-Allow-Private-Network: true` for the preflight, and
+  `Cross-Origin-Resource-Policy: cross-origin`, since the page is cross-origin
+  isolated ([serving in a tab](./wasm.md#serving)) and would otherwise refuse the
+  response. A request from any other origin gets no allow header and the browser
+  drops it. The token still guards every request: the allow header opens the
+  transport, never the project.
+- A request to a path the API does not serve answers `404`. The server serves no
+  page.
 - Each start mints a random session token, embedded in the URL the browser opens. Every
   API and LSP request carries it (`Authorization: Bearer` or a `token` query
   parameter). Requests without it get `401`. The token keeps other local processes from
   spending LLM budget or writing documents through the API. `--no-token` disables the
   check, for frontend development.
-- The app reads the token from the URL fragment once, stores it in `localStorage`, and
-  drops the fragment so copied URLs do not carry the secret. Browser origins include
-  the port, so each port keeps its own stored token: a reload, a new tab, or a browser
-  restart on the same port resumes with the stored token, no fragment needed. A stale
-  entry (the server restarted and minted a new token) surfaces as the token prompt,
-  and a pasted token replaces the stored one.
+- The app reads the port and the token from the connect route once, stores them
+  in `localStorage` under the port (`jazyk.server.<port>`), and drops the fragment so
+  copied URLs do not carry the secret. A reload, a new tab, or a browser restart
+  resumes the connection with the stored token, no fragment needed. A stale entry
+  (the server restarted and minted a new token) surfaces as the token prompt, and a
+  pasted URL or token replaces the stored one.
 - A `401` never fails quietly: the app blocks with a token prompt. This is the
   restarted-server case: a restart mints a new token, and an open tab's requests stop
   passing. Pasting the fresh URL (or just the token) into the prompt resumes the
@@ -49,6 +62,31 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   connections (the event stream, the editor's WebSocket) never delay shutdown; they
   drop with the process. Shutdown cancels the running job and waits briefly for it,
   so no stale store lock is left behind.
+
+### Connecting to a local jazyk
+
+The page at jazyk.dev is one app with every backend in it: the demo, the browser
+backend over a folder or browser storage, and a server on this computer. Connecting
+to the server is a route, `#/connect?port=<port>&token=<token>`, the one `jazyk gui`
+opens:
+
+- The page pings `http://127.0.0.1:<port>/api/ping`, reads the project's name and
+  root from the answer, stores the token under the port, adds the server to
+  `Recent` as `<name> · jazyk on this computer`, and opens the documents. Every
+  request from then on goes to that server: the API over `fetch`, the events over
+  `EventSource`, the editor's language server over `ws://127.0.0.1:<port>/lsp`. The
+  browser allows a secure page to reach `127.0.0.1`, since the loopback address is a
+  trustworthy origin.
+- Home's `Connect to jazyk on this computer` card explains the same thing for a
+  person who arrived without the link: install the CLI, run `jazyk gui` in the
+  project's folder, and the page opens itself; a port field (default `4680`) and a
+  `Connect` button reach a server already running, and ask for its token when the
+  ping answers but the API refuses.
+- A server that stops surfaces as the lost-connection banner, as before; a server
+  that restarted surfaces as the token prompt.
+- The page works without a server: the demos, browser projects, and folders need
+  none. The server adds what a tab cannot do: every job kind, the language server,
+  an agent, rendering, and the disk.
 
 ## API
 
@@ -461,7 +499,7 @@ beside the product word wherever both apply.
 |---|---|
 | compile, build | Sync: the model syncs with the documents |
 | bind, generate | Build: the product is built from the documents |
-| verify, audit | Check: tests run, statuses refresh |
+| verify, audit | Review: tests run, statuses refresh |
 | decompile | Document: documents are written from the product |
 | release (manual mode) | the Sync or Build button itself; gated work is Pending changes |
 | `compile: auto`, `compile: manual` | Sync on save, Sync on request |
@@ -517,10 +555,12 @@ inspector:
 
 ## Backends and capabilities
 
-One app, three backends. The [server](#serving) (`jazyk gui`) serves everything; the
-demo runs a bundled example in the tab; the [browser backend](./wasm.md) runs the
-compiler in the tab over a folder on the computer. The backends do not change the
-layout. They change what the backend can do, so the app reads one descriptor and
+One app, three backends, chosen when a project opens, never at build time. The
+[server](#serving) (`jazyk gui`, reached from the page over
+[a connection](#connecting-to-a-local-jazyk)) serves everything; the demo runs a
+bundled example in the tab; the [browser backend](./wasm.md) runs the compiler in
+the tab over a folder on the computer or browser storage. The backends do not change
+the layout. They change what the backend can do, so the app reads one descriptor and
 renders against it:
 
 - `GET /api/capabilities`:
@@ -563,37 +603,41 @@ renders against it:
   `request(method, path, body)` the backend implements, so the app never knows which
   backend it has beyond the descriptor.
 
-Home's banner says where changes go, from `backend` and `persistence`:
-
-- A demo: "Demos keep your edits in this browser until you reset them." With
-  `persistence: memory`: "Demo: changes stay in this tab."
-- A folder: the folder it mirrors to, and that nothing leaves the machine.
-- A browser project: that it is stored in this browser only, and that `Save to a
-  folder…` or `Download` keeps a copy on disk.
+Where a project's changes go is said once, in the [project menu](#the-project-menu),
+from `backend` and `persistence`, in one line: `Saved in this browser only`, `Saved
+to <folder>` (with the mode), `Demo: edits are saved in this browser`, `Demo:
+changes stay in this tab` (with `persistence: memory`), or `Saved on this computer
+by jazyk` for a server.
 
 ## Home
 
-The first screen is the project picker:
+The first screen is the project picker. It is short, and the ways in are the
+prominent thing:
 
-- Open a project: the entries the descriptor allows. `New project` and `Open folder`
-  (the browser backend, the latter with a `read-only` choice beside it, see
-  [a folder on disk](./wasm.md#a-folder-on-disk)), `Try a demo` (the bundled
-  examples: the shop, the sort utility, the ERP, the slide deck, the novel, the
-  organization), `Recent` (the server's list from `GET /api/projects`: each with its
-  path, its shape, its sync state in product words, and its waiting count).
-- In the browser, Home reads top to bottom: `Recent`, then `Local project`, then the
-  demos. `Local project` offers two ways to start:
-  - `New project`: a name, then `Create`. It starts a project from scratch in this
-    browser's storage (a `jazyk.toml` and a `docs/README.md` saying what to write)
-    and opens it in the editor. It works in every browser. See
+- `Open now`, first, when a project is open in this tab (a project stays open across
+  a reload, see [the open project](#the-open-project)): the project's name, where its
+  changes go, and `Back to the project`. Home is reachable from the project menu at
+  any time; going there does not close the project.
+- Four cards, side by side (stacked on a narrow screen), each one sentence and one
+  action:
+  - `Try a demo`: the bundled examples (the shop, the sort utility, the ERP, the
+    slide deck, the novel, the organization), one row each. Works everywhere.
+  - `Start a project in this browser`: a name, then `Create`. It starts a project
+    from scratch in this browser's storage (a `jazyk.toml` and a `docs/README.md`
+    saying what to write) and opens it in the editor. Works in every browser. See
     [a project in the browser](./wasm.md#a-project-in-the-browser).
-  - `Open folder…`: a folder on this computer with a `jazyk.toml` at its top, with
-    the `read-only` choice beside it. A browser without the File System Access API
-    (Firefox, Safari) shows the reason in place of this button: opening a folder
-    needs Chrome, Edge, or another Chromium browser. `New project` and the demos
-    work everywhere.
-- In the browser the `Recent` list is the browser's own, kept in its local storage
-  under `jazyk.recent`: every demo, browser project, and folder opened in this
+  - `Open a folder on this computer`: a folder with a `jazyk.toml` at its top, with
+    the `read-only` choice beside it ([a folder on disk](./wasm.md#a-folder-on-disk)).
+    A browser without the File System Access API (Firefox, Safari) shows, in the
+    card's place, that opening a folder needs Chrome, Edge, or another Chromium
+    browser, and points at the next card as the way to work on a folder from this
+    browser.
+  - `Connect to jazyk on this computer`: install the CLI, run `jazyk gui` in the
+    project's folder, and the page opens itself; or a port and `Connect` for a
+    server already running ([connecting](#connecting-to-a-local-jazyk)). This is
+    the way to every job kind, the language server, and an agent.
+- `Recent`, under the cards: kept in the browser's local storage under
+  `jazyk.recent`, every demo, browser project, folder, and server opened in this
   browser, newest first, each with its name and its kind in words:
   - `demo`: the fixture, fetched fresh.
   - `demo with your edits`: a stored copy ([an edited demo](./wasm.md#an-edited-demo)),
@@ -602,20 +646,16 @@ The first screen is the project picker:
   - `folder · writing` or `folder · read-only`, and `N changes kept in this browser`
     when the folder has changes it has not taken
     ([when a folder cannot be written](./wasm.md#when-a-folder-cannot-be-written)).
+  - `<name> · jazyk on this computer`, with its port. Opening it reconnects; a
+    server that is not running says so on the row and how to start it.
 - A folder's directory handle cannot be written as text, so it is kept in the
   browser's IndexedDB under the entry's id. Clicking an entry reopens it; a folder
-  asks the browser for permission again, since the grant does not outlive the tab.
+  asks the browser for permission again when the grant did not outlive the tab.
   An entry can be removed from the list. Removing a browser project, a demo with
   edits, or a folder with kept changes deletes what the browser stored for it, so it
   asks first. The list holds the twelve newest entries; an entry that holds stored
   data is never dropped to make room. The `read-only` choice is remembered the same
   way.
-- In the browser the top bar says where the open project's changes go, beside the
-  lenses: a folder's mode (and its held or kept changes), a demo's edits with
-  `Reset to the original`, a browser project's `in this browser`. A browser project
-  or a demo offers `Save to a folder…` (where the File System Access API exists) and
-  `Download` (a `.zip` of the project). After a save the project is that folder, in
-  writing mode.
 - New project on the server: a wizard. Pick the documents folder and glob, optionally the product
   folder, pick the model or agent (or "none: browse only"), name the root documents.
   The wizard writes `jazyk.toml` through `PUT /api/settings`, then runs the first sync
@@ -625,6 +665,42 @@ The first screen is the project picker:
 - The Developer toggle sits here too, so a developer lands in the workbench from the
   first project.
 
+### The open project
+
+The open project is remembered in the browser's local storage under `jazyk.open`
+(the recent entry's id), so a reload, a new tab on the same address, or a browser
+restart lands in the same project at the same route, never on Home:
+
+- A demo or a browser project reopens on its own from the fixture or the stored
+  copy, before the route renders (the route waits; nothing redirects).
+- A folder needs the browser's permission, and the grant may not outlive the tab:
+  the page asks for it silently first (`queryPermission`), and when that is not
+  enough it renders one card in the workspace's place, `Continue with <folder>`,
+  whose click asks. Declining goes to Home with the folder in `Recent`.
+- A server reconnects with the stored token; a server that is gone shows the
+  lost-connection banner with `Home` as the way out.
+- Home's `Open now` card and the project menu's `Close project` are the ways to
+  leave a project; closing clears `jazyk.open`.
+
+### The project menu
+
+The top bar's first item is the open project's name, and it is a menu: the one place
+that says where the project's changes go and offers what to do with them, so no
+other chip or badge in the top bar carries that.
+
+- The first line: where changes go, in the words above.
+- A folder: its mode and the switch (`Switch to read-only`, `Switch to writing`),
+  its held or kept changes with `Write N changes to the folder`, `Retry`, or
+  `Discard` ([when a folder cannot be written](./wasm.md#when-a-folder-cannot-be-written)).
+  A folder that could not be written also shows a short warning beside the name in
+  the top bar (`N changes not written`), the one exception to the rule above, since
+  it is a problem, not a state; clicking it opens the menu.
+- A browser project or a demo: `Save to a folder on this computer…` (where the File
+  System Access API exists) and `Download as .zip` (a `.zip` of the whole project,
+  every browser). After a save the project is that folder, in writing mode. A demo
+  with edits also offers `Reset to the original`.
+- `Home` and `Close project`.
+
 `GET /api/projects` lists the projects the server has opened, newest first, each with
 its root, its shape, and its status summary; the server keeps the list in
 `~/.jazyk/projects.yaml`.
@@ -633,8 +709,9 @@ its root, its shape, and its status summary; the server keeps the list in
 
 One workspace page. Navigation swaps panes, never the page. Five regions:
 
-- The top bar: the project switcher, the three lenses as tabs (Docs, Model, Product),
-  Inbox with its count, History, the command palette, the action button, and settings.
+- The top bar: the [project menu](#the-project-menu), the three lenses as tabs
+  (Docs, Model, Product), Inbox with its count, History, the command palette, the
+  action button, and settings.
 - The navigator: the left column, the active lens's navigation.
 - The center: the open item. The editor, a model page, a product page, the Inbox, a
   History diff, the settings form.
@@ -661,9 +738,10 @@ closed by any navigation, the inspector is a drawer over the center shown only w
 a node is selected, the chat column is hidden, the editor's preview stacks under the
 text, and the top bar and the status bar scroll sideways.
 
-Until a project is open, the top bar shows only the project switcher and every route
-but Home redirects to Home. A server always has one open; the browser backend has
-none until a demo or a folder is picked, and none again after a reload.
+Until a project is open, the top bar shows only the project menu and every route
+but Home redirects to Home. A connected server always has one open; the browser
+backend has none until a demo, a browser project, a folder, or a server is picked,
+and keeps it across a reload ([the open project](#the-open-project)).
 
 Addressable state: `/docs/<path>` (a document in the editor), `/model/<section>` and
 `/model/<section>/<id>` (entities, requirements, criteria, diagrams, relations,
@@ -678,25 +756,44 @@ URL the previous layout served (`/files/*`, `/graph`, `/board`, `/work`, `/journ
 
 ### The action button
 
-One button in the top bar whose label is the state: `Sync (3 documents changed)`,
-`Syncing 2 of 5`, `Up to date`, `Build (4 entities)`, `Check`. Clicking it opens the
-action sheet:
+One split button in the top bar. Its main part runs one action and its label is
+that action with the state: `Sync · 3 documents changed`, `Build · 4 entities`,
+`Review · 12 tests`, `Up to date`. Its arrow opens the list of actions to choose
+from, one line each with its state, and the choice becomes the main part:
+
+- `Sync`: the model syncs with the documents (compile). Chosen by default while
+  documents changed.
+- `Build`: the product is built from the documents (bind and generate). Chosen by
+  default when nothing changed and entities wait to be built.
+- `Review`: the tests run and the statuses refresh (verify).
+- `Settings…`, last.
+
+Only what the backend can run is listed ([capabilities](#backends-and-capabilities)):
+a tab lists `Sync` alone, and with no model ready its main part reads `Sync` and
+the click shows the [model chooser](./wasm.md#model-sources) in the action sheet
+in place of the run. No line explains what a backend cannot do; the
+[Developer toggle](#developer-toggle) shows the full list with the reasons.
+
+Clicking the main part opens the action sheet for the chosen action:
 
 - What will run, in product words: the documents, the work counts, who runs it (the
   built-in runner or the attached agent, by the
   [dispatch](../compiler/control-plane.md#dispatch) preference), and an estimate from
   the last sync's cost (`status.yaml` `costs`).
-- The mode switches: Sync on save or on request; Build after sync or on request. The
-  modes are the [workflow modes](#workflow-modes): control-plane state, never the
-  app's.
 - `Run`. In on-request mode `Run` records the [release](../compiler/control-plane.md#modes-and-releases)
   and starts the job, or wakes the attached agent. When the preference is an agent
   and none is registered, the sheet says so and offers the built-in run.
-- Check and Document are entries in the same sheet. Document takes an area from the
-  [not described](#not-described) list and records a decompile release.
-- While a job runs the button shows its progress and offers cancel.
+- While a job runs the main part shows its progress (`Syncing 2 of 5`, `Building 1
+  of 4`) and pulses, the sheet offers `Cancel`, and the job's build thread opens in
+  the [chat column](#chat), so the work is visible the moment it starts, in a tab as
+  on a server.
 
-In Developer mode the sheet also opens the [preview pane](#preview) on the next batch.
+The mode switches (Sync on save or on request; Build after sync or on request) are
+the [workflow modes](#workflow-modes): control-plane state, never the app's. They
+live in Settings under Workflow, and in Developer mode also in the sheet. Document
+(decompile), which takes an area from the [not described](#not-described) list and
+records a decompile release, and `Preview prompt` (the [preview pane](#preview) on
+the next batch) are Developer mode entries of the list.
 
 ## Lenses
 
@@ -1003,6 +1100,20 @@ thread:
 
 The column's behaviors:
 
+- Ready to type: the prompt box is at the foot of the column whenever the column is
+  open, conversation or none. Sending with no conversation selected creates one
+  and selects it, so the first question needs no button first. `New conversation`
+  (the `+` in the header) starts another while one is selected. An empty column
+  says what the chat can do in one line above the box; it never asks to be opened.
+- Working: while a turn runs, the transcript ends with a pulsing line saying what the
+  agent is doing (`Thinking…`, `Reading docs/backend.md…`, the tool it is calling),
+  the session's row in the list pulses the same way, and Send reads `Stop`. The
+  line goes when the turn ends. A build thread shows its running batch the same
+  way. Nothing runs without something on the screen moving.
+- A job's build thread opens itself: when a sync or a build starts, the column
+  opens if it was collapsed and selects the thread, so the run is watched from its
+  first line. Selecting another thread or a conversation is remembered until the
+  next job starts.
 - Ask about this: the current selection (the open document, the inspected node) is
   offered as context with one click, so a question about a requirement starts with the
   requirement loaded.
@@ -1229,6 +1340,9 @@ One switch in the status bar (also `⌘⇧D`), remembered per browser, off by de
 `jazyk gui --dev` starts with it on. When on:
 
 - The Developer lens appears in the top bar with the pages below.
+- The [action button](#the-action-button)'s list shows every action, the ones the
+  backend cannot run with the reason, plus Document (decompile) with its area,
+  `Preview prompt`, and the mode switches.
 - Compiler words appear beside product words in labels and in the status bar.
 - The inspector gains goal cards, change records, and the `Raw` tab.
 - The chat expands tool payloads, rounds, tokens, and the loaded-set panel.
@@ -1438,9 +1552,10 @@ not for the project's authors; nothing here is a statement about the documents.
 
 ## Frontend
 
-The app lives in `bootstrap/app` and its built output (`bootstrap/app/dist`,
-committed) embeds into the binary. CI rebuilds the app and fails when the committed
-output differs from the build, so a source change never ships the old GUI. The stack:
+The app lives in `bootstrap/app` and is one page, [jazyk.dev](../site.md#the-editor),
+built by `npm run build` ([building](./wasm.md#building)); the binary carries none
+of it and reaches it over [a connection](#connecting-to-a-local-jazyk). A service
+worker makes the page work offline ([offline](./wasm.md#offline)). The stack:
 React, TypeScript, Vite, TanStack Query
 for server state, zustand for the ephemeral client state (connection, jobs, the trace
 ring, the Developer toggle), CodeMirror 6 for the editor, react-router, react-markdown,

@@ -369,7 +369,15 @@ browser's local storage under `jazyk.modelSource`. Nothing is saved on a jazyk s
 an endpoint's key goes only to that endpoint.
 
 - Downloaded (the default): an instruct model from Hugging Face run on WebGPU by WebLLM,
-  loaded on request and cached by the browser (above).
+  loaded on request and cached by the browser (above). The model is a choice: the
+  chooser lists WebLLM's prebuilt instruct models (Llama 3.1 and 3.2, Qwen 2.5,
+  Hermes 2 and 3, Mistral, Phi, Gemma, SmolLM, in their 16-bit-activation builds)
+  with the memory each needs, from a few hundred megabytes to about six gigabytes,
+  and the default is Hermes-3-Llama-3.2-3B (2.2 GB). A bigger model is a better
+  sync and a longer download; the 7B and 8B tier needs a machine with several
+  gigabytes to spare beside the weights, since the 32k window's KV cache comes on
+  top. The choice is kept with the source under `jazyk.modelSource`, and a model
+  chosen after another was loaded loads on request like the first one.
 - Built into the browser: Chrome's on-device model (Gemini Nano) through the Prompt
   API (`LanguageModel`). Offered only where the browser has it. "Built in" means the
   browser owns and runs it, not that it is already on the disk: Chrome fetches the

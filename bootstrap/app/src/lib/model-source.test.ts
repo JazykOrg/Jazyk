@@ -203,9 +203,13 @@ describe('the remembered load', () => {
   it('reloads the source that was loaded, and not another choice', async () => {
     localStorage.clear()
     const { rememberLoaded, wasLoaded } = await import('./model-source')
-    expect(wasLoaded('webllm')).toBe(false)
-    rememberLoaded('chrome')
-    expect(wasLoaded('chrome')).toBe(true)
-    expect(wasLoaded('webllm')).toBe(false)
+    expect(wasLoaded({ kind: 'webllm' })).toBe(false)
+    rememberLoaded({ kind: 'chrome' })
+    expect(wasLoaded({ kind: 'chrome' })).toBe(true)
+    expect(wasLoaded({ kind: 'webllm' })).toBe(false)
+    // The downloaded source remembers which model, so a new choice loads on request.
+    rememberLoaded({ kind: 'webllm', webllmModel: 'Qwen2.5-3B-Instruct-q4f16_1-MLC' })
+    expect(wasLoaded({ kind: 'webllm', webllmModel: 'Qwen2.5-3B-Instruct-q4f16_1-MLC' })).toBe(true)
+    expect(wasLoaded({ kind: 'webllm' })).toBe(false)
   })
 })

@@ -3,9 +3,9 @@
 // kept in this browser's local storage only.
 import { useEffect, useState } from 'react'
 import { useCapabilities } from '../lib/capabilities'
-import { builtInAvailability, endpointReady, useModelSource, writeSource, type SourceKind } from '../lib/model-source'
+import { builtInAvailability, endpointReady, useModelSource, webllmModelOf, writeSource, type SourceKind } from '../lib/model-source'
 import { useApp } from '../lib/store'
-import { DEFAULT_MODEL, webgpuAvailable } from '../lib/webllm'
+import { MODEL_CHOICES, modelName, webgpuAvailable } from '../lib/webllm'
 
 export default function ModelSourcePanel() {
   const src = useModelSource()
@@ -21,8 +21,9 @@ export default function ModelSourcePanel() {
 
   const ready = caps.data?.model === 'in-page'
   const loadable = caps.data?.model === 'loadable'
-  const choose = (kind: SourceKind) => writeSource({ kind, baseUrl, model, apiKey })
-  const saveEndpoint = () => writeSource({ kind: 'endpoint', baseUrl: baseUrl.trim(), model: model.trim(), apiKey: apiKey.trim() })
+  const choose = (kind: SourceKind) => writeSource({ ...src, kind, baseUrl, model, apiKey })
+  const chosen = MODEL_CHOICES.find((m) => m.id === webllmModelOf(src)) ?? MODEL_CHOICES[0]
+  const saveEndpoint = () => writeSource({ ...src, kind: 'endpoint', baseUrl: baseUrl.trim(), model: model.trim(), apiKey: apiKey.trim() })
   const endpointDirty = baseUrl !== (src.baseUrl ?? '') || model !== (src.model ?? '') || apiKey !== (src.apiKey ?? '')
 
   const builtInNote =
@@ -53,9 +54,24 @@ export default function ModelSourcePanel() {
         'webllm',
         'Download a model',
         webgpuAvailable()
-          ? `${DEFAULT_MODEL.split('-q')[0]} from Hugging Face, about 1.7 GB, run on this computer. Downloaded once; the browser keeps it.`
+          ? `${chosen.name} from Hugging Face, about ${chosen.gb} GB, run on this computer. Downloaded once; the browser keeps it.`
           : 'Not in this browser: it needs WebGPU (Chrome, Edge, or Safari 26).',
         !webgpuAvailable(),
+      )}
+      {src.kind === 'webllm' && webgpuAvailable() && (
+        <div className="msrc-form">
+          <label>
+            Model
+            <select value={chosen.id} onChange={(e) => writeSource({ ...src, webllmModel: e.target.value })} aria-label="Downloaded model">
+              {MODEL_CHOICES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} · {m.gb} GB
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted">A bigger model syncs better and downloads longer; the 7B and 8B tier needs several gigabytes free beside the weights.</p>
+        </div>
       )}
       {option('chrome', "The browser's built-in model", builtInNote, builtIn === 'absent' || builtIn === 'unavailable')}
       {option('endpoint', 'Your endpoint', 'Any OpenAI-compatible API: a local server, LocalRouter, or a provider.', false)}
@@ -85,7 +101,7 @@ export default function ModelSourcePanel() {
 
       {ready && (
         <p className="msrc-status v-ok">
-          Ready: {src.kind === 'endpoint' ? `${src.model} at ${src.baseUrl}` : src.kind === 'chrome' ? "the browser's built-in model" : DEFAULT_MODEL}.
+          Ready: {src.kind === 'endpoint' ? `${src.model} at ${src.baseUrl}` : src.kind === 'chrome' ? "the browser's built-in model" : modelName(webllmModelOf(src))}.
         </p>
       )}
       {load && <p className={`msrc-status${load.failed ? ' v-bad' : ''}`}>{load.text}</p>}

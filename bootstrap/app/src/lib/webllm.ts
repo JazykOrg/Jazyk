@@ -117,3 +117,40 @@ export function unavailableModel(reason: string): ModelHost {
     },
   }
 }
+
+// The models the chooser offers (docs/frontends/wasm.md#model-sources): WebLLM's
+// prebuilt instruct models in their 16-bit-activation builds, with the memory each
+// needs as WebLLM states it. A static table rather than the library's own list, so
+// the chooser renders without fetching the library; a unit test keeps it honest
+// against the library's prebuilt config.
+export interface ModelChoice {
+  id: string
+  // A short name for the chooser.
+  name: string
+  // Weights plus working memory, in gigabytes, as WebLLM's vram_required_MB says.
+  gb: number
+}
+
+export const MODEL_CHOICES: ModelChoice[] = [
+  { id: 'SmolLM2-1.7B-Instruct-q4f16_1-MLC', name: 'SmolLM2 1.7B', gb: 1.7 },
+  { id: 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC', name: 'Qwen 2.5 0.5B', gb: 0.9 },
+  { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', name: 'Qwen 2.5 1.5B', gb: 1.6 },
+  { id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', name: 'Llama 3.2 1B', gb: 0.9 },
+  { id: 'gemma-2-2b-it-q4f16_1-MLC', name: 'Gemma 2 2B', gb: 1.9 },
+  { id: 'Hermes-3-Llama-3.2-3B-q4f16_1-MLC', name: 'Hermes 3 (Llama 3.2 3B)', gb: 2.2 },
+  { id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', name: 'Llama 3.2 3B', gb: 2.2 },
+  { id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC', name: 'Qwen 2.5 3B', gb: 2.4 },
+  { id: 'Phi-4-mini-instruct-q4f16_1-MLC', name: 'Phi 4 mini', gb: 3.4 },
+  { id: 'Phi-3.5-mini-instruct-q4f16_1-MLC', name: 'Phi 3.5 mini', gb: 3.6 },
+  { id: 'Hermes-2-Pro-Mistral-7B-q4f16_1-MLC', name: 'Hermes 2 Pro (Mistral 7B)', gb: 3.9 },
+  { id: 'Mistral-7B-Instruct-v0.3-q4f16_1-MLC', name: 'Mistral 7B v0.3', gb: 4.5 },
+  { id: 'Hermes-3-Llama-3.1-8B-q4f16_1-MLC', name: 'Hermes 3 (Llama 3.1 8B)', gb: 4.8 },
+  { id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC', name: 'Llama 3.1 8B', gb: 4.9 },
+  { id: 'Qwen2.5-7B-Instruct-q4f16_1-MLC', name: 'Qwen 2.5 7B', gb: 5.0 },
+  { id: 'gemma-2-9b-it-q4f16_1-MLC', name: 'Gemma 2 9B', gb: 6.3 },
+]
+
+// The choice's short name, for a model id the table knows; the id itself otherwise.
+export function modelName(id: string): string {
+  return MODEL_CHOICES.find((m) => m.id === id)?.name ?? id
+}

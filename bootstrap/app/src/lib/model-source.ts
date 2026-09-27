@@ -4,6 +4,7 @@
 // local storage and nowhere else.
 import { useSyncExternalStore } from 'react'
 import type { ModelHost } from './wasm-client'
+import { DEFAULT_MODEL } from './webllm'
 
 export type SourceKind = 'webllm' | 'chrome' | 'endpoint'
 
@@ -13,6 +14,13 @@ export interface ModelSource {
   baseUrl?: string
   model?: string
   apiKey?: string
+  // The downloaded source's model id, one of MODEL_CHOICES; the default when unset.
+  webllmModel?: string
+}
+
+// The model the downloaded source loads (docs/frontends/wasm.md#model-sources).
+export function webllmModelOf(s: ModelSource): string {
+  return s.webllmModel ?? DEFAULT_MODEL
 }
 
 const KEY = 'jazyk.modelSource'
@@ -60,17 +68,19 @@ export function useModelSource(): ModelSource {
 // no load until asked.
 const LOADED_KEY = 'jazyk.modelLoaded'
 
-export function rememberLoaded(kind: SourceKind) {
+const loadedKey = (s: ModelSource) => (s.kind === 'webllm' ? `webllm:${webllmModelOf(s)}` : s.kind)
+
+export function rememberLoaded(s: ModelSource) {
   try {
-    localStorage.setItem(LOADED_KEY, kind)
+    localStorage.setItem(LOADED_KEY, loadedKey(s))
   } catch {
     // not remembered
   }
 }
 
-export function wasLoaded(kind: SourceKind): boolean {
+export function wasLoaded(s: ModelSource): boolean {
   try {
-    return localStorage.getItem(LOADED_KEY) === kind
+    return localStorage.getItem(LOADED_KEY) === loadedKey(s)
   } catch {
     return false
   }

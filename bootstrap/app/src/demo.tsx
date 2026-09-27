@@ -14,8 +14,8 @@ import { HashRouter } from 'react-router'
 import App from './App'
 import { setBackend } from './lib/backend'
 import { startWasmBackend, crossOriginIsolated_, type ModelHost, type WasmProject } from './lib/wasm-client'
-import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
-import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, rememberLoaded, wasLoaded, type ModelSource } from './lib/model-source'
+import { loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
+import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, rememberLoaded, wasLoaded, webllmModelOf, type ModelSource } from './lib/model-source'
 import { applyTheme, useApp } from './lib/store'
 import { pushWireEvent, refreshAfterWrite } from './lib/events'
 import { probeStorage } from './lib/browser-store'
@@ -98,7 +98,7 @@ function applySource() {
 // The bridge hands every call to whatever `host` is at the time of the call, so the
 // backend can start before the model has finished loading.
 const model: ModelHost = {
-  name: () => (readSource().kind === 'webllm' ? DEFAULT_MODEL : host.name()),
+  name: () => (readSource().kind === 'webllm' ? webllmModelOf(readSource()) : host.name()),
   chat: (body) => host.chat(body),
   available: () => host.available(),
   // The source can run here, and nothing is loaded or loading yet.
@@ -118,13 +118,13 @@ function loadModelOnRequest() {
   }
   const start = s.kind === 'chrome'
     ? (say('Starting the built-in model…'), builtInModel((t) => say(t)))
-    : (say(`Loading ${DEFAULT_MODEL}…`), loadModel(DEFAULT_MODEL, (p) => say(p.text || `${Math.round(p.progress * 100)}%`)))
+    : (say(`Loading ${webllmModelOf(s)}…`), loadModel(webllmModelOf(s), (p) => say(p.text || `${Math.round(p.progress * 100)}%`)))
   start
     .then((m) => {
       if (mine !== epoch) return
       host = m
       loading = false
-      rememberLoaded(s.kind)
+      rememberLoaded(s)
       useApp.getState().setModelLoad(null)
       // The descriptor changed: a build is on offer now.
       qc.invalidateQueries({ queryKey: ['capabilities'] })
@@ -213,7 +213,7 @@ async function boot() {
   window.addEventListener('jazyk:model-source-changed', applySource)
   applySource()
   // A source loaded here before loads again without asking; the weights are cached.
-  if (wasLoaded(readSource().kind)) loadModelOnRequest()
+  if (wasLoaded(readSource())) loadModelOnRequest()
 }
 
 boot().catch((e) => {

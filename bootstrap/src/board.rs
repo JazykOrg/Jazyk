@@ -458,6 +458,25 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
     derived.cause.as_ref().map(|c| c.generation) <= failed.cause.as_ref().map(|c| c.generation)
 }
 
+// The state a stored parked entry resumes in. A goal parked by flip detection waits
+// on the ruling and is never batched, whatever state the entry was written with: a
+// parked goal resumes first, and a session cannot resolve one whose cause is the
+// ruling owed (docs/compiler/reconciler.md#flip-detection).
+fn parked_state(p: &Goal) -> GoalState {
+    let flip = p.cause.as_ref().is_some_and(|c| c.via == "flip-detection");
+    if !flip {
+        return GoalState::Parked;
+    }
+    let subject = p.change["reparent"]
+        .as_str()
+        .or_else(|| p.change["subject"].as_str())
+        .unwrap_or(&p.target)
+        .to_string();
+    GoalState::Blocked {
+        on: format!("human: unstable-derivation ruling on {}", subject),
+    }
+}
+
 // `b<generation>-<n>`, the id a batch lease is filed under.
 fn is_batch_id(s: &str) -> bool {
     let Some(rest) = s.strip_prefix('b') else { return false };
@@ -551,7 +570,7 @@ impl Board {
                 Some(g) => {
                     if g.change == p.change || p.change.is_null() {
                         if matches!(g.state, GoalState::Open) {
-                            g.state = GoalState::Parked;
+                            g.state = parked_state(p);
                         }
                     } else {
                         dropped_parked.push(p.id.clone());
@@ -564,7 +583,7 @@ impl Board {
                     let ledger_kind = matches!(p.kind.as_str(), "bind" | "generate" | "verify");
                     if target_exists(store, &p.target) && !goals::blocked_on_human(&p.kind) && !ledger_kind {
                         let mut g = p.clone();
-                        g.state = GoalState::Parked;
+                        g.state = parked_state(p);
                         goals.push(g);
                     } else {
                         dropped_parked.push(p.id.clone());
@@ -3164,6 +3183,22 @@ pub(crate) mod tests {
         let b = derive(&verified);
         assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
         assert!(b.dropped_parked.contains(&done.id));
+        // An entry parked by flip detection resumes blocked on the ruling, whatever
+        // state it was written with, so no batch takes it.
+        let mut ruled = settled_store();
+        let ent = ruled.graph.entities.keys().next().cloned().expect("an entity");
+        let mut flip = goal.clone();
+        flip.id = format!("g:conform-instance:{}", ent);
+        flip.kind = "conform-instance".into();
+        flip.target = ent.clone();
+        flip.change = json!({"reparent": "ent:row-of-shops", "between": ["ent:a", "ent:b"]});
+        flip.cause = Some(crate::model::Cause { generation: 95, mutation: 0, via: "flip-detection".into() });
+        ruled.status.parked.push(flip.clone());
+        let b = derive(&ruled);
+        let g = b.goal(&flip.id).expect("the flip entry stands");
+        assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:row-of-shops")), "{:?}", g.state);
+        assert!(!b.is_ready(&flip.id));
+        assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
     }
 
     #[test]

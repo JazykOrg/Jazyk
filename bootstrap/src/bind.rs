@@ -717,6 +717,10 @@ pub fn run_all(
     }
     crate::vfs::create_dir_all(&gs.deliverable).ok();
     let (mut bound, mut failures) = (0u64, 0u64);
+    // The dead-endpoint breaker a build has: sessions failing in a row without
+    // spending a token are the endpoint's, and the rest of the requirements are not
+    // run through it (docs/consumers/gen.md#command).
+    let (mut streak, mut stopped): (usize, Option<String>) = (0, None);
     for t in &owed {
         if trace.is_cancelled() {
             break;
@@ -754,9 +758,20 @@ pub fn run_all(
             hints: Vec::new(),
         });
         let out = runner.run_item(&batch, trace);
+        let (next, down) = crate::reconcile::breaker_step(streak, out.tokens, out.failed.as_deref());
+        streak = next;
         if let Some(e) = out.failed {
             trace.line("bind", &format!("{} failed: {}", rid, e));
             failures += 1;
+            if down && streak >= crate::limits::ENDPOINT_BREAKER {
+                let left = owed.len() as u64 - bound - failures;
+                trace.line(
+                    "bind",
+                    &format!("stopped: the agent failed {} session(s) in a row without spending a token ({}); {} requirement(s) not tried", streak, e, left),
+                );
+                stopped = Some(e);
+                break;
+            }
             continue;
         }
         // Success is the gate's word, the same check mark_goal_done faces
@@ -769,7 +784,7 @@ pub fn run_all(
             }
         }
     }
-    Ok(json!({"bound": bound, "failures": failures}))
+    Ok(json!({"bound": bound, "failures": failures, "stopped": stopped}))
 }
 
 #[cfg(test)]

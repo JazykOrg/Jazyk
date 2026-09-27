@@ -815,6 +815,12 @@ against it. A file the run creates fresh has no baseline.
 - `--force` ignores the fact-hash skip.
 - In `manual` mode the command records the generate release
   ([modes and releases](../compiler/control-plane.md#modes-and-releases)).
+- The run stops early the way a build does ([escalation](../compiler/reconciler.md#escalation)):
+  five sessions failing in a row without spending a token, or one naming a rate
+  limit, stop the binding or the generation with the reason (`stopped` in the
+  report, a line in the trace naming what was not tried), so an agent answering
+  only errors (a spent quota, a model it does not know) is not run once per
+  requirement. A novel gen once ran fifty such sessions in a row.
 - `jazyk codegen` and `jazyk testgen` are aliases that print a pointer to `jazyk gen`.
 
 `jazyk test [target...]` runs verification ([CLI](../frontends/cli.md#jazyk-test)). With

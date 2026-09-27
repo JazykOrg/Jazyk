@@ -3162,6 +3162,7 @@ pub(crate) fn rate_limited(error: &str) -> bool {
         || e.contains("rate limit")
         || e.contains("rate_limit")
         || e.contains("usage limit")
+        || e.contains("hit your limit")
         || e.contains("quota")
 }
 

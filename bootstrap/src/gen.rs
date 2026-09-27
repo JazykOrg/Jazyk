@@ -2386,16 +2386,16 @@ mod tests {
         let ids = vec!["ent:cart".to_string()];
         let idle = StubRunner { record: false, stopped: Some("http error: HTTP 429 :: rate limit".into()), store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &idle, &gs, "ent:cart", &ids, &trace);
-        let err = r[0].1.as_ref().unwrap_err();
+        let err = r.results[0].1.as_ref().unwrap_err();
         assert!(err.contains("no record landed") && err.contains("429"), "{}", err);
         let quiet = StubRunner { record: false, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &quiet, &gs, "ent:cart", &ids, &trace);
-        assert!(r[0].1.as_ref().unwrap_err().contains("without record_generation"), "{:?}", r[0].1);
+        assert!(r.results[0].1.as_ref().unwrap_err().contains("without record_generation"), "{:?}", r.results[0].1);
         // recordedAt has one-second resolution; a real session spans seconds.
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let writer = StubRunner { record: true, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &writer, &gs, "ent:cart", &ids, &trace);
-        assert_eq!(r[0].1.as_ref().unwrap(), &1, "{:?}", r[0].1);
+        assert_eq!(r.results[0].1.as_ref().unwrap(), &1, "{:?}", r.results[0].1);
         assert!(Ledger::load(&out).entities["cart"].recorded_at.is_some());
         crate::vfs::remove_dir_all(&out).ok();
     }
@@ -3518,6 +3518,10 @@ pub fn run_all(
         .filter_map(|p| p["entity"].as_str().map(String::from))
         .collect();
     let (mut regenerated, mut skipped, mut failures) = (0u64, 0u64, 0u64);
+    // The dead-endpoint breaker a build has: sessions failing in a row without
+    // spending a token are the endpoint's, and the groups left are not run through
+    // it (docs/consumers/gen.md#command).
+    let (mut streak, mut stopped): (usize, Option<String>) = (0, None);
     // One session per component group: the ready goals of one group run together, so
     // the parts of one component are written under one set of conventions. A member
     // whose facts match the ledger is skipped; its files ride the packages as
@@ -3544,7 +3548,7 @@ pub fn run_all(
         for id in &ready {
             trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
         }
-        let results: Vec<(String, Result<usize, String>)> = if gs.worker == "pipeline" {
+        let (results, spent, session_failed): (Vec<(String, Result<usize, String>)>, u64, Option<String>) = if gs.worker == "pipeline" {
             // The pipeline worker is a fixed per-entity sequence; the group still
             // orders it, part before whole.
             let mut out = Vec::new();
@@ -3564,10 +3568,13 @@ pub fn run_all(
                     }
                 }
             }
-            out
+            (out, 0, None)
         } else {
-            gen_session(store, runner, gs, &root, &ready, trace)
+            let o = gen_session(store, runner, gs, &root, &ready, trace);
+            (o.results, o.tokens, o.failed)
         };
+        let (next, down) = crate::reconcile::breaker_step(streak, spent, session_failed.as_deref());
+        streak = next;
         for (id, result) in results {
             match result {
                 Ok(files) => {
@@ -3583,6 +3590,15 @@ pub fn run_all(
                     failures += 1;
                 }
             }
+        }
+        if down && streak >= crate::limits::ENDPOINT_BREAKER {
+            let e = session_failed.unwrap_or_default();
+            trace.line(
+                "gen",
+                &format!("stopped: the agent failed {} session(s) in a row without spending a token ({}); the groups left are not tried", streak, e),
+            );
+            stopped = Some(e);
+            break;
         }
     }
     // A built deliverable is not generated until the artifact exists, so the run ends
@@ -3605,7 +3621,7 @@ pub fn run_all(
         }
     };
     Ok(
-        json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "build": build }),
+        json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "stopped": stopped, "build": build }),
     )
 }
 
@@ -3627,7 +3643,7 @@ fn gen_session(
     root: &str,
     ids: &[String],
     trace: &crate::session::Trace,
-) -> Vec<(String, Result<usize, String>)> {
+) -> GenSessionOutcome {
     let goals: Vec<crate::model::Goal> = ids
         .iter()
         .map(|id| crate::model::Goal {
@@ -3657,8 +3673,10 @@ fn gen_session(
         ids.iter().map(|id| recorded_before(&ledger, id)).collect()
     };
     let report = runner.run_item(&batch, trace);
+    let (tokens, failed) = (report.tokens, report.failed.clone());
+    let outcome = |results| GenSessionOutcome { results, tokens, failed: failed.clone() };
     if let Some(e) = report.failed {
-        return ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect();
+        return outcome(ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect());
     }
     // Success is the gate's word over a record this session wrote: the record landed
     // with current facts and existing files. A record the session never moved is no
@@ -3667,7 +3685,8 @@ fn gen_session(
     // session that recorded and ended resolves the goal at the next derivation
     // (docs/compiler/goals/generate.md#gate, docs/consumers/gen.md#the-ledger).
     let after = Ledger::load(&store.out);
-    ids.iter()
+    let results = ids
+        .iter()
         .zip(before)
         .map(|(id, was)| {
             if recorded_before(&after, id) == was {
@@ -3680,7 +3699,16 @@ fn gen_session(
                 (id.clone(), gate(store, gs, id, false))
             }
         })
-        .collect()
+        .collect();
+    outcome(results)
+}
+
+// What one generate session came to: the per-entity results, and what the session
+// spent and how it failed, for the run's dead-endpoint breaker.
+struct GenSessionOutcome {
+    results: Vec<(String, Result<usize, String>)>,
+    tokens: u64,
+    failed: Option<String>,
 }
 
 pub fn parse_file_replies(reply: &str) -> Result<Vec<(String, String)>, String> {

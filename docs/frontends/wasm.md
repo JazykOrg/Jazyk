@@ -588,7 +588,8 @@ them after the build and publishes only when they pass.
 - `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
   (Vitest, one `<module>.test.ts` beside each module, jsdom with a fake IndexedDB):
   the recent list, the coalescing store writer, the folder mirror, the model
-  sources, and the presentation words. They need no build and no browser.
+  sources, and the presentation words. They need no build and no browser, so CI runs
+  them on every change to `bootstrap/`.
 
 The page's first script carries the app alone. What only some visits use loads when
 it is first used: the model's code when the model loads, and the graph layout

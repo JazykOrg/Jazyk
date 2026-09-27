@@ -860,7 +860,8 @@ served by `GET /api/verify/matrix`:
   described (the ledger's coverage of the product).
 - A requirement a document marks as not applicable shows as such, never as missing.
 - `GET /api/verify/matrix?format=csv` and `?format=md` export the matrix, the
-  compliance-matrix use.
+  compliance-matrix use. A CSV cell holding a comma, a quote, or a line break (`\n`
+  or `\r`) is quoted, with quotes doubled.
 
 #### Not described
 

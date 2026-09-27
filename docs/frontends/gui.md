@@ -30,7 +30,8 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   the server on this computer ([connecting to a local jazyk](#connecting-to-a-local-jazyk)).
   Nothing of the app ships in the binary. `--gui-url URL` (or `JAZYK_GUI_URL`) opens
   another copy of the page instead (a `vite` dev server, a fork), and that origin is
-  the one the server admits.
+  the one the server admits (a dev server named by `localhost` or `127.0.0.1` is
+  admitted under both names, since a browser reaches it by either).
 - The page runs on a different origin than the server, so every API response
   carries `Access-Control-Allow-Origin` for the admitted page origin only
   (`https://jazyk.dev` by default), the headers and methods the app uses,

@@ -331,6 +331,7 @@ mod tests {
             "docs",
             ".jazyk/docsgen",
             ".jazyk-backup-local/docsgen",
+            "jazyk-out/docsgen",
             "elsewhere",
         ] {
             crate::vfs::create_dir_all(dir.join(d)).unwrap();
@@ -339,6 +340,8 @@ mod tests {
         crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
         crate::vfs::write(dir.join(".jazyk/docsgen/x.md"), "# X\n").unwrap();
         crate::vfs::write(dir.join(".jazyk-backup-local/docsgen/y.md"), "# Y\n").unwrap();
+        // The out directory's old name is left where it is and never compiled.
+        crate::vfs::write(dir.join("jazyk-out/docsgen/w.md"), "# W\n").unwrap();
         crate::vfs::write(dir.join("elsewhere/z.md"), "# Z\n").unwrap();
         let mut p = Project::load(&dir);
         assert_eq!(
@@ -610,7 +613,7 @@ fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
             if name.starts_with('.')
                 || name == "target"
                 || name == "node_modules"
-                || name.starts_with(".jazyk")
+                || name.starts_with(".jazyk") || name.starts_with("jazyk-out")
                 || p == out_dir
             {
                 continue;

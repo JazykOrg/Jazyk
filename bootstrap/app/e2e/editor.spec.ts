@@ -267,6 +267,8 @@ test('a requirement page lists its criteria in words, and Developer mode shows t
 // Every view of every demo has its picture in the tab (docs/frontends/wasm.md#diagrams):
 // the fixtures ship rendered, and the read serves the .svg whose .puml matches.
 test('every diagram of every demo has its picture', async ({ page }) => {
+  // Six demos opened in turn: seventeen seconds alone, longer beside a build.
+  test.setTimeout(180_000)
   let total = 0
   for (const demo of ['The shop', 'The sort utility', 'The ERP', 'The slide deck', 'The novel', 'The organization']) {
     await openDemo(page, demo)

@@ -45,7 +45,7 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
             || c == "target"
             || c == "node_modules"
             || c.starts_with('.')
-            || c.starts_with(".jazyk")
+            || c.starts_with(".jazyk") || c.starts_with("jazyk-out")
         {
             return Err(format!("`{}` is a path component the doc walk skips", c));
         }

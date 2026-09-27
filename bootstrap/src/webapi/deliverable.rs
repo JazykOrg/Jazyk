@@ -23,7 +23,7 @@ pub(crate) fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
         if name.starts_with('.')
             || name == "node_modules"
             || name == "target"
-            || name.starts_with(".jazyk")
+            || name.starts_with(".jazyk") || name.starts_with("jazyk-out")
         {
             continue;
         }

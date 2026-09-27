@@ -949,7 +949,7 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
         let name = e.file_name().to_string_lossy().to_string();
         if path.vis_dir() {
             if !matches!(name.as_str(), "target" | "node_modules" | ".git")
-                && !name.starts_with(".jazyk")
+                && !name.starts_with(".jazyk") && !name.starts_with("jazyk-out")
             {
                 collect_files(&path, v, is_criteria);
             }

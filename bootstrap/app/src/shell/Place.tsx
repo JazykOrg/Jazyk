@@ -48,9 +48,14 @@ function Folder({ f }: { f: FolderState }) {
         </button>
       </span>
     )
+  // A refused write grant: the folder stays read-only, and the bar says why.
   return (
-    <span className={`ws-folder read${kept > 0 ? ' held' : ''}`} title={`${f.name}: changes stay in this browser until written${notStored}`}>
-      read-only{kept > 0 ? ` · ${kept} unwritten` : ''}
+    <span
+      className={`ws-folder read${kept > 0 ? ' held' : ''}${f.error ? ' failed' : ''}`}
+      role={f.error ? 'status' : undefined}
+      title={`${f.name}: changes stay in this browser until written${notStored}`}
+    >
+      read-only{kept > 0 ? ` · ${kept} unwritten` : ''}{f.error ? ` · ${f.error}` : ''}
       <button onClick={() => send('jazyk:folder-mode', 'write')} title="write what this browser keeps to the folder, and keep writing">
         {kept > 0 ? 'write to disk' : 'writing'}
       </button>

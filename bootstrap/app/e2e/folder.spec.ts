@@ -3,9 +3,10 @@
 // (docs/frontends/wasm.md#when-a-folder-cannot-be-written). The directory picker
 // cannot be driven by a test, so it hands back a folder in the browser's private file
 // system, seeded with the sort example. `window.__failWrites` makes every file write
-// fail, the way a lapsed permission or a moved folder does.
+// fail, the way a lapsed permission or a moved folder does; `window.__denyWrite`
+// makes the browser refuse a write grant.
 import { expect, test, type Page } from '@playwright/test'
-import { api, offline, storedKeys, typeAtEnd } from './helpers'
+import { api, offline, storedKeys, storedText, typeAtEnd } from './helpers'
 
 async function readProjectFile(page: Page, path: string, root = 'proj'): Promise<string> {
   return page.evaluate(
@@ -35,8 +36,17 @@ test.beforeEach(async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'the File System Access API is Chromium only')
   await offline(page)
   await page.addInitScript(() => {
-    const w = window as unknown as { showDirectoryPicker: unknown; __pickDir?: string; __failWrites?: boolean; __refused?: number }
+    const w = window as unknown as { showDirectoryPicker: unknown; __pickDir?: string; __failWrites?: boolean; __refused?: number; __denyWrite?: boolean }
     w.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle(w.__pickDir ?? 'proj', { create: true })
+    // A write grant the browser refuses: both the query and the request say so.
+    const perms = FileSystemHandle.prototype as unknown as Record<'queryPermission' | 'requestPermission', (o: { mode: string }) => Promise<string>>
+    for (const name of ['queryPermission', 'requestPermission'] as const) {
+      const real = perms[name]
+      perms[name] = function (o: { mode: string }) {
+        if (w.__denyWrite && o?.mode === 'readwrite') return Promise.resolve('denied')
+        return real.call(this, o)
+      }
+    }
     const real = FileSystemFileHandle.prototype.createWritable
     FileSystemFileHandle.prototype.createWritable = function (...args: Parameters<typeof real>) {
       if (w.__failWrites) {
@@ -233,4 +243,110 @@ test('a browser project saved to a folder becomes that folder, in writing mode',
   await page.goto('/#/')
   await expect(page.locator('.proj.recent', { hasText: 'Garden planner' })).toHaveCount(0)
   await expect(page.locator('.proj.recent', { hasText: 'saved' }).locator('.shape')).toHaveText('folder · writing')
+})
+
+test("'not now' on the write prompt keeps the folder read-only and holds the change", async ({ page }) => {
+  const original = await readProjectFile(page, 'docs/main.js.md')
+  await openFolder(page, 'read')
+  await page.goto('/#/docs/docs/main.js.md')
+  await typeAtEnd(page, '\nHeld line.')
+  await page.keyboard.press('Control+s')
+  const ask = page.locator('.ide-askwrite')
+  await expect(ask).toContainText('read-only')
+  await ask.getByRole('button', { name: 'not now' }).click()
+  await expect(ask).toHaveCount(0)
+  await expect(page.locator('.ws-folder')).toHaveText(/^read-only · 1 unwritten/)
+  expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
+  expect((await api<{ text: string }>(page, 'GET', '/api/docs/content?path=docs/main.js.md')).text).toContain('Held line.')
+  await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
+})
+
+test('switching a writing folder to read-only from the top bar keeps new edits in this browser', async ({ page }) => {
+  await openFolder(page, 'write')
+  await page.goto('/#/docs/docs/main.js.md')
+  const folder = page.locator('.ws-folder')
+  await expect(folder).toHaveText(/^writing/)
+  await folder.getByRole('button', { name: 'read-only' }).click()
+  await expect(folder).toHaveText(/^read-only/)
+  const original = await readProjectFile(page, 'docs/main.js.md')
+
+  await typeAtEnd(page, '\nKept line.')
+  await page.keyboard.press('Control+s')
+  await expect(folder).toContainText('read-only · 1 unwritten')
+  await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
+  expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
+  // The recent list remembers the mode it was left in.
+  await page.goto('/#/')
+  await expect(page.locator('.proj.recent', { hasText: 'proj' }).locator('.shape')).toHaveText('folder · read-only · 1 change kept in this browser')
+})
+
+test('picking the same folder twice gives one Recent row', async ({ page }) => {
+  await openFolder(page, 'read')
+  await page.goto('/#/')
+  await expect(page.locator('.proj.recent', { hasText: 'proj' })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Open folder…' }).click()
+  await page.waitForURL(/#\/docs/)
+  await page.goto('/#/')
+  await expect(page.locator('.proj.recent')).toHaveCount(1)
+  await expect(page.locator('.proj.recent').locator('.shape')).toHaveText('folder · read-only')
+})
+
+test('a save to a folder whose writes fail leaves the browser project intact', async ({ page }) => {
+  await page.getByRole('button', { name: 'New project' }).click()
+  await page.getByLabel('Project name').fill('Garden planner')
+  await page.getByRole('button', { name: 'Create' }).click()
+  await page.waitForURL(/#\/docs/)
+  await page.evaluate(() => {
+    const w = window as unknown as { __pickDir: string; __failWrites: boolean }
+    w.__pickDir = 'saved'
+    w.__failWrites = true
+  })
+  let alerted = ''
+  page.once('dialog', (d) => {
+    alerted = d.message()
+    void d.accept()
+  })
+  await page.locator('.ws-place-chip').click()
+  await page.locator('.ws-place-menu').getByRole('button', { name: 'Save to a folder…' }).click()
+  await expect.poll(() => alerted).toContain('Could not save Garden planner to saved')
+  expect(alerted).toContain('The project stays in this browser')
+
+  // Still a browser project: its storage, its descriptor, its recent row.
+  await expect(page.locator('.ws-place-chip')).toContainText('in this browser')
+  expect(await api(page, 'GET', '/api/capabilities')).toMatchObject({ persistence: 'browser' })
+  expect((await storedKeys(page, 'file:browser:')).length).toBe(2)
+  await failWrites(page, false)
+  await page.goto('/#/docs/docs/README.md')
+  await typeAtEnd(page, '\nStill kept here.')
+  await expect.poll(() => storedText(page, 'file:browser:', 'docs/README.md')).toContain('Still kept here.')
+  await page.goto('/#/')
+  await expect(page.locator('.proj.recent', { hasText: 'Garden planner' }).locator('.shape')).toHaveText('browser project · only in this browser')
+  await expect(page.locator('.proj.recent', { hasText: 'saved' })).toHaveCount(0)
+})
+
+test('a write grant the browser refuses leaves the folder read-only and says so', async ({ page }) => {
+  const original = await readProjectFile(page, 'docs/main.js.md')
+  await openFolder(page, 'read')
+  await page.goto('/#/docs/docs/main.js.md')
+  await typeAtEnd(page, '\nHeld line.')
+  await page.keyboard.press('Control+s')
+  await expect(page.locator('.ide-askwrite')).toBeVisible()
+  await page.evaluate(() => {
+    ;(window as unknown as { __denyWrite: boolean }).__denyWrite = true
+  })
+  await page.locator('.ide-askwrite').getByRole('button', { name: 'write to disk' }).click()
+  const folder = page.locator('.ws-folder')
+  await expect(folder).toContainText('the browser did not grant write access')
+  await expect(folder).toHaveText(/^read-only · 1 unwritten/)
+  expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
+  await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
+
+  // Granted the next time: the held change lands and the message goes.
+  await page.evaluate(() => {
+    ;(window as unknown as { __denyWrite: boolean }).__denyWrite = false
+  })
+  await folder.getByRole('button', { name: 'write to disk' }).click()
+  await expect(folder).toHaveText(/^writing/)
+  await expect(folder).not.toContainText('did not grant')
+  await expect.poll(() => readProjectFile(page, 'docs/main.js.md')).toContain('Held line.')
 })

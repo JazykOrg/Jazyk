@@ -1,7 +1,9 @@
 // Browser storage (docs/frontends/wasm.md#browser-storage): a project started in the
 // browser and an edited demo survive a reload and reopen from Recent with the edit;
 // a demo resets to its original.
+import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
+import { unzipSync } from 'fflate'
 import { api, offline, openDemo, pageErrors, storedKeys, storedText, typeAtEnd } from './helpers'
 
 test.beforeEach(async ({ page }) => {
@@ -173,4 +175,28 @@ test('a store the browser refuses is reported with the way out, and Retry stores
   await expect(page.locator('.ws-folder.failed')).toHaveCount(0)
   await expect(page.locator('.ws-place-chip')).toContainText('in this browser')
   expect(await storedText(page, 'file:browser:', 'docs/README.md')).toContain('no room for')
+})
+
+// The download is the whole tree as one .zip named after the project, the layout a
+// folder would hold (docs/frontends/wasm.md#a-project-in-the-browser).
+test('Download .zip carries jazyk.toml and the edited README', async ({ page }) => {
+  await page.goto('/#/')
+  await page.getByRole('button', { name: 'New project' }).click()
+  await page.getByLabel('Project name').fill('Garden planner')
+  await page.getByRole('button', { name: 'Create' }).click()
+  await page.waitForURL(/#\/docs/)
+  await page.goto('/#/docs/docs/README.md')
+  await typeAtEnd(page, '\nA bed of tulips along the fence.')
+  await expect.poll(() => docText(page, 'docs/README.md')).toContain('A bed of tulips')
+
+  const download = page.waitForEvent('download')
+  await page.locator('.ws-place-chip').click()
+  await page.locator('.ws-place-menu').getByRole('button', { name: 'Download .zip' }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toBe('garden-planner.zip')
+  const entries = unzipSync(new Uint8Array(await readFile(await file.path())))
+  const dec = new TextDecoder()
+  expect(dec.decode(entries['garden-planner/jazyk.toml'])).toContain('docs/**/*.md')
+  expect(dec.decode(entries['garden-planner/docs/README.md'])).toContain('# Garden planner')
+  expect(dec.decode(entries['garden-planner/docs/README.md'])).toContain('A bed of tulips along the fence.')
 })

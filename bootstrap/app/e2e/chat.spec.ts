@@ -1,7 +1,7 @@
 // The chat column in a tab (docs/frontends/wasm.md#chat): the embedded loop runs in
 // the worker on the page's model, here an endpoint the test answers itself.
-import { expect, test, type Route } from '@playwright/test'
-import { api, offline, openDemo, pageErrors } from './helpers'
+import { expect, test, type Page, type Route } from '@playwright/test'
+import { api, envelope, offline, openDemo, pageErrors } from './helpers'
 
 const ENDPOINT = 'http://localhost:4999/v1'
 const ANSWER = 'The Customer is a person who holds an account and places Orders in the Shop.'
@@ -170,4 +170,103 @@ test('cancel ends a turn whose model call never answers', async ({ page }) => {
   await chat.getByRole('button', { name: 'cancel' }).click()
   await expect(chat.locator('.chat-row.marker').last()).toContainText('cancelled')
   await expect(chat.getByRole('button', { name: 'send' })).toBeVisible()
+})
+
+// The chat pane's chooser, filled in as a person does it: the endpoint is the
+// model as soon as it is saved.
+async function useEndpoint(page: Page, model = 'test-model') {
+  const chat = page.locator('.wb-chat')
+  await chat.locator('.msrc-option', { hasText: 'Your endpoint' }).click()
+  await chat.getByLabel('Base URL', { exact: true }).fill(ENDPOINT)
+  await chat.getByLabel('Model', { exact: true }).fill(model)
+  await chat.getByRole('button', { name: 'Save' }).click()
+  await chat.getByRole('button', { name: 'New conversation' }).click()
+}
+
+async function ask(page: Page, text: string) {
+  const box = page.locator('.wb-chat .chat-input textarea')
+  await box.fill(text)
+  await box.press('Enter')
+}
+
+const answering = (page: Page, content: string) =>
+  page.route(`${ENDPOINT}/chat/completions`, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    return route.fulfill({ status: 200, headers: { ...CORS, 'Content-Type': 'application/json' }, body: completion(content) })
+  })
+
+const sessions = (page: Page) => api<{ sessions: { id: string; state: string }[] }>(page, 'GET', '/api/chat/sessions')
+
+test('switching demos empties the conversations', async ({ page }) => {
+  await answering(page, ANSWER)
+  await openDemo(page, 'The shop')
+  await useEndpoint(page)
+  await ask(page, 'What is a Customer?')
+  const chat = page.locator('.wb-chat')
+  await expect(chat.locator('.chat-row.agent')).toContainText(ANSWER)
+  expect((await sessions(page)).sessions).toHaveLength(1)
+
+  // The conversations belonged to the project the tab had open before.
+  await openDemo(page, 'The sort utility')
+  expect((await sessions(page)).sessions).toEqual([])
+  await expect(chat.locator('.chat-row.agent')).toHaveCount(0)
+  await expect(chat.getByRole('button', { name: 'New conversation' })).toBeVisible()
+})
+
+test('a second prompt while a turn runs is refused with 409', async ({ page }) => {
+  let calls = 0
+  await page.route(`${ENDPOINT}/chat/completions`, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    // A model that never replies, so the turn stays running.
+    calls += 1
+  })
+  await openDemo(page, 'The shop')
+  await useEndpoint(page, 'slow-model')
+  // The worker answers nothing while it is inside the turn, so the id is read first.
+  const { sessions: before } = await sessions(page)
+  expect(before).toHaveLength(1)
+  await ask(page, 'Are you there?')
+  await expect.poll(() => calls).toBe(1)
+
+  const refused = await envelope(page, 'POST', `/api/chat/sessions/${encodeURIComponent(before[0].id)}/prompt`, { text: 'Again?' })
+  expect(refused.status).toBe(409)
+  expect(refused.body).toMatchObject({ error: expect.stringContaining('already running') })
+  // The pane offers only the cancel while the turn runs, and it ends the turn.
+  const chat = page.locator('.wb-chat')
+  await expect(chat.getByRole('button', { name: 'send' })).toHaveCount(0)
+  await chat.getByRole('button', { name: 'cancel' }).click()
+  await expect(chat.locator('.chat-row.marker').last()).toContainText('cancelled')
+  await expect(chat.locator('.chat-row.user')).toHaveCount(1)
+  expect(calls).toBe(1)
+  // The refused prompt never reached the worker: the next one runs as usual.
+  const { sessions: after } = await sessions(page)
+  expect(after[0]).toMatchObject({ id: before[0].id, state: 'idle' })
+})
+
+test('the endpoint call carries Authorization only when a key is set', async ({ page }) => {
+  const auth: (string | undefined)[] = []
+  await page.route(`${ENDPOINT}/chat/completions`, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    auth.push(route.request().headers()['authorization'])
+    return route.fulfill({ status: 200, headers: { ...CORS, 'Content-Type': 'application/json' }, body: completion(ANSWER) })
+  })
+  await openDemo(page, 'The shop')
+  await useEndpoint(page)
+  await ask(page, 'What is a Customer?')
+  const chat = page.locator('.wb-chat')
+  await expect(chat.locator('.chat-row.agent')).toHaveCount(1)
+  expect(auth).toEqual([undefined])
+
+  // A key set in Settings goes to the endpoint, and only there.
+  await page.goto('/#/settings')
+  const chooser = page.locator('.settings-model .msrc')
+  await chooser.getByLabel('API key').fill('sk-test-1')
+  await chooser.getByRole('button', { name: 'Save' }).click()
+  await expect(chooser.locator('.msrc-status')).toContainText('Ready: test-model')
+  await page.goto('/#/docs')
+  await ask(page, 'And an Order?')
+  await expect(chat.locator('.chat-row.agent')).toHaveCount(2)
+  expect(auth).toEqual([undefined, 'Bearer sk-test-1'])
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('jazyk.modelSource') ?? '{}'))
+  expect(stored).toMatchObject({ kind: 'endpoint', apiKey: 'sk-test-1' })
 })

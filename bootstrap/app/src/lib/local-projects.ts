@@ -297,7 +297,8 @@ export function installLocalProjects(d: LocalDeps) {
   })
 
   // The top bar's switch and the editor's prompt. Writing asks for write access,
-  // then lands everything held.
+  // then lands everything held; a grant the browser refuses leaves the folder
+  // read-only and says so.
   on(
     'jazyk:folder-mode',
     async (detail) => {
@@ -305,7 +306,11 @@ export function installLocalProjects(d: LocalDeps) {
       if (current?.kind !== 'folder') return
       const { id, mirror } = current
       if (mode === 'write') {
-        if (!(await ensurePermission(mirror.root, 'write'))) return
+        if (!(await ensurePermission(mirror.root, 'write'))) {
+          mirror.error = 'the browser did not grant write access'
+          publish()
+          return
+        }
         await mirror.startWriting()
       } else {
         mirror.readOnly()

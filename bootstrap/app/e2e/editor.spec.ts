@@ -187,3 +187,91 @@ test('an endpoint model source is ready at once and is remembered in this browse
   await page.waitForURL(/#\/docs/)
   expect(await api<{ model: string }>(page, 'GET', '/api/capabilities')).toMatchObject({ model: 'in-page' })
 })
+
+// The browser's built-in model (docs/frontends/wasm.md#model-sources): a Prompt API
+// the test installs stands in for Chrome's, and answers a chat.
+test("the browser's built-in model source answers a chat", async ({ page }) => {
+  const REPLY = 'The sort utility reads lines from standard input and prints them sorted.'
+  await page.addInitScript((reply: string) => {
+    const prompts: string[] = []
+    ;(window as unknown as { __prompts: string[] }).__prompts = prompts
+    ;(globalThis as unknown as { LanguageModel: unknown }).LanguageModel = {
+      availability: async () => 'available',
+      create: async () => ({
+        prompt: async (input: string) => {
+          prompts.push(input)
+          return reply
+        },
+        destroy() {},
+      }),
+    }
+  }, REPLY)
+  await openDemo(page, 'The sort utility')
+  const chat = page.locator('.wb-chat')
+  const option = chat.locator('.msrc-option', { hasText: "The browser's built-in model" })
+  await expect(option).toContainText('Ready on this device')
+  await option.click()
+  await chat.getByRole('button', { name: 'Load the model' }).click()
+  await expect.poll(async () => (await api<{ model: string }>(page, 'GET', '/api/capabilities')).model).toBe('in-page')
+
+  await chat.getByRole('button', { name: 'New conversation' }).click()
+  const box = chat.locator('.chat-input textarea')
+  await box.fill('What does it do?')
+  await box.press('Enter')
+  await expect(chat.locator('.chat-row.agent')).toContainText(REPLY)
+  await expect(chat.locator('.chat-row.marker').last()).toContainText('end_turn')
+  const prompts = await page.evaluate(() => (window as unknown as { __prompts: string[] }).__prompts)
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0]).toContain('What does it do?')
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('jazyk.modelSource') ?? '{}'))).toMatchObject({ kind: 'chrome' })
+})
+
+// The requirement page under the presentation rules (docs/frontends/gui.md#model):
+// criteria with their kind in words, a status in words, and ids only in Developer mode.
+test('a requirement page lists its criteria in words, and Developer mode shows the ids', async ({ page }) => {
+  await openDemo(page, 'The sort utility')
+  const graph = await api<{ criteria: Record<string, { requirement: string }> }>(page, 'GET', '/api/graph')
+  const withCriteria = Object.values(graph.criteria).map((c) => c.requirement)
+  const rid = withCriteria.sort()[0]
+  expect(rid).toMatch(/^req:/)
+  const n = withCriteria.filter((r) => r === rid).length
+
+  await page.goto(`/#/model/requirements/${encodeURIComponent(rid)}`)
+  const center = page.locator('.ws-center')
+  await expect(center.locator('h1.statement')).toBeVisible()
+  await expect(center.getByRole('heading', { name: 'Acceptance criteria' })).toBeVisible()
+  const kinds = center.locator('.criterion .chip')
+  await expect(kinds).toHaveCount(n)
+  for (const word of await kinds.allTextContents()) expect(['Example', 'Failure case', 'Edge case', 'Measure']).toContain(word)
+  await expect(center.locator('.status-line .status-word')).toHaveText(
+    /^(Passing|Failing|Partly passing|No test yet|Not built yet|Outdated: the requirement changed|Needs a rerun)$/,
+  )
+  await expect(center).not.toContainText(/\b(req|crit|ent):[a-z0-9]/)
+
+  await page.locator('.ws-dev').click()
+  await expect(center).toContainText(rid)
+  await expect(center.locator('.criterion .dev-id')).toHaveCount(n)
+  await expect(center.locator('.criterion .dev-id').first()).toContainText('crit:')
+  await expect(center.locator('.status-line .status-word')).toContainText(/\((verified|failing|partial|missing|unimplemented|stale-[a-z]+)\)/)
+})
+
+// Every view of every demo has its picture in the tab (docs/frontends/wasm.md#diagrams):
+// the fixtures ship rendered, and the read serves the .svg whose .puml matches.
+test('every diagram of every demo has its picture', async ({ page }) => {
+  let total = 0
+  for (const demo of ['The shop', 'The sort utility', 'The ERP', 'The slide deck', 'The novel', 'The organization']) {
+    await openDemo(page, demo)
+    const graph = await api<{ views: Record<string, unknown> }>(page, 'GET', '/api/graph')
+    const listed = await api<{ views: { id: string }[] }>(page, 'GET', '/api/views')
+    const ids = Object.keys(graph.views)
+    expect(listed.views.map((v) => v.id).sort(), demo).toEqual([...ids].sort())
+    for (const id of ids) {
+      const view = await api<{ svg: string | null; renderError: string | null }>(page, 'GET', `/api/views/${encodeURIComponent(id)}`)
+      expect(view.renderError, `${demo}: ${id}`).toBeNull()
+      expect(view.svg ?? '', `${demo}: ${id}`).toContain('<svg')
+    }
+    total += ids.length
+  }
+  // A fixture without a view (the sort utility) has nothing to draw; the rest do.
+  expect(total).toBeGreaterThan(0)
+})

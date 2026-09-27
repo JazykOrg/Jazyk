@@ -84,6 +84,14 @@ What the adapter does that a session must account for:
 - It needs a logged-in Claude Code on the machine (the adapter's auth method is the
   terminal login). `CLAUDE_CODE_EXECUTABLE` in the profile's `env` points it at a
   specific `claude` binary.
+- The host advertises `fs.readTextFile` and `fs.writeTextFile` and answers both
+  against the project root, and the adapter routes Claude Code's Read and Write through
+  them. The routing is not consistent: a novel's bind run saw five of its reads and one
+  of its writes fail inside the adapter with `No such tool available: Read` while the
+  others succeeded, and the model recovered through Find and the jazyk tools. This is
+  the adapter's, not a missing capability; dropping the advertisement would break
+  [doc edit delegation](#doc-edit-delegation), and `serve_files` is for agents with no
+  editor of their own.
 
 ## Executors
 

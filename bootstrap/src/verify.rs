@@ -32,7 +32,9 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if hash_file(&artifact) != row.hashes.test {
         return ("stale-test".into(), "test-changed".into());
     }
-    if hash_files(gs, &row.files) != row.hashes.files {
+    // Implementing files alone: a rebuilt artifact among the files is not a code change
+    // (docs/consumers/gen.md#status-is-derived-never-stored).
+    if crate::gen::hash_implementing(&store.out, gs, &row.files) != row.hashes.files {
         return ("stale-code".into(), "code-changed".into());
     }
     // Criteria judged one by one: files present with some criterion tests green and
@@ -395,7 +397,7 @@ pub fn mark(
     row.last_run = Some(now_iso());
     row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
-    row.hashes.files = hash_files(gs, &row.files);
+    row.hashes.files = crate::gen::hash_implementing(&store.out, gs, &row.files);
     // The headline is a criterion's own test when criteria exist: its verdict is that
     // criterion's too, or the row reads partial against a stale entry forever
     // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
@@ -805,7 +807,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         let hashes = crate::gen::RowHashes {
             requirement: row.hashes.requirement.clone(),
             test: hash_file(&artifact),
-            files: hash_files(gs, &row.files),
+            files: crate::gen::hash_implementing(&store.out, gs, &row.files),
         };
         let row = ledger.requirements.get_mut(&rid).unwrap();
         if hashes != row.hashes {
@@ -890,7 +892,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
             let hashes = crate::gen::RowHashes {
                 requirement: hash_hex(&r.statement),
                 test: hash_file(path),
-                files: hash_files(gs, &files),
+                files: crate::gen::hash_implementing(&store.out, gs, &files),
             };
             let tests = ledger
                 .requirements
@@ -1228,6 +1230,35 @@ mod tests {
         // Programmatic run: `true` exits 0.
         let pass = run_programmatic(&s, "req:shop-1", &gs).unwrap().pass;
         assert!(pass);
+    }
+
+    // A rebuilt artifact among a row's files is not a code change: the stale-code hash
+    // covers implementing files alone. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
+    #[test]
+    fn a_rebuilt_artifact_never_reopens_the_row() {
+        let out = std::env::temp_dir().join(format!("jazyk-verify-artifact-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        let mut ledger = crate::gen::Ledger::load(&out);
+        ledger.medium = Some(crate::gen::Medium {
+            form: "deck".into(),
+            produced: "built".into(),
+            toolchain: "python3".into(),
+            artifact: "dist/deck.pptx".into(),
+        });
+        ledger.requirements.get_mut("req:shop-1").unwrap().files.push("dist/deck.pptx".into());
+        ledger.save(&out);
+        crate::vfs::create_dir_all(gs.deliverable.join("dist")).unwrap();
+        crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "zip v1").unwrap();
+        mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
+        assert!(pending(&s, &gs, None, None).is_empty());
+        // The build rewrites the artifact with fresh bytes: nothing reopens.
+        crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "zip v2 fresh timestamps").unwrap();
+        assert!(pending(&s, &gs, None, None).is_empty(), "{:?}", pending(&s, &gs, None, None));
+        // An implementing file edit still does.
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// edited").unwrap();
+        assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-code");
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]

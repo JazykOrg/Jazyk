@@ -518,12 +518,17 @@ pub fn record(
         }
         a
     };
+    // Build outputs are dropped the same way: the medium's artifact and what the build
+    // produces are what the tests inspect, never what implements
+    // (docs/consumers/bind.md#binding).
+    let outputs = crate::gen::build_outputs(&crate::gen::Ledger::load(&store.out));
+    let not_implementation = |f: &str| test_artifacts.contains(f) || outputs.contains(f.trim_start_matches("./"));
     let dropped: Vec<String> = files
         .iter()
-        .filter(|f| test_artifacts.contains(f.as_str()))
+        .filter(|f| not_implementation(f.as_str()))
         .cloned()
         .collect();
-    files.retain(|f| !test_artifacts.contains(f.as_str()));
+    files.retain(|f| !not_implementation(f.as_str()));
     for f in &files {
         if !gs.deliverable.join(f).vis_file() {
             return Err(format!("implementing file `{}` does not exist under the deliverable; an unimplemented requirement records an empty files list", f));
@@ -593,7 +598,7 @@ pub fn record(
     if !dropped.is_empty() {
         reply["droppedFiles"] = json!(dropped);
         reply["droppedFilesNote"] = json!(
-            "test artifacts are never implementing files; list the product files a criterion test inspects, or none"
+            "test artifacts and build outputs are never implementing files; list the product files a criterion test inspects, or none"
         );
     }
     if !contradicted.is_empty() {
@@ -1003,6 +1008,34 @@ mod tests {
         assert_eq!(v["droppedFiles"], json!(["tests/shop.sh"]), "{}", v);
         let ledger = crate::gen::Ledger::load(&s.out);
         assert!(ledger.requirements["req:shop-1"].files.is_empty());
+    }
+
+    #[test]
+    fn a_build_output_listed_as_implementation_is_dropped() {
+        let s = tmp_store();
+        let gs = GenSettings {
+            configured: true,
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("dist")).unwrap();
+        crate::vfs::create_dir_all(s.out.join("gen")).unwrap();
+        crate::vfs::write(
+            s.out.join("gen/ledger.yaml"),
+            "medium: {form: deck, produced: built, toolchain: python3, artifact: dist/deck.pptx}\nbuild: {run: python3 build.py, cwd: ., produces: [dist/deck.pptx]}\n",
+        )
+        .unwrap();
+        crate::vfs::write(gs.deliverable.join("build.py"), "print('deck')\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "PK zip bytes").unwrap();
+        let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
+        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 0\n", name)).unwrap();
+        let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        let v = record(&s, "req:shop-1", &["build.py".into(), "dist/deck.pptx".into()], &test, &json!([]), "pass", Some("built"), &gs).unwrap();
+        assert_eq!(v["droppedFiles"], json!(["dist/deck.pptx"]), "{}", v);
+        let ledger = crate::gen::Ledger::load(&s.out);
+        assert_eq!(ledger.requirements["req:shop-1"].files, vec!["build.py".to_string()]);
     }
 
     #[test]

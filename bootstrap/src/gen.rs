@@ -610,6 +610,40 @@ pub fn hash_files(gs: &GenSettings, files: &[String]) -> String {
     hash_hex(&acc)
 }
 
+// Output is never implementation: the medium's artifact and every path the build
+// produces are rebuilt on every run (a deck's zip carries fresh timestamps), so a row
+// listing them would read stale-code after each run and its verify goal would never
+// close. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
+pub fn build_outputs(ledger: &Ledger) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    if let Some(m) = &ledger.medium {
+        if !m.artifact.trim().is_empty() {
+            out.insert(m.artifact.trim().trim_start_matches("./").to_string());
+        }
+    }
+    if let Some(b) = &ledger.build {
+        for p in &b.produces {
+            out.insert(p.trim().trim_start_matches("./").to_string());
+        }
+    }
+    out
+}
+
+// The files of a list that count as implementation: the build outputs set aside.
+pub fn implementing_files(ledger: &Ledger, files: &[String]) -> Vec<String> {
+    let outputs = build_outputs(ledger);
+    files
+        .iter()
+        .filter(|f| !outputs.contains(f.trim().trim_start_matches("./")))
+        .cloned()
+        .collect()
+}
+
+// The files hash a row's stale-code check compares: implementing files alone.
+pub fn hash_implementing(out: &Path, gs: &GenSettings, files: &[String]) -> String {
+    hash_files(gs, &implementing_files(&Ledger::load(out), files))
+}
+
 // A deliverable-relative path as the ledger records it: forward slashes, no leading
 // `./`, no empty or `.` segments. An absolute path, or one that climbs out with
 // `..`, is rejected naming it: nothing the ledger records, strips, hashes, or
@@ -1700,7 +1734,7 @@ pub fn mark(
             let hashes = RowHashes {
                 requirement: hash_hex(&r.statement),
                 test: hash_file(&artifact_path(&store.out, gs, &test)),
-                files: hash_files(gs, &row_files),
+                files: hash_files(gs, &implementing_files(&ledger, &row_files)),
             };
             let owner = r
                 .entities

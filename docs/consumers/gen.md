@@ -568,7 +568,12 @@ the files on disk, recomputed at every read. First match wins:
    generation if the re-bind reads `unimplemented` ([the cascade](#the-cascade));
    `jazyk test` refuses to run the row and says so.
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
-4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun.
+4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun. The hash
+   covers the implementing files alone: the medium's `artifact` and every path the
+   build `produces` are output the tests inspect, rebuilt with fresh bytes on every run
+   (a deck's zip carries new timestamps), so a row listing them would read `stale-code`
+   after each run and its verify goal would never close, which the slides example did
+   for two days. Binding drops such paths from `files` and names them in its reply.
 5. Implementing files present and the criterion tests split, some passing and some
    failing → `partial` (reason `criteria-failing`): the requirement is implemented in
    part and the failing criteria are generation work, like an `unimplemented` row,

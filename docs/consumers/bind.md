@@ -43,7 +43,10 @@ steps:
   binding's own test artifact, or any row's recorded test artifact, is dropped from
   `files` and named in the reply (`droppedFiles`), since 22 of 389 recorded rows across
   three runs listed their own tests as implementation and so read `failing` where they
-  were `unimplemented`. A constant, an object literal, or a table that describes the
+  were `unimplemented`. A build output is not one either: the medium's `artifact` and
+  the build's `produces` are dropped the same way, since the verify goal on a row that
+  listed the slides example's deck reopened after every run
+  ([status](./gen.md#status-is-derived-never-stored)). A constant, an object literal, or a table that describes the
   artifact (a list of endpoint paths, a runtime name, a framework name) is a description
   in another syntax, not the artifact; a file holding only that carries nothing, and a
   test that reads it inspects prose. Codex once generated an `apiContract.js` object

@@ -208,10 +208,6 @@ export function installLocalProjects(d: LocalDeps) {
     const disk = await readFolder(handle)
     const kept = await readKept(id).catch(() => ({ changes: [], seq: 0 }))
     const files = overlay(disk, kept.changes)
-    if (!('jazyk.toml' in files)) {
-      window.alert(`${handle.name} has no jazyk.toml at its top; pick a project directory.`)
-      return
-    }
     disconnectServer()
     const mirror = new FolderMirror(handle, '/project', mode, keptWriter(id), kept)
     mirror.onChange = publish
@@ -219,7 +215,12 @@ export function installLocalProjects(d: LocalDeps) {
     touchRecent({ id, kind: 'folder', name: handle.name, mode, kept: kept.changes.length })
     publish()
     rememberOpen(id)
-    await d.opened({ files, name: handle.name, demo: false, sink: mirror, persistence: 'folder' }, stay)
+    // A folder with no jazyk.toml yet stays on Home, in the setup wizard that writes
+    // it (docs/frontends/gui.md#the-setup-wizard); Home stays mounted, so its
+    // queries are reset rather than cleared.
+    const setup = !('jazyk.toml' in files)
+    await d.opened({ files, name: handle.name, demo: false, sink: mirror, persistence: 'folder' }, stay || setup)
+    if (setup) window.location.hash = '#/'
   }
 
   // The open project's stored data is gone: nothing is open anymore.
@@ -267,7 +268,7 @@ export function installLocalProjects(d: LocalDeps) {
       }
       const handle = (await folderHandle(id)) as DirHandle | undefined
       if (!handle) return clearOpen()
-      const mode = entry.mode ?? 'read'
+      const mode = entry.mode ?? 'write'
       // Silently first: a grant that outlived the tab needs no click.
       const h = handle as unknown as { queryPermission(o: { mode: string }): Promise<PermissionState> }
       if ((await h.queryPermission({ mode: mode === 'write' ? 'readwrite' : 'read' })) === 'granted') {

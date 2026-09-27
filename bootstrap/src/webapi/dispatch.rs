@@ -464,6 +464,12 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
 
         ("GET", "/watch") => ok(json!({ "watch": false })),
         ("GET", "/settings") => ok(crate::project::settings_read(&crate::wasm::root())),
+        // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
+        // file lands in the tree, and the page mirrors it the way any change goes.
+        ("PUT", "/settings") => match crate::project::settings_write(&crate::wasm::root(), &body) {
+            Ok(v) => ok(v),
+            Err((code, msg)) => err(code, msg),
+        },
 
         ("GET", "/out/list") => answer(super::outfiles::out_list(
             &out(),

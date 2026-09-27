@@ -165,12 +165,12 @@ describe('rememberFolder', () => {
 })
 
 describe('readOnlyPref', () => {
-  it('is read-only until changed', async () => {
+  it('is writing until changed', async () => {
     const { readOnlyPref, setReadOnlyPref } = await fresh()
-    expect(readOnlyPref()).toBe(true)
-    setReadOnlyPref(false)
     expect(readOnlyPref()).toBe(false)
     setReadOnlyPref(true)
     expect(readOnlyPref()).toBe(true)
+    setReadOnlyPref(false)
+    expect(readOnlyPref()).toBe(false)
   })
 })

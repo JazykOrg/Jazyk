@@ -906,6 +906,30 @@ fn toml_list(items: &[String]) -> String {
 // Regenerate jazyk.toml from form values, in canonical section order. Comments do
 // not survive; a redirect or an api_key already in the file is carried over
 // untouched. Returns the new file text.
+// The settings form's write, shared by the server and the tab: the file must not have
+// moved since it was read, must hold no key the form does not know, and is rewritten
+// from the form's values. The error is a status and a message
+// (docs/frontends/gui.md#settings, docs/frontends/gui.md#the-setup-wizard).
+pub fn settings_write(root: &Path, body: &serde_json::Value) -> Result<serde_json::Value, (u16, String)> {
+    let current = settings_read(root);
+    if current["hash"] != body["baseHash"] {
+        return Err((409, "jazyk.toml changed on disk since it was read".to_string()));
+    }
+    let unknown = current["unknown"].as_array().cloned().unwrap_or_default();
+    if !unknown.is_empty() {
+        return Err((
+            409,
+            format!(
+                "jazyk.toml holds keys the settings form does not know ({}); edit the file directly",
+                unknown.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+        ));
+    }
+    let text = settings_render(root, &body["settings"]).map_err(|e| (400, e))?;
+    crate::vfs::write(root.join("jazyk.toml"), &text).map_err(|e| (500, format!("cannot write jazyk.toml: {}", e)))?;
+    Ok(settings_read(root))
+}
+
 pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, String> {
     let old = Toml::parse(&crate::vfs::read_to_string(root.join("jazyk.toml")).unwrap_or_default());
     let list = |v: &serde_json::Value| -> Option<Vec<String>> {
@@ -1043,6 +1067,30 @@ pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, Str
 #[cfg(test)]
 mod settings_tests {
     use super::*;
+
+    #[test]
+    fn settings_write_creates_the_file_and_refuses_a_stale_hash() {
+        let dir = std::env::temp_dir().join(format!("jazyk-settings-write-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).unwrap();
+        // A folder with no jazyk.toml: the wizard's case.
+        let before = settings_read(&dir);
+        assert_eq!(before["exists"], false);
+        let body = serde_json::json!({
+            "baseHash": before["hash"],
+            "settings": {"docsGlob": ["docs/**/*.md"], "roots": [], "deliverable": null,
+                "llm": {"baseUrl": null, "model": null, "apiKeyEnv": null, "temperature": null},
+                "linting": {"warnings": [], "errors": []}, "executors": {}}
+        });
+        let after = settings_write(&dir, &body).expect("written");
+        assert_eq!(after["exists"], true);
+        assert!(crate::vfs::read_to_string(dir.join("jazyk.toml")).unwrap().contains("docs/**/*.md"));
+        // The file moved since the read: the write is refused with a conflict.
+        let (code, msg) = settings_write(&dir, &body).unwrap_err();
+        assert_eq!(code, 409);
+        assert!(msg.contains("changed"), "{}", msg);
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn settings_roundtrip_preserves_secret_and_redirect() {

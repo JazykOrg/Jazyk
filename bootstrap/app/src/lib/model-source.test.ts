@@ -128,7 +128,7 @@ describe('builtInModel', () => {
     const host = await builtInModel((t) => progress.push(t))
     expect(host.name()).toBe('built-in')
     expect(created).toHaveLength(1)
-    expect(progress).toEqual(['Downloading the built-in model: 50%'])
+    expect(progress).toEqual(['Chrome is downloading its built-in model for the first time (a few gigabytes, kept by the browser): 50%'])
   })
 
   it('primes a session with the merged system prompt first, then prompts the last message', async () => {

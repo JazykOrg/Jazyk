@@ -628,12 +628,13 @@ prominent thing:
     from scratch in this browser's storage (a `jazyk.toml` and a `docs/README.md`
     saying what to write) and opens it in the editor. Works in every browser. See
     [a project in the browser](./wasm.md#a-project-in-the-browser).
-  - `Open a folder on this computer`: a folder with a `jazyk.toml` at its top, with
-    the `read-only` choice beside it ([a folder on disk](./wasm.md#a-folder-on-disk)).
-    A browser without the File System Access API (Firefox, Safari) shows, in the
-    card's place, that opening a folder needs Chrome, Edge, or another Chromium
-    browser, and points at the next card as the way to work on a folder from this
-    browser.
+  - `Open a folder on this computer`: any folder, with the `read-only` choice beside
+    it, off by default ([a folder on disk](./wasm.md#a-folder-on-disk)). A folder
+    with a `jazyk.toml` at its top opens as the project; one without opens into
+    [the setup wizard](#the-setup-wizard), which writes that file. A browser
+    without the File System Access API (Firefox, Safari) shows, in the card's
+    place, that opening a folder needs Chrome, Edge, or another Chromium browser,
+    and points at the next card as the way to work on a folder from this browser.
   - `Connect to jazyk on this computer`: install the CLI, run `jazyk gui` in the
     project's folder, and the page opens itself; or a port and `Connect` for a
     server already running ([connecting](#connecting-to-a-local-jazyk)). This is
@@ -658,14 +659,28 @@ prominent thing:
   asks first. The list holds the twelve newest entries; an entry that holds stored
   data is never dropped to make room. The `read-only` choice is remembered the same
   way.
-- New project on the server: a wizard. Pick the documents folder and glob, optionally the product
-  folder, pick the model or agent (or "none: browse only"), name the root documents.
-  The wizard writes `jazyk.toml` through `PUT /api/settings`, then runs the first sync
-  with its plan visible and an estimate beside it. It names the shape it detected:
-  "documents only", "documents and product", or "product only: start by documenting
-  it", the last offering Document.
 - The Developer toggle sits here too, so a developer lands in the workbench from the
   first project.
+
+### The setup wizard
+
+A folder with no `jazyk.toml` at its top, served by `jazyk gui` or opened in a tab,
+lands on Home in the wizard rather than failing: the folder is a project the moment
+its settings are written.
+
+- The wizard shows the folder's name and asks where the documents are (the glob, one
+  per line, with the folder's markdown files as the suggestion), where the product is
+  if there is one, and which documents are the roots. On a server it also asks for
+  the model or agent (or "none: browse only"); in a tab the page's
+  [model source](./wasm.md#model-sources) stands and nothing is asked.
+- `Write jazyk.toml` writes the file through `PUT /api/settings`. In a tab the write
+  goes where every change goes: into the folder in writing mode, held with the other
+  changes in read-only mode until the folder is switched to writing, so a look at a
+  folder never leaves a file behind. The documents lens then opens with what the
+  glob matched, and the [action button](#the-action-button) runs the first sync,
+  with its plan visible and an estimate beside it on a server.
+- It names the shape it detected: "documents only", "documents and product", or
+  "product only: start by documenting it", the last offering Document.
 
 ### The open project
 
@@ -1119,8 +1134,10 @@ The column's behaviors:
 - Ask about this: the current selection (the open document, the inspected node) is
   offered as context with one click, so a question about a requirement starts with the
   requirement loaded.
-- Tool calls collapse to one line each in the default mode. The
-  [Developer toggle](#developer-toggle) expands their payloads, the rounds, the
+- Tool calls collapse to one line each in the default mode, and clicking one opens
+  it: the arguments the agent sent and the reply it got, under the line, closed
+  again by another click, so what the agent read is one click away without the
+  toggle. The [Developer toggle](#developer-toggle) expands every payload, the rounds, the
   tokens, and the loaded-set panel: the [loaded set](../compiler/context.md#the-loaded-set)
   as the serving renders it, re-rendered on every mutating tool reply, each item
   opening in the inspector.

@@ -31,7 +31,7 @@ export default function ModelSourcePanel() {
       : builtIn === 'unavailable'
         ? 'This browser has it, but not on this device.'
         : builtIn === 'downloadable' || builtIn === 'downloading'
-          ? 'Chrome downloads it on first use. Its context is small, so a large sync may not fit.'
+          ? 'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small, so a large sync may not fit.'
           : builtIn === 'available'
             ? 'Ready on this device. Its context is small, so a large sync may not fit.'
             : 'Checking…'

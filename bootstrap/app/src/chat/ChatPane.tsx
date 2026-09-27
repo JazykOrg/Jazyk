@@ -511,11 +511,11 @@ function Transcript({ rows, follow, working }: { rows: Row[]; follow: boolean; w
       {rows.map((r) => (
         <div key={r.key} className={`chat-row ${r.kind} ${r.status ?? ''}`}>
           {r.kind === 'tool' ? (
-            <details>
+            <details open={dev || undefined}>
               <summary>
                 <span className={`tool-dot ${r.status}`} /> {r.text}
               </summary>
-              {r.detail && dev && <pre>{r.detail}</pre>}
+              {r.detail && <pre>{r.detail}</pre>}
             </details>
           ) : (
             <pre>{r.text}</pre>

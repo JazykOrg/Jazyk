@@ -129,7 +129,7 @@ export async function builtInModel(onProgress: (text: string) => void): Promise<
     monitor(m) {
       m.addEventListener('downloadprogress', (e) => {
         const loaded = (e as unknown as { loaded: number }).loaded
-        onProgress(`Downloading the built-in model: ${Math.round(loaded * 100)}%`)
+        onProgress(`Chrome is downloading its built-in model for the first time (a few gigabytes, kept by the browser): ${Math.round(loaded * 100)}%`)
       })
     },
   })

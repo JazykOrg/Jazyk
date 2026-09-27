@@ -142,6 +142,10 @@ enum SessCmd {
 pub struct AcpHost {
     cmd_tx: UnboundedSender<Cmd>,
     thread: Option<std::thread::JoinHandle<()>>,
+    // The driver's end, once it ended with an error: a prompt in flight then fails
+    // with the agent's own words rather than a dropped channel
+    // (docs/frontends/acp.md#worker-sessions).
+    ended: Arc<std::sync::Mutex<Option<String>>>,
     #[allow(dead_code)]
     pub agent: ResolvedAgent,
     info: AgentInfo,
@@ -152,6 +156,8 @@ pub struct AcpHost {
 pub struct SessionHandle {
     id: String,
     cmd_tx: UnboundedSender<Cmd>,
+    agent: String,
+    ended: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 fn err_s(e: agent_client_protocol::Error) -> String {
@@ -175,6 +181,8 @@ impl AcpHost {
         let (cmd_tx, cmd_rx) = unbounded::<Cmd>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<AgentInfo, String>>();
         let spawn_agent = agent.clone();
+        let ended: Arc<std::sync::Mutex<Option<String>>> = Default::default();
+        let ended_thread = ended.clone();
         let thread = std::thread::Builder::new()
             .name("acp-host".into())
             .spawn(move || {
@@ -220,6 +228,7 @@ impl AcpHost {
                     // then, so say it out loud instead of dying silently (pending
                     // prompts would surface only as dropped reply channels).
                     eprintln!("[acp] host driver for `{}` ended: {}", spawn_agent.name, e);
+                    *ended_thread.lock().unwrap() = Some(e.clone());
                     for (_, reply) in opening.lock().unwrap().drain(..) {
                         let _ = reply.send(Err(format!(
                             "acp host for `{}` ended while creating a session: {}",
@@ -235,6 +244,7 @@ impl AcpHost {
             Ok(Ok(info)) => Ok(AcpHost {
                 cmd_tx,
                 thread: Some(thread),
+                ended,
                 agent,
                 info,
             }),
@@ -283,6 +293,8 @@ impl AcpHost {
         Ok(SessionHandle {
             id,
             cmd_tx: self.cmd_tx.clone(),
+            agent: self.agent.name.clone(),
+            ended: self.ended.clone(),
         })
     }
 }
@@ -313,8 +325,10 @@ impl SessionHandle {
                 reply,
             })
             .map_err(|_| "acp host is gone".to_string())?;
-        rx.recv()
-            .map_err(|_| "acp host dropped the prompt".to_string())?
+        rx.recv().map_err(|_| match self.ended.lock().unwrap().clone() {
+            Some(e) => format!("acp host for `{}` ended during the prompt: {}", self.agent, e),
+            None => "acp host dropped the prompt".to_string(),
+        })?
     }
 
     pub fn cancel(&self) {

@@ -183,7 +183,7 @@ function FolderCard({ picker }: { picker: boolean }) {
     <section className="home-card">
       <h2>Open a folder on this computer</h2>
       <p className="muted">
-        A folder with a <span className="mono">jazyk.toml</span> at its top. Everything runs here, in this browser.
+        Any folder. One without a <span className="mono">jazyk.toml</span> is set up here first. Everything runs in this browser.
       </p>
       <div className="actions">
         <button
@@ -251,7 +251,7 @@ export default function Home() {
         <h1>jazyk</h1>
         <p className="tag">Documents that compile. Open a project to read, edit, and build from its documents.</p>
 
-        {needsSetup && proj && settings.data && <Wizard payload={settings.data} root={proj.root} />}
+        {needsSetup && proj && settings.data && <Wizard payload={settings.data} root={placeName ?? proj.root} />}
 
         {open && !needsSetup && <OpenNow name={name} />}
 

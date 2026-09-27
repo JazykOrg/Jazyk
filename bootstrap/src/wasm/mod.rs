@@ -60,14 +60,8 @@ pub fn reset() {
 pub fn boot(root_path: &str) -> String {
     let root = std::path::PathBuf::from(root_path);
     ROOT.with(|r| *r.borrow_mut() = root.clone());
-    use crate::vfs::VPathExt;
-    if !root.join("jazyk.toml").vexists() {
-        return serde_json::json!({
-            "ok": false,
-            "error": format!("no jazyk.toml under {}", root.display()),
-        })
-        .to_string();
-    }
+    // A tree with no jazyk.toml boots too, with the defaults: the setup wizard
+    // writes the file (docs/frontends/gui.md#the-setup-wizard).
     // The page's model speaks the text codec: WebLLM offers native tool calling
     // only for a short whitelist of models and refuses a custom system prompt with
     // it, so the first-round probe would fail every session before falling back.

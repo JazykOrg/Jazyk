@@ -8,14 +8,21 @@
 import { expect, test, type Page } from '@playwright/test'
 import { api, chooseMenuItem, closeMenu, createProject, offline, openProjectMenu, projectMenuItems, storedKeys, storedText, typeAtEnd, whereChangesGo } from './helpers'
 
+// A file mid-write (the writable's close replaces it) reads as absent or unreadable
+// for an instant; that reads as '' so an expect.poll around it retries.
 async function readProjectFile(page: Page, path: string, root = 'proj'): Promise<string> {
   return page.evaluate(
     async ([p, r]) => {
-      let d = await (await navigator.storage.getDirectory()).getDirectoryHandle(r)
-      const segs = p.split('/')
-      const name = segs.pop()!
-      for (const s of segs) d = await d.getDirectoryHandle(s)
-      return (await (await d.getFileHandle(name)).getFile()).text()
+      try {
+        let d = await (await navigator.storage.getDirectory()).getDirectoryHandle(r)
+        const segs = p.split('/')
+        const name = segs.pop()!
+        for (const s of segs) d = await d.getDirectoryHandle(s)
+        return await (await (await d.getFileHandle(name)).getFile()).text()
+      } catch (e) {
+        if (e instanceof DOMException && (e.name === 'NotFoundError' || e.name === 'NotReadableError')) return ''
+        throw e
+      }
     },
     [path, root] as const,
   )
@@ -107,7 +114,9 @@ async function openFolder(page: Page, mode: 'read' | 'write') {
 
 test('read-only holds a save and asks; writing lands it and then autosaves', async ({ page }) => {
   const original = await readProjectFile(page, 'docs/main.js.md')
-  await expect(page.locator('.home-readonly input')).toBeChecked()
+  // Writing is the default; read-only is the choice.
+  await expect(page.locator('.home-readonly input')).not.toBeChecked()
+  await page.locator('.home-readonly input').check()
   await page.getByRole('button', { name: 'Open folder…' }).click()
   await page.waitForURL(/#\/docs/)
   await page.goto('/#/docs/docs/main.js.md')
@@ -354,4 +363,29 @@ test('a write grant the browser refuses leaves the folder read-only and says so'
   await expect(menu.locator('.ws-menu-note.failed')).toHaveCount(0)
   await closeMenu(page)
   await expect.poll(() => readProjectFile(page, 'docs/main.js.md')).toContain('Held line.')
+})
+
+// A folder with no jazyk.toml opens into the setup wizard, which writes the file
+// (docs/frontends/gui.md#the-setup-wizard); the read-only choice is off by default.
+test('a folder without jazyk.toml opens into the setup wizard, which writes it', async ({ page }) => {
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory()
+    await root.removeEntry('plain', { recursive: true }).catch(() => {})
+    const plain = await root.getDirectoryHandle('plain', { create: true })
+    const docs = await plain.getDirectoryHandle('docs', { create: true })
+    const w = await (await docs.getFileHandle('a.md', { create: true })).createWritable()
+    await w.write('# A\n\nThe thing shall work.\n')
+    await w.close()
+    ;(window as unknown as { __pickDir?: string }).__pickDir = 'plain'
+  })
+  await expect(page.locator('.home-readonly input')).not.toBeChecked()
+  await page.getByRole('button', { name: 'Open folder…' }).click()
+  await expect(page.locator('.wizard h2')).toHaveText('Set up this project')
+  await expect(page.locator('.wizard')).toContainText('plain')
+  await page.locator('.wizard textarea').first().fill('docs/**/*.md')
+  await page.getByRole('button', { name: 'Write jazyk.toml' }).click()
+  await expect(page).toHaveURL(/#\/docs/)
+  await expect.poll(() => readProjectFile(page, 'jazyk.toml', 'plain')).toContain('docs/**/*.md')
+  await expect(page.locator('.ws-nav')).toContainText('a.md')
+  expect(await whereChangesGo(page)).toBe('Saved to plain (writing)')
 })

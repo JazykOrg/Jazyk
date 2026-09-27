@@ -5,9 +5,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { get, post, put } from '../lib/api'
-import { useCapabilities, whyNot } from '../lib/capabilities'
-import { useWords } from '../lib/words'
+import { get, put } from '../lib/api'
+import { useCapabilities } from '../lib/capabilities'
 
 interface SettingsPayload {
   exists: boolean
@@ -31,10 +30,12 @@ export function useSettingsExists() {
 }
 
 export default function Wizard({ payload, root }: { payload: SettingsPayload; root: string }) {
-  const w = useWords()
   const qc = useQueryClient()
   const navigate = useNavigate()
   const caps = useCapabilities()
+  // In a tab the page's model source stands: no model fields, no release
+  // (docs/frontends/gui.md#the-setup-wizard).
+  const tab = caps.data !== undefined && caps.data.backend !== 'server'
   const [glob, setGlob] = useState((payload.defaults.docsGlob ?? ['**/*.md']).join('\n'))
   const [deliverable, setDeliverable] = useState('')
   const [roots, setRoots] = useState('')
@@ -42,7 +43,6 @@ export default function Wizard({ payload, root }: { payload: SettingsPayload; ro
   const [baseUrl, setBaseUrl] = useState(payload.settings.llm.baseUrl ?? '')
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
 
   const lines = (t: string) => t.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
   const shape = deliverable.trim() ? (lines(glob).length > 0 ? 'documents and product' : 'product only: start by documenting it') : 'documents only'
@@ -62,21 +62,10 @@ export default function Wizard({ payload, root }: { payload: SettingsPayload; ro
           executors: {},
         },
       })
-      setSaved(true)
+      // The folder is a project now: the documents lens lists what the glob
+      // matched, and the action button runs the first sync
+      // (docs/frontends/gui.md#the-setup-wizard).
       void qc.invalidateQueries()
-    } catch (e) {
-      setErr((e as Error).message)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const firstSync = async () => {
-    setBusy('sync')
-    setErr(null)
-    try {
-      await post('/api/release', { stage: 'compile' })
-      await post('/api/jobs', { kind: 'compile' })
       navigate('/docs')
     } catch (e) {
       setErr((e as Error).message)
@@ -84,8 +73,6 @@ export default function Wizard({ payload, root }: { payload: SettingsPayload; ro
       setBusy(null)
     }
   }
-
-  const cannotSync = whyNot(caps.data, 'compile')
 
   return (
     <div className="wizard">
@@ -106,36 +93,27 @@ export default function Wizard({ payload, root }: { payload: SettingsPayload; ro
           root documents (optional, one per line)
           <textarea rows={2} placeholder="docs/main.md" value={roots} onChange={(e) => setRoots(e.target.value)} />
         </label>
-        <label>
-          model (optional; the global config's model otherwise)
-          <input type="text" value={model} onChange={(e) => setModel(e.target.value)} />
-        </label>
-        <label>
-          model base url (optional)
-          <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-        </label>
+        {!tab && (
+          <>
+            <label>
+              model (optional; the global config's model otherwise)
+              <input type="text" value={model} onChange={(e) => setModel(e.target.value)} />
+            </label>
+            <label>
+              model base url (optional)
+              <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+            </label>
+          </>
+        )}
       </div>
       <p>
         Shape: <b>{shape}</b>
       </p>
       {err && <p className="error-inline">{err}</p>}
       <div className="actions">
-        {!saved ? (
-          <button className="primary" disabled={busy !== null} onClick={() => void save()}>
-            {busy === 'save' ? 'Writing…' : 'Write jazyk.toml'}
-          </button>
-        ) : (
-          <>
-            <span className="v-ok">jazyk.toml written.</span>
-            {cannotSync ? (
-              <span className="muted">{cannotSync}</span>
-            ) : (
-              <button className="primary" disabled={busy !== null} onClick={() => void firstSync()}>
-                {busy === 'sync' ? 'Starting…' : `Run the first ${w.sync.toLowerCase().split(' ')[0]}`}
-              </button>
-            )}
-          </>
-        )}
+        <button className="primary" disabled={busy !== null} onClick={() => void save()}>
+          {busy === 'save' ? 'Writing…' : 'Write jazyk.toml'}
+        </button>
       </div>
     </div>
   )

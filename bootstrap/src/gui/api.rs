@@ -106,36 +106,16 @@ pub async fn settings_get(State(st): State<SharedState>) -> Json<Value> {
 // the project, the LLM resolution, and the generation settings without a restart.
 pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
     let root = st.root.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let current = crate::project::settings_read(&root);
-        if current["hash"] != body["baseHash"] {
-            return Err((StatusCode::CONFLICT, "jazyk.toml changed on disk since it was read".to_string()));
-        }
-        let unknown = current["unknown"].as_array().cloned().unwrap_or_default();
-        if !unknown.is_empty() {
-            return Err((
-                StatusCode::CONFLICT,
-                format!(
-                    "jazyk.toml holds keys the settings form does not know ({}); edit the file directly",
-                    unknown.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
-                ),
-            ));
-        }
-        let text = crate::project::settings_render(&root, &body["settings"])
-            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-        crate::vfs::write(root.join("jazyk.toml"), &text)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot write jazyk.toml: {}", e)))?;
-        Ok(crate::project::settings_read(&root))
-    })
-    .await
-    .expect("settings write");
+    let result = tokio::task::spawn_blocking(move || crate::project::settings_write(&root, &body))
+        .await
+        .expect("settings write");
     match result {
         Ok(v) => {
             super::reload_project(&st);
             st.events.emit("settings.changed", json!({}));
             Json(v).into_response()
         }
-        Err((code, msg)) => err(code, msg),
+        Err((code, msg)) => err(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), msg),
     }
 }
 

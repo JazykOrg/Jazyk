@@ -140,12 +140,12 @@ export async function folderHandle(id: string): Promise<FileSystemDirectoryHandl
   }
 }
 
-// The read-only choice beside Open folder, remembered. Read-only unless changed.
+// The read-only choice beside Open folder, remembered. Writing unless changed.
 export function readOnlyPref(): boolean {
   try {
-    return localStorage.getItem(READ_ONLY_KEY) !== '0'
+    return localStorage.getItem(READ_ONLY_KEY) === '1'
   } catch {
-    return true
+    return false
   }
 }
 

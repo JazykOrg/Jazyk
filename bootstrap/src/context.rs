@@ -98,6 +98,33 @@ pub(crate) fn fmt_k(n: usize) -> String {
     }
 }
 
+// The refusal for a target the graph does not hold. The instructions' own placeholders
+// (`doc.md`, `doc.md#/ref`, `ent:...`) are named as such, since a small model once
+// loaded `doc.md` verbatim, and the documents the project holds are listed so the
+// next call can name one (docs/compiler/context.md#the-loaded-set).
+pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
+    let placeholder = matches!(
+        id.trim_end_matches("#/ref"),
+        "doc.md" | "ent:..." | "req:..." | "view:..." | "diag:..." | "scope:<scope>"
+    );
+    let mut docs: Vec<&String> = store.docs.keys().collect();
+    docs.sort();
+    let shown: Vec<String> = docs.iter().take(8).map(|d| format!("`{}`", d)).collect();
+    let listing = if shown.is_empty() {
+        "this project has no documents yet".to_string()
+    } else if docs.len() > shown.len() {
+        format!("the documents here include {} and {} more", shown.join(", "), docs.len() - shown.len())
+    } else {
+        format!("the documents here are {}", shown.join(", "))
+    };
+    format!(
+        "unknown target `{}`{}; use a node id (ent:..., req:..., view:..., diag:...), a section reference (<document>#/<section>), or scope:<scope> for a scope's top level; {}; search finds node ids by words",
+        id,
+        if placeholder { " (that is the placeholder from the instructions, not a target in this project)" } else { "" },
+        listing
+    )
+}
+
 fn first_line(s: &str) -> String {
     crate::llm::truncate(s.lines().next().unwrap_or(""), 160)
 }
@@ -667,10 +694,7 @@ impl LoadedSet {
             self.render_section(store, id, &root, &mut b)?;
             ("section body".to_string(), "document root".to_string())
         } else {
-            return Err(format!(
-                "unknown target `{}`; use a node id (ent:..., req:..., view:..., diag:...), a section reference (doc.md#/ref), or scope:<scope> for a scope's top level",
-                id
-            ));
+            return Err(unknown_target(store, id));
         };
         let pack = b.finish();
         let chars = pack.pack.len();
@@ -1060,10 +1084,7 @@ impl LoadedSet {
         sec: &str,
         b: &mut Builder,
     ) -> Result<(), String> {
-        let rec = store
-            .docs
-            .get(doc)
-            .ok_or_else(|| format!("unknown document {}", doc))?;
+        let rec = store.docs.get(doc).ok_or_else(|| unknown_target(store, doc))?;
         let s = rec
             .sections
             .get(sec)

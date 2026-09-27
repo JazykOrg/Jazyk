@@ -86,6 +86,11 @@ The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 - `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`: reads. A read's
   subject joins the set as a stub, so a follow-up `load` on it is one step away and the
   status shows what the session has seen.
+- A target the graph does not hold refuses with `bad-target`. The refusal lists the
+  documents the project holds (the first eight, and how many more), points at
+  `search` for node ids, and names the instructions' own placeholders (`doc.md`,
+  `doc.md#/ref`, `ent:...`) as placeholders when the call sent one verbatim, since a
+  small model once loaded `doc.md` as if it were a document.
 
 Outside a session, [`jazyk context <target>`](../frontends/cli.md#jazyk-context) prints
 exactly what `load` renders for a target, with `--expand` following named handles first.

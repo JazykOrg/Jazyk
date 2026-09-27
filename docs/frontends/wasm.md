@@ -85,8 +85,10 @@ Where the browser has the File System Access API (Chromium browsers), the page c
 open a directory on the computer as the project instead of the bundled demo.
 
 - The page reads the whole folder once (`.git`, `node_modules`, and `target`
-  skipped) and seeds the tree with it, bytes as they are. The folder must hold a
-  `jazyk.toml` at its top.
+  skipped) and seeds the tree with it, bytes as they are. A folder with no
+  `jazyk.toml` at its top opens too, into the
+  [setup wizard](./gui.md#the-setup-wizard), which writes the file the way any
+  change lands (applied in writing mode, held in read-only mode).
 - `enable_fs_sink()` turns on the write-through. From then on every `write`,
   `remove_file`, `remove_dir`, and `remove_dir_all` the backend makes is also posted
   to the page with the path and the bytes, and the page applies it to the folder
@@ -99,9 +101,9 @@ open a directory on the computer as the project instead of the bundled demo.
 - Reads never touch the disk again. An edit made outside the tab is not seen until
   the folder is opened again. Nothing watches the folder.
 
-A folder opens in one of two modes, chosen on [Home](./gui.md#home) and switchable
-from the [project menu](./gui.md#the-project-menu) at any time. The mode is the
-page's: the worker posts every mutation either way.
+A folder opens in one of two modes, writing unless `read-only` is chosen on
+[Home](./gui.md#home), switchable from the [project menu](./gui.md#the-project-menu)
+at any time. The mode is the page's: the worker posts every mutation either way.
 
 - Writing: every mutation is applied to the folder as it arrives, and the
   [editor](./gui.md#editor) saves on its own.
@@ -368,10 +370,13 @@ an endpoint's key goes only to that endpoint.
 
 - Downloaded (the default): an instruct model from Hugging Face run on WebGPU by WebLLM,
   loaded on request and cached by the browser (above).
-- Built into the browser: Chrome's on-device model through the Prompt API
-  (`LanguageModel`). Offered only where the browser has it; the browser may download it
-  on first use. Its context window is small, so a large session may not fit and fails
-  with the model's own error.
+- Built into the browser: Chrome's on-device model (Gemini Nano) through the Prompt
+  API (`LanguageModel`). Offered only where the browser has it. "Built in" means the
+  browser owns and runs it, not that it is already on the disk: Chrome fetches the
+  weights, a few gigabytes, the first time any page asks, and the page says so
+  (`Chrome is downloading its built-in model for the first time`) with the progress
+  the browser reports; later loads are instant. Its context window is small, so a
+  large session may not fit and fails with the model's own error.
 - Your endpoint: any OpenAI-compatible chat completions URL (a local server, LocalRouter,
   a provider), with a model name and an optional key. The page calls it directly, so
   the endpoint must allow this page's origin (CORS). Ready at once, nothing to load.

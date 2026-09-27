@@ -377,7 +377,13 @@ An agent that answers `session/new` with an error takes the host driver with it 
 client library treats the error as fatal to the connection), so the session's failure
 carries the agent's error and the last lines of the agent's stderr:
 `session: acp host for claude ended while creating a session: <the error>; agent
-stderr: <its last lines>`. The host keeps those lines for exactly this: an agent's
+stderr: <its last lines>`. A driver that ends during a prompt (an agent refusing on
+its usage limit does this) fails that prompt the same way, `acp host for codex ended
+during the prompt: <the error>`, so the session's failure names the limit and the
+[breaker](../compiler/reconciler.md#escalation) trips at once; only a host that
+vanished without a word reads `acp host dropped the prompt` (a novel run once parked
+158 goals behind that line while the agent had said "You've hit your usage
+limit"). The host keeps those lines for exactly this: an agent's
 refusal is usually explained only there.
 
 ## Chat sessions

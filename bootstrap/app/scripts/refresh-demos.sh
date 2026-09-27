@@ -34,13 +34,15 @@ EXAMPLES=(shop bootstrap/example/f1 sort example-sort erp example-erp slides exa
 ORDER=(shop sort erp slides novel org)
 
 summary=()
+limited=()
 for id in $ORDER; do
   [ -n "$ONLY" ] && [ "$ONLY" != "$id" ] && continue
   dir="$ROOT/${EXAMPLES[$id]}"
   echo "=== $id ($dir)"
   cd "$dir"
   if [ "$FREE" = 0 ]; then
-    # A build stops at a rate limit or its budget with work left; a few passes finish it.
+    since=$(mktemp)
+    # A build stops at its budget with work left; a few passes finish it.
     for pass in 1 2 3; do
       JAZYK_MODEL="$MODEL" "$JAZYK" compile --quiet | tail -2
       grep -q 'state: converged' jazyk-out/status.yaml && break
@@ -49,6 +51,12 @@ for id in $ORDER; do
       JAZYK_MODEL="$MODEL" "$JAZYK" gen | tail -3
       JAZYK_MODEL="$MODEL" "$JAZYK" test | tail -3
     fi
+    # A rate limit leaves the graph half done: such an example is not packed.
+    if [ -d jazyk-out/trace ] && find jazyk-out/trace -name '*.jsonl' -newer "$since" -exec grep -l 'HTTP 429' {} + 2>/dev/null | grep -q .; then
+      echo "$id: the model was rate limited; its fixture is left as committed"
+      limited+=("$id")
+    fi
+    rm -f "$since"
   fi
   find jazyk-out/diagrams -name '*.svg' -delete 2>/dev/null
   "$JAZYK" docsgen > /dev/null
@@ -59,6 +67,7 @@ for id in $ORDER; do
     tests="$passing of $rows"
   fi
   cost=$(sed -n 's/^cost: //p' <<< "$("$JAZYK" status 2>/dev/null)")
+  if (( ${limited[(Ie)$id]} )); then verdict="rate limited ($verdict)"; fi
   summary+=("$id|$verdict|$tests|$cost")
 done
 
@@ -68,9 +77,10 @@ cd "$ROOT"
 packs=()
 for id in $ORDER; do
   [ -n "$ONLY" ] && [ "$ONLY" != "$id" ] && continue
+  (( ${limited[(Ie)$id]} )) && continue
   packs+=("$id=${EXAMPLES[$id]}")
 done
-node bootstrap/app/scripts/pack-demo.mjs bootstrap/app/public/demos $packs
+[ ${#packs} -gt 0 ] && node bootstrap/app/scripts/pack-demo.mjs bootstrap/app/public/demos $packs
 
 echo
 printf '%-7s %-45s %-12s %s\n' demo verdict tests 'last build cost'
@@ -79,4 +89,8 @@ for row in $summary; do
   printf '%-7s %-45s %-12s %s\n' "$id" "$verdict" "$tests" "$cost"
 done
 echo
+if [ ${#limited} -gt 0 ]; then
+  echo "Rate limited: ${limited[*]}. Run again when the quota is back; nothing of theirs was packed."
+  exit 1
+fi
 echo "Next: cd bootstrap/app && npm run build:demo && PW_CHANNEL=chrome npx playwright test, then commit bootstrap/app/public/demos."

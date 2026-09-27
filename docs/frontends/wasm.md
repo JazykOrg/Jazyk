@@ -536,7 +536,10 @@ output and its tests), with the tests run and their results in the ledger.
   passing out of the ledger's rows, and the tokens the refresh billed. The model steps
   cost money, so the script runs only when a person runs it, with the model named
   (`--model gpt-5.5`); `--only <id>` rebuilds one example; `--free` skips every model
-  step and only redraws and repacks.
+  step and only redraws and repacks. An example whose model steps hit a rate limit (an
+  `HTTP 429` in a trace the run wrote) is not packed: its fixture stays as committed,
+  the table says `rate limited`, and the script exits non-zero, so a half-finished
+  graph never reaches the demos.
 - The deploy redraws the committed fixtures' diagrams with the renderer it just built
   (`app/scripts/rerender-fixtures.sh`), so a renderer change reaches jazyk.dev without a
   rebuild. Nothing else of a fixture changes at deploy.

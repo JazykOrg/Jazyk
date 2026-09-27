@@ -137,7 +137,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--expand",
     "--kind",
     "--port",
-    "--gui-dist",
+    "--gui-url",
     "--mcp",
     "--agent",
     "--acp",
@@ -176,7 +176,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "viewer" => (Some(0), &[]),
         "gui" => (
             Some(0),
-            &["--port", "--no-open", "--watch", "--gui-dist", "--no-token", "--dev"],
+            &["--port", "--no-open", "--watch", "--gui-url", "--no-token", "--dev"],
         ),
         "mcp" => (
             Some(1),
@@ -458,17 +458,20 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              directory."
             .to_string(),
         "gui" => format!(
-            "usage: jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]\n\n\
-             Start the GUI: one local server with the web app, the JSON API, the event\n\
-             stream, and the language server over WebSocket, then open the browser.\n\
-             Binds 127.0.0.1 only. The busy default port falls back to an ephemeral one;\n\
-             an explicit --port that is busy is an error.\n\n\
+            "usage: jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]\n\n\
+             Start the GUI's server: the JSON API, the event stream, and the language\n\
+             server over WebSocket, then open the editor page at jazyk.dev with the port\n\
+             and the token in the address, so the page connects to this server. The\n\
+             binary carries no page. Binds 127.0.0.1 only. The busy default port falls\n\
+             back to an ephemeral one; an explicit --port that is busy is an error.\n\n\
              options:\n  \
              --port N        the port (default 4680)\n  \
-             --no-open       do not open the browser\n  \
+             --no-open       print the address instead of opening the browser\n  \
              --watch         start in watch mode: compile on change (default: queue)\n  \
-             --gui-dist DIR  serve frontend assets from DIR instead of the embedded build\n  \
-             --no-token      disable the session token check (frontend development)\n             --dev           start with the Developer toggle on (the compiler workbench)\n  \
+             --gui-url URL   open another copy of the page (a dev server, a fork) and\n                  \
+             admit that origin (default https://jazyk.dev, or JAZYK_GUI_URL)\n  \
+             --no-token      disable the session token check (frontend development)\n  \
+             --dev           start with the Developer toggle on (the compiler workbench)\n  \
 \
              {}",
             COMMON_LLM
@@ -583,7 +586,7 @@ pub fn run() {
                 "--expand" => opts.expand.push(v),
                 "--kind" => opts.kind = Some(v),
                 "--port" => opts.port = number(arg, &v, &mut errors),
-                "--gui-dist" => opts.gui_dist = Some(v),
+                "--gui-url" => opts.gui_url = Some(v),
                 "--mcp" => opts.mcp = Some(v),
                 "--agent" => opts.agent = Some(v),
                 // `--acp` names the editor during init; `--ide` is the same argument

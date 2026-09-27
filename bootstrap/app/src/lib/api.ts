@@ -1,50 +1,75 @@
 // The typed API client over the transport seam (lib/backend.ts). The session
-// token arrives in the URL fragment (#token=...), is stored per origin, and travels
-// as a bearer header on the server backend.
-import { backend, useToken } from './backend'
+// token arrives on the connect route (`#/connect?port=&token=`), is stored per port
+// under `jazyk.server.<port>`, and travels as a bearer header on the server backend
+// (docs/frontends/gui.md#serving).
+import { backend, serverBase } from './backend'
 import { useApp } from './store'
 
-let token: string | null = null
+// The server this page is connected to, if any: its port and the token in use.
+let server: { port: number; token: string | null } | null = null
 
-// localStorage is per origin and origins include the port, so each port keeps its
-// own token: a reload, a new tab, or a browser restart on the same port resumes
-// without the fragment.
-const TOKEN_KEY = 'jazyk-token'
+export const serverTokenKey = (port: number) => `jazyk.server.${port}`
 
-export function initToken() {
-  const m = window.location.hash.match(/token=([0-9a-f]+)/)
-  if (m) {
-    token = m[1]
-    try {
-      localStorage.setItem(TOKEN_KEY, m[1])
-    } catch {
-      // storage may be unavailable; the token still lives in memory
-    }
-    // Drop the fragment so copied URLs do not carry the secret.
-    history.replaceState(null, '', window.location.pathname + window.location.search)
-  } else {
-    try {
-      token = localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY)
-    } catch {
-      token = null
-    }
+// The token stored for a port, or null when none was ever stored.
+export function storedToken(port: number): string | null {
+  try {
+    return localStorage.getItem(serverTokenKey(port))
+  } catch {
+    return null
   }
-  useToken(token)
 }
 
-// A replacement token entered through the prompt (server restarted mid-session).
-export function setToken(t: string) {
-  token = t
+export function storeToken(port: number, token: string | null) {
   try {
-    localStorage.setItem(TOKEN_KEY, t)
+    if (token) localStorage.setItem(serverTokenKey(port), token)
+    else localStorage.removeItem(serverTokenKey(port))
   } catch {
-    // in memory only
+    // storage may be unavailable; the token still lives in memory
   }
-  useToken(t)
+}
+
+// The connection in use: a token given (from the connect route) is stored under the
+// port; none given resumes with the stored one.
+export function setServer(port: number, token?: string | null): string | null {
+  const t = token ?? storedToken(port)
+  if (token) storeToken(port, token)
+  server = { port, token: t }
+  return t
+}
+
+export function clearServer() {
+  server = null
+}
+
+export function currentServer(): { port: number; token: string | null } | null {
+  return server
+}
+
+export function currentToken(): string | null {
+  return server?.token ?? null
+}
+
+// A replacement token entered through the prompt (server restarted mid-session):
+// it replaces the stored one for the connected port.
+export function setToken(t: string) {
+  if (!server) return
+  server = { ...server, token: t }
+  storeToken(server.port, t)
 }
 
 export function tokenParam(): string {
-  return token ? `token=${token}` : ''
+  const t = currentToken()
+  return t ? `token=${t}` : ''
+}
+
+// An absolute URL on the connected server for what cannot send a header: an image,
+// an export link, the event stream, with the token in the query. Relative (and so
+// answered by the backend in the tab) while no server is connected.
+export function apiUrl(path: string): string {
+  const base = serverBase() ?? ''
+  const qs = tokenParam()
+  if (!qs) return `${base}${path}`
+  return `${base}${path}${path.includes('?') ? '&' : '?'}${qs}`
 }
 
 export interface ApiError extends Error {

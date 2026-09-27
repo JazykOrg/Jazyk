@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { post, put, tokenParam, type DelivFileInfo, type DocInfo, type OutFileInfo } from '../lib/api'
+import { del, post, put, type DelivFileInfo, type DocInfo, type OutFileInfo } from '../lib/api'
 import { useDeliverable, useDocs, useMatrix, useOutList } from '../lib/queries'
 import { useDocDelivLinks } from '../lib/links'
 import { outHref } from '../lib/nav'
@@ -17,19 +17,10 @@ function contentPath(path: string): string {
   return `/api/docs/content?path=${encodeURIComponent(path)}`
 }
 
+// Through the transport seam like every other write, so it reaches the backend
+// that has the project (a server on this computer or the one in the tab).
 async function deleteDoc(path: string): Promise<void> {
-  const qs = tokenParam()
-  const res = await fetch(`${contentPath(path)}${qs ? `&${qs}` : ''}`, { method: 'DELETE' })
-  if (!res.ok) {
-    let msg = `${res.status}`
-    try {
-      const j = (await res.json()) as { error?: string }
-      if (j.error) msg = j.error
-    } catch {
-      // no body
-    }
-    throw new Error(msg)
-  }
+  await del(contentPath(path))
 }
 
 interface Tree<T> {

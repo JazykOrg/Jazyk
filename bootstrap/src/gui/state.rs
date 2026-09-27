@@ -18,9 +18,10 @@ pub struct AppState {
     pub cli_opts: crate::cli::Options,
     // None when --no-token: every request passes the auth check.
     pub token: Option<String>,
-    // Set by --gui-dist / JAZYK_GUI_DIST: serve frontend assets from disk instead of
-    // the embedded dist.
-    pub dist_dir: Option<PathBuf>,
+    // The page's origin (`https://jazyk.dev`, or the origin of --gui-url /
+    // JAZYK_GUI_URL): the one origin the CORS layer admits
+    // (docs/frontends/gui.md#serving).
+    pub gui_origin: String,
     // --dev: the app starts with the Developer toggle on (docs/frontends/gui.md#developer-toggle).
     pub dev: bool,
     // Signals the server to stop (ctrl-c or POST /api/shutdown).

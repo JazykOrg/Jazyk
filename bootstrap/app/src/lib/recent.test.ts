@@ -50,6 +50,18 @@ describe('touchRecent', () => {
     expect(ids).not.toContain('demo:1')
   })
 
+  it('remembers a server on this computer with its port and root, one row per port', async () => {
+    const { touchRecent, readRecent } = await fresh()
+    touchRecent({ id: 'server:4680', kind: 'server', name: 'garden', port: 4680, root: '/home/me/garden' })
+    touchRecent(entry('demo:shop'))
+    touchRecent({ id: 'server:4680', kind: 'server', name: 'garden', port: 4680, root: '/home/me/garden' })
+    expect(readRecent().map((r) => r.id)).toEqual(['server:4680', 'demo:shop'])
+    expect(readRecent()[0]).toMatchObject({ kind: 'server', name: 'garden', port: 4680, root: '/home/me/garden' })
+    // A server entry holds nothing in the browser: it can be dropped to make room.
+    const { holdsData } = await import('./recent')
+    expect(holdsData(readRecent()[0])).toBe(false)
+  })
+
   it('moves a touched entry to the top and keeps its other fields', async () => {
     const { touchRecent, readRecent } = await fresh()
     touchRecent(entry('folder:a', { mode: 'write' }))

@@ -7,7 +7,7 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Route } from '@playwright/test'
 import { unzipSync } from 'fflate'
-import { api, chooseMenuItem, createProject, offline, openDemo, openProjectMenu, pageErrors, projectMenuItems, typeAtEnd, whereChangesGo } from './helpers'
+import { api, chooseMenuItem, createProject, offline, openDemo, openProjectMenu, pageErrors, projectMenuItems, typeAtEnd, whereChangesGo, waitStored } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await offline(page)
@@ -21,6 +21,8 @@ test('a reload lands in the open demo at the same route, and Close project forge
   await page.goto('/#/docs/docs/catalog.md')
   await expect(page.locator('.cm-content')).toBeVisible()
   expect(await openId(page)).toBe('demo:shop')
+
+  await waitStored(page)
 
   await page.reload()
   await expect(page).toHaveURL(/#\/docs\/docs\/catalog\.md/)
@@ -43,6 +45,7 @@ test('a reload lands in the open demo at the same route, and Close project forge
   await expect(page.locator('.ws-lenses')).toHaveCount(0)
   await expect(page.locator('.home-open')).toHaveCount(0)
   expect(await openId(page)).toBeNull()
+  await waitStored(page)
   await page.reload()
   await expect(page.locator('.home-cards')).toBeVisible()
   await expect(page.locator('.ws-lenses')).toHaveCount(0)
@@ -56,6 +59,8 @@ test('a reload lands in the open browser project at the same route', async ({ pa
   await typeAtEnd(page, '\nA planner lays out the beds of a garden.')
   await expect(page.locator('.ide-topbar-right')).toContainText('saved', { timeout: 5000 })
   expect(await openId(page)).toMatch(/^browser:/)
+
+  await waitStored(page)
 
   await page.reload()
   await expect(page).toHaveURL(/#\/docs\/docs\/README\.md/)

@@ -2,6 +2,7 @@
 // blocking token prompt when a request answers 401 (a restarted server minted a new
 // token). Recovery happens in place, no reload, so unsaved editor work survives.
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { get, setToken } from '../lib/api'
 import { useApp } from '../lib/store'
 // For the .palette overlay classes the prompt reuses.
@@ -38,6 +39,7 @@ export default function ConnectionGuard() {
 function TokenPrompt() {
   const setAuthRequired = useApp((a) => a.setAuthRequired)
   const bumpTokenEpoch = useApp((a) => a.bumpTokenEpoch)
+  const qc = useQueryClient()
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -49,7 +51,7 @@ function TokenPrompt() {
 
   const submit = async () => {
     // Accept the whole opened URL or the bare token.
-    const m = value.match(/token=([0-9a-f]+)/)
+    const m = value.match(/token=([A-Za-z0-9_-]+)/)
     const candidate = m ? m[1] : value.trim()
     if (!candidate) return
     setBusy(true)
@@ -61,6 +63,8 @@ function TokenPrompt() {
       setAuthRequired(false)
       // Long-lived connections (event stream, editor WebSocket) re-dial on this.
       bumpTokenEpoch()
+      // Every read that was refused is asked again with the accepted token.
+      qc.invalidateQueries()
     } catch (e) {
       const msg = (e as Error).message
       setErr(msg === '401' ? 'token rejected' : `backend unreachable (${msg})`)
@@ -77,7 +81,7 @@ function TokenPrompt() {
           <b>Session token rejected.</b>
         </p>
         <p className="muted">
-          The server was likely restarted and minted a new token. Paste the new URL it
+          The server was likely restarted and minted a new token. Paste the address it
           printed (or just the token) to resume this session. Nothing in this tab is
           lost.
         </p>
@@ -90,7 +94,7 @@ function TokenPrompt() {
           <input
             ref={inputRef}
             className="mono"
-            placeholder="http://127.0.0.1:4680/#token=… or the token"
+            placeholder="https://jazyk.dev/#/connect?port=4680&token=… or the token"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             disabled={busy}

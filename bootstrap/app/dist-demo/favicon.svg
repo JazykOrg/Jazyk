@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="100"
+   height="100"
+   viewBox="0 0 100 100"
+   fill="none"
+   role="img"
+   aria-label="Jazyk"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="logo.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#ffffff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="1"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="3.5341629"
+     inkscape:cx="-1.1318097"
+     inkscape:cy="32.115101"
+     inkscape:window-width="2056"
+     inkscape:window-height="1234"
+     inkscape:window-x="0"
+     inkscape:window-y="39"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg1" />
+  <title
+     id="title1">Jazyk</title>
+  <path
+     d="M 18.798667,39.531784 C 34.890675,23.921129 65.388045,22.322715 78.369446,35.618033 92.403293,49.664988 87.476459,72.681827 77.562502,75.302499 60.609819,79.13199 43.40133,57.805936 17.136147,66.450183"
+     stroke="#d81b60"
+     stroke-width="7.5"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     fill="none"
+     id="path1"
+     sodipodi:nodetypes="cccc"
+     style="stroke:#37bd99;stroke-opacity:1" />
+  <path
+     d="m 34.06096,47.906888 c 14.153897,-5.017419 29.024856,1.262734 34.911538,6.677947"
+     style="fill:none;stroke:#37bd99;stroke-width:7.5;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+     id="path1-9"
+     sodipodi:nodetypes="cc" />
+</svg>

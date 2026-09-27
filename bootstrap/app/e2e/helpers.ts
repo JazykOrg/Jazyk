@@ -91,6 +91,14 @@ export async function typeAtEnd(page: Page, text: string) {
   await page.keyboard.type(text)
 }
 
+// Waits until browser storage holds every change the page made (the store is
+// coalesced, docs/frontends/wasm.md#browser-storage), so a reload finds them.
+export async function waitStored(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { jazykPending?: () => number }).jazykPending?.() ?? 0), { timeout: 10_000 })
+    .toBe(0)
+}
+
 // Browser storage as the page keeps it (docs/frontends/wasm.md#browser-storage): the
 // keys under `prefix`, and for each the stored text (a file's bytes, or a kept
 // change's). A database that does not exist yet is created the way the page creates

@@ -40,6 +40,8 @@ import {
 } from './recent'
 import { clearOpen, readOpenId, rememberOpen } from './open'
 import { useApp } from './store'
+import { connect, disconnectServer } from './connect'
+import { storeToken } from './api'
 import type { WasmBackend, WasmProject } from './wasm-client'
 
 export interface LocalDeps {
@@ -125,7 +127,20 @@ export function installLocalProjects(d: LocalDeps) {
     if (c?.kind === 'folder') await c.mirror.persist()
   }
 
+  // Connecting to a server on this computer (docs/frontends/gui.md#connecting-to-a-local-jazyk):
+  // what the tab had open is put away first, then the connection takes over.
+  const connectServer = async (port: number, token?: string) => {
+    await leave()
+    const c = current
+    if (c?.kind === 'stored') c.store?.writer.close()
+    current = null
+    d.backend.close()
+    publish()
+    await connect(port, token)
+  }
+
   const openStored = async (c: Extract<Current, { kind: 'stored' }>, files: WasmProject['files'], stay = false) => {
+    disconnectServer()
     if (c.store) c.store.writer.onState = publish
     current = c
     publish()
@@ -197,6 +212,7 @@ export function installLocalProjects(d: LocalDeps) {
       window.alert(`${handle.name} has no jazyk.toml at its top; pick a project directory.`)
       return
     }
+    disconnectServer()
     const mirror = new FolderMirror(handle, '/project', mode, keptWriter(id), kept)
     mirror.onChange = publish
     current = { kind: 'folder', id, name: handle.name, mirror }
@@ -300,6 +316,15 @@ export function installLocalProjects(d: LocalDeps) {
     clearOpen()
     window.location.hash = '#/'
   })
+  on(
+    'jazyk:connect',
+    async (detail) => {
+      const { port, token } = (detail ?? {}) as { port?: number; token?: string }
+      if (!port) return
+      await connectServer(port, token)
+    },
+    'connect',
+  )
 
   on('jazyk:new-project', (detail) => newProject(String((detail as { name?: string })?.name ?? '')))
 
@@ -328,6 +353,7 @@ export function installLocalProjects(d: LocalDeps) {
     if (!entry) return
     if (entry.kind === 'demo') return openDemo(id.slice('demo:'.length))
     if (entry.kind === 'browser') return openBrowserProject(id, entry.name)
+    if (entry.kind === 'server') return connectServer(entry.port ?? Number(id.slice('server:'.length)))
     const handle = (await folderHandle(id)) as DirHandle | undefined
     if (!handle) {
       window.alert(`${entry.name} is no longer remembered by this browser; open it with Open folder.`)
@@ -354,7 +380,8 @@ export function installLocalProjects(d: LocalDeps) {
             : null
     if (question && !window.confirm(question)) return
     if (question && current?.id === id) closeCurrent()
-    if (r.kind === 'folder') await deleteKept(id)
+    if (r.kind === 'server') storeToken(r.port ?? Number(id.slice('server:'.length)), null)
+    else if (r.kind === 'folder') await deleteKept(id)
     else await deleteFiles(id).catch(() => {})
     removeRecent(id)
   })
@@ -517,6 +544,10 @@ export function installLocalProjects(d: LocalDeps) {
     if (document.visibilityState === 'hidden') persistNow()
   })
   window.addEventListener('pagehide', persistNow)
+  // How many changes browser storage has not taken yet: the browser tests wait for
+  // zero before a reload, since the coalesced store lands a moment after a save.
+  ;(window as unknown as { jazykPending: () => number }).jazykPending = () =>
+    current?.kind === 'stored' ? (current.store?.writer.pendingCount ?? 0) : current?.kind === 'folder' ? current.mirror.keptCount : 0
 
   // Changes the folder has not taken are kept in browser storage, and closing the tab
   // still asks first; so does a project whose storage refused a write.

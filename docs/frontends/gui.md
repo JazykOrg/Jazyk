@@ -1,10 +1,11 @@
 # GUI
 
-`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]` starts one
-local process: an HTTP server that serves the GUI web app, a JSON API over the
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]` starts one
+local process: an HTTP server with a JSON API over the
 [graph store](../compiler/graph.md), a live event stream, and the
-[language server](./lsp.md) over WebSocket. It then opens the browser at the served
-address. The GUI is the front door of a jazyk project: read and edit the documents,
+[language server](./lsp.md) over WebSocket. It then opens the page at
+[jazyk.dev](../site.md#the-editor), which connects to it
+([serving](#serving)). The GUI is the front door of a jazyk project: read and edit the documents,
 see what the compiler understood and what it asks, walk the model and its diagrams,
 review the product against the documents, and talk to the agent. The compiler's own
 workbench (the board, the runs, the prompts) sits behind the
@@ -29,7 +30,8 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   the server on this computer ([connecting to a local jazyk](#connecting-to-a-local-jazyk)).
   Nothing of the app ships in the binary. `--gui-url URL` (or `JAZYK_GUI_URL`) opens
   another copy of the page instead (a `vite` dev server, a fork), and that origin is
-  the one the server admits.
+  the one the server admits (a dev server named by `localhost` or `127.0.0.1` is
+  admitted under both names, since a browser reaches it by either).
 - The page runs on a different origin than the server, so every API response
   carries `Access-Control-Allow-Origin` for the admitted page origin only
   (`https://jazyk.dev` by default), the headers and methods the app uses,

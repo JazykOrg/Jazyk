@@ -4,7 +4,7 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import { unzipSync } from 'fflate'
-import { api, chooseMenuItem, createProject, offline, openDemo, openProjectMenu, pageErrors, projectMenuItems, storedKeys, storedText, typeAtEnd, whereChangesGo } from './helpers'
+import { api, chooseMenuItem, createProject, offline, openDemo, openProjectMenu, pageErrors, projectMenuItems, storedKeys, storedText, typeAtEnd, whereChangesGo, waitStored } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await offline(page)
@@ -32,6 +32,8 @@ test('a new project starts in the browser, keeps an edit across a reload, and re
   await expect(page.locator('.ide-topbar-right')).toContainText('saved', { timeout: 5000 })
   // The edit reached browser storage, one record per file.
   await expect.poll(() => storedText(page, 'file:browser:', 'docs/README.md')).toContain('lays out the beds')
+
+  await waitStored(page)
 
   await page.reload()
   await page.goto('/#/')
@@ -67,6 +69,8 @@ test('an edited demo reopens with the edit after a reload, then resets to the or
   expect(await storedKeys(page, 'file:demo:shop:')).toContain('file:demo:shop:jazyk.toml')
   expect(await whereChangesGo(page)).toBe('Demo: edits are saved in this browser')
   expect(await projectMenuItems(page)).toContain('Reset to the original')
+
+  await waitStored(page)
 
   await page.reload()
   await page.goto('/#/')

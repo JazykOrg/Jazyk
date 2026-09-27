@@ -1,53 +1,70 @@
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { resolve } from 'node:path'
-import { existsSync, renameSync } from 'node:fs'
+import { VitePWA } from 'vite-plugin-pwa'
 
 // SharedArrayBuffer, which the model bridge blocks on, is only available to a
-// cross-origin isolated page (docs/frontends/wasm.md#the-model).
+// cross-origin isolated page (docs/frontends/wasm.md#serving).
 const isolation = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
 }
 
-// Two builds from one app. The default is the workbench the binary embeds, which
-// talks to a server. `JAZYK_DEMO=1` builds the editor page instead, which carries the
-// compiler as wasm and needs no server; it lands in its own directory so the
-// embedded dist never grows a 7MB module (docs/frontends/wasm.md#building).
-const demo = !!process.env.JAZYK_DEMO
-
-// The editor is served at the root of jazyk.dev, so its page is index.html there.
-// The source stays demo.html beside the workbench's index.html; the build renames.
-const editorIndex: Plugin = {
-  name: 'jazyk-editor-index',
-  apply: 'build',
-  closeBundle() {
-    const from = resolve(__dirname, 'dist-demo/demo.html')
-    if (existsSync(from)) renameSync(from, resolve(__dirname, 'dist-demo/index.html'))
-  },
-}
-
+// One page, jazyk.dev (docs/frontends/wasm.md#building): the app with the compiler
+// as wasm, every backend in it (a demo, the browser, a folder, a server on this
+// computer). The binary embeds nothing; `jazyk gui` opens this page.
 export default defineConfig({
-  plugins: demo ? [react(), editorIndex] : [react()],
-  // The demo fixtures under public/ travel with the editor only; the workbench the
-  // binary embeds has a server for projects.
-  publicDir: demo ? 'public' : false,
-  server: {
-    headers: isolation,
-    proxy: {
-      '/api': 'http://127.0.0.1:4680',
-      '/lsp': { target: 'ws://127.0.0.1:4680', ws: true },
-    },
-  },
+  plugins: [
+    react(),
+    // The service worker (docs/frontends/wasm.md#offline): the app shell is
+    // precached, the wasm module included (hence the raised size limit); a demo's
+    // fixture is cached when first fetched and refreshed in the background. A
+    // response served from the cache keeps the headers it was cached with, so the
+    // isolation headers hold offline too.
+    VitePWA({
+      registerType: 'autoUpdate',
+      manifest: {
+        name: 'Jazyk',
+        short_name: 'Jazyk',
+        description: 'Documents that compile: the Jazyk editor.',
+        start_url: '/',
+        display: 'standalone',
+        // From src/tokens.css: the accent and the light background.
+        theme_color: '#0e7a6d',
+        background_color: '#f7f8f7',
+        icons: [
+          { src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml' },
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,wasm,woff,woff2,svg,png,webmanifest}'],
+        // The fixtures are runtime-cached instead: a demo opened once opens offline,
+        // one never opened is not downloaded on arrival. The model's code (WebLLM)
+        // is fetched with the model, not with the page (docs/frontends/wasm.md#the-demo).
+        globIgnores: ['demos/**', '**/webllm-*.js'],
+        // The wasm module is about 7MB; Workbox's default limit is 2MB.
+        maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
+        navigateFallback: 'index.html',
+        runtimeCaching: [
+          {
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && /\/demos\/[^/]+\.json$/.test(url.pathname),
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'jazyk-demos' },
+          },
+        ],
+      },
+    }),
+  ],
+  server: { headers: isolation },
   preview: { headers: isolation },
   worker: { format: 'es' },
   build: {
-    outDir: demo ? 'dist-demo' : 'dist',
+    outDir: 'dist',
     chunkSizeWarningLimit: 8000,
     rollupOptions: {
-      input: demo
-        ? { demo: resolve(__dirname, 'demo.html') }
-        : { main: resolve(__dirname, 'index.html') },
+      // The model's code in a chunk of its own, named so the precache can skip it.
+      output: { manualChunks: { webllm: ['@mlc-ai/web-llm'] } },
     },
   },
 })

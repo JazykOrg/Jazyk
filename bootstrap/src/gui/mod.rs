@@ -1,7 +1,8 @@
-// The GUI frontend: one local process serving the web app, the JSON API, the event
-// stream, and the language server over WebSocket. Mirrors docs/frontends/gui.md.
+// The GUI's server: one local process serving the JSON API, the event stream, and
+// the language server over WebSocket. The page itself is jazyk.dev (or --gui-url),
+// opened with the port and the token in the address, and connects back over CORS.
+// Mirrors docs/frontends/gui.md#serving.
 mod api;
-mod assets;
 mod board_api;
 mod card_api;
 mod chat;
@@ -82,7 +83,7 @@ pub struct GuiOptions {
     pub port: Option<u16>,
     pub no_open: bool,
     pub watch: bool,
-    pub gui_dist: Option<String>,
+    pub gui_url: Option<String>,
     pub no_token: bool,
     pub dev: bool,
     // The original invocation, kept so a settings reload re-resolves the LLM with
@@ -125,13 +126,43 @@ fn probe_occupant(port: u16, our_root: &std::path::Path) -> String {
     }
 }
 
+pub const DEFAULT_GUI_URL: &str = "https://jazyk.dev";
+
+// The page to open: --gui-url, then JAZYK_GUI_URL, then jazyk.dev. A trailing slash
+// is dropped so the connect route appends cleanly.
+pub fn gui_url(flag: Option<&str>, env: Option<&str>) -> String {
+    let url = flag
+        .map(str::to_string)
+        .or_else(|| env.map(str::to_string))
+        .unwrap_or_else(|| DEFAULT_GUI_URL.to_string());
+    url.trim_end_matches('/').to_string()
+}
+
+// The origin of a URL (`scheme://host[:port]`): the one the CORS layer admits.
+pub fn origin_of(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some(x) => x,
+        None => return url.trim_end_matches('/').to_string(),
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    format!("{}://{}", scheme, host)
+}
+
+// The address the browser opens: the page's connect route with the port and, unless
+// --no-token, the token (docs/frontends/gui.md#connecting-to-a-local-jazyk).
+pub fn connect_url(gui_url: &str, port: u16, token: Option<&str>) -> String {
+    match token {
+        Some(t) => format!("{}/#/connect?port={}&token={}", gui_url, port, t),
+        None => format!("{}/#/connect?port={}", gui_url, port),
+    }
+}
+
 pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
     let gs = GenSettings::resolve(&proj);
-    let dist_dir = gopts
-        .gui_dist
-        .clone()
-        .or_else(|| std::env::var("JAZYK_GUI_DIST").ok())
-        .map(PathBuf::from);
+    let page = gui_url(
+        gopts.gui_url.as_deref(),
+        std::env::var("JAZYK_GUI_URL").ok().as_deref(),
+    );
     let token = if gopts.no_token {
         None
     } else {
@@ -145,7 +176,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         gs: std::sync::RwLock::new(gs),
         cli_opts: gopts.cli_opts.clone(),
         token,
-        dist_dir,
+        gui_origin: origin_of(&page),
         dev: gopts.dev,
         shutdown: tokio::sync::Notify::new(),
         events: events::EventHub::new(),
@@ -200,11 +231,13 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
                 occupant
             );
         }
-        let url = match &st.token {
-            Some(t) => format!("http://127.0.0.1:{}/#token={}", addr.port(), t),
-            None => format!("http://127.0.0.1:{}/", addr.port()),
-        };
-        println!("jazyk: gui serving {} at {}", st.proj().root.display(), url);
+        let url = connect_url(&page, addr.port(), st.token.as_deref());
+        println!(
+            "jazyk: gui serving {} on 127.0.0.1:{} at {}",
+            st.proj().root.display(),
+            addr.port(),
+            url
+        );
         if !gopts.no_open {
             if let Err(e) = open::that_detached(&url) {
                 eprintln!(
@@ -236,4 +269,32 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         }
         code
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_page_is_the_flag_then_the_env_then_jazyk_dev() {
+        assert_eq!(gui_url(None, None), "https://jazyk.dev");
+        assert_eq!(gui_url(None, Some("http://localhost:5173/")), "http://localhost:5173");
+        assert_eq!(gui_url(Some("https://fork.example/app/"), Some("x")), "https://fork.example/app");
+    }
+
+    #[test]
+    fn the_admitted_origin_is_the_page_url_without_its_path() {
+        assert_eq!(origin_of("https://jazyk.dev"), "https://jazyk.dev");
+        assert_eq!(origin_of("https://fork.example/app"), "https://fork.example");
+        assert_eq!(origin_of("http://localhost:5173/x?y#z"), "http://localhost:5173");
+    }
+
+    #[test]
+    fn the_opened_address_is_the_connect_route_with_port_and_token() {
+        assert_eq!(
+            connect_url("https://jazyk.dev", 4680, Some("abc")),
+            "https://jazyk.dev/#/connect?port=4680&token=abc"
+        );
+        assert_eq!(connect_url("http://localhost:5173", 4681, None), "http://localhost:5173/#/connect?port=4681");
+    }
 }

@@ -7,6 +7,7 @@ import { get, post, verdictText } from '../lib/api'
 import { useApp, type ChatUpdateRow, type TurnProgress } from '../lib/store'
 import { needsPageModel, useCapabilities } from '../lib/capabilities'
 import ModelSourcePanel from '../components/ModelSourcePanel'
+import { toolWords, workingLine } from '../lib/working'
 import { useWords, verdictWords } from '../lib/words'
 
 interface Command {
@@ -401,6 +402,8 @@ function OpenPane({ close }: { close: () => void }) {
     selected && (chatIds.includes(selected) || followIds.includes(selected))
       ? selected
       : followIds[0] ?? chatIds[chatIds.length - 1] ?? null
+  const chatId = active && !active.startsWith('follow-') ? active : null
+  const chatRunning = chatId ? sessions[chatId]?.state === 'running' : false
 
   const newChat = async () => {
     const r = await post<{ id: string }>(`/api/chat/sessions`)
@@ -424,15 +427,15 @@ function OpenPane({ close }: { close: () => void }) {
         {followIds.map((id) => {
           const j = jobs[Number(id.slice(7))]
           const live = j && (j.state === 'running' || j.state === 'queued')
-          const verb = j?.kind.kind === 'compile' ? w.sync : j?.kind.kind === 'gen' ? w.build : j?.kind.kind === 'verify' || j?.kind.kind === 'audit' ? w.check : (j?.kind.kind ?? 'build')
+          const verb = j?.kind.kind === 'compile' ? w.sync : j?.kind.kind === 'gen' ? w.build : j?.kind.kind === 'verify' || j?.kind.kind === 'audit' ? w.review : (j?.kind.kind ?? 'build')
           return (
-            <button key={id} className={`chat-sess ${active === id ? 'active' : ''}`} onClick={() => select(id)} title={`build thread for job ${id.slice(7)}`}>
+            <button key={id} className={`chat-sess${active === id ? ' active' : ''}${live ? ' working' : ''}`} onClick={() => select(id)} title={`build thread for job ${id.slice(7)}`}>
               <span className={`dot ${live ? 'running' : j?.state === 'failed' ? 'failed' : ''}`} /> {verb} #{id.slice(7)}
             </button>
           )
         })}
         {chatIds.map((id) => (
-          <button key={id} className={`chat-sess ${active === id ? 'active' : ''}`} onClick={() => select(id)}>
+          <button key={id} className={`chat-sess${active === id ? ' active' : ''}${sessions[id].state === 'running' ? ' working' : ''}`} onClick={() => select(id)}>
             <span className={`dot ${sessions[id].state}`} /> {sessions[id].title}
             {sessions[id].pending.length > 0 && <span className="ask-badge">?</span>}
           </button>
@@ -440,26 +443,20 @@ function OpenPane({ close }: { close: () => void }) {
       </div>
       {active?.startsWith('follow-') ? (
         <FollowView jobId={Number(active.slice(7))} />
-      ) : active ? (
-        <ChatView id={active} needsModel={needsModel} />
-      ) : needsModel ? (
-        <NeedsModel />
+      ) : chatId ? (
+        <ChatView id={chatId} />
       ) : (
         <div className="chat-empty muted">
           {noAgent ? (
             <p>This backend has no agent to talk to. Syncs still show here as build threads while they run.</p>
           ) : (
-            <>
-              <p>No conversations yet. Ask about the project, or run a sync and follow it here.</p>
-              <p>
-                <button className="chat-start" onClick={() => void newChat()}>
-                  New conversation
-                </button>
-              </p>
-            </>
+            <p>Ask about the project, or run a sync and follow it here.</p>
           )}
         </div>
       )}
+      {/* Ready to type: the prompt box is at the foot whenever the column is open,
+          conversation or none (docs/frontends/gui.md#chat). */}
+      {noAgent ? null : needsModel && !chatRunning ? <NeedsModel /> : <PromptBox sessionId={chatId} />}
     </div>
   )
 }
@@ -501,12 +498,14 @@ function LoadedPanel({ block }: { block: string | null }) {
   )
 }
 
-function Transcript({ rows, follow }: { rows: Row[]; follow: boolean }) {
+// `working` is the pulsing line at the end while a turn runs: what the agent is
+// doing (docs/frontends/gui.md#chat).
+function Transcript({ rows, follow, working }: { rows: Row[]; follow: boolean; working?: string | null }) {
   const endRef = useRef<HTMLDivElement>(null)
   const dev = useApp((a) => a.dev)
   useEffect(() => {
     if (follow) endRef.current?.scrollIntoView({ block: 'end' })
-  }, [rows.length, follow])
+  }, [rows.length, follow, working])
   return (
     <div className="chat-transcript">
       {rows.map((r) => (
@@ -523,6 +522,11 @@ function Transcript({ rows, follow }: { rows: Row[]; follow: boolean }) {
           )}
         </div>
       ))}
+      {working && (
+        <div className="chat-row working" role="status">
+          <pre>{working}</pre>
+        </div>
+      )}
       <div ref={endRef} />
     </div>
   )
@@ -540,14 +544,11 @@ function useSelectionContext(): string | null {
   return null
 }
 
-function ChatView({ id, needsModel }: { id: string; needsModel: boolean }) {
+function ChatView({ id }: { id: string }) {
   const updates = useApp((a) => a.chatUpdates[id])
-  const context = useSelectionContext()
   const dev = useApp((a) => a.dev)
   const seedChatUpdates = useApp((a) => a.seedChatUpdates)
   const info = useApp((a) => a.chatSessions[id])
-  const [text, setText] = useState('')
-  const [commands, setCommands] = useState<Command[]>([])
 
   // Replay the session on first open (a reload arrives mid-conversation).
   useEffect(() => {
@@ -556,11 +557,6 @@ function ChatView({ id, needsModel }: { id: string; needsModel: boolean }) {
       .then((r) => seedChatUpdates(id, r.updates ?? []))
       .catch(() => seedChatUpdates(id, []))
   }, [id, updates, seedChatUpdates])
-  useEffect(() => {
-    get<{ commands?: Command[] }>(`/api/chat/sessions`)
-      .then((r) => setCommands(r.commands ?? []))
-      .catch(() => {})
-  }, [])
 
   const rows = useMemo(() => {
     const all = chatRows(updates ?? [])
@@ -580,63 +576,95 @@ function ChatView({ id, needsModel }: { id: string; needsModel: boolean }) {
     [updates],
   )
 
+  return (
+    <>
+      <Transcript rows={rows} follow working={running ? workingLine(rows) : null} />
+      <LoadedPanel block={loadedBlock} />
+      {(info?.pending ?? []).map((ask) => (
+        <PermissionAsk key={ask.id} sessionId={id} ask={ask as never} />
+      ))}
+    </>
+  )
+}
+
+// The prompt box at the foot of the column. Sending with no conversation selected
+// creates one and selects it, so the first question needs no button first; while
+// a turn runs Send reads Stop (docs/frontends/gui.md#chat).
+function PromptBox({ sessionId }: { sessionId: string | null }) {
+  const context = useSelectionContext()
+  const select = useApp((a) => a.selectChat)
+  const info = useApp((a) => (sessionId ? a.chatSessions[sessionId] : undefined))
+  const [text, setText] = useState('')
+  const [commands, setCommands] = useState<Command[]>([])
+  const [sending, setSending] = useState(false)
+  useEffect(() => {
+    get<{ commands?: Command[] }>(`/api/chat/sessions`)
+      .then((r) => setCommands(r.commands ?? []))
+      .catch(() => {})
+  }, [])
+  const running = info?.state === 'running'
+
   const send = async () => {
     const t = text.trim()
-    if (!t || running) return
+    if (!t || running || sending) return
+    setSending(true)
     setText('')
-    await post(`/api/chat/sessions/${id}/prompt`, { text: t }).catch(() => {})
+    try {
+      let id = sessionId
+      if (!id) {
+        const r = await post<{ id: string }>(`/api/chat/sessions`)
+        id = r.id
+        select(id)
+      }
+      await post(`/api/chat/sessions/${id}/prompt`, { text: t })
+    } catch {
+      // The transcript carries the turn's end, error included.
+    } finally {
+      setSending(false)
+    }
   }
 
   const completions = text.startsWith('/') ? commands.filter((c) => c.name.startsWith(text.trim())) : []
 
   return (
-    <>
-      <Transcript rows={rows} follow />
-      <LoadedPanel block={loadedBlock} />
-      {(info?.pending ?? []).map((ask) => (
-        <PermissionAsk key={ask.id} sessionId={id} ask={ask as never} />
-      ))}
-      {needsModel && !running ? (
-        <NeedsModel />
-      ) : (
-        <div className="chat-input">
-          {completions.length > 0 && (
-            <div className="chat-completions">
-              {completions.map((c) => (
-                <button key={c.name} onClick={() => setText(c.name + ' ')}>
-                  <span className="mono">{c.name}</span> <span className="muted">{c.description}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {context && !text && (
-            <button className="chat-context" onClick={() => setText(`About ${context}: `)} title="start the question with what you are looking at">
-              ask about {context.length > 40 ? `${context.slice(0, 38)}…` : context}
+    <div className="chat-input">
+      {completions.length > 0 && (
+        <div className="chat-completions">
+          {completions.map((c) => (
+            <button key={c.name} onClick={() => setText(c.name + ' ')}>
+              <span className="mono">{c.name}</span> <span className="muted">{c.description}</span>
             </button>
-          )}
-          <textarea
-            value={text}
-            placeholder={running ? 'the agent is working…' : commands.length > 0 ? 'ask the agent, or / for commands' : 'ask the agent about the project'}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                void send()
-              }
-            }}
-          />
-          <div className="chat-input-row">
-            {running ? (
-              <button onClick={() => void post(`/api/chat/sessions/${id}/cancel`)}>cancel</button>
-            ) : (
-              <button onClick={() => void send()} disabled={!text.trim()}>
-                send
-              </button>
-            )}
-          </div>
+          ))}
         </div>
       )}
-    </>
+      {context && !text && (
+        <button className="chat-context" onClick={() => setText(`About ${context}: `)} title="start the question with what you are looking at">
+          ask about {context.length > 40 ? `${context.slice(0, 38)}…` : context}
+        </button>
+      )}
+      <textarea
+        value={text}
+        placeholder={running ? 'the agent is working…' : commands.length > 0 ? 'ask the agent, or / for commands' : 'ask the agent about the project'}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            void send()
+          }
+        }}
+      />
+      <div className="chat-input-row">
+        {running && sessionId ? (
+          <button onClick={() => void post(`/api/chat/sessions/${sessionId}/cancel`)} title="cancel the running turn">
+            Stop
+          </button>
+        ) : (
+          <button onClick={() => void send()} disabled={!text.trim() || sending}>
+            Send
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -678,9 +706,10 @@ function FollowView({ jobId }: { jobId: number }) {
   const dev = useApp((a) => a.dev)
   const job = useApp((a) => a.jobs[jobId])
 
+  const live = !!job && (job.state === 'running' || job.state === 'queued')
   const rows = useMemo(() => {
     const out = followRows(trace as never, jobId, dev)
-    if (job && job.state !== 'running' && job.state !== 'queued') {
+    if (job && !live) {
       const r = job.result as { verdict?: { state?: string } | string } | null
       const v = r?.verdict
       const counted = r
@@ -707,6 +736,15 @@ function FollowView({ jobId }: { jobId: number }) {
     () => Object.values(turns).sort((a, b) => a.since - b.since),
     [turns],
   )
+  // The running batch, the same way a chat turn shows its work: the tool being
+  // called, else what the batch is doing (docs/frontends/gui.md#chat).
+  const working = useMemo(() => {
+    if (!live) return null
+    const last = [...trace].reverse().find((r) => r.jobId === jobId)
+    if (last && last.event.kind === 'toolCall') return toolWords(String(last.event.name ?? ''))
+    const running = plan.find((t) => t.state === 'running')
+    return running ? `${batchWords([{ kind: running.task, target: running.target }], dev)}…` : 'Thinking…'
+  }, [live, trace, jobId, plan, dev])
   // The loaded-set panel beside the transcript: the last status block a tool
   // reply carried (condensed on mutating replies, full on graph_status).
   const loadedBlock = useMemo(
@@ -741,7 +779,7 @@ function FollowView({ jobId }: { jobId: number }) {
           follow in editor
         </label>
         {plan.map((t) => (
-          <div key={t.label} className={`plan-entry ${t.state}`}>
+          <div key={t.label} className={`plan-entry ${t.state}${t.state === 'running' ? ' working' : ''}`}>
             <span className="plan-mark">
               {t.state === 'done' ? '✓' : t.state === 'failed' ? '✗' : t.state === 'running' ? '●' : '○'}
             </span>{' '}
@@ -756,7 +794,7 @@ function FollowView({ jobId }: { jobId: number }) {
           </div>
         ))}
       </div>
-      <Transcript rows={rows} follow />
+      <Transcript rows={rows} follow working={working} />
       <LoadedPanel block={loadedBlock} />
     </>
   )

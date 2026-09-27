@@ -102,7 +102,7 @@ export function Tests() {
       {matrix.data && rows.length === 0 && (
         <div className="empty-state">
           <b>No tests yet</b>
-          A build writes one test per criterion; a check runs them.
+          A build writes one test per criterion; a review runs them.
         </div>
       )}
       {rows.map(([rid, r]) => (

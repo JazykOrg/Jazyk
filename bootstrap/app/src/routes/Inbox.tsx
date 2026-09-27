@@ -229,7 +229,7 @@ export function Problems({ items }: { items: Item[] }) {
   const ps = items.filter(([, d]) => !d.prompt && !PROPOSAL_RULES.has(d.rule) && d.rule !== DRAFT_RULE)
   const rules = [...new Set(ps.map(([, d]) => d.rule))].sort()
   const shown = ps.filter(([, d]) => (!sev || d.severity === sev) && (!rule || d.rule === rule) && (!doc || (d.subjects ?? []).some((s) => s.includes(doc))))
-  if (ps.length === 0) return <Empty title={`No ${w.problems.toLowerCase()}`} text="Contradictions, gaps, broken links, and failing tests land here after a sync or a check." />
+  if (ps.length === 0) return <Empty title={`No ${w.problems.toLowerCase()}`} text="Contradictions, gaps, broken links, and failing tests land here after a sync or a review." />
   return (
     <>
       <div className="inbox-filters">

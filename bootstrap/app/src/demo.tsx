@@ -17,7 +17,7 @@ import { startWasmBackend, crossOriginIsolated_, type ModelHost, type WasmProjec
 import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
 import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, type ModelSource } from './lib/model-source'
 import { applyTheme, useApp } from './lib/store'
-import { pushTraceEvents, pushWireEvent, refreshAfterWrite } from './lib/events'
+import { pushWireEvent, refreshAfterWrite } from './lib/events'
 import { probeStorage } from './lib/browser-store'
 import { installLocalProjects } from './lib/local-projects'
 import { DEMOS } from './shell/Home'
@@ -148,11 +148,11 @@ async function boot() {
   const backend = await startWasmBackend({
     persistence: () => (stored ? 'browser' : 'memory'),
     model,
-    onTrace: (events) => {
-      for (const e of events) console.info('[jazyk trace]', JSON.stringify(e))
-      pushTraceEvents(qc, events)
+    // The trace reaches the app as job.trace through onEvent; the console gets it too.
+    onTrace: (events, jobId) => {
+      for (const e of events) console.info(`[jazyk trace] job ${jobId}`, JSON.stringify(e))
     },
-    // A chat turn's updates, as the event stream would carry them.
+    // A chat turn's updates and a job's lifecycle, as the event stream would carry them.
     onEvent: (event) => pushWireEvent(qc, event),
     onWrite: () => refreshAfterWrite(qc),
   })
@@ -169,8 +169,8 @@ async function boot() {
     // A page that stays mounted refetches what it shows; everything else is dropped.
     if (stay) void qc.resetQueries()
     else qc.clear()
-    // The conversations belonged to the project the tab had open before.
-    useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null })
+    // The conversations and the jobs belonged to the project the tab had open before.
+    useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, jobs: {}, trace: [], turns: {} })
     if (!stay) window.location.hash = '#/docs'
   }
 
@@ -181,7 +181,7 @@ async function boot() {
     opened,
     closed: () => {
       qc.clear()
-      useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null })
+      useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, jobs: {}, trace: [], turns: {} })
       window.location.hash = '#/'
     },
     refresh: () => qc.invalidateQueries({ queryKey: ['capabilities'] }),

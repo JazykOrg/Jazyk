@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 // Nothing leaves the machine: the page must work without the network, and the
 // model must not download on arrival (docs/frontends/wasm.md#the-demo).
@@ -18,6 +18,49 @@ export async function openDemo(page: Page, name: string) {
   await page.locator('.home .demo', { hasText: name }).click()
   await page.waitForURL(/#\/docs/)
   await expect(page.locator('.ws-lenses')).toBeVisible()
+}
+
+// The project menu (docs/frontends/gui.md#the-project-menu), opened from the
+// project's name in the top bar.
+export async function openProjectMenu(page: Page): Promise<Locator> {
+  await page.locator('.ws-top .ws-project').click()
+  const menu = page.locator('.ws-menu')
+  await expect(menu).toBeVisible()
+  return menu
+}
+
+export async function closeMenu(page: Page) {
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.ws-menu')).toHaveCount(0)
+}
+
+// The menu's first line: where the project's changes go.
+export async function whereChangesGo(page: Page): Promise<string> {
+  const menu = await openProjectMenu(page)
+  const text = (await menu.locator('.ws-menu-where').textContent()) ?? ''
+  await closeMenu(page)
+  return text
+}
+
+// The names of the menu's items, in order.
+export async function projectMenuItems(page: Page): Promise<string[]> {
+  const menu = await openProjectMenu(page)
+  const names = await menu.getByRole('menuitem').allTextContents()
+  await closeMenu(page)
+  return names
+}
+
+export async function chooseMenuItem(page: Page, name: string) {
+  const menu = await openProjectMenu(page)
+  await menu.getByRole('menuitem', { name, exact: true }).click()
+  await expect(page.locator('.ws-menu')).toHaveCount(0)
+}
+
+// Start a project in this browser, from Home's card (docs/frontends/gui.md#home).
+export async function createProject(page: Page, name: string) {
+  await page.getByLabel('Project name').fill(name)
+  await page.getByRole('button', { name: 'Create' }).click()
+  await page.waitForURL(/#\/docs/)
 }
 
 // The backend in the tab answers the same envelope the app reads.

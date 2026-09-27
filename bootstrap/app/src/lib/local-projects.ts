@@ -38,6 +38,7 @@ import {
   updateRecent,
   type FolderMode,
 } from './recent'
+import { clearOpen, readOpenId, rememberOpen } from './open'
 import { useApp } from './store'
 import type { WasmBackend, WasmProject } from './wasm-client'
 
@@ -128,6 +129,7 @@ export function installLocalProjects(d: LocalDeps) {
     if (c.store) c.store.writer.onState = publish
     current = c
     publish()
+    rememberOpen(c.id)
     await d.opened({ files, name: c.name, demo: !!c.demo, sink: c.store, persistence: c.store ? 'browser' : 'memory' }, stay)
   }
 
@@ -200,6 +202,7 @@ export function installLocalProjects(d: LocalDeps) {
     current = { kind: 'folder', id, name: handle.name, mirror }
     touchRecent({ id, kind: 'folder', name: handle.name, mode, kept: kept.changes.length })
     publish()
+    rememberOpen(id)
     await d.opened({ files, name: handle.name, demo: false, sink: mirror, persistence: 'folder' }, stay)
   }
 
@@ -210,8 +213,75 @@ export function installLocalProjects(d: LocalDeps) {
     if (c?.kind === 'folder') c.mirror.discard()
     current = null
     d.backend.close()
+    clearOpen()
     publish()
     d.closed()
+  }
+
+  // Close project, from the project menu: what is pending lands, nothing is
+  // deleted, and the browser forgets which project was open
+  // (docs/frontends/gui.md#the-open-project).
+  const closeProject = async () => {
+    await leave()
+    if (current?.kind === 'stored') current.store?.writer.close()
+    current = null
+    d.backend.close()
+    clearOpen()
+    publish()
+    d.closed()
+  }
+
+  // The remembered project reopens on page load, before the routes render: a demo
+  // or a browser project on its own, a folder once the browser grants it again.
+  // The route is kept (docs/frontends/gui.md#the-open-project).
+  const reopen = async () => {
+    const id = readOpenId()
+    if (!id) return
+    const entry = readRecent().find((r) => r.id === id)
+    if (!entry) return clearOpen()
+    const s = useApp.getState()
+    s.setReopening(true)
+    try {
+      if (entry.kind === 'demo') return await openDemo(id.slice('demo:'.length), true)
+      if (entry.kind === 'browser') {
+        const files = await readFiles(id)
+        if (!('jazyk.toml' in files)) return clearOpen()
+        touchRecent({ id, kind: 'browser', name: entry.name })
+        return await openStored({ kind: 'stored', id, name: entry.name, demo: null, store: new StoredProject(id) }, files, true)
+      }
+      const handle = (await folderHandle(id)) as DirHandle | undefined
+      if (!handle) return clearOpen()
+      const mode = entry.mode ?? 'read'
+      // Silently first: a grant that outlived the tab needs no click.
+      const h = handle as unknown as { queryPermission(o: { mode: string }): Promise<PermissionState> }
+      if ((await h.queryPermission({ mode: mode === 'write' ? 'readwrite' : 'read' })) === 'granted') {
+        return await openFolder(id, handle, mode, true)
+      }
+      s.setPendingFolder({ id, name: entry.name })
+    } catch (err) {
+      console.warn('[jazyk reopen]', err)
+      clearOpen()
+    } finally {
+      useApp.getState().setReopening(false)
+    }
+  }
+
+  // The `Continue with <folder>` card's click: the gesture the permission prompt
+  // needs. Declining goes to Home with the folder in Recent.
+  const continueFolder = async () => {
+    const pending = useApp.getState().pendingFolder
+    if (!pending) return
+    const entry = readRecent().find((r) => r.id === pending.id)
+    const handle = (await folderHandle(pending.id)) as DirHandle | undefined
+    const mode = entry?.mode ?? 'read'
+    if (handle && (await ensurePermission(handle, mode))) {
+      useApp.getState().setPendingFolder(null)
+      await openFolder(pending.id, handle, mode, true)
+      return
+    }
+    useApp.getState().setPendingFolder(null)
+    clearOpen()
+    window.location.hash = '#/'
   }
 
   const on = (name: string, fn: (detail: unknown) => Promise<void> | void, what = 'project') =>
@@ -220,6 +290,16 @@ export function installLocalProjects(d: LocalDeps) {
     })
 
   on('jazyk:open-demo', (detail) => openDemo(String(detail ?? '')), 'demo')
+
+  on('jazyk:close-project', () => closeProject())
+
+  on('jazyk:continue-folder', () => continueFolder(), 'folder')
+
+  on('jazyk:decline-folder', () => {
+    useApp.getState().setPendingFolder(null)
+    clearOpen()
+    window.location.hash = '#/'
+  })
 
   on('jazyk:new-project', (detail) => newProject(String((detail as { name?: string })?.name ?? '')))
 
@@ -444,4 +524,8 @@ export function installLocalProjects(d: LocalDeps) {
     if (current?.kind === 'folder' && current.mirror.keptCount > 0) e.preventDefault()
     if (current?.kind === 'stored' && current.store?.writer.error) e.preventDefault()
   })
+
+  // Synchronous, so the routes see `reopening` before their first render.
+  if (readOpenId()) useApp.getState().setReopening(true)
+  void reopen()
 }

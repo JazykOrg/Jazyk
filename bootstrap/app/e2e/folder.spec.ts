@@ -6,7 +6,7 @@
 // fail, the way a lapsed permission or a moved folder does; `window.__denyWrite`
 // makes the browser refuse a write grant.
 import { expect, test, type Page } from '@playwright/test'
-import { api, offline, storedKeys, storedText, typeAtEnd } from './helpers'
+import { api, chooseMenuItem, closeMenu, createProject, offline, openProjectMenu, projectMenuItems, storedKeys, storedText, typeAtEnd, whereChangesGo } from './helpers'
 
 async function readProjectFile(page: Page, path: string, root = 'proj'): Promise<string> {
   return page.evaluate(
@@ -111,16 +111,16 @@ test('read-only holds a save and asks; writing lands it and then autosaves', asy
   await page.getByRole('button', { name: 'Open folder…' }).click()
   await page.waitForURL(/#\/docs/)
   await page.goto('/#/docs/docs/main.js.md')
-  await expect(page.locator('.ws-folder')).toContainText('read-only')
+  expect(await whereChangesGo(page)).toBe('Saved to proj (read-only)')
 
   await typeAtEnd(page, '\nHeld line.')
   await page.keyboard.press('Control+s')
   await expect(page.locator('.ide-askwrite')).toContainText('read-only')
-  await expect(page.locator('.ws-folder')).toContainText('unwritten')
+  expect(await projectMenuItems(page)).toContain('Write 1 change to the folder')
   expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
 
   await page.locator('.ide-askwrite').getByRole('button', { name: 'write to disk' }).click()
-  await expect(page.locator('.ws-folder')).toContainText('writing')
+  await expect.poll(() => whereChangesGo(page)).toBe('Saved to proj (writing)')
   await expect.poll(() => readProjectFile(page, 'docs/main.js.md')).toContain('Held line.')
 
   await typeAtEnd(page, '\nAuto line.')
@@ -130,25 +130,30 @@ test('read-only holds a save and asks; writing lands it and then autosaves', asy
 test('a folder whose writes fail keeps them in this browser, and Retry lands them', async ({ page }) => {
   await openFolder(page, 'write')
   await page.goto('/#/docs/docs/main.js.md')
-  await expect(page.locator('.ws-folder')).toContainText('writing')
+  expect(await whereChangesGo(page)).toBe('Saved to proj (writing)')
   await failWrites(page, true)
 
   await typeAtEnd(page, '\nKept line.')
-  const failed = page.locator('.ws-folder.failed')
-  await expect(failed).toContainText(/Could not write to proj: \d+ changes? kept in this browser/, { timeout: 8000 })
+  // The one warning beside the name; clicking it opens the menu with the reason.
+  const warning = page.locator('.ws-top .ws-unwritten')
+  await expect(warning).toHaveText(/\d+ changes? not written/, { timeout: 8000 })
   expect(await readProjectFile(page, 'docs/main.js.md')).not.toContain('Kept line.')
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
+  await warning.click()
+  const menu = page.locator('.ws-menu')
+  await expect(menu.locator('.ws-menu-note.failed')).toContainText(/Could not write to proj: \d+ changes? kept in this browser/)
 
   // Still failing: Retry stops at the first change and keeps them all.
   const before = await refused(page)
-  await failed.getByRole('button', { name: 'Retry' }).click()
+  await menu.getByRole('menuitem', { name: 'Retry' }).click()
   await expect.poll(() => refused(page)).toBeGreaterThan(before)
-  await expect(failed.getByRole('button', { name: 'Retry' })).toBeVisible()
+  await expect(warning).toBeVisible()
 
   await failWrites(page, false)
-  await failed.getByRole('button', { name: 'Retry' }).click()
-  await expect(page.locator('.ws-folder')).toHaveText(/^writing/)
-  await expect(page.locator('.ws-folder.failed')).toHaveCount(0)
+  await chooseMenuItem(page, 'Retry')
+  await expect(warning).toHaveCount(0)
+  expect(await whereChangesGo(page)).toBe('Saved to proj (writing)')
+  expect(await projectMenuItems(page)).not.toContain('Retry')
   expect(await readProjectFile(page, 'docs/main.js.md')).toContain('Kept line.')
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toEqual([])
 
@@ -163,10 +168,11 @@ test('reopening a folder with kept changes shows them and offers to write them',
   await page.goto('/#/docs/docs/main.js.md')
   await failWrites(page, true)
   await typeAtEnd(page, '\nKept line.')
-  await expect(page.locator('.ws-folder.failed')).toBeVisible({ timeout: 8000 })
+  await expect(page.locator('.ws-top .ws-unwritten')).toBeVisible({ timeout: 8000 })
   await expect.poll(() => storedKeys(page, 'kept:folder:')).not.toEqual([])
 
-  // A reload is a new tab's worth of state: writes work again, nothing is open.
+  // A reload is a new tab's worth of state: writes work again. The folder reopens
+  // from the recent row.
   await page.reload()
   await page.goto('/#/')
   const row = page.locator('.proj.recent', { hasText: 'proj' })
@@ -177,10 +183,9 @@ test('reopening a folder with kept changes shows them and offers to write them',
   // The tab shows the work as it was left; the folder does not have it yet.
   expect((await api<{ text: string }>(page, 'GET', '/api/docs/content?path=docs/main.js.md')).text).toContain('Kept line.')
   expect(await readProjectFile(page, 'docs/main.js.md')).not.toContain('Kept line.')
-  const held = page.locator('.ws-folder.held')
-  await expect(held).toContainText('kept in this browser')
-  await held.getByRole('button', { name: 'Write to folder' }).click()
-  await expect(page.locator('.ws-folder')).toHaveText(/^writing/)
+  expect(await whereChangesGo(page)).toBe('Saved to proj (writing)')
+  await chooseMenuItem(page, 'Write 1 change to the folder')
+  await expect.poll(() => projectMenuItems(page)).not.toContain('Discard')
   expect(await readProjectFile(page, 'docs/main.js.md')).toContain('Kept line.')
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toEqual([])
 })
@@ -192,7 +197,7 @@ test("read-only mode's held changes survive a reload, and discard reopens the fo
   await page.goto('/#/docs/docs/main.js.md')
   await typeAtEnd(page, '\nHeld line.')
   await page.keyboard.press('Control+s')
-  await expect(page.locator('.ws-folder')).toContainText('unwritten')
+  await expect.poll(() => projectMenuItems(page)).toContain('Write 1 change to the folder')
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
 
   await page.reload()
@@ -202,34 +207,31 @@ test("read-only mode's held changes survive a reload, and discard reopens the fo
   await row.locator('.recent-open').click()
   await page.waitForURL(/#\/docs/)
   expect((await api<{ text: string }>(page, 'GET', '/api/docs/content?path=docs/main.js.md')).text).toContain('Held line.')
-  await expect(page.locator('.ws-folder')).toContainText(/read-only · \d+ unwritten/)
+  expect(await whereChangesGo(page)).toBe('Saved to proj (read-only)')
+  expect(await projectMenuItems(page)).toContain('Write 1 change to the folder')
   expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
 
   await page.goto('/#/docs/docs/main.js.md')
   await expect(page.locator('.cm-content')).toContainText('Held line.')
-  await page.locator('.ws-folder').getByRole('button', { name: 'discard' }).click()
-  await expect(page.locator('.ws-folder')).toHaveText(/^read-only/)
-  await expect(page.locator('.ws-folder')).not.toContainText('unwritten')
+  await chooseMenuItem(page, 'Discard')
+  await expect.poll(() => whereChangesGo(page)).toBe('Saved to proj (read-only)')
+  expect(await projectMenuItems(page)).not.toContain('Discard')
   await expect.poll(async () => (await api<{ text: string }>(page, 'GET', '/api/docs/content?path=docs/main.js.md')).text).toBe(original)
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toEqual([])
   // The editor shows the folder as it is, and nothing is kept again.
   await expect(page.locator('.cm-content')).not.toContainText('Held line.')
   await page.waitForTimeout(1500)
-  await expect(page.locator('.ws-folder')).not.toContainText('unwritten')
+  expect(await projectMenuItems(page)).not.toContain('Discard')
 })
 
 test('a browser project saved to a folder becomes that folder, in writing mode', async ({ page }) => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Project name').fill('Garden planner')
-  await page.getByRole('button', { name: 'Create' }).click()
-  await page.waitForURL(/#\/docs/)
+  await createProject(page, 'Garden planner')
 
   await page.evaluate(() => {
     ;(window as unknown as { __pickDir: string }).__pickDir = 'saved'
   })
-  await page.locator('.ws-place-chip').click()
-  await page.locator('.ws-place-menu').getByRole('button', { name: 'Save to a folder…' }).click()
-  await expect(page.locator('.ws-folder')).toHaveText(/^writing/)
+  await chooseMenuItem(page, 'Save to a folder on this computer…')
+  await expect.poll(() => whereChangesGo(page)).toBe('Saved to saved (writing)')
   expect(await readProjectFile(page, 'jazyk.toml', 'saved')).toContain('docs/**/*.md')
   expect(await readProjectFile(page, 'docs/README.md', 'saved')).toContain('# Garden planner')
   expect(await api(page, 'GET', '/api/capabilities')).toMatchObject({ persistence: 'folder' })
@@ -255,7 +257,8 @@ test("'not now' on the write prompt keeps the folder read-only and holds the cha
   await expect(ask).toContainText('read-only')
   await ask.getByRole('button', { name: 'not now' }).click()
   await expect(ask).toHaveCount(0)
-  await expect(page.locator('.ws-folder')).toHaveText(/^read-only · 1 unwritten/)
+  expect(await whereChangesGo(page)).toBe('Saved to proj (read-only)')
+  expect(await projectMenuItems(page)).toContain('Write 1 change to the folder')
   expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
   expect((await api<{ text: string }>(page, 'GET', '/api/docs/content?path=docs/main.js.md')).text).toContain('Held line.')
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
@@ -264,15 +267,14 @@ test("'not now' on the write prompt keeps the folder read-only and holds the cha
 test('switching a writing folder to read-only from the top bar keeps new edits in this browser', async ({ page }) => {
   await openFolder(page, 'write')
   await page.goto('/#/docs/docs/main.js.md')
-  const folder = page.locator('.ws-folder')
-  await expect(folder).toHaveText(/^writing/)
-  await folder.getByRole('button', { name: 'read-only' }).click()
-  await expect(folder).toHaveText(/^read-only/)
+  expect(await whereChangesGo(page)).toBe('Saved to proj (writing)')
+  await chooseMenuItem(page, 'Switch to read-only')
+  await expect.poll(() => whereChangesGo(page)).toBe('Saved to proj (read-only)')
   const original = await readProjectFile(page, 'docs/main.js.md')
 
   await typeAtEnd(page, '\nKept line.')
   await page.keyboard.press('Control+s')
-  await expect(folder).toContainText('read-only · 1 unwritten')
+  await expect.poll(() => projectMenuItems(page)).toContain('Write 1 change to the folder')
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
   expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
   // The recent list remembers the mode it was left in.
@@ -292,10 +294,7 @@ test('picking the same folder twice gives one Recent row', async ({ page }) => {
 })
 
 test('a save to a folder whose writes fail leaves the browser project intact', async ({ page }) => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Project name').fill('Garden planner')
-  await page.getByRole('button', { name: 'Create' }).click()
-  await page.waitForURL(/#\/docs/)
+  await createProject(page, 'Garden planner')
   await page.evaluate(() => {
     const w = window as unknown as { __pickDir: string; __failWrites: boolean }
     w.__pickDir = 'saved'
@@ -306,13 +305,12 @@ test('a save to a folder whose writes fail leaves the browser project intact', a
     alerted = d.message()
     void d.accept()
   })
-  await page.locator('.ws-place-chip').click()
-  await page.locator('.ws-place-menu').getByRole('button', { name: 'Save to a folder…' }).click()
+  await chooseMenuItem(page, 'Save to a folder on this computer…')
   await expect.poll(() => alerted).toContain('Could not save Garden planner to saved')
   expect(alerted).toContain('The project stays in this browser')
 
   // Still a browser project: its storage, its descriptor, its recent row.
-  await expect(page.locator('.ws-place-chip')).toContainText('in this browser')
+  expect(await whereChangesGo(page)).toBe('Saved in this browser only')
   expect(await api(page, 'GET', '/api/capabilities')).toMatchObject({ persistence: 'browser' })
   expect((await storedKeys(page, 'file:browser:')).length).toBe(2)
   await failWrites(page, false)
@@ -335,9 +333,13 @@ test('a write grant the browser refuses leaves the folder read-only and says so'
     ;(window as unknown as { __denyWrite: boolean }).__denyWrite = true
   })
   await page.locator('.ide-askwrite').getByRole('button', { name: 'write to disk' }).click()
-  const folder = page.locator('.ws-folder')
-  await expect(folder).toContainText('the browser did not grant write access')
-  await expect(folder).toHaveText(/^read-only · 1 unwritten/)
+  // A refused grant is a problem: the warning beside the name, the reason in the menu.
+  await expect(page.locator('.ws-top .ws-unwritten')).toHaveText('1 change not written')
+  let menu = await openProjectMenu(page)
+  await expect(menu.locator('.ws-menu-note.failed')).toContainText('the browser did not grant write access')
+  await expect(menu.locator('.ws-menu-where')).toHaveText('Saved to proj (read-only)')
+  await expect(menu.getByRole('menuitem', { name: 'Write 1 change to the folder' })).toBeVisible()
+  await closeMenu(page)
   expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
   await expect.poll(() => storedKeys(page, 'kept:folder:')).toContainEqual(expect.stringMatching(/:docs\/main\.js\.md$/))
 
@@ -345,8 +347,11 @@ test('a write grant the browser refuses leaves the folder read-only and says so'
   await page.evaluate(() => {
     ;(window as unknown as { __denyWrite: boolean }).__denyWrite = false
   })
-  await folder.getByRole('button', { name: 'write to disk' }).click()
-  await expect(folder).toHaveText(/^writing/)
-  await expect(folder).not.toContainText('did not grant')
+  await chooseMenuItem(page, 'Write 1 change to the folder')
+  await expect.poll(() => whereChangesGo(page)).toBe('Saved to proj (writing)')
+  await expect(page.locator('.ws-top .ws-unwritten')).toHaveCount(0)
+  menu = await openProjectMenu(page)
+  await expect(menu.locator('.ws-menu-note.failed')).toHaveCount(0)
+  await closeMenu(page)
   await expect.poll(() => readProjectFile(page, 'docs/main.js.md')).toContain('Held line.')
 })

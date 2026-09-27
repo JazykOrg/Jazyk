@@ -657,7 +657,7 @@ export interface Job {
   startedAt: string | null
   finishedAt: string | null
   result: Record<string, unknown> | null
-  events?: { jobId: number; event: TraceEvent }[]
+  events?: { jobId: number; n?: number; event: TraceEvent }[]
 }
 
 export interface TraceEvent {

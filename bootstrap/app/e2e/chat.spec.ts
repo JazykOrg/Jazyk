@@ -58,12 +58,15 @@ test('a chat on an endpoint source calls a read tool and answers in the pane', a
   await chat.getByLabel('Model', { exact: true }).fill('test-model')
   await chat.getByRole('button', { name: 'Save' }).click()
 
-  // The model is ready: the chooser gives way to the conversation.
-  await chat.getByRole('button', { name: 'New conversation' }).click()
+  // The model is ready: the chooser gives way to the prompt box, and the first
+  // question needs no conversation first (docs/frontends/gui.md#chat).
+  await expect(chat.locator('.chat-empty')).toContainText('Ask about the project')
+  await expect(chat.locator('.chat-sess')).toHaveCount(0)
   const box = chat.locator('.chat-input textarea')
   await box.fill('What is a Customer?')
   await box.press('Enter')
 
+  await expect(chat.locator('.chat-sess')).toHaveCount(1)
   await expect(chat.locator('.chat-row.user')).toContainText('What is a Customer?')
   await expect(chat.locator('.chat-row.tool')).toContainText('search')
   await expect(chat.locator('.chat-row.tool.ok')).toHaveCount(1)
@@ -109,7 +112,6 @@ test('an edit asked in chat moves the prose and the graph together', async ({ pa
   await chat.getByLabel('Base URL', { exact: true }).fill(ENDPOINT)
   await chat.getByLabel('Model', { exact: true }).fill('test-model')
   await chat.getByRole('button', { name: 'Save' }).click()
-  await chat.getByRole('button', { name: 'New conversation' }).click()
   await chat.locator('.chat-input textarea').fill('A Product also has a stock count.')
   await chat.locator('.chat-input textarea').press('Enter')
   await expect(chat.locator('.chat-row.tool.ok')).toContainText('revise_requirement')
@@ -139,7 +141,6 @@ test('a model error ends the turn with the error in the pane, never a hang', asy
   await chat.getByLabel('Base URL', { exact: true }).fill(ENDPOINT)
   await chat.getByLabel('Model', { exact: true }).fill('small-model')
   await chat.getByRole('button', { name: 'Save' }).click()
-  await chat.getByRole('button', { name: 'New conversation' }).click()
   await chat.locator('.chat-input textarea').fill('Tell me everything.')
   await chat.locator('.chat-input textarea').press('Enter')
   const end = chat.locator('.chat-row.marker').last()
@@ -163,13 +164,17 @@ test('cancel ends a turn whose model call never answers', async ({ page }) => {
   await chat.getByLabel('Base URL', { exact: true }).fill(ENDPOINT)
   await chat.getByLabel('Model', { exact: true }).fill('slow-model')
   await chat.getByRole('button', { name: 'Save' }).click()
-  await chat.getByRole('button', { name: 'New conversation' }).click()
   await chat.locator('.chat-input textarea').fill('Are you there?')
   await chat.locator('.chat-input textarea').press('Enter')
   await expect.poll(() => calls).toBe(1)
-  await chat.getByRole('button', { name: 'cancel' }).click()
+  // Working: the transcript ends with what the agent is doing, the row pulses, and
+  // Send reads Stop (docs/frontends/gui.md#chat).
+  await expect(chat.locator('.chat-row.working')).toHaveText('Thinking…')
+  await expect(chat.locator('.chat-sess.working')).toHaveCount(1)
+  await chat.getByRole('button', { name: 'Stop' }).click()
   await expect(chat.locator('.chat-row.marker').last()).toContainText('cancelled')
-  await expect(chat.getByRole('button', { name: 'send' })).toBeVisible()
+  await expect(chat.locator('.chat-row.working')).toHaveCount(0)
+  await expect(chat.getByRole('button', { name: 'Send' })).toBeVisible()
 })
 
 // The chat pane's chooser, filled in as a person does it: the endpoint is the
@@ -180,7 +185,7 @@ async function useEndpoint(page: Page, model = 'test-model') {
   await chat.getByLabel('Base URL', { exact: true }).fill(ENDPOINT)
   await chat.getByLabel('Model', { exact: true }).fill(model)
   await chat.getByRole('button', { name: 'Save' }).click()
-  await chat.getByRole('button', { name: 'New conversation' }).click()
+  await expect(chat.locator('.chat-input textarea')).toBeVisible()
 }
 
 async function ask(page: Page, text: string) {
@@ -210,7 +215,8 @@ test('switching demos empties the conversations', async ({ page }) => {
   await openDemo(page, 'The sort utility')
   expect((await sessions(page)).sessions).toEqual([])
   await expect(chat.locator('.chat-row.agent')).toHaveCount(0)
-  await expect(chat.getByRole('button', { name: 'New conversation' })).toBeVisible()
+  await expect(chat.locator('.chat-empty')).toContainText('Ask about the project')
+  await expect(chat.locator('.chat-input textarea')).toBeVisible()
 })
 
 test('a second prompt while a turn runs is refused with 409', async ({ page }) => {
@@ -222,7 +228,10 @@ test('a second prompt while a turn runs is refused with 409', async ({ page }) =
   })
   await openDemo(page, 'The shop')
   await useEndpoint(page, 'slow-model')
-  // The worker answers nothing while it is inside the turn, so the id is read first.
+  // The worker answers nothing while it is inside the turn, so the conversation is
+  // started from the header and its id read first.
+  await page.locator('.wb-chat .chat-new').click()
+  await expect(page.locator('.wb-chat .chat-sess')).toHaveCount(1)
   const { sessions: before } = await sessions(page)
   expect(before).toHaveLength(1)
   await ask(page, 'Are you there?')
@@ -231,10 +240,10 @@ test('a second prompt while a turn runs is refused with 409', async ({ page }) =
   const refused = await envelope(page, 'POST', `/api/chat/sessions/${encodeURIComponent(before[0].id)}/prompt`, { text: 'Again?' })
   expect(refused.status).toBe(409)
   expect(refused.body).toMatchObject({ error: expect.stringContaining('already running') })
-  // The pane offers only the cancel while the turn runs, and it ends the turn.
+  // The pane offers only Stop while the turn runs, and it ends the turn.
   const chat = page.locator('.wb-chat')
-  await expect(chat.getByRole('button', { name: 'send' })).toHaveCount(0)
-  await chat.getByRole('button', { name: 'cancel' }).click()
+  await expect(chat.getByRole('button', { name: 'Send' })).toHaveCount(0)
+  await chat.getByRole('button', { name: 'Stop' }).click()
   await expect(chat.locator('.chat-row.marker').last()).toContainText('cancelled')
   await expect(chat.locator('.chat-row.user')).toHaveCount(1)
   expect(calls).toBe(1)

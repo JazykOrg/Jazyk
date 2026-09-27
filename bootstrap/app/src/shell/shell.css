@@ -980,85 +980,6 @@ a.trail-step:hover .trail-label {
   max-height: none;
 }
 
-/* A folder open in the browser: its mode, and what read-only mode holds
-   (docs/frontends/wasm.md#a-folder-on-disk). */
-.ws-top .ws-folder {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 2px 2px 2px 8px;
-}
-
-.ws-top .ws-folder.held {
-  color: var(--warn);
-  border-color: var(--warn);
-}
-
-.ws-top .ws-folder button {
-  font-size: 11.5px;
-  padding: 2px 8px;
-}
-
-/* A write that did not land, said plainly with the way to recover beside it
-   (docs/frontends/wasm.md#when-a-folder-cannot-be-written). */
-.ws-top .ws-folder.failed {
-  color: var(--err);
-  border-color: var(--err);
-  font-weight: 500;
-}
-
-/* A project kept in this browser, or a demo: the chip opens a small menu saying what
-   that means and what can be done (docs/frontends/wasm.md#browser-storage). */
-.ws-top .ws-place-chip {
-  font-size: 12px;
-  color: var(--muted);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 3px 8px;
-  white-space: nowrap;
-}
-
-.ws-top .ws-place-chip:hover,
-.ws-top .ws-place-chip[aria-expanded='true'] {
-  color: var(--ink);
-  border-color: var(--accent);
-  outline: none;
-}
-
-.ws-place-menu {
-  position: fixed;
-  width: 320px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-  padding: 12px 14px;
-  z-index: 50;
-  white-space: normal;
-  font-size: 13px;
-  color: var(--ink);
-}
-
-.ws-place-menu p {
-  margin: 0 0 10px;
-  line-height: 1.45;
-}
-
-.ws-place-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.ws-place-actions button {
-  font-size: 12.5px;
-}
-
 /* The recent list in the browser (docs/frontends/gui.md#home). */
 .home .proj.recent {
   display: flex;
@@ -1120,16 +1041,7 @@ a.trail-step:hover .trail-label {
   color: var(--warn);
 }
 
-/* New project: a name, then Create (docs/frontends/gui.md#home). */
-.home .home-new {
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
-  border-radius: 6px;
-  padding: 12px 14px;
-  margin: -14px 0 24px;
-  background: var(--panel);
-}
-
+/* Start a project in this browser: a name, then Create (docs/frontends/gui.md#home). */
 .home .home-new-row {
   display: flex;
   gap: 8px;
@@ -1144,22 +1056,6 @@ a.trail-step:hover .trail-label {
 .home .home-new-row button {
   padding: 7px 14px;
   font-size: 14px;
-}
-
-.home .home-new button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-.home .home-new p {
-  margin: 8px 0 0;
-  font-size: 12.5px;
-}
-
-.home .home-nostore {
-  border-left-color: var(--warn);
 }
 
 .home .home-readonly {
@@ -1741,4 +1637,288 @@ a.trail-step:hover .trail-label {
 
 .home .home-nofolder {
   border-left-color: var(--warn);
+}
+
+/* The split action button (docs/frontends/gui.md#the-action-button): the main part
+   runs the chosen action and reads its state; the arrow opens the list. */
+.ws-action {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.ws-action > button.main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.ws-action > button.arrow {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  padding: 5px 7px;
+  border-left: 1px solid color-mix(in srgb, #fff 30%, transparent);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+.ws-action > button.arrow.running {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+.ws-action > button.arrow.idle {
+  background: var(--panel);
+  border-color: var(--line);
+  border-left-color: var(--line);
+  color: var(--ink);
+}
+
+.ws-action > button.primary.running {
+  animation: ws-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ws-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-action > button.primary.running {
+    animation: none;
+  }
+}
+
+/* The menus: the project menu and the action list, one look
+   (docs/frontends/gui.md#the-project-menu). */
+.ws-menu {
+  min-width: 260px;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  z-index: 60;
+  white-space: normal;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ws-menu-where {
+  padding: 6px 10px 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.ws-menu-note {
+  margin: 0;
+  padding: 4px 10px 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.ws-menu-note.failed {
+  color: var(--err);
+}
+
+.ws-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  line-height: 1.35;
+}
+
+.ws-menu-item[data-highlighted] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ws-menu-item[data-disabled] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.ws-menu-item .state {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ws-menu-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 2px;
+}
+
+/* The project menu's trigger keeps the project's look; the caret says it opens. */
+.ws-top button.ws-project {
+  background: none;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ws-top .ws-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-top .ws-project-caret {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* The one warning beside the name: changes a folder or this browser did not take
+   (docs/frontends/gui.md#the-project-menu). */
+.ws-top .ws-unwritten {
+  font-size: 12px;
+  color: var(--err);
+  border: 1px solid var(--err);
+  border-radius: 5px;
+  background: none;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* Home's cards (docs/frontends/gui.md#home): four side by side, stacked on a
+   narrow screen. */
+.home {
+  max-width: 1080px;
+}
+
+.home-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.home-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px 14px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.home-card h2 {
+  margin: 0;
+  font-size: 15px;
+  border: none;
+  padding: 0;
+}
+
+.home-card p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.home-card .demos {
+  grid-template-columns: 1fr;
+  gap: 4px;
+  margin: 0;
+}
+
+.home-card .demo {
+  padding: 6px 8px;
+  gap: 1px;
+}
+
+.home-card .demo .blurb {
+  font-size: 11.5px;
+}
+
+.home-card .actions {
+  margin: 0;
+  align-items: center;
+}
+
+.home-card .home-new-row {
+  flex-wrap: wrap;
+}
+
+.home-card .home-new-row input {
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+.home-card button.primary,
+.home .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.home-card.home-nofolder,
+.home-card.home-nostore {
+  border-left: 4px solid var(--warn);
+}
+
+.home-card.home-connect {
+  border-left: 4px solid var(--accent);
+}
+
+.home-open {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 14px 14px;
+  margin-bottom: 20px;
+  background: var(--panel);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+
+.home-open h2 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border: none;
+  padding: 0;
+  flex-basis: 100%;
+}
+
+.home-open p {
+  margin: 0;
+  flex: 1;
+}
+
+.home-open .btn {
+  padding: 6px 12px;
+  border-radius: 5px;
+  text-decoration: none;
+}
+
+@media (max-width: 760px) {
+  .home-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ws-continue .actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
 }

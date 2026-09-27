@@ -73,6 +73,25 @@ function DevGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// A remembered folder that needs the browser's permission again: one card in the
+// workspace's place, whose click asks (docs/frontends/gui.md#the-open-project).
+function ContinueCard({ name }: { name: string }) {
+  return (
+    <Scroll>
+      <div className="empty-state ws-continue" style={{ marginTop: 60 }}>
+        <b>Continue with {name}</b>
+        The browser needs your permission to open the folder again.
+        <div className="actions">
+          <button className="primary" onClick={() => window.dispatchEvent(new CustomEvent('jazyk:continue-folder'))}>
+            Continue with {name}
+          </button>
+          <button onClick={() => window.dispatchEvent(new CustomEvent('jazyk:decline-folder'))}>Not now</button>
+        </div>
+      </div>
+    </Scroll>
+  )
+}
+
 function DocsHome() {
   return (
     <Scroll>
@@ -117,6 +136,10 @@ export default function App() {
   const [palette, setPalette] = useState(0)
   const home = loc.pathname === '/'
   const open = useProjectOpen()
+  const pendingFolder = useApp((a) => a.pendingFolder)
+  // The remembered project reopens before any route renders, Home included
+  // (docs/frontends/gui.md#the-open-project).
+  const reopening = useApp((a) => a.reopening)
   const narrow = useNarrow()
   // On a narrow screen the navigator is a drawer, closed again by any navigation.
   const [navOpen, setNavOpen] = useState(false)
@@ -132,7 +155,9 @@ export default function App() {
         {panes && navOpen && <div className="ws-scrim" onClick={() => setNavOpen(false)} />}
         <div className="ws-centerrow">
           <main className="ws-center">
-            {!home && open === false ? (
+            {reopening ? null : !home && !open && pendingFolder ? (
+              <ContinueCard name={pendingFolder.name} />
+            ) : !home && open === false ? (
               <Navigate to="/" replace />
             ) : !home && open === undefined ? null : (
             <Routes>

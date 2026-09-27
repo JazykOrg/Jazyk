@@ -151,11 +151,21 @@ test('the recent list remembers a demo, reopens it, and forgets it', async ({ pa
   await expect(page.locator('.proj.recent')).toHaveCount(0)
 })
 
-test('Home reads Recent, then Local project, then the demos', async ({ page }) => {
+test('Home reads Open now, the four cards, then Recent', async ({ page }) => {
   await openDemo(page, 'The shop')
   await page.goto('/#/')
-  await expect(page.locator('.home h2')).toHaveText(['Recent', 'Local project', 'Demos'])
+  await expect(page.locator('.home h2')).toHaveText([
+    'Open now',
+    'Try a demo',
+    'Start a project in this browser',
+    'Open a folder on this computer',
+    'Connect to jazyk on this computer',
+    'Recent',
+  ])
   await expect(page.locator('.home').getByRole('button', { name: 'Open folder…' })).toBeVisible()
+  // Going Home does not close the project.
+  await expect(page.locator('.home-open')).toContainText('The shop')
+  await expect(page.locator('.ws-lenses')).toBeVisible()
 })
 
 test('a browser without the folder API says so instead of offering the button', async ({ page }) => {
@@ -163,7 +173,7 @@ test('a browser without the folder API says so instead of offering the button', 
     delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker
   })
   await page.goto('/#/')
-  await expect(page.locator('.home-nofolder')).toContainText('cannot open a folder')
+  await expect(page.locator('.home-nofolder')).toContainText('needs Chrome, Edge, or another Chromium browser')
   await expect(page.locator('.home').getByRole('button', { name: 'Open folder…' })).toHaveCount(0)
 })
 
@@ -181,10 +191,10 @@ test('an endpoint model source is ready at once and is remembered in this browse
   expect(await api<{ model: string }>(page, 'GET', '/api/capabilities')).toMatchObject({ model: 'in-page' })
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('jazyk.modelSource') ?? '{}'))
   expect(stored).toMatchObject({ kind: 'endpoint', baseUrl: 'http://localhost:4999/v1', model: 'test-model' })
-  // A reload keeps the choice; the demo reopens from the recent list.
+  // A reload keeps the choice, and the open project with its route.
   await page.reload()
-  await page.locator('.proj.recent .recent-open').first().click()
-  await page.waitForURL(/#\/docs/)
+  await expect(chooser.locator('.msrc-status')).toContainText('Ready: test-model')
+  await expect(page).toHaveURL(/#\/settings/)
   expect(await api<{ model: string }>(page, 'GET', '/api/capabilities')).toMatchObject({ model: 'in-page' })
 })
 
@@ -214,7 +224,6 @@ test("the browser's built-in model source answers a chat", async ({ page }) => {
   await chat.getByRole('button', { name: 'Load the model' }).click()
   await expect.poll(async () => (await api<{ model: string }>(page, 'GET', '/api/capabilities')).model).toBe('in-page')
 
-  await chat.getByRole('button', { name: 'New conversation' }).click()
   const box = chat.locator('.chat-input textarea')
   await box.fill('What does it do?')
   await box.press('Enter')

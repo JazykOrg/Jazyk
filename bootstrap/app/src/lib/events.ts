@@ -118,6 +118,11 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       break
     case 'job.started':
       app.setJobState(ev.jobId as number, 'running')
+      // The job's build thread opens itself: the column opens if it was collapsed
+      // and selects the thread, so the run is watched from its first line
+      // (docs/frontends/gui.md#chat).
+      app.setChatOpen(true)
+      app.selectChat(`follow-${ev.jobId as number}`)
       qc.invalidateQueries({ queryKey: ['jobs'] })
       break
     case 'job.trace': {
@@ -133,6 +138,13 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       // A feedback call lands mid-run; the view refreshes on the call, not at the end.
       if (event.kind === 'toolCall' && event.name === 'report_feedback')
         qc.invalidateQueries({ queryKey: ['feedback'] })
+      // A commit lands mid-build; the graph views refresh on it, not at the end. The
+      // server also says so as store.generation; a tab has only the trace.
+      if (event.kind === 'commit' || event.kind === 'sessionDone') {
+        for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'board', 'views', 'tree', 'out'])
+          qc.invalidateQueries({ queryKey: [key] })
+        qc.invalidateQueries({ queryKey: ['node'] })
+      }
       break
     }
     case 'job.finished':
@@ -266,30 +278,10 @@ export function startEventStream(qc: QueryClient) {
   }
 }
 
-// The wasm backend has no event stream: it buffers the trace of the running build
-// and the page drains it. Each drained event goes through the same path a streamed
-// one does, so the workbench renders a browser build exactly as it renders a
-// server one (docs/frontends/wasm.md#the-trace).
-export function pushTraceEvents(qc: QueryClient, events: unknown[]) {
-  const app = useApp.getState()
-  let n = 0
-  for (const raw of events) {
-    const event = raw as TraceEvent
-    app.pushTrace({ jobId: 0, seq: n++, event })
-    applyProgress(event)
-    if (event.kind === 'toolCall' && event.name === 'report_feedback')
-      qc.invalidateQueries({ queryKey: ['feedback'] })
-    // A commit lands mid-build; the graph views refresh on it, not at the end.
-    if (event.kind === 'commit' || event.kind === 'sessionDone') {
-      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'board', 'views', 'tree', 'out'])
-        qc.invalidateQueries({ queryKey: [key] })
-      qc.invalidateQueries({ queryKey: ['node'] })
-    }
-  }
-}
-
-// The wasm backend's chat events (docs/frontends/wasm.md#chat): the worker posts
-// them in the event stream's shape, so they take the stream's own path.
+// The wasm backend's events (docs/frontends/wasm.md#chat, and jobs in a tab under
+// #the-demo): the worker and the page post them in the event stream's shape, so
+// they take the stream's own path and the workbench renders a browser build exactly
+// as it renders a server one.
 export function pushWireEvent(qc: QueryClient, event: Record<string, unknown>) {
   if (typeof event.type !== 'string') return
   dispatch(qc, event as WireEvent)

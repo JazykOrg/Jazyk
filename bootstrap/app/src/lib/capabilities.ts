@@ -76,7 +76,7 @@ export function whyNot(caps: Capabilities | undefined, need: JobKind | 'agent' |
   // A tab that can load its model offers the load in the Sync sheet.
   if (need === 'compile' && caps.model === 'loadable') return 'Sync runs a model in this browser. Load it first.'
   if (!caps.jobs.includes(need)) {
-    return `This backend cannot run ${need === 'compile' ? 'a sync' : need === 'gen' ? 'a build' : need === 'verify' ? 'a check' : need}.`
+    return `This backend cannot run ${need === 'compile' ? 'a sync' : need === 'gen' ? 'a build' : need === 'verify' || need === 'audit' ? 'a review' : need === 'decompile' ? 'Document' : need}.`
   }
   if (need === 'compile' && caps.model === 'needs-key') return 'Sync needs a model. Add an API key in Settings.'
   if (need === 'compile' && caps.model === 'none') return 'Sync needs a model. Configure one in Settings.'

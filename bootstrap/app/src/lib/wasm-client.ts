@@ -5,6 +5,7 @@
 // everything else with a 501, which is what Home renders the picker against.
 // See docs/frontends/wasm.md#the-worker and gui.md#backends-and-capabilities.
 
+import type { Job, TraceEvent } from './api'
 import type { Backend, BackendReply } from './backend'
 import type { Capabilities } from './capabilities'
 import type { FsSink } from './browser-store'
@@ -43,10 +44,11 @@ export interface WasmProject {
 
 export interface WasmBackendOptions {
   model: ModelHost
-  // Called with each trace event as the build emits it.
-  onTrace?: (events: unknown[]) => void
-  // Called with each chat event as a turn emits it, in the event stream's shape
-  // (docs/frontends/wasm.md#chat).
+  // Called with each trace event as the build emits it, and the job it belongs to.
+  onTrace?: (events: unknown[], jobId: number) => void
+  // Called with each event the page or the worker emits, in the event stream's
+  // shape: a chat turn's progress (docs/frontends/wasm.md#chat) and a job's
+  // lifecycle with its trace (docs/frontends/wasm.md#the-demo, jobs in a tab).
   onEvent?: (event: Record<string, unknown>) => void
   // Called after every write request returns: the app refetches, since there is no
   // event stream to say what moved.
@@ -119,6 +121,19 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     Atomics.notify(controlView, 0)
   }
 
+  // Jobs in a tab (docs/frontends/wasm.md#the-demo): the worker runs a build
+  // synchronously, so the page keeps the list and emits the lifecycle around the
+  // call. Newest first, kept for the life of the tab; a project open empties it.
+  let jobs: (Job & { events: { jobId: number; n: number; event: TraceEvent }[] })[] = []
+  let nextJob = 1
+  let runningJob: number | null = null
+  let traceN = 0
+  const emit = (event: Record<string, unknown>) => opts.onEvent?.(event)
+  const jobRow = (j: Job & { events: unknown[] }): Job => {
+    const { events: _events, ...row } = j
+    return row
+  }
+
   worker.onmessage = (e: MessageEvent) => {
     const msg = e.data
     if (msg?.kind === 'fs') {
@@ -131,8 +146,14 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       return
     }
     if (msg?.kind === 'trace') {
-      // Emitted from inside a running build, one event at a time.
-      opts.onTrace?.([JSON.parse(msg.event)])
+      // Emitted from inside a running build, one event at a time, numbered per job
+      // and carried as job.trace, the event the server streams.
+      const event = JSON.parse(msg.event) as TraceEvent
+      opts.onTrace?.([event], runningJob ?? 0)
+      if (runningJob === null) return
+      const n = traceN++
+      jobs.find((j) => j.id === runningJob)?.events.push({ jobId: runningJob, n, event })
+      emit({ type: 'job.trace', jobId: runningJob, n, event })
       return
     }
     if (msg?.kind === 'event') {
@@ -191,6 +212,54 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
   // The prompt request whose turn the worker is running, until it answers.
   let turn: Promise<void> | null = null
 
+  // One job, run to its end: queued and started before the call, finished after it
+  // with the verdict. The worker answers nothing else while it runs.
+  const runJob = async (body: Record<string, unknown>): Promise<BackendReply> => {
+    const kind = typeof body.kind === 'string' ? body.kind : 'compile'
+    // A build already running takes the tab: the submission is that job, as the
+    // server answers a queued compile's id.
+    const running = jobs.find((j) => j.state === 'running')
+    if (running) return reply(200, { id: running.id })
+    const id = nextJob++
+    const job = {
+      id,
+      kind: {
+        kind,
+        ...(Array.isArray(body.entities) ? { entities: body.entities as string[] } : {}),
+        ...(Array.isArray(body.targets) ? { targets: body.targets as string[] } : {}),
+      },
+      state: 'queued',
+      queuedAt: new Date().toISOString(),
+      startedAt: null as string | null,
+      finishedAt: null as string | null,
+      result: null as Record<string, unknown> | null,
+      events: [] as { jobId: number; n: number; event: TraceEvent }[],
+    }
+    jobs = [job, ...jobs]
+    emit({ type: 'job.queued', job: jobRow(job) })
+    job.state = 'running'
+    job.startedAt = new Date().toISOString()
+    runningJob = id
+    traceN = 0
+    emit({ type: 'job.started', jobId: id })
+    let status = 500
+    let answered: unknown = null
+    try {
+      ;({ status, body: answered } = await send<{ status: number; body: unknown }>({ kind: 'request', method: 'POST', path: '/api/jobs', body }))
+    } catch (e) {
+      answered = { error: e instanceof Error ? e.message : String(e) }
+    } finally {
+      runningJob = null
+    }
+    const out = (answered && typeof answered === 'object' ? answered : {}) as Record<string, unknown>
+    job.finishedAt = new Date().toISOString()
+    job.state = status < 400 ? 'finished' : 'failed'
+    job.result = status < 400 ? ((out.report as Record<string, unknown> | undefined) ?? out) : { error: out.error ?? 'the job failed' }
+    emit({ type: 'job.finished', jobId: id, state: job.state, result: job.result })
+    opts.onWrite?.()
+    return reply(status, status < 400 ? { ...out, id } : out)
+  }
+
   const request = async (method: string, path: string, body?: unknown): Promise<BackendReply> => {
     const bare = path.split('?')[0]
     if (bare === '/api/capabilities') return reply(200, capabilities())
@@ -200,6 +269,22 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       })
     }
     if (!project) return reply(501, { error: 'no project is open in this tab yet' })
+    // The job list is the page's (docs/frontends/wasm.md#the-demo).
+    if (method === 'GET' && bare === '/api/jobs') return reply(200, { jobs: jobs.map(jobRow) })
+    if (method === 'GET' && /^\/api\/jobs\/\d+$/.test(bare)) {
+      const job = jobs.find((j) => j.id === Number(bare.slice('/api/jobs/'.length)))
+      return job ? reply(200, { ...jobRow(job), events: job.events }) : reply(404, { error: 'no such job' })
+    }
+    if (method === 'POST' && bare === '/api/jobs') return runJob((body ?? {}) as Record<string, unknown>)
+    // A job's cancel cannot reach the worker either: failing the model call in
+    // flight ends the session at its next boundary.
+    if (method === 'POST' && /^\/api\/jobs\/\d+\/cancel$/.test(bare)) {
+      if (runningJob !== null && inflight) {
+        inflight = 0
+        answer({ error: 'the job was cancelled' })
+      }
+      return reply(202, { ok: true })
+    }
     // A cancel cannot reach the worker: it is inside the turn. The flag stops the loop
     // at its next check, and failing the model call in flight ends the wait now.
     if (method === 'POST' && /^\/api\/chat\/sessions\/[^/]+\/cancel$/.test(bare)) {
@@ -237,6 +322,8 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     capabilities,
     async open(p: WasmProject) {
       project = { ...p, files: {} }
+      // The jobs belonged to the project the tab had open before.
+      jobs = []
       await send({ kind: 'seed', files: p.files, model: opts.model.name() })
       sink = p.sink
     },

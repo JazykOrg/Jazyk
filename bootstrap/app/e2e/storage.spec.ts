@@ -4,7 +4,7 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import { unzipSync } from 'fflate'
-import { api, offline, openDemo, pageErrors, storedKeys, storedText, typeAtEnd } from './helpers'
+import { api, chooseMenuItem, createProject, offline, openDemo, openProjectMenu, pageErrors, projectMenuItems, storedKeys, storedText, typeAtEnd, whereChangesGo } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await offline(page)
@@ -17,10 +17,7 @@ async function docText(page: Page, path: string): Promise<string> {
 test('a new project starts in the browser, keeps an edit across a reload, and reopens from Recent', async ({ page }) => {
   const errors = pageErrors(page)
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Project name').fill('Garden planner')
-  await page.getByRole('button', { name: 'Create' }).click()
-  await page.waitForURL(/#\/docs/)
+  await createProject(page, 'Garden planner')
 
   // The minimal project: a jazyk.toml and a README saying what to write.
   const docs = await api<{ docs: { path: string }[] }>(page, 'GET', '/api/docs')
@@ -28,7 +25,7 @@ test('a new project starts in the browser, keeps an edit across a reload, and re
   expect(await docText(page, 'docs/README.md')).toContain('# Garden planner')
   expect(await api(page, 'GET', '/api/capabilities')).toMatchObject({ backend: 'wasm', persistence: 'browser' })
   await expect(page.locator('.ws-project')).toContainText('Garden planner')
-  await expect(page.locator('.ws-place-chip')).toContainText('in this browser')
+  expect(await whereChangesGo(page)).toBe('Saved in this browser only')
 
   await page.goto('/#/docs/docs/README.md')
   await typeAtEnd(page, '\nA planner lays out the beds of a garden.')
@@ -44,11 +41,11 @@ test('a new project starts in the browser, keeps an edit across a reload, and re
   await page.waitForURL(/#\/docs/)
   expect(await docText(page, 'docs/README.md')).toContain('A planner lays out the beds of a garden.')
 
-  // The Home banner and the top bar menu say where it lives.
-  await page.locator('.ws-place-chip').click()
-  await expect(page.locator('.ws-place-menu')).toContainText('stored in this browser only')
-  await expect(page.locator('.ws-place-menu').getByRole('button', { name: 'Download .zip' })).toBeVisible()
-  await expect(page.locator('.ws-place-menu').getByRole('button', { name: 'Save to a folder…' })).toBeVisible()
+  // The project menu says where it lives and offers the ways out.
+  expect(await whereChangesGo(page)).toBe('Saved in this browser only')
+  const items = await projectMenuItems(page)
+  expect(items).toContain('Download as .zip')
+  expect(items).toContain('Save to a folder on this computer…')
   expect(errors).toEqual([])
 })
 
@@ -68,7 +65,8 @@ test('an edited demo reopens with the edit after a reload, then resets to the or
   await expect.poll(() => storedText(page, 'file:demo:shop:', 'docs/catalog.md')).toContain(LINE)
   // The copy carries the whole fixture, not just the edited file.
   expect(await storedKeys(page, 'file:demo:shop:')).toContain('file:demo:shop:jazyk.toml')
-  await expect(page.locator('.ws-place-chip')).toContainText('demo · your edits')
+  expect(await whereChangesGo(page)).toBe('Demo: edits are saved in this browser')
+  expect(await projectMenuItems(page)).toContain('Reset to the original')
 
   await page.reload()
   await page.goto('/#/')
@@ -82,12 +80,11 @@ test('an edited demo reopens with the edit after a reload, then resets to the or
   await openDemo(page, 'The shop')
   expect(await docText(page, 'docs/catalog.md')).toContain(LINE)
 
-  // Reset to the original, from the top bar: asks, then reopens the fixture.
+  // Reset to the original, from the project menu: asks, then reopens the fixture.
   page.once('dialog', (d) => d.accept())
-  await page.locator('.ws-place-chip').click()
-  await page.locator('.ws-place-menu').getByRole('button', { name: 'Reset to the original' }).click()
+  await chooseMenuItem(page, 'Reset to the original')
   await expect.poll(() => docText(page, 'docs/catalog.md')).not.toContain(LINE)
-  await expect(page.locator('.ws-place-chip')).toHaveText(/^demo\b(?! ·)/)
+  await expect.poll(() => projectMenuItems(page)).not.toContain('Reset to the original')
   expect(await storedKeys(page, 'file:demo:shop:')).toEqual([])
   await page.goto('/#/')
   await expect(page.locator('.proj.recent', { hasText: 'The shop' }).locator('.shape')).toHaveText('demo')
@@ -114,23 +111,19 @@ test('New project works in a browser without the folder API', async ({ page }) =
     delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker
   })
   await page.goto('/#/')
-  await expect(page.locator('.home h2')).toHaveText(['Local project', 'Demos'])
-  await expect(page.locator('.home-nofolder')).toContainText('New projects and the demos work here')
-  await page.getByRole('button', { name: 'New project' }).click()
+  await expect(page.locator('.home h2')).toHaveText(['Try a demo', 'Start a project in this browser', 'Open a folder on this computer', 'Connect to jazyk on this computer'])
+  await expect(page.locator('.home-nofolder')).toContainText('needs Chrome, Edge, or another Chromium browser')
   await page.getByLabel('Project name').fill('Notes')
   await page.getByLabel('Project name').press('Enter')
   await page.waitForURL(/#\/docs/)
-  await page.locator('.ws-place-chip').click()
-  await expect(page.locator('.ws-place-menu').getByRole('button', { name: 'Save to a folder…' })).toHaveCount(0)
-  await expect(page.locator('.ws-place-menu').getByRole('button', { name: 'Download .zip' })).toBeVisible()
+  const items = await projectMenuItems(page)
+  expect(items).not.toContain('Save to a folder on this computer…')
+  expect(items).toContain('Download as .zip')
 })
 
 test('forgetting a browser project asks, then deletes it from storage', async ({ page }) => {
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Project name').fill('Scratch')
-  await page.getByRole('button', { name: 'Create' }).click()
-  await page.waitForURL(/#\/docs/)
+  await createProject(page, 'Scratch')
   expect((await storedKeys(page, 'file:browser:')).length).toBe(2)
   await page.goto('/#/')
   let asked = ''
@@ -154,26 +147,29 @@ test('a store the browser refuses is reported with the way out, and Retry stores
     }
   })
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Project name').fill('Full disk')
-  await page.getByRole('button', { name: 'Create' }).click()
-  await page.waitForURL(/#\/docs/)
+  await createProject(page, 'Full disk')
   await page.evaluate(() => {
     ;(window as unknown as { __quota: boolean }).__quota = true
   })
   await page.goto('/#/docs/docs/README.md')
   await typeAtEnd(page, '\nA line the disk had no room for.')
-  const failed = page.locator('.ws-folder.failed')
-  await expect(failed).toContainText(/Could not save to this browser: \d+ changes? in this tab only/, { timeout: 8000 })
+  // The warning beside the name; the menu says why and offers the ways out.
+  const warning = page.locator('.ws-top .ws-unwritten')
+  await expect(warning).toHaveText(/\d+ changes? not written/, { timeout: 8000 })
+  await warning.click()
+  const menu = page.locator('.ws-menu')
+  const failed = menu.locator('.ws-menu-note.failed')
+  await expect(failed).toContainText(/Could not save to this browser: \d+ changes? in this tab only/)
   await expect(failed).toHaveAttribute('title', "this browser's storage for the site is full")
-  await expect(failed.getByRole('button', { name: 'Download' })).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: 'Download as .zip' })).toBeVisible()
 
   await page.evaluate(() => {
     ;(window as unknown as { __quota: boolean }).__quota = false
   })
-  await failed.getByRole('button', { name: 'Retry' }).click()
-  await expect(page.locator('.ws-folder.failed')).toHaveCount(0)
-  await expect(page.locator('.ws-place-chip')).toContainText('in this browser')
+  await menu.getByRole('menuitem', { name: 'Retry' }).click()
+  await expect(warning).toHaveCount(0)
+  expect(await whereChangesGo(page)).toBe('Saved in this browser only')
+  expect(await projectMenuItems(page)).not.toContain('Retry')
   expect(await storedText(page, 'file:browser:', 'docs/README.md')).toContain('no room for')
 })
 
@@ -181,17 +177,14 @@ test('a store the browser refuses is reported with the way out, and Retry stores
 // folder would hold (docs/frontends/wasm.md#a-project-in-the-browser).
 test('Download .zip carries jazyk.toml and the edited README', async ({ page }) => {
   await page.goto('/#/')
-  await page.getByRole('button', { name: 'New project' }).click()
-  await page.getByLabel('Project name').fill('Garden planner')
-  await page.getByRole('button', { name: 'Create' }).click()
-  await page.waitForURL(/#\/docs/)
+  await createProject(page, 'Garden planner')
   await page.goto('/#/docs/docs/README.md')
   await typeAtEnd(page, '\nA bed of tulips along the fence.')
   await expect.poll(() => docText(page, 'docs/README.md')).toContain('A bed of tulips')
 
   const download = page.waitForEvent('download')
-  await page.locator('.ws-place-chip').click()
-  await page.locator('.ws-place-menu').getByRole('button', { name: 'Download .zip' }).click()
+  const menu = await openProjectMenu(page)
+  await menu.getByRole('menuitem', { name: 'Download as .zip' }).click()
   const file = await download
   expect(file.suggestedFilename()).toBe('garden-planner.zip')
   const entries = unzipSync(new Uint8Array(await readFile(await file.path())))

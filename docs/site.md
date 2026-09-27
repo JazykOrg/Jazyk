@@ -7,7 +7,7 @@ The public site for the project is hosted at [jazyk.org](https://jazyk.org).
 - Static HTML, one hand-editable file per page, styled with Tailwind classes from its
   CDN script. No build step, no framework, no bundler.
 - Every image the site shows is a real rendering, copied into `site/` as a static asset
-  from a built example's `jazyk-out/`. A page never links into an example directory or
+  from a built example's `.jazyk/`. A page never links into an example directory or
   into an out directory; links between pages and to assets are relative to the site.
 - Code blocks are real output: trace events, shard YAML, cards, and terminal lines are
   copied from a run, condensed where a line would wrap, never invented.

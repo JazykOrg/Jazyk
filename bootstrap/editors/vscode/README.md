@@ -20,7 +20,7 @@ card, the requirements document, the level page. A derived grouping names its pe
 proposal. Hovering inside a requirement's sentence shows the requirement card instead
 (the statement, the code, the test).
 
-The links to the walk's pages (cards under `jazyk-out/docsgen/entities/`, diagram pages
+The links to the walk's pages (cards under `.jazyk/docsgen/entities/`, diagram pages
 under `docsgen/diagrams/`, level pages under `docsgen/levels/`) open in the markdown
 preview to the side, so the card's own links click through to levels and diagrams. The
 requirements document link opens the file at the requirement's heading. Go to Type

@@ -237,7 +237,7 @@ impl Default for Project {
     fn default() -> Self {
         Project {
             root: PathBuf::from("."),
-            out: PathBuf::from("./jazyk-out"),
+            out: PathBuf::from("./.jazyk"),
             gen_deliverable: None,
             gen_worker: None,
             gen_code: Vec::new(),
@@ -302,7 +302,7 @@ mod tests {
         // even under a glob that matches it. Mirrors docs/compiler/project-settings.md#docs.
         let dir = std::env::temp_dir().join(format!("jazyk-critdoc-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
-        for d in ["docs", "project/tests", "jazyk-out/gen"] {
+        for d in ["docs", "project/tests", ".jazyk/gen"] {
             crate::vfs::create_dir_all(dir.join(d)).unwrap();
         }
         crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n\n[gen]\ndeliverable = \"project\"\n").unwrap();
@@ -310,7 +310,7 @@ mod tests {
         crate::vfs::write(dir.join("project/tests/crit_a.md"), "---\nrequirement: req:a-1\n---\n").unwrap();
         crate::vfs::write(dir.join("project/README.md"), "# Readme\n").unwrap();
         crate::vfs::write(
-            dir.join("jazyk-out/gen/ledger.yaml"),
+            dir.join(".jazyk/gen/ledger.yaml"),
             "requirements:\n  req:a-1:\n    entity: ent:a\n    test: {kind: llm, label: judged, artifact: tests/crit_a.md, name: crit_a, run: \"\"}\n    hashes: {requirement: x, test: y, files: z}\n",
         )
         .unwrap();
@@ -329,16 +329,16 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         for d in [
             "docs",
-            "jazyk-out/docsgen",
-            "jazyk-out-backup-local/docsgen",
+            ".jazyk/docsgen",
+            ".jazyk-backup-local/docsgen",
             "elsewhere",
         ] {
             crate::vfs::create_dir_all(dir.join(d)).unwrap();
         }
         crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
-        crate::vfs::write(dir.join("jazyk-out/docsgen/x.md"), "# X\n").unwrap();
-        crate::vfs::write(dir.join("jazyk-out-backup-local/docsgen/y.md"), "# Y\n").unwrap();
+        crate::vfs::write(dir.join(".jazyk/docsgen/x.md"), "# X\n").unwrap();
+        crate::vfs::write(dir.join(".jazyk-backup-local/docsgen/y.md"), "# Y\n").unwrap();
         crate::vfs::write(dir.join("elsewhere/z.md"), "# Z\n").unwrap();
         let mut p = Project::load(&dir);
         assert_eq!(
@@ -438,7 +438,7 @@ impl Project {
     fn load_inner(root: &Path, follow_redirect: bool) -> Project {
         let mut p = Project::default();
         p.root = root.to_path_buf();
-        p.out = root.join("jazyk-out");
+        p.out = root.join(".jazyk");
         let toml_path = root.join("jazyk.toml");
         let text = match crate::vfs::read_to_string(&toml_path) {
             Ok(t) => t,
@@ -606,11 +606,11 @@ fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
             // Generated output is never doc input: the resolved out directory (wherever
-            // --out put it) and anything named like it (e.g. a jazyk-out backup copy).
+            // --out put it) and anything named like it (e.g. a .jazyk backup copy).
             if name.starts_with('.')
                 || name == "target"
                 || name == "node_modules"
-                || name.starts_with("jazyk-out")
+                || name.starts_with(".jazyk")
                 || p == out_dir
             {
                 continue;

@@ -1408,7 +1408,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
-        let out = root.join("jazyk-out");
+        let out = root.join(".jazyk");
         let deliv = tmp.join("product");
         crate::vfs::create_dir_all(deliv.join("src")).unwrap();
         crate::vfs::create_dir_all(deliv.join("tests")).unwrap();
@@ -1520,7 +1520,7 @@ mod tests {
     fn requirement_card_without_a_ledger_row() {
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let out = tmp.join("jazyk-out");
+        let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         let r = requirement();
         let mut store = Store {
@@ -1729,7 +1729,7 @@ mod tests {
     fn entity_hover_renders_the_card_in_short_with_its_level() {
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let out = tmp.join("jazyk-out");
+        let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         write_svg(&out, "component", "shop");
         write_svg(&out, "component", "order-service");
@@ -1777,7 +1777,7 @@ mod tests {
     fn entity_hover_on_a_leaf_has_no_inside_and_survives_a_missing_rendering() {
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-leaf-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let out = tmp.join("jazyk-out");
+        let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         write_svg(&out, "component", "order-service");
         let lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
@@ -1827,7 +1827,7 @@ mod tests {
         use crate::model::{Diagnostic, Entity, Provenance};
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let out = tmp.join("jazyk-out");
+        let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
         s.out = out.clone();
@@ -1892,7 +1892,7 @@ mod tests {
     fn type_definition_opens_the_card() {
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let out = tmp.join("jazyk-out");
+        let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         let mut lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
         let mut wire: Vec<u8> = Vec::new();
@@ -1955,7 +1955,7 @@ mod tests {
         use crate::model::View;
         let tmp = std::env::temp_dir().join(format!("jazyk-lsp-flow-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let out = tmp.join("jazyk-out");
+        let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         write_svg(&out, "usecase", "all");
         write_svg(&out, "sequence", "one");

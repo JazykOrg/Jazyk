@@ -675,7 +675,7 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
         let name = e.file_name().to_string_lossy().into_owned();
         if p == out_dir
             || name.starts_with('.')
-            || name.starts_with("jazyk-out")
+            || name.starts_with(".jazyk")
             || name == "jazyk.toml"
         {
             continue;

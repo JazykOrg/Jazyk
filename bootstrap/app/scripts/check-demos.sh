@@ -22,7 +22,7 @@ for f in "$DEMOS"/*.json; do
   status=$(cd "$dir" && "$JAZYK" status 2>&1)
   # A store of another version reads as empty; only a build archives it, so the
   # version is compared here: the fixture's against the one the binary reports.
-  packed=$(sed -n 's/^version: *//p' "$dir/jazyk-out/status.yaml" 2>/dev/null)
+  packed=$(sed -n 's/^version: *//p' "$dir/.jazyk/status.yaml" 2>/dev/null)
   binary=$(printf '%s\n' "$status" | sed -n 's/^store: version \([0-9]*\),.*/\1/p')
   if [ "$packed" != "$binary" ]; then
     warn "$id" "its store version is ${packed:-missing}, not this binary's $binary, so its graph reads as empty."
@@ -32,8 +32,8 @@ for f in "$DEMOS"/*.json; do
   if [ -n "$open" ] && [ "$open" -gt 0 ]; then
     warn "$id" "the current compiler derives $open open goal(s) for it."
   fi
-  if [ -f "$dir/jazyk-out/gen/ledger.yaml" ]; then
-    set -- $(python3 "$HERE/ledger-count.py" "$dir/jazyk-out/gen/ledger.yaml")
+  if [ -f "$dir/.jazyk/gen/ledger.yaml" ]; then
+    set -- $(python3 "$HERE/ledger-count.py" "$dir/.jazyk/gen/ledger.yaml")
     passing=$1
     rows=$2
     if [ "$rows" -gt 0 ] && [ "$passing" -lt "$rows" ]; then

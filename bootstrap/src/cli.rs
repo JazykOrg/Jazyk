@@ -400,7 +400,7 @@ pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
                 cwd.join(pb)
             }
         })
-        .unwrap_or_else(|| proj.root.join("jazyk-out"));
+        .unwrap_or_else(|| proj.root.join(".jazyk"));
     // The out directory is never doc input; doc_files skips it by path.
     proj.out = out.clone();
     (proj, llm, out)

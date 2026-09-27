@@ -428,7 +428,7 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         .and_then(|rest| rest.split_once(':'))
         .map(|(k, t)| (k.to_string(), t.to_string()))
         .unwrap_or((String::new(), String::new()));
-    // The project: the trace lives under <root>/jazyk-out/trace.
+    // The project: the trace lives under <root>/.jazyk/trace.
     let root = trace
         .parent()
         .and_then(|p| p.parent())
@@ -448,11 +448,11 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
     // The graph the session saw: the batch's snapshot when the run left one, else the
     // current graph, trimmed to the nodes the goal and the calls name
     // (docs/benchmark/replays.md#where-replays-come-from).
-    let snap = root.join("jazyk-out").join("snapshots").join(label.replace(['/', ':'], "_")).join("graph");
+    let snap = root.join(".jazyk").join("snapshots").join(label.replace(['/', ':'], "_")).join("graph");
     let (graph_dir, seeded_from) = if snap.is_dir() {
         (snap, "the batch's snapshot")
     } else {
-        (root.join("jazyk-out").join("graph"), "the project's current graph (no snapshot for this batch)")
+        (root.join(".jazyk").join("graph"), "the project's current graph (no snapshot for this batch)")
     };
     let read_shard = |name: &str| -> serde_json::Map<String, Value> {
         std::fs::read_to_string(graph_dir.join(name))
@@ -603,7 +603,7 @@ fn collect_md(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         if p.is_dir() {
-            if matches!(name.as_str(), "jazyk-out" | "jazyk-out.bak" | "node_modules" | "target") || name.starts_with('.') {
+            if matches!(name.as_str(), ".jazyk" | ".jazyk.bak" | "node_modules" | "target") || name.starts_with('.') {
                 continue;
             }
             collect_md(root, &p, out);

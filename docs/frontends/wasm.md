@@ -154,7 +154,7 @@ hundreds. Leaving the page (hiding it or closing it) stores what is pending at o
 Size and quota:
 
 - A browser sets the quota per site, usually a share of the free disk. A browser
-  project is a few kilobytes of documents plus its `jazyk-out`. An edited demo is
+  project is a few kilobytes of documents plus its `.jazyk`. An edited demo is
   about the size of its fixture, up to about 1.3MB.
 - The page asks the browser to keep the site's storage persistent
   (`navigator.storage.persist()`) when it first stores a project, so the browser
@@ -246,7 +246,7 @@ The top bar offers to write them (`Write to folder`) or to discard them (`Discar
 after asking, reopens the folder as it is on disk). In writing mode, while changes are
 kept, new mutations queue behind them rather than landing first.
 
-So a build in a tab lands in the same `jazyk-out/` the native binary would write,
+So a build in a tab lands in the same `.jazyk/` the native binary would write,
 with the same shards and the same journal, and the two can be used on the same
 project in turn.
 
@@ -254,8 +254,8 @@ project in turn.
 
 A project that carries its product carries it into the tab: the
 [deliverable](../consumers/gen.md#the-deliverable) folder, the
-[ledger](../consumers/gen.md#the-ledger) under `jazyk-out/gen/`, the criteria files,
-and the generated pages under `jazyk-out/docsgen/` are files in the tree like any
+[ledger](../consumers/gen.md#the-ledger) under `.jazyk/gen/`, the criteria files,
+and the generated pages under `.jazyk/docsgen/` are files in the tree like any
 other. Every read of the product is served from them, through the same
 `crate::webapi` functions the server answers with, so the [Product](./gui.md#product)
 lens shows in a tab what it shows on a machine:
@@ -524,10 +524,11 @@ the cache. `jobs` lists `compile` once the model is ready. The model's code
 (WebLLM) is fetched with the model, not with the page.
 
 Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
-its product folder when it has one, and its whole `jazyk-out` as last built (the
+its product folder when it has one, and its whole `.jazyk` as last built (the
 shards, the journal, the coverage, the rendered diagrams, the ledger), packed by
 `app/scripts/pack-demo.mjs` into one JSON per example under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
-for replays, leases, worker registrations, sockets, dotfiles, `__pycache__`, an
+for replays, leases, worker registrations, sockets, dotfiles (`.jazyk` itself is the
+one dotfolder carried, since it is the out directory), `__pycache__`, an
 archived out directory, and any file that is not UTF-8 text (a built deck, a compiled
 module) are left out: a stale worker registration would be reaped on the first
 read, and that removal would count as an edit, and a binary file would only arrive

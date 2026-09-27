@@ -16,7 +16,7 @@ for f in "$DEMOS"/*.json; do
   dir="$WORK/$id"
   node "$HERE/unpack-demo.mjs" "$f" "$dir" > /dev/null
   # A drawing is redrawn when it is missing, so remove them all.
-  find "$dir/jazyk-out/diagrams" -name '*.svg' -delete 2>/dev/null || true
+  find "$dir/.jazyk/diagrams" -name '*.svg' -delete 2>/dev/null || true
   (cd "$dir" && "$JAZYK" docsgen > /dev/null)
   node "$HERE/pack-demo.mjs" "$DEMOS" "$id=$dir"
 done

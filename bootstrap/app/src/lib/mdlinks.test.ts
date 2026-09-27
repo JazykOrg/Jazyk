@@ -86,11 +86,11 @@ describe('slug', () => {
 })
 
 describe('locate', () => {
-  const project = { root: '/p', out: '/p/jazyk-out', deliverable: '/p/src' } as Project
+  const project = { root: '/p', out: '/p/.jazyk', deliverable: '/p/src' } as Project
   const docs = [{ path: 'docs/a.md' }, { path: 'README.md' }]
 
   it('the out directory wins, then a matched document, then the deliverable', () => {
-    expect(locate('/p/jazyk-out/diagrams/x.svg', project, docs)).toEqual({ tree: 'out', rel: 'diagrams/x.svg' })
+    expect(locate('/p/.jazyk/diagrams/x.svg', project, docs)).toEqual({ tree: 'out', rel: 'diagrams/x.svg' })
     expect(locate('/p/docs/a.md', project, docs)).toEqual({ tree: 'docs', rel: 'docs/a.md' })
     expect(locate('/p/README.md', project, docs)).toEqual({ tree: 'docs', rel: 'README.md' })
     expect(locate('/p/src/main.rs', project, docs)).toEqual({ tree: 'deliverable', rel: 'main.rs' })

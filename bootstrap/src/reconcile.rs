@@ -3565,7 +3565,7 @@ mod tests {
         crate::vfs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
         let proj = Project {
             root: dir.clone(),
-            out: dir.join("jazyk-out"),
+            out: dir.join(".jazyk"),
             docs_glob: vec!["docs/**/*".to_string()],
             ..Default::default()
         };

@@ -295,7 +295,7 @@ Deliverable:
   entities and requirements the [ledger](../consumers/gen.md#the-ledger) binds to it,
   and the test artifacts pointing at it. The reply also carries the recorded `medium`
   and `build` from the ledger, the [product form](#product) page's source. Hidden entries, `target`, `node_modules`, and
-  `jazyk-out*` directories are skipped, so a deliverable at the project root lists the
+  `.jazyk*` directories are skipped, so a deliverable at the project root lists the
   product, not the compiler's output.
 - `GET /api/deliverable/file?path=`: one file's text plus its resolved
   [sites](../consumers/gen.md#traceability): each ledger site whose `file` is this

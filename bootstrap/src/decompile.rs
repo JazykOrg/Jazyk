@@ -356,7 +356,7 @@ mod tests {
         crate::vfs::create_dir_all(&root).unwrap();
         let mut proj = Project::default();
         proj.root = root.clone();
-        proj.out = root.join("jazyk-out");
+        proj.out = root.join(".jazyk");
         let store = Store {
             out: proj.out.clone(),
             ..Default::default()

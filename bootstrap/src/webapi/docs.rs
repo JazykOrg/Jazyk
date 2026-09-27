@@ -45,7 +45,7 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
             || c == "target"
             || c == "node_modules"
             || c.starts_with('.')
-            || c.starts_with("jazyk-out")
+            || c.starts_with(".jazyk")
         {
             return Err(format!("`{}` is a path component the doc walk skips", c));
         }
@@ -170,7 +170,7 @@ mod tests {
     fn proj(dir: &Path) -> Project {
         let mut p = Project::default();
         p.root = dir.to_path_buf();
-        p.out = dir.join("jazyk-out");
+        p.out = dir.join(".jazyk");
         p.docs_glob = vec!["**/*.md".to_string(), "!fixtures/**".to_string()];
         p
     }
@@ -192,8 +192,8 @@ mod tests {
         assert!(safe_doc_path(&p, "docs/../../escape.md").is_none());
         assert!(safe_doc_path(&p, "/etc/passwd").is_none());
         assert!(safe_doc_path(&p, ".git/config.md").is_none());
-        assert!(safe_doc_path(&p, "jazyk-out/docsgen/x.md").is_none());
-        assert!(safe_doc_path(&p, "jazyk-out-backup/x.md").is_none());
+        assert!(safe_doc_path(&p, ".jazyk/docsgen/x.md").is_none());
+        assert!(safe_doc_path(&p, ".jazyk-backup/x.md").is_none());
         assert!(safe_doc_path(&p, "target/x.md").is_none());
         assert!(safe_doc_path(&p, "node_modules/x.md").is_none());
         assert!(safe_doc_path(&p, "docs/a.txt").is_none());

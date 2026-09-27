@@ -23,7 +23,7 @@ pub(crate) fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
         if name.starts_with('.')
             || name == "node_modules"
             || name == "target"
-            || name.starts_with("jazyk-out")
+            || name.starts_with(".jazyk")
         {
             continue;
         }
@@ -257,8 +257,8 @@ mod tests {
     fn listing_skips_hidden_and_output_directories() {
         let dir = temp_deliv("list");
         let root = dir.join("product");
-        crate::vfs::create_dir_all(root.join("jazyk-out/graph")).unwrap();
-        crate::vfs::write(root.join("jazyk-out/graph/entities.yaml"), "x").unwrap();
+        crate::vfs::create_dir_all(root.join(".jazyk/graph")).unwrap();
+        crate::vfs::write(root.join(".jazyk/graph/entities.yaml"), "x").unwrap();
         crate::vfs::create_dir_all(root.join("target")).unwrap();
         crate::vfs::write(root.join("target/bin"), "x").unwrap();
         let mut files = Vec::new();

@@ -45,9 +45,9 @@ describe('pack-demo and unpack-demo', () => {
         'jazyk.toml': 'docs = ["docs/*.md"]\n',
         'docs/main.md': '# Shop\n\nThe Cart holds items.\n',
         'docs/nested/deep.md': 'Ünïcödé and a tab\t and CRLF\r\n',
-        'jazyk-out/status.yaml': 'version: 2\ngeneration: 1\n',
-        'jazyk-out/graph/entities.yaml': 'ent:cart:\n  name: Cart\n',
-        'jazyk-out/diagrams/class/shop.puml': '@startuml\nclass Cart\n@enduml\n',
+        '.jazyk/status.yaml': 'version: 2\ngeneration: 1\n',
+        '.jazyk/graph/entities.yaml': 'ent:cart:\n  name: Cart\n',
+        '.jazyk/diagrams/class/shop.puml': '@startuml\nclass Cart\n@enduml\n',
         'code/empty.txt': '',
         // A byte order mark is part of the file's bytes.
         'docs/bom.md': Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from('# With a BOM\n')]),
@@ -55,9 +55,9 @@ describe('pack-demo and unpack-demo', () => {
       const skipped = {
         '.editorconfig': 'root = true\n',
         'docs/.hidden.md': 'a dotfile\n',
-        'jazyk-out/trace/g1.jsonl': '{"event":"note"}\n',
-        'jazyk-out/sessions/s1.md': 'transcript\n',
-        'jazyk-out.bak/status.yaml': 'version: 1\n',
+        '.jazyk/trace/g1.jsonl': '{"event":"note"}\n',
+        '.jazyk/sessions/s1.md': 'transcript\n',
+        '.jazyk.bak/status.yaml': 'version: 1\n',
         'code/__pycache__/main.cpython-310.pyc': 'cached\n',
         'code/node_modules/dep/index.js': 'module.exports = 1\n',
         // Not UTF-8: a lone continuation byte and an overlong sequence.

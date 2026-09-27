@@ -190,7 +190,7 @@ free.
 
 ## Outputs
 
-Everything lives in the out directory (default `jazyk-out/`). See
+Everything lives in the out directory (default `.jazyk/`). See
 [storage layout](./graph.md#storage-layout).
 
 - `graph/`: the semantic graph, the primary output. Authored shards `entities.yaml`,

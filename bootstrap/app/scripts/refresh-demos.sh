@@ -45,25 +45,25 @@ for id in $ORDER; do
     # A build stops at its budget with work left; a few passes finish it.
     for pass in 1 2 3; do
       JAZYK_MODEL="$MODEL" "$JAZYK" compile --quiet | tail -2
-      grep -q 'state: converged' jazyk-out/status.yaml && break
+      grep -q 'state: converged' .jazyk/status.yaml && break
     done
     if grep -q '^\[gen\]' jazyk.toml; then
       JAZYK_MODEL="$MODEL" "$JAZYK" gen | tail -3
       JAZYK_MODEL="$MODEL" "$JAZYK" test | tail -3
     fi
     # A rate limit leaves the graph half done: such an example is not packed.
-    if [ -d jazyk-out/trace ] && find jazyk-out/trace -name '*.jsonl' -newer "$since" -exec grep -l 'HTTP 429' {} + 2>/dev/null | grep -q .; then
+    if [ -d .jazyk/trace ] && find .jazyk/trace -name '*.jsonl' -newer "$since" -exec grep -l 'HTTP 429' {} + 2>/dev/null | grep -q .; then
       echo "$id: the model was rate limited; its fixture is left as committed"
       limited+=("$id")
     fi
     rm -f "$since"
   fi
-  find jazyk-out/diagrams -name '*.svg' -delete 2>/dev/null
+  find .jazyk/diagrams -name '*.svg' -delete 2>/dev/null
   "$JAZYK" docsgen > /dev/null
   verdict=$(sed -n 's/^verdict: //p' <<< "$("$JAZYK" status 2>/dev/null)")
   tests="-"
-  if [ -f jazyk-out/gen/ledger.yaml ]; then
-    read passing rows <<< "$(python3 "$ROOT/bootstrap/app/scripts/ledger-count.py" jazyk-out/gen/ledger.yaml)"
+  if [ -f .jazyk/gen/ledger.yaml ]; then
+    read passing rows <<< "$(python3 "$ROOT/bootstrap/app/scripts/ledger-count.py" .jazyk/gen/ledger.yaml)"
     tests="$passing of $rows"
   fi
   cost=$(sed -n 's/^cost: //p' <<< "$("$JAZYK" status 2>/dev/null)")

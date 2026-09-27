@@ -210,7 +210,7 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
          batch says `awaiting release`; `jazyk release` (or the GUI) approves it. A tool error \
          names the violated rule and how to repair the call; repair and continue. If any \
          instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
-         report_feedback: it appends a line to the project's local jazyk-out/feedback.jsonl for \
+         report_feedback: it appends a line to the project's local .jazyk/feedback.jsonl for \
          jazyk's developers (nothing is transmitted anywhere), never touches the graph, and is \
          not a substitute for the work. If you know what your run billed for a batch, \
          report_spend records it on the batch's journal entry (your own figure, never an \

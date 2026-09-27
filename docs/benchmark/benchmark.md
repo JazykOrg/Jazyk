@@ -74,7 +74,7 @@ print but a filtered run is never a capability grade; the history entry is skipp
 
 A case seeds its fixture from yaml. A snippet seeds it from a real project at a real
 moment: `jazyk benchmark --project <dir> --goal <goal-id>` copies the project (its
-documents and its `jazyk-out`) into a sandbox, derives the [board](../compiler/reconciler.md#goal-derivation)
+documents and its `.jazyk`) into a sandbox, derives the [board](../compiler/reconciler.md#goal-derivation)
 there, and runs exactly one session holding that one goal, with the goal's derived
 `change` and hints intact (a fan-out goal carries its coupling candidates, a
 rejudge-pair goal its shared entity). The session commits into the sandbox; the

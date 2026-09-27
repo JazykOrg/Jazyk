@@ -12,7 +12,7 @@ Two models ran everything here:
 - Remote: `gpt-5.5` via LocalRouter on a subscription with a quota window (see
   [known weaknesses](#known-weaknesses)).
 
-The persisted evidence per corpus is its `jazyk-out/` (journal, status, graph shards,
+The persisted evidence per corpus is its `.jazyk/` (journal, status, graph shards,
 diagrams, ledger). The grading history and the two prompt-loop reports are the session
 scratchpad's `validation-notes.md`, `iterate-cycle-1.md`, and `iterate-cycle-2.md`.
 "Not recorded" below means the number is not in those sources; nothing here is estimated.
@@ -50,7 +50,7 @@ hired stage, 8 a quality statement without a measure.
   component/catalog, use case plus sequence for customer-system). The failure-mode
   branch landed after the right step in the flow view.
 - Immediate rebuild: 0 goals, 0 LLM calls, `converged`.
-- A version-0 out directory archived to `jazyk-out.bak` and reconciled from empty.
+- A version-0 out directory archived to `.jazyk.bak` and reconciled from empty.
 - Found during the run: the internal build never recorded the compile release, so
   default manual mode blocked everything (`6fc98ed`).
 
@@ -576,7 +576,7 @@ the next batch's prompt (`jazyk preview`, the exact prompt a session receives) a
 hands it to `claude -p --strict-mcp-config` with `jazyk mcp compile` as the only MCP
 server, one batch per call, up to a cap per project (2026-09-04 and 05; the ACP path,
 `jazyk compile --agent claude`, works too since MCP over HTTP landed, and takes more
-rounds per batch). Transcripts are the MCP traces under each project's `jazyk-out/trace/`
+rounds per batch). Transcripts are the MCP traces under each project's `.jazyk/trace/`
 in the session scratchpad (`self-<example>/`).
 
 - Converged on their own: f1 (5 batches, 2 to 4 minutes each, coverage 100 percent,

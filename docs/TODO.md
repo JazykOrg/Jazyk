@@ -127,7 +127,7 @@ LocalRouter; the default local model fails judgment-heavy goals.
   (a narrative corpus), beside `example-slides`, each converging with views and
   diagrams that read as an org chart and as scenes.
 - [ ] The dogfood with diagrams: `cd docs && jazyk compile` reaches `converged`
-  (blocked and advised counts are acceptable, silence is not); `jazyk-out/diagrams/`
+  (blocked and advised counts are acceptable, silence is not); `.jazyk/diagrams/`
   holds `.puml` and `.svg` per view ([output layout](./compiler/diagrams.md#output-layout));
   [docsgen](./consumers/docsgen.md) pages embed the images; `jazyk preview`,
   `jazyk explain`, and `jazyk ripple` answer ([CLI](./frontends/cli.md)); LSP hover
@@ -140,7 +140,7 @@ LocalRouter; the default local model fails judgment-heavy goals.
   ratification proposal, and accepting it flips the fact's provenance to `quote`
   ([edit paths](./compiler/compilation.md#edit-paths)).
 - [ ] The store version: an out directory without `version: 2` archives to
-  `jazyk-out.bak` and the next build reconciles from the empty graph, on `f1` and on
+  `.jazyk.bak` and the next build reconciles from the empty graph, on `f1` and on
   the dogfood.
 - [ ] Docs tree and binary agree: no page describes machinery the binary lacks, no
   behavior lacks a page, prompts and skills are `include_str!` bytes, and the root

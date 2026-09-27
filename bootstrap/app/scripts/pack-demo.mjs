@@ -17,7 +17,7 @@ if (!dest || pairs.length === 0) {
 // the leases and worker registrations of a running server, and an archived out
 // directory. A stale worker registration would be reaped on the first read in the
 // tab, and that removal would count as an edit of the demo.
-const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'workers', 'node_modules', '__pycache__', '.git', 'jazyk-out.bak'])
+const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'workers', 'node_modules', '__pycache__', '.git', '.jazyk.bak'])
 
 // A fixture carries text: a binary file (a built deck, a compiled module) would only
 // arrive as replacement characters, so it is left out. A byte order mark is part of
@@ -34,7 +34,8 @@ function textOf(bytes) {
 function walk(dir, files) {
   for (const name of readdirSync(dir)) {
     // Dotfiles are a machine's configuration (an editor's, an agent's), not the project.
-    if (SKIP.has(name) || name.startsWith('.')) continue
+    // The out directory is the one dotfolder a fixture carries.
+    if (SKIP.has(name) || (name.startsWith('.') && name !== '.jazyk')) continue
     const p = join(dir, name)
     const st = lstatSync(p)
     if (st.isDirectory()) walk(p, files)

@@ -57,7 +57,7 @@ jobs:
             const fs = require("node:fs")
             const [dest] = process.argv.slice(1)
             const f = JSON.parse(fs.readFileSync("bootstrap/app/public/demos/shop.json", "utf8"))
-            const status = "jazyk-out/status.yaml"
+            const status = ".jazyk/status.yaml"
             fs.writeFileSync(`${dest}/version/shop.json`, JSON.stringify({ ...f, [status]: f[status].replace(/^version: \d+$/m, "version: 1") }))
             const puml = Object.keys(f).find((k) => k.endsWith(".puml"))
             fs.writeFileSync(`${dest}/diagram/shop.json`, JSON.stringify({ ...f, [puml]: f[puml].replace("@startuml", "@startuml\n\x27 not the emitter output") }))

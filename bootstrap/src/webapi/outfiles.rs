@@ -111,11 +111,11 @@ mod tests {
     fn temp_out(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-webapi-out-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
-        crate::vfs::create_dir_all(dir.join("jazyk-out/docsgen/entities")).unwrap();
-        crate::vfs::create_dir_all(dir.join("jazyk-out/diagrams/class")).unwrap();
-        crate::vfs::write(dir.join("jazyk-out/docsgen/entities/funds.md"), "# Funds\n").unwrap();
-        crate::vfs::write(dir.join("jazyk-out/diagrams/class/funds.svg"), "<svg/>").unwrap();
-        crate::vfs::write(dir.join("jazyk-out/.hidden.md"), "x").unwrap();
+        crate::vfs::create_dir_all(dir.join(".jazyk/docsgen/entities")).unwrap();
+        crate::vfs::create_dir_all(dir.join(".jazyk/diagrams/class")).unwrap();
+        crate::vfs::write(dir.join(".jazyk/docsgen/entities/funds.md"), "# Funds\n").unwrap();
+        crate::vfs::write(dir.join(".jazyk/diagrams/class/funds.svg"), "<svg/>").unwrap();
+        crate::vfs::write(dir.join(".jazyk/.hidden.md"), "x").unwrap();
         crate::vfs::write(dir.join("secret.md"), "outside\n").unwrap();
         dir
     }
@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn out_path_is_confined_to_the_out_directory() {
         let dir = temp_out("confine");
-        let out = dir.join("jazyk-out");
+        let out = dir.join(".jazyk");
         assert!(safe_out_path(&out, "docsgen/entities/funds.md").is_some());
         assert!(safe_out_path(&out, "diagrams/class/funds.svg").is_some());
         assert!(safe_out_path(&out, "docsgen").is_some());
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn symlink_out_of_the_out_directory_is_refused() {
         let dir = temp_out("symlink");
-        let out = dir.join("jazyk-out");
+        let out = dir.join(".jazyk");
         std::os::unix::fs::symlink(dir.join("secret.md"), out.join("linked.md")).unwrap();
         std::os::unix::fs::symlink(&dir, out.join("up")).unwrap();
         assert!(safe_out_path(&out, "linked.md").is_none());
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn listing_walks_a_directory_and_skips_hidden() {
         let dir = temp_out("list");
-        let out = dir.join("jazyk-out");
+        let out = dir.join(".jazyk");
         let v = out_list(&out, "docsgen").unwrap();
         let files = v["files"].as_array().unwrap();
         assert_eq!(files.len(), 1);

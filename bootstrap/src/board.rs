@@ -2932,7 +2932,7 @@ pub(crate) mod tests {
         let docs = root.join("docs");
         crate::vfs::create_dir_all(&docs).unwrap();
         crate::vfs::write(docs.join("a.md"), "# A\n\nThe first body.\n").unwrap();
-        let out = root.join("jazyk-out");
+        let out = root.join(".jazyk");
         let proj = Project {
             root: root.clone(),
             out: out.clone(),

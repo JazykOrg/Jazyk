@@ -192,15 +192,15 @@ zero goals, makes zero LLM calls, and leaves every view and diagram byte-identic
 A compile must produce, each `.puml` with its `.svg` beside it and no `.png`:
 
 ```
-jazyk-out/diagrams/component/public.puml        .svg   (class/public.puml when no parentless entity carries a structural stereotype)
-jazyk-out/diagrams/component/orderly.puml       .svg   (when Orderly has two or more children)
-jazyk-out/diagrams/usecase/shipping.puml            .svg
-jazyk-out/diagrams/sequence/shipping.puml           .svg
-jazyk-out/diagrams/usecase/admin.puml               .svg
-jazyk-out/diagrams/sequence/admin.puml              .svg
-jazyk-out/diagrams/usecase/returns.puml             .svg
-jazyk-out/diagrams/sequence/returns.puml            .svg
-jazyk-out/diagrams/state/order.puml             .svg
+.jazyk/diagrams/component/public.puml        .svg   (class/public.puml when no parentless entity carries a structural stereotype)
+.jazyk/diagrams/component/orderly.puml       .svg   (when Orderly has two or more children)
+.jazyk/diagrams/usecase/shipping.puml            .svg
+.jazyk/diagrams/sequence/shipping.puml           .svg
+.jazyk/diagrams/usecase/admin.puml               .svg
+.jazyk/diagrams/sequence/admin.puml              .svg
+.jazyk/diagrams/usecase/returns.puml             .svg
+.jazyk/diagrams/sequence/returns.puml            .svg
+.jazyk/diagrams/state/order.puml             .svg
 ```
 
 No `diagrams/object/` directory. Deeper level views (`usecase/orderly-*`,

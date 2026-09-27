@@ -43,10 +43,11 @@ glob = ["docs/**/*.md", "!docs/LICENSE.md"]
 
 Some paths are never doc input, regardless of the glob:
 
-- The resolved [output directory](../frontends/cli.md) (default `jazyk-out`, or the
+- The resolved [output directory](../frontends/cli.md) (default `.jazyk`, or the
   `--out` override). The compiler never reads its own output as source.
-- Any directory whose name starts with `jazyk-out` (e.g. the `jazyk-out.bak` archive
-  the [store version](./graph.md#store-version) check leaves behind).
+- Any directory whose name starts with `.jazyk` (e.g. the `.jazyk.bak` archive
+  the [store version](./graph.md#store-version) check leaves behind) or with
+  `jazyk-out` (the out directory's old name, left where it is).
 - Hidden directories (name starting with `.`), `target`, and `node_modules`.
 - A file the [ledger](../consumers/gen.md#the-ledger) records as a test artifact under
   the deliverable (an `llm` row's criteria file): it is generation metadata, never a

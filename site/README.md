@@ -17,10 +17,10 @@ build step. Specified in [`../docs/site.md`](../docs/site.md).
 ## Snippets and assets
 
 The example blocks on the page are files of `example-sort` (its documents, its
-`code/`, and its `jazyk-out/graph/` shards), condensed where a line would wrap. The
+`code/`, and its `.jazyk/graph/` shards), condensed where a line would wrap. The
 acceptance criteria are written for the page in the criterion form, since the example
 has no criteria shard built. `example/*.svg` are renderings copied from the
-`example-ledger` project's built `jazyk-out/diagrams/` (`component/public`,
+`example-ledger` project's built `.jazyk/diagrams/` (`component/public`,
 `class/checkout`, `sequence/checkout-checkout`) with the drill-down anchors removed.
 Re-copy them after a rebuild of an example changes them; the site never links into an
 example directory.

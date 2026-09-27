@@ -388,7 +388,7 @@ mod tests {
         let mut proj = Project::default();
         proj.root = root.clone();
         proj.docs_glob = vec!["docs/**/*.md".into()];
-        let out = root.join("jazyk-out");
+        let out = root.join(".jazyk");
         proj.out = out.clone();
         // Seed the graph through the same tools a session uses.
         let mut session = session_for(&proj, &out, "seed");

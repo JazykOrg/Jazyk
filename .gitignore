@@ -15,10 +15,10 @@ Thumbs.db
 
 # Rust
 /bootstrap/target/
-/bootstrap/jazyk-out/
+/bootstrap/.jazyk/
 
-jazyk-out
-jazyk-out.*
+.jazyk
+.jazyk.*
 project2/
 .loop-logs/
 

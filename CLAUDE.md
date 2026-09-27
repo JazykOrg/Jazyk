@@ -60,12 +60,12 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   mutation will open; `mark_goal_done` is validated against the kind's gate and takes
   a one-line justification; `mark_goal_failed` is always available; `done` runs batch
   gates; the changeset commits atomically, or the session retries once and parks.
-- The store: YAML shards under `jazyk-out/graph/`, natural-key upserts, changesets
+- The store: YAML shards under `.jazyk/graph/`, natural-key upserts, changesets
   committed atomically behind `.lock`, one journal entry per generation with
   `opened_goals` and `resolved_goals` (each with its justification; a human save that
   dirties sections journals as an `edit` entry, so every ripple roots in a generation),
   the deterministic GC sweep at commit, `version: 2` in `status.yaml` (a mismatch
-  archives the out directory to `jazyk-out.bak` and the next build reconciles from
+  archives the out directory to `.jazyk.bak` and the next build reconciles from
   empty; no migration code, ever).
 - Derived data, recomputed on every commit, no write tool: relationships from
   requirement `edges` (one node per pair, contributions grouped by direction and type,
@@ -75,7 +75,7 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   object view per instantiated type; stable ids, `default: true`, cleared by any
   mutation that names the view), and the name index.
 - Views and rendering: every view emits `.puml` and `.svg` under
-  `jazyk-out/diagrams/<kind>/` on commit through `plantuml-little` in process (`resvg`
+  `.jazyk/diagrams/<kind>/` on commit through `plantuml-little` in process (`resvg`
   for `.png` on demand; `JAZYK_PLANTUML` swaps in the official native binary behind the
   `render_svg` seam). A relationship touching a hidden descendant lifts to the nearest
   shown ancestor; groups collapse to one arrow per direction and type, promoted to the
@@ -136,7 +136,7 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `cases/` (the case files are embedded into the binary at compile time; they are
   fixtures, excluded from the docs glob), known-results.yaml (embedded too).
 - `docs/jazyk.toml`: the live project file (docs glob, roots, lint rules); the repo-root
-  `jazyk.toml` redirects discovery to it. The graph lands in `docs/jazyk-out/`
+  `jazyk.toml` redirects discovery to it. The graph lands in `docs/.jazyk/`
   (gitignored): `graph/*.yaml` shards (entities, requirements, views, diagnostics,
   redirects; derived relationships and state-machines rewritten every commit), `docs/`
   section trees + coverage, `journal/g<N>.yaml`, `diagrams/<kind>/<slug>.puml` and
@@ -237,7 +237,7 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 - Always commit and push changes as you make them, one commit per coherent change, so
   the history is a ledger of the work and nothing is lost between sessions. Never leave
   the tree dirty at the end of a step.
-- Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and `jazyk-out` anywhere
+- Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and `.jazyk` anywhere
   are gitignored.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys
   `site/` to jazyk.org via GitHub Actions.

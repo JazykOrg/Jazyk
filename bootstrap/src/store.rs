@@ -934,7 +934,7 @@ impl Store {
                 let name = out
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "jazyk-out".to_string());
+                    .unwrap_or_else(|| ".jazyk".to_string());
                 let bak = out.with_file_name(format!("{}.bak", name));
                 crate::vfs::remove_dir_all(&bak).ok();
                 match crate::vfs::rename(out, &bak) {
@@ -6144,7 +6144,7 @@ mod tests {
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
         crate::vfs::write(root.join("docs/pay.md"), text).unwrap();
         let mut s = Store {
-            out: root.join("jazyk-out"),
+            out: root.join(".jazyk"),
             ..Default::default()
         };
         let parsed_of = |text: &str| {

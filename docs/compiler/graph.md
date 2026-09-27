@@ -7,12 +7,18 @@ runs inside it. One graph per project, edited in place, never regenerated.
 
 ## Storage layout
 
-The store lives in the project's out directory (default `jazyk-out/`). All files are YAML,
+The store lives in the project's out directory (default `.jazyk/`, beside
+`jazyk.toml`; `--out DIR` moves it). All files are YAML,
 sorted by key, so builds diff cleanly in git. The schema is
-[`graph.schema.yaml`](./graph.schema.yaml).
+[`graph.schema.yaml`](./graph.schema.yaml). The directory is a dotfolder so it stays
+out of the way in a project's listing, the same convention as `.git`; a project's
+`.gitignore` names it (`.jazyk` and `.jazyk.*`, the latter the archives). A
+`jazyk-out/` directory from before the name changed is never read and never
+compiled ([glob](./project-settings.md#glob)): move it to
+`.jazyk/` to keep its graph, or leave it and the next build reconciles from empty.
 
 ```
-jazyk-out/
+.jazyk/
   status.yaml            # version, generation, verdict, change records, parked and
                          # failed goals, costs, budgets spent, open diagnostic counts
                          # by severity, pending alignment proposals, anchors marked

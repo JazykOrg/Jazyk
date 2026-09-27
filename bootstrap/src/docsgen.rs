@@ -858,7 +858,7 @@ fn github_anchor(title: &str) -> String {
 // resolve from `docsgen/`, two levels under the project root when the out directory
 // sits where the default puts it. Mirrors docs/consumers/docsgen.md#the-requirements-document.
 fn relink_quote(quote: &str, doc: &str, store: &Store) -> String {
-    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some("jazyk-out");
+    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some(".jazyk");
     if !default_out || !quote.contains("](") {
         return quote.to_string();
     }
@@ -1995,7 +1995,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
 fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     // A link into a source document: relative from docsgen when the out directory
     // sits where the default puts it, the bare reference otherwise.
-    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some("jazyk-out");
+    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some(".jazyk");
     let section_link = |doc: &str, section: &str| -> String {
         let text = format!("{}#{}", doc, section);
         if default_out {
@@ -2155,7 +2155,7 @@ mod tests {
         let mut s = Store::default();
         let out = std::env::temp_dir()
             .join(format!("jazyk-docsgen-links-{}", crate::sys::process_id()))
-            .join("jazyk-out");
+            .join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         s.out = out.clone();
         assert_eq!(

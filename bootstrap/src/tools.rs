@@ -427,7 +427,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_feedback",
-            description: "Report that jazyk's own prompt, tool, schema, or error message is ambiguous, wrong, confusing, or missing something. It appends one line to the project's own jazyk-out/feedback.jsonl, read later by jazyk's developers, not this project's authors; nothing is transmitted anywhere. It never touches the graph. Use it for what blocked YOU; problems in the documents are diagnostics, not feedback. kind: ambiguous, wrong, confusing, missing, or other. subject names the tool, argument, or instruction. message says what was unclear and what would have helped. Then continue the task with your best judgment.",
+            description: "Report that jazyk's own prompt, tool, schema, or error message is ambiguous, wrong, confusing, or missing something. It appends one line to the project's own .jazyk/feedback.jsonl, read later by jazyk's developers, not this project's authors; nothing is transmitted anywhere. It never touches the graph. Use it for what blocked YOU; problems in the documents are diagnostics, not feedback. kind: ambiguous, wrong, confusing, missing, or other. subject names the tool, argument, or instruction. message says what was unclear and what would have helped. Then continue the task with your best judgment.",
             parameters: obj(
                 json!({
                     "kind": {"type": "string", "enum": ["ambiguous", "wrong", "confusing", "missing", "other"]},
@@ -4258,7 +4258,7 @@ impl ToolSession {
                         if name.starts_with('.')
                             || name == "target"
                             || name == "node_modules"
-                            || name == "jazyk-out"
+                            || name == ".jazyk"
                         {
                             continue;
                         }

@@ -792,7 +792,7 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `--llm-base-url URL`: the LLM endpoint (used by the embedded agent).
 - `--model M`: the model to use (used by the embedded agent).
 - `--api-key K`: sent as a bearer token (used by the embedded agent).
-- `--out DIR`: the out directory (default `jazyk-out/`).
+- `--out DIR`: the out directory (default `.jazyk/`).
 
 ## Help
 
@@ -825,4 +825,4 @@ directory as the project root. A [redirect](../compiler/project-settings.md#redi
 found above the working directory is a boundary, not a capture: discovery stops there
 and the command runs ad hoc at the working directory. Explicit `[path...]` arguments
 skip discovery and run ad hoc on those files. The out directory defaults to
-`<root>/jazyk-out/`.
+`<root>/.jazyk/`.

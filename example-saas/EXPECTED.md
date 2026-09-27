@@ -286,25 +286,25 @@ node over the hard threshold.
 A converged compile produces, each `.puml` with its `.svg` beside it:
 
 ```
-jazyk-out/diagrams/component/public.puml               .svg
-jazyk-out/diagrams/component/backend.puml              .svg
-jazyk-out/diagrams/class/ops.puml                      .svg   (or component/)
-jazyk-out/diagrams/component/api-server.puml           .svg
-jazyk-out/diagrams/class/<data-model-slug>.puml        .svg
-jazyk-out/diagrams/class/<request-handling-slug>.puml  .svg
-jazyk-out/diagrams/class/<rendering-slug>.puml         .svg
-jazyk-out/diagrams/class/identity.puml                 .svg   (good run)
-jazyk-out/diagrams/class/collaboration.puml            .svg   (good run)
-jazyk-out/diagrams/class/billing.puml                  .svg   (good run)
-jazyk-out/diagrams/usecase/user-identity.puml          .svg   and sequence/
-jazyk-out/diagrams/usecase/user-collaboration.puml     .svg   and sequence/
-jazyk-out/diagrams/usecase/user-billing.puml           .svg   and sequence/
-jazyk-out/diagrams/usecase/backend-*.puml              .svg   and sequence/
-jazyk-out/diagrams/usecase/api-server-*.puml           .svg   and sequence/
-jazyk-out/diagrams/state/account.puml                  .svg
-jazyk-out/diagrams/state/task.puml                     .svg
-jazyk-out/diagrams/state/invoice.puml                  .svg
-jazyk-out/diagrams/state/subscription.puml             .svg
+.jazyk/diagrams/component/public.puml               .svg
+.jazyk/diagrams/component/backend.puml              .svg
+.jazyk/diagrams/class/ops.puml                      .svg   (or component/)
+.jazyk/diagrams/component/api-server.puml           .svg
+.jazyk/diagrams/class/<data-model-slug>.puml        .svg
+.jazyk/diagrams/class/<request-handling-slug>.puml  .svg
+.jazyk/diagrams/class/<rendering-slug>.puml         .svg
+.jazyk/diagrams/class/identity.puml                 .svg   (good run)
+.jazyk/diagrams/class/collaboration.puml            .svg   (good run)
+.jazyk/diagrams/class/billing.puml                  .svg   (good run)
+.jazyk/diagrams/usecase/user-identity.puml          .svg   and sequence/
+.jazyk/diagrams/usecase/user-collaboration.puml     .svg   and sequence/
+.jazyk/diagrams/usecase/user-billing.puml           .svg   and sequence/
+.jazyk/diagrams/usecase/backend-*.puml              .svg   and sequence/
+.jazyk/diagrams/usecase/api-server-*.puml           .svg   and sequence/
+.jazyk/diagrams/state/account.puml                  .svg
+.jazyk/diagrams/state/task.puml                     .svg
+.jazyk/diagrams/state/invoice.puml                  .svg
+.jazyk/diagrams/state/subscription.puml             .svg
 ```
 
 What the pictures show:

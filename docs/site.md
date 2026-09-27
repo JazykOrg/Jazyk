@@ -73,11 +73,18 @@ One page.
 
 ## The editor
 
-[jazyk.dev](https://jazyk.dev) is the [GUI](./frontends/gui.md) built for the
-browser: the [demo build](./frontends/wasm.md#the-demo) of `bootstrap/app`, with the
-compiler as wasm, every example as a fixture, a new project kept in the browser's
-own storage ([a project in the browser](./frontends/wasm.md#a-project-in-the-browser)),
-and a folder on the computer openable through the File System Access API.
+[jazyk.dev](https://jazyk.dev) is the [GUI](./frontends/gui.md), the one page the
+app has: `bootstrap/app` built with the compiler as wasm, every example as a
+fixture, a new project kept in the browser's own storage
+([a project in the browser](./frontends/wasm.md#a-project-in-the-browser)), a
+folder on the computer openable through the File System Access API, and a
+connection to a `jazyk gui` server running on the computer
+([connecting to a local jazyk](./frontends/gui.md#connecting-to-a-local-jazyk)),
+which is how the binary shows its GUI: it opens this page. Once loaded, the page
+works without a network: a service worker keeps the app and its assets, so the
+demos, browser projects, folders, and a local server all work offline
+([offline](./frontends/wasm.md#offline)); only the first visit and a model download
+need the network.
 
 - Hosted like [jazyk.org](#hosting): a private bucket `jazyk.dev`, a distribution
   for `jazyk.dev` and `www.jazyk.dev` with its own certificate, origin access

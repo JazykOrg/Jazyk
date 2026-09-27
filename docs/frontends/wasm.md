@@ -100,8 +100,8 @@ open a directory on the computer as the project instead of the bundled demo.
   the folder is opened again. Nothing watches the folder.
 
 A folder opens in one of two modes, chosen on [Home](./gui.md#home) and switchable
-from the top bar at any time. The mode is the page's: the worker posts every
-mutation either way.
+from the [project menu](./gui.md#the-project-menu) at any time. The mode is the
+page's: the worker posts every mutation either way.
 
 - Writing: every mutation is applied to the folder as it arrives, and the
   [editor](./gui.md#editor) saves on its own.
@@ -193,7 +193,8 @@ Reopening it from `Recent` reads its files from storage and seeds the tree with 
 It works in every browser, since it needs no folder API. Removing its entry from the
 list deletes it, after asking.
 
-A browser project leaves the browser two ways, both offered in the top bar:
+A browser project leaves the browser two ways, both offered in the
+[project menu](./gui.md#the-project-menu):
 
 - `Save to a folder…` (where the File System Access API exists): the page asks for a
   folder, asks again if the folder is not empty, and writes every file of the tree
@@ -216,8 +217,9 @@ since. Its recent entry says it carries your edits.
 
 - Reopening it from `Recent`, or picking the same demo again, opens the edited copy,
   not the fixture.
-- `Reset to the original`, on its recent row and in the top bar, deletes the copy
-  after asking. A demo that is open reopens from the fixture.
+- `Reset to the original`, on its recent row and in the
+  [project menu](./gui.md#the-project-menu), deletes the copy after asking. A demo
+  that is open reopens from the fixture.
 - Removing its entry from the list deletes the copy too, after asking.
 
 The stored copy is a snapshot of the fixture it started from. A newer fixture in a
@@ -487,19 +489,30 @@ drawn at another level of detail, has no picture in a tab, and its page says why
 
 ## The demo
 
-`bootstrap/app/demo.html` is the same app with a different entry. The app mounts at
-once against a backend with no project open, which answers the
+The page mounts at once against a backend with no project open, which answers the
 [capability descriptor](./gui.md#backends-and-capabilities) itself (`backend:
 demo`, `projects: bundled`, `events: pushed`, `lsp: false`, `agent: embedded`,
 `rendering: none`, `persistence: browser`) and
 refuses every other route with `501` until a project is open. Home renders the
 picker from that descriptor and dispatches `jazyk:open-demo`, `jazyk:pick-folder`,
-`jazyk:new-project`, or `jazyk:open-recent`; the entry listens, seeds the backend
-with the bundled project, the [folder](#a-folder-on-disk) picked, or the
-[stored project](#browser-storage), and moves to the documents. Opening a folder
-flips the descriptor to `backend: wasm`, `persistence: folder`; opening a
-[browser project](#a-project-in-the-browser) flips it to `backend: wasm`,
-`persistence: browser`.
+`jazyk:new-project`, `jazyk:connect`, or `jazyk:open-recent`; the entry listens,
+seeds the backend with the bundled project, the [folder](#a-folder-on-disk) picked,
+or the [stored project](#browser-storage), or connects to the
+[local server](./gui.md#connecting-to-a-local-jazyk), and moves to the documents.
+Opening a folder flips the descriptor to `backend: wasm`, `persistence: folder`;
+opening a [browser project](#a-project-in-the-browser) flips it to `backend: wasm`,
+`persistence: browser`; connecting swaps the backend for the server's own
+descriptor. The open project is remembered and reopened on a reload
+([the open project](./gui.md#the-open-project)).
+
+Jobs in a tab: a build runs inside the worker, synchronously, so the worker itself
+can emit no lifecycle. The page keeps the job list and emits the lifecycle around
+the call: `POST /api/jobs` mints the job id and posts `job.queued` and
+`job.started`, every trace event the worker posts while the call runs carries that
+id as `job.trace`, and the return posts `job.finished` with the verdict.
+`GET /api/jobs` answers the page's list, newest first, kept for the life of the tab.
+So the [action button](./gui.md#the-action-button) shows the run's progress and the
+[chat column](./gui.md#chat) opens its build thread in a tab exactly as on a server.
 
 The model loads only when asked, because every read works without one and only a
 build or a [chat](#chat) needs it, and a first visit would otherwise download
@@ -571,20 +584,18 @@ output and its tests), with the tests run and their results in the ledger.
 
 ## Building
 
-`cd bootstrap/app && npm run build:demo` runs the whole pipeline:
+`cd bootstrap/app && npm run build` runs the whole pipeline:
 
 - `scripts/build-wasm.sh`: `cargo build --target wasm32-unknown-unknown --lib
   --release`, then `wasm-bindgen --target web`, then a stable re-export for the model
   bridge (wasm-bindgen names its snippet directory after a content hash).
-- `vite build` with `JAZYK_DEMO=1`, which builds `demo.html` into `dist-demo/` as
-  `index.html` (the editor is the root of its site) beside the fixtures from
-  `public/demos/`. `npm run preview:demo` serves it with the isolation headers.
-
-The demo lands in its own directory so the dist the binary embeds never grows a 7MB
-module. `npm run build` is unchanged and still builds only the workbench.
+- `vite build`, which builds the one page into `dist/` beside the fixtures from
+  `public/demos/`, the web manifest, and the service worker with its precache
+  manifest ([offline](#offline)). `npm run preview` serves it with the isolation
+  headers. `dist/` is build output, never committed: the binary embeds nothing.
 
 `npm run test:e2e` runs the editor's browser tests (`app/e2e/`, Playwright) against
-the built `dist-demo/` served with the isolation headers. They drive the page the
+the built `dist/` served with the isolation headers. They drive the page the
 way a visitor does: every route but Home redirects until a project is open, each
 demo opens with only its own documents, the Model pages read by name with no ids,
 a requirement keeps the Requirements list, a diagram shows its picture, the
@@ -602,8 +613,14 @@ the key only when one is set, a second prompt during a turn is refused, switchin
 demos empties the conversations, a stubbed built-in model answers a chat, a
 download is a `.zip` of the project, a refused write grant is said in the top bar,
 a requirement page reads its criteria in words and its ids only in Developer mode,
-every diagram of every demo has its picture, and a phone-width screen shows the
-chat again once it is wide. The deploy workflow runs them after the build and
+every diagram of every demo has its picture, a phone-width screen shows the
+chat again once it is wide, a reload lands in the open project at the same route,
+a sync in a tab shows its progress on the action button and opens its build thread
+in the chat, the chat's prompt box takes a first question with no conversation
+open, the action list offers only what the backend runs, the project menu says
+where changes go and downloads the project, the page loads and opens a demo it has
+seen with the network off, and the connect route reaches a mocked local server and
+lists it in Recent. The deploy workflow runs them after the build and
 publishes only when they pass.
 
 - `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
@@ -640,7 +657,31 @@ and no build can run. That means two headers on the document:
 
 The Vite dev server and `vite preview` set both. [jazyk.dev](../site.md#the-editor)
 serves the page from S3 through CloudFront, which sets them with a response headers
-policy; nothing client-side is needed.
+policy; nothing client-side is needed. A response the service worker serves from
+its cache keeps the headers it was cached with, so an offline load is isolated too.
+
+## Offline
+
+The page is installable and works without a network once it has loaded once:
+
+- A service worker (Workbox through `vite-plugin-pwa`) precaches the app shell:
+  `index.html`, the scripts and styles, the wasm module and its bindings, the
+  fonts, the icons, and the web manifest. It serves them cache-first, and updates
+  the cache in the background when a new build is deployed; the next load runs the
+  new version.
+- A demo's fixture (`demos/<id>.json`) is cached when it is first fetched and
+  served from the cache after, refreshed in the background when the network is
+  there, so a demo opened once opens offline. The model's weights are the model
+  library's own cache, filled on the first load.
+- Browser projects, folders, and the edits kept for a demo are in the browser's
+  storage and never needed the network. A connection to a local server is on the
+  loopback address and needs no network either.
+- What needs the network: the first visit, a demo never opened, a model never
+  loaded, and the endpoint model source.
+- A build a person is offline for is not the deploy's concern: `index.html` and the
+  fixtures are served with no cache at the edge, the hashed assets with a week, and
+  the worker's precache manifest names each asset by its hash, so an update is one
+  new manifest and the assets it names.
 
 ## What a tab does not do
 

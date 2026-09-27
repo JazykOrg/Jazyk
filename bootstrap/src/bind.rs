@@ -1100,6 +1100,7 @@ mod tests {
                 requirements: vec!["req:shop-1".into()],
                 files: vec!["tests/shop.rs".into()],
                 unattached: None,
+                recorded_at: None,
             },
         );
         ledger.save(&s.out);

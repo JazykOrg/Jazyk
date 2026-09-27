@@ -423,6 +423,7 @@ impl AcpRunner {
             tokens,
             failed: Some(failed),
             resolved: Vec::new(),
+            stopped: None,
         };
         // The attempt opens before anything can fail, so every exit below closes it
         // with exactly one terminal event (sessions.md#trace-events).
@@ -518,9 +519,13 @@ impl AcpRunner {
             UpdateTranslator::new(&label).with_doc(scope.doc()),
         ));
         let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        // The agent's own error, when its loop failed: it arrives as a message chunk
+        // and becomes the session's stop reason (docs/frontends/acp.md#the-embedded-agent).
+        let agent_error: Arc<Mutex<Option<String>>> = Default::default();
         let cb_translator = translator.clone();
         let cb_trace = trace.clone();
         let cb_calls = calls.clone();
+        let cb_error = agent_error.clone();
         let on_update: super::host::OnUpdate = Arc::new(move |ev| {
             if let super::host::HostEvent::Update(u) = ev {
                 if matches!(
@@ -528,6 +533,13 @@ impl AcpRunner {
                     agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)
                 ) {
                     cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if let agent_client_protocol::schema::v1::SessionUpdate::AgentMessageChunk(c) = u {
+                    if let agent_client_protocol::schema::v1::ContentBlock::Text(t) = &c.content {
+                        if let Some(e) = t.text.strip_prefix("agent error:") {
+                            *cb_error.lock().unwrap() = Some(e.trim().to_string());
+                        }
+                    }
                 }
                 cb_translator.lock().unwrap().on_update(u, &cb_trace);
             }
@@ -586,6 +598,21 @@ impl AcpRunner {
                 ""
             }
         );
+        // The reason a caller judging its own ledger names when nothing landed.
+        let stop_reason: Option<String> = match stop.stop.as_str() {
+            "end_turn" if !stop.idled => None,
+            "end_turn" => Some("the idle watchdog fired".to_string()),
+            "refusal" => Some(
+                agent_error
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| "the agent refused the prompt".to_string()),
+            ),
+            "max_turn_requests" => Some(format!("the session ran out of rounds after {}", rounds)),
+            "cancelled" => Some("the session was cancelled".to_string()),
+            other => Some(format!("the session stopped: {}", other)),
+        };
 
         // A ledger batch is judged by its caller against the ledger: the attempt ends
         // with the verdict left to it.
@@ -597,6 +624,7 @@ impl AcpRunner {
                 tokens,
                 failed: None,
                 resolved,
+                stopped: stop_reason,
             };
         }
         // Success is the store's word: the batch's goals must be resolved, failed,
@@ -618,6 +646,7 @@ impl AcpRunner {
             tokens,
             failed,
             resolved,
+            stopped: stop_reason,
         }
     }
 

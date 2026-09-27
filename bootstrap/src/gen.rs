@@ -373,6 +373,10 @@ pub struct EntityGen {
     // Mirrors docs/consumers/gen.md#the-unattached-remainder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattached: Option<Unattached>,
+    // When record_generation last landed for the entity: a run tells a record its
+    // session wrote from one that predates it. Mirrors docs/consumers/gen.md#the-ledger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<String>,
 }
 
 // Generated mass attached to no requirement: owned files no row names, significant
@@ -1682,6 +1686,7 @@ pub fn mark(
             requirements: reqs_of_sorted(store, id),
             files: files.clone(),
             unattached: None,
+            recorded_at: Some(crate::verify::now_iso()),
         },
     );
     let mut seeded = 0;
@@ -2304,6 +2309,62 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
 mod tests {
     use super::*;
     use crate::model::*;
+
+    // A runner that stops without recording, and one that records: gen counts an
+    // entity as generated only when its record moved during the session, and names
+    // the stop otherwise. Mirrors docs/consumers/gen.md#the-ledger.
+    struct StubRunner {
+        record: bool,
+        stopped: Option<String>,
+        store: Store,
+        gs: GenSettings,
+    }
+    impl crate::runner::SessionRunner for StubRunner {
+        fn agent_name(&self) -> String {
+            "stub".into()
+        }
+        fn set_build_token(&self, _token: Option<String>) {}
+        fn run_item(&self, _batch: &crate::runner::BatchRun, _trace: &crate::session::Trace) -> crate::runner::SessionReport {
+            if self.record {
+                crate::vfs::write(self.gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
+                mark(&self.store, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &self.gs).unwrap();
+            }
+            crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, failed: None, resolved: Vec::new(), stopped: self.stopped.clone() }
+        }
+        fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
+            Err("stub".into())
+        }
+        fn ask_traced(&self, _s: &str, _u: &str, _l: &str, _st: &str, _t: Option<&crate::session::Trace>) -> Result<String, String> {
+            Err("stub".into())
+        }
+    }
+
+    #[test]
+    fn a_session_that_recorded_nothing_is_no_generation() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-landed-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+        // A record from an earlier run stands in the ledger.
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn old() {}\n").unwrap();
+        mark(&s, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &gs).unwrap();
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal, std::sync::Arc::new(|_| {}), Default::default());
+        let ids = vec!["ent:cart".to_string()];
+        let idle = StubRunner { record: false, stopped: Some("http error: HTTP 429 :: rate limit".into()), store: s.clone(), gs: gs.clone() };
+        let r = gen_session(&s, &idle, &gs, "ent:cart", &ids, &trace);
+        let err = r[0].1.as_ref().unwrap_err();
+        assert!(err.contains("no record landed") && err.contains("429"), "{}", err);
+        let quiet = StubRunner { record: false, stopped: None, store: s.clone(), gs: gs.clone() };
+        let r = gen_session(&s, &quiet, &gs, "ent:cart", &ids, &trace);
+        assert!(r[0].1.as_ref().unwrap_err().contains("without record_generation"), "{:?}", r[0].1);
+        // recordedAt has one-second resolution; a real session spans seconds.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let writer = StubRunner { record: true, stopped: None, store: s.clone(), gs: gs.clone() };
+        let r = gen_session(&s, &writer, &gs, "ent:cart", &ids, &trace);
+        assert_eq!(r[0].1.as_ref().unwrap(), &1, "{:?}", r[0].1);
+        assert!(Ledger::load(&out).entities["cart"].recorded_at.is_some());
+        crate::vfs::remove_dir_all(&out).ok();
+    }
 
     fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
         let mut s = Store {
@@ -3554,16 +3615,37 @@ fn gen_session(
         goals,
         executor: None,
     };
+    let recorded_before = |ledger: &Ledger, id: &str| -> Option<String> {
+        ledger.entities.get(&slug_of(id)).and_then(|e| e.recorded_at.clone())
+    };
+    let before: Vec<Option<String>> = {
+        let ledger = Ledger::load(&store.out);
+        ids.iter().map(|id| recorded_before(&ledger, id)).collect()
+    };
     let report = runner.run_item(&batch, trace);
     if let Some(e) = report.failed {
         return ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect();
     }
-    // Success is the gate's word: the record landed with current facts and existing
-    // files. Whether run_tests ran is the verify goal's business here; a session that
-    // recorded and ended resolves the goal at the next derivation
-    // (docs/compiler/goals/generate.md#gate).
+    // Success is the gate's word over a record this session wrote: the record landed
+    // with current facts and existing files. A record the session never moved is no
+    // generation, whatever the ledger held before, and the failure names why the
+    // session stopped. Whether run_tests ran is the verify goal's business here; a
+    // session that recorded and ended resolves the goal at the next derivation
+    // (docs/compiler/goals/generate.md#gate, docs/consumers/gen.md#the-ledger).
+    let after = Ledger::load(&store.out);
     ids.iter()
-        .map(|id| (id.clone(), gate(store, gs, id, false)))
+        .zip(before)
+        .map(|(id, was)| {
+            if recorded_before(&after, id) == was {
+                let why = report
+                    .stopped
+                    .clone()
+                    .unwrap_or_else(|| "the session ended without record_generation".to_string());
+                (id.clone(), Err(format!("no record landed for `{}` in this session: {}", id, why)))
+            } else {
+                (id.clone(), gate(store, gs, id, false))
+            }
+        })
         .collect()
 }
 

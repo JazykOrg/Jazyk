@@ -106,7 +106,8 @@ ledger, not the model's word:
   ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)) and
   names them in its reply.
 - A session that recorded and ended without marking still resolves the goal at the
-  next derivation. A session that never recorded has not resolved it: retry once with
+  next derivation (the run reads the record's `recordedAt` to tell the two apart). A
+  session that never recorded has not resolved it: retry once with
   a fresh session, then park
   ([resolving, failing, parking](../sessions.md#resolving-failing-parking)).
 - A bound test the session cannot make pass without changing it is left untouched.

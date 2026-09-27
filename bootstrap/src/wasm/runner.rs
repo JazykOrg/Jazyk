@@ -87,6 +87,7 @@ impl SessionRunner for InPageRunner {
             tokens,
             failed: Some(msg),
             resolved: Vec::new(),
+            stopped: None,
         };
 
         // The same flags the native runner gives its injected serving: it belongs
@@ -212,8 +213,9 @@ impl SessionRunner for InPageRunner {
             applied,
             rounds,
             tokens,
-            failed: if committed { None } else { note.or(Some("nothing committed".to_string())) },
+            failed: if committed { None } else { note.clone().or(Some("nothing committed".to_string())) },
             resolved,
+            stopped: note,
         }
     }
 

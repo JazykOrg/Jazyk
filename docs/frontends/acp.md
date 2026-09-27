@@ -196,7 +196,12 @@ back through the same tool template and failed the same way, aborting the turn. 
 fallbacks ride along too: streaming when the endpoint demands it, dropped
 `temperature`, stripped reasoning fields ([LLM settings](../compiler/project-settings.md#llm)).
 A reasoning model's reasoning is appended back into the history unchanged, so later
-rounds see the reasoning behind earlier calls. No jazyk prompting, no jazyk tool
+rounds see the reasoning behind earlier calls. A loop failure (a rate limit, a dead
+endpoint) ends the prompt as a refusal with `agent error: ...` in a message chunk rather
+than a protocol error, which would close the host and every session on it; the worker
+runner reads that chunk back as the session's stop reason, so the caller of a ledger
+batch names it (a generate session that never recorded once failed its entities with
+the record gate's wording while the cause was a 429). No jazyk prompting, no jazyk tool
 knowledge, no shortcut into the store. The same session against OpenCode or the
 embedded agent carries the same prompt and the same injected tools, which is what
 makes the embedded agent a faithful test double for the whole path.

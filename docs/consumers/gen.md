@@ -509,6 +509,7 @@ entities:
     files:                                # deliverable-relative files this entity's
       - src/catalog.rs                    # generation produced or touched
       - tests/catalog.rs
+    recordedAt: 2026-09-26T16:58:02Z      # when record_generation last landed for it
     unattached:                           # the unattached remainder, measured at record time
       files: 0                            # owned files no requirement row names
       lines: 14                           # significant lines outside every site's run
@@ -751,7 +752,12 @@ regenerates only the members whose facts moved
 generation work only through an `unimplemented` row
 ([the generate goal](../compiler/goals/generate.md#created-when)), so adopted code whose
 rows all read `verified` is never regenerated over. `jazyk gen` names the reason for
-every entity it skips: unchanged, a bind still owed, or no row that says generate.
+every entity it skips: unchanged, a bind still owed, or no row that says generate. It
+counts an entity as generated only when its record's `recordedAt` moved during the
+session; an entity whose session ended without recording is a failure naming why the
+session stopped (a rate limit, the round budget, a cancel), never a regeneration, since a
+run under an exhausted quota once printed "generated" for an entity whose record was the
+day before's.
 `--force` regenerates everything. A regeneration overwrites the entity's recorded file
 set: files the previous generation recorded that the new manifest omits are removed
 from the deliverable (snapshotted first, see below), so a test file under a new name

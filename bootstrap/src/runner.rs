@@ -16,6 +16,10 @@ pub struct SessionReport {
     pub failed: Option<String>,
     // Goal ids the batch's journal entries resolved.
     pub resolved: Vec<String>,
+    // Why the session stopped short of a plain end of turn (the agent's error text on
+    // a refusal, the round budget, a cancel), for a caller that judges its own ledger.
+    // Mirrors docs/frontends/acp.md#the-embedded-agent.
+    pub stopped: Option<String>,
 }
 
 // One session's worth of work: the batch id, its goals, and the scheduler's executor

@@ -417,10 +417,11 @@ impl AcpRunner {
         let label = batch.id.clone();
         let goal_ids = batch.goal_ids();
         let scope = WorkScope::for_batch(&batch.id, &batch.goals);
-        let failed_report = |failed: String, rounds: u32, tokens: u64| SessionReport {
+        let failed_report = |failed: String, rounds: u32, tokens: u64, cached: u64| SessionReport {
             applied: 0,
             rounds,
             tokens,
+            cached,
             failed: Some(failed),
             resolved: Vec::new(),
             stopped: None,
@@ -484,7 +485,7 @@ impl AcpRunner {
         batch: &BatchRun,
         trace: &Trace,
         attempt: Attempt,
-        failed_report: &dyn Fn(String, u32, u64) -> SessionReport,
+        failed_report: &dyn Fn(String, u32, u64, u64) -> SessionReport,
     ) -> SessionReport {
         let label = batch.id.clone();
         let goal_ids = batch.goal_ids();
@@ -494,7 +495,7 @@ impl AcpRunner {
             Err(e) => {
                 let e = format!("executor: {}", e);
                 attempt.failed(&e);
-                return failed_report(e, 0, 0);
+                return failed_report(e, 0, 0, 0);
             }
         };
         let gen_before = crate::store::read_generation(&self.out);
@@ -503,7 +504,7 @@ impl AcpRunner {
             Err(e) => {
                 let e = format!("session: {}", e);
                 attempt.failed(&e);
-                return failed_report(e, 0, 0);
+                return failed_report(e, 0, 0, 0);
             }
         };
         // The transport is news only when it is not the default.
@@ -570,6 +571,7 @@ impl AcpRunner {
         let mut t = translator.lock().unwrap();
         t.finish(trace);
         let tokens = t.tokens;
+        let cached = t.cached;
         drop(t);
         crate::llm::add_tokens(tokens);
         let rounds = calls.load(std::sync::atomic::Ordering::Relaxed);
@@ -583,7 +585,7 @@ impl AcpRunner {
                     self.hosts.lock().unwrap().remove(&agent.name);
                 }
                 attempt.failed(&e);
-                return failed_report(e, rounds, tokens);
+                return failed_report(e, rounds, tokens, cached);
             }
         };
 
@@ -622,6 +624,7 @@ impl AcpRunner {
                 applied,
                 rounds,
                 tokens,
+                cached,
                 failed: None,
                 resolved,
                 stopped: stop_reason,
@@ -644,6 +647,7 @@ impl AcpRunner {
             applied,
             rounds,
             tokens,
+            cached,
             failed,
             resolved,
             stopped: stop_reason,

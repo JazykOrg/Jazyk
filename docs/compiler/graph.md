@@ -504,6 +504,7 @@ opened_goals:
   - {goal: g:rejudge-pair:req:orders-6~req:payment-9, cause: {generation: 413, mutation: 1, via: entities}}
 rounds: 6
 tokens: 9800
+cachedTokens: 6100
 ```
 
 The entry kinds:
@@ -514,7 +515,9 @@ The entry kinds:
   serving, before the turn's cost is known, so `tokens` is stamped afterwards by the
   build that measured it, split across the `session` entries that turn wrote (a
   `checks` or `settle-diagnostics` entry between them takes no share, so the parts sum
-  to the spend). A session an
+  to the spend). `cachedTokens` is the part of the input the endpoint served from its
+  prompt cache, when it reported one ([budgets](./sessions.md#budgets)): stamped and
+  split the same way, absent when the endpoint reported none. A session an
   external agent drove ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp))
   spends tokens the harness never sees, so its entry carries no `tokens` at all rather
   than claiming zero: reading `tokens: 0` on every session, a person would price a build

@@ -39,13 +39,16 @@ pub fn set_tools_mode(mode: u8) {
 
 // What one model call cost. `completion` is the tokens it produced (the throughput and
 // efficiency figures the benchmark reports); `billed` is what the endpoint bills, its
-// input and output tokens together (the session's cost). `measured` says the endpoint
-// reported usage; otherwise both are estimates from characters, a quarter token each.
+// input and output tokens together (the session's cost); `cached` is the part of the
+// input the endpoint served from its prompt cache, a share of the bill and never a
+// deduction from it, 0 when unreported. `measured` says the endpoint reported usage;
+// otherwise completion and billed are estimates from characters, a quarter token each.
 // Mirrors docs/compiler/sessions.md#budgets.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Spend {
     pub completion: u64,
     pub billed: u64,
+    pub cached: u64,
     pub measured: bool,
 }
 
@@ -55,6 +58,16 @@ fn usage_billed(u: &Value) -> Option<u64> {
         let prompt = u["prompt_tokens"].as_u64()?;
         Some(prompt + u["completion_tokens"].as_u64().unwrap_or(0))
     })
+}
+
+// The cached input tokens a usage object reports: OpenAI's
+// `prompt_tokens_details.cached_tokens`, or an Anthropic-compatible endpoint's
+// `cache_read_input_tokens`. 0 when neither is present.
+fn usage_cached(u: &Value) -> u64 {
+    u["prompt_tokens_details"]["cached_tokens"]
+        .as_u64()
+        .or_else(|| u["cache_read_input_tokens"].as_u64())
+        .unwrap_or(0)
 }
 
 // Token meter: completion tokens across all calls this run, for status.yaml reporting.
@@ -761,8 +774,8 @@ fn parse_completion(body: &str, sent_estimate: u64) -> Result<(Value, Spend), St
         as u64;
     let completion = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| received.div_ceil(4));
     let spend = match usage_billed(&v["usage"]) {
-        Some(billed) => Spend { completion, billed, measured: true },
-        None => Spend { completion, billed: sent_estimate + completion, measured: false },
+        Some(billed) => Spend { completion, billed, cached: usage_cached(&v["usage"]), measured: true },
+        None => Spend { completion, billed: sent_estimate + completion, cached: 0, measured: false },
     };
     SPENT_TOKENS.fetch_add(completion, Ordering::Relaxed);
     Ok((msg, spend))
@@ -793,6 +806,7 @@ fn read_stream_message<R: BufRead>(
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
     let mut usage_billed_tokens: Option<u64> = None;
+    let mut usage_cached_tokens = 0u64;
     let mut finish_reason: Option<String> = None;
     let started = crate::sys::Instant::now();
     // Chars per token runs 3 to 4; the slack keeps an honest near-cap reply alive while
@@ -837,6 +851,7 @@ fn read_stream_message<R: BufRead>(
             }
             if let Some(b) = usage_billed(&v["usage"]) {
                 usage_billed_tokens = Some(b);
+                usage_cached_tokens = usage_cached(&v["usage"]);
             }
             if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
                 finish_reason = Some(f.to_string());
@@ -889,8 +904,8 @@ fn read_stream_message<R: BufRead>(
     SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
     // Billed is the usage's total; without one the caller adds what went out.
     let spend = match usage_billed_tokens {
-        Some(billed) => Spend { completion: tokens, billed, measured: true },
-        None => Spend { completion: tokens, billed: tokens, measured: false },
+        Some(billed) => Spend { completion: tokens, billed, cached: usage_cached_tokens, measured: true },
+        None => Spend { completion: tokens, billed: tokens, cached: 0, measured: false },
     };
     let mut msg = json!({"role": "assistant", "content": content});
     if let Some(f) = finish_reason {
@@ -1032,7 +1047,7 @@ mod tests {
             r#"{"choices":[],"usage":{"prompt_tokens":9749,"completion_tokens":31,"total_tokens":9780}}"#,
         ]);
         let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
-        assert_eq!(spend, Spend { completion: 31, billed: 9780, measured: true });
+        assert_eq!(spend, Spend { completion: 31, billed: 9780, cached: 0, measured: true });
         let body = sse(&[
             r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
             r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5}}"#,
@@ -1053,11 +1068,11 @@ mod tests {
         let (msg, spend) = parse_completion(body, 50).unwrap();
         assert_eq!(msg["content"], "ok");
         assert_eq!(msg["finish_reason"], "stop");
-        assert_eq!(spend, Spend { completion: 7, billed: 107, measured: true });
+        assert_eq!(spend, Spend { completion: 7, billed: 107, cached: 0, measured: true });
         // No total: prompt plus completion.
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7}}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 7, billed: 107, measured: true });
+        assert_eq!(spend, Spend { completion: 7, billed: 107, cached: 0, measured: true });
     }
 
     // Without usage the completion is a quarter token per character of what came
@@ -1066,12 +1081,12 @@ mod tests {
     fn nonstream_without_usage_bills_sent_plus_received() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"eight ch"}}]}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 2, billed: 52, measured: false });
+        assert_eq!(spend, Spend { completion: 2, billed: 52, cached: 0, measured: false });
         // Tool calls count by their serialized text; a null content counts nothing.
         let body = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"done","arguments":"{}"}}]}}]}"#;
         let (msg, spend) = parse_completion(body, 50).unwrap();
         let text = msg["tool_calls"].to_string().chars().count() as u64;
-        assert_eq!(spend, Spend { completion: text.div_ceil(4), billed: 50 + text.div_ceil(4), measured: false });
+        assert_eq!(spend, Spend { completion: text.div_ceil(4), billed: 50 + text.div_ceil(4), cached: 0, measured: false });
         // A body without a message is an error naming the body.
         let err = parse_completion(r#"{"choices":[]}"#, 50).unwrap_err();
         assert!(err.starts_with("no message in response"), "{}", err);
@@ -1085,9 +1100,37 @@ mod tests {
     fn usage_without_prompt_tokens_is_unmeasured() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"completion_tokens":7}}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 7, billed: 57, measured: false });
+        assert_eq!(spend, Spend { completion: 7, billed: 57, cached: 0, measured: false });
         assert_eq!(usage_billed(&json!({"completion_tokens": 7})), None);
         assert_eq!(usage_billed(&json!({"prompt_tokens": 3})), Some(3));
+    }
+
+    // Cached input rides beside the bill under either provider's name: OpenAI's
+    // `prompt_tokens_details.cached_tokens` or Anthropic's `cache_read_input_tokens`,
+    // read on a body and on a stream alike, 0 when neither is reported
+    // (docs/compiler/sessions.md#budgets).
+    #[test]
+    fn cached_input_tokens_are_read_under_both_names_on_both_paths() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":64}}}"#;
+        let (_msg, spend) = parse_completion(body, 50).unwrap();
+        assert_eq!(spend, Spend { completion: 7, billed: 107, cached: 64, measured: true });
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7,"cache_read_input_tokens":80}}"#;
+        let (_msg, spend) = parse_completion(body, 50).unwrap();
+        assert_eq!(spend.cached, 80);
+        assert_eq!(usage_cached(&json!({"prompt_tokens": 3})), 0);
+        // The stream's closing usage chunk carries it the same way.
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"content":"hi"}}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9749,"completion_tokens":31,"total_tokens":9780,"prompt_tokens_details":{"cached_tokens":9000}}}"#,
+        ]);
+        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert_eq!(spend, Spend { completion: 31, billed: 9780, cached: 9000, measured: true });
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"content":"hi"}}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"cache_read_input_tokens":90}}"#,
+        ]);
+        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert_eq!((spend.billed, spend.cached), (105, 90));
     }
 
     // A streamed message the transport already assembled keeps a measured spend as
@@ -1096,18 +1139,18 @@ mod tests {
     fn a_streamed_unmeasured_message_adds_sent_estimate() {
         let msg = json!({"role": "assistant", "content": "ok"});
         let (m, spend) = settle(
-            Transported::Message((msg.clone(), Spend { completion: 2, billed: 2, measured: false })),
+            Transported::Message((msg.clone(), Spend { completion: 2, billed: 2, cached: 0, measured: false })),
             50,
         )
         .unwrap();
         assert_eq!(m, msg);
-        assert_eq!(spend, Spend { completion: 2, billed: 52, measured: false });
+        assert_eq!(spend, Spend { completion: 2, billed: 52, cached: 0, measured: false });
         let (_m, spend) = settle(
-            Transported::Message((msg, Spend { completion: 31, billed: 9780, measured: true })),
+            Transported::Message((msg, Spend { completion: 31, billed: 9780, cached: 0, measured: true })),
             50,
         )
         .unwrap();
-        assert_eq!(spend, Spend { completion: 31, billed: 9780, measured: true });
+        assert_eq!(spend, Spend { completion: 31, billed: 9780, cached: 0, measured: true });
     }
 
     #[test]

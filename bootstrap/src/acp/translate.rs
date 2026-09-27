@@ -21,8 +21,10 @@ pub struct UpdateTranslator {
     message: String,
     // Tool call titles by id, so an update row can name what finished.
     calls: HashMap<String, String>,
-    // Completion tokens the agent reported (the embedded agent's usage meta).
+    // The tokens the agent reported billed (the embedded agent's usage meta), and the
+    // input tokens among them its endpoint served from its prompt cache.
     pub tokens: u64,
+    pub cached: u64,
 }
 
 impl UpdateTranslator {
@@ -45,6 +47,7 @@ impl UpdateTranslator {
             message: String::new(),
             calls: HashMap::new(),
             tokens: 0,
+            cached: 0,
         }
     }
 
@@ -177,11 +180,15 @@ impl UpdateTranslator {
                 });
             }
             SessionUpdate::UsageUpdate(u) => {
-                // The embedded agent reports each round's billed tokens in the meta;
-                // other agents may not report usage at all, and tokens stay 0.
+                // The embedded agent reports each round's billed tokens and its cached
+                // input in the meta; other agents may not report usage at all, and
+                // both stay 0.
                 if let Ok(v) = serde_json::to_value(&u.meta) {
                     if let Some(t) = v["jazyk"]["tokens"].as_u64() {
                         self.tokens += t;
+                    }
+                    if let Some(c) = v["jazyk"]["cachedTokens"].as_u64() {
+                        self.cached += c;
                     }
                 }
             }

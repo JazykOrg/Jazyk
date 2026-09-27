@@ -387,11 +387,16 @@ report covers every build, where `costs` in `status.yaml` covers the last one.
   spend splits evenly across the goals the entry resolved (the goals of its `batch`
   when it resolved none).
 - `cost`: the journal's generation range, the session entries (measured and
-  unmeasured), and the measured tokens.
-- `by kind`: per goal kind, the goals resolved, their tokens, tokens per measured goal,
-  and the goals whose session was unmeasured. Heaviest kind first.
-- `by document`: per document, the goals that target it, their tokens, and the
-  unmeasured goals. A goal's document is its target's:
+  unmeasured), the measured tokens, and, when any entry carries `cachedTokens`, the
+  cached input tokens with their share of the spend
+  ([budgets](../compiler/sessions.md#budgets)). An entry without `cachedTokens`
+  contributes no cached tokens: older entries and endpoints that report no cache read
+  count as 0 cached, never as unmeasured.
+- `by kind`: per goal kind, the goals resolved, their tokens, their cached tokens,
+  tokens per measured goal, and the goals whose session was unmeasured. Heaviest kind
+  first.
+- `by document`: per document, the goals that target it, their tokens, their cached
+  tokens, and the unmeasured goals. A goal's document is its target's:
   - a section reference or a document path names it,
   - a node's is the document its quote sits in: an entity without a quote of its own
     takes its first mention's, a criterion without one takes its requirement's, a
@@ -412,24 +417,29 @@ measured session says its spend is unknown instead of printing them.
 E.g.:
 
 ```
-cost: g1..g43, 38 sessions (36 measured, 2 unmeasured), 164210 tokens
-by kind:               goals   tokens  per goal  unmeasured
-  reconcile-section       31    61204      2040           1
-  derive-criteria         16    45611      2851           0
-  review-entity           19    27830      1546           0
-by document:           goals   tokens  unmeasured
-  docs/orders.md          14    21870           0
-  docs/payment.md         11    18342           1
-  (no document)            3     1904           0
+cost: g1..g43, 38 sessions (36 measured, 2 unmeasured), 164210 tokens, 61204 cached (37%)
+by kind:               goals   tokens   cached  per goal  unmeasured
+  reconcile-section       31    61204    24910      2040           1
+  derive-criteria         16    45611    18102      2851           0
+  review-entity           19    27830     9877      1546           0
+by document:           goals   tokens   cached  unmeasured
+  docs/orders.md          14    21870     8104           0
+  docs/payment.md         11    18342     7011           1
+  (no document)            3     1904        0           0
 per requirement: 1954 tokens (84 requirements)
 per criterion: 1253 tokens (131 criteria)
 ```
 
+The `cached` figure and its share print only when some entry carries `cachedTokens`;
+a journal without one prints the line and the tables as before, without the cached
+column.
+
 `--costs --json` prints one JSON object with the same content: `first`, `last`,
-`sessions`, `measured`, `unmeasured`, `tokens`, `by_kind` and `by_document` (each a
-list of `{name, goals, tokens, unmeasured}`, heaviest first), `requirements`,
-`criteria`, `per_requirement`, `per_criterion`. A figure no session measured is `null`
-(and `-` in the text), never `0`. Exit `0`.
+`sessions`, `measured`, `unmeasured`, `tokens`, `cached` (the cached input tokens
+over the measured sessions, `0` when none reported any), `by_kind` and `by_document`
+(each a list of `{name, goals, tokens, cached, unmeasured}`, heaviest first),
+`requirements`, `criteria`, `per_requirement`, `per_criterion`. A figure no session
+measured is `null` (and `-` in the text), never `0`. Exit `0`.
 
 ### jazyk preview
 

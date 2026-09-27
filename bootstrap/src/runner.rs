@@ -12,7 +12,10 @@ use std::collections::BTreeSet;
 pub struct SessionReport {
     pub applied: usize,
     pub rounds: u32,
+    // What the turn billed, and the input among it the endpoint served from its prompt
+    // cache (docs/compiler/sessions.md#budgets).
     pub tokens: u64,
+    pub cached: u64,
     pub failed: Option<String>,
     // Goal ids the batch's journal entries resolved.
     pub resolved: Vec<String>,

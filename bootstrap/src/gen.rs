@@ -2329,7 +2329,7 @@ mod tests {
                 crate::vfs::write(self.gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
                 mark(&self.store, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &self.gs).unwrap();
             }
-            crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, failed: None, resolved: Vec::new(), stopped: self.stopped.clone() }
+            crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, cached: 0, failed: None, resolved: Vec::new(), stopped: self.stopped.clone() }
         }
         fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
             Err("stub".into())

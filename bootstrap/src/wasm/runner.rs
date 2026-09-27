@@ -85,6 +85,7 @@ impl SessionRunner for InPageRunner {
             applied: 0,
             rounds,
             tokens,
+            cached: 0,
             failed: Some(msg),
             resolved: Vec::new(),
             stopped: None,
@@ -136,6 +137,7 @@ impl SessionRunner for InPageRunner {
         let gen_before = crate::store::read_generation(&self.out);
         let mut history: Vec<Value> = vec![json!({"role": "user", "content": opening})];
         let mut tokens = 0u64;
+        let mut cached = 0u64;
         let mut rounds = 0u32;
 
         let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
@@ -155,7 +157,10 @@ impl SessionRunner for InPageRunner {
             }
         };
         let mut emit = |ev: AgentEvent| match ev {
-            AgentEvent::Usage { tokens: t } => tokens += t,
+            AgentEvent::Usage { tokens: t, cached: c } => {
+                tokens += t;
+                cached += c;
+            }
             AgentEvent::ToolCallStart { name, args, .. } => {
                 trace.event(TraceEvent::ToolCall {
                     label: label.clone(),
@@ -213,6 +218,7 @@ impl SessionRunner for InPageRunner {
             applied,
             rounds,
             tokens,
+            cached,
             failed: if committed { None } else { note.clone().or(Some("nothing committed".to_string())) },
             resolved,
             stopped: note,

@@ -30,8 +30,11 @@ pub enum AgentEvent {
         result: String,
         ok: bool,
     },
+    // What the round billed (input and output) and how much of its input the endpoint
+    // served from its prompt cache (docs/compiler/sessions.md#budgets).
     Usage {
         tokens: u64,
+        cached: u64,
     },
 }
 
@@ -408,7 +411,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             // The cost a session carries is what the endpoint bills, input and output
             // (docs/compiler/sessions.md#budgets).
             Ok((m, t)) => {
-                (a.emit)(AgentEvent::Usage { tokens: t.billed });
+                (a.emit)(AgentEvent::Usage { tokens: t.billed, cached: t.cached });
                 m
             }
             Err(e) if e.starts_with("tools-rejected:") && mode != 2 => {

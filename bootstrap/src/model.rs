@@ -1035,6 +1035,11 @@ pub struct JournalEntry {
     // Mirrors docs/compiler/graph.md#journal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<u64>,
+    // The input tokens among `tokens` the endpoint served from its prompt cache. Absent
+    // when the endpoint reported none and on entries older than the field
+    // (docs/compiler/sessions.md#budgets).
+    #[serde(rename = "cachedTokens", default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
 }
 
 // The budgets the last build used.

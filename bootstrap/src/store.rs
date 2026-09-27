@@ -1036,8 +1036,10 @@ impl Store {
 
     // Stamp the session's measured spend onto the entries a session just wrote: the
     // entry commits inside the serving, before the runner knows what the turn cost.
+    // `cached` is the input among `tokens` the endpoint served from its prompt cache,
+    // split the same way; 0 leaves the field absent.
     // Mirrors docs/compiler/graph.md#journal.
-    pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64) {
+    pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64, cached: u64) {
         if tokens == 0 || to <= from {
             return;
         }
@@ -1055,10 +1057,14 @@ impl Store {
         if n == 0 {
             return;
         }
-        let share = tokens / n;
+        // The remainder rides on the last entry.
+        let split = |total: u64, i: usize| {
+            let share = total / n;
+            if i as u64 + 1 == n { total - share * (n - 1) } else { share }
+        };
         for (i, (p, mut entry)) in entries.into_iter().enumerate() {
-            // The remainder rides on the last entry.
-            entry.tokens = Some(if i as u64 + 1 == n { tokens - share * (n - 1) } else { share });
+            entry.tokens = Some(split(tokens, i));
+            entry.cached_tokens = (cached > 0).then(|| split(cached, i));
             if let Ok(out_text) = serde_norway::to_string(&entry) {
                 crate::vfs::write(&p, out_text).ok();
             }
@@ -8027,7 +8033,7 @@ mod tests {
         write(1, "edit", None);
         write(2, "session", None);
         write(3, "session", None);
-        Store::stamp_tokens(&out, 1, 3, 901);
+        Store::stamp_tokens(&out, 1, 3, 901, 601);
         let read = |g: u64| -> JournalEntry {
             serde_norway::from_str(
                 &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g)))
@@ -8035,20 +8041,28 @@ mod tests {
             )
             .unwrap()
         };
-        // The two session entries carry the whole spend between them; the edit entry,
-        // which no session wrote, stays without one.
+        // The two session entries carry the whole spend between them, the cached input
+        // split the same way; the edit entry, which no session wrote, stays without one.
         assert_eq!(read(2).tokens, Some(450));
         assert_eq!(read(3).tokens, Some(451));
+        assert_eq!(read(2).cached_tokens, Some(300));
+        assert_eq!(read(3).cached_tokens, Some(301));
         assert_eq!(read(1).tokens, None);
         // A second stamp over the same generations leaves the first one's numbers.
-        Store::stamp_tokens(&out, 1, 3, 100);
+        Store::stamp_tokens(&out, 1, 3, 100, 0);
         assert_eq!(read(2).tokens, Some(450));
+        assert_eq!(read(2).cached_tokens, Some(300));
         // A checks entry after the session's own takes no share: the session entry
         // carries the whole spend (a split once dropped half a criteria session's).
+        // An endpoint that reported no cache read leaves the field absent, not zero.
         write(4, "session", None);
         write(5, "checks", None);
-        Store::stamp_tokens(&out, 3, 5, 12051);
+        Store::stamp_tokens(&out, 3, 5, 12051, 0);
         assert_eq!(read(4).tokens, Some(12051));
+        assert_eq!(read(4).cached_tokens, None);
+        assert!(
+            !crate::vfs::read_to_string(out.join("journal/g4.yaml")).unwrap().contains("cachedTokens")
+        );
         assert_eq!(read(5).tokens, None);
     }
 

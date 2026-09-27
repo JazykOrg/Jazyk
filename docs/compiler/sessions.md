@@ -474,6 +474,18 @@ throughput and efficiency the [benchmark](../benchmark/benchmark.md) reports, an
 input tokens are most of a session's bill; one build counted output alone and reported
 13k tokens where the endpoint saw 29k of input.
 
+Cached input tokens ride beside the bill. A provider that caches the prompt prefix
+reports how much of the input it served from that cache: OpenAI chat completions in
+`usage.prompt_tokens_details.cached_tokens`, an Anthropic-compatible endpoint in
+`usage.cache_read_input_tokens`. Both response paths (a body, a stream) read both
+names; an endpoint that reports neither counts 0. The figure is a share of the input,
+not a deduction from it: the bill stays what the endpoint billed, and the cached share
+says how much of it was priced at the cache rate. The embedded agent reports both per
+round in its usage update's meta (`jazyk.tokens`, `jazyk.cachedTokens`), the runner sums
+them over the turn, and the journal entry carries them as `tokens` and `cachedTokens`
+([journal](./graph.md#journal)); `jazyk status --costs` prints the cached share beside
+the spend ([status](../frontends/cli.md#jazyk-status)).
+
 ## Snapshots
 
 Every batch a session opens leaves a snapshot of the graph as it stood: the shards under

@@ -1711,7 +1711,12 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
                     mutation: 0,
                     via: "flip-detection".into(),
                 }),
-                state: GoalState::Parked,
+                // Blocked on the ruling, never batched: a parked goal resumes first,
+                // and a session cannot resolve one whose cause is the ruling owed
+                // (docs/compiler/reconciler.md#flip-detection).
+                state: GoalState::Blocked {
+                    on: format!("human: unstable-derivation ruling on {}", subject),
+                },
                 hints: vec![format!(
                     "parked by flip detection; answer the unstable-derivation prompt on {}",
                     subject
@@ -2028,7 +2033,12 @@ fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec
                 mutation: 0,
                 via: "flip-detection".into(),
             }),
-            state: GoalState::Parked,
+            // Blocked on the ruling, never batched (the novel's conform-instance goal
+            // behind a reparent flip was batched, resolved, and re-derived six times
+            // in one build with no mutation between).
+            state: GoalState::Blocked {
+                on: format!("human: unstable-derivation ruling on {}", subject),
+            },
             hints: vec![format!(
                 "parked by flip detection; answer the unstable-derivation prompt on {}",
                 subject
@@ -4221,7 +4231,8 @@ mod tests {
                 .into_iter()
                 .collect()
         );
-        assert!(parked.iter().all(|g| g.state == GoalState::Parked));
+        // Blocked on the ruling, so no batch takes them (a parked goal resumes first).
+        assert!(parked.iter().all(|g| matches!(&g.state, GoalState::Blocked { on } if on.contains("unstable-derivation ruling"))), "{:?}", parked);
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -4513,7 +4524,7 @@ mod tests {
         assert!(p.question.contains("`Backend`"), "{}", p.question);
         assert_eq!(parked.len(), 1);
         assert_eq!(parked[0].id, "g:review-entity:ent:storage");
-        assert_eq!(parked[0].state, GoalState::Parked);
+        assert!(matches!(&parked[0].state, GoalState::Blocked { on } if on.contains("ent:database")), "{:?}", parked[0].state);
         assert_eq!(parked[0].change["reparent"], "ent:database");
 
         // A later regroup under a re-minted id is the same flip on the same natural

@@ -927,8 +927,17 @@ impl McpServer {
                 // to take it (docs/frontends/mcp.md#compilation-over-mcp).
                 return reply;
             }
-            // The checks can surface new work (rare); fall through to name it.
-            reply["next"] = json!(board2.answer());
+            // The checks can surface new work (rare); name its first batch, never the
+            // whole board (a novel's board of 205 bind goals once came back as a
+            // 508k-character reply the agent could not read).
+            reply["next"] = match board2.batches.first() {
+                Some(b) => {
+                    let mut v = board2.batch_json(b);
+                    v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
+                    v
+                }
+                None => json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"}),
+            };
             return reply;
         }
         // beginNext claims the next ready batch in the same call, saving a round

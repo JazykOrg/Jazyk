@@ -731,7 +731,11 @@ it.
   until the count has grown by a fifth over the count at failure (or a human bumps or
   retries), since a novel lead's goal once re-fired on every chapter's new statements
   and failed three times, at up to fifty calls each, with the same honest reason.
-- Resolving a parked or failed goal clears its entry with its record.
+- Resolving a parked or failed goal clears its entry with its record. A parked
+  ledger goal (`bind`, `generate`, `verify`) the ledger no longer derives drops too:
+  the ledger judges what landed, so a verify goal parked mid-run whose row reads
+  verified since has nothing to resume (the slides example carried two such goals
+  across every run).
 
 ## Flip detection
 
@@ -754,8 +758,11 @@ stored: the journal is the history, and tombstone redirects mark deletions
   `unstable-derivation` diagnostic is filed on the key's surviving node with both
   justifications side by side (the latest from each direction). The diagnostic carries a
   [prompt](./model/diagnostic.md#prompts): keep the split, keep the merge, or a
-  freeform ruling. The pair is blocked on that answer; answering it clears the parked
-  entries and the next build resumes the chosen direction.
+  freeform ruling. The pair is blocked on that answer (`blocked on human:
+  unstable-derivation ruling`, so no batch takes them; a goal parked for want of road
+  resumes first, but a session cannot resolve one whose cause is the ruling owed);
+  answering it clears the parked entries and the next build resumes the chosen
+  direction.
 - A reparent flip is a child that moves between the same two parents across
   generations: `ent:cache` moves from `ent:backend` under `ent:storage` in one
   generation (a `group_entities`, a `dissolve_entity`, an `update_entity` or
@@ -767,8 +774,11 @@ stored: the journal is the history, and tombstone redirects mark deletions
   cross-class flip: the goal behind it moves to `parked` and stays there, and one
   diagnostic is filed on the child with both justifications side by side and a
   [prompt](./model/diagnostic.md#prompts): keep it under the first parent, keep it
-  under the second, or a freeform ruling. Answering it clears the parked entry and the
-  next build resumes the chosen direction.
+  under the second, or a freeform ruling. The goal is blocked on that answer the same
+  way, never batched (a novel's `conform-instance` goal behind a reparent flip was
+  once batched, resolved, and re-derived six times in one build with no mutation
+  between). Answering it clears the parked entry and the next build resumes the
+  chosen direction.
 
 Flip detection and the budgets bound the alternation between the classes and the
 alternation of a child between parents. With them,

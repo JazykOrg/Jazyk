@@ -558,7 +558,11 @@ impl Board {
                     }
                 }
                 None => {
-                    if target_exists(store, &p.target) && !goals::blocked_on_human(&p.kind) {
+                    // A ledger goal is the ledger's to derive: a parked verify goal
+                    // whose row reads verified has nothing left to resume (the slides
+                    // example carried two such goals across every run).
+                    let ledger_kind = matches!(p.kind.as_str(), "bind" | "generate" | "verify");
+                    if target_exists(store, &p.target) && !goals::blocked_on_human(&p.kind) && !ledger_kind {
                         let mut g = p.clone();
                         g.state = GoalState::Parked;
                         goals.push(g);
@@ -3148,6 +3152,18 @@ pub(crate) mod tests {
         let b = derive(&empty);
         assert!(b.goal(&stray.id).is_none());
         assert!(b.dropped_parked.contains(&stray.id));
+        // A parked ledger goal the ledger no longer derives (its row verified since)
+        // has nothing to resume: it drops even though its target stands.
+        let mut verified = settled_store();
+        let req = verified.graph.requirements.keys().next().cloned().expect("a requirement");
+        let mut done = goal.clone();
+        done.id = format!("g:verify:{}", req);
+        done.kind = "verify".into();
+        done.target = req;
+        verified.status.parked.push(done.clone());
+        let b = derive(&verified);
+        assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
+        assert!(b.dropped_parked.contains(&done.id));
     }
 
     #[test]

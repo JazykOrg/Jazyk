@@ -630,40 +630,7 @@ impl Llm {
         // in-page model (docs/frontends/wasm.md#the-model).
         // A reply without usage is billed by estimate: what went out and what came back.
         let sent_estimate = (body.chars().count() as u64).div_ceil(4);
-        let resp_body = match self.transport(&body, streaming)? {
-            Transported::Message((m, mut spend)) => {
-                if !spend.measured {
-                    spend.billed += sent_estimate;
-                }
-                return Ok((m, spend));
-            }
-            Transported::Body(b) => b,
-        };
-        let v: Value = serde_json::from_str(&resp_body)
-            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
-        let mut msg = v["choices"][0]["message"].clone();
-        if msg.is_null() {
-            return Err(format!(
-                "no message in response :: {}",
-                truncate(&resp_body, 300)
-            ));
-        }
-        // The finish reason rides on the message for the loop to read (a `length`
-        // finish is a reply the completion cap cut); the loop strips it before the
-        // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
-        if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
-            msg["finish_reason"] = Value::String(f.to_string());
-        }
-        let received = (msg["content"].as_str().unwrap_or("").chars().count()
-            + msg["tool_calls"].to_string().chars().count() * usize::from(msg["tool_calls"].is_array()))
-            as u64;
-        let completion = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| received.div_ceil(4));
-        let spend = match usage_billed(&v["usage"]) {
-            Some(billed) => Spend { completion, billed, measured: true },
-            None => Spend { completion, billed: sent_estimate + completion, measured: false },
-        };
-        SPENT_TOKENS.fetch_add(completion, Ordering::Relaxed);
-        Ok((msg, spend))
+        settle(self.transport(&body, streaming)?, sent_estimate)
     }
 
     // The HTTP transport. Everything above it is protocol, shared by both targets.
@@ -751,6 +718,54 @@ impl Llm {
 enum Transported {
     Body(String),
     Message((Value, Spend)),
+}
+
+// The message and its spend from what the transport handed back. A streamed message
+// arrives with its spend; unmeasured, it still owes what went out. A body is parsed.
+// `sent_estimate` is the request's size in tokens, a quarter token per character.
+fn settle(t: Transported, sent_estimate: u64) -> Result<(Value, Spend), String> {
+    match t {
+        Transported::Message((m, mut spend)) => {
+            if !spend.measured {
+                spend.billed += sent_estimate;
+            }
+            Ok((m, spend))
+        }
+        Transported::Body(b) => parse_completion(&b, sent_estimate),
+    }
+}
+
+// A non-streaming chat completion body: its first choice's message with the finish
+// reason riding on it, and its spend. With a usage object the spend is measured
+// (billed is its total, or prompt plus completion); without one the completion is
+// estimated from what came back and billed adds what went out.
+// Mirrors docs/compiler/sessions.md#budgets.
+fn parse_completion(body: &str, sent_estimate: u64) -> Result<(Value, Spend), String> {
+    let v: Value = serde_json::from_str(body)
+        .map_err(|e| format!("response json: {} :: {}", e, truncate(body, 300)))?;
+    let mut msg = v["choices"][0]["message"].clone();
+    if msg.is_null() {
+        return Err(format!(
+            "no message in response :: {}",
+            truncate(body, 300)
+        ));
+    }
+    // The finish reason rides on the message for the loop to read (a `length`
+    // finish is a reply the completion cap cut); the loop strips it before the
+    // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
+    if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
+        msg["finish_reason"] = Value::String(f.to_string());
+    }
+    let received = (msg["content"].as_str().unwrap_or("").chars().count()
+        + msg["tool_calls"].to_string().chars().count() * usize::from(msg["tool_calls"].is_array()))
+        as u64;
+    let completion = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| received.div_ceil(4));
+    let spend = match usage_billed(&v["usage"]) {
+        Some(billed) => Spend { completion, billed, measured: true },
+        None => Spend { completion, billed: sent_estimate + completion, measured: false },
+    };
+    SPENT_TOKENS.fetch_add(completion, Ordering::Relaxed);
+    Ok((msg, spend))
 }
 
 // Read a streamed (SSE) chat completion and assemble the assistant message: content
@@ -1028,6 +1043,71 @@ mod tests {
         let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert!(!spend.measured);
         assert_eq!(spend.completion, 2);
+    }
+
+    // A non-streaming reply with a usage total is billed that total, measured, and
+    // the finish reason rides on the message. Mirrors docs/compiler/sessions.md#budgets.
+    #[test]
+    fn nonstream_usage_total_is_billed_measured() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":7,"total_tokens":107}}"#;
+        let (msg, spend) = parse_completion(body, 50).unwrap();
+        assert_eq!(msg["content"], "ok");
+        assert_eq!(msg["finish_reason"], "stop");
+        assert_eq!(spend, Spend { completion: 7, billed: 107, measured: true });
+        // No total: prompt plus completion.
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7}}"#;
+        let (_msg, spend) = parse_completion(body, 50).unwrap();
+        assert_eq!(spend, Spend { completion: 7, billed: 107, measured: true });
+    }
+
+    // Without usage the completion is a quarter token per character of what came
+    // back (content and the tool calls' text) and billed adds the request estimate.
+    #[test]
+    fn nonstream_without_usage_bills_sent_plus_received() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"eight ch"}}]}"#;
+        let (_msg, spend) = parse_completion(body, 50).unwrap();
+        assert_eq!(spend, Spend { completion: 2, billed: 52, measured: false });
+        // Tool calls count by their serialized text; a null content counts nothing.
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"done","arguments":"{}"}}]}}]}"#;
+        let (msg, spend) = parse_completion(body, 50).unwrap();
+        let text = msg["tool_calls"].to_string().chars().count() as u64;
+        assert_eq!(spend, Spend { completion: text.div_ceil(4), billed: 50 + text.div_ceil(4), measured: false });
+        // A body without a message is an error naming the body.
+        let err = parse_completion(r#"{"choices":[]}"#, 50).unwrap_err();
+        assert!(err.starts_with("no message in response"), "{}", err);
+        assert!(parse_completion("not json", 50).unwrap_err().starts_with("response json"));
+    }
+
+    // A usage object naming only completion tokens bills nothing on its own: the
+    // completion is taken as reported, the input stays an estimate, and the spend
+    // is unmeasured.
+    #[test]
+    fn usage_without_prompt_tokens_is_unmeasured() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"completion_tokens":7}}"#;
+        let (_msg, spend) = parse_completion(body, 50).unwrap();
+        assert_eq!(spend, Spend { completion: 7, billed: 57, measured: false });
+        assert_eq!(usage_billed(&json!({"completion_tokens": 7})), None);
+        assert_eq!(usage_billed(&json!({"prompt_tokens": 3})), Some(3));
+    }
+
+    // A streamed message the transport already assembled keeps a measured spend as
+    // is; an unmeasured one adds the request estimate to what the stream counted.
+    #[test]
+    fn a_streamed_unmeasured_message_adds_sent_estimate() {
+        let msg = json!({"role": "assistant", "content": "ok"});
+        let (m, spend) = settle(
+            Transported::Message((msg.clone(), Spend { completion: 2, billed: 2, measured: false })),
+            50,
+        )
+        .unwrap();
+        assert_eq!(m, msg);
+        assert_eq!(spend, Spend { completion: 2, billed: 52, measured: false });
+        let (_m, spend) = settle(
+            Transported::Message((msg, Spend { completion: 31, billed: 9780, measured: true })),
+            50,
+        )
+        .unwrap();
+        assert_eq!(spend, Spend { completion: 31, billed: 9780, measured: true });
     }
 
     #[test]

@@ -2731,6 +2731,170 @@ pub(crate) mod tests {
         assert_eq!(with_pairs, vec![6], "{:?}", with_pairs);
     }
 
+    // Six entities owing criteria, each its own locality, pack on into one batch
+    // until the cap and spill the rest into the next: four, then two.
+    // Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn six_criteria_goals_pack_as_four_and_two() {
+        let mut s = Store::default();
+        for i in 0..6 {
+            let eid = format!("ent:e{}", i);
+            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.requirements.insert(
+                format!("req:r-{}", i),
+                Requirement {
+                    statement: format!("The E{} answers within {} seconds.", i, i + 1),
+                    entities: vec![eid],
+                    ..Default::default()
+                },
+            );
+        }
+        let proj = Project {
+            out: s.out.clone(),
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
+        let b = Board::derive(&s, &proj, &control_auto());
+        let per_batch: Vec<usize> = b
+            .batches
+            .iter()
+            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .filter(|n| *n > 0)
+            .collect();
+        assert_eq!(limits::CRITERIA_GOALS_PER_BATCH, 4);
+        assert_eq!(per_batch, vec![4, 2], "{:?}", b.batches);
+        // A batch of criteria goals holds nothing else.
+        for bt in b.batches.iter().filter(|bt| bt.goals.iter().any(|id| id.starts_with("g:derive-criteria:"))) {
+            assert!(bt.goals.iter().all(|id| id.starts_with("g:derive-criteria:")), "{:?}", bt);
+        }
+    }
+
+    // A ledger locality is a wall: the batch flushes before and after it, and its
+    // counters (size, sections, criteria, charged sides) start over. A pair never
+    // meets a wall (pairs are tier 2, the walled kinds tiers 0, 1, and 3), so the
+    // reset of charged sides has no pair to show it; what a wall does show is a
+    // bind goal alone in its batch while the criteria goals of the same tier pack
+    // among themselves, where without the wall the bind would share the first
+    // criteria batch. Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn a_walled_locality_never_shares_a_batch() {
+        let mut s = Store::default();
+        // One requirement already carrying a criterion owes a bind and no criteria.
+        s.graph.entities.insert("ent:g".into(), Entity { name: "G".into(), ..Default::default() });
+        s.graph.requirements.insert(
+            "req:r-g".into(),
+            Requirement {
+                statement: "The G answers within 9 seconds.".into(),
+                entities: vec!["ent:g".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.criteria.insert(
+            "crit:g-1".into(),
+            Criterion {
+                requirement: "req:r-g".into(),
+                statement: "A G asked once answers in 8 seconds.".into(),
+                kind: "positive".into(),
+                ..Default::default()
+            },
+        );
+        for i in 0..6 {
+            let eid = format!("ent:e{}", i);
+            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.requirements.insert(
+                format!("req:r-{}", i),
+                Requirement {
+                    statement: format!("The E{} answers within {} seconds.", i, i + 1),
+                    entities: vec![eid],
+                    ..Default::default()
+                },
+            );
+        }
+        let proj = Project {
+            out: s.out.clone(),
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
+        let control = Control { generate: "auto".into(), ..control_auto() };
+        let b = Board::derive(&s, &proj, &control);
+        assert!(b.is_ready("g:bind:req:r-g"), "{:?}", b.readiness.get("g:bind:req:r-g"));
+        let bind = b
+            .batches
+            .iter()
+            .find(|bt| bt.goals.iter().any(|id| id == "g:bind:req:r-g"))
+            .unwrap_or_else(|| panic!("{:?}", b.batches));
+        assert_eq!(bind.goals, vec!["g:bind:req:r-g".to_string()], "{:?}", bind);
+        let per_batch: Vec<usize> = b
+            .batches
+            .iter()
+            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .filter(|n| *n > 0)
+            .collect();
+        assert_eq!(per_batch, vec![4, 2], "{:?}", b.batches);
+    }
+
+    // A pair that overflows its batch opens the next one charged in full: the side
+    // the spent batch held is loaded again by the fresh one. A hub paired with six
+    // spokes, sized so two pairs fill a batch with the hub and four would without
+    // it, goes three batches of two, never two and then four.
+    // Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn an_overflowing_pair_recharges_in_full() {
+        let judgment = crate::session::SKILLS
+            .iter()
+            .find(|(k, _)| *k == "judgment")
+            .map(|(_, p)| p.len())
+            .unwrap();
+        let budget = limits::CONTEXT_BUDGET.saturating_sub(judgment).max(6_000);
+        // A side costs 260 + statement + 90 per entity; a pair 700 plus its uncharged
+        // sides. A spoke side is 1800 (a pair step of 2500); the hub side sits so
+        // that two steps fit beside it and three do not, while four fit without it.
+        let spoke_len = 1800 - 350;
+        let hub_len = (budget - 6250) - 350;
+        assert!(4 * 2500 <= budget, "{}", budget);
+        let pad = " It holds under the nightly settlement rules for gold keys and silver locks.";
+        let fill = |base: String, len: usize| -> String {
+            let mut s = base;
+            while s.len() < len {
+                s.push_str(pad);
+            }
+            s.truncate(len);
+            s
+        };
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:x".into(), Entity { name: "X".into(), ..Default::default() });
+        let req = |statement: String| Requirement {
+            statement,
+            entities: vec!["ent:x".into()],
+            ..Default::default()
+        };
+        // Each pair shares two words no other statement carries, so no filter drops it.
+        let words = [("amber", "basil"), ("cedar", "dahlia"), ("elder", "fennel"), ("ginger", "hazel"), ("iris", "juniper"), ("kelp", "lotus")];
+        let hub: Vec<String> = words.iter().map(|(a, b)| format!("{} {}", a, b)).collect();
+        s.graph.requirements.insert("req:t-0".into(), req(fill(format!("The ledger weighs {}.", hub.join(", ")), hub_len)));
+        for (i, (a, b)) in words.iter().enumerate() {
+            s.graph.requirements.insert(
+                format!("req:t-{}", i + 1),
+                req(fill(format!("The ledger weighs {} {} apart.", a, b), spoke_len)),
+            );
+        }
+        s.status.generation = 5;
+        record(&mut s, 5, store::CHANGE_REQ_REVISED, "req:t-0", "fields", json!({}));
+        let b = derive(&s);
+        let pairs: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "rejudge-pair").collect();
+        assert_eq!(pairs.len(), 6, "{:?}", pairs.iter().map(|g| &g.id).collect::<Vec<_>>());
+        for g in &pairs {
+            assert_eq!(estimate(&s, g), 700 + (budget - 6250) + 1800, "{}", g.id);
+        }
+        let with_pairs: Vec<usize> = b
+            .batches
+            .iter()
+            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:rejudge-pair:")).count())
+            .filter(|n| *n > 0)
+            .collect();
+        assert_eq!(with_pairs, vec![2, 2, 2], "{:?}", with_pairs);
+    }
+
     // A read-only derivation never commits: Board::compute on a store whose documents
     // changed on disk leaves the journal, the section trees, and the generation
     // untouched while the board shows the dirty section's goal.

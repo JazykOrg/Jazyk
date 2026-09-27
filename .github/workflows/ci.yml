@@ -47,3 +47,23 @@ jobs:
       # failure (docs/frontends/wasm.md#keeping-the-demos-current).
       - name: Check the demos
         run: sh bootstrap/app/scripts/check-demos.sh bootstrap/target/release/jazyk bootstrap/app/public/demos
+      # The check must see a demo fall behind: a copy of one fixture with its store
+      # version set back, and one with a diagram's source changed, each warn.
+      - name: Check that check-demos.sh sees a stale demo
+        run: |
+          stale=$(mktemp -d)
+          mkdir "$stale/version" "$stale/diagram"
+          node -e '
+            const fs = require("node:fs")
+            const [dest] = process.argv.slice(1)
+            const f = JSON.parse(fs.readFileSync("bootstrap/app/public/demos/shop.json", "utf8"))
+            const status = "jazyk-out/status.yaml"
+            fs.writeFileSync(`${dest}/version/shop.json`, JSON.stringify({ ...f, [status]: f[status].replace(/^version: \d+$/m, "version: 1") }))
+            const puml = Object.keys(f).find((k) => k.endsWith(".puml"))
+            fs.writeFileSync(`${dest}/diagram/shop.json`, JSON.stringify({ ...f, [puml]: f[puml].replace("@startuml", "@startuml\n\x27 not the emitter output") }))
+          ' "$stale"
+          for case in version diagram; do
+            out=$(sh bootstrap/app/scripts/check-demos.sh bootstrap/target/release/jazyk "$stale/$case")
+            echo "$out"
+            echo "$out" | grep -q '::warning title=demo' || { echo "::error title=check-demos::a fixture with a stale $case did not warn"; exit 1; }
+          done

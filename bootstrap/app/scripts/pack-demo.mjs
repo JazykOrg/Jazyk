@@ -20,8 +20,9 @@ if (!dest || pairs.length === 0) {
 const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'workers', 'node_modules', '__pycache__', '.git', 'jazyk-out.bak'])
 
 // A fixture carries text: a binary file (a built deck, a compiled module) would only
-// arrive as replacement characters, so it is left out.
-const utf8 = new TextDecoder('utf-8', { fatal: true })
+// arrive as replacement characters, so it is left out. A byte order mark is part of
+// the file and is kept, so an unpacked file is the packed one byte for byte.
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 function textOf(bytes) {
   try {
     return utf8.decode(bytes)

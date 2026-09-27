@@ -516,7 +516,8 @@ for replays, leases, worker registrations, sockets, dotfiles, `__pycache__`, an
 archived out directory, and any file that is not UTF-8 text (a built deck, a compiled
 module) are left out: a stale worker registration would be reaped on the first
 read, and that removal would count as an edit, and a binary file would only arrive
-as replacement characters. The fixtures are committed, since the
+as replacement characters. A packed file unpacks byte for byte (a byte order mark
+stays). The fixtures are committed, since the
 examples' out directories are not, and `npm run pack-demos` repacks all of them
 after an example is rebuilt. The page fetches a fixture when its demo is picked
 rather than carrying them all.
@@ -549,10 +550,22 @@ output and its tests), with the tests run and their results in the ledger.
   (`app/scripts/rerender-fixtures.sh`), so a renderer change reaches jazyk.dev without a
   rebuild. Nothing else of a fixture changes at deploy.
 - CI reports a demo that fell behind as a warning on the run, never a failure, so a
-  compiler change is never held up by a demo: a fixture whose store version is not the
-  binary's, a fixture with open goals the current compiler would derive, or a fixture
-  whose ledger has failing, stale, or missing tests. The warning names
-  `refresh-demos.sh`.
+  compiler change is never held up by a demo. `app/scripts/check-demos.sh` unpacks
+  every fixture into a temporary directory and warns about:
+  - a fixture whose store version is not the binary's. `jazyk status` reads such a
+    store as empty and only a build archives it, so the script compares the packed
+    `version` with the one `status` reports.
+  - a fixture with open goals the current compiler would derive.
+  - a fixture whose ledger has failing, stale, or missing tests
+    (`app/scripts/ledger-count.py`).
+  - a fixture whose diagrams are not the current renderer's output. `jazyk docsgen`
+    on the unpacked fixture draws every view whose committed `.puml` is not what the
+    emitter writes or whose `.svg` is missing, and its summary line counts them; one
+    drawn is drift. This warning names `rerender-fixtures.sh`, since a redraw is free.
+    The others name `refresh-demos.sh`.
+  A second CI step proves the check sees a stale demo: it runs the script on a copy of
+  one fixture with its store version set back and on a copy with a diagram's source
+  changed, and fails unless each warns.
 
 ## Building
 
@@ -588,8 +601,13 @@ them after the build and publishes only when they pass.
 - `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
   (Vitest, one `<module>.test.ts` beside each module, jsdom with a fake IndexedDB):
   the recent list, the coalescing store writer, the folder mirror, the model
-  sources, and the presentation words. They need no build and no browser, so CI runs
-  them on every change to `bootstrap/`.
+  sources, and the presentation words. The same run covers the demo fixture scripts
+  under `app/scripts/` (one `<script>.test.mjs` beside each, in node): `pack-demo.mjs`
+  and `unpack-demo.mjs` round-trip a project tree, minus the skipped entries and the
+  binary files, byte for byte; `ledger-count.py` counts a ledger with a quoted
+  verdict, a criterion's verdict beside its row's, a verdict line inside a block
+  scalar `evidence`, a failing row, and an unverified row. They need no build and no
+  browser, so CI runs them on every change to `bootstrap/`.
 
 The page's first script carries the app alone. What only some visits use loads when
 it is first used: the model's code when the model loads, and the graph layout

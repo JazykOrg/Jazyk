@@ -111,8 +111,9 @@ mutation either way.
   order they happened. Documents, a build's shards, and the journal all stay in the
   tab. The top bar shows how many paths are held and offers to write them; a save in
   the editor asks the same. Writing asks the browser for write access, applies the
-  held mutations in order, and switches to writing mode. The held mutations are
-  also kept in [browser storage](#browser-storage), so a reload or a closed tab
+  held mutations in order, and switches to writing mode. A grant the browser
+  refuses leaves the folder read-only, and the top bar says so. The held mutations
+  are also kept in [browser storage](#browser-storage), so a reload or a closed tab
   does not lose them. Closing the tab with mutations held still asks first.
 
 The recent list on [Home](./gui.md#home) remembers each folder's mode, so a folder
@@ -407,7 +408,8 @@ module.
   with the serving's tools and a dispatch closure that calls `tools/call` on it,
   against the page's model through [the bridge](#the-model). The first turn opens
   with the serving's instructions, so the model knows which project it is in and
-  which tools move the prose.
+  which tools move the prose. A prompt sent while a turn runs is answered `409` by
+  the page, since the worker is inside the turn and runs one at a time.
 - The loop runs as a conversation: a prose reply after tool calls is the answer and
   ends the turn. The finish nudge a worker session gets
   ([the embedded agent](./acp.md#the-embedded-agent)) would hold the answer back and
@@ -581,9 +583,15 @@ reopen with their edits after a reload and the demo resets to its original, a
 folder whose writes fail keeps them and Retry lands them, a read-only folder's held
 changes survive a reload, a phone-width screen gives the editor
 the width, nothing downloads the model on arrival, the chat pane offers the model
-chooser while no model is ready, and a chat on an endpoint source (a mocked one)
-calls a read tool and streams its answer into the pane. The deploy workflow runs
-them after the build and publishes only when they pass.
+chooser while no model is ready, a chat on an endpoint source (a mocked one)
+calls a read tool and streams its answer into the pane, the endpoint call carries
+the key only when one is set, a second prompt during a turn is refused, switching
+demos empties the conversations, a stubbed built-in model answers a chat, a
+download is a `.zip` of the project, a refused write grant is said in the top bar,
+a requirement page reads its criteria in words and its ids only in Developer mode,
+every diagram of every demo has its picture, and a phone-width screen shows the
+chat again once it is wide. The deploy workflow runs them after the build and
+publishes only when they pass.
 
 - `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
   (Vitest, one `<module>.test.ts` beside each module, jsdom with a fake IndexedDB):

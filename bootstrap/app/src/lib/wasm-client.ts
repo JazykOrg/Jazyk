@@ -188,6 +188,9 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     persistence: project?.persistence ?? opts.persistence?.() ?? 'memory',
   })
 
+  // The prompt request whose turn the worker is running, until it answers.
+  let turn: Promise<void> | null = null
+
   const request = async (method: string, path: string, body?: unknown): Promise<BackendReply> => {
     const bare = path.split('?')[0]
     if (bare === '/api/capabilities') return reply(200, capabilities())
@@ -207,9 +210,25 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       }
       return reply(202, { ok: true })
     }
-    const out = await send<{ status: number; body: unknown }>({ kind: 'request', method, path, body })
+    // The worker is inside a running turn and answers nothing until it ends, so a
+    // second prompt is refused here, as the worker refuses one to a running session
+    // (docs/frontends/wasm.md#chat).
+    const prompt = method === 'POST' && /^\/api\/chat\/sessions\/[^/]+\/prompt$/.test(bare)
+    if (prompt && turn) return reply(409, { error: 'a turn is already running; cancel it or wait for it to end' })
+    const out = send<{ status: number; body: unknown }>({ kind: 'request', method, path, body })
+    if (prompt) {
+      const mine = out.then(
+        () => undefined,
+        () => undefined,
+      )
+      turn = mine
+      void mine.then(() => {
+        if (turn === mine) turn = null
+      })
+    }
+    const { status, body: answered } = await out
     if (method !== 'GET') opts.onWrite?.()
-    return reply(out.status, out.body)
+    return reply(status, answered)
   }
 
   return {

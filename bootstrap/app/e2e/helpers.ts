@@ -28,6 +28,19 @@ export async function api<T = unknown>(page: Page, method: string, path: string,
   ) as Promise<T>
 }
 
+// The same request with its status, for a test that asserts a refusal.
+export async function envelope(page: Page, method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+  return page.evaluate(
+    async ([m, p, b]) =>
+      (window as unknown as { jazyk: { request: (m: string, p: string, b?: unknown) => Promise<{ status: number; body: unknown }> } }).jazyk.request(
+        m as string,
+        p as string,
+        b,
+      ),
+    [method, path, body] as const,
+  )
+}
+
 // Types at the end of the open document, the way a person appends a line.
 export async function typeAtEnd(page: Page, text: string) {
   await page.locator('.cm-content').click()

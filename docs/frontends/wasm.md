@@ -585,6 +585,11 @@ chooser while no model is ready, and a chat on an endpoint source (a mocked one)
 calls a read tool and streams its answer into the pane. The deploy workflow runs
 them after the build and publishes only when they pass.
 
+- `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
+  (Vitest, one `<module>.test.ts` beside each module, jsdom with a fake IndexedDB):
+  the recent list, the coalescing store writer, the folder mirror, the model
+  sources, and the presentation words. They need no build and no browser.
+
 The page's first script carries the app alone. What only some visits use loads when
 it is first used: the model's code when the model loads, and the graph layout
 library when the Developer [map](./gui.md#map) opens.

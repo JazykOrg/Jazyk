@@ -20,7 +20,7 @@ fn cell(v: &Value) -> String {
 }
 
 fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
+    if s.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
@@ -242,5 +242,18 @@ mod tests {
 
         assert_eq!(gen_package_value(&s, "ent:nope", &gs).unwrap_err().0, 404);
         crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A cell is quoted when it carries a separator, a quote, or a line break of
+    // either kind, and an inner quote doubles; a plain cell passes through.
+    #[test]
+    fn csv_escape_quotes_commas_quotes_newlines_and_cr() {
+        assert_eq!(csv_escape("plain"), "plain");
+        assert_eq!(csv_escape(""), "");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_escape("line\nbreak"), "\"line\nbreak\"");
+        assert_eq!(csv_escape("carriage\rreturn"), "\"carriage\rreturn\"");
+        assert_eq!(csv_escape("both\r\nends"), "\"both\r\nends\"");
     }
 }

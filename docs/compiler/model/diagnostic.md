@@ -103,6 +103,7 @@ answer:
   choice: 2        # option index, null for a freeform reply
   text: "The bounds differ on purpose; ..."
   status: handling # applied | handling | handled | failed
+  error: null      # why a failed answer could not be acted on
 ```
 
 - Choosing an `edit` option applies it as a dual write, journaled as `answer` (the entry
@@ -121,7 +122,8 @@ answer:
   [ACP](../../frontends/acp.md#answer-sessions) (journal entry `answer`): in a chat
   session the session's own agent acts on it with its tools; elsewhere jazyk spawns an
   answer session. The answer session resolves the diagnostic (or updates its prompt and
-  leaves it open); `status` moves to `handled`, or `failed` with the error. The retract
+  leaves it open); `status` moves to `handled`, or `failed` with the error in
+  `error`. The retract
   option of a ratification proposal is the exception: it is deterministic, and no model
   runs; a retract the store refuses records no answer
   ([retract](../goals/ratify.md#retract)).

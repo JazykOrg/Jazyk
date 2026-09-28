@@ -25,7 +25,10 @@ until a release approves them:
 
 - A `place-anchors` or `reconcile-section` goal is blocked until `released.compile`
   maps its document to the document's current content hash. Editing after a release
-  re-gates exactly that document.
+  re-gates exactly that document. A dual write carries the release with it: when
+  `released.compile` maps the document to its hash before the write, the write maps
+  it to the hash after, since the commit absorbed the new text and nothing in it
+  waits to be read.
 - A `generate` goal is blocked until `released.generate` equals the graph's current
   generation. A commit moves the generation, so new graph facts gate new generation
   work until the next release. The generate release first syncs the documents on disk

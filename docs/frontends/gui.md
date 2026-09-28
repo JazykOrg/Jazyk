@@ -1069,14 +1069,30 @@ Answering posts to `POST /api/questions/{id}/answer`, the same engine every fron
 uses:
 
 - Enter in the text box sends the freeform answer; Shift+Enter makes a new line. A
-  small send button beside the box does the same.
+  `Send` button beside the box does the same.
 - A clicked option or a sent answer shows its pending state until the reply. A
   refusal shows under the card in the backend's words; nothing fails silently.
 - An `edit` option applies, and the item leaves the list when the lists refresh
-  after the reply.
-- Other answers show `answer.status` as the [answer session](./acp.md#answer-sessions)
-  handles them (`handling`, `handled`, `failed`). In a browser tab the next build
-  runs that session, and the card says so ([the Inbox in a tab](./wasm.md#the-inbox)).
+  after the reply. The edit is a dual write: an open editor takes it in place, the
+  way it takes any change it did not make, and marks the changed lines "changed by
+  your answer" until the mark fades ([editor](#editor)). History lists it as an
+  `answer` entry. It dirties no section and leaves no pending change, so no build
+  rereads the document. The judgment a revised requirement owes (its
+  `requirement-revised` record's pairs, see
+  [change records](../compiler/graph.md#change-records)) is build work like any
+  other, and the action button counts it.
+- Any other answer (an `answer` option or a freeform reply) records
+  `answer.status: handling`, and the card follows it to its outcome: `handled` with
+  a link to the change in History, or `failed` with the reason and the question open
+  again.
+  - On a server the [answer session](./acp.md#answer-sessions) starts at once. The
+    card refreshes on every commit (`store.generation`) and polls while the answer
+    is `handling`, so the outcome shows when it lands.
+  - In a browser tab the answer is build work: the card says `Queued for the next
+    build` with a `Build now` action, the action button counts it, and the next
+    build runs its session ([the Inbox in a tab](./wasm.md#the-inbox)). The prose
+    edits the session makes are dual writes and show in the editor with the same
+    mark. With `compile: auto` a recorded answer starts a build at once.
 
 The same questions render inline in the [editor](#editor) as a band under the
 anchored sentence, with the same buttons. The chat keeps `/questions` for agents.
@@ -1355,6 +1371,13 @@ from the graph's mentions, quotes, and section tree.
 - A dual write shows in the text as it lands: the accepted rewrite replaces the
   sentence in place, the document does not re-dirty, and the gutter shows no change
   against the baseline for it.
+- A change to the open document that the editor did not make (a dual write, an
+  answer, a build's answer session, another writer) lands as the smallest edit that
+  turns the old text into the new, so the rest of the text, the scroll position, and
+  the selection stay where they were. The changed lines are marked for a few seconds,
+  then the mark fades: "changed by your answer" when an answer made the change,
+  "changed outside the editor" otherwise. Read marks the same blocks. An editor with
+  unsaved changes raises the conflict bar instead.
 - The editor diffs against the last-built text (`GET /api/docs/baseline`): changed,
   added, and deleted lines mark the gutter, updated live. A `diff` toggle swaps the
   editor for a side-by-side diff; the current side stays editable. A never-built
@@ -1423,7 +1446,10 @@ Document has no mode: it is always an explicit action that records a decompile
 release for its area ([decompilation](../consumers/decompile.md#triggering)).
 
 `--watch` starts with `compile: auto`. Automatic modes spend LLM budget, so both are
-opt-in. Running `jazyk watch` in a terminal beside the GUI is safe: builds serialize
+opt-in. In a browser tab the modes live in the tab's own `control.yaml`, and
+`GET /api/watch` and `PUT /api/watch` are served there too
+([workflow modes in a tab](./wasm.md#workflow-modes-in-a-tab)). Settings shows the
+Build switch; a tab generates nothing, so it has no Generate switch. Running `jazyk watch` in a terminal beside the GUI is safe: builds serialize
 on the build lease and commits on the store lock, and the second build derives an
 empty board.
 

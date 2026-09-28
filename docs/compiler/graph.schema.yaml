@@ -683,6 +683,11 @@ definitions:
               - handling
               - handled
               - failed
+          error:
+            description: Why a failed answer could not be acted on
+            type:
+              - string
+              - 'null'
         additionalProperties: false
       created:
         type: string

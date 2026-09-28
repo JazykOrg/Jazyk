@@ -93,10 +93,14 @@ async function expectNoPopoverButtons(pop: import('@playwright/test').Locator) {
 }
 
 // A click on the empty stretch of the top bar, left of the search box.
+// A click in the middle of the center pane: outside the popover, which hangs from
+// the top bar's right side, and away from the top bar, whose items move as their
+// counts change.
 async function clickElsewhere(page: import('@playwright/test').Page) {
-  const box = await page.locator('.ws-top .ws-palette').boundingBox()
-  if (!box) throw new Error('no search box in the top bar')
-  await page.mouse.click(box.x - 30, box.y + box.height / 2)
+  const box = await page.locator('.ws-center').boundingBox()
+  if (!box) throw new Error('no center pane')
+  // The popover hangs over the center's right half; its bottom-left stays clear.
+  await page.mouse.click(box.x + 24, box.y + box.height - 24)
 }
 
 test("in a tab the arrow's popover holds the model chooser alone; Developer mode adds the actions with reasons", async ({ page }) => {

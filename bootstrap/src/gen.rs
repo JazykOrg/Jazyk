@@ -550,11 +550,32 @@ impl Ledger {
         out.join("gen").join("ledger.yaml")
     }
 
+    // Parsed once per content: the status of every row reloads the ledger to see
+    // whether its entity was generated here, and a novel's two hundred rows parsed
+    // the same file two hundred times, 28 seconds for one Inbox read in a tab. The
+    // cache is keyed on the path and the text, so any write reads fresh.
     pub fn load(out: &Path) -> Ledger {
-        crate::vfs::read_to_string(Self::path(out))
-            .ok()
-            .and_then(|t| serde_norway::from_str(&t).ok())
-            .unwrap_or_default()
+        use std::hash::{Hash, Hasher};
+        static CACHE: std::sync::Mutex<Option<(PathBuf, u64, Ledger)>> = std::sync::Mutex::new(None);
+        let path = Self::path(out);
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
+            return Ledger::default();
+        };
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        let key = h.finish();
+        if let Ok(guard) = CACHE.lock() {
+            if let Some((p, k, l)) = guard.as_ref() {
+                if *p == path && *k == key {
+                    return l.clone();
+                }
+            }
+        }
+        let ledger: Ledger = serde_norway::from_str(&text).unwrap_or_default();
+        if let Ok(mut guard) = CACHE.lock() {
+            *guard = Some((path, key, ledger.clone()));
+        }
+        ledger
     }
 
     pub fn save(&self, out: &Path) {

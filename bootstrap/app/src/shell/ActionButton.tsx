@@ -146,6 +146,20 @@ export default function ActionButton() {
   const costs = counts.status?.costs
   const estimate = costs && (costs.sessions ?? 0) > 0 ? `About ${plural(costs.sessions ?? 0, 'session')} and ${Math.round((costs.tokens ?? 0) / 1000)}k tokens, as last time.` : undefined
 
+  // A click anywhere outside the popover and the button closes it. Radix's own
+  // outside detection missed most such clicks here (the chooser inside carries
+  // layers of its own), so the page listens itself while the popover is open.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null
+      if (t && (t.closest('.ws-pop') || t.closest('.ws-action'))) return
+      setOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [open])
+
   // A job that starts takes over the main part; the popover gives way to it.
   const lastRunning = useRef<number | null>(null)
   useEffect(() => {

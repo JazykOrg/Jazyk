@@ -1360,13 +1360,13 @@ every agent over MCP read the same policy. A mode set in the GUI survives a rest
 and binds the agents too.
 
 `GET /api/watch` and `PUT /api/watch` carry `{compile, gen}`, each `auto` or
-`manual`; the action sheet shows them as Build on save or on request and Generate after
+`manual`; Settings shows them as Build on save or on request and Generate after
 build or on request:
 
 - `compile: manual` (the default): changes queue visibly in the Inbox's
   [pending changes](#pending-changes). The board derives from the saved documents, so
   the work a save opens exists before any release, carrying `gated: true`. Building is
-  an explicit `Run` in the action sheet, which records a
+  an explicit click on the [action button](#the-action-button), which records a
   [release](../compiler/control-plane.md#modes-and-releases), so an attached agent's
   watcher fires from the same click.
 - `compile: auto`: changes build automatically, the loop of
@@ -1389,9 +1389,9 @@ empty board.
 
 `GET /api/workers` reports the control plane: the modes, the registered
 [workers](../compiler/control-plane.md#workers-and-leases) with their heartbeats and
-held batches, the live leases, and the gated goal counts. The action sheet names who
+held batches, the live leases, and the gated goal counts. The action button's tooltip names who
 will run ("claude-code agent, waiting for you"), and the Developer lens's
-[Workers](#workers-1) page renders the whole snapshot. `Run` dispatches by the
+[Workers](#workers-1) page renders the whole snapshot. The click dispatches by the
 `worker` preference ([dispatch](../compiler/control-plane.md#dispatch)): with an agent
 registered and preferred, the click records the release and the agent claims the
 batches ([compilation over MCP](./mcp.md#compilation-over-mcp)), its progress
@@ -1513,8 +1513,8 @@ and hints, the `## Loaded` block, and the worker-protocol line. Beside it: the b
 toolset and the executor the batch resolves to
 ([executors](../compiler/project-settings.md#executors)).
 
-- In `compile: manual`, the action sheet opens the pane before the release in
-  Developer mode, and the pane's release button records the release
+- In `compile: manual`, the action button's `Preview prompt` opens the pane before the
+  release in Developer mode, and the pane's release button records the release
   ([modes and releases](../compiler/control-plane.md#modes-and-releases)). The pane
   re-renders as documents change until the release lands.
 - From a board card, the pane shows the batch that goal would join, the same rendering

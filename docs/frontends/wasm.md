@@ -362,8 +362,9 @@ machinery, not the quality.
 
 ### Model sources
 
-The page's model comes from one of three sources, chosen in the Build sheet, in
-Settings, and in the chat pane while no model is ready. Builds and [chat](#chat) use
+The page's model comes from one of three sources, chosen in the
+[action button](./gui.md#the-action-button)'s popover, in Settings, and in the chat
+pane while no model is ready. Builds and [chat](#chat) use
 the same one. The choice, and an endpoint's URL, model name, and key, are kept in this
 browser's local storage under `jazyk.modelSource`. Nothing is saved on a jazyk server;
 an endpoint's key goes only to that endpoint.
@@ -392,14 +393,13 @@ an endpoint's key goes only to that endpoint.
     source chosen yet or with the downloaded source chosen; a page with nothing
     downloaded offers the default and waits to be asked. A remembered choice
     ([the demo](#the-demo)) is kept when it is still downloaded.
-  - A build runs on a `build` or a `chat` model. With a `chat` model loaded the
-    Build sheet offers `Run` with one sentence above it: the model is small, a
-    build runs, and its results are rough; a 7B or larger model, or an endpoint,
-    builds better. A `Choose a stronger model` link under it reveals the chooser.
-  - With a `reader` model loaded the Build sheet says a build needs a model of 3B
-    or more, or an endpoint, and shows the chooser in place of `Run`, since a
-    session's prompt and the judgment it asks for are beyond a model that size,
-    and the build would only park. Chat runs on any tier.
+  - A build runs on a `build` or a `chat` model. A `chat` model carries an info
+    tooltip in the chooser: the model is small, a build runs, and its results are
+    rough; a 7B or larger model, or an endpoint, builds better.
+  - With no model or a `reader` model loaded, the Build button opens the chooser
+    instead of running, and the tooltip says a build needs a model of 3B or more,
+    or an endpoint, since a session's prompt and the judgment it asks for are
+    beyond a model that size and the build would only park. Chat runs on any tier.
 - Built into the browser: Chrome's on-device model (Gemini Nano) through the Prompt
   API (`LanguageModel`). Offered only where the browser has it. "Built in" means the
   browser owns and runs it, not that it is already on the disk: Chrome fetches the
@@ -500,7 +500,7 @@ The model:
 - The descriptor says `agent: embedded` in a tab whether or not a model is ready;
   `model` says whether it is. While it is not `in-page`, the pane says the chat needs
   the model and shows the [model sources](#model-sources) chooser with its load
-  button, the one the Build sheet shows.
+  button, the one the action button's popover shows.
 - A turn the model fails ends with the model's error in the transcript, never a hang.
   A small context window is the usual cause: the conversation, the instructions, and
   the tool schemas travel on every call, and on the browser's built-in model they may
@@ -566,8 +566,8 @@ them. So the [action button](./gui.md#the-action-button) shows the run's progres
 The model loads only when asked, because every read works without one and only a
 build or a [chat](#chat) needs it, and a first visit would otherwise download
 gigabytes to read a document. The descriptor says `model: loadable` while the chosen
-[source](#model-sources) still has to load, and the Build sheet and the chat pane
-offer `Load the model` with its download size; the load shows its
+[source](#model-sources) still has to load, and the action button's popover and the
+chat pane offer `Load the model` with its download size; the load shows its
 progress there, and the weights cache in the browser, so a later visit loads from
 the cache. A source loaded once in this browser loads again on the next visit
 without asking (`jazyk.modelLoaded` in local storage remembers which), so a reload

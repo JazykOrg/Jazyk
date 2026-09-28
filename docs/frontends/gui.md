@@ -1372,7 +1372,7 @@ build or on request:
 - `compile: auto`: changes build automatically, the loop of
   [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, backoff
   retries for `incomplete` builds.
-- `gen: manual` (the default): Generate runs on `Run`, which likewise records a release.
+- `gen: manual` (the default): Generate runs on a click on the action button, which likewise records a release.
   The release covers [binding](../consumers/bind.md#when-binding-runs) too: open
   `bind` goals run before `generate` goals.
 - `gen: auto`: a finished build with open `generate` goals queues a `gen` job behind it.

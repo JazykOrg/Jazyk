@@ -4,7 +4,7 @@
 // local storage and nowhere else.
 import { useSyncExternalStore } from 'react'
 import type { ModelHost } from './wasm-client'
-import { DEFAULT_MODEL } from './webllm'
+import { DEFAULT_MODEL, tierOf, type ModelTier } from './webllm'
 
 export type SourceKind = 'webllm' | 'chrome' | 'endpoint'
 
@@ -21,6 +21,13 @@ export interface ModelSource {
 // The model the downloaded source loads (docs/frontends/wasm.md#model-sources).
 export function webllmModelOf(s: ModelSource): string {
   return s.webllmModel ?? DEFAULT_MODEL
+}
+
+// The tier of the model a source gives (docs/frontends/wasm.md#model-sources): an
+// endpoint counts as `sync`, the browser's built-in model as `reader`, a downloaded
+// model as its parameter count says.
+export function sourceTier(s: ModelSource): ModelTier {
+  return s.kind === 'endpoint' ? 'sync' : s.kind === 'chrome' ? 'reader' : tierOf(webllmModelOf(s))
 }
 
 const KEY = 'jazyk.modelSource'

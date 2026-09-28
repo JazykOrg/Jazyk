@@ -378,6 +378,22 @@ an endpoint's key goes only to that endpoint.
   gigabytes to spare beside the weights, since the 32k window's KV cache comes on
   top. The choice is kept with the source under `jazyk.modelSource`, and a model
   chosen after another was loaded loads on request like the first one.
+  - Each model carries a tier, from its parameter count, so the list says what a
+    model is for: `sync` (7B and up: syncs and chat), `chat` (3B: chat and
+    questions, syncs rough), `reader` (under 3B: questions over the graph's read
+    tools only). The rule is the count, not a name, so a model the table gains
+    later sorts itself.
+  - The list marks the models already in the browser's cache (`downloaded`, from
+    WebLLM's `hasModelInCache`), so what is one click away is visible, and it is
+    sorted strongest first.
+  - On arrival the page picks the strongest downloaded model and loads it, with no
+    source chosen yet or with the downloaded source chosen; a page with nothing
+    downloaded offers the default and waits to be asked. A remembered choice
+    ([the demo](#the-demo)) is kept when it is still downloaded.
+  - A sync asks for a `sync` model: with a `chat` or `reader` model loaded the Sync
+    sheet says so and shows the chooser in place of `Run`, since a session's prompt
+    and the judgment it asks for are beyond a small model, and the build would only
+    park. Chat runs on any tier.
 - Built into the browser: Chrome's on-device model (Gemini Nano) through the Prompt
   API (`LanguageModel`). Offered only where the browser has it. "Built in" means the
   browser owns and runs it, not that it is already on the disk: Chrome fetches the
@@ -421,7 +437,13 @@ module.
 - `POST /api/chat/sessions` opens a conversation in the worker. It holds an
   `McpServer` in `chat` mode (ephemeral, like the serving a native chat session
   gets), the running history, and the numbered updates. The serving lives as long as
-  the conversation, so the loaded set carries from one prompt to the next.
+  the conversation, so the loaded set carries from one prompt to the next. A
+  `reader`-tier model ([model sources](#model-sources)) gets the `graph` serving
+  instead: the read tools alone (`search`, `load`, `expand`, `read_section`,
+  `get_entity`, `get_view`, `diagnostics`) and a short instruction block, so the
+  prompt fits a small window and the model answers questions about the project
+  without being offered edits it cannot make well. The page passes the tier when it
+  opens the conversation (`{"tier": "reader"}` in the body).
 - `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::agent_loop::run_loop`
   with the serving's tools and a dispatch closure that calls `tools/call` on it,
   against the page's model through [the bridge](#the-model). The first turn opens

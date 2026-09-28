@@ -786,9 +786,10 @@ from, one line each with its state, and the choice becomes the main part:
 - `Settings…`, last.
 
 Only what the backend can run is listed ([capabilities](#backends-and-capabilities)):
-a tab lists `Sync` alone, and with no model ready its main part reads `Sync` and
+a tab lists `Sync` alone, and with no model ready, or a model below the `sync`
+tier ([model sources](./wasm.md#model-sources)), its main part reads `Sync` and
 the click shows the [model chooser](./wasm.md#model-sources) in the action sheet
-in place of the run. No line explains what a backend cannot do; the
+in place of the run, saying which tier a sync needs. No line explains what a backend cannot do; the
 [Developer toggle](#developer-toggle) shows the full list with the reasons.
 
 Clicking the main part opens the action sheet for the chosen action:
@@ -821,22 +822,39 @@ tints the documents its requirements anchor in; an entity tints its mentions.
 
 ### Docs
 
-The navigator is the document tree. Each row carries its problem badge (the highest
-open severity, colored), the drift dot when it is stale against the model, the pending
-mark when it was edited since its last sync, and the progress mark while a sync works
-on it (dimmed and waiting, then running with the section reached, then its result,
-fading after a few seconds and held under the pointer). Documents are created, moved,
-and deleted from the tree through the documents API; a delete asks for a second click,
-never a dialog.
+The navigator is the document tree, the file tree a code editor has, not a list of
+its own:
+
+- Folders and files as the project holds them, folders collapsible with a chevron
+  and remembered open or closed per project, files under their folder sorted by
+  name with folders first, the documents the glob matches in full color and the
+  rest of the tree dimmed. The open document is highlighted and stays in view. The
+  tree is keyboard-driven the standard way: arrows move and open or close, Enter
+  opens, F2 renames, Delete deletes.
+- Actions where they belong: hovering a folder shows `New document` and `New
+  folder` on its row, hovering a file shows `Rename` and `Delete`, and a right
+  click opens the same as a menu. There is no button row above the tree. A new
+  document is typed in place as a row of the folder it goes in, so the path is
+  never spelled out; a delete asks for a second click on the row, never a dialog.
+  Everything goes through the documents API.
+- Each document row carries its problem badge (the highest open severity, colored),
+  the drift dot when it is stale against the model, the pending mark when it was
+  edited since its last sync, and the progress mark while a sync works on it
+  (dimmed and waiting, then running with the section reached, then its result,
+  fading after a few seconds and held under the pointer).
+- The product's files and the generated pages are trees of the same kind under
+  their own heads.
 
 Under the tree, the open document's outline: its sections from the
 [section tree](../compiler/parsing.md) in document order, the top-level ones included
 (the document's `# heading`, or each of them when it has several) with their
 subsections indented under them, each with its read state (Read, Informational with
-its note, Not read yet). Clicking a section scrolls the editor to it.
+its note, Not read yet). Clicking a section scrolls the editor to it, and the
+outline follows the editor back: the section holding the cursor (in Write) or the
+top of the view (in Read) is highlighted as the reader moves, so the outline is a
+position as much as a table of contents.
 
-The center is the [editor](#editor). A Reader toggle renders the document with the
-same overlays and no editing, for reviewers.
+The center is the [editor](#editor), in Read or Write.
 
 The inspector for a section: its read state, the requirements extracted from it with
 their statements, the entities it defines, its problems, and what the last sync did
@@ -996,9 +1014,8 @@ preview depends on the tree the file lives in:
   preview in place of the source; a `source` toggle swaps the read-only text in. Any
   other file under the out directory opens as read-only text, a `.png` as the image,
   and a `.svg` inline with its links live.
-- A source document keeps its [editor](#editor) and shows the preview beside it,
-  split, live as one types; a `preview` toggle on the editor's bar shows or hides it,
-  remembered in the browser.
+- A source document opens in Write or Read by the [editor](#editor)'s one toggle;
+  Read is this rendering in the editor's place, never a pane beside it.
 
 Links and images resolve against the open file's path, so the pages walk the way
 [docsgen](../consumers/docsgen.md#entity-cards) writes them: a relative link to a
@@ -1254,7 +1271,12 @@ from the graph's mentions, quotes, and section tree.
   the requirement in the inspector. The marker replaces the code lens as the default
   rendering; the lens returns under the Developer toggle.
 - Entity mentions are underlined so what is clickable is discoverable; hover shows
-  the card, click opens the inspector.
+  the card, click opens the inspector. A mention is every occurrence of an entity's
+  name (or an alias the graph records) in the text, matched case-insensitively
+  on word boundaries, in Read and in Write alike, on a server and in a tab: the
+  graph's `mentions` say which sections define an entity, the name index says
+  where its name appears, and the editor draws both without the LSP. A name that
+  is also part of a longer entity's name underlines the longer one.
 - Hovering a requirement's sentence shows the [requirement card](./lsp.md#capabilities):
   the requirement, the code, and the test, each linked, with the trace status. The
   card's links stay inside the app.
@@ -1278,9 +1300,16 @@ from the graph's mentions, quotes, and section tree.
   added, and deleted lines mark the gutter, updated live. A `diff` toggle swaps the
   editor for a side-by-side diff; the current side stays editable. A never-synced
   document shows neither.
-- The [markdown preview](#markdown-preview) sits beside the editor when its
-  `preview` toggle is on. The Reader toggle replaces the editor with the rendered
-  page carrying the same markers, underlines, bands, and read states.
+- One toggle, `Read` or `Write`, in the editor's bar. Write is the editor. Read is
+  the [rendered page](#markdown-preview) in the editor's place, carrying the same
+  markers, underlines, bands, and read states, with nothing editable; there is no
+  third state and no pane beside the editor. Read is the default for a product file,
+  for a document in a folder opened read-only, and for a demo's generated pages;
+  Write is the default otherwise; the last choice per document is remembered for
+  the session. In Read every link works: a relative link to another document opens
+  it (in Read), a link with an anchor scrolls to the heading, a link into the out
+  directory opens the generated page or the diagram, and an external link opens a
+  new tab. A link to a document the project does not hold says so in place.
 - Saving writes through the documents API with the conditional hash, so an edit made
   outside the GUI is never silently overwritten.
 - In the browser, where a write lands without asking (a demo, a browser project, and

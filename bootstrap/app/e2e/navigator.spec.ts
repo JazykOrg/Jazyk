@@ -185,7 +185,7 @@ test('entity mentions are underlined in Write and in Read, and a click opens the
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/backend.md')
   // The editor draws the lines in view; the mention sits at the end of the document.
-  await page.locator('.cm-content').click()
+  await page.locator('.cm-content .cm-line').last().click()
   await page.keyboard.press('Control+End')
   const mention = page.locator('.cm-content .entity-mark', { hasText: 'Inventory Management' })
   await expect(mention).toBeVisible()

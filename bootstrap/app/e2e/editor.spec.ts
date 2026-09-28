@@ -1,6 +1,6 @@
 // The editor as a visitor drives it (docs/frontends/wasm.md#building).
 import { expect, test } from '@playwright/test'
-import { api, offline, openDemo, pageErrors } from './helpers'
+import { api, offline, openDemo, pageErrors, typeAtEnd } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await offline(page)
@@ -131,9 +131,7 @@ test('a diagram shows its picture in the tab', async ({ page }) => {
 test('a demo saves an edit on its own', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/main.md')
-  await page.locator('.cm-content').click()
-  await page.keyboard.press('Control+End')
-  await page.keyboard.type('\nAutosaved line.')
+  await typeAtEnd(page, '\nAutosaved line.')
   await expect(page.locator('.ide-topbar-right')).toContainText('saved', { timeout: 5000 })
   await expect
     .poll(async () => JSON.stringify(await api(page, 'GET', '/api/docs/content?path=docs/main.md')))

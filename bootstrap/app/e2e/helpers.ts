@@ -96,9 +96,12 @@ export async function toWrite(page: Page) {
   if ((await write.getAttribute('aria-pressed')) !== 'true') await write.click()
 }
 
+// Clicks the last line rather than the middle of the text: a click on an
+// underlined entity name opens the inspector, and in CI's layout the middle of a
+// document is often one.
 export async function typeAtEnd(page: Page, text: string) {
   await toWrite(page)
-  await page.locator('.cm-content').click()
+  await page.locator('.cm-content .cm-line').last().click()
   await page.keyboard.press('Control+End')
   await page.keyboard.type(text)
 }

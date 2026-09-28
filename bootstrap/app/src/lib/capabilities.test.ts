@@ -47,3 +47,22 @@ describe('the action button', () => {
     expect(needsBuildModel(SERVER_CAPABILITIES)).toBe(false)
   })
 })
+
+describe('the work a build runs', () => {
+  it('leaves the ledger kinds out', async () => {
+    const { buildWork } = await import('../shell/ActionButton')
+    expect(buildWork(undefined)).toBe(0)
+    expect(buildWork({ open: 5 })).toBe(5)
+    expect(buildWork({ open: 190, by_kind: { bind: 184, generate: 3, 'reconcile-section': 2, verify: 1 } })).toBe(2)
+  })
+})
+
+describe('a diagram box link', () => {
+  it('opens the entity for a card and the page otherwise', async () => {
+    const { diagramLinkTarget } = await import('./levels')
+    expect(diagramLinkTarget('../../docsgen/entities/quay.md')).toEqual({ kind: 'entity', id: 'ent:quay' })
+    expect(diagramLinkTarget('../../docsgen/diagrams/class/funds.md#x')).toEqual({ kind: 'page', path: 'docsgen/diagrams/class/funds.md' })
+    expect(diagramLinkTarget('https://example.com/docsgen/x.md')).toBeNull()
+    expect(diagramLinkTarget('../other.md')).toBeNull()
+  })
+})

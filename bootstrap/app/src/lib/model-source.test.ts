@@ -213,3 +213,11 @@ describe('the remembered load', () => {
     expect(wasLoaded({ kind: 'webllm' })).toBe(false)
   })
 })
+
+describe('the built-in model name', () => {
+  it('follows the browser', async () => {
+    const { builtInName } = await import('./model-source')
+    expect(builtInName('Mozilla/5.0 Chrome/130.0 Safari/537.36 Edg/130.0')).toBe("Edge's built-in model (Phi-4-mini)")
+    expect(builtInName('Mozilla/5.0 Chrome/130.0 Safari/537.36')).toBe("Chrome's built-in model (Gemini Nano)")
+  })
+})

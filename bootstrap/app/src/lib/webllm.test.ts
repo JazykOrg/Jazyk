@@ -123,3 +123,13 @@ describe('arrivalModel', () => {
     expect(arrivalModel(DEFAULT_MODEL, new Set())).toBeNull()
   })
 })
+
+describe('splitThinking', () => {
+  it('takes a think block out of the text', async () => {
+    const { splitThinking } = await import('./webllm')
+    expect(splitThinking('plain')).toEqual({ content: 'plain', reasoning: null })
+    expect(splitThinking('<think>why</think>\nanswer')).toEqual({ content: 'answer', reasoning: 'why' })
+    expect(splitThinking('<think>still thinking')).toEqual({ content: '', reasoning: 'still thinking' })
+    expect(splitThinking('<think></think>answer')).toEqual({ content: 'answer', reasoning: null })
+  })
+})

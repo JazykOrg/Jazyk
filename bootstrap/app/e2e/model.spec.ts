@@ -95,7 +95,7 @@ test('a reader model chats over the read tools alone and cannot build', async ({
   }, REPLY)
   await openDemo(page, 'The sort utility')
   const chat = page.locator('.wb-chat')
-  await chat.locator('.msrc-option', { hasText: "The browser's built-in model" }).click()
+  await chat.locator('.msrc-option', { hasText: "Chrome's built-in model" }).click()
   await chat.getByRole('button', { name: 'Load the model' }).click()
   await expect.poll(async () => (await api<{ model: string }>(page, 'GET', '/api/capabilities')).model).toBe('in-page')
   const caps = await api<{ jobs: string[]; modelTier: string }>(page, 'GET', '/api/capabilities')
@@ -109,7 +109,7 @@ test('a reader model chats over the read tools alone and cannot build', async ({
   const pop = page.locator('.ws-pop')
   await expect(pop.locator('.msrc')).toBeVisible()
   await expect(pop.locator('.msrc-status.v-ok')).toContainText("Ready: the browser's built-in model · questions only")
-  await expect(pop.locator('.msrc-tier')).toHaveAttribute('title', 'A build needs a model of 3B or more, or an endpoint. This one answers questions.')
+  await expect(pop.locator('.msrc-tier')).toHaveAttribute('aria-label', 'A build needs a model of 3B or more, or an endpoint. This one answers questions.')
   await expect(pop.getByRole('button', { name: /^(Run|Cancel)$/ })).toHaveCount(0)
   expect((await api<{ jobs: unknown[] }>(page, 'GET', '/api/jobs')).jobs).toEqual([])
   await page.keyboard.press('Escape')
@@ -134,4 +134,17 @@ test('a reader model chats over the read tools alone and cannot build', async ({
   expect(seen.systems[0]).not.toContain('- report_feedback:')
   expect(seen.systems[0]).not.toContain('- goals:')
   expect(errors).toEqual([])
+})
+
+// An info icon shows its bubble on hover, not only as a slow title tooltip.
+test('an info icon shows its explanation on hover', async ({ page }) => {
+  await page.goto('/#/')
+  await page.getByRole('button', { name: /The shop/ }).click()
+  await page.waitForURL(/#\/docs/)
+  await page.getByRole('button', { name: 'choose a model' }).click()
+  const tip = page.locator('.info-tip').first()
+  await tip.hover()
+  await expect
+    .poll(() => tip.evaluate((el) => getComputedStyle(el, '::after').visibility))
+    .toBe('visible')
 })

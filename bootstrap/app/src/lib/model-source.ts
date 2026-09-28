@@ -130,6 +130,13 @@ export async function builtInAvailability(): Promise<Availability | 'absent'> {
   }
 }
 
+// The built-in model's name. The Prompt API never says which model it runs, so the
+// browser says it: Edge ships Phi-4-mini, Chrome Gemini Nano
+// (docs/frontends/wasm.md#model-sources).
+export function builtInName(ua: string = typeof navigator !== 'undefined' ? navigator.userAgent : ''): string {
+  return /\bEdg\//.test(ua) ? "Edge's built-in model (Phi-4-mini)" : "Chrome's built-in model (Gemini Nano)"
+}
+
 export function builtInPresent(): boolean {
   return languageModel() !== null
 }

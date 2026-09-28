@@ -5,7 +5,7 @@
 // (docs/frontends/gui.md#the-action-button).
 import { useEffect, useId, useState } from 'react'
 import { useCapabilities } from '../lib/capabilities'
-import { builtInAvailability, endpointReady, sourceTier, useModelSource, webllmModelOf, writeSource, type ModelSource, type SourceKind } from '../lib/model-source'
+import { builtInAvailability, endpointReady, sourceTier, useModelSource, webllmModelOf, writeSource, type ModelSource, type SourceKind, builtInName } from '../lib/model-source'
 import { useApp } from '../lib/store'
 import { MODEL_CHOICES, TIER_WORDS, downloadedModels, modelName, tier, webgpuAvailable, type ModelTier } from '../lib/webllm'
 import InfoTip from './InfoTip'
@@ -105,7 +105,13 @@ export default function ModelSourcePanel({ loadOnChoose = false }: { loadOnChoos
           </label>
         </div>
       )}
-      {option('chrome', "The browser's built-in model", builtInNote, builtInTip, builtIn === 'absent' || builtIn === 'unavailable')}
+      {option(
+        'chrome',
+        builtInName(),
+        builtInNote,
+        [builtInTip, 'The browser ships one model and offers no choice among others; for a choice, download a model or use your endpoint.'].filter(Boolean).join(' '),
+        builtIn === 'absent' || builtIn === 'unavailable',
+      )}
       {option(
         'endpoint',
         'Your endpoint',

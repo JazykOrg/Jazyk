@@ -1914,3 +1914,39 @@ a.trail-step:hover .trail-label {
 .home .home-hint {
   font-size: 0.85em;
 }
+
+/* The ⓘ bubble: drawn from data-tip on hover and focus, above everything in its
+   popover. */
+.info-tip {
+  position: relative;
+  cursor: help;
+}
+.info-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--fg, #1d2320);
+  color: var(--bg, #f7f8f7);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 400;
+  white-space: normal;
+  text-align: left;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.1s;
+}
+.info-tip:hover::after,
+.info-tip:focus::after,
+.info-tip:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}

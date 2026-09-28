@@ -182,7 +182,7 @@ test('an endpoint model source is ready at once and is remembered in this browse
   // The chat pane offers the same chooser until a model is ready; this one is Settings'.
   const chooser = page.locator('.settings-model .msrc')
   await chooser.locator('.msrc-option', { hasText: 'Your endpoint' }).click()
-  await expect(chooser.locator('.msrc-privacy')).toHaveAttribute('title', /Nothing is saved on a jazyk server/)
+  await expect(chooser.locator('.msrc-privacy')).toHaveAttribute('aria-label', /Nothing is saved on a jazyk server/)
   await chooser.getByLabel('Base URL', { exact: true }).fill('http://localhost:4999/v1')
   await chooser.getByLabel('Model', { exact: true }).fill('test-model')
   await chooser.getByRole('button', { name: 'Save' }).click()
@@ -217,7 +217,7 @@ test("the browser's built-in model source answers a chat", async ({ page }) => {
   }, REPLY)
   await openDemo(page, 'The sort utility')
   const chat = page.locator('.wb-chat')
-  const option = chat.locator('.msrc-option', { hasText: "The browser's built-in model" })
+  const option = chat.locator('.msrc-option', { hasText: "Chrome's built-in model" })
   await expect(option).toContainText('Ready on this device')
   await option.click()
   await chat.getByRole('button', { name: 'Load the model' }).click()

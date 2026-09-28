@@ -4,7 +4,7 @@
 // docs/frontends/gui.md#graph).
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
-import { viewIdFromDiagramHref } from '../lib/levels'
+import { diagramLinkTarget, viewIdFromDiagramHref } from '../lib/levels'
 
 export default function DiagramSvg({ svg, className }: { svg: string; className?: string }) {
   const navigate = useNavigate()
@@ -28,8 +28,19 @@ export default function DiagramSvg({ svg, className }: { svg: string; className?
     if (!a) return
     // Any anchor in the picture stays in the app; only a level link goes somewhere.
     e.preventDefault()
-    const id = viewIdFromDiagramHref(a.getAttribute('href') ?? a.getAttribute('xlink:href'))
-    if (!id) return
+    const href = a.getAttribute('href') ?? a.getAttribute('xlink:href')
+    const id = viewIdFromDiagramHref(href)
+    if (!id) {
+      // A box links to its entity's card (`../../docsgen/entities/<slug>.md`): the
+      // entity opens in the inspector; another generated page opens as itself.
+      const target = diagramLinkTarget(href)
+      if (target?.kind === 'entity') {
+        const next = new URLSearchParams(loc.search)
+        next.set('node', target.id)
+        navigate(`${loc.pathname}?${next.toString()}`)
+      } else if (target?.kind === 'page') navigate(`/product/generated/${target.path}`)
+      return
+    }
     const next = new URLSearchParams(loc.pathname.startsWith('/dev/map') ? loc.search : '')
     next.set('view', id)
     next.set('node', id)

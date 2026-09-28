@@ -378,7 +378,7 @@ an endpoint's key goes only to that endpoint.
 
 - Downloaded (the default): an instruct model from Hugging Face run on WebGPU by WebLLM,
   loaded on request and cached by the browser (above). The model is a choice: the
-  chooser lists WebLLM's prebuilt instruct models (Llama 3.1 and 3.2, Qwen 2.5,
+  chooser lists WebLLM's prebuilt instruct models (Llama 3.1 and 3.2, Qwen 2.5 and 3,
   Hermes 2 and 3, Mistral, Phi, Gemma, SmolLM, in their 16-bit-activation builds)
   with the memory each needs, from a few hundred megabytes to about six gigabytes,
   and the default is Hermes-3-Llama-3.2-3B (2.2 GB). A bigger model is a better
@@ -393,6 +393,9 @@ an endpoint's key goes only to that endpoint.
     - `chat`: 3B. Chats and answers questions, and builds with rough results.
     - `reader`: under 3B. Answers questions over the graph's read tools only, and
       does not build.
+  - Qwen 3 thinks before it answers, inside `<think>` tags in its text; the page
+    splits that block out as the reply's reasoning, so the chat shows it as
+    reasoning and the text codec parses only the answer.
   - The list marks the models already in the browser's cache (`downloaded`, from
     WebLLM's `hasModelInCache`), so what is one click away is visible, and it is
     sorted strongest first.
@@ -407,8 +410,11 @@ an endpoint's key goes only to that endpoint.
     instead of running, and the tooltip says a build needs a model of 3B or more,
     or an endpoint, since a session's prompt and the judgment it asks for are
     beyond a model that size and the build would only park. Chat runs on any tier.
-- Built into the browser: Chrome's on-device model (Gemini Nano) through the Prompt
-  API (`LanguageModel`). Offered only where the browser has it. "Built in" means the
+- Built into the browser: the browser's on-device model through the Prompt API
+  (`LanguageModel`), Gemini Nano in Chrome and Phi-4-mini in Edge. Offered only where
+  the browser has it. The browser ships this one model and the API offers no choice
+  among others, nor says which model it runs, so the chooser names it from the
+  browser and has nothing to pick within it. "Built in" means the
   browser owns and runs it, not that it is already on the disk: Chrome fetches the
   weights, a few gigabytes, the first time any page asks, and the page says so
   (`Chrome is downloading its built-in model for the first time`) with the progress

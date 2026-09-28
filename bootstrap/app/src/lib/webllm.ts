@@ -31,6 +31,12 @@ export function webgpuAvailable(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator
 }
 
+// The message fields a reply carries once its thinking is split out.
+function thinkingSplit(raw: string): { content: string; reasoning_content?: string } {
+  const { content, reasoning } = splitThinking(raw)
+  return reasoning ? { content, reasoning_content: reasoning } : { content }
+}
+
 export async function loadModel(
   model: string,
   onProgress: (p: LoadProgress) => void,
@@ -84,7 +90,7 @@ export async function loadModel(
           object: 'chat.completion',
           created: Math.floor(Date.now() / 1000),
           model,
-          choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: finish ?? 'stop', logprobs: null }],
+          choices: [{ index: 0, message: { role: 'assistant', ...thinkingSplit(content) }, finish_reason: finish ?? 'stop', logprobs: null }],
           usage,
         } as webllm.ChatCompletion
       } catch (e) {
@@ -170,7 +176,26 @@ export const MODEL_CHOICES: ModelChoice[] = [
   { id: 'Llama-3.1-8B-Instruct-q4f16_1-MLC', name: 'Llama 3.1 8B', gb: 4.9, params: 8 },
   { id: 'Qwen2.5-7B-Instruct-q4f16_1-MLC', name: 'Qwen 2.5 7B', gb: 5.0, params: 7.6 },
   { id: 'gemma-2-9b-it-q4f16_1-MLC', name: 'Gemma 2 9B', gb: 6.3, params: 9.2 },
+  // Qwen 3 thinks before it answers: its reasoning arrives inside <think> tags in
+  // the text and is split out as the reply's reasoning (splitThinking).
+  { id: 'Qwen3-1.7B-q4f16_1-MLC', name: 'Qwen 3 1.7B', gb: 2.0, params: 1.7 },
+  { id: 'Qwen3-4B-q4f16_1-MLC', name: 'Qwen 3 4B', gb: 3.4, params: 4 },
+  { id: 'Qwen3-8B-q4f16_1-MLC', name: 'Qwen 3 8B', gb: 5.6, params: 8.2 },
 ].sort(byStrength)
+
+// A reply's `<think>…</think>` block, as Qwen 3 writes it, taken out of the text
+// and returned as the reasoning, so the chat shows it as reasoning and the text
+// codec parses only the answer (docs/frontends/gui.md#chat). An unclosed block is
+// all reasoning.
+export function splitThinking(content: string): { content: string; reasoning: string | null } {
+  const open = content.indexOf('<think>')
+  if (open < 0) return { content, reasoning: null }
+  const close = content.indexOf('</think>', open)
+  if (close < 0) return { content: content.slice(0, open).trim(), reasoning: content.slice(open + 7).trim() || null }
+  const reasoning = content.slice(open + 7, close).trim()
+  const rest = (content.slice(0, open) + content.slice(close + 8)).trim()
+  return { content: rest, reasoning: reasoning || null }
+}
 
 // The choice's short name, for a model id the table knows; the id itself otherwise.
 export function modelName(id: string): string {

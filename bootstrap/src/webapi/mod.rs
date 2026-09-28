@@ -6,6 +6,7 @@ pub mod board;
 pub mod card;
 pub mod deliverable;
 pub mod docs;
+pub mod facts;
 pub mod outfiles;
 pub mod product;
 pub mod status;

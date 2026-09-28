@@ -12,6 +12,19 @@ export function viewIdFromDiagramHref(href: string | null | undefined): string |
   return m ? `view:${m[1]}/${m[2]}` : null
 }
 
+// Where a diagram box's link goes, once it is not a level view: the entity whose
+// card it names, or the generated page it names under the out directory's
+// `docsgen/` (docs/compiler/diagrams.md#drill-down). Anything else stays put.
+export function diagramLinkTarget(href: string | null | undefined): { kind: 'entity'; id: string } | { kind: 'page'; path: string } | null {
+  if (!href || /^[a-z]+:/i.test(href)) return null
+  const at = href.indexOf('docsgen/')
+  if (at < 0) return null
+  const path = href.slice(at).replace(/[?#].*$/, '')
+  const m = path.match(/^docsgen\/entities\/([^/]+)\.md$/)
+  if (m) return { kind: 'entity', id: `ent:${decodeURIComponent(m[1])}` }
+  return { kind: 'page', path }
+}
+
 export interface Crumb {
   // `scope:<scope>` for the scope root, the entity id otherwise.
   target: string

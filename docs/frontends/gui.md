@@ -783,7 +783,10 @@ One split button in the top bar.
   starts the job (or wakes the attached agent, by the
   [dispatch](../compiler/control-plane.md#dispatch) preference). Its label is the
   action and its state: `Build · 3 changed`, `Generate · 4 entities`,
-  `Review · 12 tests`, `Up to date`. While a job runs it shows the progress
+  `Review · 12 tests`, `Up to date`. Build's count is the build's own work: open
+  goals of every kind but `bind`, `generate`, and `verify`, which are Generate's and
+  Review's (and which a tab cannot run), so the label never promises work a build
+  will not do. While a job runs it shows the progress
   (`Building 2 of 5`) and pulses, and the job's build thread opens in the
   [chat column](#chat); a click then opens that thread. Stopping is the thread's
   `Stop`.
@@ -796,7 +799,8 @@ One split button in the top bar.
   backend runs (`Build`, `Generate`, `Review`), one line each with its state; the
   choice becomes the main part. `Build` is the default while documents changed,
   `Generate` when nothing changed and entities wait.
-- Explanations are an info icon with a tooltip, never a sentence in the way: a
+- Explanations are an info icon whose bubble shows on hover and on keyboard focus,
+  never a sentence in the way: a
   `chat`-tier model shows the icon beside its name ("a small model: builds run,
   results are rough"), the estimate from the last build's cost (`status.yaml`
   `costs`) is the tooltip on the main part.
@@ -1008,7 +1012,10 @@ preview depends on the tree the file lives in:
 - A generated page under the out directory and a markdown product file open on the
   preview in place of the source; a `source` toggle swaps the read-only text in. Any
   other file under the out directory opens as read-only text, a `.png` as the image,
-  and a `.svg` inline with its links live.
+  and a `.svg` inline with its links live. A diagram's links stay in the app
+  wherever the diagram shows: a box's link to its entity card
+  (`docsgen/entities/<slug>.md`) opens the entity in the inspector, a level link
+  opens that level's view, and a link to another generated page opens it.
 - A source document opens in Write or Read by the [editor](#editor)'s one toggle;
   Read is this rendering in the editor's place, never a pane beside it.
 

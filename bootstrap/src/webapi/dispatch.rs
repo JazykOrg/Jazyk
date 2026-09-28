@@ -463,6 +463,12 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         }
 
         ("GET", "/watch") => ok(json!({ "watch": false })),
+        // The inspector's fact edits, the server's own core
+        // (docs/frontends/gui.md#api, facts).
+        ("POST", path) if path.starts_with("/facts/") && path.ends_with("/edit") => {
+            let id = decode(path.trim_start_matches("/facts/").trim_end_matches("/edit"));
+            answer(super::facts::edit_fact_core(&project(), &out(), &id, &body))
+        }
         ("GET", "/settings") => ok(crate::project::settings_read(&crate::wasm::root())),
         // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
         // file lands in the tree, and the page mirrors it the way any change goes.

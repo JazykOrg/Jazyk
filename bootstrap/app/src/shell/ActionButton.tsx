@@ -25,6 +25,17 @@ function useRunning() {
   return { running, queued }
 }
 
+// The work a Build runs: open goals of every kind but the ledger's (bind, generate,
+// verify), which are Generate and Review work and which a tab cannot run at all
+// (docs/frontends/gui.md#the-action-button). A novel whose only open goals were
+// 184 binds read "184 items left" and built nothing.
+const LEDGER_KINDS = new Set(['bind', 'generate', 'verify'])
+export function buildWork(board: { open: number; by_kind?: Record<string, number> } | undefined): number {
+  if (!board) return 0
+  if (!board.by_kind) return board.open
+  return Object.entries(board.by_kind).reduce((n, [k, v]) => (LEDGER_KINDS.has(k) ? n : n + v), 0)
+}
+
 // The counts every line reads: documents changed, work left, entities to generate,
 // tests to run.
 function useCounts() {
@@ -36,7 +47,7 @@ function useCounts() {
   const changedDocs = inbox.data?.pending.docs ?? (docs?.docs ?? []).filter((d) => d.stale).map((d) => d.path)
   return {
     changedDocs,
-    openGoals: s?.board?.open ?? 0,
+    openGoals: buildWork(s?.board),
     toBuild: pending.data?.pending.length ?? 0,
     tests: matrix.data ? Object.values(matrix.data.rows).filter((r) => r.test).length : 0,
     status: s,

@@ -181,6 +181,10 @@ interface AppStore {
   chatSelected: string | null
   chatSessions: Record<string, ChatSessionInfo>
   chatUpdates: Record<string, ChatUpdateRow[]>
+  // Build threads closed from the list, by job id, for the life of the page
+  // (docs/frontends/gui.md#chat).
+  hiddenThreads: number[]
+  hideThread: (jobId: number) => void
   setChatOpen: (v: boolean) => void
   setChatFollow: (v: boolean) => void
   selectChat: (id: string | null) => void
@@ -239,8 +243,12 @@ export const useApp = create<AppStore>((set) => ({
   reopening: false,
   pendingFolder: null,
   chatOpen: readPref('jazyk-chat') !== 'closed',
-  chatFollow: false,
+  // Follow in editor is on by default (docs/frontends/gui.md#chat).
+  chatFollow: true,
   chatSelected: null,
+  hiddenThreads: [],
+  hideThread: (jobId) =>
+    set((s) => (s.hiddenThreads.includes(jobId) ? s : { hiddenThreads: [...s.hiddenThreads, jobId] })),
   chatSessions: {},
   chatUpdates: {},
   setChatOpen: (v) => {

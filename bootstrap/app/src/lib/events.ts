@@ -4,6 +4,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { apiUrl, get, type Job, type Status, type TraceEvent } from './api'
 import { useApp } from './store'
+import { failureLine, noClues, noteClue, parseGoalId, type Clues, type GoalRef } from './failure'
 
 type WireEvent = {
   seq?: number
@@ -20,14 +21,29 @@ function targetDoc(target: string): string | null {
   return doc.endsWith('.md') ? doc : null
 }
 
+// Per session label: the batch's goals and what its session left that explains an
+// end, so a failed batch says why in words (docs/frontends/gui.md#chat).
+const batchGoals = new Map<string, GoalRef[]>()
+const labelClues = new Map<string, Clues>()
+
+// A session's goals: the batch's own, else the ids its terminal event carries.
+function sessionGoals(label: string, ev: TraceEvent): GoalRef[] {
+  const known = batchGoals.get(label)
+  if (known && known.length > 0) return known
+  return Array.isArray(ev.goals) ? (ev.goals as string[]).map(parseGoalId) : []
+}
+
 // The events that say where a build is working, into the session-progress slice.
 // The files tree and the editor render it in place (docs/frontends/gui.md#files).
 function applyProgress(ev: TraceEvent) {
   const app = useApp.getState()
+  const label = str(ev.label)
+  labelClues.set(label, noteClue(labelClues.get(label) ?? noClues(), ev))
   switch (ev.kind) {
     case 'batchStart': {
       // One queued entry per batch, keyed by the batch id the session events use.
       const goals = Array.isArray(ev.goals) ? (ev.goals as { id?: string; kind?: string; target?: string }[]) : []
+      batchGoals.set(label, goals)
       const sectionGoals = goals.filter((g) => g.kind === 'reconcile-section')
       const first = goals[0]
       const doc = goals.map((g) => targetDoc(str(g.target))).find((d) => d !== null) ?? null
@@ -57,13 +73,24 @@ function applyProgress(ev: TraceEvent) {
       break
     case 'sessionDone': {
       const summary = str(ev.summary)
-      const staged = `${num(ev.staged)} staged · ${num(ev.rounds)} rounds`
-      app.turnEnded(str(ev.label), 'done', summary ? `${staged} · ${summary}` : staged)
+      const n = num(ev.staged)
+      const staged = `Read: ${n} change${n === 1 ? '' : 's'} saved`
+      app.turnEnded(label, 'done', summary ? `${staged}. ${summary}` : staged)
       break
     }
     case 'sessionFailed':
-      app.turnEnded(str(ev.label), 'failed', str(ev.error))
+    case 'sessionEnded': {
+      const stop = str(ev.error) || str(ev.reason)
+      // A ledger batch returned for its ledger to judge is no failure of its own.
+      if (ev.kind === 'sessionEnded' && !/cancel/i.test(stop)) {
+        app.turnEnded(label, 'done', stop)
+        break
+      }
+      const clues = labelClues.get(label) ?? noClues()
+      const line = failureLine(sessionGoals(label, ev), clues, stop, typeof ev.attempt === 'number' ? ev.attempt : undefined)
+      app.turnEnded(label, 'failed', line)
       break
+    }
     case 'goal':
       // Resolved cards turn into their justification and linger on the board.
       app.noteGoal(str(ev.goal), str(ev.event), str(ev.justification) || str(ev.reason))

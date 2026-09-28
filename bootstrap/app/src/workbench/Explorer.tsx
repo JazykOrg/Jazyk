@@ -51,35 +51,37 @@ function GoalBadge({ doc }: { doc: DocInfo }) {
   )
 }
 
-// What the build is doing to this document, under its row. A running turn shows
-// the section it reached; a finished one shows what it staged, until it fades
+// What the build is doing to this document: a small icon on its row (waiting,
+// running, read, not read yet) whose tooltip says what happened, fading a few
+// seconds after the build and held under the pointer. No sentence sits in the tree
 // (docs/frontends/gui.md#docs).
+function buildMarkWords(p: TurnProgress): { state: 'waiting' | 'running' | 'read' | 'unread'; icon: string; tip: string } {
+  const count = p.sections.length > 0 ? ` (${p.touched.length}/${p.sections.length} sections)` : ''
+  switch (p.state) {
+    case 'queued':
+      return { state: 'waiting', icon: '○', tip: `Waiting to be read in this build${count}` }
+    case 'running':
+      return { state: 'running', icon: '●', tip: `Being read now${p.active ? `: ${p.active}` : ''}${count}` }
+    case 'done':
+      return { state: 'read', icon: '✓', tip: p.result || 'Read' }
+    default:
+      return { state: 'unread', icon: '!', tip: p.result || 'Not read yet' }
+  }
+}
+
 function BuildMark({ p }: { p: TurnProgress }) {
-  const cls =
-    p.state === 'running'
-      ? 'v-stale'
-      : p.state === 'failed'
-        ? 'v-bad'
-        : p.state === 'done'
-          ? 'v-ok'
-          : 'muted'
-  const mark = p.state === 'running' ? '▶' : p.state === 'failed' ? '✗' : p.state === 'done' ? '✓' : '◦'
-  const detail =
-    p.state === 'running'
-      ? (p.active ?? 'reading the document')
-      : p.state === 'queued'
-        ? 'queued'
-        : (p.result ?? '')
+  const m = buildMarkWords(p)
+  const settled = p.state === 'done' || p.state === 'failed'
   return (
-    <div className={`ide-build ${cls}${p.state === 'running' ? ' running' : ''}`} title={`${p.label}\n${detail}`}>
-      <span className="ide-build-mark">{mark}</span>
-      <span className="ide-build-text mono">{detail}</span>
-      {p.sections.length > 0 && (
-        <span className="ide-build-count mono">
-          {p.touched.length}/{p.sections.length}
-        </span>
-      )}
-    </div>
+    <span
+      className={`ide-build-icon ${m.state}${settled && !p.held ? ' fading' : ''}`}
+      title={m.tip}
+      aria-label={m.tip}
+      role="img"
+      data-state={m.state}
+    >
+      {m.icon}
+    </span>
   )
 }
 
@@ -208,12 +210,9 @@ export default function Explorer({ sections = ['docs', 'deliverable', 'generated
                       ●
                     </span>
                   )}
+                  {docProgress.has(f.path) && <BuildMark p={docProgress.get(f.path)!} />}
                 </>
               )}
-              under={(f) => {
-                const p = docProgress.get(f.path)
-                return p ? <BuildMark p={p} /> : null
-              }}
             />
           )}
         </div>

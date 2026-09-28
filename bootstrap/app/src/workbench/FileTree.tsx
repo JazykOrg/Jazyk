@@ -31,8 +31,6 @@ interface Props<T extends { path: string }> {
   // The linkage tint (docs/frontends/gui.md#lenses).
   related?: Set<string>
   badges?: (file: TreeFile<T>) => ReactNode
-  // What renders under a file's row (the build's progress mark).
-  under?: (file: TreeFile<T>) => ReactNode
   onHover?: (path: string, held: boolean) => void
   // A class for the name, so the owner's tests and styles find it.
   nameClass?: string
@@ -89,7 +87,7 @@ type Edit = { mode: 'create' | 'folder'; dir: string } | { mode: 'rename'; path:
 const CONFIRM_MS = 4000
 
 export default function FileTree<T extends { path: string }>(props: Props<T>) {
-  const { head, projectKey, items, current, hrefFor, dim, related, badges, under, onHover, nameClass, actions, placeholder } = props
+  const { head, projectKey, items, current, hrefFor, dim, related, badges, onHover, nameClass, actions, placeholder } = props
   const navigate = useNavigate()
   const [closed, setClosed] = useState<Set<string>>(() => readClosedFolders(head, projectKey))
   useEffect(() => setClosed(readClosedFolders(head, projectKey)), [head, projectKey])
@@ -460,7 +458,6 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
         ) : (
           row
         )}
-        {under?.(f)}
       </div>
     )
   }

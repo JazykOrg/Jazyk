@@ -17,7 +17,7 @@ import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
 import { buildMentionIndex, findQuoteIn, lineOf, quoteLine } from '../lib/mentions'
 import { sectionBySlug, sectionLines } from '../lib/sections'
-import CmHost, { docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
+import CmHost, { buildBar, docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
 import { serverBase } from '../lib/backend'
@@ -141,6 +141,7 @@ export default function DocEditor() {
             sections: progress.sections,
             active: progress.active,
             result: progress.result,
+            held: progress.held,
           }
         : undefined,
     [progress],
@@ -488,7 +489,6 @@ export default function DocEditor() {
     if (!reading) return undefined
     const sections = record?.sections ?? {}
     const coverage = record?.coverage ?? {}
-    const done = build ? build.state === 'done' || build.state === 'failed' : false
     const secAt = (line: number) => {
       let best: string | null = null
       let bestStart = -1
@@ -506,17 +506,14 @@ export default function DocEditor() {
       if (!ref) return ''
       const cov = coverage[ref]
       const cls = [cov ? (cov.state === 'covered' ? 'md-cov-covered' : 'md-cov-nonnorm') : 'md-cov-unprocessed']
-      if (build && build.sections.includes(ref))
-        cls.push(done ? (build.state === 'failed' ? 'build-failed' : 'build-done') : ref === build.active ? 'build-active' : 'build-queued')
+      // The build's bar beside the block, never a tint over it.
+      if (build && build.sections.includes(ref)) cls.push(buildBar(build, ref).cls)
       return cls.join(' ')
     }
     const lineTitle = (line: number) => {
       const ref = secAt(line)
       if (!ref) return undefined
-      if (build && build.sections.includes(ref))
-        return done
-          ? `${build.label}: ${build.result ?? (build.state === 'failed' ? 'parked' : 'committed')}`
-          : `${build.label}: ${ref === build.active ? 'reconciling this section' : 'queued for this build'}`
+      if (build && build.sections.includes(ref)) return buildBar(build, ref).tip
       return coverage[ref]?.note
     }
     const markMap = new Map<number, { rid: string; cls: string; tip: string }>()

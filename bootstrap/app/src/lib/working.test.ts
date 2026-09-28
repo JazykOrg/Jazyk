@@ -22,4 +22,8 @@ describe('workingLine', () => {
     expect(workingLine([{ kind: 'tool', text: 'search Customer', status: 'pending' }])).toBe('Searching Customer…')
     expect(workingLine([{ kind: 'tool', text: 'search Customer', status: 'ok' }])).toBe('Thinking…')
   })
+
+  it('gives way to reasoning as it streams', () => {
+    expect(workingLine([{ kind: 'user', text: 'hi' }, { kind: 'thought', text: 'Let me look' }])).toBeNull()
+  })
 })

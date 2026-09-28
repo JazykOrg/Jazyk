@@ -13,7 +13,7 @@ test('every route but Home goes home until a project is open', async ({ page }) 
   await expect(page.locator('.home .demo')).toHaveCount(6)
 })
 
-test('nothing downloads the model on arrival; the Build sheet offers it', async ({ page }) => {
+test("nothing downloads the model on arrival; the action button's popover offers it", async ({ page }) => {
   const external = await offline(page)
   await openDemo(page, 'The sort utility')
   await page.waitForTimeout(1500)
@@ -21,8 +21,9 @@ test('nothing downloads the model on arrival; the Build sheet offers it', async 
   const caps = await api<{ model: string }>(page, 'GET', '/api/capabilities')
   // A browser without WebGPU has no model to offer at all.
   if (caps.model === 'loadable') {
-    await page.locator('.ws-top').getByRole('button', { name: /Up to date|Build/ }).click()
-    await expect(page.locator('.ws-sheet')).toContainText('Load the model')
+    await page.locator('.ws-action > button.main').click()
+    await expect(page.locator('.ws-pop')).toContainText('Load the model')
+    expect(external).toEqual([])
   }
 })
 
@@ -182,8 +183,8 @@ test('an endpoint model source is ready at once and is remembered in this browse
   await page.goto('/#/settings')
   // The chat pane offers the same chooser until a model is ready; this one is Settings'.
   const chooser = page.locator('.settings-model .msrc')
-  await expect(chooser.locator('.msrc-privacy')).toContainText('Nothing is saved on a jazyk server')
   await chooser.locator('.msrc-option', { hasText: 'Your endpoint' }).click()
+  await expect(chooser.locator('.msrc-privacy')).toHaveAttribute('title', /Nothing is saved on a jazyk server/)
   await chooser.getByLabel('Base URL', { exact: true }).fill('http://localhost:4999/v1')
   await chooser.getByLabel('Model', { exact: true }).fill('test-model')
   await chooser.getByRole('button', { name: 'Save' }).click()

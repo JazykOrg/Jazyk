@@ -169,114 +169,6 @@
   outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-.ws-sheet {
-  position: absolute;
-  top: 36px;
-  right: 0;
-  width: 400px;
-  max-height: 70vh;
-  overflow: auto;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-  padding: 12px 14px;
-  z-index: 40;
-  white-space: normal;
-  font-size: 13px;
-}
-
-.ws-sheet h3 {
-  font-family: var(--sans);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  margin: 12px 0 4px;
-}
-
-.ws-sheet h3:first-child {
-  margin-top: 0;
-}
-
-.ws-sheet .row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 0;
-}
-
-.ws-sheet .row .grow {
-  flex: 1;
-}
-
-.ws-sheet .why {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-/* The chooser behind a chat-tier model's warning, shown on request. */
-.ws-sheet button.ws-stronger {
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0 0 4px;
-  color: var(--accent);
-  font-size: 12px;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.ws-sheet .modes label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 3px 0;
-  color: var(--ink);
-}
-
-.ws-sheet .modes select {
-  font-size: 12px;
-}
-
-.ws-sheet button.run {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-.ws-sheet button.run:disabled {
-  background: var(--line);
-  border-color: var(--line);
-  color: var(--muted);
-}
-
-.ws-sheet .entry {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-top: 1px solid var(--line);
-}
-
-.ws-sheet .entry b {
-  min-width: 80px;
-}
-
-.ws-sheet .entry .grow {
-  flex: 1;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.ws-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-}
-
 /* Navigator */
 .ws-nav {
   width: 260px;
@@ -1580,8 +1472,9 @@ a.trail-step:hover .trail-label {
 
 .msrc-option {
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  white-space: nowrap;
+  gap: 8px;
+  align-items: baseline;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1599,18 +1492,17 @@ a.trail-step:hover .trail-label {
 }
 
 .msrc-option input {
-  margin-top: 3px;
-}
-
-.msrc-option > span {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-self: center;
+  margin: 0;
 }
 
 .msrc-note {
   color: var(--muted);
   font-size: 12.5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .msrc-form {
@@ -1638,9 +1530,26 @@ a.trail-step:hover .trail-label {
   font-size: 13px;
 }
 
-.msrc-privacy {
+.msrc-form .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+/* An explanation behind an icon, its text the tooltip
+   (docs/frontends/gui.md#the-action-button). */
+.info-tip {
+  color: var(--muted);
   font-size: 12px;
-  margin: 4px 0 0;
+  cursor: help;
+  user-select: none;
+}
+
+.info-tip:hover,
+.info-tip:focus-visible {
+  color: var(--accent);
+  outline: none;
 }
 
 .settings-model {
@@ -1704,6 +1613,57 @@ a.trail-step:hover .trail-label {
   .ws-action > button.primary.running {
     animation: none;
   }
+}
+
+/* The arrow's popover: the model chooser in a tab, the actions on a server. */
+.ws-pop {
+  width: 420px;
+  max-width: calc(100vw - 16px);
+  max-height: 70vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ws-pop .msrc {
+  max-width: none;
+}
+
+.ws-pop .ws-menu-item {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ws-pop .ws-menu-item:not([aria-disabled]):hover,
+.ws-pop .ws-menu-item:not([aria-disabled]):focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ws-pop .ws-menu-item[aria-disabled] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.ws-pop .ws-menu-item[aria-selected='true'] {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.ws-pop-modes {
+  border-top: 1px solid var(--line);
+  padding: 6px 10px 2px;
+}
+
+.ws-pop-modes label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 3px 0;
+}
+
+.ws-pop-modes select {
+  font-size: 12px;
 }
 
 /* The menus: the project menu and the action list, one look

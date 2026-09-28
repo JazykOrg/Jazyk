@@ -101,18 +101,19 @@ test('a reader model chats over the read tools alone and cannot build', async ({
   const caps = await api<{ jobs: string[]; modelTier: string }>(page, 'GET', '/api/capabilities')
   expect(caps).toMatchObject({ jobs: [], modelTier: 'reader' })
 
-  // The action button reads Build alone, and its sheet shows the chooser with the
-  // model a build needs in place of Run.
+  // The action button reads Build alone, and its main part opens the chooser instead
+  // of running; the tier's meaning is the info icon's tooltip.
   const main = page.locator('.ws-action > button.main')
   await expect(main).toHaveText(/^▸ Build$/)
   await main.click()
-  const sheet = page.locator('.ws-sheet')
-  await expect(sheet.locator('.ws-tier')).toHaveText("A build needs a model of 3B or more, or an endpoint; the browser's built-in model answers questions.")
-  await expect(sheet.locator('.msrc')).toBeVisible()
-  await expect(sheet.locator('.msrc-status.v-ok')).toContainText("Ready: the browser's built-in model, reader tier (questions only).")
-  await expect(sheet.getByRole('button', { name: 'Run' })).toHaveCount(0)
+  const pop = page.locator('.ws-pop')
+  await expect(pop.locator('.msrc')).toBeVisible()
+  await expect(pop.locator('.msrc-status.v-ok')).toContainText("Ready: the browser's built-in model · questions only")
+  await expect(pop.locator('.msrc-tier')).toHaveAttribute('title', 'A build needs a model of 3B or more, or an endpoint. This one answers questions.')
+  await expect(pop.getByRole('button', { name: /^(Run|Cancel)$/ })).toHaveCount(0)
+  expect((await api<{ jobs: unknown[] }>(page, 'GET', '/api/jobs')).jobs).toEqual([])
   await page.keyboard.press('Escape')
-  await expect(sheet).toHaveCount(0)
+  await expect(pop).toHaveCount(0)
 
   // Chat runs: the conversation opened as a reader, with the read tools alone.
   const box = chat.locator('.chat-input textarea')

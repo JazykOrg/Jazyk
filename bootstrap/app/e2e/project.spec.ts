@@ -86,24 +86,62 @@ test('the project menu says where changes go and downloads the project', async (
   expect(Object.keys(entries)).toContain('the-shop/docs/catalog.md')
 })
 
-test('the action list holds Build alone in a tab; Developer mode adds the rest with reasons', async ({ page }) => {
+// No Run, no Cancel, no Settings: the popover has no buttons of its own.
+async function expectNoPopoverButtons(pop: import('@playwright/test').Locator) {
+  await expect(pop.getByRole('button', { name: /^(Run|Cancel|Settings)/ })).toHaveCount(0)
+  await expect(pop.getByRole('link', { name: /Settings/ })).toHaveCount(0)
+}
+
+// A click on the empty stretch of the top bar, left of the search box.
+async function clickElsewhere(page: import('@playwright/test').Page) {
+  const box = await page.locator('.ws-top .ws-palette').boundingBox()
+  if (!box) throw new Error('no search box in the top bar')
+  await page.mouse.click(box.x - 30, box.y + box.height / 2)
+}
+
+test("in a tab the arrow's popover holds the model chooser alone; Developer mode adds the actions with reasons", async ({ page }) => {
   await openDemo(page, 'The shop')
   const top = page.locator('.ws-top')
-  await top.getByRole('button', { name: 'choose an action' }).click()
-  const menu = page.locator('.ws-action-menu')
-  await expect(menu.getByRole('menuitem')).toHaveText([/^Build/, 'Settings…'])
-  await page.keyboard.press('Escape')
-  await expect(menu).toHaveCount(0)
+  await top.getByRole('button', { name: 'choose a model' }).click()
+  const pop = page.locator('.ws-pop')
+  await expect(pop.locator('.msrc')).toBeVisible()
+  await expect(pop.getByRole('listbox', { name: 'actions' })).toHaveCount(0)
+  await expectNoPopoverButtons(pop)
+  // A click anywhere else closes it.
+  await clickElsewhere(page)
+  await expect(pop).toHaveCount(0)
 
   await page.locator('.ws-dev').click()
-  await top.getByRole('button', { name: 'choose an action' }).click()
-  const items = page.locator('.ws-action-menu').getByRole('menuitem')
-  await expect(items).toHaveText([/^Build/, /^Generate/, /^Review/, /^Document/, /^Preview prompt/, 'Settings…'])
+  await top.getByRole('button', { name: 'choose a model' }).click()
+  const items = pop.getByRole('listbox', { name: 'actions' }).getByRole('option')
+  await expect(items).toHaveText([/^Build/, /^Generate/, /^Review/])
   await expect(items.nth(1)).toContainText('This backend cannot run a generate run.')
-  await expect(items.nth(1)).toHaveAttribute('data-disabled', '')
+  await expect(items.nth(1)).toHaveAttribute('aria-disabled', 'true')
   await expect(items.nth(2)).toContainText('This backend cannot run a review.')
+  await expect(pop).toContainText('Document')
+  await expect(pop).toContainText('Preview prompt')
+  await expect(pop.locator('.ws-pop-modes')).toBeVisible()
+  await expectNoPopoverButtons(pop)
   await page.keyboard.press('Escape')
+  await expect(pop).toHaveCount(0)
 })
+
+// With no model ready nothing could run: the main part opens the chooser, and no
+// job starts (docs/frontends/gui.md#the-action-button).
+test('with no model ready the main part opens the popover with the chooser and runs nothing', async ({ page }) => {
+  await openDemo(page, 'The shop')
+  const main = page.locator('.ws-action > button.main')
+  await expect(main).toHaveText(/^▸ Build$/)
+  await main.click()
+  const pop = page.locator('.ws-pop')
+  await expect(pop.locator('.msrc')).toBeVisible()
+  await expect(pop.locator('.msrc-option', { hasText: 'Your endpoint' })).toBeVisible()
+  await expectNoPopoverButtons(pop)
+  expect((await api<{ jobs: unknown[] }>(page, 'GET', '/api/jobs')).jobs).toEqual([])
+  await clickElsewhere(page)
+  await expect(pop).toHaveCount(0)
+})
+
 
 // A build in a tab (docs/frontends/wasm.md#the-demo): the page keeps the job, the
 // action button shows the run's progress, and the chat column opens the build
@@ -119,9 +157,14 @@ test('a build in a tab shows its progress on the action button and opens its bui
     'Cross-Origin-Resource-Policy': 'cross-origin',
   }
   let calls = 0
+  // The model calls wait until the test has watched the run, so the build is
+  // certainly still running while the main part is clicked again.
+  let release = () => {}
+  const released = new Promise<void>((r) => (release = r))
   await page.route(`${ENDPOINT}/chat/completions`, async (route: Route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
     calls += 1
+    await released
     await new Promise((r) => setTimeout(r, 600))
     return route.fulfill({
       status: 400,
@@ -149,20 +192,24 @@ test('a build in a tab shows its progress on the action button and opens its bui
   await chat.locator('.chat-toggle', { hasText: '›' }).click()
   await expect(page.locator('.wb-chat-closed')).toBeVisible()
 
+  // The main part runs at once: no popover, the build starts.
   await main.click()
-  const sheet = page.locator('.ws-sheet')
-  await expect(sheet).toContainText('1 document changed since the last build: docs/catalog.md')
-  await expect(sheet).toContainText('The built-in runner will run it.')
-  await sheet.getByRole('button', { name: 'Run' }).click()
-
   await expect(main).toHaveText(/Building/)
   await expect(main).toHaveClass(/running/)
-  await expect(page.locator('.ws-sheet')).toHaveCount(0)
+  await expect(page.locator('.ws-pop')).toHaveCount(0)
   const open = page.locator('.wb-chat')
   await expect(open.locator('.chat-sess.active')).toContainText('Build #1')
   await expect(open.locator('.chat-sess.working')).toHaveCount(1)
   await expect(open.locator('.chat-row.working')).toBeVisible()
   await expect.poll(() => calls).toBeGreaterThan(0)
+
+  // While it runs a click opens its build thread again, and starts nothing.
+  await open.locator('.chat-toggle', { hasText: '›' }).click()
+  await expect(page.locator('.wb-chat-closed')).toBeVisible()
+  await main.click()
+  await expect(page.locator('.wb-chat .chat-sess.active')).toContainText('Build #1')
+  await expect(page.locator('.ws-pop')).toHaveCount(0)
+  release()
 
   // The run ends on its own: the button reads the state again, the thread keeps
   // the run with its verdict.

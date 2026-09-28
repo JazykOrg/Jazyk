@@ -6,7 +6,7 @@ import { useProject } from '../lib/queries'
 import { useInbox } from '../lib/product'
 import { useApp } from '../lib/store'
 import { useWords } from '../lib/words'
-import ActionButton from './ActionSheet'
+import ActionButton from './ActionButton'
 import ProjectMenu from './ProjectMenu'
 
 function projectName(root: string | undefined): string {

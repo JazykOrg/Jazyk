@@ -787,7 +787,9 @@ One split button in the top bar.
   `Review · 12 tests`, `Up to date`. Build's count is the build's own work: open
   goals of every kind but `bind`, `generate`, and `verify`, which are Generate's and
   Review's (and which a tab cannot run), so the label never promises work a build
-  will not do. While a job runs it shows the progress
+  will not do. In a tab, the answers a build acts on are its work too
+  ([the Inbox in a tab](./wasm.md#the-inbox)): `Build · 1 answer` when nothing
+  else waits. While a job runs it shows the progress
   (`Building 2 of 5`) and pulses, and the job's build thread opens in the
   [chat column](#chat); a click then opens that thread. Stopping is the thread's
   `Stop`.

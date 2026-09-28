@@ -495,7 +495,7 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         // The chat pane: conversations run in the worker on the page's model, and
         // their progress is posted to the page as events while the prompt request
         // is still running. See docs/frontends/wasm.md#chat.
-        ("POST", "/chat/sessions") => ok(crate::wasm::chat::create()),
+        ("POST", "/chat/sessions") => ok(crate::wasm::chat::create(&body)),
         ("GET", "/chat/sessions") => ok(crate::wasm::chat::list()),
         ("GET", p) if p.starts_with("/chat/sessions/") => {
             let id = decode(p.trim_start_matches("/chat/sessions/"));

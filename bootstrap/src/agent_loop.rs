@@ -644,6 +644,48 @@ pub fn run_loop(a: LoopArgs) -> Stop {
 #[cfg(test)]
 mod tests {
 
+    // The reader serving's first call (docs/frontends/wasm.md#chat): the system
+    // preamble with the text codec's tool block, then the instructions, must fit a
+    // small model's window with room for the turns. 8k tokens is about 32k
+    // characters; the bound here leaves the rest for the conversation.
+    #[test]
+    fn reader_prompt_fits_a_small_window() {
+        let dir = std::env::temp_dir().join(format!("jazyk-reader-prompt-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let server = crate::mcp::McpServer::with_bridge(
+            project,
+            out,
+            vec!["graph".to_string()],
+            false,
+            crate::mcp::BridgeFlags {
+                ephemeral: true,
+                reader: true,
+                ..Default::default()
+            },
+        );
+        let init = server.handle("initialize", &json!({"protocolVersion": "2024-11-05"})).unwrap();
+        let instructions = init["instructions"].as_str().unwrap().to_string();
+        let list = server.handle("tools/list", &json!({})).unwrap();
+        let tools: Vec<GenericTool> = list["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| GenericTool {
+                name: t["name"].as_str().unwrap_or_default().to_string(),
+                description: t["description"].as_str().unwrap_or_default().to_string(),
+                parameters: t["inputSchema"].clone(),
+            })
+            .collect();
+        let system = format!("{}{}", SYSTEM, TextCodec.system_suffix(&tools));
+        let chars = system.chars().count() + instructions.chars().count();
+        eprintln!("reader first-call prompt: {} chars (system {}, instructions {})", chars, system.chars().count(), instructions.chars().count());
+        assert!(chars < 16_000, "the reader prompt is {} chars", chars);
+    }
+
     // A mid-turn downgrade leaves no native tool_calls or tool-role messages behind.
     // Mirrors docs/frontends/acp.md#the-embedded-agent.
     #[test]

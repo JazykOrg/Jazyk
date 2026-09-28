@@ -783,6 +783,7 @@ pub fn run() {
                         serve_files: opts.serve_files,
                         edit_sink: opts.edit_sink.clone(),
                         packaged: opts.packaged,
+                        reader: false,
                     };
                     mcp::McpServer::with_bridge(proj, out, modes, opts.write, bridge).run();
                     0

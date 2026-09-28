@@ -321,6 +321,9 @@ What an answer does in a tab:
   lists them under `answers`, and each session's events reach the trace under the
   label `answer <diagnostic>`.
 - A build needs a model, so without one the answer waits with `handling`.
+- A [chat](#chat) answers the same way a native chat session does: the agent
+  records a reply relayed in conversation with `answer_diagnostic` and acts on it
+  in the same turn ([questions in chat](./acp.md#questions-in-chat)).
 
 ## Sessions
 

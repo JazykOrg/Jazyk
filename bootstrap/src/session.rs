@@ -1434,6 +1434,35 @@ pub fn full_payload(v: &Value) -> Option<String> {
     }
 }
 
+// The section a tool call names, when it belongs to the session's document. Every
+// runner emits a `section` event from it (docs/compiler/sessions.md#trace-events).
+pub fn named_section(args: &Value, doc: &str) -> Option<String> {
+    let raw = args["section"]
+        .as_str()
+        .or_else(|| args["mention"]["section"].as_str())?;
+    match crate::model::split_section_ref(raw) {
+        Some((d, sec)) => (d == doc).then_some(sec),
+        None => raw.starts_with('/').then(|| raw.to_string()),
+    }
+}
+
+// The rule and message a refused tool call carries: a jazyk refusal is
+// `{"error": {"rule", "message"}}`; anything else is its own message under
+// `fallback` (docs/compiler/tools.md).
+pub fn refusal(text: &str, fallback: &str) -> (String, String) {
+    let parsed: Value =
+        serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()));
+    let rule = parsed["error"]["rule"]
+        .as_str()
+        .unwrap_or(fallback)
+        .to_string();
+    let message = parsed["error"]["message"]
+        .as_str()
+        .unwrap_or(text)
+        .to_string();
+    (rule, message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

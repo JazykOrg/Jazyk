@@ -111,7 +111,7 @@ impl UpdateTranslator {
                 });
                 // An accepted call that names a section says where the turn is.
                 if let Some(doc) = self.doc.clone() {
-                    if let Some(sec) = named_section(&args, &doc) {
+                    if let Some(sec) = crate::session::named_section(&args, &doc) {
                         if self.at_section.as_deref() != Some(sec.as_str()) {
                             self.at_section = Some(sec.clone());
                             trace.event(TraceEvent::Section {
@@ -201,18 +201,6 @@ impl UpdateTranslator {
     // The end of the turn: whatever is buffered lands.
     pub fn finish(&mut self, trace: &Trace) {
         self.flush_into(trace);
-    }
-}
-
-// The section a tool call names, when it belongs to this turn's document (moved from
-// the retired turn loop).
-fn named_section(args: &serde_json::Value, doc: &str) -> Option<String> {
-    let raw = args["section"]
-        .as_str()
-        .or_else(|| args["mention"]["section"].as_str())?;
-    match crate::model::split_section_ref(raw) {
-        Some((d, sec)) => (d == doc).then_some(sec),
-        None => raw.starts_with('/').then(|| raw.to_string()),
     }
 }
 

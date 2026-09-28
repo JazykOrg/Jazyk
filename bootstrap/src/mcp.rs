@@ -1774,16 +1774,11 @@ impl McpServer {
                     let text = v["content"][0]["text"].as_str().unwrap_or_default();
                     let parsed: Value = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
                     if is_err {
+                        let (rule, message) = crate::session::refusal(text, "error");
                         self.trace.event(crate::session::TraceEvent::ToolError {
                             label,
-                            rule: parsed["error"]["rule"]
-                                .as_str()
-                                .unwrap_or("error")
-                                .to_string(),
-                            message: parsed["error"]["message"]
-                                .as_str()
-                                .unwrap_or(text)
-                                .to_string(),
+                            rule,
+                            message,
                         });
                     } else {
                         self.trace.event(crate::session::TraceEvent::ToolResult {

@@ -79,16 +79,24 @@ function InboxNav() {
   const inbox = useInbox()
   const d = inbox.data
   const problems = Object.values(d?.problems ?? {}).reduce((a, b) => a + b, 0)
+  // A rollup that failed says so where its counts would be, never a count of zero.
+  const missing = inbox.error ? (
+    <span className="sev-error" title={`the Inbox could not load: ${(inbox.error as Error).message}`}>
+      !
+    </span>
+  ) : (
+    '…'
+  )
   return (
     <>
       <div className="ws-nav-head">Inbox</div>
       <div className="ws-nav-list">
-        <Row to="/inbox" end label="Everything" sub={d ? d.total : '…'} />
-        <Row to="/inbox/questions" label={w.questions} sub={d ? d.questions : '…'} />
-        <Row to="/inbox/proposals" label={w.proposals} sub={d ? d.proposals : '…'} />
-        <Row to="/inbox/problems" label={w.problems} sub={d ? problems : '…'} />
-        <Row to="/inbox/pending" label={w.pendingChanges} sub={d ? d.pending.docs.length + (d.pending.entities > 0 ? 1 : 0) : '…'} />
-        <Row to="/inbox/drafts" label={w.drafts} sub={d ? d.drafts : '…'} />
+        <Row to="/inbox" end label="Everything" sub={d ? d.total : missing} />
+        <Row to="/inbox/questions" label={w.questions} sub={d ? d.questions : missing} />
+        <Row to="/inbox/proposals" label={w.proposals} sub={d ? d.proposals : missing} />
+        <Row to="/inbox/problems" label={w.problems} sub={d ? problems : missing} />
+        <Row to="/inbox/pending" label={w.pendingChanges} sub={d ? d.pending.docs.length + (d.pending.entities > 0 ? 1 : 0) : missing} />
+        <Row to="/inbox/drafts" label={w.drafts} sub={d ? d.drafts : missing} />
       </div>
     </>
   )

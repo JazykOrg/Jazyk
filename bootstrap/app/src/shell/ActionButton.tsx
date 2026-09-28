@@ -44,10 +44,13 @@ function useCounts() {
   const { data: docs } = useDocs()
   const matrix = useMatrix()
   const { data: s } = useStatus()
+  const caps = useCapabilities()
   const changedDocs = inbox.data?.pending.docs ?? (docs?.docs ?? []).filter((d) => d.stale).map((d) => d.path)
   return {
     changedDocs,
     openGoals: buildWork(s?.board),
+    // In a tab the next build acts on the recorded answers (docs/frontends/wasm.md#the-inbox).
+    answers: caps.data && caps.data.backend !== 'server' ? (inbox.data?.handling ?? 0) : 0,
     toBuild: pending.data?.pending.length ?? 0,
     tests: matrix.data ? Object.values(matrix.data.rows).filter((r) => r.test).length : 0,
     status: s,
@@ -60,7 +63,13 @@ type Counts = ReturnType<typeof useCounts>
 function stateLine(kind: ActionChoice, c: Counts): string {
   switch (kind) {
     case 'compile':
-      return c.changedDocs.length > 0 ? `${plural(c.changedDocs.length, 'document')} changed` : c.openGoals > 0 ? `${plural(c.openGoals, 'item')} left` : 'Up to date'
+      return c.changedDocs.length > 0
+        ? `${plural(c.changedDocs.length, 'document')} changed`
+        : c.openGoals > 0
+          ? `${plural(c.openGoals, 'item')} left`
+          : c.answers > 0
+            ? plural(c.answers, 'answer')
+            : 'Up to date'
     case 'gen':
       return c.toBuild > 0 ? plural(c.toBuild, 'entity', 'entities') : 'Nothing to generate'
     case 'verify':
@@ -194,7 +203,7 @@ export default function ActionButton() {
   } else if (needsModel) {
     label = w.build
     title = 'choose a model'
-  } else if (chosen === 'compile' && counts.changedDocs.length === 0 && counts.openGoals === 0) {
+  } else if (chosen === 'compile' && counts.changedDocs.length === 0 && counts.openGoals === 0 && counts.answers === 0) {
     label = w.upToDate
     cls += ' idle'
   } else {

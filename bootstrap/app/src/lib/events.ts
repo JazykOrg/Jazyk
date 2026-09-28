@@ -321,7 +321,7 @@ export function pushWireEvent(qc: QueryClient, event: Record<string, unknown>) {
 // the event stream; the wasm backend has no stream, so the demo calls this after
 // any write request returns (docs/frontends/wasm.md#the-trace).
 export function refreshAfterWrite(qc: QueryClient) {
-  for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain', 'out', 'workers'])
+  for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain', 'out', 'workers', 'inbox', 'questions'])
     qc.invalidateQueries({ queryKey: [key] })
   qc.invalidateQueries({ queryKey: ['node'] })
 }

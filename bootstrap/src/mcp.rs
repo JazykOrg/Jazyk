@@ -2475,7 +2475,6 @@ impl McpServer {
     // the answer engine (through this serving's edit sink when the proxy listens);
     // any other answer is recorded and the handling contract returns to the calling
     // agent. Mirrors docs/frontends/acp.md#questions-in-chat.
-    #[cfg(not(target_arch = "wasm32"))]
     fn answer_diagnostic(&self, args: &Value) -> Value {
         let id = args["id"].as_str().unwrap_or_default().to_string();
         let reply = if let Some(i) = args["option"].as_u64() {
@@ -2498,11 +2497,6 @@ impl McpServer {
             }
             Err(e) => json!({"error": {"rule": "answer-failed", "message": e}}),
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn answer_diagnostic(&self, args: &Value) -> Value {
-        json!({"error": "the browser backend does not answer diagnostics"})
     }
 
     // Maintain the question on a finding, through a ToolSession so the same gates

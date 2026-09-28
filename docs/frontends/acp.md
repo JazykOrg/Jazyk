@@ -489,7 +489,9 @@ prompt carrying the diagnostic, the loaded set for its subjects, the question, a
 the human's reply, with the contract to act on the reply and then resolve or
 re-prompt the diagnostic. The `answer.status` on the node moves `handling` on spawn
 and `handled` or `failed` when the session lands, so every frontend shows the same
-progress from the store. The `answer` goal resolves when the session lands.
+progress from the store. The `answer` goal resolves when the session lands. A
+browser tab spawns nothing: its next build runs the session
+([the Inbox in a tab](./wasm.md#the-inbox)).
 
 ### Slash commands
 

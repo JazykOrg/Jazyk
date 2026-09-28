@@ -17,7 +17,8 @@ The [GUI](./gui.md) API is one implementation with two ways in.
   `card_value`, `page_value`, and the [product](#the-product)'s
   `deliverable_value`, `deliverable_file`, `deliverable_baseline`, `matrix_value`,
   `matrix_export`, `gen_pending_value`, `gen_package_value`, `verify_pending_value`,
-  `docsgen_value`, `out_list`, and `out_file`. Each takes a
+  `docsgen_value`, `out_list`, and `out_file`, and [the Inbox](#the-inbox)'s
+  `inbox_value`, `questions_value`, `triage_value`, and `answer_value`. Each takes a
   [store](../compiler/graph.md) (or a project and an out directory) and answers a
   JSON value, or a refusal with its status and reason. Nothing in it knows about a
   transport.
@@ -289,6 +290,40 @@ deliverable or the out directory is `400`, a missing file is `404`.
 
 What the product needs a shell for does not run: see
 [what a tab does not do](#what-a-tab-does-not-do).
+
+## The Inbox
+
+The [Inbox](./gui.md#inbox) works in a tab. Its reads and writes are the server's
+own, from `crate::webapi::inbox`:
+
+- `GET /api/inbox`: the rollup. The top bar's count, the navigator's section
+  counts, and the Inbox's lists all read it.
+- `GET /api/questions`: the standing questions.
+- `POST /api/diagnostics/{id}/triage`: Seen, Won't fix, Hide, and Undo, committed
+  through the store as a `triage` entry.
+- `POST /api/questions/{id}/answer`: an answer, through `crate::answer`, the engine
+  every frontend calls ([answers](../compiler/model/diagnostic.md#answers)).
+
+What an answer does in a tab:
+
+- An `edit` option applies and resolves in the reply, the way it does on a machine:
+  the dual write lands in the tree and the question leaves the list. A ratification
+  proposal's `Accept` and `Retract` are the same.
+- An `answer` option or a freeform reply records the text with
+  `answer.status: handling`. A tab runs nothing in the background, so no
+  [answer session](./acp.md#answer-sessions) starts on the reply. The reply says
+  so, and the card says the next build acts on it.
+- The next build runs it. Before its first goal batch, a build in a tab runs one
+  answer session per `handling` answer, on the page's model, the way
+  [sessions](#sessions) run: the `chat` serving, the prompt carrying the
+  diagnostic, the question, the reply, and the subjects. The status moves to
+  `handled` when the session ends, or `failed` with the error. The build's reply
+  lists them under `answers`, and each session's events reach the trace under the
+  label `answer <diagnostic>`.
+- A build needs a model, so without one the answer waits with `handling`.
+- A [chat](#chat) answers the same way a native chat session does: the agent
+  records a reply relayed in conversation with `answer_diagnostic` and acts on it
+  in the same turn ([questions in chat](./acp.md#questions-in-chat)).
 
 ## Sessions
 

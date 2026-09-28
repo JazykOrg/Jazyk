@@ -9,7 +9,9 @@ use crate::model::{DiagnosticAnswer, Provenance, SourceRef};
 use crate::project::Project;
 use crate::store::{Commit, Op, ProseEdit, Store, WriteEdit};
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 pub enum Reply {
     Choice(usize),
@@ -445,26 +447,28 @@ pub fn questions_summary(out: &Path) -> Option<String> {
     ))
 }
 
-// Frontends with no live session (LSP, GUI) hand a `handling` answer to one focused
-// background session; `answer.status` moves to handled or failed when it lands, so
-// every frontend shows the same progress from the store.
-pub fn spawn_handler(project: Project, out: PathBuf, id: String) {
-    std::thread::spawn(move || {
-        let _ = run_handler(&project, &out, &id);
-    });
+// The answers recorded as `handling`: what an answer session still owes. A tab runs
+// nothing in the background, so its next build runs one session per id here
+// (docs/frontends/wasm.md#the-inbox).
+pub fn handling_ids(out: &Path) -> Vec<String> {
+    Store::load(out)
+        .graph
+        .diagnostics
+        .iter()
+        .filter(|(_, d)| {
+            d.lifecycle == "open" && d.answer.as_ref().map_or(false, |a| a.status == "handling")
+        })
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
-// Run the answer session for a `handling` answer and record its outcome on the
-// answer (`handled`, or `failed` with the error). The terminal runs it in the
-// foreground (docs/frontends/cli.md#jazyk-answer); the other frontends spawn it.
-pub fn run_handler(project: &Project, out: &Path, id: &str) -> Result<(), String> {
-    let outcome = handle(project, out, id);
-    let status = match &outcome {
+// Record an answer session's outcome on the answer: `handled`, or `failed` with the
+// error. Every runner lands the same record, so every frontend shows the same
+// progress from the store.
+pub fn record_outcome(out: &Path, id: &str, outcome: &Result<(), String>) {
+    let status = match outcome {
         Ok(()) => "handled",
-        Err(e) => {
-            eprintln!("jazyk: answer session for {} failed: {}", id, e);
-            "failed"
-        }
+        Err(_) => "failed",
     };
     let mut s = Store::load(out);
     let rid = s.resolve_id(id).to_string();
@@ -479,9 +483,32 @@ pub fn run_handler(project: &Project, out: &Path, id: &str) -> Result<(), String
             &Commit::store("answer"),
         );
     }
+}
+
+// Frontends with no live session (LSP, GUI) hand a `handling` answer to one focused
+// background session; `answer.status` moves to handled or failed when it lands, so
+// every frontend shows the same progress from the store.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_handler(project: Project, out: PathBuf, id: String) {
+    std::thread::spawn(move || {
+        let _ = run_handler(&project, &out, &id);
+    });
+}
+
+// Run the answer session for a `handling` answer and record its outcome on the
+// answer (`handled`, or `failed` with the error). The terminal runs it in the
+// foreground (docs/frontends/cli.md#jazyk-answer); the other frontends spawn it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_handler(project: &Project, out: &Path, id: &str) -> Result<(), String> {
+    let outcome = handle(project, out, id);
+    if let Err(e) = &outcome {
+        eprintln!("jazyk: answer session for {} failed: {}", id, e);
+    }
+    record_outcome(out, id, &outcome);
     outcome
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn handle(project: &Project, out: &Path, id: &str) -> Result<(), String> {
     let llm = crate::cli::resolve_llm(
         &crate::cli::Options::default(),

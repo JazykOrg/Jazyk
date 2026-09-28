@@ -558,8 +558,56 @@
   color: var(--accent);
 }
 
-.inbox-item .free {
+.inbox-item .free-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
   margin-top: 6px;
+}
+
+.inbox-item .free {
+  flex: 1;
+  resize: vertical;
+  min-height: 28px;
+  font: inherit;
+}
+
+.inbox-item .free-row .send {
+  padding: 2px 10px;
+}
+
+.inbox-item button.pending {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.inbox-error {
+  color: var(--err, #c0392b);
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+.inbox-item .triage .inbox-error {
+  margin: 0 0 0 6px;
+}
+
+.inbox-item .inbox-note {
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+.inbox-item .answer-state {
+  margin: 6px 0 0;
+}
+
+.inbox-item .related {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.inbox-item .related ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
 }
 
 .inbox-item .subjects {

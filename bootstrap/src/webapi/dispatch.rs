@@ -269,12 +269,16 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             let p = project();
             let llm = crate::wasm::llm();
             let trace = crate::wasm::trace();
+            // The answers recorded since the last build run first: a tab runs no
+            // answer session in the background (docs/frontends/wasm.md#the-inbox).
+            let answers = crate::wasm::runner::run_answers(&p, &llm, &p.out, &trace);
             let report = crate::reconcile::compile(&p, &llm, &p.out, &trace);
             ok(json!({
                 "id": 1,
                 "kind": "compile",
                 "state": "finished",
                 "report": serde_json::to_value(&report).unwrap_or(Value::Null),
+                "answers": answers,
             }))
         }
 
@@ -389,7 +393,6 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 &c,
             ))
         }
-        ("GET", "/questions") => ok(json!({ "questions": [] })),
         ("GET", "/benchmarks") => ok(json!({ "caseSetHash": "", "results": [] })),
         ("GET", "/benchmarks/models") => ok(json!({ "models": [] })),
         ("GET", "/trace") => ok(json!({ "traces": [] })),
@@ -468,6 +471,40 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         ("POST", path) if path.starts_with("/facts/") && path.ends_with("/edit") => {
             let id = decode(path.trim_start_matches("/facts/").trim_end_matches("/edit"));
             answer(super::facts::edit_fact_core(&project(), &out(), &id, &body))
+        }
+        // The Inbox, the server's own cores (docs/frontends/wasm.md#the-inbox).
+        ("GET", "/inbox") => {
+            let p = project();
+            let store = Store::load(&p.out);
+            ok(super::inbox::inbox_value(
+                &p,
+                &crate::gen::GenSettings::resolve(&p),
+                &p.out,
+                &store,
+            ))
+        }
+        ("GET", "/questions") => ok(super::inbox::questions_value(&Store::load(&out()))),
+        ("POST", path) if path.starts_with("/diagnostics/") && path.ends_with("/triage") => {
+            let id = decode(
+                path.trim_start_matches("/diagnostics/")
+                    .trim_end_matches("/triage"),
+            );
+            answer(super::inbox::triage_value(&out(), &id, &body))
+        }
+        // A reply that records `handling` waits for the next build, which runs its
+        // answer session; the reply says so.
+        ("POST", path) if path.starts_with("/questions/") && path.ends_with("/answer") => {
+            let id = decode(
+                path.trim_start_matches("/questions/")
+                    .trim_end_matches("/answer"),
+            );
+            let p = project();
+            answer(super::inbox::answer_value(&p, &p.out, &id, &body).map(|mut v| {
+                if v["status"] == "handling" {
+                    v["note"] = json!("recorded; the next build acts on the answer");
+                }
+                v
+            }))
         }
         ("GET", "/settings") => ok(crate::project::settings_read(&crate::wasm::root())),
         // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the

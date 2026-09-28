@@ -119,114 +119,53 @@ pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>
     }
 }
 
-// The standing questions: open, unsuppressed, prompted, unanswered diagnostics.
-// Mirrors docs/frontends/gui.md#questions.
+// The standing questions: open, unsuppressed, prompted diagnostics. The value lives
+// in crate::webapi::inbox. Mirrors docs/frontends/gui.md#questions.
 pub async fn questions(State(st): State<SharedState>) -> Response {
-    let out = st.out.clone();
-    let v = tokio::task::spawn_blocking(move || {
-        let store = Store::load(&out);
-        let mut items: Vec<Value> = Vec::new();
-        for (id, d) in &store.graph.diagnostics {
-            if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
-                continue;
-            }
-            if d.prompt.is_none() {
-                continue;
-            }
-            items.push(json!({
-                "id": id, "rule": d.rule, "severity": d.severity, "message": d.message,
-                "subjects": d.subjects, "prompt": d.prompt, "answer": d.answer,
-            }));
-        }
-        json!({ "questions": items })
-    })
-    .await
-    .expect("questions task panicked");
-    Json(v).into_response()
+    let store = load_store(&st).await;
+    Json(crate::webapi::inbox::questions_value(&store)).into_response()
 }
 
-// A human answer to a prompted diagnostic: {option} or {text}. Edit options apply
-// and resolve synchronously; anything else records handling and a background
-// answer session acts on it. Mirrors docs/compiler/model/diagnostic.md#answers.
+// A human answer to a prompted diagnostic: {option} or {text}, through the shared
+// core in crate::webapi::inbox. Edit options apply and resolve synchronously;
+// anything else records handling and a background answer session acts on it.
+// Mirrors docs/compiler/model/diagnostic.md#answers.
 pub async fn answer_question(
     State(st): State<SharedState>,
     UrlPath(id): UrlPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let reply = if let Some(i) = body["option"].as_u64() {
-        crate::answer::Reply::Choice(i as usize)
-    } else if let Some(t) = body["text"].as_str() {
-        crate::answer::Reply::Text(t.to_string())
-    } else {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "pass option (an index) or text (a freeform reply)",
-        );
-    };
     let out = st.out.clone();
-    let project = st.proj.read().unwrap().clone();
+    let project = st.proj();
     let result = tokio::task::spawn_blocking(move || {
-        let v = crate::answer::answer(&project, &out, &id, reply, None)?;
+        let v = crate::webapi::inbox::answer_value(&project, &out, &id, &body)?;
         if v["status"] == "handling" {
             crate::answer::spawn_handler(project, out, id);
         }
-        Ok::<Value, String>(v)
+        Ok::<Value, crate::webapi::Refusal>(v)
     })
     .await
     .expect("answer task panicked");
     match result {
         Ok(v) => Json(v).into_response(),
-        Err(e) => err(StatusCode::BAD_REQUEST, e),
+        Err(r) => refused(r),
     }
 }
 
-// The human triage decision on a diagnostic, committed through the store as a
-// journaled changeset. The compiler never overwrites human triage.
+// The human triage decision on a diagnostic, through the shared core in
+// crate::webapi::inbox. The compiler never overwrites human triage.
 pub async fn triage(
     State(st): State<SharedState>,
     UrlPath(id): UrlPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let triage = match &body["triage"] {
-        Value::Null => None,
-        Value::String(s) if ["acknowledged", "suppressed", "wontfix"].contains(&s.as_str()) => {
-            Some(s.clone())
-        }
-        _ => {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "triage must be acknowledged, suppressed, wontfix, or null",
-            )
-        }
-    };
     let out = st.out.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let mut store = Store::load(&out);
-        let rid = store.resolve_id(&id).to_string();
-        if !store.graph.diagnostics.contains_key(&rid) {
-            return Err(format!("no diagnostic {}", rid));
-        }
-        let item = crate::model::WorkItem {
-            task: "triage".into(),
-            target: rid.clone(),
-            dirty_sections: vec![],
-            stale_anchors: vec![],
-            proposals: vec![],
-        };
-        store.apply(
-            vec![crate::store::Op::TriageDiagnostic {
-                id: rid.clone(),
-                triage,
-            }],
-            &item.commit(0, None),
-        );
-        Ok(json!({ "id": rid, "diagnostic": store.graph.diagnostics.get(&rid) }))
-    })
-    .await
-    .expect("triage task panicked");
+    let result = tokio::task::spawn_blocking(move || crate::webapi::inbox::triage_value(&out, &id, &body))
+        .await
+        .expect("triage task panicked");
     match result {
         Ok(v) => Json(v).into_response(),
-        Err(e) => err(StatusCode::NOT_FOUND, e),
+        Err(r) => refused(r),
     }
 }
 

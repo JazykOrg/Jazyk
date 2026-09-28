@@ -10,6 +10,7 @@
 // targets against crate::vfs instead of std::fs.
 pub mod agent_loop;
 pub mod align;
+pub mod answer;
 pub mod board;
 pub mod card;
 pub mod context;
@@ -44,8 +45,6 @@ pub mod webapi;
 pub mod acp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod answer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod benchmark;
 #[cfg(not(target_arch = "wasm32"))]

@@ -174,55 +174,7 @@ fn open_by_severity(store: &Store) -> BTreeMap<String, usize> {
 }
 
 // ---------------------------------------------------------------------------
-// The Inbox rollup: questions, proposals, problems, pending changes, drafts.
-
-const PROPOSAL_RULES: [&str; 2] = ["ratification-pending", "invented-choice"];
-const DRAFT_RULE: &str = "unratified";
-
-pub fn inbox_value(proj: &crate::project::Project, gs: &crate::gen::GenSettings, out: &Path, store: &Store) -> Value {
-    let mut questions = 0usize;
-    let mut proposals = 0usize;
-    let mut drafts = 0usize;
-    let mut problems: BTreeMap<String, usize> = BTreeMap::new();
-    for d in store.graph.diagnostics.values() {
-        if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
-            continue;
-        }
-        if d.rule == DRAFT_RULE {
-            drafts += 1;
-        } else if PROPOSAL_RULES.contains(&d.rule.as_str()) {
-            proposals += 1;
-        } else if d.prompt.is_some() && d.answer.is_none() {
-            questions += 1;
-        } else {
-            *problems.entry(d.severity.clone()).or_default() += 1;
-        }
-    }
-    let control = crate::control::Control::load(proj, out);
-    let mut pending_docs: Vec<String> = Vec::new();
-    if control.compile == "manual" {
-        for (doc, hash) in crate::control::current_doc_hashes(proj) {
-            if control.released.compile.get(&doc) != Some(&hash) {
-                pending_docs.push(doc);
-            }
-        }
-    }
-    let mut pending_entities = 0usize;
-    if control.generate == "manual" && control.released.generate != store.status.generation {
-        pending_entities = crate::gen::pending(store, gs).len();
-    }
-    let errors = problems.get("error").copied().unwrap_or(0);
-    json!({
-        "generation": store.status.generation,
-        "questions": questions,
-        "proposals": proposals,
-        "problems": problems,
-        "pending": { "docs": pending_docs, "entities": pending_entities },
-        "drafts": drafts,
-        "modes": { "compile": control.compile, "generate": control.generate },
-        "total": questions + proposals + pending_docs.len() + errors,
-    })
-}
+// The Inbox rollup: the value lives in crate::webapi::inbox.
 
 pub async fn inbox(State(st): State<SharedState>) -> Json<Value> {
     let proj = st.proj();
@@ -231,7 +183,7 @@ pub async fn inbox(State(st): State<SharedState>) -> Json<Value> {
     Json(
         tokio::task::spawn_blocking(move || {
             let store = Store::load(&out);
-            inbox_value(&proj, &gs, &out, &store)
+            crate::webapi::inbox::inbox_value(&proj, &gs, &out, &store)
         })
         .await
         .expect("inbox task panicked"),

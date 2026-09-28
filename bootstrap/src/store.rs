@@ -2413,6 +2413,7 @@ impl Store {
             let _ = put(&edit.old_full, &edit.new_text, &edit.old_text);
             return Err(report.skipped.join("; "));
         }
+        crate::control::carry_release(&self.out, &edit.doc, &edit.old_full, &edit.full);
         Ok(report)
     }
 
@@ -8052,6 +8053,7 @@ mod tests {
                         choice: Some(1),
                         text: "retract".into(),
                         status: "applied".into(),
+                        error: None,
                     },
                 },
             ],
@@ -9127,6 +9129,7 @@ mod tests {
                     choice: None,
                     text: "both".into(),
                     status: "handling".into(),
+                    error: None,
                 },
             }],
             &Commit::store("answer"),

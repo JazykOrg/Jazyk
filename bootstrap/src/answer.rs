@@ -144,6 +144,7 @@ pub fn answer(
                 choice,
                 text: text.clone(),
                 status: "applied".to_string(),
+                error: None,
             },
         });
         if !ratify {
@@ -155,8 +156,11 @@ pub fn answer(
         let kind = if ratify { "ratify" } else { "answer" };
         s.dual_write(&project.root, &prose, ops, &Commit::store(kind), write)
             .map_err(|e| format!("commit skipped: {}", e))?;
+        // The edit as it landed, so a frontend can mark the changed text in an open
+        // editor (docs/frontends/gui.md#questions).
         return Ok(json!({
             "status": "applied", "resolved": true, "doc": e.doc,
+            "edit": {"doc": e.doc, "section": e.section, "newText": prose.new_text},
             "note": if ratify {
                 "the sentence landed and the fact is quoted from it; no recompile is owed for it"
             } else {
@@ -179,6 +183,7 @@ pub fn answer(
                 choice,
                 text: text.clone(),
                 status: "applied".to_string(),
+                error: None,
             },
         });
         // All or nothing: a refused retract records no answer, so the proposal stays
@@ -205,6 +210,7 @@ pub fn answer(
                 choice,
                 text: text.clone(),
                 status: "handling".to_string(),
+                error: None,
             },
         }],
         &Commit::store("answer"),
@@ -466,15 +472,16 @@ pub fn handling_ids(out: &Path) -> Vec<String> {
 // error. Every runner lands the same record, so every frontend shows the same
 // progress from the store.
 pub fn record_outcome(out: &Path, id: &str, outcome: &Result<(), String>) {
-    let status = match outcome {
-        Ok(()) => "handled",
-        Err(_) => "failed",
+    let (status, error) = match outcome {
+        Ok(()) => ("handled", None),
+        Err(e) => ("failed", Some(e.clone())),
     };
     let mut s = Store::load(out);
     let rid = s.resolve_id(id).to_string();
     if let Some(a) = s.graph.diagnostics.get(&rid).and_then(|d| d.answer.clone()) {
         let mut a = a;
         a.status = status.to_string();
+        a.error = error;
         let _ = s.apply(
             vec![Op::AnswerDiagnostic {
                 id: rid.clone(),

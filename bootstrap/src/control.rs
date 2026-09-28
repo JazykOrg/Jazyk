@@ -99,6 +99,25 @@ pub fn release(proj: &Project, out: &Path, stage: Option<&str>) {
     c.save(out);
 }
 
+// A dual write carries the compile release: a document released at its text before
+// the write is released at its text after, since the commit absorbed the new text and
+// nothing in it waits to be read. A document that was not released stays pending.
+// Mirrors docs/compiler/control-plane.md#modes-and-releases.
+pub fn carry_release(out: &Path, doc: &str, before: &str, after: &str) {
+    let Ok(text) = crate::vfs::read_to_string(Control::path(out)) else {
+        return;
+    };
+    let Ok(mut c) = serde_norway::from_str::<Control>(&text) else {
+        return;
+    };
+    let old = crate::model::hash_hex(before);
+    if c.released.compile.get(doc) != Some(&old) {
+        return;
+    }
+    c.released.compile.insert(doc.to_string(), crate::model::hash_hex(after));
+    c.save(out);
+}
+
 // Approve decompilation scopes. Scopes accumulate until a submitted draft consumes
 // them. Mirrors docs/consumers/decompile.md#triggering.
 pub fn release_decompile(proj: &Project, out: &Path, scopes: &[String]) {

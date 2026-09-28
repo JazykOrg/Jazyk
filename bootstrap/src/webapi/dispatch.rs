@@ -465,7 +465,16 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             answer(super::outfiles::docsgen_value(&out(), &slug))
         }
 
-        ("GET", "/watch") => ok(json!({ "watch": false })),
+        // The workflow modes, the tab's own control plane
+        // (docs/frontends/wasm.md#workflow-modes-in-a-tab).
+        ("GET", "/watch") => {
+            let p = project();
+            ok(super::workers::watch_value(&crate::control::Control::load(&p, &p.out)))
+        }
+        ("PUT", "/watch") => {
+            let p = project();
+            answer(super::workers::watch_write(&p, &p.out, &body))
+        }
         // The inspector's fact edits, the server's own core
         // (docs/frontends/gui.md#api, facts).
         ("POST", path) if path.starts_with("/facts/") && path.ends_with("/edit") => {

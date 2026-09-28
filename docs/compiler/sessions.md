@@ -535,7 +535,11 @@ The event kinds:
   `sessionFailed`, or `sessionEnded`. The runner emits it on every exit path
   (success, failure, cancellation, host death, the round budget), and the trace drops a
   second terminal event for an attempt it already closed. A `sessionStart` with no
-  terminal event means the process died.
+  terminal event means the process died. A failure's reason names the stop in words
+  (the model ended its turn with the batch still open, the round budget, the model's
+  error), never a bare `nothing committed`; the refusals and the model text before it
+  ride on their own `toolError` and `modelText` events under the same label, so a
+  reader says why a batch did not land.
 - `goal`: a goal changed state. `opened` carries the `cause` (generation, mutation,
   `via`); `resolved` carries the `justification`; `failed` the `reason`; `parked` the
   session that left it. Resolved and failed events fire when the claim is accepted at

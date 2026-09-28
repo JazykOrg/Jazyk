@@ -315,6 +315,13 @@ the ones every other front door uses. What landed is read from the
 from the model's word. A batch the model leaves open never commits: the changeset is
 abandoned and the goals return to open.
 
+The runner emits the session's [trace events](../compiler/sessions.md#trace-events)
+the way the ACP runner's translator does: `sessionStart`, one `toolCall` per call
+with its `toolResult` or `toolError`, a `section` event when an accepted call names
+another section, the model's text and reasoning as `modelText`, and `sessionDone`
+when the batch lands. A batch that does not land fails with the stop in words (the
+model ended its turn with the batch still open, the round budget, the model's error).
+
 `crate::agent_loop` is the generic loop the embedded agent already used: send the
 history and the tools, dispatch the calls the model makes, repeat until it stops
 calling tools. It carries the codec machinery (native tool calls, the text fallback,

@@ -207,7 +207,7 @@
 }
 
 /* Read carries what Write draws: every block knows its lines, the read state
-   is its left border, a build band its background, a requirement marker sits
+   is its left border, a build its bar beside it, a requirement marker sits
    in its margin, a band follows it (docs/frontends/gui.md#editor). */
 .md-read [data-line] {
   position: relative;
@@ -229,6 +229,19 @@
 
 .md-read > .md-cov-unprocessed {
   border-left-color: var(--warn);
+}
+
+/* The build's bar beside a block in Read, left of the read-state border; the
+   text is never tinted (docs/frontends/gui.md#editor). */
+.md-read > [data-line][class*='bld-']::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--bld);
 }
 
 .md-read .md-req {

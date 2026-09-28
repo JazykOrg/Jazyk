@@ -1199,7 +1199,10 @@ API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
 them, `GET /api/chat/sessions/{id}` returns one with its transcript and its loaded
 set, `POST /api/chat/sessions/{id}/prompt` sends a prompt (progress streams over the
 event stream; a tab posts the same events from the worker),
-`POST /api/chat/sessions/{id}/cancel` cancels the open prompt, and
+`POST /api/chat/sessions/{id}/cancel` cancels the open prompt,
+`DELETE /api/chat/sessions/{id}` removes a conversation (it cancels an open prompt,
+closes the agent session, and deletes the transcript from the
+[session store](./acp.md#session-store)), and
 `POST /api/chat/permissions` answers a pending permission request with body
 `{sessionId, id, optionId?}` (a missing `optionId` cancels the request). Updates
 travel as `chat.update` events, elided like `job.trace`; permission requests as

@@ -1,7 +1,7 @@
 // The chat column in a tab (docs/frontends/wasm.md#chat): the embedded loop runs in
 // the worker on the page's model, here an endpoint the test answers itself.
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { api, envelope, offline, openDemo, pageErrors } from './helpers'
+import { api, envelope, offline, openDemo, pageErrors, typeAtEnd } from './helpers'
 
 const ENDPOINT = 'http://localhost:4999/v1'
 const ANSWER = 'The Customer is a person who holds an account and places Orders in the Shop.'
@@ -278,4 +278,136 @@ test('the endpoint call carries Authorization only when a key is set', async ({ 
   expect(auth).toEqual([undefined, 'Bearer sk-test-1'])
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('jazyk.modelSource') ?? '{}'))
   expect(stored).toMatchObject({ kind: 'endpoint', apiKey: 'sk-test-1' })
+})
+
+// Every transcript row starts at the left edge (docs/frontends/gui.md#chat).
+async function leftAligned(page: Page, selector: string): Promise<string[]> {
+  return page.locator(selector).evaluateAll((els) =>
+    els.flatMap((el) => [el, ...Array.from(el.querySelectorAll('pre, summary, button'))]).map((el) => getComputedStyle(el).textAlign),
+  )
+}
+
+test('reasoning shows muted, collapses to its first line when the turn moves on, and opens on a click', async ({ page }) => {
+  await page.route(`${ENDPOINT}/chat/completions`, async (route: Route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    const body = JSON.stringify({
+      id: 'mock',
+      object: 'chat.completion',
+      model: 'test-model',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: ANSWER, reasoning_content: 'The user asks about a Customer.\nThe docs define it in the shop.' },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+    })
+    return route.fulfill({ status: 200, headers: { ...CORS, 'Content-Type': 'application/json' }, body })
+  })
+  await openDemo(page, 'The shop')
+  await useEndpoint(page)
+  await ask(page, 'What is a Customer?')
+  const chat = page.locator('.wb-chat')
+  await expect(chat.locator('.chat-row.agent')).toContainText(ANSWER)
+  // Not a Developer-only row: the default mode shows it, collapsed to its first line.
+  const thought = chat.locator('.chat-row.thought')
+  await expect(thought).toHaveCount(1)
+  await expect(thought.locator('.chat-thought-line')).toContainText('The user asks about a Customer.')
+  await expect(thought).not.toContainText('The docs define it in the shop.')
+  await thought.locator('.chat-thought-line').click()
+  await expect(thought.locator('.chat-thought-text')).toContainText('The docs define it in the shop.')
+  // Left aligned, like a conversation.
+  for (const align of await leftAligned(page, '.wb-chat .chat-row')) expect(['left', 'start']).toContain(align)
+})
+
+test('a conversation closes with its ×, asking first when it has messages', async ({ page }) => {
+  await answering(page, ANSWER)
+  await openDemo(page, 'The shop')
+  await useEndpoint(page)
+  const chat = page.locator('.wb-chat')
+
+  // An empty conversation closes at once.
+  await chat.locator('.chat-new').click()
+  await expect(chat.locator('.chat-sess')).toHaveCount(1)
+  await expect(chat.locator('.chat-sess.active .chat-sess-close')).toBeVisible()
+  await chat.locator('.chat-sess.active .chat-sess-close').click()
+  await expect(chat.locator('.chat-sess')).toHaveCount(0)
+  expect((await sessions(page)).sessions).toEqual([])
+
+  // One with messages asks for a second click.
+  await ask(page, 'What is a Customer?')
+  await expect(chat.locator('.chat-row.agent')).toContainText(ANSWER)
+  const row = chat.locator('.chat-sess', { hasText: 'What is a Customer?' })
+  await row.hover()
+  await row.locator('.chat-sess-close').click()
+  await expect(row.locator('.chat-sess-close')).toHaveText('Delete?')
+  expect((await sessions(page)).sessions).toHaveLength(1)
+  await row.locator('.chat-sess-close').click()
+  await expect(chat.locator('.chat-sess')).toHaveCount(0)
+  await expect(chat.locator('.chat-row.agent')).toHaveCount(0)
+  expect((await sessions(page)).sessions).toEqual([])
+  const gone = await envelope(page, 'DELETE', '/api/chat/sessions/chat-2')
+  expect(gone.status).toBe(404)
+})
+
+// A build on a model that answers prose and never calls a tool: every batch ends
+// with nothing landed, and the thread says why in words, the tree marks the
+// document with an icon, and the editor with a gutter bar, never a tint.
+test('a failed build says why under the batch, never nothing committed', async ({ page }) => {
+  const errors = pageErrors(page)
+  const PROSE = 'I read the catalog section but I am not sure what to record.'
+  await answering(page, PROSE)
+  await openDemo(page, 'The shop')
+  await useEndpoint(page)
+  await expect.poll(async () => (await api<{ jobs: string[] }>(page, 'GET', '/api/capabilities')).jobs).toEqual(['compile'])
+  await page.goto('/#/docs/docs/catalog.md')
+  await typeAtEnd(page, '\nThe shop also sells gift cards.')
+  await expect(page.locator('.ide-topbar-right')).toContainText('saved', { timeout: 5000 })
+
+  // Started the way the Build button starts it; the page keeps the job.
+  await page.evaluate(() => {
+    void (window as unknown as { jazyk: { request: (m: string, p: string, b?: unknown) => Promise<unknown> } }).jazyk.request('POST', '/api/jobs', { kind: 'compile' })
+  })
+  const chat = page.locator('.wb-chat')
+  await expect(chat.locator('.chat-sess.active')).toContainText('#1')
+  // Follow in editor is on by default.
+  await expect(chat.locator('.chat-follow-toggle input')).toBeChecked()
+
+  const why = chat.locator('.chat-row.why').first()
+  await expect(why).toContainText('was not read', { timeout: 45_000 })
+  await expect(why).toContainText('docs/catalog.md ›')
+  await expect(why).toContainText(`the model said “${PROSE}” and stopped`)
+  await expect(why).toContainText('It will be retried')
+  // The tree marks the document with an icon whose tooltip carries the why.
+  const icon = page.locator('.ide-build-icon[data-state="unread"]').first()
+  await expect(icon).toHaveAttribute('title', /was not read/)
+  await expect(page.locator('.ft')).not.toContainText('nothing committed')
+
+  // The run ends on its own; nothing anywhere says `nothing committed`, and no
+  // goal id shows in the default mode.
+  await expect(chat.locator('.chat-row.marker').last()).toContainText(/Build incomplete|Up to date|■|✗/, { timeout: 45_000 })
+  await expect(page.locator('body')).not.toContainText('nothing committed')
+  await expect(chat.locator('.chat-transcript')).not.toContainText('g:reconcile-section')
+  for (const align of await leftAligned(page, '.wb-chat .chat-row')) expect(['left', 'start']).toContain(align)
+  // The editor's text is never tinted by the build.
+  await expect(page.locator('.cm-line.build-failed, .cm-line.build-done, .cm-line.build-queued, .cm-line.build-active')).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('a build thread closes with its × and stays closed', async ({ page }) => {
+  await answering(page, 'Nothing to do.')
+  await openDemo(page, 'The shop')
+  await useEndpoint(page)
+  await expect.poll(async () => (await api<{ jobs: string[] }>(page, 'GET', '/api/capabilities')).jobs).toEqual(['compile'])
+  // Nothing changed: the build finishes at once.
+  await api(page, 'POST', '/api/jobs', { kind: 'compile' })
+  const chat = page.locator('.wb-chat')
+  const thread = chat.locator('.chat-sess', { hasText: '#1' })
+  await expect(thread).toHaveCount(1)
+  await thread.hover()
+  await thread.locator('.chat-sess-close').click()
+  await expect(chat.locator('.chat-sess', { hasText: '#1' })).toHaveCount(0)
+  // The job itself is kept; only its thread left the list.
+  expect((await api<{ jobs: unknown[] }>(page, 'GET', '/api/jobs')).jobs).toHaveLength(1)
 })

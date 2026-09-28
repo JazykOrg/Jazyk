@@ -784,16 +784,54 @@ button.btn-on {
   background: var(--accent);
 }
 .chat-sess {
-  background: none;
   border: 1px solid var(--line);
   border-radius: 10px;
   color: var(--muted);
-  cursor: pointer;
   font-size: 12px;
-  padding: 1px 8px;
+  padding: 0 2px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+}
+.chat-sess-open {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 1px 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Every thread closes (docs/frontends/gui.md#chat): the × shows on hover and
+   always on the selected thread. */
+.chat-sess-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 4px;
+  border-radius: 8px;
+  visibility: hidden;
+}
+.chat-sess:hover .chat-sess-close,
+.chat-sess:focus-within .chat-sess-close,
+.chat-sess.active .chat-sess-close,
+.chat-sess.confirming .chat-sess-close {
+  visibility: visible;
+}
+.chat-sess-close:hover {
+  color: var(--ink);
+}
+.chat-sess.confirming .chat-sess-close {
+  color: var(--err, #c55);
 }
 .chat-sess.active {
   color: var(--fg);
@@ -832,13 +870,20 @@ button.btn-on {
   margin: 0 0 4px;
   font-weight: 600;
 }
+/* The transcript reads top to bottom, left aligned: every row starts at the left
+   edge (docs/frontends/gui.md#chat). */
 .chat-transcript {
   flex: 1;
   overflow: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 6px;
+  text-align: left;
+}
+.chat-row {
+  text-align: left;
 }
 .chat-row pre {
   margin: 0;
@@ -853,12 +898,42 @@ button.btn-on {
 }
 .chat-row.thought pre {
   color: var(--muted);
-  font-style: italic;
+  font-size: 12px;
+}
+/* Reasoning collapsed to its first line once the turn moves on; a click opens it. */
+.chat-thought-line {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-thought-line:hover {
+  color: var(--ink);
+}
+.chat-thought-mark {
+  display: inline-block;
+  width: 10px;
+}
+.chat-row.thought .chat-thought-text {
+  cursor: default;
 }
 .chat-row.marker pre {
   color: var(--muted);
   font-size: 12px;
-  text-align: center;
+}
+/* Why a batch did not land, in its own line under the batch. */
+.chat-row.why pre {
+  color: var(--warn);
+  font-size: 12px;
 }
 .chat-row.tool summary {
   cursor: pointer;

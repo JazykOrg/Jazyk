@@ -62,9 +62,12 @@ export interface WorkRow {
 
 // The line for a transcript whose turn runs: the tool the last row is still
 // calling, or thinking. A chat tool row's text is the call's title (`search
-// Customer`); the first word is the tool.
-export function workingLine(rows: WorkRow[]): string {
+// Customer`); the first word is the tool. Reasoning streaming in is the work shown
+// itself: `Thinking…` is only the placeholder until it arrives, so a transcript
+// ending in reasoning has no line (docs/frontends/gui.md#chat).
+export function workingLine(rows: WorkRow[]): string | null {
   const last = rows[rows.length - 1]
+  if (last && last.kind === 'thought') return null
   if (last && last.kind === 'tool' && last.status === 'pending') {
     const [name, ...rest] = last.text.split(/\s+/)
     return toolWords(name, rest.join(' '))

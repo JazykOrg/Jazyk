@@ -261,7 +261,6 @@ function decoField(): [StateField<DecorationSet>, ReturnType<typeof StateEffect.
   return [field, effect]
 }
 
-const [bandField, setBands] = decoField() // build bands: whole-line backgrounds
 const [linkField, setLinks] = decoField() // entity marks over LSP document links
 
 // Entity mentions from the graph's name index, underlined in the text and
@@ -404,14 +403,28 @@ export interface EditorHandle {
   revealSection(startLine: number, quote?: string): void
 }
 
-// What a running build is doing to this document, drawn over the text
-// (docs/frontends/gui.md#editor).
+// What a running build is doing to this document, drawn in the gutter beside the
+// text, never over it (docs/frontends/gui.md#editor).
 export interface BuildBands {
   label: string
   state: 'queued' | 'running' | 'done' | 'failed'
   sections: string[]
   active: string | null
   result: string | null
+  // The pointer is on it: the result holds instead of fading.
+  held: boolean
+}
+
+// One section's bar: queued, running, read (green), or not read yet (amber), with
+// the tooltip saying why, fading after the session ends unless held.
+export function buildBar(b: BuildBands, ref: string): { cls: string; tip: string } {
+  if (b.state === 'done' || b.state === 'failed') {
+    const cls = b.state === 'done' ? 'bld-read' : 'bld-unread'
+    const tip = b.result || (b.state === 'done' ? 'Read in this build' : 'Not read yet')
+    return { cls: `${cls}${b.held ? '' : ' bld-fading'}`, tip }
+  }
+  if (b.state === 'running' && ref === b.active) return { cls: 'bld-running', tip: 'Being read now' }
+  return { cls: 'bld-queued', tip: 'Waiting to be read in this build' }
 }
 
 interface Props {
@@ -613,34 +626,29 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     view.dispatch({ effects: setCov.of(specs) })
   }
 
+  // A thin bar in the gutter beside each section of the batch; the text itself is
+  // never tinted (docs/frontends/gui.md#editor).
   const applyBuild = (view: EditorView) => {
     const p = propsRef.current
     const b = p.build
-    const bands: { from: number; deco: Decoration }[] = []
     const specs: StripSpec[] = []
+    const barred = new Set<number>()
     if (b && p.record) {
-      const done = b.state === 'done' || b.state === 'failed'
-      const outcome = b.state === 'failed' ? 'build-failed' : 'build-done'
       for (const secRef of b.sections) {
         const sec = p.record.sections[secRef]
         if (!sec) continue
         const [start, end] = sectionLines(sec)
         if (start > view.state.doc.lines) continue
-        const active = secRef === b.active
-        const cls = done ? outcome : active ? 'build-active' : 'build-queued'
-        const tip = done
-          ? `${b.label}: ${b.result ?? (b.state === 'failed' ? 'parked' : 'committed')}`
-          : `${b.label}: ${active ? 'reconciling this section' : 'queued for this build'}`
+        const { cls, tip } = buildBar(b, secRef)
+        // A nested section's lines are its parent's too: one bar per line.
         for (let l = start; l <= Math.min(Math.max(end, start), view.state.doc.lines); l++)
-          bands.push({
-            from: view.state.doc.line(l).from,
-            deco: Decoration.line({ class: cls, attributes: { title: tip } }),
-          })
-        specs.push({ line: start, cls: `${cls}-gutter`, tip })
+          if (!barred.has(l)) {
+            barred.add(l)
+            specs.push({ line: l, cls, tip })
+          }
       }
     }
-    const decos = bands.sort((a, b2) => a.from - b2.from).map((x) => x.deco.range(x.from))
-    view.dispatch({ effects: [setBands.of(Decoration.set(decos, true)), setBld.of(specs)] })
+    view.dispatch({ effects: setBld.of(specs) })
   }
 
   const applyDiffMarks = (view: EditorView) => {
@@ -823,7 +831,6 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       inlineField,
       chgField,
       bldField,
-      bandField,
       linkField,
       mentionField,
       lensField,

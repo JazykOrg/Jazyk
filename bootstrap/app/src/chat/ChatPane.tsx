@@ -3,271 +3,17 @@
 // live trace the jobs already stream. Mirrors docs/frontends/gui.md#chat.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
-import { get, post, verdictText } from '../lib/api'
-import { useApp, type ChatUpdateRow, type TurnProgress } from '../lib/store'
+import { del, get, post, verdictText } from '../lib/api'
+import { useApp, type TurnProgress } from '../lib/store'
 import { needsPageModel, useCapabilities, type Capabilities } from '../lib/capabilities'
 import ModelSourcePanel from '../components/ModelSourcePanel'
 import { toolWords, workingLine } from '../lib/working'
 import { useWords, verdictWords } from '../lib/words'
+import { batchWords, chatRows, followRows, type Row } from '../lib/transcript'
 
 interface Command {
   name: string
   description: string
-}
-
-// ---- transcript row model: both session kinds normalize onto this ----
-
-interface Row {
-  key: string
-  kind: 'user' | 'agent' | 'thought' | 'tool' | 'marker'
-  text: string
-  // Tool rows: pending | ok | failed.
-  status?: string
-  detail?: string
-}
-
-// Chat sessions: coalesce streamed chunks, one row per tool call.
-// A tool payload one field per line (docs/compiler/tools.md): a string that already
-// holds pretty JSON stays as it is, anything else is pretty-printed.
-function pretty(v: unknown): string {
-  if (typeof v === 'string') return v
-  try {
-    return JSON.stringify(v, null, 2)
-  } catch {
-    return String(v)
-  }
-}
-
-function chatRows(updates: ChatUpdateRow[]): Row[] {
-  const rows: Row[] = []
-  const toolRow: Record<string, number> = {}
-  const push = (kind: Row['kind'], text: string, key: string) => rows.push({ key, kind, text })
-  const appendText = (kind: 'agent' | 'thought', text: string, key: string) => {
-    const last = rows[rows.length - 1]
-    if (last && last.kind === kind) last.text += text
-    else push(kind, text, key)
-  }
-  for (const { n, update } of updates) {
-    const u = update as Record<string, never> & Record<string, unknown>
-    const k = String(u.sessionUpdate ?? '')
-    const content = (u.content ?? {}) as { type?: string; text?: string }
-    switch (k) {
-      case 'user_message':
-        push('user', String(u.text ?? ''), `u${n}`)
-        break
-      case 'agent_message':
-        push('agent', String(u.text ?? ''), `a${n}`)
-        break
-      case 'agent_message_chunk':
-        appendText('agent', content.text ?? '', `a${n}`)
-        break
-      case 'agent_thought_chunk':
-        appendText('thought', content.text ?? '', `t${n}`)
-        break
-      case 'tool_call': {
-        const id = String(u.toolCallId ?? n)
-        toolRow[id] = rows.length
-        rows.push({
-          key: `c${n}`,
-          kind: 'tool',
-          text: String(u.title ?? 'tool'),
-          status: 'pending',
-          detail: u.rawInput !== undefined ? pretty(u.rawInput) : undefined,
-        })
-        break
-      }
-      case 'tool_call_update': {
-        const id = String(u.toolCallId ?? '')
-        const fields = (u.fields ?? u) as { status?: string; rawOutput?: unknown; title?: string }
-        const at = toolRow[id]
-        if (at !== undefined && rows[at]) {
-          const status = fields.status === 'failed' ? 'failed' : fields.status === 'completed' ? 'ok' : 'pending'
-          rows[at] = {
-            ...rows[at],
-            status,
-            detail: fields.rawOutput !== undefined ? pretty(fields.rawOutput) : rows[at].detail,
-          }
-        }
-        break
-      }
-      case 'plan': {
-        const entries = (u.entries as { content?: string; status?: string }[]) ?? []
-        push('marker', entries.map((e) => `[${e.status}] ${e.content}`).join('\n'), `p${n}`)
-        break
-      }
-      case 'turn_end':
-        push('marker', u.error ? `turn ended: ${u.error}` : `· ${String(u.stop ?? 'end')} ·`, `e${n}`)
-        break
-      default:
-        break
-    }
-  }
-  return rows
-}
-
-// A batch in plain words: what the session does and to what
-// (docs/frontends/gui.md#chat). The Developer toggle keeps the goal ids beside it.
-function batchWords(goals: { kind?: string; target?: string }[], dev: boolean): string {
-  if (goals.length === 0) return 'working'
-  const first = goals[0]
-  const kind = first.kind ?? ''
-  const target = first.target ?? ''
-  const doc = target.includes('#') ? target.slice(0, target.indexOf('#')) : target
-  const name = (t: string) => t.replace(/^(ent|req|view):/, '')
-  let text: string
-  switch (kind) {
-    case 'reconcile-section':
-      text = `Reading ${doc}${goals.length > 1 ? `, ${goals.length} sections` : ''}`
-      break
-    case 'place-anchors':
-      text = `Re-anchoring ${doc}`
-      break
-    case 'rejudge-pair':
-      text = `Comparing ${goals.length} pair${goals.length === 1 ? '' : 's'} of requirements`
-      break
-    case 'review-entity':
-      text = `Reviewing ${name(target)}${goals.length > 1 ? ` and ${goals.length - 1} more` : ''}`
-      break
-    case 'retrace':
-      text = `Re-tracing ${name(target)}`
-      break
-    case 'conform-instance':
-      text = `Checking ${name(target)} against its type`
-      break
-    case 'bind':
-      text = `Binding ${goals.length} requirement${goals.length === 1 ? '' : 's'} to the product`
-      break
-    case 'generate':
-      text = `Generating ${name(target)}${goals.length > 1 ? ` and ${goals.length - 1} more` : ''}`
-      break
-    case 'verify':
-      text = `Checking ${goals.length} requirement${goals.length === 1 ? '' : 's'}`
-      break
-    case 'declare-edges':
-    case 'dedupe-candidates':
-    case 'curate-view':
-    case 'split-view':
-    case 'abstract-entity':
-      text = `Tidying the model: ${kind.replace('-', ' ')} on ${name(target)}`
-      break
-    default:
-      text = `${kind} ${target}`
-  }
-  return dev ? `${text} (${goals.map((g) => `${g.kind} ${g.target}`).join(' · ')})` : text
-}
-
-// Follow entries: the running build's trace rows, filtered by job.
-function followRows(trace: { jobId: number; seq: number; event: Record<string, unknown> }[], jobId: number, dev: boolean): Row[] {
-  const rows: Row[] = []
-  for (const { jobId: j, seq, event } of trace) {
-    if (j !== jobId) continue
-    const kind = String(event.kind ?? '')
-    const label = String(event.label ?? '')
-    switch (kind) {
-      case 'batchStart': {
-        const goals = Array.isArray(event.goals)
-          ? (event.goals as { kind?: string; target?: string }[])
-          : []
-        rows.push({
-          key: `b${seq}`,
-          kind: 'marker',
-          text: `▷ ${batchWords(goals, dev)}${dev ? ` [${label}]` : ''}`,
-        })
-        break
-      }
-      case 'sessionStart':
-        if (dev) rows.push({ key: `s${seq}`, kind: 'marker', text: `▶ ${label}` })
-        break
-      case 'goal': {
-        const tail = String(event.justification ?? event.reason ?? '')
-        rows.push({
-          key: `g${seq}`,
-          kind: 'marker',
-          text: `${event.event === 'resolved' ? '✓' : '◈'} ${String(event.event ?? '')} ${String(event.goal ?? '')}${tail ? `: ${tail}` : ''}`,
-        })
-        break
-      }
-      case 'modelText':
-        if (dev) rows.push({ key: `m${seq}`, kind: 'thought', text: String(event.text ?? '') })
-        break
-      case 'toolCall':
-        rows.push({
-          key: `c${seq}`,
-          kind: 'tool',
-          text: `${label} → ${String(event.name ?? '')}`,
-          status: 'pending',
-          detail: String(event.summary ?? ''),
-        })
-        break
-      case 'toolResult': {
-        // The result closes the last pending tool row of the same label.
-        for (let i = rows.length - 1; i >= 0; i--) {
-          if (rows[i].kind === 'tool' && rows[i].status === 'pending' && rows[i].text.startsWith(label)) {
-            rows[i] = { ...rows[i], status: 'ok', detail: String(event.summary ?? '') }
-            break
-          }
-        }
-        break
-      }
-      case 'toolError':
-        rows.push({
-          key: `x${seq}`,
-          kind: 'tool',
-          text: `${label} ✗ ${String(event.rule ?? '')}`,
-          status: 'failed',
-          detail: String(event.message ?? ''),
-        })
-        break
-      case 'genEntityStart':
-        rows.push({ key: `ge${seq}`, kind: 'marker', text: `▷ Generating ${String(event.entity ?? '').replace(/^ent:/, '')}${event.stage ? ` (${String(event.stage)})` : ''}` })
-        break
-      case 'genEntityDone':
-        rows.push({
-          key: `gd${seq}`,
-          kind: 'marker',
-          text: `✓ Generated ${String(event.entity ?? '').replace(/^ent:/, '')}${Array.isArray(event.files) ? `: ${(event.files as string[]).join(', ')}` : ''}`,
-        })
-        break
-      case 'genEntitySkipped':
-        rows.push({ key: `gs${seq}`, kind: 'marker', text: `· Skipped ${String(event.entity ?? '').replace(/^ent:/, '')}${event.reason ? `: ${String(event.reason)}` : ''}` })
-        break
-      case 'genEntityFailed':
-        rows.push({ key: `gf${seq}`, kind: 'marker', text: `✗ ${String(event.entity ?? '').replace(/^ent:/, '')}: ${String(event.error ?? event.reason ?? 'failed')}` })
-        break
-      case 'verifyRowStart':
-        rows.push({ key: `vs${seq}`, kind: 'tool', text: `Checking ${String(event.requirement ?? '')}`, status: 'pending', detail: String(event.test ?? '') })
-        break
-      case 'verifyRowDone': {
-        const rid = String(event.requirement ?? '')
-        const pass = String(event.verdict ?? '') === 'pass'
-        let closed = false
-        for (let i = rows.length - 1; i >= 0; i--) {
-          if (rows[i].kind === 'tool' && rows[i].status === 'pending' && rows[i].text === `Checking ${rid}`) {
-            rows[i] = { ...rows[i], text: `${pass ? 'Verified' : 'Failing'} ${rid}`, status: pass ? 'ok' : 'failed', detail: String(event.evidence ?? event.run ?? '') }
-            closed = true
-            break
-          }
-        }
-        if (!closed) rows.push({ key: `vd${seq}`, kind: 'tool', text: `${pass ? 'Verified' : 'Failing'} ${rid}`, status: pass ? 'ok' : 'failed', detail: String(event.evidence ?? '') })
-        break
-      }
-      case 'verifyRowStale':
-        rows.push({ key: `vt${seq}`, kind: 'tool', text: `Stale ${String(event.requirement ?? '')}`, status: 'pending', detail: `${String(event.status ?? '')}: ${String(event.reason ?? '')}` })
-        break
-      case 'verifyRowError':
-        rows.push({ key: `ve${seq}`, kind: 'tool', text: `Could not check ${String(event.requirement ?? '')}`, status: 'failed', detail: String(event.error ?? event.reason ?? '') })
-        break
-      case 'sessionDone':
-        rows.push({ key: `d${seq}`, kind: 'marker', text: dev ? `✓ ${label}` : `✓ done${event.summary ? `: ${String(event.summary)}` : ''}` })
-        break
-      case 'sessionFailed':
-        rows.push({ key: `f${seq}`, kind: 'marker', text: `✗ ${dev ? `${label}: ` : ''}${String(event.error ?? 'failed')}` })
-        break
-      default:
-        break
-    }
-  }
-  return rows.slice(-500)
 }
 
 // A new conversation. A tab passes its model's tier: a reader-tier model gets the
@@ -386,6 +132,11 @@ function OpenPane({ close }: { close: () => void }) {
   const jobs = useApp((a) => a.jobs)
   const selected = useApp((a) => a.chatSelected)
   const select = useApp((a) => a.selectChat)
+  const hidden = useApp((a) => a.hiddenThreads)
+  const hideThread = useApp((a) => a.hideThread)
+  const chatUpdates = useApp((a) => a.chatUpdates)
+  // The conversation whose × was clicked once and waits for the second click.
+  const [confirming, setConfirming] = useState<string | null>(null)
   const caps = useCapabilities()
   const w = useWords()
   const noAgent = caps.data?.agent === 'none'
@@ -398,10 +149,11 @@ function OpenPane({ close }: { close: () => void }) {
   const followIds = useMemo(() => {
     const live = (j: { state: string }) => j.state === 'running' || j.state === 'queued'
     return Object.values(jobs)
+      .filter((j) => !hidden.includes(j.id))
       .sort((a, b) => Number(live(b)) - Number(live(a)) || b.id - a.id)
       .slice(0, 8)
       .map((j) => `follow-${j.id}`)
-  }, [jobs])
+  }, [jobs, hidden])
 
   const chatIds = Object.keys(sessions)
   const active =
@@ -414,6 +166,27 @@ function OpenPane({ close }: { close: () => void }) {
   const newChat = async () => {
     const r = await openChat(caps.data)
     select(r.id)
+  }
+
+  // Every thread closes (docs/frontends/gui.md#chat): a conversation is deleted,
+  // after a second click when it has messages; a build thread leaves the list.
+  const closeChat = async (id: string) => {
+    const said = (sessions[id]?.updates ?? 0) > 0 || (chatUpdates[id]?.length ?? 0) > 0
+    if (said && confirming !== id) {
+      setConfirming(id)
+      return
+    }
+    setConfirming(null)
+    if (sessions[id]?.state === 'running') await post(`/api/chat/sessions/${id}/cancel`).catch(() => {})
+    await del(`/api/chat/sessions/${encodeURIComponent(id)}`).catch(() => {})
+    const app = useApp.getState()
+    const { [id]: _gone, ...rest } = app.chatSessions
+    app.setChatSessions(Object.values(rest))
+    if (active === id) select(null)
+  }
+  const closeThread = (id: string) => {
+    hideThread(Number(id.slice(7)))
+    if (active === id) select(null)
   }
 
   return (
@@ -435,16 +208,32 @@ function OpenPane({ close }: { close: () => void }) {
           const live = j && (j.state === 'running' || j.state === 'queued')
           const verb = j?.kind.kind === 'compile' ? w.build : j?.kind.kind === 'gen' ? w.generate : j?.kind.kind === 'verify' || j?.kind.kind === 'audit' ? w.review : (j?.kind.kind ?? 'build')
           return (
-            <button key={id} className={`chat-sess${active === id ? ' active' : ''}${live ? ' working' : ''}`} onClick={() => select(id)} title={`build thread for job ${id.slice(7)}`}>
-              <span className={`dot ${live ? 'running' : j?.state === 'failed' ? 'failed' : ''}`} /> {verb} #{id.slice(7)}
-            </button>
+            <span key={id} className={`chat-sess${active === id ? ' active' : ''}${live ? ' working' : ''}`}>
+              <button className="chat-sess-open" onClick={() => select(id)} title={`build thread for job ${id.slice(7)}`}>
+                <span className={`dot ${live ? 'running' : j?.state === 'failed' ? 'failed' : ''}`} /> {verb} #{id.slice(7)}
+              </button>
+              <button className="chat-sess-close" onClick={() => closeThread(id)} title="close this build thread" aria-label={`close ${verb} #${id.slice(7)}`}>
+                ×
+              </button>
+            </span>
           )
         })}
         {chatIds.map((id) => (
-          <button key={id} className={`chat-sess${active === id ? ' active' : ''}${sessions[id].state === 'running' ? ' working' : ''}`} onClick={() => select(id)}>
-            <span className={`dot ${sessions[id].state}`} /> {sessions[id].title}
-            {sessions[id].pending.length > 0 && <span className="ask-badge">?</span>}
-          </button>
+          <span key={id} className={`chat-sess${active === id ? ' active' : ''}${sessions[id].state === 'running' ? ' working' : ''}${confirming === id ? ' confirming' : ''}`}>
+            <button className="chat-sess-open" onClick={() => select(id)}>
+              <span className={`dot ${sessions[id].state}`} /> {sessions[id].title}
+              {sessions[id].pending.length > 0 && <span className="ask-badge">?</span>}
+            </button>
+            <button
+              className="chat-sess-close"
+              onClick={() => void closeChat(id)}
+              onBlur={() => confirming === id && setConfirming(null)}
+              title={confirming === id ? 'click again to delete this conversation' : 'delete this conversation'}
+              aria-label={confirming === id ? `delete ${sessions[id].title}: click again` : `delete ${sessions[id].title}`}
+            >
+              {confirming === id ? 'Delete?' : '×'}
+            </button>
+          </span>
         ))}
       </div>
       {active?.startsWith('follow-') ? (
@@ -504,18 +293,39 @@ function LoadedPanel({ block }: { block: string | null }) {
   )
 }
 
+// The model's reasoning: muted lines while it streams, collapsed to its first line
+// once the turn moves on, a click opening it (docs/frontends/gui.md#chat).
+function Thought({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(false)
+  const first = text.trim().split('\n')[0] ?? ''
+  const more = text.trim() !== first
+  if (live || open)
+    return (
+      <pre className="chat-thought-text" onClick={() => !live && setOpen(false)} title={live ? undefined : 'collapse'}>
+        {text.trim()}
+      </pre>
+    )
+  return (
+    <button type="button" className="chat-thought-line" onClick={() => setOpen(true)} title="show the whole reasoning" aria-expanded={false}>
+      <span className="chat-thought-mark">▸</span> {first}
+      {more ? ' …' : ''}
+    </button>
+  )
+}
+
 // `working` is the pulsing line at the end while a turn runs: what the agent is
-// doing (docs/frontends/gui.md#chat).
-function Transcript({ rows, follow, working }: { rows: Row[]; follow: boolean; working?: string | null }) {
+// doing; `live` says the last row is still being written (docs/frontends/gui.md#chat).
+function Transcript({ rows, follow, working, live = false }: { rows: Row[]; follow: boolean; working?: string | null; live?: boolean }) {
   const endRef = useRef<HTMLDivElement>(null)
   const dev = useApp((a) => a.dev)
+  const lastText = rows.length > 0 ? rows[rows.length - 1].text.length : 0
   useEffect(() => {
     if (follow) endRef.current?.scrollIntoView({ block: 'end' })
-  }, [rows.length, follow, working])
+  }, [rows.length, lastText, follow, working])
   return (
     <div className="chat-transcript">
-      {rows.map((r) => (
-        <div key={r.key} className={`chat-row ${r.kind} ${r.status ?? ''}`}>
+      {rows.map((r, i) => (
+        <div key={r.key} className={`chat-row ${r.kind} ${r.status ?? ''}${r.kind === 'thought' && live && i === rows.length - 1 ? ' working' : ''}`}>
           {r.kind === 'tool' ? (
             <details open={dev || undefined}>
               <summary>
@@ -523,8 +333,10 @@ function Transcript({ rows, follow, working }: { rows: Row[]; follow: boolean; w
               </summary>
               {r.detail && <pre>{r.detail}</pre>}
             </details>
+          ) : r.kind === 'thought' ? (
+            <Thought text={r.text} live={live && i === rows.length - 1} />
           ) : (
-            <pre>{r.text}</pre>
+            <pre title={r.detail}>{r.text}</pre>
           )}
         </div>
       ))}
@@ -552,7 +364,6 @@ function useSelectionContext(): string | null {
 
 function ChatView({ id }: { id: string }) {
   const updates = useApp((a) => a.chatUpdates[id])
-  const dev = useApp((a) => a.dev)
   const seedChatUpdates = useApp((a) => a.seedChatUpdates)
   const info = useApp((a) => a.chatSessions[id])
 
@@ -564,10 +375,7 @@ function ChatView({ id }: { id: string }) {
       .catch(() => seedChatUpdates(id, []))
   }, [id, updates, seedChatUpdates])
 
-  const rows = useMemo(() => {
-    const all = chatRows(updates ?? [])
-    return dev ? all : all.filter((r) => r.kind !== 'thought')
-  }, [updates, dev])
+  const rows = useMemo(() => chatRows(updates ?? []), [updates])
   const running = info?.state === 'running'
   // The loaded set as the agent's tool replies rendered it, newest wins.
   const loadedBlock = useMemo(
@@ -584,7 +392,7 @@ function ChatView({ id }: { id: string }) {
 
   return (
     <>
-      <Transcript rows={rows} follow working={running ? workingLine(rows) : null} />
+      <Transcript rows={rows} follow working={running ? workingLine(rows) : null} live={running} />
       <LoadedPanel block={loadedBlock} />
       {(info?.pending ?? []).map((ask) => (
         <PermissionAsk key={ask.id} sessionId={id} ask={ask as never} />
@@ -749,6 +557,8 @@ function FollowView({ jobId }: { jobId: number }) {
     if (!live) return null
     const last = [...trace].reverse().find((r) => r.jobId === jobId)
     if (last && last.event.kind === 'toolCall') return toolWords(String(last.event.name ?? ''))
+    // Reasoning streaming in is the work shown itself.
+    if (last && last.event.kind === 'modelText') return null
     const running = plan.find((t) => t.state === 'running')
     return running ? `${batchWords([{ kind: running.task, target: running.target }], dev)}…` : 'Thinking…'
   }, [live, trace, jobId, plan, dev])
@@ -801,7 +611,7 @@ function FollowView({ jobId }: { jobId: number }) {
           </div>
         ))}
       </div>
-      <Transcript rows={rows} follow working={working} />
+      <Transcript rows={rows} follow working={working} live={live} />
       <LoadedPanel block={loadedBlock} />
     </>
   )

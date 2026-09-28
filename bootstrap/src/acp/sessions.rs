@@ -173,6 +173,12 @@ fn summarize(text: &str) -> String {
     short
 }
 
+// Forget one conversation: its file goes, so no listing brings it back. Mirrors
+// docs/frontends/gui.md#chat.
+pub fn remove(out: &Path, id: &str) -> bool {
+    crate::vfs::remove_file(path_for(out, id)).is_ok()
+}
+
 // Conversations a project no longer needs. Kept simple on purpose: the newest `keep`
 // survive, the rest are removed, and the caller decides when to run it.
 pub fn prune(out: &Path, keep: usize) -> usize {
@@ -259,6 +265,24 @@ mod tests {
         assert_eq!(prune(&out, 2), 1);
         let left: Vec<String> = list(&out).into_iter().map(|m| m.id).collect();
         assert_eq!(left, vec!["c".to_string(), "b".to_string()]);
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A conversation the GUI closes is gone from the store, so a restart does not
+    // list it again (docs/frontends/gui.md#chat).
+    #[test]
+    fn a_removed_conversation_is_not_listed() {
+        let out = std::env::temp_dir().join(format!("jazyk-sess-rm-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let cwd = std::path::Path::new("/tmp/project");
+        open(&out, "chat-1", cwd, "gui");
+        record_prompt(&out, "chat-1", "hello");
+        open(&out, "chat-2", cwd, "gui");
+        assert!(remove(&out, "chat-1"));
+        assert!(!remove(&out, "chat-1"));
+        let left: Vec<String> = list(&out).into_iter().map(|m| m.id).collect();
+        assert_eq!(left, vec!["chat-2".to_string()]);
+        assert_eq!(read(&out, "chat-1").len(), 0);
         crate::vfs::remove_dir_all(&out).ok();
     }
 }

@@ -13,7 +13,7 @@ use crate::agent_loop::{self, AgentEvent, GenericTool, LoopArgs, Stop};
 use crate::llm::Llm;
 use crate::mcp::McpServer;
 use crate::project::Project;
-use crate::runner::{BatchRun, SessionReport, SessionRunner};
+use crate::runner::{BatchRun, LoopTrace, SessionReport, SessionRunner};
 use crate::session::{Trace, TraceEvent};
 use serde_json::{json, Value};
 use std::cell::Cell;
@@ -136,9 +136,11 @@ impl SessionRunner for InPageRunner {
 
         let gen_before = crate::store::read_generation(&self.out);
         let mut history: Vec<Value> = vec![json!({"role": "user", "content": opening})];
-        let mut tokens = 0u64;
-        let mut cached = 0u64;
-        let mut rounds = 0u32;
+        // The session's trail on the build trace, as a native worker session leaves
+        // it (docs/frontends/wasm.md#sessions). The claim above precedes it: a batch
+        // that cannot be claimed never opened a session.
+        trace.event(crate::runner::session_start(batch));
+        let mut lt = LoopTrace::new(trace, batch);
 
         let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
             match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
@@ -156,28 +158,7 @@ impl SessionRunner for InPageRunner {
                 Err((_, m)) => Err(m),
             }
         };
-        let mut emit = |ev: AgentEvent| match ev {
-            AgentEvent::Usage { tokens: t, cached: c } => {
-                tokens += t;
-                cached += c;
-            }
-            AgentEvent::ToolCallStart { name, args, .. } => {
-                trace.event(TraceEvent::ToolCall {
-                    label: label.clone(),
-                    name,
-                    summary: crate::session::condense(&args, 160),
-                    full: crate::session::full_payload(&args),
-                });
-            }
-            AgentEvent::Message(text) | AgentEvent::Thought(text) => {
-                trace.event(TraceEvent::Note {
-                    label: label.clone(),
-                    text: crate::llm::truncate(&text, 400),
-                    verbose: true,
-                });
-            }
-            AgentEvent::ToolCallEnd { .. } => {}
-        };
+        let mut emit = |ev: AgentEvent| lt.on_event(ev);
 
         let never_cancelled = || false;
         let stop = agent_loop::run_loop(LoopArgs {
@@ -191,7 +172,7 @@ impl SessionRunner for InPageRunner {
             label: label.clone(),
             conversation: false,
         });
-        rounds += 1;
+        let (rounds, tokens, cached) = (lt.rounds, lt.tokens, lt.cached);
 
         // The session's word is never the verdict: what landed is read from the
         // store, exactly as the native runner reads it.
@@ -208,18 +189,35 @@ impl SessionRunner for InPageRunner {
             );
         }
 
-        let note = match stop {
+        // Why the session stopped short of a plain end of turn, for a caller judging
+        // its own ledger; a batch that did not land fails with the stop in words
+        // (docs/compiler/sessions.md#trace-events).
+        let note = match &stop {
             Stop::EndTurn => None,
-            Stop::MaxRounds => Some(format!("the session ran out of rounds after {}", rounds)),
-            Stop::Cancelled => Some("the session was cancelled".to_string()),
-            Stop::Error(e) => Some(e),
+            other => Some(crate::runner::unlanded_reason(other, rounds)),
         };
+        if committed {
+            // The batch landed: the store's word. A failure's terminal event is the
+            // reconciler's, which knows the attempt number.
+            trace.event(TraceEvent::SessionDone {
+                label: label.clone(),
+                goals: batch.goal_ids(),
+                staged: applied,
+                rounds,
+                mode: "done".into(),
+                summary: String::new(),
+            });
+        }
         SessionReport {
             applied,
             rounds,
             tokens,
             cached,
-            failed: if committed { None } else { note.clone().or(Some("nothing committed".to_string())) },
+            failed: if committed {
+                None
+            } else {
+                Some(crate::runner::unlanded_reason(&stop, rounds))
+            },
             resolved,
             stopped: note,
         }

@@ -131,3 +131,283 @@ pub fn journal_diff(out: &std::path::Path, from: u64, to: u64, goal_ids: &[Strin
     }
     (applied, resolved)
 }
+
+// An in-process session's trace: the agent loop's events as the trace events the ACP
+// runner's translator emits for a worker session, so a build in a tab reads like a
+// native one (docs/frontends/wasm.md#sessions). It also counts the rounds and the
+// spend.
+pub struct LoopTrace<'a> {
+    trace: &'a Trace,
+    label: String,
+    doc: Option<String>,
+    at_section: Option<String>,
+    // The name and arguments of each call in flight, by call id: a `section` event
+    // waits for the call to be accepted.
+    calls: std::collections::HashMap<String, (String, serde_json::Value)>,
+    pub rounds: u32,
+    pub tokens: u64,
+    pub cached: u64,
+}
+
+impl<'a> LoopTrace<'a> {
+    pub fn new(trace: &'a Trace, batch: &BatchRun) -> LoopTrace<'a> {
+        LoopTrace {
+            trace,
+            label: batch.id.clone(),
+            doc: batch_doc(batch),
+            at_section: None,
+            calls: Default::default(),
+            rounds: 0,
+            tokens: 0,
+            cached: 0,
+        }
+    }
+
+    pub fn on_event(&mut self, ev: crate::agent_loop::AgentEvent) {
+        use crate::agent_loop::AgentEvent;
+        use crate::session::TraceEvent;
+        match ev {
+            AgentEvent::Usage { tokens, cached } => {
+                self.rounds += 1;
+                self.tokens += tokens;
+                self.cached += cached;
+            }
+            AgentEvent::Message(text) | AgentEvent::Thought(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    return;
+                }
+                self.trace.event(TraceEvent::ModelText {
+                    label: self.label.clone(),
+                    text: crate::llm::truncate(text, 2_000).to_string(),
+                });
+            }
+            AgentEvent::ToolCallStart { id, name, args } => {
+                self.trace.event(TraceEvent::ToolCall {
+                    label: self.label.clone(),
+                    name: name.clone(),
+                    summary: crate::session::condense(&args, 160),
+                    full: crate::session::full_payload(&args),
+                });
+                self.calls.insert(id, (name, args));
+            }
+            AgentEvent::ToolCallEnd { id, result, ok } => {
+                let (name, args) = self
+                    .calls
+                    .remove(&id)
+                    .unwrap_or_else(|| (id.clone(), serde_json::Value::Null));
+                if !ok {
+                    let (rule, message) = crate::session::refusal(&result, &name);
+                    self.trace.event(TraceEvent::ToolError {
+                        label: self.label.clone(),
+                        rule,
+                        message,
+                    });
+                    return;
+                }
+                let out: serde_json::Value = serde_json::from_str(&result)
+                    .unwrap_or_else(|_| serde_json::Value::String(result.clone()));
+                self.trace.event(TraceEvent::ToolResult {
+                    label: self.label.clone(),
+                    name: name.clone(),
+                    summary: crate::session::condense(&out, 160),
+                    full: crate::session::full_payload(&out),
+                });
+                // An accepted call that names another section says where the session is.
+                let Some(doc) = self.doc.clone() else { return };
+                if let Some(sec) = crate::session::named_section(&args, &doc) {
+                    if self.at_section.as_deref() != Some(sec.as_str()) {
+                        self.at_section = Some(sec.clone());
+                        self.trace.event(TraceEvent::Section {
+                            label: self.label.clone(),
+                            doc,
+                            section: sec,
+                            tool: name,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The document a batch works on: the first goal target naming one.
+pub fn batch_doc(batch: &BatchRun) -> Option<String> {
+    batch.goals.iter().find_map(|g| {
+        let doc = g.target.split('#').next().unwrap_or_default();
+        doc.ends_with(".md").then(|| doc.to_string())
+    })
+}
+
+// The `sessionStart` an in-process session opens with: the goals, the task and
+// target, the document, and the sections its reconcile goals name.
+pub fn session_start(batch: &BatchRun) -> crate::session::TraceEvent {
+    let sections: Vec<String> = batch
+        .goals
+        .iter()
+        .filter(|g| g.kind == "reconcile-section")
+        .filter_map(|g| crate::model::split_section_ref(&g.target).map(|(_, s)| s))
+        .collect();
+    crate::session::TraceEvent::SessionStart {
+        label: batch.id.clone(),
+        goals: batch.goal_ids(),
+        task: batch.kind(),
+        target: batch
+            .goals
+            .first()
+            .map(|g| g.target.clone())
+            .unwrap_or_default(),
+        doc: batch_doc(batch),
+        dirty: sections.len(),
+        sections,
+        stale: 0,
+        proposals: 0,
+    }
+}
+
+// Why a batch that did not land stopped, in words, never a bare "nothing committed"
+// (docs/compiler/sessions.md#trace-events).
+pub fn unlanded_reason(stop: &crate::agent_loop::Stop, rounds: u32) -> String {
+    use crate::agent_loop::Stop;
+    match stop {
+        Stop::EndTurn => "the model ended its turn with the batch still open".to_string(),
+        Stop::MaxRounds => format!("the session ran out of rounds after {}", rounds),
+        Stop::Cancelled => "the session was cancelled".to_string(),
+        Stop::Error(e) => format!("the model call failed: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_loop::{AgentEvent, Stop};
+    use crate::session::{TraceEvent, TraceLevel};
+    use std::sync::{Arc, Mutex};
+
+    fn capture() -> (Trace, Arc<Mutex<Vec<TraceEvent>>>) {
+        let events: Arc<Mutex<Vec<TraceEvent>>> = Default::default();
+        let sink = events.clone();
+        let trace = Trace::to_sink(
+            TraceLevel::Normal,
+            Arc::new(move |ev| sink.lock().unwrap().push(ev.clone())),
+            Default::default(),
+        );
+        (trace, events)
+    }
+
+    fn batch() -> BatchRun {
+        BatchRun {
+            id: "b2-1".into(),
+            goals: vec![Goal {
+                id: "g:reconcile-section:docs/README.md#/hello-world".into(),
+                kind: "reconcile-section".into(),
+                target: "docs/README.md#/hello-world".into(),
+                ..Default::default()
+            }],
+            executor: None,
+        }
+    }
+
+    // The in-process loop leaves the trail a native worker session does: the
+    // session's start with its document and sections, each call with its result or
+    // refusal, the section an accepted call reached, and the model's words
+    // (docs/frontends/wasm.md#sessions).
+    #[test]
+    fn the_loop_trace_says_what_the_session_did() {
+        let (trace, events) = capture();
+        let b = batch();
+        trace.event(session_start(&b));
+        let mut lt = LoopTrace::new(&trace, &b);
+        lt.on_event(AgentEvent::Usage { tokens: 30, cached: 4 });
+        lt.on_event(AgentEvent::Thought("I should read the section first.".into()));
+        lt.on_event(AgentEvent::ToolCallStart {
+            id: "c1".into(),
+            name: "read_section".into(),
+            args: serde_json::json!({"section": "docs/README.md#/hello-world"}),
+        });
+        lt.on_event(AgentEvent::ToolCallEnd {
+            id: "c1".into(),
+            result: "{\"text\": \"Hello\"}".into(),
+            ok: true,
+        });
+        lt.on_event(AgentEvent::ToolCallStart {
+            id: "c2".into(),
+            name: "upsert_requirement".into(),
+            args: serde_json::json!({"statement": "x"}),
+        });
+        lt.on_event(AgentEvent::ToolCallEnd {
+            id: "c2".into(),
+            result: "{\"error\": {\"rule\": \"quote-not-found\", \"message\": \"the quote is not in the section\"}}".into(),
+            ok: false,
+        });
+        lt.on_event(AgentEvent::Message("I cannot find the quote.".into()));
+        assert_eq!((lt.rounds, lt.tokens, lt.cached), (1, 30, 4));
+
+        let ev = events.lock().unwrap();
+        match &ev[0] {
+            TraceEvent::SessionStart { label, doc, sections, task, goals, .. } => {
+                assert_eq!(label, "b2-1");
+                assert_eq!(doc.as_deref(), Some("docs/README.md"));
+                assert_eq!(sections, &vec!["/hello-world".to_string()]);
+                assert_eq!(task, "reconcile-section");
+                assert_eq!(goals.len(), 1);
+            }
+            other => panic!("expected sessionStart, got {:?}", other),
+        }
+        assert!(matches!(&ev[1], TraceEvent::ModelText { text, .. } if text.contains("read the section")));
+        assert!(matches!(&ev[2], TraceEvent::ToolCall { name, .. } if name == "read_section"));
+        assert!(matches!(&ev[3], TraceEvent::ToolResult { name, .. } if name == "read_section"));
+        assert!(matches!(&ev[4], TraceEvent::Section { section, doc, .. } if section == "/hello-world" && doc == "docs/README.md"));
+        assert!(matches!(&ev[5], TraceEvent::ToolCall { name, .. } if name == "upsert_requirement"));
+        match &ev[6] {
+            TraceEvent::ToolError { rule, message, label } => {
+                assert_eq!(label, "b2-1");
+                assert_eq!(rule, "quote-not-found");
+                assert_eq!(message, "the quote is not in the section");
+            }
+            other => panic!("expected toolError, got {:?}", other),
+        }
+        assert!(matches!(&ev[7], TraceEvent::ModelText { text, .. } if text == "I cannot find the quote."));
+        assert_eq!(ev.len(), 8);
+    }
+
+    // A refusal that is not a jazyk error keeps its text under the tool's name, and
+    // a refused call names no section.
+    #[test]
+    fn a_plain_refusal_names_the_tool() {
+        let (trace, events) = capture();
+        let b = batch();
+        let mut lt = LoopTrace::new(&trace, &b);
+        lt.on_event(AgentEvent::ToolCallStart {
+            id: "c1".into(),
+            name: "load".into(),
+            args: serde_json::json!({"section": "/hello-world"}),
+        });
+        lt.on_event(AgentEvent::ToolCallEnd {
+            id: "c1".into(),
+            result: "unknown tool".into(),
+            ok: false,
+        });
+        let ev = events.lock().unwrap();
+        assert_eq!(ev.len(), 2);
+        assert!(matches!(&ev[1], TraceEvent::ToolError { rule, message, .. } if rule == "load" && message == "unknown tool"));
+    }
+
+    // The failure reason names the stop; "nothing committed" alone never says why.
+    #[test]
+    fn an_unlanded_batch_says_why_it_stopped() {
+        assert_eq!(
+            unlanded_reason(&Stop::EndTurn, 3),
+            "the model ended its turn with the batch still open"
+        );
+        assert_eq!(
+            unlanded_reason(&Stop::MaxRounds, 40),
+            "the session ran out of rounds after 40"
+        );
+        assert!(unlanded_reason(&Stop::Error("HTTP 400: maximum context length".into()), 1)
+            .contains("maximum context length"));
+        for s in [Stop::EndTurn, Stop::MaxRounds, Stop::Cancelled, Stop::Error("x".into())] {
+            assert!(!unlanded_reason(&s, 1).contains("nothing committed"));
+        }
+    }
+}

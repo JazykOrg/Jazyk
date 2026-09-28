@@ -136,6 +136,16 @@ pub fn get(id: &str) -> Option<Value> {
     })
 }
 
+// Remove a conversation (docs/frontends/gui.md#chat). A turn cannot be running: the
+// worker answers nothing while it is inside one. Answers whether it existed.
+pub fn remove(id: &str) -> bool {
+    let gone = BOOK.with(|b| b.borrow_mut().chats.remove(id).is_some());
+    if gone {
+        publish_sessions();
+    }
+    gone
+}
+
 // The chat serving for one conversation, as a native chat session gets it: `chat`
 // mode, ephemeral, no build token. A reader conversation gets the `graph` serving
 // with the read tools alone and a short instruction block instead, so the prompt

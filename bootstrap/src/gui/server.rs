@@ -140,7 +140,10 @@ pub fn router(st: SharedState) -> Router {
             "/chat/sessions",
             get(chat::list_sessions).post(chat::post_session),
         )
-        .route("/chat/sessions/{id}", get(chat::get_session))
+        .route(
+            "/chat/sessions/{id}",
+            get(chat::get_session).delete(chat::delete_session),
+        )
         .route("/chat/sessions/{id}/prompt", post(chat::post_prompt))
         .route("/chat/sessions/{id}/cancel", post(chat::cancel))
         .route("/chat/permissions", post(chat::answer_permission))

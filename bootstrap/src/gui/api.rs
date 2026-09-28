@@ -169,65 +169,24 @@ pub async fn triage(
     }
 }
 
-// The workflow modes as the wire reports them. `mode` keeps the legacy select
-// values (`queue` = manual, `watch` = auto) beside the control-plane names.
+// The workflow modes, the values the tab serves too
+// (docs/frontends/gui.md#workflow-modes).
 fn watch_state(st: &SharedState) -> Value {
-    let c = st.control();
-    json!({
-        "mode": if c.compile == "auto" { "watch" } else { "queue" },
-        "compile": c.compile,
-        "gen": c.generate,
-        "worker": c.worker,
-    })
+    crate::webapi::workers::watch_value(&st.control())
 }
 
 pub async fn watch_get(State(st): State<SharedState>) -> Json<Value> {
     Json(watch_state(&st))
 }
 
-// The workflow modes share the endpoint; either field alone leaves the other
-// untouched. They persist in control.yaml, where every worker reads them.
-// Mirrors docs/frontends/gui.md#workflow-modes.
 pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
-    let mut c = st.control();
-    // `compile` takes the control-plane names; `mode` keeps the legacy ones.
-    if let Some(m) = body["compile"].as_str().or(match body["mode"].as_str() {
-        Some("watch") => Some("auto"),
-        Some("queue") | Some("off") => Some("manual"),
-        Some(_) => {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "mode must be queue or watch (compile: manual or auto)",
-            )
+    match crate::webapi::workers::watch_write(&st.proj(), &st.out, &body) {
+        Ok(state) => {
+            st.events.emit("watch.state", state.clone());
+            Json(state).into_response()
         }
-        None => None,
-    }) {
-        if !["manual", "auto"].contains(&m) {
-            return err(StatusCode::BAD_REQUEST, "compile must be manual or auto");
-        }
-        c.compile = m.to_string();
+        Err(r) => refused(r),
     }
-    if let Some(gen) = body["gen"].as_str() {
-        if !["manual", "auto"].contains(&gen) {
-            return err(StatusCode::BAD_REQUEST, "gen must be manual or auto");
-        }
-        c.generate = gen.to_string();
-    } else if !body["gen"].is_null() {
-        return err(StatusCode::BAD_REQUEST, "gen must be a string");
-    }
-    if let Some(w) = body["worker"].as_str() {
-        if !["internal", "agent", "any"].contains(&w) {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "worker must be internal, agent, or any",
-            );
-        }
-        c.worker = w.to_string();
-    }
-    c.save(&st.out);
-    let state = watch_state(&st);
-    st.events.emit("watch.state", state.clone());
-    Json(state).into_response()
 }
 
 // The control plane snapshot the workers strip renders: modes, registered workers,

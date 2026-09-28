@@ -305,6 +305,9 @@ mod tests {
         let (proj, out) = fixture("edit");
         let v = answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 0})).unwrap();
         assert_eq!(v["status"], "applied");
+        // The reply names the text that landed, for the editor's mark.
+        assert_eq!(v["edit"]["doc"], "docs/arc.md");
+        assert_eq!(v["edit"]["newText"], "an ally");
         let text = crate::vfs::read_to_string(proj.root.join("docs/arc.md")).unwrap();
         assert!(text.contains("Theo is an ally"), "{}", text);
         let r = rollup(&proj, &out);
@@ -315,6 +318,47 @@ mod tests {
             .unwrap()
             .iter()
             .any(|q| q["id"] == "diag:contradiction-1"));
+    }
+
+    // A dual write moves the prose and the graph in one commit: in manual mode the
+    // released document stays released, and no reconciliation derives for it
+    // (docs/compiler/control-plane.md#modes-and-releases).
+    #[test]
+    fn an_edit_option_leaves_nothing_pending_and_nothing_to_reread() {
+        let (proj, out) = fixture("pending");
+        crate::control::release(&proj, &out, Some("compile"));
+        assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!([]));
+        // The fixture never read its section, so the reading it owes stands; the edit
+        // adds none.
+        let reread = || -> Vec<String> {
+            crate::board::Board::compute(&proj, &out)
+                .goals
+                .iter()
+                .filter(|g| matches!(g.kind.as_str(), "reconcile-section" | "place-anchors"))
+                .map(|g| g.id.clone())
+                .collect()
+        };
+        let before = reread();
+        answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 0})).unwrap();
+        assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!([]));
+        assert_eq!(reread(), before);
+        // A human edit after it is pending again, as any edit is.
+        crate::vfs::write(proj.root.join("docs/arc.md"), "# Arc\n\nTheo is an ally now.\n").unwrap();
+        assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!(["docs/arc.md"]));
+    }
+
+    // A document that waited for a release before the write still waits after it.
+    #[test]
+    fn an_unreleased_document_stays_pending_after_an_edit_option() {
+        let (proj, out) = fixture("unreleased");
+        crate::control::release(&proj, &out, Some("compile"));
+        crate::vfs::write(
+            proj.root.join("docs/arc.md"),
+            "# Arc\n\nTheo is a rival at the midpoint. He sulks.\n",
+        )
+        .unwrap();
+        answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 0})).unwrap();
+        assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!(["docs/arc.md"]));
     }
 
     #[test]
@@ -329,6 +373,7 @@ mod tests {
                 choice: None,
                 text: "keep the rival".into(),
                 status: "handling".into(),
+                error: None,
             })
         );
         let r = rollup(&proj, &out);
@@ -350,7 +395,10 @@ mod tests {
         answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 1})).unwrap();
         crate::answer::record_outcome(&out, "diag:contradiction-1", &Err("no model".into()));
         let d = Store::load(&out).graph.diagnostics["diag:contradiction-1"].clone();
-        assert_eq!(d.answer.unwrap().status, "failed");
+        let a = d.answer.unwrap();
+        assert_eq!(a.status, "failed");
+        // The card says why.
+        assert_eq!(a.error.as_deref(), Some("no model"));
         // A failed answer waits on a person again, and nothing is left to handle.
         let r = rollup(&proj, &out);
         assert_eq!(r["questions"], 1);

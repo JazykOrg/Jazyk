@@ -605,6 +605,9 @@ pub struct DiagnosticAnswer {
     pub text: String,
     // applied | handling | handled | failed
     pub status: String,
+    // Why a failed answer could not be acted on. Mirrors docs/compiler/model/diagnostic.md#answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // The section kinds parsing produces. Mirrors docs/compiler/model/section.md#fields.

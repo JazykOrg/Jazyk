@@ -8,6 +8,7 @@ import {
   RangeSet,
   StateEffect,
   StateField,
+  Transaction,
   type Extension,
 } from '@codemirror/state'
 import {
@@ -33,7 +34,7 @@ import { autocompletion, type CompletionContext, type CompletionResult } from '@
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint'
 import { MergeView } from '@codemirror/merge'
 import type { DocRecord } from '../lib/api'
-import { lineMarks } from '../lib/diff'
+import { lineMarks, minimalChange } from '../lib/diff'
 import { findMentions, type MentionIndex } from '../lib/mentions'
 import { sectionLines } from '../lib/sections'
 import { markdownLive } from './markdown-live'
@@ -298,6 +299,8 @@ const mentionField = StateField.define<{ index: MentionIndex | null; decos: Deco
 const [lensField, setLenses] = decoField() // requirement lenses above their quotes
 const [quoteField, setQuote] = decoField() // the ?quote= highlight
 const [inlineField, setInline] = decoField() // question and proposal bands under sentences
+const [flashField, setFlash] = decoField() // changes the editor did not make, until they fade
+
 
 class LensWidget extends WidgetType {
   constructor(
@@ -395,9 +398,22 @@ function renderMd(value: string, onHref: (href: string) => void): HTMLElement {
   return root
 }
 
+// A mark over lines the editor did not change itself: 1-based, inclusive.
+export interface FlashLines {
+  key: string
+  from: number
+  to: number
+  label: string
+  fading: boolean
+}
+
 export interface EditorHandle {
   getText(): string
   setText(text: string): void // replaces content and resets the dirty baseline
+  // Takes a text written elsewhere as the smallest edit, resets the dirty baseline,
+  // and answers the 1-based lines the change covers in the new text (null when
+  // nothing changed).
+  applyExternal(text: string): [number, number] | null
   markSaved(): void // current content becomes the baseline
   revealLine(line: number): void
   revealSection(startLine: number, quote?: string): void
@@ -452,6 +468,8 @@ interface Props {
   mentions?: MentionIndex
   // The 1-based line holding the cursor, on every move; the outline follows it.
   onCursorLine?: (line: number) => void
+  // Changes the editor did not make, marked until they fade.
+  flashes?: FlashLines[]
 }
 
 // Whitespace-insensitive quote search, preferring a match at or after fromPos.
@@ -591,6 +609,26 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     const seen = new Set<number>()
     const unique = ranges.filter((r) => (seen.has(r.from) ? false : (seen.add(r.from), true)))
     view.dispatch({ effects: setReqs.of(RangeSet.of(unique)) })
+  }
+
+  const applyFlashes = (view: EditorView) => {
+    const decos = []
+    const seen = new Set<number>()
+    for (const f of propsRef.current.flashes ?? []) {
+      const last = Math.min(Math.max(f.to, f.from), view.state.doc.lines)
+      for (let l = clampLine(view.state, f.from); l <= last; l++) {
+        if (seen.has(l)) continue
+        seen.add(l)
+        decos.push(
+          Decoration.line({
+            class: `jz-flash${f.fading ? ' fading' : ''}`,
+            attributes: { title: f.label, 'data-flash': f.label },
+          }).range(view.state.doc.line(l).from),
+        )
+      }
+    }
+    decos.sort((a, b) => a.from - b.from)
+    view.dispatch({ effects: setFlash.of(Decoration.set(decos, true)) })
   }
 
   const applyBands = (view: EditorView) => {
@@ -835,6 +873,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       mentionField,
       lensField,
       quoteField,
+      flashField,
     ]
   }
 
@@ -849,6 +888,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     applyDiffMarks(view)
     applyMarks(view)
     applyBands(view)
+    applyFlashes(view)
     const diags = lastDiags.current.get(uri)
     if (diags) pushDiagnostics(view, diags)
     else propsRef.current.onMarkers([])
@@ -942,6 +982,11 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     if (view) applyMentions(view)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.mentions, props.path])
+  useEffect(() => {
+    const view = viewRef.current
+    if (view) applyFlashes(view)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.flashes, props.path])
 
   // The diff view: side-by-side, baseline read-only, the current side editable.
   // Edits forward into the hidden main view, so the document stays one source of
@@ -1019,6 +1064,24 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
           view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
         propsRef.current.onDirty(false)
         propsRef.current.onText?.(text)
+      },
+      applyExternal: (text) => {
+        const view = viewRef.current
+        const uri = activeUri()
+        if (!view || !uri) return null
+        baselines.current.set(uri, text)
+        const change = minimalChange(view.state.doc.toString(), text)
+        let lines: [number, number] | null = null
+        if (change) {
+          // The selection maps through the change and the view keeps its scroll
+          // anchor. The change is not the person's, so undo does not take it back.
+          view.dispatch({ changes: change, annotations: Transaction.addToHistory.of(false) })
+          const end = change.from + change.insert.length
+          lines = [view.state.doc.lineAt(change.from).number, view.state.doc.lineAt(end).number]
+        }
+        propsRef.current.onDirty(false)
+        propsRef.current.onText?.(text)
+        return lines
       },
       markSaved: () => {
         const view = viewRef.current

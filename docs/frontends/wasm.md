@@ -18,7 +18,8 @@ The [GUI](./gui.md) API is one implementation with two ways in.
   `deliverable_value`, `deliverable_file`, `deliverable_baseline`, `matrix_value`,
   `matrix_export`, `gen_pending_value`, `gen_package_value`, `verify_pending_value`,
   `docsgen_value`, `out_list`, and `out_file`, and [the Inbox](#the-inbox)'s
-  `inbox_value`, `questions_value`, `triage_value`, and `answer_value`. Each takes a
+  `inbox_value`, `questions_value`, `triage_value`, and `answer_value`, and the
+  [workflow modes](#workflow-modes-in-a-tab)' `watch_value` and `watch_write`. Each takes a
   [store](../compiler/graph.md) (or a project and an out directory) and answers a
   JSON value, or a refusal with its status and reason. Nothing in it knows about a
   transport.
@@ -312,18 +313,43 @@ What an answer does in a tab:
 - An `answer` option or a freeform reply records the text with
   `answer.status: handling`. A tab runs nothing in the background, so no
   [answer session](./acp.md#answer-sessions) starts on the reply. The reply says
-  so, and the card says the next build acts on it.
+  so. The recorded answer is build work: the card says `Queued for the next build`
+  with a `Build now` action, and the [action button](./gui.md#the-action-button)
+  counts it (`Build · 1 answer` when nothing else waits). With `compile: auto` the
+  page starts that build itself ([workflow modes in a tab](#workflow-modes-in-a-tab)).
 - The next build runs it. Before its first goal batch, a build in a tab runs one
   answer session per `handling` answer, on the page's model, the way
   [sessions](#sessions) run: the `chat` serving, the prompt carrying the
   diagnostic, the question, the reply, and the subjects. The status moves to
-  `handled` when the session ends, or `failed` with the error. The build's reply
-  lists them under `answers`, and each session's events reach the trace under the
-  label `answer <diagnostic>`.
+  `handled` when the session ends, or `failed` with the error in `answer.error`.
+  The build's reply lists them under `answers`, and each session's events reach the
+  trace under the label `answer <diagnostic>`, in the build thread. The prose edits
+  a session makes are dual writes: an open editor takes them in place and marks
+  them "changed by your answer" ([editor](./gui.md#editor)).
 - A build needs a model, so without one the answer waits with `handling`.
 - A [chat](#chat) answers the same way a native chat session does: the agent
   records a reply relayed in conversation with `answer_diagnostic` and acts on it
   in the same turn ([questions in chat](./acp.md#questions-in-chat)).
+
+## Workflow modes in a tab
+
+The [workflow modes](./gui.md#workflow-modes) are control-plane state in a tab too:
+`control.yaml` in the tab's out directory, read and written through
+`crate::control`, which compiles for both targets. `GET /api/watch` and
+`PUT /api/watch` answer from `crate::webapi::workers`, the server's own
+`watch_value` and `watch_write`, and a mode set in the tab is kept with the project
+like any other file.
+
+- Settings shows the Build switch: Build on save or Build on request. A tab runs no
+  generation, so it has no Generate switch.
+- `compile: manual` (the default): a build runs on a click on the action button.
+- `compile: auto`: the page starts a build a moment after a document save and after
+  a recorded answer. Saves and answers in quick succession start one build. A
+  trigger that arrives while a build runs waits, and the next build starts when
+  that one ends. Without a model that builds nothing starts, and the work waits for
+  the action button.
+- An applied `edit` option starts nothing: its dual write leaves no section to
+  reread.
 
 ## Sessions
 

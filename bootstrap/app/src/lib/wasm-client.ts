@@ -265,9 +265,54 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     job.finishedAt = new Date().toISOString()
     job.state = status < 400 ? 'finished' : 'failed'
     job.result = status < 400 ? ((out.report as Record<string, unknown> | undefined) ?? out) : { error: out.error ?? 'the job failed' }
-    emit({ type: 'job.finished', jobId: id, state: job.state, result: job.result })
+    // The answers the build ran first ride with its end: the edits they made are the
+    // person's answers (docs/frontends/wasm.md#the-inbox).
+    emit({ type: 'job.finished', jobId: id, state: job.state, result: job.result, answers: out.answers ?? [] })
     opts.onWrite?.()
+    // A trigger that arrived while this build ran starts the next one now.
+    if (autoWanted) scheduleAuto(0)
     return reply(status, status < 400 ? { ...out, id } : out)
+  }
+
+  // The workflow modes (docs/frontends/wasm.md#workflow-modes-in-a-tab): the tab's
+  // control plane answers them, and the page follows them. `compile: auto` starts a
+  // build a moment after a document save or a recorded answer, one build for a burst
+  // of them, never while a build or a chat turn runs.
+  const AUTO_DELAY_MS = 1500
+  let compileAuto = false
+  let autoWanted = false
+  let autoTimer: ReturnType<typeof setTimeout> | null = null
+  const noteWatch = (v: unknown) => {
+    if (!v || typeof v !== 'object') return
+    const w = v as Record<string, unknown>
+    compileAuto = w.compile === 'auto'
+    // The event stream's shape, so the app's slices follow it as they do a server's.
+    emit({ type: 'watch.state', ...w })
+  }
+  const fireAuto = () => {
+    autoTimer = null
+    if (!autoWanted || !project || !compileAuto) return
+    // Busy: the job's end or the turn's end asks again.
+    if (runningJob !== null || turn) return
+    autoWanted = false
+    // Without a model that builds, nothing starts and the work waits for the button.
+    if (!capabilities().jobs.includes('compile')) return
+    void runJob({ kind: 'compile' })
+  }
+  function scheduleAuto(delay = AUTO_DELAY_MS) {
+    if (!compileAuto) return
+    autoWanted = true
+    if (autoTimer !== null) clearTimeout(autoTimer)
+    autoTimer = setTimeout(fireAuto, delay)
+  }
+  // A write that owes a build in auto mode: a document save, or an answer recorded
+  // for a build to act on. An applied option owes none.
+  const triggersBuild = (method: string, bare: string, status: number, answered: unknown) => {
+    if (status >= 400) return false
+    if (method === 'PUT' && bare === '/api/docs/content') return true
+    if (method === 'POST' && /^\/api\/questions\/[^/]+\/answer$/.test(bare))
+      return !!answered && typeof answered === 'object' && (answered as { status?: string }).status === 'handling'
+    return false
   }
 
   const request = async (method: string, path: string, body?: unknown): Promise<BackendReply> => {
@@ -319,10 +364,13 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       turn = mine
       void mine.then(() => {
         if (turn === mine) turn = null
+        if (autoWanted) scheduleAuto(0)
       })
     }
     const { status, body: answered } = await out
+    if (bare === '/api/watch' && status < 400) noteWatch(answered)
     if (method !== 'GET') opts.onWrite?.()
+    if (triggersBuild(method, bare, status, answered)) scheduleAuto()
     return reply(status, answered)
   }
 
@@ -334,8 +382,14 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       project = { ...p, files: {} }
       // The jobs belonged to the project the tab had open before.
       jobs = []
+      autoWanted = false
+      if (autoTimer !== null) clearTimeout(autoTimer)
+      autoTimer = null
       await send({ kind: 'seed', files: p.files, model: opts.model.name() })
       sink = p.sink
+      // The project's own workflow modes.
+      const watch = await send<{ status: number; body: unknown }>({ kind: 'request', method: 'GET', path: '/api/watch', body: null })
+      if (watch.status < 400) noteWatch(watch.body)
     },
     moveTo(place) {
       if (project) project = { ...project, ...place }
@@ -344,6 +398,7 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     close() {
       project = null
       sink = null
+      autoWanted = false
     },
     dump() {
       return send<Record<string, Uint8Array>>({ kind: 'dump' })

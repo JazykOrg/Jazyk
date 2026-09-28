@@ -17,7 +17,7 @@ import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
 import { buildMentionIndex, findQuoteIn, lineOf, quoteLine } from '../lib/mentions'
 import { sectionBySlug, sectionLines } from '../lib/sections'
-import CmHost, { buildBar, docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
+import CmHost, { buildBar, docUri, type EditorHandle, type FlashLines, type LinkTarget, type Marker } from '../ide/CmHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
 import { serverBase } from '../lib/backend'
@@ -223,8 +223,11 @@ export default function DocEditor() {
     setSaveErr(null)
   }, [contentQ.data, docPath, loaded])
 
-  // Disk changed under us (docs.changed refetch): reload silently when clean,
-  // raise the conflict bar when dirty.
+  // Disk changed under us (docs.changed refetch, or a write this page made
+  // elsewhere): when clean, the new text lands as the smallest edit, the scroll and
+  // the selection kept, and the changed lines are marked until the mark fades; when
+  // dirty, the conflict bar rises (docs/frontends/gui.md#editor).
+  const addFlash = useApp((a) => a.addFlash)
   useEffect(() => {
     const data = contentQ.data
     if (!docPath || !data || loaded?.path !== docPath) return
@@ -235,10 +238,15 @@ export default function DocEditor() {
       return
     }
     baseHashes.current.set(docPath, data.hash)
-    hostRef.current?.setText(data.text)
+    const lines = hostRef.current?.applyExternal(data.text) ?? null
     setLoaded({ path: docPath, text: data.text, hash: data.hash })
     setConflict(false)
-  }, [contentQ.data, docPath, loaded, dirty])
+    if (!lines) return
+    // An applied option already named the text it landed; the lines add nothing.
+    const app = useApp.getState()
+    const named = app.flashes.some((f) => f.doc === docPath && f.text && !f.fading)
+    if (!named) addFlash({ doc: docPath, label: app.changeLabel(), lines })
+  }, [contentQ.data, docPath, loaded, dirty, addFlash])
 
   const afterWrite = useCallback(
     (target: string, text: string, hash: string) => {
@@ -482,6 +490,22 @@ export default function DocEditor() {
   const root = projectQ.data?.root
   const sortedMarkers = useMemo(() => [...markers].sort((a, b) => a.line - b.line), [markers])
 
+  // The marks over this document's changes, as line ranges in the text it holds.
+  const allFlashes = useApp((a) => a.flashes)
+  const flashLines = useMemo<FlashLines[]>(() => {
+    const out: FlashLines[] = []
+    for (const f of allFlashes) {
+      if (f.doc !== docPath) continue
+      let range = f.lines ?? null
+      if (f.text) {
+        const hit = findQuoteIn(readText, f.text)
+        range = hit ? [lineOf(readText, hit.from), lineOf(readText, hit.to)] : null
+      }
+      if (range) out.push({ key: String(f.id), from: range[0], to: range[1], label: f.label, fading: f.fading })
+    }
+    return out
+  }, [allFlashes, docPath, readText])
+
   // What Read draws over the blocks: the read state and the build band of the
   // section a block starts in, the requirement markers by their quote's line, and
   // the bands under their sentences (docs/frontends/gui.md#editor).
@@ -532,8 +556,12 @@ export default function DocEditor() {
       if (line === null) continue
       bandMap.set(line, [...(bandMap.get(line) ?? []), b])
     }
-    return { lineClass, lineTitle, marks: markMap, bands: bandMap }
-  }, [reading, record, build, marks, bands, readText])
+    const flash = (start: number, end: number) => {
+      const f = flashLines.find((x) => x.from <= end && x.to >= start)
+      return f ? { cls: `md-flash${f.fading ? ' fading' : ''}`, title: f.label } : null
+    }
+    return { lineClass, lineTitle, marks: markMap, bands: bandMap, flash }
+  }, [reading, record, build, marks, bands, readText, flashLines])
 
   const baseline = baselineQ.data ? baselineQ.data.text : baselineQ.data === null ? null : undefined
   const hasBaseline = baseline !== null && baseline !== undefined
@@ -645,6 +673,7 @@ export default function DocEditor() {
           bands={bands}
           mentions={mentions}
           onCursorLine={reportLine}
+          flashes={flashLines}
         />
         {reading && (
           <MarkdownView

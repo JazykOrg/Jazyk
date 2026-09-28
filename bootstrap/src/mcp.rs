@@ -73,6 +73,10 @@ pub struct BridgeFlags {
     // The bridge already sent the batch's instructions and package as the session
     // prompt; begin_goals answers with a short ack instead of repeating them.
     pub packaged: bool,
+    // A reader serving, for a small model in a tab: the read tools alone and a short
+    // instruction block, so the prompt fits a small window
+    // (docs/frontends/wasm.md#chat).
+    pub reader: bool,
 }
 
 #[derive(Default)]
@@ -217,6 +221,22 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
          estimate).",
     );
     s
+}
+
+// The reader serving's instructions (docs/frontends/wasm.md#chat): a small model
+// answers questions over the graph's read tools, so the block names the project, the
+// tools, and nothing it cannot do. The trailer about write tools and batches would
+// only offer what the serving does not carry.
+pub fn reader_instructions() -> String {
+    String::from(
+        "This server is one jazyk project's semantic graph: entities and requirements \
+         reconciled from prose documentation. You are in a conversation about this project \
+         and can only read it. Answer questions from the graph: search finds entities and \
+         requirements by words, get_entity and read_section return one, load and expand \
+         bring a scope into context, diagnostics lists the open judgments. Look before you \
+         answer, then answer in prose, briefly. No tool here changes the documents or the \
+         graph.",
+    )
 }
 
 impl McpServer {
@@ -383,6 +403,11 @@ impl McpServer {
     }
 
     fn enabled_tools(&self) -> Vec<&'static str> {
+        // The reader serving carries the read tools and nothing else, not even
+        // report_feedback: every schema travels with every call of a small model.
+        if self.bridge.reader {
+            return crate::tools::READ_TOOLS.to_vec();
+        }
         let mut v: Vec<&'static str> = Vec::new();
         for m in &self.modes {
             let set = match m.as_str() {
@@ -1550,7 +1575,7 @@ impl McpServer {
                     "protocolVersion": requested,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": instructions_for(&self.modes, self.write, self.initialized())
+                    "instructions": if self.bridge.reader { reader_instructions() } else { instructions_for(&self.modes, self.write, self.initialized()) }
                 }))
             }
             "ping" => Ok(json!({})),
@@ -2859,6 +2884,42 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or_default().to_string())
             .collect()
+    }
+
+    // A reader conversation (a small model in a tab) gets the read tools alone and
+    // the short instruction block; a write asked of it is refused.
+    // Mirrors docs/frontends/wasm.md#chat.
+    #[test]
+    fn reader_serving_lists_only_the_read_tools() {
+        let dir = bare_dir("reader");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let s = McpServer::with_bridge(
+            project,
+            out,
+            vec!["graph".to_string()],
+            false,
+            BridgeFlags {
+                ephemeral: true,
+                reader: true,
+                ..Default::default()
+            },
+        );
+        let init = s
+            .handle("initialize", &json!({"protocolVersion": "2024-11-05"}))
+            .unwrap();
+        let instructions = init["instructions"].as_str().unwrap();
+        assert!(instructions.contains("can only read it"), "{}", instructions);
+        assert!(!instructions.contains("The write tools are"), "{}", instructions);
+        assert_eq!(
+            tool_names(&s),
+            crate::tools::READ_TOOLS.iter().map(|t| t.to_string()).collect::<Vec<_>>()
+        );
+        let r = s.handle(
+            "tools/call",
+            &json!({"name": "upsert_entity", "arguments": {"name": "X", "stereotype": "system"}}),
+        );
+        assert!(r.is_err() || r.unwrap()["isError"].as_bool().unwrap_or(false));
     }
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {

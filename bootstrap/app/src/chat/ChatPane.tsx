@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { get, post, verdictText } from '../lib/api'
 import { useApp, type ChatUpdateRow, type TurnProgress } from '../lib/store'
-import { needsPageModel, useCapabilities } from '../lib/capabilities'
+import { needsPageModel, useCapabilities, type Capabilities } from '../lib/capabilities'
 import ModelSourcePanel from '../components/ModelSourcePanel'
 import { toolWords, workingLine } from '../lib/working'
 import { useWords, verdictWords } from '../lib/words'
@@ -270,6 +270,12 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
   return rows.slice(-500)
 }
 
+// A new conversation. A tab passes its model's tier: a reader-tier model gets the
+// read tools alone and a short instruction block (docs/frontends/wasm.md#chat).
+function openChat(caps: Capabilities | undefined) {
+  return post<{ id: string }>(`/api/chat/sessions`, caps?.modelTier === 'reader' ? { tier: 'reader' } : undefined)
+}
+
 export default function ChatPane() {
   const open = useApp((a) => a.chatOpen)
   const setOpen = useApp((a) => a.setChatOpen)
@@ -406,7 +412,7 @@ function OpenPane({ close }: { close: () => void }) {
   const chatRunning = chatId ? sessions[chatId]?.state === 'running' : false
 
   const newChat = async () => {
-    const r = await post<{ id: string }>(`/api/chat/sessions`)
+    const r = await openChat(caps.data)
     select(r.id)
   }
 
@@ -591,6 +597,7 @@ function ChatView({ id }: { id: string }) {
 // creates one and selects it, so the first question needs no button first; while
 // a turn runs Send reads Stop (docs/frontends/gui.md#chat).
 function PromptBox({ sessionId }: { sessionId: string | null }) {
+  const caps = useCapabilities()
   const context = useSelectionContext()
   const select = useApp((a) => a.selectChat)
   const info = useApp((a) => (sessionId ? a.chatSessions[sessionId] : undefined))
@@ -612,7 +619,7 @@ function PromptBox({ sessionId }: { sessionId: string | null }) {
     try {
       let id = sessionId
       if (!id) {
-        const r = await post<{ id: string }>(`/api/chat/sessions`)
+        const r = await openChat(caps.data)
         id = r.id
         select(id)
       }

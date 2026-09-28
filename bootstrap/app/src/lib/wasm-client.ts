@@ -24,6 +24,9 @@ export interface ModelHost {
   available(): boolean
   // Whether the page can load a model on request (docs/frontends/wasm.md#the-demo).
   loadable?(): boolean
+  // The loaded model's tier (docs/frontends/wasm.md#model-sources), null while none
+  // is loaded. A host that says nothing counts as sync.
+  tier?(): 'sync' | 'chat' | 'reader' | null
 }
 
 // Where the open project's changes go (docs/frontends/gui.md#backends-and-capabilities).
@@ -194,20 +197,27 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
 
   // What this page can do, read fresh on every ask: the model finishes loading
   // behind the app, and the project open decides the persistence.
-  const capabilities = (): Capabilities => ({
-    backend: !project || project.demo ? 'demo' : 'wasm',
-    projects: 'bundled',
-    docs: 'write',
-    events: 'pushed',
-    lsp: false,
-    jobs: opts.model.available() ? ['compile'] : [],
-    // The chat loop runs in the worker; `model` says whether it has a model to call
-    // (docs/frontends/wasm.md#chat).
-    agent: 'embedded',
-    model: opts.model.available() ? 'in-page' : opts.model.loadable?.() ? 'loadable' : 'none',
-    rendering: 'none',
-    persistence: project?.persistence ?? opts.persistence?.() ?? 'memory',
-  })
+  const capabilities = (): Capabilities => {
+    const ready = opts.model.available()
+    const modelTier = ready ? (opts.model.tier?.() ?? 'sync') : null
+    return {
+      backend: !project || project.demo ? 'demo' : 'wasm',
+      projects: 'bundled',
+      docs: 'write',
+      events: 'pushed',
+      lsp: false,
+      // A sync needs a model of the sync tier (docs/frontends/wasm.md#model-sources);
+      // chat runs on any.
+      jobs: modelTier === 'sync' ? ['compile'] : [],
+      // The chat loop runs in the worker; `model` says whether it has a model to call
+      // (docs/frontends/wasm.md#chat).
+      agent: 'embedded',
+      model: ready ? 'in-page' : opts.model.loadable?.() ? 'loadable' : 'none',
+      modelTier,
+      rendering: 'none',
+      persistence: project?.persistence ?? opts.persistence?.() ?? 'memory',
+    }
+  }
 
   // The prompt request whose turn the worker is running, until it answers.
   let turn: Promise<void> | null = null

@@ -14,8 +14,8 @@ import { HashRouter } from 'react-router'
 import App from './App'
 import { setBackend } from './lib/backend'
 import { startWasmBackend, crossOriginIsolated_, type ModelHost, type WasmProject } from './lib/wasm-client'
-import { loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
-import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, rememberLoaded, wasLoaded, webllmModelOf, type ModelSource } from './lib/model-source'
+import { arrivalModel, downloadedModels, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
+import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, rememberLoaded, sourceTier, wasLoaded, webllmModelOf, writeSource, type ModelSource } from './lib/model-source'
 import { applyTheme, useApp } from './lib/store'
 import { pushWireEvent, refreshAfterWrite } from './lib/events'
 import { probeStorage } from './lib/browser-store'
@@ -103,6 +103,9 @@ const model: ModelHost = {
   available: () => host.available(),
   // The source can run here, and nothing is loaded or loading yet.
   loadable: () => !reasonFor(readSource()) && !host.available(),
+  // The loaded model's tier (docs/frontends/wasm.md#model-sources): an endpoint
+  // counts as sync, the built-in model as reader, a downloaded model as its size says.
+  tier: () => (host.available() ? sourceTier(readSource()) : null),
 }
 
 // Loads the chosen source, its progress on the console and in the Sync sheet.
@@ -212,8 +215,25 @@ async function boot() {
   // The Sync sheet and Settings choose the source; the choice is already stored.
   window.addEventListener('jazyk:model-source-changed', applySource)
   applySource()
-  // A source loaded here before loads again without asking; the weights are cached.
-  if (wasLoaded(readSource())) loadModelOnRequest()
+  void arrive()
+}
+
+// The model on arrival (docs/frontends/wasm.md#model-sources). With the downloaded
+// source, the default when none was chosen, the strongest downloaded model loads
+// without asking, the chosen one kept when it is still downloaded; with nothing
+// downloaded the page offers the default and waits to be asked. The built-in model
+// loads again when it was loaded here before.
+async function arrive() {
+  const s = readSource()
+  if (s.kind !== 'webllm') {
+    if (wasLoaded(s)) loadModelOnRequest()
+    return
+  }
+  if (reasonFor(s)) return
+  const pick = arrivalModel(s.webllmModel, await downloadedModels())
+  if (!pick) return
+  if (pick !== s.webllmModel) writeSource({ ...s, webllmModel: pick })
+  loadModelOnRequest()
 }
 
 boot().catch((e) => {

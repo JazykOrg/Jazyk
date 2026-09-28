@@ -5,6 +5,7 @@
 // server set.
 import { useQuery } from '@tanstack/react-query'
 import { get } from './api'
+import type { ModelTier } from './webllm'
 
 export type JobKind = 'compile' | 'gen' | 'verify' | 'audit' | 'decompile' | 'benchmark'
 
@@ -17,6 +18,9 @@ export interface Capabilities {
   jobs: JobKind[]
   agent: 'embedded' | 'external' | 'none'
   model: 'configured' | 'in-page' | 'loadable' | 'needs-key' | 'none'
+  // The loaded model's tier (docs/frontends/wasm.md#model-sources), null with no
+  // model. An endpoint and the server's model count as sync.
+  modelTier?: ModelTier | null
   rendering: 'server' | 'none'
   persistence: 'disk' | 'folder' | 'browser' | 'memory'
   dev?: boolean
@@ -31,6 +35,7 @@ export const SERVER_CAPABILITIES: Capabilities = {
   jobs: ['compile', 'gen', 'verify', 'audit', 'decompile', 'benchmark'],
   agent: 'embedded',
   model: 'configured',
+  modelTier: 'sync',
   rendering: 'server',
   persistence: 'disk',
 }
@@ -57,6 +62,18 @@ export function needsPageModel(caps: Capabilities | undefined): boolean {
   return !!caps && caps.backend !== 'server' && caps.model !== 'in-page'
 }
 
+// A sync needs a model of the sync tier: with none, or one below the tier, the Sync
+// sheet shows the chooser in place of the run (docs/frontends/gui.md#the-action-button).
+// Chat runs on any tier.
+export function needsSyncModel(caps: Capabilities | undefined): boolean {
+  return needsPageModel(caps) || (!!caps && caps.backend !== 'server' && caps.modelTier !== 'sync')
+}
+
+// The loaded model is below the sync tier.
+export function belowSyncTier(caps: Capabilities | undefined): boolean {
+  return !!caps && caps.model === 'in-page' && !!caps.modelTier && caps.modelTier !== 'sync'
+}
+
 // Whether the backend runs a job kind: a page hides the action that would start it
 // otherwise (docs/frontends/wasm.md#what-a-tab-does-not-do). Unknown yet reads as yes.
 export function useCanRun(): (need: JobKind) => boolean {
@@ -75,6 +92,7 @@ export function whyNot(caps: Capabilities | undefined, need: JobKind | 'agent' |
   }
   // A tab that can load its model offers the load in the Sync sheet.
   if (need === 'compile' && caps.model === 'loadable') return 'Sync runs a model in this browser. Load it first.'
+  if (need === 'compile' && belowSyncTier(caps)) return 'A sync needs a model of the sync tier (7B and up) or an endpoint.'
   if (!caps.jobs.includes(need)) {
     return `This backend cannot run ${need === 'compile' ? 'a sync' : need === 'gen' ? 'a build' : need === 'verify' || need === 'audit' ? 'a review' : need === 'decompile' ? 'Document' : need}.`
   }

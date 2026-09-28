@@ -8,13 +8,13 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { post, put } from '../lib/api'
-import { needsPageModel, useCapabilities, whyNot, type JobKind } from '../lib/capabilities'
+import { belowSyncTier, needsSyncModel, useCapabilities, whyNot, type JobKind } from '../lib/capabilities'
 import { useInbox } from '../lib/product'
 import { useDocs, useGenPending, useMatrix, useStatus, useWorkers } from '../lib/queries'
 import { useApp, type ActionChoice } from '../lib/store'
 import ModelSourcePanel from '../components/ModelSourcePanel'
-import { useModelSource } from '../lib/model-source'
-import { DEFAULT_MODEL } from '../lib/webllm'
+import { sourceTier, useModelSource, webllmModelOf, type ModelSource } from '../lib/model-source'
+import { TIER_WORDS, modelName } from '../lib/webllm'
 import { useWords, type Words } from '../lib/words'
 
 const CHOICES: ActionChoice[] = ['compile', 'gen', 'verify']
@@ -68,10 +68,10 @@ function runningWord(kind: string, w: Words): string {
 }
 
 // Which actions the backend offers: what it runs, plus Sync in a tab whose model is
-// not ready yet, since the sheet then shows the model chooser.
+// not ready or below the sync tier, since the sheet then shows the model chooser.
 function useOffered() {
   const caps = useCapabilities()
-  return (kind: JobKind) => !caps.data || caps.data.jobs.includes(kind) || (kind === 'compile' && needsPageModel(caps.data))
+  return (kind: JobKind) => !caps.data || caps.data.jobs.includes(kind) || (kind === 'compile' && needsSyncModel(caps.data))
 }
 
 // The chosen action: the remembered choice when the backend offers it, else the
@@ -135,6 +135,10 @@ export default function ActionButton() {
   if (running) {
     label = `${runningWord(running.kind.kind, w)}${progress ? ` ${progress}` : ''}${queued > 0 ? ` (+${queued})` : ''}`
     cls += ' running'
+  } else if (chosen === 'compile' && needsSyncModel(caps.data)) {
+    // No model of the sync tier: the click shows the chooser
+    // (docs/frontends/gui.md#the-action-button).
+    label = w.sync
   } else if (chosen === 'compile' && counts.changedDocs.length === 0 && counts.openGoals === 0) {
     label = w.upToDate
     cls += ' idle'
@@ -211,6 +215,7 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
   const { running, queued } = useRunning()
   const progress = useProgress()
   const { data: workers } = useWorkers()
+  const src = useModelSource()
   const watchMode = useApp((a) => a.watchMode)
   const genMode = useApp((a) => a.genMode)
   const [busy, setBusy] = useState(false)
@@ -282,11 +287,16 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
             </button>
           </div>
         </>
-      ) : kind === 'compile' && needsPageModel(caps.data) ? (
+      ) : kind === 'compile' && needsSyncModel(caps.data) ? (
         <>
           <p className="why" style={{ margin: '2px 0' }}>
             {what}
           </p>
+          {belowSyncTier(caps.data) && (
+            <p className="why ws-tier" style={{ margin: '2px 0' }}>
+              A sync needs a model of the sync tier (7B and up) or an endpoint; {loadedName(src)} answers questions.
+            </p>
+          )}
           <ModelSourcePanel />
         </>
       ) : (
@@ -338,13 +348,18 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
   )
 }
 
-// The browser's model, once ready, and where to change it.
+// The name of the model a source gives, in product words.
+function loadedName(src: ModelSource): string {
+  return src.kind === 'endpoint' ? (src.model ?? 'the endpoint') : src.kind === 'chrome' ? "the browser's built-in model" : modelName(webllmModelOf(src))
+}
+
+// The browser's model, once ready, with its tier and where to change it.
 function ModelLine() {
   const src = useModelSource()
-  const name = src.kind === 'endpoint' ? src.model : src.kind === 'chrome' ? "the browser's built-in model" : DEFAULT_MODEL
+  const tier = sourceTier(src)
   return (
     <p className="why" style={{ margin: '2px 0' }}>
-      Model: {name}. <Link to="/settings">Change</Link>
+      Model: {loadedName(src)}, {tier} tier ({TIER_WORDS[tier]}). <Link to="/settings">Change</Link>
     </p>
   )
 }

@@ -391,6 +391,7 @@ impl AcpRunner {
                 build_token: self.build_token.lock().unwrap().clone(),
                 serve_files: mode == "generate" && agent.serve_files,
                 edit_sink: None,
+                reader: false,
             },
         }
     }

@@ -26,6 +26,9 @@ struct Chat {
     // are taken out for the length of a turn.
     history: Vec<Value>,
     serving: Option<(McpServer, Vec<GenericTool>, String)>,
+    // A reader conversation, for a model of the `reader` tier: the `graph` serving
+    // with the read tools alone (docs/frontends/wasm.md#chat).
+    reader: bool,
 }
 
 #[derive(Default)]
@@ -84,7 +87,10 @@ fn set_state(id: &str, state: &str) {
     publish_sessions();
 }
 
-pub fn create() -> Value {
+// The page passes the loaded model's tier: `{"tier": "reader"}` opens a reader
+// conversation (docs/frontends/wasm.md#chat).
+pub fn create(body: &Value) -> Value {
+    let reader = body["tier"].as_str() == Some("reader");
     let id = BOOK.with(|b| {
         let mut b = b.borrow_mut();
         b.seq += 1;
@@ -101,6 +107,7 @@ pub fn create() -> Value {
                 next_n: 0,
                 history: Vec::new(),
                 serving: None,
+                reader,
             },
         );
         id
@@ -130,18 +137,21 @@ pub fn get(id: &str) -> Option<Value> {
 }
 
 // The chat serving for one conversation, as a native chat session gets it: `chat`
-// mode, ephemeral, no build token. Answers the serving, its tools in the shape the
-// loop hands the model, and its instructions.
-fn open_serving() -> Result<(McpServer, Vec<GenericTool>, String), String> {
+// mode, ephemeral, no build token. A reader conversation gets the `graph` serving
+// with the read tools alone and a short instruction block instead, so the prompt
+// fits a small model's window. Answers the serving, its tools in the shape the loop
+// hands the model, and its instructions.
+fn open_serving(reader: bool) -> Result<(McpServer, Vec<GenericTool>, String), String> {
     let project = crate::project::Project::load(&super::root());
     let out = project.out.clone();
     let server = McpServer::with_bridge(
         project,
         out,
-        vec!["chat".to_string()],
+        vec![if reader { "graph" } else { "chat" }.to_string()],
         false,
         crate::mcp::BridgeFlags {
             ephemeral: true,
+            reader,
             ..Default::default()
         },
     );
@@ -241,12 +251,12 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let taken = BOOK.with(|b| {
         let mut b = b.borrow_mut();
         let c = b.chats.get_mut(id)?;
-        Some((c.serving.take(), std::mem::take(&mut c.history)))
+        Some((c.serving.take(), std::mem::take(&mut c.history), c.reader))
     });
-    let (serving, mut history) = taken.unwrap_or((None, Vec::new()));
+    let (serving, mut history, reader) = taken.unwrap_or((None, Vec::new(), false));
     let (server, tools, instructions) = match serving {
         Some(s) => s,
-        None => match open_serving() {
+        None => match open_serving(reader) {
             Ok(s) => s,
             Err(e) => {
                 BOOK.with(|b| {

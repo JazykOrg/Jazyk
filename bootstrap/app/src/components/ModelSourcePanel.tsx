@@ -3,9 +3,9 @@
 // kept in this browser's local storage only.
 import { useEffect, useState } from 'react'
 import { useCapabilities } from '../lib/capabilities'
-import { builtInAvailability, endpointReady, useModelSource, webllmModelOf, writeSource, type SourceKind } from '../lib/model-source'
+import { builtInAvailability, endpointReady, sourceTier, useModelSource, webllmModelOf, writeSource, type SourceKind } from '../lib/model-source'
 import { useApp } from '../lib/store'
-import { MODEL_CHOICES, modelName, webgpuAvailable } from '../lib/webllm'
+import { MODEL_CHOICES, TIER_WORDS, downloadedModels, modelName, tier, webgpuAvailable } from '../lib/webllm'
 
 export default function ModelSourcePanel() {
   const src = useModelSource()
@@ -15,8 +15,12 @@ export default function ModelSourcePanel() {
   const [baseUrl, setBaseUrl] = useState(src.baseUrl ?? '')
   const [model, setModel] = useState(src.model ?? '')
   const [apiKey, setApiKey] = useState(src.apiKey ?? '')
+  // The models already in this browser's cache, marked in the list
+  // (docs/frontends/wasm.md#model-sources).
+  const [downloaded, setDownloaded] = useState<Set<string>>(() => new Set())
   useEffect(() => {
     void builtInAvailability().then(setBuiltIn)
+    if (webgpuAvailable()) void downloadedModels().then(setDownloaded)
   }, [])
 
   const ready = caps.data?.model === 'in-page'
@@ -32,9 +36,9 @@ export default function ModelSourcePanel() {
       : builtIn === 'unavailable'
         ? 'This browser has it, but not on this device.'
         : builtIn === 'downloadable' || builtIn === 'downloading'
-          ? 'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small, so a large sync may not fit.'
+          ? 'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small: questions only, no sync.'
           : builtIn === 'available'
-            ? 'Ready on this device. Its context is small, so a large sync may not fit.'
+            ? 'Ready on this device. Its context is small: questions only, no sync.'
             : 'Checking…'
 
   const option = (kind: SourceKind, title: string, note: string, disabled: boolean) => (
@@ -65,12 +69,16 @@ export default function ModelSourcePanel() {
             <select value={chosen.id} onChange={(e) => writeSource({ ...src, webllmModel: e.target.value })} aria-label="Downloaded model">
               {MODEL_CHOICES.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name} · {m.gb} GB
+                  {m.name} · {m.gb} GB · {TIER_WORDS[tier(m.params)]}
+                  {downloaded.has(m.id) ? ' · downloaded' : ''}
                 </option>
               ))}
             </select>
           </label>
-          <p className="muted">A bigger model syncs better and downloads longer; the 7B and 8B tier needs several gigabytes free beside the weights.</p>
+          <p className="muted">
+            Strongest first. 7B and up syncs and chats; 3B chats and syncs rough; under 3B answers questions only. A bigger model downloads longer, and 7B and up needs several
+            gigabytes free beside the weights.
+          </p>
         </div>
       )}
       {option('chrome', "The browser's built-in model", builtInNote, builtIn === 'absent' || builtIn === 'unavailable')}
@@ -101,7 +109,11 @@ export default function ModelSourcePanel() {
 
       {ready && (
         <p className="msrc-status v-ok">
-          Ready: {src.kind === 'endpoint' ? `${src.model} at ${src.baseUrl}` : src.kind === 'chrome' ? "the browser's built-in model" : modelName(webllmModelOf(src))}.
+          Ready:{' '}
+          {src.kind === 'endpoint'
+            ? `${src.model} at ${src.baseUrl}`
+            : `${src.kind === 'chrome' ? "the browser's built-in model" : modelName(webllmModelOf(src))}, ${sourceTier(src)} tier (${TIER_WORDS[sourceTier(src)]})`}
+          .
         </p>
       )}
       {load && <p className={`msrc-status${load.failed ? ' v-bad' : ''}`}>{load.text}</p>}

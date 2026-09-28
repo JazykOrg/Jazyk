@@ -776,48 +776,37 @@ URL the previous layout served (`/files/*`, `/graph`, `/board`, `/work`, `/journ
 
 ### The action button
 
-One split button in the top bar. Its main part runs one action and its label is
-that action with the state: `Build · 3 documents changed`, `Generate · 4 entities`,
-`Review · 12 tests`, `Up to date`. Its arrow opens the list of actions to choose
-from, one line each with its state, and the choice becomes the main part:
+One split button in the top bar.
 
-- `Build`: the model builds from the documents (compile). Chosen by default while
-  documents changed.
-- `Generate`: the product is generated from the documents (bind and generate).
-  Chosen by default when nothing changed and entities wait to be generated.
-- `Review`: the tests run and the statuses refresh (verify).
-- `Settings…`, last.
-
-Only what the backend can run is listed ([capabilities](#backends-and-capabilities)):
-a tab lists `Build` alone. With no model ready, or a `reader`-tier model
-([model sources](./wasm.md#model-sources)), its main part reads `Build` and the
-click shows the [model chooser](./wasm.md#model-sources) in the action sheet in
-place of the run, saying a build needs a model of 3B or more, or an endpoint. A
-`chat`-tier model builds: the sheet shows the run, with one sentence above `Run`
-saying the model is small and its results rough, and a `Choose a stronger model`
-link that reveals the chooser. No line explains what a backend cannot do; the
-[Developer toggle](#developer-toggle) shows the full list with the reasons.
-
-Clicking the main part opens the action sheet for the chosen action:
-
-- What will run, in product words: the documents, the work counts, who runs it (the
-  built-in runner or the attached agent, by the
-  [dispatch](../compiler/control-plane.md#dispatch) preference), and an estimate from
-  the last build's cost (`status.yaml` `costs`).
-- `Run`. In on-request mode `Run` records the [release](../compiler/control-plane.md#modes-and-releases)
-  and starts the job, or wakes the attached agent. When the preference is an agent
-  and none is registered, the sheet says so and offers the built-in run.
-- While a job runs the main part shows its progress (`Building 2 of 5`, `Generating 1
-  of 4`) and pulses, the sheet offers `Cancel`, and the job's build thread opens in
-  the [chat column](#chat), so the work is visible the moment it starts, in a tab as
-  on a server.
+- The main part runs at once, no sheet: it records the
+  [release](../compiler/control-plane.md#modes-and-releases) in on-request mode and
+  starts the job (or wakes the attached agent, by the
+  [dispatch](../compiler/control-plane.md#dispatch) preference). Its label is the
+  action and its state: `Build · 3 changed`, `Generate · 4 entities`,
+  `Review · 12 tests`, `Up to date`. While a job runs it shows the progress
+  (`Building 2 of 5`) and pulses, and the job's build thread opens in the
+  [chat column](#chat); a click then opens that thread. Stopping is the thread's
+  `Stop`.
+- With no model ready in a tab, or a `reader`-tier model
+  ([model sources](./wasm.md#model-sources)), the main part opens the arrow's
+  popover instead of running, since nothing could run.
+- The arrow opens a popover, closed by a click anywhere else, with no buttons of
+  its own. In a tab it holds the [model chooser](./wasm.md#model-sources) and
+  nothing more: choosing a model loads it. On a server it lists the actions the
+  backend runs (`Build`, `Generate`, `Review`), one line each with its state; the
+  choice becomes the main part. `Build` is the default while documents changed,
+  `Generate` when nothing changed and entities wait.
+- Explanations are an info icon with a tooltip, never a sentence in the way: a
+  `chat`-tier model shows the icon beside its name ("a small model: builds run,
+  results are rough"), the estimate from the last build's cost (`status.yaml`
+  `costs`) is the tooltip on the main part.
 
 The mode switches (Build on save or on request; Generate after build or on request) are
 the [workflow modes](#workflow-modes): control-plane state, never the app's. They
-live in Settings under Workflow, and in Developer mode also in the sheet. Document
-(decompile), which takes an area from the [not described](#not-described) list and
-records a decompile release, and `Preview prompt` (the [preview pane](#preview) on
-the next batch) are Developer mode entries of the list.
+live in Settings under Workflow. The [Developer toggle](#developer-toggle) adds to the
+popover what the backend cannot run with the reason, Document (decompile) with its
+area from the [not described](#not-described) list, `Preview prompt` (the
+[preview pane](#preview) on the next batch), and the mode switches.
 
 ## Lenses
 
@@ -845,9 +834,9 @@ its own:
   Everything goes through the documents API.
 - Each document row carries its problem badge (the highest open severity, colored),
   the drift dot when it is stale against the model, the pending mark when it was
-  edited since its last build, and the progress mark while a build works on it
-  (dimmed and waiting, then running with the section reached, then its result,
-  fading after a few seconds and held under the pointer).
+  edited since its last build, and while a build works on it a small icon (waiting,
+  running, read, not read yet) whose tooltip says what happened, fading a few
+  seconds after the build and held under the pointer. No sentence sits in the tree.
 - The product's files and the generated pages are trees of the same kind under
   their own heads.
 
@@ -1138,6 +1127,24 @@ thread:
   as short lines in product words, the committed changes as collapsible cards, and
   the state line at the end. In Developer mode a board card opens the thread holding
   its goal.
+- A batch that fails says why, in its own line under the batch, never `nothing
+  committed` alone: the model's last words, the tool call a gate refused and the
+  rule it broke, or the stop (the round budget, the model's error, a context too
+  small), then what that means (`README.md › Hello world was not read: the model
+  never finished; it will be retried on the next build`). A goal left for later
+  says so in words, with its id only in Developer mode.
+
+The transcript reads top to bottom, left aligned, like a conversation: messages,
+the model's reasoning, tool calls, and status lines all start at the left edge.
+
+- Reasoning shows as it streams: the model's thinking (a reasoning channel, or the
+  text a model writes before its tool calls) renders as muted lines, collapsed to
+  its first line once the turn moves on, a click opening it. `Thinking…` is only
+  the placeholder until the first reasoning arrives.
+- Every thread closes: a `×` on its row (on hover, and always on the selected one)
+  removes a conversation (`DELETE /api/chat/sessions/{id}`, after asking when it
+  has messages) and hides a build thread from the list until the next job.
+- `Follow in editor` is on by default.
 
 The column's behaviors:
 
@@ -1298,11 +1305,11 @@ from the graph's mentions, quotes, and section tree.
 - The read state renders beside the text from the section tree: Read, Informational,
   and Not read yet sections are visually distinct.
 - A build in progress is visible in the text. When a session takes this document's
-  sections, the sections in its batch are banded as queued, and the section the
-  session reached ([`section` events](../compiler/sessions.md#trace-events)) is banded
-  as running. When the session ends, the bands become its result, green for committed
-  and red for parked or failed, and clear a few seconds later; hovering a band holds
-  it.
+  sections, a thin bar in the gutter marks the sections in its batch as queued and
+  the section the session reached ([`section` events](../compiler/sessions.md#trace-events))
+  as running. When the session ends the bar takes its result, green for read and
+  amber for not read yet, with a tooltip saying why, and fades after a few seconds;
+  hovering holds it. The text itself is never tinted.
 - A dual write shows in the text as it lands: the accepted rewrite replaces the
   sentence in place, the document does not re-dirty, and the gutter shows no change
   against the baseline for it.

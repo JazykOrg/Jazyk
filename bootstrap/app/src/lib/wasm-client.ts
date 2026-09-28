@@ -7,7 +7,7 @@
 
 import type { Job, TraceEvent } from './api'
 import type { Backend, BackendReply } from './backend'
-import type { Capabilities } from './capabilities'
+import { tabJobs, type Capabilities } from './capabilities'
 import type { FsSink } from './browser-store'
 
 // The shared control block the worker blocks on: [0] state, [1] reply length,
@@ -25,8 +25,8 @@ export interface ModelHost {
   // Whether the page can load a model on request (docs/frontends/wasm.md#the-demo).
   loadable?(): boolean
   // The loaded model's tier (docs/frontends/wasm.md#model-sources), null while none
-  // is loaded. A host that says nothing counts as sync.
-  tier?(): 'sync' | 'chat' | 'reader' | null
+  // is loaded. A host that says nothing counts as build.
+  tier?(): 'build' | 'chat' | 'reader' | null
 }
 
 // Where the open project's changes go (docs/frontends/gui.md#backends-and-capabilities).
@@ -199,16 +199,16 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
   // behind the app, and the project open decides the persistence.
   const capabilities = (): Capabilities => {
     const ready = opts.model.available()
-    const modelTier = ready ? (opts.model.tier?.() ?? 'sync') : null
+    const modelTier = ready ? (opts.model.tier?.() ?? 'build') : null
     return {
       backend: !project || project.demo ? 'demo' : 'wasm',
       projects: 'bundled',
       docs: 'write',
       events: 'pushed',
       lsp: false,
-      // A sync needs a model of the sync tier (docs/frontends/wasm.md#model-sources);
-      // chat runs on any.
-      jobs: modelTier === 'sync' ? ['compile'] : [],
+      // A build runs on a model of the build or chat tier, the chat tier's results
+      // rough (docs/frontends/wasm.md#model-sources); chat runs on any.
+      jobs: tabJobs(modelTier),
       // The chat loop runs in the worker; `model` says whether it has a model to call
       // (docs/frontends/wasm.md#chat).
       agent: 'embedded',

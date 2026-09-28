@@ -115,6 +115,17 @@ struct OpenBatch {
 const LIFECYCLE: [&str; 4] = ["goals", "begin_goals", "done", "abandon_goals"];
 
 fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String {
+    instructions_in(modes, write, initialized, cfg!(target_arch = "wasm32"))
+}
+
+// A chat in a tab has no build path of its own: the page's Build button runs builds,
+// so a model asked to build says so instead of asking for prose
+// (docs/frontends/wasm.md#chat).
+const TAB_BUILD_NOTE: &str = "You cannot start a build: the Build button at the top of the \
+     page builds the documents into the graph. When asked to build, say so. ";
+
+// The instructions for a serving, `tab` saying it runs in a browser tab.
+fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) -> String {
     let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and requirements \
          reconciled from prose documentation, consumed by generation and verification. ",
@@ -192,14 +203,19 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
                  there is no init_project tool and nothing to scaffold. ",
             );
             // A tab serves the compilation lifecycle alone (docs/frontends/wasm.md#chat).
-            s.push_str(if cfg!(target_arch = "wasm32") {
-                "The compilation lifecycle is available for explicit requests. This serving runs in \
-                 a browser tab, which has no shell: binding, generation, and verification are not \
-                 served here. "
+            if tab {
+                s.push_str(
+                    "The compilation lifecycle is available for explicit requests. This serving \
+                     runs in a browser tab, which has no shell: binding, generation, and \
+                     verification are not served here. ",
+                );
+                s.push_str(TAB_BUILD_NOTE);
             } else {
-                "The compilation, binding, generation, and verification lifecycles are available for \
-                 explicit requests. "
-            });
+                s.push_str(
+                    "The compilation, binding, generation, and verification lifecycles are \
+                     available for explicit requests. ",
+                );
+            }
         }
     }
     if modes.iter().any(|m| m == "graph") && write {
@@ -228,15 +244,17 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
 // tools, and nothing it cannot do. The trailer about write tools and batches would
 // only offer what the serving does not carry.
 pub fn reader_instructions() -> String {
-    String::from(
+    let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and requirements \
          reconciled from prose documentation. You are in a conversation about this project \
          and can only read it. Answer questions from the graph: search finds entities and \
          requirements by words, get_entity and read_section return one, load and expand \
          bring a scope into context, diagnostics lists the open judgments. Look before you \
          answer, then answer in prose, briefly. No tool here changes the documents or the \
-         graph.",
-    )
+         graph. ",
+    );
+    s.push_str(TAB_BUILD_NOTE.trim_end());
+    s
 }
 
 impl McpServer {
@@ -3408,6 +3426,13 @@ mod tests {
         );
 
         assert!(instructions_for(&["chat".to_string()], false, false).contains("NO PROJECT HERE"));
+        // A tab's chat and reader say builds run from the Build button, since neither
+        // can start one (docs/frontends/wasm.md#chat); a native chat has its own path.
+        let note = "You cannot start a build: the Build button at the top of the page builds \
+                    the documents into the graph. When asked to build, say so.";
+        assert!(instructions_in(&["chat".to_string()], false, true, true).contains(note));
+        assert!(reader_instructions().contains(note));
+        assert!(!instructions_in(&["chat".to_string()], false, true, false).contains(note));
         assert!(
             instructions_for(&["chat".to_string()], false, true).contains("already initialized")
         );

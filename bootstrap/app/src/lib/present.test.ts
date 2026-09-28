@@ -7,7 +7,7 @@ describe('statusWord', () => {
     ['verified', 'Passing', 'v-ok'],
     ['failing', 'Failing', 'v-bad'],
     ['partial', 'Partly passing', 'v-bad'],
-    ['unimplemented', 'Not built yet', 'v-none'],
+    ['unimplemented', 'Not generated yet', 'v-none'],
     ['stale-requirement', 'Outdated: the requirement changed', 'v-stale'],
     ['stale-test', 'Needs a rerun', 'v-stale'],
     ['stale-code', 'Needs a rerun', 'v-stale'],

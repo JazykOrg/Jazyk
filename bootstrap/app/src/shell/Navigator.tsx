@@ -65,7 +65,7 @@ function ProductNav() {
         <Row to="/product/not-described" label={w.notDescribed} sub={workers.data ? (workers.data.unclaimed ?? 0) : '…'} />
         <Row to="/product/generated" label="Generated docs" />
         <Row to="/product/form" label={w.productForm} />
-        <Row to="/product/build" label="To build" sub={pending.data ? pending.data.pending.length : '…'} />
+        <Row to="/product/build" label="To generate" sub={pending.data ? pending.data.pending.length : '…'} />
       </div>
       {(loc.pathname.startsWith('/product/files') || loc.pathname.startsWith('/product/generated')) && (
         <Explorer sections={loc.pathname.startsWith('/product/files') ? ['deliverable'] : ['generated']} />
@@ -103,10 +103,10 @@ function HistoryNav() {
     <>
       <div className="ws-nav-head">{w.history}</div>
       <div className="ws-nav-list">
-        <Row to="/history" end label="All syncs" />
+        <Row to="/history" end label="All builds" />
         {entries.map((e) => (
           <NavLink key={e.generation} to={`/history/${e.generation}`} className={({ isActive }) => `mono${isActive ? ' active' : ''}`}>
-            <span className={human(e.kind) ? 'v-ok' : ''}>{w.syncNumber(e.generation)}</span>
+            <span className={human(e.kind) ? 'v-ok' : ''}>{w.buildNumber(e.generation)}</span>
             <span className="sub">{e.kind ?? 'session'}</span>
           </NavLink>
         ))}

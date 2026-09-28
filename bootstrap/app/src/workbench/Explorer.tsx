@@ -104,7 +104,7 @@ export default function Explorer({ sections = ['docs', 'deliverable', 'generated
   const turns = useApp((a) => a.turns)
   const turnHold = useApp((a) => a.turnHold)
   const projectKey = treeProjectKey(projectQ.data?.root ?? 'project')
-  // Edited since its last sync: the pending mark (docs/frontends/gui.md#docs).
+  // Edited since its last build: the pending mark (docs/frontends/gui.md#docs).
   const pendingDocs = useMemo(() => new Set(inbox.data?.pending.docs ?? []), [inbox.data])
   const docsGlob = projectQ.data?.docsGlob ?? NO_GLOB
 
@@ -204,7 +204,7 @@ export default function Explorer({ sections = ['docs', 'deliverable', 'generated
                   <GoalBadge doc={f.item} />
                   {f.item.stale && <span className="dot-stale" title="stale against the model" />}
                   {pendingDocs.has(f.path) && (
-                    <span className="ide-pending" title="edited since the last sync">
+                    <span className="ide-pending" title="edited since the last build">
                       ●
                     </span>
                   )}

@@ -362,8 +362,8 @@ machinery, not the quality.
 
 ### Model sources
 
-The page's model comes from one of three sources, chosen in the Sync sheet, in
-Settings, and in the chat pane while no model is ready. Syncs and [chat](#chat) use
+The page's model comes from one of three sources, chosen in the Build sheet, in
+Settings, and in the chat pane while no model is ready. Builds and [chat](#chat) use
 the same one. The choice, and an endpoint's URL, model name, and key, are kept in this
 browser's local storage under `jazyk.modelSource`. Nothing is saved on a jazyk server;
 an endpoint's key goes only to that endpoint.
@@ -374,15 +374,17 @@ an endpoint's key goes only to that endpoint.
   Hermes 2 and 3, Mistral, Phi, Gemma, SmolLM, in their 16-bit-activation builds)
   with the memory each needs, from a few hundred megabytes to about six gigabytes,
   and the default is Hermes-3-Llama-3.2-3B (2.2 GB). A bigger model is a better
-  sync and a longer download; the 7B and 8B tier needs a machine with several
+  build and a longer download; the 7B and 8B tier needs a machine with several
   gigabytes to spare beside the weights, since the 32k window's KV cache comes on
   top. The choice is kept with the source under `jazyk.modelSource`, and a model
   chosen after another was loaded loads on request like the first one.
   - Each model carries a tier, from its parameter count, so the list says what a
-    model is for: `sync` (7B and up: syncs and chat), `chat` (3B: chat and
-    questions, syncs rough), `reader` (under 3B: questions over the graph's read
-    tools only). The rule is the count, not a name, so a model the table gains
+    model is for. The rule is the count, not a name, so a model the table gains
     later sorts itself.
+    - `build`: 7B and up. Builds well, and chats.
+    - `chat`: 3B. Chats and answers questions, and builds with rough results.
+    - `reader`: under 3B. Answers questions over the graph's read tools only, and
+      does not build.
   - The list marks the models already in the browser's cache (`downloaded`, from
     WebLLM's `hasModelInCache`), so what is one click away is visible, and it is
     sorted strongest first.
@@ -390,10 +392,14 @@ an endpoint's key goes only to that endpoint.
     source chosen yet or with the downloaded source chosen; a page with nothing
     downloaded offers the default and waits to be asked. A remembered choice
     ([the demo](#the-demo)) is kept when it is still downloaded.
-  - A sync asks for a `sync` model: with a `chat` or `reader` model loaded the Sync
-    sheet says so and shows the chooser in place of `Run`, since a session's prompt
-    and the judgment it asks for are beyond a small model, and the build would only
-    park. Chat runs on any tier.
+  - A build runs on a `build` or a `chat` model. With a `chat` model loaded the
+    Build sheet offers `Run` with one sentence above it: the model is small, a
+    build runs, and its results are rough; a 7B or larger model, or an endpoint,
+    builds better. A `Choose a stronger model` link under it reveals the chooser.
+  - With a `reader` model loaded the Build sheet says a build needs a model of 3B
+    or more, or an endpoint, and shows the chooser in place of `Run`, since a
+    session's prompt and the judgment it asks for are beyond a model that size,
+    and the build would only park. Chat runs on any tier.
 - Built into the browser: Chrome's on-device model (Gemini Nano) through the Prompt
   API (`LanguageModel`). Offered only where the browser has it. "Built in" means the
   browser owns and runs it, not that it is already on the disk: Chrome fetches the
@@ -401,7 +407,7 @@ an endpoint's key goes only to that endpoint.
   (`Chrome is downloading its built-in model for the first time`) with the progress
   the browser reports; later loads are instant. Its context window is small, so it
   counts as a `reader` model (the tiers above): chat and questions over the read
-  tools, and a sync asks for a downloaded `sync` model or an endpoint. A prompt it
+  tools, and a build asks for a downloaded model of 3B or more, or an endpoint. A prompt it
   still cannot hold fails with the model's own words ("The input is too large.") and
   the remedy beside them (a downloaded model or an endpoint).
 - Your endpoint: any OpenAI-compatible chat completions URL (a local server, LocalRouter,
@@ -481,6 +487,10 @@ What the serving does in a tab:
 - No [slash commands](./acp.md#slash-commands): the catalog lives in `acp`, which is
   gated off the wasm build. The list answers empty, and a prompt that starts with
   `/` reaches the model as text.
+- The chat does not start a build. The tab's chat instructions, the `graph`
+  serving's short block included, say that builds run from the Build button at the
+  top of the page, so a model asked to build points there instead of asking for
+  prose to build from.
 - No permission requests: the loop never asks.
 - A conversation lives in the worker for the life of the tab. Nothing is written to
   the [session store](./acp.md#session-store), so a reload starts with none.
@@ -490,7 +500,7 @@ The model:
 - The descriptor says `agent: embedded` in a tab whether or not a model is ready;
   `model` says whether it is. While it is not `in-page`, the pane says the chat needs
   the model and shows the [model sources](#model-sources) chooser with its load
-  button, the one the Sync sheet shows.
+  button, the one the Build sheet shows.
 - A turn the model fails ends with the model's error in the transcript, never a hang.
   A small context window is the usual cause: the conversation, the instructions, and
   the tool schemas travel on every call, and on the browser's built-in model they may
@@ -556,14 +566,15 @@ them. So the [action button](./gui.md#the-action-button) shows the run's progres
 The model loads only when asked, because every read works without one and only a
 build or a [chat](#chat) needs it, and a first visit would otherwise download
 gigabytes to read a document. The descriptor says `model: loadable` while the chosen
-[source](#model-sources) still has to load, and the Sync sheet and the chat pane
+[source](#model-sources) still has to load, and the Build sheet and the chat pane
 offer `Load the model` with its download size; the load shows its
 progress there, and the weights cache in the browser, so a later visit loads from
 the cache. A source loaded once in this browser loads again on the next visit
 without asking (`jazyk.modelLoaded` in local storage remembers which), so a reload
 lands in a project with its model ready; choosing another source in the chooser
 stops that until the new one is loaded once. `jobs` lists `compile` once the model
-is ready. The model's code (WebLLM) is fetched with the model, not with the page.
+is ready and its tier is `build` or `chat`. The model's code (WebLLM) is fetched
+with the model, not with the page.
 
 Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
 its product folder when it has one, and its whole `.jazyk` as last built (the
@@ -660,7 +671,7 @@ download is a `.zip` of the project, a refused write grant is said in the top ba
 a requirement page reads its criteria in words and its ids only in Developer mode,
 every diagram of every demo has its picture, a phone-width screen shows the
 chat again once it is wide, a reload lands in the open project at the same route,
-a sync in a tab shows its progress on the action button and opens its build thread
+a build in a tab shows its progress on the action button and opens its build thread
 in the chat, the chat's prompt box takes a first question with no conversation
 open, the action list offers only what the backend runs, the project menu says
 where changes go and downloads the project, the page loads and opens a demo it has

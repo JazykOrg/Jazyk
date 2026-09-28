@@ -3,10 +3,13 @@ import { compilerVerdict, coverageWord, provenanceWord, shapeWords, triageWords,
 
 describe('words', () => {
   it('reads as product words, with the compiler word beside them in Developer mode', () => {
-    expect(words(false).sync).toBe('Sync')
-    expect(words(true).sync).toBe('Sync (compile)')
-    expect(words(false).syncNumber(3)).toBe('Sync #3')
-    expect(words(true).syncNumber(3)).toBe('Sync #3 (g3)')
+    expect(words(false).build).toBe('Build')
+    expect(words(true).build).toBe('Build (compile)')
+    expect(words(false).generate).toBe('Generate')
+    expect(words(false).building).toBe('Building')
+    expect(words(false).generating).toBe('Generating')
+    expect(words(false).buildNumber(3)).toBe('Build #3')
+    expect(words(true).buildNumber(3)).toBe('Build #3 (g3)')
     expect(words(false).both('A', 'b')).toBe('A')
     expect(words(true).both('A', 'b')).toBe('A (b)')
   })
@@ -19,9 +22,9 @@ describe('words', () => {
 })
 
 describe('verdictWords', () => {
-  it('is not synced yet without a verdict', () => {
-    expect(verdictWords(undefined, false)).toBe('Not synced yet')
-    expect(verdictWords({ state: '' }, true)).toBe('Not synced yet')
+  it('is not built yet without a verdict', () => {
+    expect(verdictWords(undefined, false)).toBe('Not built yet')
+    expect(verdictWords({ state: '' }, true)).toBe('Not built yet')
   })
 
   it('reads a converged verdict with its suggestions', () => {
@@ -32,10 +35,10 @@ describe('verdictWords', () => {
   })
 
   it('counts what is left otherwise', () => {
-    expect(verdictWords({ state: 'unconverged', open: 1 }, false)).toBe('Sync incomplete: 1 item left')
-    expect(verdictWords({ state: 'unconverged', open: 2, failed: 1 }, false)).toBe('Sync incomplete: 3 items left, 1 failed')
+    expect(verdictWords({ state: 'unconverged', open: 1 }, false)).toBe('Build incomplete: 1 item left')
+    expect(verdictWords({ state: 'unconverged', open: 2, failed: 1 }, false)).toBe('Build incomplete: 3 items left, 1 failed')
     expect(verdictWords({ state: 'unconverged', open: 2, failed: 1 }, true)).toBe(
-      'Sync incomplete: 3 items left, 1 failed (unconverged: 2 open, 1 failed, 0 blocked, 0 optional advised)',
+      'Build incomplete: 3 items left, 1 failed (unconverged: 2 open, 1 failed, 0 blocked, 0 optional advised)',
     )
   })
 })

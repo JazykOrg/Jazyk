@@ -183,7 +183,7 @@ function Empty({ title, text, action }: { title: string; text: string; action?: 
 export function Questions({ items }: { items: Item[] }) {
   const qs = items.filter(([, d]) => d.prompt && !PROPOSAL_RULES.has(d.rule) && d.rule !== DRAFT_RULE && (!d.answer || d.answer.status === 'failed' || d.answer.status === 'handling'))
   const w = useWords()
-  if (qs.length === 0) return <Empty title={`No ${w.questions.toLowerCase()}`} text="When a sync finds a sentence it cannot settle, it asks here." />
+  if (qs.length === 0) return <Empty title={`No ${w.questions.toLowerCase()}`} text="When a build finds a sentence it cannot settle, it asks here." />
   return (
     <>
       {qs.map(([id, d]) => (
@@ -197,7 +197,7 @@ export function Proposals({ items }: { items: Item[] }) {
   const w = useWords()
   const ps = items.filter(([, d]) => PROPOSAL_RULES.has(d.rule) && (!d.answer || d.answer.status === 'failed' || d.answer.status === 'handling'))
   if (ps.length === 0)
-    return <Empty title={`No ${w.proposals.toLowerCase()}`} text="A fact inferred by a sync, or one you edited in the model, asks to be written into a document here." />
+    return <Empty title={`No ${w.proposals.toLowerCase()}`} text="A fact inferred by a build, or one you edited in the model, asks to be written into a document here." />
   // Grouped by target document: one reviewed draft per document.
   const groups = new Map<string, Item[]>()
   for (const it of ps) {
@@ -229,7 +229,7 @@ export function Problems({ items }: { items: Item[] }) {
   const ps = items.filter(([, d]) => !d.prompt && !PROPOSAL_RULES.has(d.rule) && d.rule !== DRAFT_RULE)
   const rules = [...new Set(ps.map(([, d]) => d.rule))].sort()
   const shown = ps.filter(([, d]) => (!sev || d.severity === sev) && (!rule || d.rule === rule) && (!doc || (d.subjects ?? []).some((s) => s.includes(doc))))
-  if (ps.length === 0) return <Empty title={`No ${w.problems.toLowerCase()}`} text="Contradictions, gaps, broken links, and failing tests land here after a sync or a review." />
+  if (ps.length === 0) return <Empty title={`No ${w.problems.toLowerCase()}`} text="Contradictions, gaps, broken links, and failing tests land here after a build or a review." />
   return (
     <>
       <div className="inbox-filters">
@@ -271,12 +271,12 @@ export function Pending() {
   const genManual = d?.modes.generate === 'manual'
   if (!d) return <p className="muted">loading…</p>
   if (list.length === 0 && (!genManual || entities.length === 0))
-    return <Empty title="Nothing pending" text={manual ? 'Documents you edit wait here until you run a sync.' : 'Sync on save is on: every saved change syncs by itself.'} />
+    return <Empty title="Nothing pending" text={manual ? 'Documents you edit wait here until you run a build.' : 'Build on save is on: every saved change builds by itself.'} />
   return (
     <>
       {list.length > 0 && (
         <>
-          <h2>Documents changed since their last sync</h2>
+          <h2>Documents changed since their last build</h2>
           {list.map((p) => {
             const info = docs?.docs.find((x) => x.path === p)
             const goals = Object.entries(info?.goals ?? {}).reduce((a, [, n]) => a + n, 0)
@@ -284,17 +284,17 @@ export function Pending() {
               <div key={p} className="inbox-item">
                 <div className="head">
                   <Link to={docHref(p)}>{p}</Link>
-                  <span className="muted">{goals > 0 ? `a sync would read ${goals} section${goals === 1 ? '' : 's'} here` : 'a sync would read this document'}</span>
+                  <span className="muted">{goals > 0 ? `a build would read ${goals} section${goals === 1 ? '' : 's'} here` : 'a build would read this document'}</span>
                 </div>
               </div>
             )
           })}
-          <p className="muted">Run {w.sync.toLowerCase()} from the button in the top bar.</p>
+          <p className="muted">Run {w.build.toLowerCase()} from the button in the top bar.</p>
         </>
       )}
       {genManual && entities.length > 0 && (
         <>
-          <h2>Entities to build</h2>
+          <h2>Entities to generate</h2>
           {entities.map((e) => (
             <div key={e.entity} className="inbox-item">
               <div className="head">
@@ -303,7 +303,7 @@ export function Pending() {
               </div>
             </div>
           ))}
-          <p className="muted">Run {w.build.toLowerCase()} from the button in the top bar.</p>
+          <p className="muted">Run {w.generate.toLowerCase()} from the button in the top bar.</p>
         </>
       )}
     </>

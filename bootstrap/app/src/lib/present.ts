@@ -15,7 +15,7 @@ export function statusWord(status?: string | null): { word: string; cls: string 
     case 'partial':
       return { word: 'Partly passing', cls: 'v-bad' }
     case 'unimplemented':
-      return { word: 'Not built yet', cls: 'v-none' }
+      return { word: 'Not generated yet', cls: 'v-none' }
     case 'stale-requirement':
       return { word: 'Outdated: the requirement changed', cls: 'v-stale' }
     case 'stale-test':

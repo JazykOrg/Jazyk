@@ -1,4 +1,4 @@
-// The status bar: the sync number, the state in product words, the waiting count,
+// The status bar: the build number, the state in product words, the waiting count,
 // the problem counts, the connection state, and the Developer toggle
 // (docs/frontends/gui.md#layout). The state never travels alone.
 import { useEffect } from 'react'
@@ -43,10 +43,10 @@ export default function StatusBar() {
     <footer className="ws-status">
       {s && (
         <>
-          <Link to="/history" title="the last sync">
-            {w.syncNumber(s.generation)}
+          <Link to="/history" title="the last build">
+            {w.buildNumber(s.generation)}
           </Link>
-          <Link to={incomplete ? '/inbox' : '/history'} className={incomplete ? 'v-stale' : ''} title="the state of the last sync">
+          <Link to={incomplete ? '/inbox' : '/history'} className={incomplete ? 'v-stale' : ''} title="the state of the last build">
             {verdictWords(s.verdict, dev)}
           </Link>
           <Link to="/inbox" className={waiting > 0 ? '' : 'muted'} title="questions, proposals, pending changes, and errors">

@@ -2,7 +2,7 @@
 // route (docs/frontends/gui.md#the-open-project), the project menu says where
 // changes go and offers the ways out (#the-project-menu), the action button is a
 // split button whose list holds what the backend runs (#the-action-button), and a
-// sync in a tab shows its progress and opens its build thread
+// build in a tab shows its progress and opens its build thread
 // (docs/frontends/wasm.md#the-demo, jobs in a tab).
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Route } from '@playwright/test'
@@ -86,30 +86,30 @@ test('the project menu says where changes go and downloads the project', async (
   expect(Object.keys(entries)).toContain('the-shop/docs/catalog.md')
 })
 
-test('the action list holds Sync alone in a tab; Developer mode adds the rest with reasons', async ({ page }) => {
+test('the action list holds Build alone in a tab; Developer mode adds the rest with reasons', async ({ page }) => {
   await openDemo(page, 'The shop')
   const top = page.locator('.ws-top')
   await top.getByRole('button', { name: 'choose an action' }).click()
   const menu = page.locator('.ws-action-menu')
-  await expect(menu.getByRole('menuitem')).toHaveText([/^Sync/, 'Settings…'])
+  await expect(menu.getByRole('menuitem')).toHaveText([/^Build/, 'Settings…'])
   await page.keyboard.press('Escape')
   await expect(menu).toHaveCount(0)
 
   await page.locator('.ws-dev').click()
   await top.getByRole('button', { name: 'choose an action' }).click()
   const items = page.locator('.ws-action-menu').getByRole('menuitem')
-  await expect(items).toHaveText([/^Sync/, /^Build/, /^Review/, /^Document/, /^Preview prompt/, 'Settings…'])
-  await expect(items.nth(1)).toContainText('This backend cannot run a build.')
+  await expect(items).toHaveText([/^Build/, /^Generate/, /^Review/, /^Document/, /^Preview prompt/, 'Settings…'])
+  await expect(items.nth(1)).toContainText('This backend cannot run a generate run.')
   await expect(items.nth(1)).toHaveAttribute('data-disabled', '')
   await expect(items.nth(2)).toContainText('This backend cannot run a review.')
   await page.keyboard.press('Escape')
 })
 
-// A sync in a tab (docs/frontends/wasm.md#the-demo): the page keeps the job, the
+// A build in a tab (docs/frontends/wasm.md#the-demo): the page keeps the job, the
 // action button shows the run's progress, and the chat column opens the build
 // thread. The endpoint answers every model call with an error, so each session
 // fails fast and the build ends on its own.
-test('a sync in a tab shows its progress on the action button and opens its build thread', async ({ page }) => {
+test('a build in a tab shows its progress on the action button and opens its build thread', async ({ page }) => {
   const errors = pageErrors(page)
   const ENDPOINT = 'http://localhost:4999/v1'
   const CORS = {
@@ -138,12 +138,12 @@ test('a sync in a tab shows its progress on the action button and opens its buil
   await chat.getByRole('button', { name: 'Save' }).click()
   await expect.poll(async () => (await api<{ jobs: string[] }>(page, 'GET', '/api/capabilities')).jobs).toEqual(['compile'])
 
-  // A changed document: the main part reads Sync with the count.
+  // A changed document: the main part reads Build with the count.
   await page.goto('/#/docs/docs/catalog.md')
   await typeAtEnd(page, '\nThe shop also sells gift cards.')
   await expect(page.locator('.ide-topbar-right')).toContainText('saved', { timeout: 5000 })
   const main = page.locator('.ws-action > button.main')
-  await expect(main).toHaveText(/Sync · 1 document changed/)
+  await expect(main).toHaveText(/Build · 1 document changed/)
 
   // The column is collapsed; the job opens it.
   await chat.locator('.chat-toggle', { hasText: '›' }).click()
@@ -151,24 +151,24 @@ test('a sync in a tab shows its progress on the action button and opens its buil
 
   await main.click()
   const sheet = page.locator('.ws-sheet')
-  await expect(sheet).toContainText('1 document changed since the last sync: docs/catalog.md')
+  await expect(sheet).toContainText('1 document changed since the last build: docs/catalog.md')
   await expect(sheet).toContainText('The built-in runner will run it.')
   await sheet.getByRole('button', { name: 'Run' }).click()
 
-  await expect(main).toHaveText(/Syncing/)
+  await expect(main).toHaveText(/Building/)
   await expect(main).toHaveClass(/running/)
   await expect(page.locator('.ws-sheet')).toHaveCount(0)
   const open = page.locator('.wb-chat')
-  await expect(open.locator('.chat-sess.active')).toContainText('Sync #1')
+  await expect(open.locator('.chat-sess.active')).toContainText('Build #1')
   await expect(open.locator('.chat-sess.working')).toHaveCount(1)
   await expect(open.locator('.chat-row.working')).toBeVisible()
   await expect.poll(() => calls).toBeGreaterThan(0)
 
   // The run ends on its own: the button reads the state again, the thread keeps
   // the run with its verdict.
-  await expect(main).not.toHaveText(/Syncing/, { timeout: 45_000 })
+  await expect(main).not.toHaveText(/Building/, { timeout: 45_000 })
   await expect(open.locator('.chat-row.working')).toHaveCount(0)
-  await expect(open.locator('.chat-row.marker').last()).toContainText(/Sync incomplete|Up to date|■|✗/)
+  await expect(open.locator('.chat-row.marker').last()).toContainText(/Build incomplete|Up to date|■|✗/)
   const jobs = await api<{ jobs: { id: number; state: string; kind: { kind: string } }[] }>(page, 'GET', '/api/jobs')
   expect(jobs.jobs).toHaveLength(1)
   expect(jobs.jobs[0]).toMatchObject({ id: 1, kind: { kind: 'compile' } })

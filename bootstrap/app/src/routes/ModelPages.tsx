@@ -40,7 +40,7 @@ export function ModelHome() {
       {s && s.counts.entities === 0 && (
         <div className="empty-state">
           <b>Nothing extracted yet</b>
-          Run a sync from the button in the top bar. The entities and requirements it reads out of the documents appear here.
+          Run a build from the button in the top bar. The entities and requirements it reads out of the documents appear here.
         </div>
       )}
       <p className="muted">Pick an entity on the left to open its page, or a diagram to see the picture.</p>
@@ -107,7 +107,7 @@ export function DiagramGallery() {
       {list.length === 0 && views.data && (
         <div className="empty-state">
           <b>No diagrams yet</b>
-          Every sync draws a class diagram per level, a component diagram per system, and a flow diagram per story it finds.
+          Every build draws a class diagram per level, a component diagram per system, and a flow diagram per story it finds.
         </div>
       )}
       {[...byKind.entries()].map(([k, vs]) => (
@@ -120,7 +120,7 @@ export function DiagramGallery() {
                 {v.members} {v.members === 1 ? 'item' : 'items'}
                 {dev ? ` · ${v.edges} edges${v.default ? ' · default' : ''}` : ''}
               </span>
-              {v.limits.some((l) => l.over) && <span className="chip sev-warning" title="more boxes than a diagram should carry; a sync can split it">crowded</span>}
+              {v.limits.some((l) => l.over) && <span className="chip sev-warning" title="more boxes than a diagram should carry; a build can split it">crowded</span>}
             </p>
           ))}
         </div>

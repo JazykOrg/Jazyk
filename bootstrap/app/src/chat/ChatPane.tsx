@@ -138,7 +138,7 @@ function batchWords(goals: { kind?: string; target?: string }[], dev: boolean): 
       text = `Binding ${goals.length} requirement${goals.length === 1 ? '' : 's'} to the product`
       break
     case 'generate':
-      text = `Building ${name(target)}${goals.length > 1 ? ` and ${goals.length - 1} more` : ''}`
+      text = `Generating ${name(target)}${goals.length > 1 ? ` and ${goals.length - 1} more` : ''}`
       break
     case 'verify':
       text = `Checking ${goals.length} requirement${goals.length === 1 ? '' : 's'}`
@@ -219,13 +219,13 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
         })
         break
       case 'genEntityStart':
-        rows.push({ key: `ge${seq}`, kind: 'marker', text: `▷ Building ${String(event.entity ?? '').replace(/^ent:/, '')}${event.stage ? ` (${String(event.stage)})` : ''}` })
+        rows.push({ key: `ge${seq}`, kind: 'marker', text: `▷ Generating ${String(event.entity ?? '').replace(/^ent:/, '')}${event.stage ? ` (${String(event.stage)})` : ''}` })
         break
       case 'genEntityDone':
         rows.push({
           key: `gd${seq}`,
           kind: 'marker',
-          text: `✓ Built ${String(event.entity ?? '').replace(/^ent:/, '')}${Array.isArray(event.files) ? `: ${(event.files as string[]).join(', ')}` : ''}`,
+          text: `✓ Generated ${String(event.entity ?? '').replace(/^ent:/, '')}${Array.isArray(event.files) ? `: ${(event.files as string[]).join(', ')}` : ''}`,
         })
         break
       case 'genEntitySkipped':
@@ -433,7 +433,7 @@ function OpenPane({ close }: { close: () => void }) {
         {followIds.map((id) => {
           const j = jobs[Number(id.slice(7))]
           const live = j && (j.state === 'running' || j.state === 'queued')
-          const verb = j?.kind.kind === 'compile' ? w.sync : j?.kind.kind === 'gen' ? w.build : j?.kind.kind === 'verify' || j?.kind.kind === 'audit' ? w.review : (j?.kind.kind ?? 'build')
+          const verb = j?.kind.kind === 'compile' ? w.build : j?.kind.kind === 'gen' ? w.generate : j?.kind.kind === 'verify' || j?.kind.kind === 'audit' ? w.review : (j?.kind.kind ?? 'build')
           return (
             <button key={id} className={`chat-sess${active === id ? ' active' : ''}${live ? ' working' : ''}`} onClick={() => select(id)} title={`build thread for job ${id.slice(7)}`}>
               <span className={`dot ${live ? 'running' : j?.state === 'failed' ? 'failed' : ''}`} /> {verb} #{id.slice(7)}
@@ -454,9 +454,9 @@ function OpenPane({ close }: { close: () => void }) {
       ) : (
         <div className="chat-empty muted">
           {noAgent ? (
-            <p>This backend has no agent to talk to. Syncs still show here as build threads while they run.</p>
+            <p>This backend has no agent to talk to. Builds still show here as build threads while they run.</p>
           ) : (
-            <p>Ask about the project, or run a sync and follow it here.</p>
+            <p>Ask about the project, or run a build and follow it here.</p>
           )}
         </div>
       )}
@@ -729,7 +729,7 @@ function FollowView({ jobId }: { jobId: number }) {
         typeof v === 'string'
           ? dev
             ? v
-            : v.replace(/^converged.*/, 'Up to date').replace(/^incomplete.*/, 'Sync incomplete')
+            : v.replace(/^converged.*/, 'Up to date').replace(/^incomplete.*/, 'Build incomplete')
           : v && typeof v === 'object'
             ? dev
               ? verdictText(v as never)

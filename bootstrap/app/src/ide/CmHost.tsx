@@ -34,6 +34,8 @@ import { setDiagnostics, type Diagnostic } from '@codemirror/lint'
 import { MergeView } from '@codemirror/merge'
 import type { DocRecord } from '../lib/api'
 import { lineMarks } from '../lib/diff'
+import { findMentions, type MentionIndex } from '../lib/mentions'
+import { sectionLines } from '../lib/sections'
 import { markdownLive } from './markdown-live'
 import type { LspClient, LspDiagnostic, LspRange } from './lsp-client'
 
@@ -261,6 +263,39 @@ function decoField(): [StateField<DecorationSet>, ReturnType<typeof StateEffect.
 
 const [bandField, setBands] = decoField() // build bands: whole-line backgrounds
 const [linkField, setLinks] = decoField() // entity marks over LSP document links
+
+// Entity mentions from the graph's name index, underlined in the text and
+// recomputed on every edit (docs/frontends/gui.md#editor). The LSP's document
+// links draw the same class on a server; the tab has only these.
+const setMentions = StateEffect.define<MentionIndex | null>()
+
+function mentionDecos(state: EditorState, index: MentionIndex | null): DecorationSet {
+  if (!index || !index.re) return Decoration.none
+  const text = state.doc.toString()
+  const decos = findMentions(text, index).map((m) =>
+    Decoration.mark({
+      class: 'entity-mark',
+      attributes: { 'data-entity': m.id, title: index.names.find((n) => n.id === m.id)?.name ?? m.name },
+    }).range(m.from, m.to),
+  )
+  return Decoration.set(decos, true)
+}
+
+const mentionField = StateField.define<{ index: MentionIndex | null; decos: DecorationSet }>({
+  create: () => ({ index: null, decos: Decoration.none }),
+  update(value, tr) {
+    let index = value.index
+    let changed = false
+    for (const e of tr.effects)
+      if (e.is(setMentions)) {
+        index = e.value
+        changed = true
+      }
+    if (!changed && !tr.docChanged) return value
+    return { index, decos: mentionDecos(tr.state, index) }
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
+})
 const [lensField, setLenses] = decoField() // requirement lenses above their quotes
 const [quoteField, setQuote] = decoField() // the ?quote= highlight
 const [inlineField, setInline] = decoField() // question and proposal bands under sentences
@@ -400,6 +435,10 @@ interface Props {
   // Requirement markers in the margin and bands under sentences, located by quote.
   marks?: ReqMark[]
   bands?: InlineBand[]
+  // The entity names to underline, from the graph.
+  mentions?: MentionIndex
+  // The 1-based line holding the cursor, on every move; the outline follows it.
+  onCursorLine?: (line: number) => void
 }
 
 // Whitespace-insensitive quote search, preferring a match at or after fromPos.
@@ -566,7 +605,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       for (const [secRef, sec] of Object.entries(rec.sections)) {
         const cov = (rec.coverage ?? {})[secRef]
         const cls = cov ? (cov.state === 'covered' ? 'cov-covered' : 'cov-nonnorm') : 'cov-unprocessed'
-        const [start, end] = sec.lines
+        const [start, end] = sectionLines(sec)
         for (let l = start; l <= Math.min(end, view.state.doc.lines); l++)
           specs.push({ line: l, cls, tip: cov?.note ?? undefined })
       }
@@ -585,8 +624,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       for (const secRef of b.sections) {
         const sec = p.record.sections[secRef]
         if (!sec) continue
-        // Lines are one-based in the editor; a section record at 0 is the top.
-        const [start, end] = [Math.max(sec.lines[0], 1), Math.max(sec.lines[1], 1)]
+        const [start, end] = sectionLines(sec)
         if (start > view.state.doc.lines) continue
         const active = secRef === b.active
         const cls = done ? outcome : active ? 'build-active' : 'build-queued'
@@ -676,6 +714,16 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     })
 
     const clicks = EditorView.domEventHandlers({
+      // A plain click on an underlined mention opens the entity in the inspector;
+      // the cursor still lands where it was clicked. A drag never opens anything.
+      click: (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return false
+        const mark = (e.target as HTMLElement).closest('[data-entity]') as HTMLElement | null
+        const id = mark?.dataset.entity
+        if (!id) return false
+        propsRef.current.onOpenNode?.(id)
+        return false
+      },
       mousedown: (e, view) => {
         const el = e.target as HTMLElement
         const md = el.closest('[data-md-href]') as HTMLElement | null
@@ -727,6 +775,8 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     })
 
     const listener = EditorView.updateListener.of((u) => {
+      if (u.selectionSet || u.docChanged)
+        propsRef.current.onCursorLine?.(u.state.doc.lineAt(u.state.selection.main.head).number)
       if (!u.docChanged) return
       const text = u.state.doc.toString()
       propsRef.current.lsp.didChange(uri, text)
@@ -775,14 +825,20 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       bldField,
       bandField,
       linkField,
+      mentionField,
       lensField,
       quoteField,
     ]
   }
 
+  const applyMentions = (view: EditorView) => {
+    view.dispatch({ effects: setMentions.of(propsRef.current.mentions ?? null) })
+  }
+
   const refreshOverlays = (view: EditorView, uri: string) => {
     applyCoverage(view)
     applyBuild(view)
+    applyMentions(view)
     applyDiffMarks(view)
     applyMarks(view)
     applyBands(view)
@@ -843,6 +899,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     view.setState(state)
     propsRef.current.onDirty(view.state.doc.toString() !== baselines.current.get(uri))
     propsRef.current.onText?.(view.state.doc.toString())
+    propsRef.current.onCursorLine?.(view.state.doc.lineAt(view.state.selection.main.head).number)
     refreshOverlays(view, uri)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.root, props.path])
@@ -873,6 +930,11 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     if (view) applyBands(view)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.bands, props.path])
+  useEffect(() => {
+    const view = viewRef.current
+    if (view) applyMentions(view)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.mentions, props.path])
 
   // The diff view: side-by-side, baseline read-only, the current side editable.
   // Edits forward into the hidden main view, so the document stays one source of

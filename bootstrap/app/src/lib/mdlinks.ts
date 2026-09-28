@@ -96,6 +96,8 @@ export interface LinkResolver {
   // The app route a resolved absolute path opens, or null when the GUI serves no
   // page for it.
   route(abs: string, hash?: string): string | null
+  // Which tree the absolute path falls in, or null; null too before the project loads.
+  locate(abs: string): Located
   // The URL an image at the absolute path loads from, or null when it is not served.
   image(abs: string): string | null
   // The path under the out directory an absolute path names, or null when it is
@@ -126,13 +128,13 @@ export function useLinkResolver(): LinkResolver {
     },
     [project, docs],
   )
+  const locateAbs = useCallback((abs: string) => (project ? locate(abs, project, docs) : null), [project, docs])
   const outRel = useCallback(
     (abs: string) => {
-      if (!project) return null
-      const at = locate(abs, project, docs)
+      const at = locateAbs(abs)
       return at?.tree === 'out' ? at.rel : null
     },
-    [project, docs],
+    [locateAbs],
   )
   const image = useCallback(
     (abs: string) => {
@@ -142,5 +144,5 @@ export function useLinkResolver(): LinkResolver {
     [outRel],
   )
   const outAbs = useCallback((rel: string) => (project ? `${project.out}/${rel}` : null), [project])
-  return useMemo(() => ({ route, image, outRel, outAbs }), [route, image, outRel, outAbs])
+  return useMemo(() => ({ route, locate: locateAbs, image, outRel, outAbs }), [route, locateAbs, image, outRel, outAbs])
 }

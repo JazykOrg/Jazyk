@@ -291,6 +291,21 @@ test('switching a writing folder to read-only from the top bar keeps new edits i
   await expect(page.locator('.proj.recent', { hasText: 'proj' }).locator('.shape')).toHaveText('folder · read-only · 1 change kept in this browser')
 })
 
+// Read is the default in a folder opened read-only, Write in a writing one
+// (docs/frontends/gui.md#editor).
+test('a read-only folder opens its documents in Read, a writing folder in Write', async ({ page }) => {
+  await openFolder(page, 'read')
+  await page.goto('/#/docs/docs/main.js.md')
+  await expect(page.locator('.ide-mode').getByRole('button', { name: 'Read' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.md-read')).toBeVisible()
+  await expect(page.locator('.cm-content')).toBeHidden()
+  await chooseMenuItem(page, 'Close project')
+  await openFolder(page, 'write')
+  await page.goto('/#/docs/docs/main.js.md')
+  await expect(page.locator('.ide-mode').getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.cm-content')).toBeVisible()
+})
+
 test('picking the same folder twice gives one Recent row', async ({ page }) => {
   await openFolder(page, 'read')
   await page.goto('/#/')

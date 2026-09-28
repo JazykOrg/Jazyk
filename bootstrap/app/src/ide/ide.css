@@ -119,6 +119,13 @@
   border-width: 1px;
 }
 
+/* The pending mark: edited since the last sync (docs/frontends/gui.md#docs). */
+.ide-pending {
+  color: var(--warn);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
 .dot-stale {
   width: 7px;
   height: 7px;
@@ -813,14 +820,28 @@
   color: var(--ink);
 }
 
-/* Reader: the rendered page alone. */
-.ide-split.reader .ide-editor-host {
+/* Read: the rendered page in the editor's place; the editor keeps the text
+   underneath, hidden (docs/frontends/gui.md#editor). */
+.ide-split.read .ide-editor-host {
   display: none;
 }
 
-.ide-split.reader .md-view {
-  flex: 1;
-  max-width: 900px;
+/* The one toggle, Read or Write. */
+.ide-mode {
+  display: inline-flex;
+}
+
+.ide-mode button {
+  border-radius: 0;
+}
+
+.ide-mode button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.ide-mode button:last-child {
+  border-radius: 0 4px 4px 0;
+  margin-left: -1px;
 }
 
 /* A narrow screen: the editor's toolbar wraps, and the preview stacks under the

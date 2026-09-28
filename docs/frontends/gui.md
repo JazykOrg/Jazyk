@@ -1025,7 +1025,8 @@ Links and images resolve against the open file's path, so the pages walk the way
 page under the out directory opens that page, one to a document opens the editor, one
 to a product file opens the viewer, a `#fragment` scrolls to the heading with that
 slug under the compiler's own slug rule, a link with a scheme opens in a new tab, and
-a link that lands nowhere renders as text. A relative image under the out directory
+a link that lands nowhere renders as text with `not in this project` beside it. A
+relative image under the out directory
 renders inline through `GET /api/out/file` with the `token` query parameter. A `.svg`
 renders inline as SVG, sanitized (`<script>` elements and `on*` attributes dropped),
 its `viewBox` kept and its hard `width` and `height` dropped, so the anchors the
@@ -1279,7 +1280,10 @@ from the graph's mentions, quotes, and section tree.
   on word boundaries, in Read and in Write alike, on a server and in a tab: the
   graph's `mentions` say which sections define an entity, the name index says
   where its name appears, and the editor draws both without the LSP. A name that
-  is also part of a longer entity's name underlines the longer one.
+  is also part of a longer entity's name underlines the longer one. A link's
+  destination is a path, never a mention. In Read a mention inside a link keeps
+  the link's click; in Write a plain click opens the entity and a modified click
+  follows the link.
 - Hovering a requirement's sentence shows the [requirement card](./lsp.md#capabilities):
   the requirement, the code, and the test, each linked, with the trace status. The
   card's links stay inside the app.

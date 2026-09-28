@@ -1,13 +1,20 @@
 // The open document's outline under the tree: its sections with their read
 // state, the requirements and entities each carries, and the verification
-// rollup, the linkage rail beside the text (docs/frontends/gui.md#docs).
-import { useMemo } from 'react'
+// rollup. Clicking a section scrolls the editor to it, and the outline follows
+// the editor back: the section holding the cursor (in Write) or the top of the
+// view (in Read) is highlighted as the reader moves (docs/frontends/gui.md#docs).
+import { useEffect, useMemo, useRef } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 import { useCoverage, useGraph, useMatrix } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { coverageWord } from '../lib/words'
 import { aggClass } from '../components/Cards'
 import { docHref } from '../lib/nav'
+import { outlined, sectionAtLine, sortedSections } from '../lib/sections'
+
+// The editor listens for this: the outline asks it to scroll to a section even
+// when the route already names it.
+export const REVEAL_EVENT = 'jazyk:reveal-section'
 
 export default function Outline() {
   const loc = useLocation()
@@ -17,8 +24,15 @@ export default function Outline() {
   const graph = useGraph()
   const matrix = useMatrix()
   const dev = useApp((a) => a.dev)
-  const current = sp.get('section') ?? ''
+  const editorLine = useApp((a) => a.editorLine)
   const rec = coverage.data?.[docPath]
+  // Where the reader is wins over where the route pointed.
+  const followed = rec && editorLine && editorLine.doc === docPath ? sectionAtLine(rec.sections, editorLine.line) : null
+  const current = followed ?? sp.get('section') ?? ''
+  const rowRefs = useRef(new Map<string, HTMLAnchorElement>())
+  useEffect(() => {
+    if (current) rowRefs.current.get(current)?.scrollIntoView({ block: 'nearest' })
+  }, [current])
 
   const perSection = useMemo(() => {
     const g = graph.data
@@ -39,10 +53,9 @@ export default function Outline() {
 
   if (!docPath || !rec) return null
   const rows = matrix.data?.rows ?? {}
-  // Every section, the top-level ones included (a document's `# heading`, or
-  // several), in document order: `order` counts siblings, so the start line is
-  // what puts a parent before its children and one tree before the next.
-  const sections = Object.entries(rec.sections).sort(([, a], [, b]) => (a.lines?.[0] ?? 0) - (b.lines?.[0] ?? 0) || a.order - b.order)
+  // Every heading, the top-level ones included (a document's `# heading`, or
+  // several), in document order.
+  const sections = sortedSections(rec.sections).filter(([, s]) => outlined(s))
   if (sections.length === 0) return null
   return (
     <div className="wb-explorer-section outline">
@@ -58,9 +71,14 @@ export default function Outline() {
         return (
           <Link
             key={ref}
+            ref={(el) => {
+              if (el) rowRefs.current.set(ref, el)
+              else rowRefs.current.delete(ref)
+            }}
             to={docHref(docPath, ref)}
             className={`outline-row${current === ref ? ' active' : ''}`}
             style={{ paddingLeft: 12 + depth * 10 }}
+            onClick={() => window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: { doc: docPath, section: ref } }))}
             title={[
               `${coverageWord(state, dev)}${cov?.note ? `: ${cov.note}` : ''}`,
               reqs.length > 0 ? `${reqs.length} requirement${reqs.length === 1 ? '' : 's'}` : '',

@@ -16,7 +16,8 @@ import SectionLink from '../components/SectionLink'
 import { VerifyChip } from '../components/Chip'
 import { DiagnosticCard, ProvenanceLine, RelationshipCard } from '../components/Cards'
 import { CriterionView, EntityView, RelationView, RequirementView } from '../components/NodeViews'
-import { NameLink, Part, ProblemItem, StatusDot } from '../components/Present'
+import { NameLink, Part, StatusDot } from '../components/Present'
+import InboxCard, { PROPOSAL_RULES } from '../components/InboxCard'
 import { useNodeName } from '../lib/present'
 import { useApp } from '../lib/store'
 import { entryLabel } from '../lib/api'
@@ -495,7 +496,7 @@ export function NodeDetail({ id, page }: { id: string; page?: boolean }) {
     return (
       <>
         {diag.triage === 'suppressed' && <p className="muted">This problem is hidden; it counts nowhere.</p>}
-        {dev ? <DiagnosticCard id={id} d={diag} /> : <ProblemItem id={id} d={diag} />}
+        <InboxCard id={id} d={diag} proposal={PROPOSAL_RULES.has(diag.rule)} />
       </>
     )
   }

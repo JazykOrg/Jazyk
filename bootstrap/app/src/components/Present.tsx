@@ -4,8 +4,8 @@
 // details that keep the compiler's records without putting them in the way.
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { useQueryClient } from '@tanstack/react-query'
-import { post, type Diagnostic } from '../lib/api'
+import { type Diagnostic } from '../lib/api'
+import Triage from './Triage'
 import { useApp } from '../lib/store'
 import { docHref, useNodeHref } from '../lib/nav'
 import { shorten, statusWord, useNodeName, useSectionLabel } from '../lib/present'
@@ -117,14 +117,7 @@ const TRIAGE: Record<string, string> = { acknowledged: 'Seen', suppressed: 'Hidd
 // A problem in the product's words: its severity, its message, its question, and
 // the triage actions (docs/frontends/gui.md#vocabulary).
 export function ProblemItem({ id, d }: { id: string; d: Diagnostic }) {
-  const qc = useQueryClient()
   const dev = useApp((a) => a.dev)
-  const triage = (t: string | null) =>
-    post(`/api/diagnostics/${encodeURIComponent(id)}/triage`, { triage: t }).then(() => {
-      qc.invalidateQueries({ queryKey: ['graph'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
-      qc.invalidateQueries({ queryKey: ['board'] })
-    })
   return (
     <div className={`problem sev-${d.severity}`}>
       <p className="problem-line">
@@ -140,10 +133,7 @@ export function ProblemItem({ id, d }: { id: string; d: Diagnostic }) {
         </details>
       )}
       <p className="row problem-actions">
-        {d.triage !== 'acknowledged' && <button onClick={() => triage('acknowledged')}>Seen</button>}
-        {d.triage !== 'wontfix' && <button onClick={() => triage('wontfix')}>Won't fix</button>}
-        {d.triage !== 'suppressed' && <button onClick={() => triage('suppressed')}>Hide</button>}
-        {d.triage && <button onClick={() => triage(null)}>Undo</button>}
+        <Triage id={id} d={d} />
       </p>
     </div>
   )

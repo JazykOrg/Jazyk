@@ -1,173 +1,36 @@
 // The Inbox: every request the compiler makes of a human, in one place, with one
 // vocabulary (docs/frontends/gui.md#inbox). Sections: questions, proposals,
-// problems, pending changes, drafts.
+// problems, pending changes, drafts. Every section lists the ids the rollup names,
+// so a count and its list never disagree.
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
-import { useQueryClient } from '@tanstack/react-query'
-import { post, type Diagnostic } from '../lib/api'
-import { useInbox } from '../lib/product'
+import { type Diagnostic } from '../lib/api'
+import { useInbox, type InboxRollup } from '../lib/product'
 import { useDocs, useGenPending, useGraph } from '../lib/queries'
-import { useApp } from '../lib/store'
-import { docHref, useNodeHref } from '../lib/nav'
-import { triageWords, useWords } from '../lib/words'
-import { SevChip } from '../components/Chip'
+import { docHref } from '../lib/nav'
+import { useWords } from '../lib/words'
+import InboxCard, { sectionOf } from '../components/InboxCard'
 import NodeLink from '../components/NodeLink'
-import SectionLink from '../components/SectionLink'
 import '../shell/shell.css'
 
-const PROPOSAL_RULES = new Set(['ratification-pending', 'invented-choice'])
-const DRAFT_RULE = 'unratified'
 const SEV_RANK: Record<string, number> = { error: 0, warning: 1, info: 2, none: 3 }
 
 type Item = [string, Diagnostic]
+type Section = keyof NonNullable<InboxRollup['sections']>
 
-function useOpenDiagnostics(): Item[] {
+// The diagnostics a section lists, by the rollup's ids, most severe first.
+function useSection(section: Section): { items: Item[]; ready: boolean } {
   const graph = useGraph()
-  return useMemo(() => {
-    const all = Object.entries(graph.data?.diagnostics ?? {}) as Item[]
-    return all
-      .filter(([, d]) => (d.lifecycle ?? 'open') === 'open' && d.triage !== 'suppressed')
+  const inbox = useInbox()
+  const ids = inbox.data?.sections?.[section]
+  const items = useMemo(() => {
+    const all = graph.data?.diagnostics ?? {}
+    return (ids ?? [])
+      .map((id) => [id, all[id]] as Item)
+      .filter(([, d]) => !!d)
       .sort((a, b) => (SEV_RANK[a[1].severity] ?? 3) - (SEV_RANK[b[1].severity] ?? 3))
-  }, [graph.data])
-}
-
-// A section reference among the subjects, for the jump to the editor.
-function sectionOf(d: Diagnostic): { doc: string; section?: string } | null {
-  for (const s of d.subjects ?? []) {
-    if (s.endsWith('.md')) return { doc: s }
-    const m = s.match(/^(.+\.md)#(.*)$/)
-    if (m) return { doc: m[1], section: m[2] }
-  }
-  return null
-}
-
-function Subjects({ d }: { d: Diagnostic }) {
-  const sec = sectionOf(d)
-  return (
-    <div className="subjects">
-      {(d.subjects ?? [])
-        .filter((s) => !s.includes('.md'))
-        .slice(0, 6)
-        .map((s) => (
-          <NodeLink key={s} id={s} />
-        ))}
-      {sec && (
-        <SectionLink doc={sec.doc} section={sec.section}>
-          open in the editor →
-        </SectionLink>
-      )}
-    </div>
-  )
-}
-
-function Triage({ id, d }: { id: string; d: Diagnostic }) {
-  const qc = useQueryClient()
-  const dev = useApp((a) => a.dev)
-  const set = async (t: string | null) => {
-    await post(`/api/diagnostics/${encodeURIComponent(id)}/triage`, { triage: t })
-    void qc.invalidateQueries({ queryKey: ['graph'] })
-    void qc.invalidateQueries({ queryKey: ['inbox'] })
-  }
-  return (
-    <span className="triage">
-      {triageWords(dev).map((t) => (
-        <button key={t.value} className={d.triage === t.value ? 'active' : ''} onClick={() => void set(d.triage === t.value ? null : t.value)}>
-          {t.label}
-        </button>
-      ))}
-    </span>
-  )
-}
-
-function QuestionItem({ id, d, proposal }: { id: string; d: Diagnostic; proposal?: boolean }) {
-  const qc = useQueryClient()
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const respond = async (body: Record<string, unknown>) => {
-    setBusy(true)
-    try {
-      await post(`/api/questions/${encodeURIComponent(id)}/answer`, body)
-    } finally {
-      setBusy(false)
-      void qc.invalidateQueries({ queryKey: ['graph'] })
-      void qc.invalidateQueries({ queryKey: ['inbox'] })
-    }
-  }
-  const handling = d.answer?.status === 'handling'
-  const sec = sectionOf(d)
-  return (
-    <div className="inbox-item">
-      <div className="head">
-        <SevChip severity={d.severity} />
-        <span className="muted mono">{d.rule}</span>
-        {sec && (
-          <Link to={docHref(sec.doc, sec.section)} className="muted">
-            {sec.doc}
-            {sec.section ? `#${sec.section}` : ''}
-          </Link>
-        )}
-        <NodeLink id={id} />
-      </div>
-      <p style={{ margin: '4px 0' }}>{d.message}</p>
-      {d.prompt && <p className="q">{d.prompt.question}</p>}
-      {handling ? (
-        <p className="muted">
-          <span className="dot running" /> being handled…
-        </p>
-      ) : (
-        <>
-          <div className="opts">
-            {(d.prompt?.options ?? []).map((o, i) => (
-              <button
-                key={i}
-                disabled={busy}
-                className={o.edit ? 'edit' : ''}
-                title={o.edit ? (proposal ? 'accept: the sentence lands in the document' : 'applies the edit to the document and resolves') : 'recorded and handled by the agent'}
-                onClick={() => void respond({ option: i })}
-              >
-                {o.edit ? (proposal ? 'Accept: ' : '✎ ') : ''}
-                {o.label}
-              </button>
-            ))}
-          </div>
-          {d.prompt?.freeform && (
-            <input
-              className="free"
-              type="text"
-              disabled={busy}
-              value={text}
-              placeholder="answer in your own words, enter to send"
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && text.trim()) void respond({ text: text.trim() })
-              }}
-            />
-          )}
-        </>
-      )}
-      {d.reasoning && <p className="reasoning">{d.reasoning}</p>}
-      <Subjects d={d} />
-    </div>
-  )
-}
-
-function ProblemItem({ id, d }: { id: string; d: Diagnostic }) {
-  const nodeHref = useNodeHref()
-  return (
-    <div className="inbox-item">
-      <div className="head">
-        <SevChip severity={d.severity} />
-        <span className="muted mono">{d.rule}</span>
-        <Link to={nodeHref(id)} className="muted mono">
-          {id}
-        </Link>
-        <Triage id={id} d={d} />
-      </div>
-      <p style={{ margin: '4px 0' }}>{d.message}</p>
-      {d.reasoning && <p className="reasoning">{d.reasoning}</p>}
-      <Subjects d={d} />
-    </div>
-  )
+  }, [graph.data, ids])
+  return { items, ready: !!ids && !!graph.data }
 }
 
 function Empty({ title, text, action }: { title: string; text: string; action?: React.ReactNode }) {
@@ -180,27 +43,38 @@ function Empty({ title, text, action }: { title: string; text: string; action?: 
   )
 }
 
-export function Questions({ items }: { items: Item[] }) {
-  const qs = items.filter(([, d]) => d.prompt && !PROPOSAL_RULES.has(d.rule) && d.rule !== DRAFT_RULE && (!d.answer || d.answer.status === 'failed' || d.answer.status === 'handling'))
+// While the rollup loads, or why it did not.
+function NotYet() {
+  const inbox = useInbox()
+  const graph = useGraph()
+  const err = inbox.error ?? graph.error
+  if (err) return <p className="inbox-error" role="alert">The Inbox could not load: {(err as Error).message}</p>
+  return <p className="muted">loading…</p>
+}
+
+export function Questions() {
+  const { items, ready } = useSection('questions')
   const w = useWords()
-  if (qs.length === 0) return <Empty title={`No ${w.questions.toLowerCase()}`} text="When a build finds a sentence it cannot settle, it asks here." />
+  if (!ready) return <NotYet />
+  if (items.length === 0) return <Empty title={`No ${w.questions.toLowerCase()}`} text="When a build finds a sentence it cannot settle, it asks here." />
   return (
     <>
-      {qs.map(([id, d]) => (
-        <QuestionItem key={id} id={id} d={d} />
+      {items.map(([id, d]) => (
+        <InboxCard key={id} id={id} d={d} />
       ))}
     </>
   )
 }
 
-export function Proposals({ items }: { items: Item[] }) {
+export function Proposals() {
   const w = useWords()
-  const ps = items.filter(([, d]) => PROPOSAL_RULES.has(d.rule) && (!d.answer || d.answer.status === 'failed' || d.answer.status === 'handling'))
-  if (ps.length === 0)
+  const { items, ready } = useSection('proposals')
+  if (!ready) return <NotYet />
+  if (items.length === 0)
     return <Empty title={`No ${w.proposals.toLowerCase()}`} text="A fact inferred by a build, or one you edited in the model, asks to be written into a document here." />
   // Grouped by target document: one reviewed draft per document.
   const groups = new Map<string, Item[]>()
-  for (const it of ps) {
+  for (const it of items) {
     const sec = sectionOf(it[1])
     const key = sec?.doc ?? 'other'
     const g = groups.get(key)
@@ -213,7 +87,7 @@ export function Proposals({ items }: { items: Item[] }) {
         <div key={doc}>
           <h2>{doc === 'other' ? 'Without a target document' : doc}</h2>
           {list.map(([id, d]) => (
-            <QuestionItem key={id} id={id} d={d} proposal />
+            <InboxCard key={id} id={id} d={d} proposal />
           ))}
         </div>
       ))}
@@ -221,12 +95,13 @@ export function Proposals({ items }: { items: Item[] }) {
   )
 }
 
-export function Problems({ items }: { items: Item[] }) {
+export function Problems() {
   const w = useWords()
   const [sev, setSev] = useState('')
   const [rule, setRule] = useState('')
   const [doc, setDoc] = useState('')
-  const ps = items.filter(([, d]) => !d.prompt && !PROPOSAL_RULES.has(d.rule) && d.rule !== DRAFT_RULE)
+  const { items: ps, ready } = useSection('problems')
+  if (!ready) return <NotYet />
   const rules = [...new Set(ps.map(([, d]) => d.rule))].sort()
   const shown = ps.filter(([, d]) => (!sev || d.severity === sev) && (!rule || d.rule === rule) && (!doc || (d.subjects ?? []).some((s) => s.includes(doc))))
   if (ps.length === 0) return <Empty title={`No ${w.problems.toLowerCase()}`} text="Contradictions, gaps, broken links, and failing tests land here after a build or a review." />
@@ -253,7 +128,7 @@ export function Problems({ items }: { items: Item[] }) {
         </span>
       </div>
       {shown.map(([id, d]) => (
-        <ProblemItem key={id} id={id} d={d} />
+        <InboxCard key={id} id={id} d={d} />
       ))}
     </>
   )
@@ -265,11 +140,12 @@ export function Pending() {
   const pending = useGenPending()
   const { data: docs } = useDocs()
   const d = inbox.data
-  const list = d?.pending.docs ?? []
-  const entities = pending.data?.pending ?? []
-  const manual = d?.modes.compile === 'manual'
-  const genManual = d?.modes.generate === 'manual'
+  if (inbox.error && !d) return <p className="inbox-error" role="alert">Pending changes could not load: {(inbox.error as Error).message}</p>
   if (!d) return <p className="muted">loading…</p>
+  const list = d.pending.docs
+  const entities = pending.data?.pending ?? []
+  const manual = d.modes.compile === 'manual'
+  const genManual = d.modes.generate === 'manual'
   if (list.length === 0 && (!genManual || entities.length === 0))
     return <Empty title="Nothing pending" text={manual ? 'Documents you edit wait here until you run a build.' : 'Build on save is on: every saved change builds by itself.'} />
   return (
@@ -310,9 +186,10 @@ export function Pending() {
   )
 }
 
-export function Drafts({ items }: { items: Item[] }) {
+export function Drafts() {
   const w = useWords()
-  const ds = items.filter(([, d]) => d.rule === DRAFT_RULE)
+  const { items: ds, ready } = useSection('drafts')
+  if (!ready) return <NotYet />
   if (ds.length === 0) return <Empty title={`No ${w.drafts.toLowerCase()}`} text={`${w.document} writes documents from the product; they wait here until you read and edit them.`} />
   return (
     <>
@@ -335,7 +212,6 @@ export function Drafts({ items }: { items: Item[] }) {
 
 export default function Inbox() {
   const { section } = useParams()
-  const items = useOpenDiagnostics()
   const w = useWords()
   const inbox = useInbox()
   const d = inbox.data
@@ -371,16 +247,16 @@ export default function Inbox() {
       {(!section || section === 'questions') && (
         <>
           {!section && <h2>{w.questions}</h2>}
-          <Questions items={items} />
+          <Questions />
         </>
       )}
       {(!section || section === 'proposals') && (
         <>
           {!section && <h2>{w.proposals}</h2>}
-          <Proposals items={items} />
+          <Proposals />
         </>
       )}
-      {section === 'problems' && <Problems items={items} />}
+      {section === 'problems' && <Problems />}
       {!section && problems > 0 && (
         <>
           <h2>{w.problems}</h2>
@@ -395,7 +271,7 @@ export default function Inbox() {
           <Pending />
         </>
       )}
-      {section === 'drafts' && <Drafts items={items} />}
+      {section === 'drafts' && <Drafts />}
     </div>
   )
 }

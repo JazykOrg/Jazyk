@@ -5,11 +5,15 @@ import { get, type Verdict } from './api'
 
 export interface InboxRollup {
   generation: number
+  // What waits on a person; an answer being handled is listed, not counted.
   questions: number
   proposals: number
+  handling?: number
   problems: Record<string, number>
   pending: { docs: string[]; entities: number }
   drafts: number
+  // The diagnostic ids each section lists (docs/frontends/gui.md#inbox).
+  sections?: { questions: string[]; proposals: string[]; problems: string[]; drafts: string[] }
   modes: { compile: string; generate: string }
   total: number
 }

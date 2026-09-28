@@ -15,6 +15,7 @@ import NodeLink from './NodeLink'
 import SectionLink from './SectionLink'
 import { SevChip, VerifyChip } from './Chip'
 import FactField from './FactField'
+import Triage from './Triage'
 
 // Reverse index: entity id -> requirement ids referencing it.
 export function reverseIndex(graph: Graph): Map<string, string[]> {
@@ -258,13 +259,6 @@ export function RelationshipCard({ id, r }: { id: string; r: Relationship }) {
 }
 
 export function DiagnosticCard({ id, d }: { id: string; d: Diagnostic }) {
-  const qc = useQueryClient()
-  const triage = (t: string | null) =>
-    post(`/api/diagnostics/${encodeURIComponent(id)}/triage`, { triage: t }).then(() => {
-      qc.invalidateQueries({ queryKey: ['graph'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
-      qc.invalidateQueries({ queryKey: ['board'] })
-    })
   return (
     <div className="card">
       <h3>
@@ -291,10 +285,7 @@ export function DiagnosticCard({ id, d }: { id: string; d: Diagnostic }) {
         </details>
       )}
       <p className="row" style={{ margin: '6px 0 0' }}>
-        <button onClick={() => triage('acknowledged')}>acknowledge</button>
-        <button onClick={() => triage('wontfix')}>wontfix</button>
-        <button onClick={() => triage('suppressed')}>suppress</button>
-        {d.triage && <button onClick={() => triage(null)}>clear</button>}
+        <Triage id={id} d={d} />
       </p>
     </div>
   )

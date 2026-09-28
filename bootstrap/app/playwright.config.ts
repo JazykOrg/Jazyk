@@ -10,6 +10,9 @@ const PORT = Number(process.env.PW_PORT) || 4174
 export default defineConfig({
   testDir: 'e2e',
   timeout: 60_000,
+  // The in-tab worker answers in seconds under load (a build beside the run), so an
+  // assertion waits longer than the default five before it calls a page wrong.
+  expect: { timeout: 15_000 },
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI ? [['list'], ['github']] : 'list',

@@ -6,7 +6,7 @@
 // fail, the way a lapsed permission or a moved folder does; `window.__denyWrite`
 // makes the browser refuse a write grant.
 import { expect, test, type Page } from '@playwright/test'
-import { api, chooseMenuItem, closeMenu, createProject, offline, openProjectMenu, projectMenuItems, storedKeys, storedText, typeAtEnd, whereChangesGo } from './helpers'
+import { api, chooseMenuItem, closeMenu, createProject, offline, openProjectMenu, projectMenuItems, storedKeys, storedText, toWrite, typeAtEnd, whereChangesGo } from './helpers'
 
 // A file mid-write (the writable's close replaces it) reads as absent or unreadable
 // for an instant; that reads as '' so an expect.poll around it retries.
@@ -221,6 +221,7 @@ test("read-only mode's held changes survive a reload, and discard reopens the fo
   expect(await readProjectFile(page, 'docs/main.js.md')).toBe(original)
 
   await page.goto('/#/docs/docs/main.js.md')
+  await toWrite(page)
   await expect(page.locator('.cm-content')).toContainText('Held line.')
   await chooseMenuItem(page, 'Discard')
   await expect.poll(() => whereChangesGo(page)).toBe('Saved to proj (read-only)')

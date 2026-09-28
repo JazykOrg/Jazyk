@@ -87,10 +87,17 @@ export async function envelope(page: Page, method: string, path: string, body?: 
 // Types at the end of the open document, the way a person appends a line. A
 // document open in Read (the default in a read-only folder) is switched to Write
 // first (docs/frontends/gui.md#editor).
-export async function typeAtEnd(page: Page, text: string) {
+// Switches the open document to Write. A hidden editor (Read is the default in a
+// read-only folder) renders only the lines of its empty viewport, so an assertion
+// on `.cm-content` needs Write first.
+export async function toWrite(page: Page) {
   const write = page.locator('.ide-mode').getByRole('button', { name: 'Write' })
   await expect(write).toBeVisible()
   if ((await write.getAttribute('aria-pressed')) !== 'true') await write.click()
+}
+
+export async function typeAtEnd(page: Page, text: string) {
+  await toWrite(page)
   await page.locator('.cm-content').click()
   await page.keyboard.press('Control+End')
   await page.keyboard.type(text)

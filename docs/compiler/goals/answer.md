@@ -184,6 +184,9 @@ Choosing an `answer` option or replying freeform records the text on the node wi
   the reply and then resolve or re-prompt. It is not a goal batch: it runs between
   build sessions under the store lock ([concurrency](../graph.md#concurrency)), carries
   no goal tools, and the recorded answer is its cause.
+- In a browser tab nothing runs in the background: the reply waits with `handling`,
+  and the next build runs the answer session before its first batch
+  ([the Inbox in a tab](../../frontends/wasm.md#the-inbox)).
 - The session's changeset journals as an `answer` entry naming the diagnostic, with the
   mutations it staged; every goal those mutations open carries that generation as
   its cause, so [`jazyk ripple`](../../frontends/cli.md#jazyk-ripple) roots the cascade

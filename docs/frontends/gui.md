@@ -177,7 +177,8 @@ Project and store reads:
   status summary ([home](#home)).
 - `GET /api/inbox`: the [Inbox](#inbox) rollup: the counts of open questions,
   pending proposals, open problems by severity, documents awaiting a release, and
-  drafts, plus the sum the top bar shows.
+  drafts, plus the sum the top bar shows, and the ids each section lists
+  (`sections`).
 
 The board and causality:
 
@@ -1037,18 +1038,43 @@ The preview renders the text as it stands and never rewrites it.
 
 The single review queue: every request the compiler makes of a human, in one place,
 with one vocabulary. The Inbox count in the top bar is the sum of Questions,
-Proposals, Pending changes, and Problems at `error`. `GET /api/inbox` serves the
-rollup with per-section counts; each section reads its own endpoint.
+Proposals, Pending changes, and Problems at `error`.
+
+`GET /api/inbox` serves the rollup: each section's count and the diagnostic ids each
+section lists, from one classification of the open diagnostics that are not hidden.
+
+- Drafts: the rule `unratified`.
+- Proposals: the rules `ratification-pending` and `invented-choice`, while the
+  answer is absent, `handling`, or `failed`.
+- Questions: any other diagnostic carrying a prompt, on the same terms.
+- Problems: the rest, a prompted finding that still stands after its answer landed
+  included.
+
+The top bar, the navigator's section counts, and the Inbox's pages all read the
+rollup, so a count and its list never disagree. Questions and Proposals count what
+waits on a person: an item whose answer is `handling` is listed with its progress
+and not counted. A rollup that fails to load says why where its counts would be.
 
 ### Questions
 
-Open diagnostics carrying a [prompt](../compiler/model/diagnostic.md#prompts), from
-`GET /api/questions`. Each item: the question, the sentence it concerns with a jump to
-the editor, up to four option buttons, and a text box when the prompt accepts
-freeform. Answering posts to `POST /api/questions/{id}/answer`, the same engine every
-frontend uses: an `edit` option applies and the item disappears with the next event;
-other answers show `answer.status` as the [answer session](./acp.md#answer-sessions)
-handles them (`handling`, `handled`, `failed`).
+Open diagnostics carrying a [prompt](../compiler/model/diagnostic.md#prompts), the
+rollup's `questions` ids. Each item is one card: the message, the question, the
+sentence it concerns with a jump to the editor, up to four option buttons, a text box
+when the prompt accepts freeform, the related requirements by statement (each opens
+it), the reasoning, and the triage actions.
+
+Answering posts to `POST /api/questions/{id}/answer`, the same engine every frontend
+uses:
+
+- Enter in the text box sends the freeform answer; Shift+Enter makes a new line. A
+  small send button beside the box does the same.
+- A clicked option or a sent answer shows its pending state until the reply. A
+  refusal shows under the card in the backend's words; nothing fails silently.
+- An `edit` option applies, and the item leaves the list when the lists refresh
+  after the reply.
+- Other answers show `answer.status` as the [answer session](./acp.md#answer-sessions)
+  handles them (`handling`, `handled`, `failed`). In a browser tab the next build
+  runs that session, and the card says so ([the Inbox in a tab](./wasm.md#the-inbox)).
 
 The same questions render inline in the [editor](#editor) as a band under the
 anchored sentence, with the same buttons. The chat keeps `/questions` for agents.
@@ -1073,10 +1099,12 @@ list here too, graded by their severity.
 
 ### Problems
 
-Open diagnostics by severity: the rule, the message, the reasoning, the subjects
-(each a jump: a node opens the inspector, a section opens the editor), and the triage
-actions (Seen, Hidden, Won't fix, posted to `POST /api/diagnostics/{id}/triage`).
-Hidden items sit behind a filter and never count. A `failing` trace row is a problem
+Open diagnostics by severity, the rollup's `problems` ids: the rule, the message, the
+reasoning, the subjects (each a jump: a node opens the inspector, a section opens the
+editor), and the triage actions (Seen, Hidden, Won't fix, posted to
+`POST /api/diagnostics/{id}/triage`). A triage action shows its pending state, then
+the new state; a refusal shows inline. Hidden items sit behind a filter and never
+count. A `failing` trace row is a problem
 here ([failing bindings](../consumers/bind.md#what-the-verdict-means)). The filters:
 severity, rule, document.
 
@@ -1240,8 +1268,10 @@ under the same [presentation](#presentation) rules. What each kind carries:
   lifted arrow lists the concrete edges beneath it first.
 - States: the states, the initial state, the transitions, each with the requirement
   that declares it and its open [checks](../compiler/model/state-machine.md#checks).
-- A problem: message, severity, subjects, reasoning, the triage actions, and its
-  question when it carries one.
+- A problem: the same card the [Inbox](#questions) shows, with the same working
+  actions: the message and severity, the question with its options and the freeform
+  box, the related requirements by statement, the reasoning, and the triage
+  actions.
 - A product file: the entities and requirements bound to it, its sites, its tests.
 - A document, when nothing is selected in it: the requirements its sentences state,
   by statement with their status, and the files that implement them.

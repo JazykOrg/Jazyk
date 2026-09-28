@@ -539,7 +539,7 @@ export interface Diagnostic {
   lifecycle?: string
   triage?: string | null
   prompt?: { question: string; options?: { label: string; edit?: unknown; answer?: string }[]; freeform?: boolean }
-  answer?: { status?: string; text?: string } | null
+  answer?: { status?: string; text?: string; error?: string | null } | null
   created?: string
   updated?: string
 }

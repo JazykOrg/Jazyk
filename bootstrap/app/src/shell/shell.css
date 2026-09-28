@@ -573,7 +573,32 @@
 }
 
 .inbox-item .free-row .send {
-  padding: 2px 10px;
+  padding: 4px 14px;
+  font-weight: 600;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.inbox-item .free-row .send:disabled {
+  opacity: 0.5;
+}
+
+.inbox-item .answer-state .build-now {
+  margin-left: 6px;
+}
+
+.inbox-item .answer-state .dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 2px;
+  background: var(--muted);
+}
+
+.inbox-item .answer-state .dot.running {
+  background: var(--accent);
 }
 
 .inbox-item button.pending {

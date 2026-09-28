@@ -6,6 +6,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { post, type Diagnostic, type Graph, type VerifyRow } from '../lib/api'
 import { useApp } from '../lib/store'
 import { words } from '../lib/words'
+import { useCapabilities } from '../lib/capabilities'
+import { noteAnswer, replyWords, type AnswerReply } from '../components/InboxCard'
 import type { InlineBand, ReqMark } from './CmHost'
 
 // The rollup class of one requirement: its trace status, or a question standing
@@ -81,6 +83,8 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
 export function useInlineBands(graph: Graph | undefined, doc: string): InlineBand[] {
   const qc = useQueryClient()
   const dev = useApp((a) => a.dev)
+  const caps = useCapabilities()
+  const tab = !!caps.data && caps.data.backend !== 'server'
   return useMemo(() => {
     if (!graph) return []
     const w = words(dev)
@@ -108,8 +112,10 @@ export function useInlineBands(graph: Graph | undefined, doc: string): InlineBan
         const answer = async (body: Record<string, unknown>) => {
           busy(true)
           try {
-            await post(`/api/questions/${encodeURIComponent(id)}/answer`, body)
-            root.replaceChildren(el('div', 'jz-band-msg muted', 'answered, being handled…'))
+            const r = await post<AnswerReply>(`/api/questions/${encodeURIComponent(id)}/answer`, body)
+            noteAnswer(r)
+            const said = r.status === 'applied' ? 'Applied: changed by your answer.' : (replyWords(r, tab) ?? 'Answered.')
+            root.replaceChildren(el('div', 'jz-band-msg muted answer-state', said))
           } catch (e) {
             busy(false)
             root.appendChild(el('div', 'jz-band-msg v-bad', (e as Error).message))
@@ -119,7 +125,7 @@ export function useInlineBands(graph: Graph | undefined, doc: string): InlineBan
         }
         ;(d.prompt?.options ?? []).forEach((o, i) => {
           const b = el('button', o.edit ? 'edit' : '', `${o.edit ? (proposal ? 'Accept: ' : '✎ ') : ''}${o.label}`)
-          b.title = o.edit ? 'applies the edit to the document and resolves' : 'recorded and handled by the agent'
+          b.title = o.edit ? 'applies the edit to the document and resolves' : tab ? 'recorded; the next build acts on it' : 'recorded and handled by the agent'
           b.onclick = () => void answer({ option: i })
           opts.appendChild(b)
         })
@@ -127,14 +133,22 @@ export function useInlineBands(graph: Graph | undefined, doc: string): InlineBan
           const input = el('input', 'jz-band-free') as HTMLInputElement
           input.type = 'text'
           input.placeholder = 'answer in your own words, enter to send'
-          input.onkeydown = (e) => {
-            if (e.key === 'Enter' && input.value.trim()) void answer({ text: input.value.trim() })
+          input.setAttribute('aria-label', 'answer in your own words')
+          const sendBtn = el('button', 'jz-band-send', 'Send') as HTMLButtonElement
+          sendBtn.title = 'send the answer (Enter)'
+          const sendText = () => {
+            if (input.value.trim()) void answer({ text: input.value.trim() })
           }
+          input.onkeydown = (e) => {
+            if (e.key === 'Enter') sendText()
+          }
+          sendBtn.onclick = sendText
           opts.appendChild(input)
+          opts.appendChild(sendBtn)
         }
         root.appendChild(opts)
         return root
       },
     }))
-  }, [graph, doc, qc, dev])
+  }, [graph, doc, qc, dev, tab])
 }

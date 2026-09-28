@@ -408,6 +408,21 @@
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
+/* A change the editor did not make (a dual write, an answer): the lines tint and
+   carry a bar on their left edge, then fade (docs/frontends/gui.md#editor). */
+.cm-line.jz-flash {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  transition:
+    background-color 3s ease-out,
+    box-shadow 3s ease-out;
+}
+
+.cm-line.jz-flash.fading {
+  background: transparent;
+  box-shadow: inset 3px 0 0 transparent;
+}
+
 /* ---------------------------------------------------------------------------
    CodeMirror chrome in the app palette. */
 .cm-editor {
@@ -795,6 +810,13 @@
 .jz-band-opts button.edit {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.jz-band-opts button.jz-band-send {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
 }
 
 .jz-band-free {

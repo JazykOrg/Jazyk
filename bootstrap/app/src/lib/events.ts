@@ -104,8 +104,10 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
   switch (ev.type) {
     case 'store.generation': {
       app.setLastCommit(ev.generation as number)
-      // 'out': the generated pages and renderings rewrite on every commit.
-      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain', 'out'])
+      // 'out': the generated pages and renderings rewrite on every commit. The Inbox
+      // follows an answer to its outcome on the commit that records it
+      // (docs/frontends/gui.md#questions).
+      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain', 'out', 'inbox', 'questions'])
         qc.invalidateQueries({ queryKey: [key] })
       qc.invalidateQueries({ queryKey: ['node'] })
       break
@@ -163,6 +165,9 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
         event,
       })
       applyProgress(event)
+      // An answer session runs inside the build in a tab: what it changes next is
+      // the person's answer (docs/frontends/wasm.md#the-inbox).
+      if (typeof event.label === 'string' && event.label.startsWith('answer ')) app.noteAnswered()
       // A feedback call lands mid-run; the view refreshes on the call, not at the end.
       if (event.kind === 'toolCall' && event.name === 'report_feedback')
         qc.invalidateQueries({ queryKey: ['feedback'] })
@@ -176,6 +181,8 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       break
     }
     case 'job.finished':
+      // A build that ran answer sessions: the edits that follow are the answers'.
+      if (Array.isArray(ev.answers) && ev.answers.length > 0) app.noteAnswered()
       app.turnsSettle()
       app.clearGoalNotes()
       app.setJobState(ev.jobId as number, ev.state as string, ev.result as Job['result'])

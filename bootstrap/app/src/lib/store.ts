@@ -99,6 +99,27 @@ export type ActionChoice = 'compile' | 'gen' | 'verify'
 // The editor's one toggle (docs/frontends/gui.md#editor).
 export type DocMode = 'read' | 'write'
 
+// A change the editor did not make, marked in the text until it fades
+// (docs/frontends/gui.md#editor): located by the text that landed (an applied
+// option's reply) or by the lines the editor saw change.
+export interface Flash {
+  id: number
+  doc: string
+  label: string
+  at: number
+  fading: boolean
+  text?: string
+  lines?: [number, number]
+}
+
+// How long a mark stands, and how long it takes to fade after.
+export const FLASH_HOLD_MS = 5000
+export const FLASH_FADE_MS = 3000
+// A change arriving this soon after an answer is the answer's.
+const ANSWER_WINDOW_MS = 10 * 60_000
+
+let flashSeq = 1
+
 export interface StoredState {
   // The recent entry's id: `demo:<id>` or `browser:<uuid>`.
   id: string
@@ -162,6 +183,14 @@ interface AppStore {
   // shows one card, `Continue with <folder>`, whose click asks.
   pendingFolder: { id: string; name: string } | null
   turns: Record<string, TurnProgress>
+  // The marks over changes the editor did not make, and when the page last sent an
+  // answer, which names what a later change is (docs/frontends/gui.md#editor).
+  flashes: Flash[]
+  answeredAt: number
+  addFlash: (f: { doc: string; label: string; text?: string; lines?: [number, number] }) => void
+  noteAnswered: () => void
+  // The words a change the editor did not make carries.
+  changeLabel: () => string
   goalNotes: Record<string, GoalNote>
   noteGoal: (goal: string, event: string, text: string) => void
   clearGoalNotes: () => void
@@ -220,7 +249,7 @@ function readAction(): ActionChoice | null {
   return ACTIONS.includes(v as ActionChoice) ? (v as ActionChoice) : null
 }
 
-export const useApp = create<AppStore>((set) => ({
+export const useApp = create<AppStore>((set, get) => ({
   connected: false,
   authRequired: false,
   tokenEpoch: 0,
@@ -251,6 +280,17 @@ export const useApp = create<AppStore>((set) => ({
     set((s) => (s.hiddenThreads.includes(jobId) ? s : { hiddenThreads: [...s.hiddenThreads, jobId] })),
   chatSessions: {},
   chatUpdates: {},
+  flashes: [],
+  answeredAt: 0,
+  addFlash: (f) => {
+    const id = flashSeq++
+    set((s) => ({ flashes: [...s.flashes, { ...f, id, at: Date.now(), fading: false }] }))
+    window.setTimeout(() => set((s) => ({ flashes: s.flashes.map((x) => (x.id === id ? { ...x, fading: true } : x)) })), FLASH_HOLD_MS)
+    window.setTimeout(() => set((s) => ({ flashes: s.flashes.filter((x) => x.id !== id) })), FLASH_HOLD_MS + FLASH_FADE_MS)
+  },
+  noteAnswered: () => set({ answeredAt: Date.now() }),
+  changeLabel: () =>
+    Date.now() - get().answeredAt < ANSWER_WINDOW_MS ? 'changed by your answer' : 'changed outside the editor',
   setChatOpen: (v) => {
     writePref('jazyk-chat', v ? 'open' : 'closed')
     set({ chatOpen: v })

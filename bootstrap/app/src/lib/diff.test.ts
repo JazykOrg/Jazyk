@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lineMarks } from './diff'
+import { lineMarks, minimalChange } from './diff'
 
 // The marks as plain arrays, for readable comparisons.
 function marks(baseline: string, current: string) {
@@ -51,5 +51,40 @@ describe('lineMarks', () => {
     const base = ['h', '1', '2', '3', '4', '5', '6', 't'].join('\n')
     const cur = ['h', '1', 'two', '3', '4', '5', '6', 'new', 't'].join('\n')
     expect(marks(base, cur)).toEqual({ added: [8], modified: [3], deletedAbove: {} })
+  })
+})
+
+// An external text lands in the editor as one change: the smallest middle between the
+// common prefix and suffix (docs/frontends/gui.md#editor).
+describe('minimalChange', () => {
+  const apply = (from: string, c: { from: number; to: number; insert: string }) => from.slice(0, c.from) + c.insert + from.slice(c.to)
+
+  it('is nothing when the texts are equal', () => {
+    expect(minimalChange('abc', 'abc')).toBeNull()
+  })
+
+  it('replaces only the changed middle of a sentence', () => {
+    const before = '# Arcs\n\nTheo moves from acquaintance to ally.\n\nMore text.\n'
+    const after = '# Arcs\n\nTheo moves from acquaintance to rival.\n\nMore text.\n'
+    const c = minimalChange(before, after)!
+    expect(apply(before, c)).toBe(after)
+    // The change sits inside the sentence: everything before and after stays put.
+    expect(c.from).toBeGreaterThan(before.indexOf('to '))
+    expect(c.to).toBeLessThanOrEqual(before.indexOf('.\n\nMore'))
+  })
+
+  it('handles insertions, deletions, and overlapping prefix and suffix', () => {
+    for (const [a, b] of [
+      ['aaa', 'aaaa'],
+      ['aaaa', 'aa'],
+      ['', 'x'],
+      ['x', ''],
+      ['abcabc', 'abc'],
+      ['line one\nline two', 'line one\nline 2\nline two'],
+    ]) {
+      const c = minimalChange(a, b)!
+      expect(apply(a, c)).toBe(b)
+      expect(c.to - c.from + c.insert.length).toBeLessThanOrEqual(Math.max(a.length, b.length))
+    }
   })
 })

@@ -88,7 +88,7 @@ test('a freeform answer sends on Enter, Shift+Enter makes a new line, and the ne
   await expect(box).toHaveValue('Theo is 34.\nThe arcs table is right.')
   await box.press('Enter')
   const state = card.locator('.answer-state[data-state="handling"]')
-  await expect(state).toContainText('The next build acts on the answer')
+  await expect(state).toContainText('Queued for the next build')
   const d = await diag(page, 'diag:contradiction-3')
   expect(d.answer?.status).toBe('handling')
   expect(d.answer?.text).toBe('Theo is 34.\nThe arcs table is right.')

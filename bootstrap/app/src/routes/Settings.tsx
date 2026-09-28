@@ -370,32 +370,43 @@ function ProjectSettings() {
 
 // The workflow modes (docs/frontends/gui.md#workflow-modes): control-plane state,
 // shared with every agent, here as Build on save or on request and Generate after build
-// or on request. A tab has no control plane to set.
-function Workflow() {
+// or on request. A tab keeps them in its own control plane and generates nothing, so
+// it shows the Build switch alone (docs/frontends/wasm.md#workflow-modes-in-a-tab).
+function Workflow({ browser }: { browser: boolean }) {
   const w = useWords()
   const watchMode = useApp((a) => a.watchMode)
   const genMode = useApp((a) => a.genMode)
   const manual = watchMode !== 'watch'
+  const [error, setError] = useState<string | null>(null)
+  const set = (body: Record<string, string>) => {
+    setError(null)
+    put('/api/watch', body).catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }
   return (
     <section className="settings-workflow">
       <h1>Workflow</h1>
       <div className="settings-grid">
-        <label title="On save: every saved change builds (spends model budget). On request: changes wait in the Inbox until you run a build. Shared with attached agents.">
+        <label title={browser ? 'On save: a build starts a moment after a save or an answer (spends model time). On request: changes wait until you run a build.' : 'On save: every saved change builds (spends model budget). On request: changes wait in the Inbox until you run a build. Shared with attached agents.'}>
           Build
-          <select value={manual ? 'queue' : 'watch'} onChange={(e) => put('/api/watch', { mode: e.target.value })}>
+          <select aria-label="Build" value={manual ? 'queue' : 'watch'} onChange={(e) => set({ mode: e.target.value })}>
             <option value="queue">{w.buildOnRequest}</option>
             <option value="watch">{w.buildOnSave}</option>
           </select>
         </label>
-        <label title="After build: a finished build with entities to generate queues a generate run. On request: generating is a click.">
-          Generate
-          <select value={genMode} onChange={(e) => put('/api/watch', { gen: e.target.value })}>
-            <option value="manual">{w.generateOnRequest}</option>
-            <option value="auto">{w.generateAfterBuild}</option>
-          </select>
-        </label>
+        {!browser && (
+          <label title="After build: a finished build with entities to generate queues a generate run. On request: generating is a click.">
+            Generate
+            <select value={genMode} onChange={(e) => set({ gen: e.target.value })}>
+              <option value="manual">{w.generateOnRequest}</option>
+              <option value="auto">{w.generateAfterBuild}</option>
+            </select>
+          </label>
+        )}
       </div>
-      <p className="muted">Automatic modes spend model budget, so both are on request unless changed.</p>
+      {error && <p className="error-inline">{error}</p>}
+      <p className="muted">
+        {browser ? 'Building on save spends model time, so it is on request unless changed.' : 'Automatic modes spend model budget, so both are on request unless changed.'}
+      </p>
     </section>
   )
 }
@@ -414,7 +425,7 @@ export default function Settings() {
         </section>
       )}
       <ProjectSettings />
-      {!browser && <Workflow />}
+      <Workflow browser={browser} />
     </>
   )
 }

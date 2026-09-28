@@ -31,6 +31,8 @@ export interface ReadDecor {
   marks: Map<number, { rid: string; cls: string; tip: string }>
   // The bands, by the line their sentence ends on.
   bands: Map<number, InlineBand[]>
+  // A change the editor did not make, over the block's lines, until it fades.
+  flash?: (start: number, end: number) => { cls: string; title: string } | null
 }
 
 export interface MarkdownViewHandle {
@@ -118,7 +120,13 @@ function decoratePlugin(mentions: MentionIndex | undefined, decor: ReadDecor | u
             const title = decor.lineTitle(start)
             if (title && !props.title) props.title = title
             if (LEAF_BLOCKS.has(el.tagName)) {
-              const mark = markLines.find((l) => l >= start && l <= end && !claimedMark.has(l))
+              const flash = decor.flash?.(start, end)
+              if (flash) {
+                props.className = [...((props.className as string[] | undefined) ?? []), ...flash.cls.split(' ')]
+                props.title = flash.title
+                props.dataFlash = flash.title
+              }
+              const mark =markLines.find((l) => l >= start && l <= end && !claimedMark.has(l))
               if (mark !== undefined) {
                 claimedMark.add(mark)
                 props.dataMark = String(mark)

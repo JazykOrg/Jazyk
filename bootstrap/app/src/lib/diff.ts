@@ -161,3 +161,16 @@ export function lineMarks(baseline: string, current: string): LineMarks {
   if (pendingDel > 0) marks.deletedAbove.set(bLine, (marks.deletedAbove.get(bLine) ?? 0) + pendingDel)
   return marks
 }
+
+// The smallest edit that turns one text into the other: the common prefix and suffix
+// stay, the middle is replaced. One change keeps the selection, the scroll position,
+// and the undo history around it (docs/frontends/gui.md#editor).
+export function minimalChange(from: string, to: string): { from: number; to: number; insert: string } | null {
+  if (from === to) return null
+  const max = Math.min(from.length, to.length)
+  let p = 0
+  while (p < max && from.charCodeAt(p) === to.charCodeAt(p)) p++
+  let q = 0
+  while (q < max - p && from.charCodeAt(from.length - 1 - q) === to.charCodeAt(to.length - 1 - q)) q++
+  return { from: p, to: from.length - q, insert: to.slice(p, to.length - q) }
+}

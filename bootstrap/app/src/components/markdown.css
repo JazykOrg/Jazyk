@@ -231,6 +231,17 @@
   border-left-color: var(--warn);
 }
 
+/* A change the editor did not make, in Read: the block tints, then fades
+   (docs/frontends/gui.md#editor). */
+.md-read .md-flash {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  transition: background-color 3s ease-out;
+}
+
+.md-read .md-flash.fading {
+  background: transparent;
+}
+
 /* The build's bar beside a block in Read, left of the read-state border; the
    text is never tinted (docs/frontends/gui.md#editor). */
 .md-read > [data-line][class*='bld-']::before {

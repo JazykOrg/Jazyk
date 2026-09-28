@@ -468,7 +468,7 @@ Who it serves:
   trail from a sentence to a criterion to a test to a code site; and what the product
   carries that no document describes.
 - A reviewer reads: the documents with their diagrams and linkage, a health summary,
-  what changed between two syncs, and a chat to ask the project questions.
+  what changed between two builds, and a chat to ask the project questions.
 - A jazyk developer wants the workbench: the board, the runs, the prompts, the costs.
   The Developer toggle serves them without shaping the default layout.
 
@@ -499,15 +499,15 @@ beside the product word wherever both apply.
 
 | Compiler (docs, CLI, Developer mode) | Default mode |
 |---|---|
-| compile, build | Sync: the model syncs with the documents |
-| bind, generate | Build: the product is built from the documents |
+| compile, build | Build: the model builds from the documents |
+| bind, generate | Generate: the product is generated from the documents |
 | verify, audit | Review: tests run, statuses refresh |
 | decompile | Document: documents are written from the product |
-| release (manual mode) | the Sync or Build button itself; gated work is Pending changes |
-| `compile: auto`, `compile: manual` | Sync on save, Sync on request |
-| `gen: auto`, `gen: manual` | Build after sync, Build on request |
+| release (manual mode) | the Build or Generate button itself; gated work is Pending changes |
+| `compile: auto`, `compile: manual` | Build on save, Build on request |
+| `gen: auto`, `gen: manual` | Generate after build, Generate on request |
 | verdict `converged` | Up to date |
-| verdict `incomplete` with `open` and `failed` | Sync incomplete, N items left, with the reason |
+| verdict `incomplete` with `open` and `failed` | Build incomplete, N items left, with the reason |
 | `blocked` (`ratify`, `answer`, gated) | Waiting on you (N): the Inbox count |
 | `optional` (soft-limit GC advice) | Suggestions |
 | a goal in session, batch narration | the build thread's plain lines ("Reading compiler/graph.md, 3 sections") |
@@ -525,7 +525,7 @@ beside the product word wherever both apply.
 | deliverable, medium | Product, Product form |
 | ledger row | Trace row |
 | status `verified`, `failing`, `partial` | Passing, Failing, Partly passing |
-| status `missing`, `unimplemented` | No test yet, Not built yet |
+| status `missing`, `unimplemented` | No test yet, Not generated yet |
 | status `stale-requirement`, `stale-test`, `stale-code` | Outdated (the requirement changed), Needs a rerun |
 | relationship type, from the entity's side | a verb: uses, is used by, is part of, is made of, has, belongs to, is a kind of, implements, is related to |
 | stereotype | the kind in words beside the name (a component, an actor), never in guillemets |
@@ -533,7 +533,7 @@ beside the product word wherever both apply.
 | criterion kind `positive`, `negative`, `boundary`, `quality` | Example, Failure case, Edge case, Measure |
 | unclaimed report | Not described: files no document describes |
 | draft (`unratified`) | Draft |
-| journal, generation, changeset | History, Sync #N, Change |
+| journal, generation, changeset | History, Build #N, Change |
 | ripple | What this caused |
 
 ### Presentation
@@ -584,9 +584,9 @@ renders against it:
     chat column offers the model chooser in place of the prompt box.
   - `model`: `configured`, `in-page` (a model loaded in the tab), `loadable` (the
     tab can load one, on request), `needs-key`, or `none`.
-  - `modelTier`: the loaded model's tier, `sync`, `chat`, or `reader`
+  - `modelTier`: the loaded model's tier, `build`, `chat`, or `reader`
     ([model sources](./wasm.md#model-sources)), or `null` with no model; an endpoint
-    and the server's model count as `sync`, the browser's built-in model as `reader`.
+    and the server's model count as `build`, the browser's built-in model as `reader`.
   - `rendering`: `server` or `none`. A tab renders no `.svg`; a demo seed ships its
     renderings.
   - `persistence`: where a change goes.
@@ -602,7 +602,7 @@ renders against it:
 - A route the backend does not serve answers `501` with a reason
   (the browser backend's rule). A panel whose read answers `501` hides
   behind that reason; it never renders empty or errors.
-- A missing capability hides its action and explains it in the empty state ("Sync
+- A missing capability hides its action and explains it in the empty state ("Build
   needs a model. Add one in Settings."). Nothing fails for want of a capability.
 - The transport is one seam: every read and write goes through one
   `request(method, path, body)` the backend implements, so the app never knows which
@@ -680,7 +680,7 @@ its settings are written.
   goes where every change goes: into the folder in writing mode, held with the other
   changes in read-only mode until the folder is switched to writing, so a look at a
   folder never leaves a file behind. The documents lens then opens with what the
-  glob matched, and the [action button](#the-action-button) runs the first sync,
+  glob matched, and the [action button](#the-action-button) runs the first build,
   with its plan visible and an estimate beside it on a server.
 - It names the shape it detected: "documents only", "documents and product", or
   "product only: start by documenting it", the last offering Document.
@@ -742,7 +742,7 @@ One workspace page. Navigation swaps panes, never the page. Five regions:
 - The chat column: the far right, collapsible to a strip with an unread mark. See
   [chat](#chat).
 
-The status bar under everything: the sync number, the state in product words, the
+The status bar under everything: the build number, the state in product words, the
 waiting count, the problem counts by severity, the connection state, and the
 [Developer toggle](#developer-toggle). The state never travels alone: the problem
 counts ride beside it, because a project can be up to date with open errors standing
@@ -777,22 +777,25 @@ URL the previous layout served (`/files/*`, `/graph`, `/board`, `/work`, `/journ
 ### The action button
 
 One split button in the top bar. Its main part runs one action and its label is
-that action with the state: `Sync · 3 documents changed`, `Build · 4 entities`,
+that action with the state: `Build · 3 documents changed`, `Generate · 4 entities`,
 `Review · 12 tests`, `Up to date`. Its arrow opens the list of actions to choose
 from, one line each with its state, and the choice becomes the main part:
 
-- `Sync`: the model syncs with the documents (compile). Chosen by default while
+- `Build`: the model builds from the documents (compile). Chosen by default while
   documents changed.
-- `Build`: the product is built from the documents (bind and generate). Chosen by
-  default when nothing changed and entities wait to be built.
+- `Generate`: the product is generated from the documents (bind and generate).
+  Chosen by default when nothing changed and entities wait to be generated.
 - `Review`: the tests run and the statuses refresh (verify).
 - `Settings…`, last.
 
 Only what the backend can run is listed ([capabilities](#backends-and-capabilities)):
-a tab lists `Sync` alone, and with no model ready, or a model below the `sync`
-tier ([model sources](./wasm.md#model-sources)), its main part reads `Sync` and
-the click shows the [model chooser](./wasm.md#model-sources) in the action sheet
-in place of the run, saying which tier a sync needs. No line explains what a backend cannot do; the
+a tab lists `Build` alone. With no model ready, or a `reader`-tier model
+([model sources](./wasm.md#model-sources)), its main part reads `Build` and the
+click shows the [model chooser](./wasm.md#model-sources) in the action sheet in
+place of the run, saying a build needs a model of 3B or more, or an endpoint. A
+`chat`-tier model builds: the sheet shows the run, with one sentence above `Run`
+saying the model is small and its results rough, and a `Choose a stronger model`
+link that reveals the chooser. No line explains what a backend cannot do; the
 [Developer toggle](#developer-toggle) shows the full list with the reasons.
 
 Clicking the main part opens the action sheet for the chosen action:
@@ -800,16 +803,16 @@ Clicking the main part opens the action sheet for the chosen action:
 - What will run, in product words: the documents, the work counts, who runs it (the
   built-in runner or the attached agent, by the
   [dispatch](../compiler/control-plane.md#dispatch) preference), and an estimate from
-  the last sync's cost (`status.yaml` `costs`).
+  the last build's cost (`status.yaml` `costs`).
 - `Run`. In on-request mode `Run` records the [release](../compiler/control-plane.md#modes-and-releases)
   and starts the job, or wakes the attached agent. When the preference is an agent
   and none is registered, the sheet says so and offers the built-in run.
-- While a job runs the main part shows its progress (`Syncing 2 of 5`, `Building 1
+- While a job runs the main part shows its progress (`Building 2 of 5`, `Generating 1
   of 4`) and pulses, the sheet offers `Cancel`, and the job's build thread opens in
   the [chat column](#chat), so the work is visible the moment it starts, in a tab as
   on a server.
 
-The mode switches (Sync on save or on request; Build after sync or on request) are
+The mode switches (Build on save or on request; Generate after build or on request) are
 the [workflow modes](#workflow-modes): control-plane state, never the app's. They
 live in Settings under Workflow, and in Developer mode also in the sheet. Document
 (decompile), which takes an area from the [not described](#not-described) list and
@@ -842,7 +845,7 @@ its own:
   Everything goes through the documents API.
 - Each document row carries its problem badge (the highest open severity, colored),
   the drift dot when it is stale against the model, the pending mark when it was
-  edited since its last sync, and the progress mark while a sync works on it
+  edited since its last build, and the progress mark while a build works on it
   (dimmed and waiting, then running with the section reached, then its result,
   fading after a few seconds and held under the pointer).
 - The product's files and the generated pages are trees of the same kind under
@@ -860,7 +863,7 @@ position as much as a table of contents.
 The center is the [editor](#editor), in Read or Write.
 
 The inspector for a section: its read state, the requirements extracted from it with
-their statements, the entities it defines, its problems, and what the last sync did
+their statements, the entities it defines, its problems, and what the last build did
 here.
 
 ### Model
@@ -887,7 +890,7 @@ The center is a page per selection:
     (each a link), the definition (editable), its other names, and its attributes.
     A grouping no document states says so in a line with its proposal.
   - One status line: how many requirements it carries and how many pass, and the
-    files that implement it, or "Not built yet".
+    files that implement it, or "Not generated yet".
   - Connections: one picture of the entity and its one-hop neighbors, each arrow
     labeled with its relation in words, the parent as `is part of` and the children as
     `contains`. Selecting a neighbor lists the sentences that connect the two, each
@@ -956,7 +959,7 @@ The navigator has six sections:
 
 - Files: the product tree, each file with its ownership badge (the entities and
   requirements the [ledger](../consumers/gen.md#the-ledger) binds to it) and a stale
-  dot after a build changed it.
+  dot after a generate run changed it.
 - Trace: the [trace matrix](#trace-matrix).
 - Tests: the test artifacts by requirement, with kind, run command, verdict, and
   evidence.
@@ -973,8 +976,8 @@ A product file opens read-only in the center:
   its line (the requirement id and trace status). Clicking it opens the requirement
   in the inspector and highlights the sentence in the Docs lens. Lost sites are
   flagged.
-- The viewer diffs against the file's build baseline
-  (`GET /api/deliverable/baseline`): gutter marks on the lines the last build changed,
+- The viewer diffs against the file's baseline from the last generate run
+  (`GET /api/deliverable/baseline`): gutter marks on the lines that run changed,
   and a `diff` toggle for a side-by-side view. A file with no baseline shows neither.
 - A markdown product file opens on its [markdown preview](#markdown-preview) with a
   `source` toggle.
@@ -988,9 +991,9 @@ served by `GET /api/verify/matrix`:
   their test verdicts. The row carries its status chip, its reason, and the
   one-sentence repair; the [cascade](../consumers/gen.md#the-cascade) is explained per
   row.
-- Filters by status, document, and entity. Actions per row and per entity: Build,
+- Filters by status, document, and entity. Actions per row and per entity: Generate,
   Check, re-bind.
-- The header: verified, failing, stale, unverified, not built; and the two coverage
+- The header: verified, failing, stale, unverified, not generated; and the two coverage
   numbers: sections read (the graph's coverage of the documents) and product files
   described (the ledger's coverage of the product).
 - A requirement a document marks as not applicable shows as such, never as missing.
@@ -1069,7 +1072,7 @@ Each: the sentence the document should gain, the target section, `Accept` (the d
 write: the sentence lands, the provenance flips to `quote`, the diagnostic resolves,
 the goal leaves), and `Retract` (`retract_decree`). The owner may also write the
 sentence anywhere in their own words; the proposal is a convenience, never the only
-door. Invented-choice prompts from a build ([invented choices](../consumers/gen.md#invented-choices))
+door. Invented-choice prompts from a generate run ([invented choices](../consumers/gen.md#invented-choices))
 list here too, graded by their severity.
 
 ### Problems
@@ -1084,9 +1087,9 @@ severity, rule, document.
 ### Pending changes
 
 In on-request mode, the documents edited since their last release
-([gating](../compiler/control-plane.md#modes-and-releases)): each with what a sync
-would do to it, in product words, and the Sync action that records the release. The
-Build release lists the same way: the entities a build would produce. This is the
+([gating](../compiler/control-plane.md#modes-and-releases)): each with what a build
+would do to it, in product words, and the Build action that records the release. The
+Generate release lists the same way: the entities a generate run would produce. This is the
 product face of `awaiting release`: visible here, actionable here, and nowhere else
 described as blocked.
 
@@ -1102,14 +1105,14 @@ clears the item.
 
 For reviewers and release notes:
 
-- The list of syncs, newest first, from `GET /api/journal`: each with its state in
+- The list of builds, newest first, from `GET /api/journal`: each with its state in
   product words, its cost in plain words (sessions, tokens), and the human edits that
   started its cascade (`edit`, `dual-write`, `decree`, `ratify`, `answer` entries),
   so the list separates what people decided from what followed
   ([release diffs](../consumers/pm.md#release-diffs-from-the-journal)).
-- A sync opens its changes: each mutation with its reasoning, the work it resolved
+- A build opens its changes: each mutation with its reasoning, the work it resolved
   with the justification, the work it opened.
-- A range of syncs opens the diff (`GET /api/diff?from=&to=`): per node before and
+- A range of builds opens the diff (`GET /api/diff?from=&to=`): per node before and
   after.
 - What this caused: one change's [ripple](../compiler/reconciler.md) rendered as a
   small DAG (`GET /api/ripple`), forward or back.
@@ -1129,7 +1132,7 @@ thread:
   prompt line.
 - Build threads: one per job, live while it runs, kept after. Every
   [worker session](./acp.md#worker-sessions) a job runs registers as a read-only
-  session, so watching a sync is opening its thread. A build thread renders the
+  session, so watching a build is opening its thread. A build thread renders the
   [plan](./acp.md#plans) as a live checklist, one entry per goal batch (pending,
   running, done, failed, or waiting with the reason), the running batch's narration
   as short lines in product words, the committed changes as collapsible cards, and
@@ -1148,7 +1151,7 @@ The column's behaviors:
   the session's row in the list pulses the same way, and Send reads `Stop`. The
   line goes when the turn ends. A build thread shows its running batch the same
   way. Nothing runs without something on the screen moving.
-- A job's build thread opens itself: when a sync or a build starts, the column
+- A job's build thread opens itself: when a build or a generate run starts, the column
   opens if it was collapsed and selects the thread, so the run is watched from its
   first line. Selecting another thread or a conversation is remembered until the
   next job starts.
@@ -1294,7 +1297,7 @@ from the graph's mentions, quotes, and section tree.
   [Inbox](#inbox).
 - The read state renders beside the text from the section tree: Read, Informational,
   and Not read yet sections are visually distinct.
-- A sync in progress is visible in the text. When a session takes this document's
+- A build in progress is visible in the text. When a session takes this document's
   sections, the sections in its batch are banded as queued, and the section the
   session reached ([`section` events](../compiler/sessions.md#trace-events)) is banded
   as running. When the session ends, the bands become its result, green for committed
@@ -1303,9 +1306,9 @@ from the graph's mentions, quotes, and section tree.
 - A dual write shows in the text as it lands: the accepted rewrite replaces the
   sentence in place, the document does not re-dirty, and the gutter shows no change
   against the baseline for it.
-- The editor diffs against the last-synced text (`GET /api/docs/baseline`): changed,
+- The editor diffs against the last-built text (`GET /api/docs/baseline`): changed,
   added, and deleted lines mark the gutter, updated live. A `diff` toggle swaps the
-  editor for a side-by-side diff; the current side stays editable. A never-synced
+  editor for a side-by-side diff; the current side stays editable. A never-built
   document shows neither.
 - One toggle, `Read` or `Write`, in the editor's bar. Write is the editor. Read is
   the [rendered page](#markdown-preview) in the editor's place, carrying the same
@@ -1334,7 +1337,7 @@ from the graph's mentions, quotes, and section tree.
 The [project settings](../compiler/project-settings.md) as a form over
 `GET /api/settings` and `PUT /api/settings`, grouped: Documents (glob, roots,
 handlers, lint rules), Model and agent (`[llm]`, `[acp]`, and the executors per goal
-kind, each with the last sync's cost for that kind beside it), Product (`[gen]`:
+kind, each with the last build's cost for that kind beside it), Product (`[gen]`:
 folder, worker, code globs), Workflow (the mode defaults). Unset keys show their
 effective defaults. The API key shows set or unset only. Saving is conditional on the
 file hash and applies live. A Connection group shows the backend kind and its
@@ -1350,22 +1353,22 @@ every agent over MCP read the same policy. A mode set in the GUI survives a rest
 and binds the agents too.
 
 `GET /api/watch` and `PUT /api/watch` carry `{compile, gen}`, each `auto` or
-`manual`; the action sheet shows them as Sync on save or on request and Build after
-sync or on request:
+`manual`; the action sheet shows them as Build on save or on request and Generate after
+build or on request:
 
 - `compile: manual` (the default): changes queue visibly in the Inbox's
   [pending changes](#pending-changes). The board derives from the saved documents, so
-  the work a save opens exists before any release, carrying `gated: true`. Syncing is
+  the work a save opens exists before any release, carrying `gated: true`. Building is
   an explicit `Run` in the action sheet, which records a
   [release](../compiler/control-plane.md#modes-and-releases), so an attached agent's
   watcher fires from the same click.
-- `compile: auto`: changes sync automatically, the loop of
+- `compile: auto`: changes build automatically, the loop of
   [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, backoff
   retries for `incomplete` builds.
-- `gen: manual` (the default): Build runs on `Run`, which likewise records a release.
+- `gen: manual` (the default): Generate runs on `Run`, which likewise records a release.
   The release covers [binding](../consumers/bind.md#when-binding-runs) too: open
   `bind` goals run before `generate` goals.
-- `gen: auto`: a finished sync with open `generate` goals queues a `gen` job behind it.
+- `gen: auto`: a finished build with open `generate` goals queues a `gen` job behind it.
 
 Document has no mode: it is always an explicit action that records a decompile
 release for its area ([decompilation](../consumers/decompile.md#triggering)).
@@ -1405,7 +1408,7 @@ One switch in the status bar (also `⌘⇧D`), remembered per browser, off by de
 - The status bar adds the event-stream sequence, the store lock state, and the last
   request's latency.
 - Failed or dead runs surface under [Runs](#runs) only. The default mode shows a
-  failed sync as one line with its reason and a `Details` link that flips the toggle.
+  failed build as one line with its reason and a `Details` link that flips the toggle.
 
 ### Board
 
@@ -1595,7 +1598,7 @@ not for the project's authors; nothing here is a statement about the documents.
 ## Empty states and failure
 
 - Every panel has an empty state that says what fills it and offers the action: a
-  project with no sync yet offers Sync; a Product lens with no product folder offers
+  project with no build yet offers Build; a Product lens with no product folder offers
   the settings; an Inbox with nothing waiting says so.
 - A slow backend shows a skeleton for at most two seconds, then a banner naming the
   request still pending. A read that another process blocks (the store busy under a
@@ -1603,7 +1606,7 @@ not for the project's authors; nothing here is a statement about the documents.
 - A dropped event stream banners the lost connection and polls until it heals; a
   rejected token gives way to the token prompt ([serving](#serving)).
 - The default mode never renders a run list, a transcript, or a dead run. A failed
-  sync is one line with its reason and `Details`.
+  build is one line with its reason and `Details`.
 
 ## Frontend
 

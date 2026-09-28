@@ -94,6 +94,9 @@ test('the keyboard walks the tree', async ({ page }) => {
   await expect(nav.locator('.ft-row.focused .ft-name')).toHaveText('frontend.md')
   await page.keyboard.press('Enter')
   await page.waitForURL(/#\/docs\/docs\/frontend\.md/)
+  // The tree settles on the opened document (its ancestors open themselves) before
+  // the walk goes on, or that opening lands after the close below.
+  await expect(nav.locator('.ft-row.active .ft-name')).toHaveText('frontend.md')
   // Left from a file goes to its folder; Left on an open folder closes it.
   await page.keyboard.press('ArrowLeft')
   await expect(nav.locator('.ft-row.focused .ft-name')).toHaveText('docs')

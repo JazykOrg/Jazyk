@@ -205,9 +205,8 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
             // A tab serves the compilation lifecycle alone (docs/frontends/wasm.md#chat).
             if tab {
                 s.push_str(
-                    "The compilation lifecycle is available for explicit requests. This serving \
-                     runs in a browser tab, which has no shell: binding, generation, and \
-                     verification are not served here. ",
+                    "This serving runs in a browser tab, which has no shell: binding, \
+                     generation, and verification are not served here. ",
                 );
                 s.push_str(TAB_BUILD_NOTE);
             } else {

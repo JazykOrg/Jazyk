@@ -6,18 +6,18 @@ import { useApp } from './store'
 
 export interface Words {
   dev: boolean
-  sync: string
   build: string
+  generate: string
   review: string
   document: string
-  syncing: string
   building: string
+  generating: string
   reviewing: string
   upToDate: string
-  syncOnSave: string
-  syncOnRequest: string
-  buildAfterSync: string
+  buildOnSave: string
   buildOnRequest: string
+  generateAfterBuild: string
+  generateOnRequest: string
   pendingChanges: string
   waitingOnYou: string
   suggestions: string
@@ -47,7 +47,7 @@ export interface Words {
   trace: string
   notDescribed: string
   history: string
-  syncNumber: (n: number) => string
+  buildNumber: (n: number) => string
   whatThisCaused: string
   // A label with the compiler word beside it in Developer mode.
   both: (product: string, compiler: string) => string
@@ -57,18 +57,18 @@ function make(dev: boolean): Words {
   const both = (product: string, compiler: string) => (dev ? `${product} (${compiler})` : product)
   return {
     dev,
-    sync: both('Sync', 'compile'),
-    build: both('Build', 'generate'),
+    build: both('Build', 'compile'),
+    generate: both('Generate', 'generate'),
     review: both('Review', 'verify'),
     document: both('Document', 'decompile'),
-    syncing: both('Syncing', 'compiling'),
-    building: both('Building', 'generating'),
+    building: both('Building', 'compiling'),
+    generating: both('Generating', 'generating'),
     reviewing: both('Reviewing', 'verifying'),
     upToDate: both('Up to date', 'converged'),
-    syncOnSave: both('Sync on save', 'compile: auto'),
-    syncOnRequest: both('Sync on request', 'compile: manual'),
-    buildAfterSync: both('Build after sync', 'gen: auto'),
-    buildOnRequest: both('Build on request', 'gen: manual'),
+    buildOnSave: both('Build on save', 'compile: auto'),
+    buildOnRequest: both('Build on request', 'compile: manual'),
+    generateAfterBuild: both('Generate after build', 'gen: auto'),
+    generateOnRequest: both('Generate on request', 'gen: manual'),
     pendingChanges: both('Pending changes', 'awaiting release'),
     waitingOnYou: both('Waiting on you', 'blocked'),
     suggestions: both('Suggestions', 'optional'),
@@ -98,7 +98,7 @@ function make(dev: boolean): Words {
     trace: both('Trace', 'verification matrix'),
     notDescribed: both('Not described', 'unclaimed'),
     history: both('History', 'journal'),
-    syncNumber: (n) => (dev ? `Sync #${n} (g${n})` : `Sync #${n}`),
+    buildNumber: (n) => (dev ? `Build #${n} (g${n})` : `Build #${n}`),
     whatThisCaused: both('What this caused', 'ripple'),
     both,
   }
@@ -118,7 +118,7 @@ export function useWords(): Words {
 
 // The verdict in product words; the compiler's line beside it in Developer mode.
 export function verdictWords(v: Verdict | undefined | null, dev: boolean): string {
-  if (!v || !v.state) return 'Not synced yet'
+  if (!v || !v.state) return 'Not built yet'
   const w = words(dev)
   const compiler = compilerVerdict(v)
   // The blocked count mixes questions, proposals, and gated work; the Inbox is
@@ -129,7 +129,7 @@ export function verdictWords(v: Verdict | undefined | null, dev: boolean): strin
     return dev ? `${s} (${compiler})` : s
   }
   const left = (v.open ?? 0) + (v.failed ?? 0)
-  let s = `Sync incomplete: ${left} item${left === 1 ? '' : 's'} left`
+  let s = `Build incomplete: ${left} item${left === 1 ? '' : 's'} left`
   if (v.failed) s += `, ${v.failed} failed`
   return dev ? `${s} (${compiler})` : s
 }

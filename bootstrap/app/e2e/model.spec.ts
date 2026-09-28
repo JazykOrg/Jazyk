@@ -1,7 +1,7 @@
 // Model tiers in a tab (docs/frontends/wasm.md#model-sources): the chooser lists
 // the downloaded models strongest first with their tier and the ones in the cache
-// marked, arrival loads the strongest downloaded one, and a model below the sync
-// tier chats but cannot sync (docs/frontends/gui.md#the-action-button).
+// marked, arrival loads the strongest downloaded one, and a reader-tier model chats
+// but cannot build (docs/frontends/gui.md#the-action-button).
 import { expect, test, type Page } from '@playwright/test'
 import { api, offline, openDemo, pageErrors } from './helpers'
 
@@ -38,10 +38,10 @@ test('the chooser lists models strongest first with their tier, marks the downlo
   await page.goto('/#/settings')
   const select = page.locator('.settings-model .msrc').getByLabel('Downloaded model')
   const options = select.locator('option')
-  await expect(options.first()).toHaveText(/^Gemma 2 9B · 6.3 GB · syncs and chat$/)
+  await expect(options.first()).toHaveText(/^Gemma 2 9B · 6.3 GB · builds and chat$/)
   await expect(options.last()).toHaveText(/^Qwen 2.5 0.5B · 0.9 GB · questions only · downloaded$/)
-  await expect(options.filter({ hasText: 'Hermes 3 (Llama 3.2 3B)' })).toHaveText(/chat, syncs rough · downloaded$/)
-  await expect(options.filter({ hasText: /^Llama 3.1 8B/ })).toHaveText(/syncs and chat$/)
+  await expect(options.filter({ hasText: 'Hermes 3 (Llama 3.2 3B)' })).toHaveText(/chat, builds rough · downloaded$/)
+  await expect(options.filter({ hasText: /^Llama 3.1 8B/ })).toHaveText(/builds and chat$/)
   // The strongest downloaded model became the choice, without asking.
   await expect(select).toHaveValue(MID)
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('jazyk.modelSource') ?? '{}'))
@@ -71,7 +71,7 @@ test('with nothing downloaded the default is offered and nothing loads', async (
 
 // The browser's built-in model stands in for any reader-tier model: a Prompt API the
 // test installs answers, and records what it was asked.
-test('a reader model chats over the read tools alone and cannot sync', async ({ page }) => {
+test('a reader model chats over the read tools alone and cannot build', async ({ page }) => {
   const errors = pageErrors(page)
   const REPLY = 'The sort utility reads lines and prints them sorted.'
   await page.addInitScript((reply: string) => {
@@ -101,13 +101,13 @@ test('a reader model chats over the read tools alone and cannot sync', async ({ 
   const caps = await api<{ jobs: string[]; modelTier: string }>(page, 'GET', '/api/capabilities')
   expect(caps).toMatchObject({ jobs: [], modelTier: 'reader' })
 
-  // The action button reads Sync alone, and its sheet shows the chooser with the
-  // tier a sync needs in place of Run.
+  // The action button reads Build alone, and its sheet shows the chooser with the
+  // model a build needs in place of Run.
   const main = page.locator('.ws-action > button.main')
-  await expect(main).toHaveText(/^▸ Sync$/)
+  await expect(main).toHaveText(/^▸ Build$/)
   await main.click()
   const sheet = page.locator('.ws-sheet')
-  await expect(sheet.locator('.ws-tier')).toHaveText("A sync needs a model of the sync tier (7B and up) or an endpoint; the browser's built-in model answers questions.")
+  await expect(sheet.locator('.ws-tier')).toHaveText("A build needs a model of 3B or more, or an endpoint; the browser's built-in model answers questions.")
   await expect(sheet.locator('.msrc')).toBeVisible()
   await expect(sheet.locator('.msrc-status.v-ok')).toContainText("Ready: the browser's built-in model, reader tier (questions only).")
   await expect(sheet.getByRole('button', { name: 'Run' })).toHaveCount(0)
@@ -124,6 +124,8 @@ test('a reader model chats over the read tools alone and cannot sync', async ({ 
     return { prompts: w.__prompts, systems: w.__systems }
   })
   expect(seen.prompts[0]).toContain('can only read it')
+  // It knows it cannot build, and where builds run.
+  expect(seen.prompts[0]).toContain('You cannot start a build: the Build button at the top of the page builds the documents into the graph.')
   expect(seen.prompts[0]).not.toContain('CHAT SERVING')
   expect(seen.systems[0]).toContain('- search:')
   expect(seen.systems[0]).toContain('- get_entity:')

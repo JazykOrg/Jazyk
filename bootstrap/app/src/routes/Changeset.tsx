@@ -50,9 +50,9 @@ export default function Changeset() {
   const entry = q.data.entries.find((e) => e.generation === gen) ?? q.data.entries[0]
   const nav = (
     <p className="row">
-      {gen > 1 && <Link to={`/history/${gen - 1}`}>← {w.syncNumber(gen - 1)}</Link>}
+      {gen > 1 && <Link to={`/history/${gen - 1}`}>← {w.buildNumber(gen - 1)}</Link>}
       <Link to="/history">{w.history}</Link>
-      <Link to={`/history/${gen + 1}`}>{w.syncNumber(gen + 1)} →</Link>
+      <Link to={`/history/${gen + 1}`}>{w.buildNumber(gen + 1)} →</Link>
       <Link to={`/history/diff?from=${Math.max(1, gen - 1)}&to=${gen}`}>what changed in it</Link>
     </p>
   )
@@ -68,11 +68,11 @@ export default function Changeset() {
   const human = entry.kind ? HUMAN[entry.kind] : undefined
   return (
     <div>
-      <h1>{w.syncNumber(gen)}</h1>
+      <h1>{w.buildNumber(gen)}</h1>
       {nav}
       <div className="card">
         <p style={{ margin: '2px 0' }}>
-          <b>{human ?? (w.dev ? entry.kind || 'changeset' : 'A sync')}</b>
+          <b>{human ?? (w.dev ? entry.kind || 'changeset' : 'A build')}</b>
           {w.dev && (
             <>
               {' '}

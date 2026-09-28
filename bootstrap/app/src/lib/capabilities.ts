@@ -19,7 +19,7 @@ export interface Capabilities {
   agent: 'embedded' | 'external' | 'none'
   model: 'configured' | 'in-page' | 'loadable' | 'needs-key' | 'none'
   // The loaded model's tier (docs/frontends/wasm.md#model-sources), null with no
-  // model. An endpoint and the server's model count as sync.
+  // model. An endpoint and the server's model count as build.
   modelTier?: ModelTier | null
   rendering: 'server' | 'none'
   persistence: 'disk' | 'folder' | 'browser' | 'memory'
@@ -35,7 +35,7 @@ export const SERVER_CAPABILITIES: Capabilities = {
   jobs: ['compile', 'gen', 'verify', 'audit', 'decompile', 'benchmark'],
   agent: 'embedded',
   model: 'configured',
-  modelTier: 'sync',
+  modelTier: 'build',
   rendering: 'server',
   persistence: 'disk',
 }
@@ -56,22 +56,38 @@ export function useCapabilities() {
   })
 }
 
-// A tab's syncs and chat run the page's model: until it is ready, the Sync sheet and
+// A tab's builds and chat run the page's model: until it is ready, the Build sheet and
 // the chat pane show the model chooser (docs/frontends/wasm.md#model-sources).
 export function needsPageModel(caps: Capabilities | undefined): boolean {
   return !!caps && caps.backend !== 'server' && caps.model !== 'in-page'
 }
 
-// A sync needs a model of the sync tier: with none, or one below the tier, the Sync
-// sheet shows the chooser in place of the run (docs/frontends/gui.md#the-action-button).
-// Chat runs on any tier.
-export function needsSyncModel(caps: Capabilities | undefined): boolean {
-  return needsPageModel(caps) || (!!caps && caps.backend !== 'server' && caps.modelTier !== 'sync')
+// Whether a tier builds: the build tier well, the chat tier with rough results
+// (docs/frontends/wasm.md#model-sources).
+const builds = (t: Capabilities['modelTier']) => t === 'build' || t === 'chat'
+
+// The jobs a tab runs with its model's tier, null with no model ready: a build on a
+// model that builds, nothing else, since a tab has no shell.
+export function tabJobs(tier: ModelTier | null): JobKind[] {
+  return builds(tier) ? ['compile'] : []
 }
 
-// The loaded model is below the sync tier.
-export function belowSyncTier(caps: Capabilities | undefined): boolean {
-  return !!caps && caps.model === 'in-page' && !!caps.modelTier && caps.modelTier !== 'sync'
+// A build needs a model of the build or chat tier: with none, or a reader, the Build
+// sheet shows the chooser in place of the run (docs/frontends/gui.md#the-action-button).
+// Chat runs on any tier.
+export function needsBuildModel(caps: Capabilities | undefined): boolean {
+  return needsPageModel(caps) || (!!caps && caps.backend !== 'server' && !builds(caps.modelTier))
+}
+
+// The loaded model is of the reader tier: it answers questions and does not build.
+export function belowBuildTier(caps: Capabilities | undefined): boolean {
+  return !!caps && caps.model === 'in-page' && !!caps.modelTier && !builds(caps.modelTier)
+}
+
+// The loaded model builds with rough results: the sheet runs it and says so, with the
+// chooser a click away.
+export function smallBuildModel(caps: Capabilities | undefined): boolean {
+  return !!caps && caps.backend !== 'server' && caps.model === 'in-page' && caps.modelTier === 'chat'
 }
 
 // Whether the backend runs a job kind: a page hides the action that would start it
@@ -90,13 +106,13 @@ export function whyNot(caps: Capabilities | undefined, need: JobKind | 'agent' |
   if (need === 'docs-write') {
     return caps.docs === 'write' ? null : 'This backend reads the documents but cannot write them.'
   }
-  // A tab that can load its model offers the load in the Sync sheet.
-  if (need === 'compile' && caps.model === 'loadable') return 'Sync runs a model in this browser. Load it first.'
-  if (need === 'compile' && belowSyncTier(caps)) return 'A sync needs a model of the sync tier (7B and up) or an endpoint.'
+  // A tab that can load its model offers the load in the Build sheet.
+  if (need === 'compile' && caps.model === 'loadable') return 'Build runs a model in this browser. Load it first.'
+  if (need === 'compile' && belowBuildTier(caps)) return 'A build needs a model of 3B or more, or an endpoint.'
   if (!caps.jobs.includes(need)) {
-    return `This backend cannot run ${need === 'compile' ? 'a sync' : need === 'gen' ? 'a build' : need === 'verify' || need === 'audit' ? 'a review' : need === 'decompile' ? 'Document' : need}.`
+    return `This backend cannot run ${need === 'compile' ? 'a build' : need === 'gen' ? 'a generate run' : need === 'verify' || need === 'audit' ? 'a review' : need === 'decompile' ? 'Document' : need}.`
   }
-  if (need === 'compile' && caps.model === 'needs-key') return 'Sync needs a model. Add an API key in Settings.'
-  if (need === 'compile' && caps.model === 'none') return 'Sync needs a model. Configure one in Settings.'
+  if (need === 'compile' && caps.model === 'needs-key') return 'Build needs a model. Add an API key in Settings.'
+  if (need === 'compile' && caps.model === 'none') return 'Build needs a model. Configure one in Settings.'
   return null
 }

@@ -32,7 +32,7 @@ export function ProductHome() {
       {deliv.data && files.length === 0 && (
         <div className="empty-state">
           <b>No product yet</b>
-          {proj?.deliverable ? `Nothing is in ${proj.deliverable} yet. Run ${w.build.toLowerCase()} to build it from the documents, or point Settings at an existing product folder.` : 'Name a product folder in Settings.'}
+          {proj?.deliverable ? `Nothing is in ${proj.deliverable} yet. Run ${w.generate.toLowerCase()} to produce it from the documents, or point Settings at an existing product folder.` : 'Name a product folder in Settings.'}
           <div className="actions">
             <Link to="/settings" className="btn">
               Settings
@@ -85,7 +85,7 @@ export function FilesHome() {
       {deliv.data && files.length === 0 && (
         <div className="empty-state">
           <b>No product files</b>
-          Run {w.build.toLowerCase()} to build the product from the documents.
+          Run {w.generate.toLowerCase()} to produce the product from the documents.
         </div>
       )}
       {files.length > 0 && <p className="muted">Pick a file on the left. Each file shows which entities and requirements it carries.</p>}
@@ -102,7 +102,7 @@ export function Tests() {
       {matrix.data && rows.length === 0 && (
         <div className="empty-state">
           <b>No tests yet</b>
-          A build writes one test per criterion; a review runs them.
+          Generating writes one test per criterion; a review runs them.
         </div>
       )}
       {rows.map(([rid, r]) => (
@@ -169,11 +169,11 @@ export function GeneratedHome() {
   return (
     <div className="ws-scroll narrow">
       <h1>Generated docs</h1>
-      <p className="muted">Reference pages written from the model after every sync: one document per entity, cards, level pages, diagram pages.</p>
+      <p className="muted">Reference pages written from the model after every build: one document per entity, cards, level pages, diagram pages.</p>
       {out.data && pages.length === 0 && (
         <div className="empty-state">
           <b>No pages yet</b>
-          The first sync writes them.
+          The first build writes them.
         </div>
       )}
       {pages.map((p) => (
@@ -198,7 +198,7 @@ export function ProductForm() {
       {deliv.data && !m && (
         <div className="empty-state">
           <b>Not decided yet</b>
-          The first {w.build.toLowerCase()} decides the form and records it here.
+          The first {w.generate.toLowerCase()} run decides the form and records it here.
         </div>
       )}
       {m && (

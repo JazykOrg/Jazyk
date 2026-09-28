@@ -20,7 +20,7 @@ export function markClass(status: string | undefined, asked: boolean): string {
 }
 
 function statusWords(status: string | undefined): string {
-  if (!status || status === 'missing') return 'extracted, not yet built'
+  if (!status || status === 'missing') return 'extracted, not yet generated'
   return status
 }
 

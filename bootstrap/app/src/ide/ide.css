@@ -119,7 +119,7 @@
   border-width: 1px;
 }
 
-/* The pending mark: edited since the last sync (docs/frontends/gui.md#docs). */
+/* The pending mark: edited since the last build (docs/frontends/gui.md#docs). */
 .ide-pending {
   color: var(--warn);
   font-size: 9px;

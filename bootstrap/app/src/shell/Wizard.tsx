@@ -1,7 +1,7 @@
 // The new-project wizard (docs/frontends/gui.md#home): a served folder with no
 // jazyk.toml yet. Pick the documents glob, optionally the product folder, the
 // root documents, and the model; the wizard writes jazyk.toml through the settings
-// endpoint, names the shape it detected, and runs the first sync.
+// endpoint, names the shape it detected, and runs the first build.
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -63,7 +63,7 @@ export default function Wizard({ payload, root }: { payload: SettingsPayload; ro
         },
       })
       // The folder is a project now: the documents lens lists what the glob
-      // matched, and the action button runs the first sync
+      // matched, and the action button runs the first build
       // (docs/frontends/gui.md#the-setup-wizard).
       void qc.invalidateQueries()
       navigate('/docs')

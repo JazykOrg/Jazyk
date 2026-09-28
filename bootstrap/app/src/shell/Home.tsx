@@ -189,7 +189,7 @@ function FolderCard({ picker }: { picker: boolean }) {
         <button
           className="primary"
           onClick={() => send('jazyk:pick-folder', { mode: readOnly ? 'read' : 'write' })}
-          title={readOnly ? 'changes stay in this browser until you write them' : 'edits and syncs write back into the folder'}
+          title={readOnly ? 'changes stay in this browser until you write them' : 'edits and builds write back into the folder'}
         >
           Open folder…
         </button>

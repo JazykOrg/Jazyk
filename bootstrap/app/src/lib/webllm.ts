@@ -134,19 +134,19 @@ export interface ModelChoice {
 }
 
 // What a model is for, from its parameter count (docs/frontends/wasm.md#model-sources):
-// `sync` (7B and up) syncs and chats, `chat` (3B) chats and syncs rough, `reader`
-// (under 3B) answers questions over the read tools only. The rule is the count, not
+// `build` (7B and up) builds well and chats, `chat` (3B) chats and builds with rough
+// results, `reader` (under 3B) answers questions over the read tools only. The rule is the count, not
 // a name, so a model the table gains later sorts itself.
-export type ModelTier = 'sync' | 'chat' | 'reader'
+export type ModelTier = 'build' | 'chat' | 'reader'
 
 export function tier(params: number): ModelTier {
-  return params >= 7 ? 'sync' : params >= 3 ? 'chat' : 'reader'
+  return params >= 7 ? 'build' : params >= 3 ? 'chat' : 'reader'
 }
 
 // The tier word the chooser and the ready line show beside a model.
 export const TIER_WORDS: Record<ModelTier, string> = {
-  sync: 'syncs and chat',
-  chat: 'chat, syncs rough',
+  build: 'builds and chat',
+  chat: 'chat, builds rough',
   reader: 'questions only',
 }
 

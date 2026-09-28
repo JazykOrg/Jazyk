@@ -13,7 +13,7 @@ test('every route but Home goes home until a project is open', async ({ page }) 
   await expect(page.locator('.home .demo')).toHaveCount(6)
 })
 
-test('nothing downloads the model on arrival; the Sync sheet offers it', async ({ page }) => {
+test('nothing downloads the model on arrival; the Build sheet offers it', async ({ page }) => {
   const external = await offline(page)
   await openDemo(page, 'The sort utility')
   await page.waitForTimeout(1500)
@@ -21,7 +21,7 @@ test('nothing downloads the model on arrival; the Sync sheet offers it', async (
   const caps = await api<{ model: string }>(page, 'GET', '/api/capabilities')
   // A browser without WebGPU has no model to offer at all.
   if (caps.model === 'loadable') {
-    await page.locator('.ws-top').getByRole('button', { name: /Up to date|Sync/ }).click()
+    await page.locator('.ws-top').getByRole('button', { name: /Up to date|Build/ }).click()
     await expect(page.locator('.ws-sheet')).toContainText('Load the model')
   }
 })
@@ -253,7 +253,7 @@ test('a requirement page lists its criteria in words, and Developer mode shows t
   await expect(kinds).toHaveCount(n)
   for (const word of await kinds.allTextContents()) expect(['Example', 'Failure case', 'Edge case', 'Measure']).toContain(word)
   await expect(center.locator('.status-line .status-word')).toHaveText(
-    /^(Passing|Failing|Partly passing|No test yet|Not built yet|Outdated: the requirement changed|Needs a rerun)$/,
+    /^(Passing|Failing|Partly passing|No test yet|Not generated yet|Outdated: the requirement changed|Needs a rerun)$/,
   )
   await expect(center).not.toContainText(/\b(req|crit|ent):[a-z0-9]/)
 

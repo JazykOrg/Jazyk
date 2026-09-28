@@ -1,5 +1,5 @@
-// History: the list of syncs with the human edits that started each cascade, in
-// product words (docs/frontends/gui.md#history). One sync opens its changes
+// History: the list of builds with the human edits that started each cascade, in
+// product words (docs/frontends/gui.md#history). One build opens its changes
 // (the Changeset page); a range opens the diff.
 import { Link } from 'react-router'
 import { entryLabel, type JournalEntry } from '../lib/api'
@@ -19,7 +19,7 @@ function kindWords(e: JournalEntry, dev: boolean): string {
   if (e.kind && HUMAN[e.kind]) return HUMAN[e.kind]
   switch (e.kind) {
     case 'session':
-      return dev ? entryLabel(e) : `a sync read ${(e.batch ?? []).length || 'some'} item${(e.batch ?? []).length === 1 ? '' : 's'}`
+      return dev ? entryLabel(e) : `a build read ${(e.batch ?? []).length || 'some'} item${(e.batch ?? []).length === 1 ? '' : 's'}`
     case 'gc':
       return 'the model was tidied'
     case 'align':
@@ -44,7 +44,7 @@ export default function History() {
         <h1>{w.history}</h1>
         {journal.data && (
           <span className="muted">
-            {w.syncNumber(journal.data.generation)} is the latest.{' '}
+            {w.buildNumber(journal.data.generation)} is the latest.{' '}
             {entries.length > 1 && (
               <Link to={`/history/diff?from=${Math.max(1, entries[entries.length - 1].generation)}&to=${entries[0].generation}`}>What changed across all of them →</Link>
             )}
@@ -54,7 +54,7 @@ export default function History() {
       {entries.length === 0 && journal.data && (
         <div className="empty-state">
           <b>Nothing yet</b>
-          The first sync writes the first entry here.
+          The first build writes the first entry here.
         </div>
       )}
       {entries.map((e) => {
@@ -62,7 +62,7 @@ export default function History() {
         return (
           <div key={e.generation} className="hist-row">
             <Link to={`/history/${e.generation}`} className="mono">
-              {w.syncNumber(e.generation)}
+              {w.buildNumber(e.generation)}
             </Link>
             <span className={human ? 'human' : ''}>
               {kindWords(e, w.dev)}

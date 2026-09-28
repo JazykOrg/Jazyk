@@ -369,7 +369,7 @@ function ProjectSettings() {
 }
 
 // The workflow modes (docs/frontends/gui.md#workflow-modes): control-plane state,
-// shared with every agent, here as Sync on save or on request and Build after sync
+// shared with every agent, here as Build on save or on request and Generate after build
 // or on request. A tab has no control plane to set.
 function Workflow() {
   const w = useWords()
@@ -380,18 +380,18 @@ function Workflow() {
     <section className="settings-workflow">
       <h1>Workflow</h1>
       <div className="settings-grid">
-        <label title="On save: every saved change syncs (spends model budget). On request: changes wait in the Inbox until you run a sync. Shared with attached agents.">
-          Sync
+        <label title="On save: every saved change builds (spends model budget). On request: changes wait in the Inbox until you run a build. Shared with attached agents.">
+          Build
           <select value={manual ? 'queue' : 'watch'} onChange={(e) => put('/api/watch', { mode: e.target.value })}>
-            <option value="queue">{w.syncOnRequest}</option>
-            <option value="watch">{w.syncOnSave}</option>
+            <option value="queue">{w.buildOnRequest}</option>
+            <option value="watch">{w.buildOnSave}</option>
           </select>
         </label>
-        <label title="After sync: a finished sync with entities to build queues a build. On request: building is a click.">
-          Build
+        <label title="After build: a finished build with entities to generate queues a generate run. On request: generating is a click.">
+          Generate
           <select value={genMode} onChange={(e) => put('/api/watch', { gen: e.target.value })}>
-            <option value="manual">{w.buildOnRequest}</option>
-            <option value="auto">{w.buildAfterSync}</option>
+            <option value="manual">{w.generateOnRequest}</option>
+            <option value="auto">{w.generateAfterBuild}</option>
           </select>
         </label>
       </div>

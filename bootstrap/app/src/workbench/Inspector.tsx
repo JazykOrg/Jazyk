@@ -586,7 +586,7 @@ function DocTies({ path }: { path: string }) {
   return (
     <>
       <h2>Requirements in this document</h2>
-      {reqs.length === 0 && <p className="muted">None found yet. A sync reads them out of the text.</p>}
+      {reqs.length === 0 && <p className="muted">None found yet. A build reads them out of the text.</p>}
       <div className="req-list">
         {reqs.slice(0, 60).map(([rid]) => (
           <div key={rid} className="req-row">
@@ -595,8 +595,8 @@ function DocTies({ path }: { path: string }) {
           </div>
         ))}
       </div>
-      <h2>Built in</h2>
-      {files.length === 0 && <p className="muted">Not built yet.</p>}
+      <h2>Generated in</h2>
+      {files.length === 0 && <p className="muted">Not generated yet.</p>}
       {files.map((p) => (
         <p key={p} style={{ margin: '2px 0' }}>
           <Link className="mono" to={delivHref(p)}>

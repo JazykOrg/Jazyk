@@ -104,11 +104,11 @@ const model: ModelHost = {
   // The source can run here, and nothing is loaded or loading yet.
   loadable: () => !reasonFor(readSource()) && !host.available(),
   // The loaded model's tier (docs/frontends/wasm.md#model-sources): an endpoint
-  // counts as sync, the built-in model as reader, a downloaded model as its size says.
+  // counts as build, the built-in model as reader, a downloaded model as its size says.
   tier: () => (host.available() ? sourceTier(readSource()) : null),
 }
 
-// Loads the chosen source, its progress on the console and in the Sync sheet.
+// Loads the chosen source, its progress on the console and in the Build sheet.
 function loadModelOnRequest() {
   const s = readSource()
   if (reasonFor(s) || loading || host.available()) return
@@ -212,7 +212,7 @@ async function boot() {
   )
 
   window.addEventListener('jazyk:load-model', loadModelOnRequest)
-  // The Sync sheet and Settings choose the source; the choice is already stored.
+  // The Build sheet and Settings choose the source; the choice is already stored.
   window.addEventListener('jazyk:model-source-changed', applySource)
   applySource()
   void arrive()

@@ -36,9 +36,9 @@ export default function ModelSourcePanel() {
       : builtIn === 'unavailable'
         ? 'This browser has it, but not on this device.'
         : builtIn === 'downloadable' || builtIn === 'downloading'
-          ? 'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small: questions only, no sync.'
+          ? 'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small: questions only, no build.'
           : builtIn === 'available'
-            ? 'Ready on this device. Its context is small: questions only, no sync.'
+            ? 'Ready on this device. Its context is small: questions only, no build.'
             : 'Checking…'
 
   const option = (kind: SourceKind, title: string, note: string, disabled: boolean) => (
@@ -53,7 +53,7 @@ export default function ModelSourcePanel() {
 
   return (
     <div className="msrc">
-      <p className="why">Syncs and chat run a model. Choose where it comes from.</p>
+      <p className="why">Builds and chat run a model. Choose where it comes from.</p>
       {option(
         'webllm',
         'Download a model',
@@ -76,7 +76,7 @@ export default function ModelSourcePanel() {
             </select>
           </label>
           <p className="muted">
-            Strongest first. 7B and up syncs and chats; 3B chats and syncs rough; under 3B answers questions only. A bigger model downloads longer, and 7B and up needs several
+            Strongest first. 7B and up builds and chats; 3B chats and builds with rough results; under 3B answers questions only. A bigger model downloads longer, and 7B and up needs several
             gigabytes free beside the weights.
           </p>
         </div>

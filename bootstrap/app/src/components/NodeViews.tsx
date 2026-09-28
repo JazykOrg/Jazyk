@@ -40,10 +40,10 @@ function useFiles(reqIds: string[]): string[] {
 }
 
 function FilesLine({ files, site }: { files: string[]; site?: string }) {
-  if (files.length === 0) return <span className="muted">Not built yet</span>
+  if (files.length === 0) return <span className="muted">Not generated yet</span>
   return (
     <span>
-      Built in{' '}
+      Generated in{' '}
       {files.slice(0, 3).map((f, i) => (
         <span key={f}>
           {i > 0 && ', '}
@@ -353,7 +353,7 @@ export function RequirementView({
 
       <Part title="Acceptance criteria">
         {criteria.length === 0 ? (
-          <p className="muted">None yet. A sync writes the examples that show this requirement is met.</p>
+          <p className="muted">None yet. A build writes the examples that show this requirement is met.</p>
         ) : (
           criteria.map((cid) => <CriterionItem key={cid} id={cid} graph={g} />)
         )}

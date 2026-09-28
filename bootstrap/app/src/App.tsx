@@ -265,7 +265,7 @@ function CommitNote() {
   if (!last || Date.now() - last.at > 6000) return null
   return (
     <Link className="commit-note mono" to={`/history/${last.generation}`}>
-      sync #{last.generation} landed →
+      build #{last.generation} landed →
     </Link>
   )
 }

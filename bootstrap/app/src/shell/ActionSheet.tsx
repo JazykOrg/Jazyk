@@ -8,7 +8,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { post, put } from '../lib/api'
-import { belowSyncTier, needsSyncModel, useCapabilities, whyNot, type JobKind } from '../lib/capabilities'
+import { belowBuildTier, needsBuildModel, smallBuildModel, useCapabilities, whyNot, type JobKind } from '../lib/capabilities'
 import { useInbox } from '../lib/product'
 import { useDocs, useGenPending, useMatrix, useStatus, useWorkers } from '../lib/queries'
 import { useApp, type ActionChoice } from '../lib/store'
@@ -27,7 +27,7 @@ function useRunning() {
   return { running, queued }
 }
 
-// The counts every line reads: documents changed, work left, entities to build,
+// The counts every line reads: documents changed, work left, entities to generate,
 // tests to run.
 function useCounts() {
   const inbox = useInbox()
@@ -53,29 +53,29 @@ function stateLine(kind: ActionChoice, c: Counts): string {
     case 'compile':
       return c.changedDocs.length > 0 ? `${plural(c.changedDocs.length, 'document')} changed` : c.openGoals > 0 ? `${plural(c.openGoals, 'item')} left` : 'Up to date'
     case 'gen':
-      return c.toBuild > 0 ? plural(c.toBuild, 'entity', 'entities') : 'Nothing to build'
+      return c.toBuild > 0 ? plural(c.toBuild, 'entity', 'entities') : 'Nothing to generate'
     case 'verify':
       return c.tests > 0 ? plural(c.tests, 'test') : 'No tests yet'
   }
 }
 
 function actionWord(kind: ActionChoice, w: Words): string {
-  return kind === 'compile' ? w.sync : kind === 'gen' ? w.build : w.review
+  return kind === 'compile' ? w.build : kind === 'gen' ? w.generate : w.review
 }
 
 function runningWord(kind: string, w: Words): string {
-  return kind === 'compile' ? w.syncing : kind === 'gen' ? w.building : kind === 'verify' || kind === 'audit' ? w.reviewing : `${kind}…`
+  return kind === 'compile' ? w.building : kind === 'gen' ? w.generating : kind === 'verify' || kind === 'audit' ? w.reviewing : `${kind}…`
 }
 
-// Which actions the backend offers: what it runs, plus Sync in a tab whose model is
-// not ready or below the sync tier, since the sheet then shows the model chooser.
+// Which actions the backend offers: what it runs, plus Build in a tab whose model is
+// not ready or of the reader tier, since the sheet then shows the model chooser.
 function useOffered() {
   const caps = useCapabilities()
-  return (kind: JobKind) => !caps.data || caps.data.jobs.includes(kind) || (kind === 'compile' && needsSyncModel(caps.data))
+  return (kind: JobKind) => !caps.data || caps.data.jobs.includes(kind) || (kind === 'compile' && needsBuildModel(caps.data))
 }
 
 // The chosen action: the remembered choice when the backend offers it, else the
-// default for the state (Sync while documents changed, Build when entities wait).
+// default for the state (Build while documents changed, Generate when entities wait).
 function useChosen(c: Counts): ActionChoice {
   const choice = useApp((a) => a.action)
   const offered = useOffered()
@@ -135,10 +135,10 @@ export default function ActionButton() {
   if (running) {
     label = `${runningWord(running.kind.kind, w)}${progress ? ` ${progress}` : ''}${queued > 0 ? ` (+${queued})` : ''}`
     cls += ' running'
-  } else if (chosen === 'compile' && needsSyncModel(caps.data)) {
-    // No model of the sync tier: the click shows the chooser
+  } else if (chosen === 'compile' && needsBuildModel(caps.data)) {
+    // No model that builds: the click shows the chooser
     // (docs/frontends/gui.md#the-action-button).
-    label = w.sync
+    label = w.build
   } else if (chosen === 'compile' && counts.changedDocs.length === 0 && counts.openGoals === 0) {
     label = w.upToDate
     cls += ' idle'
@@ -220,6 +220,8 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
   const genMode = useApp((a) => a.genMode)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // A chat-tier model builds; the chooser stays folded until asked for.
+  const [chooser, setChooser] = useState(false)
 
   const manual = watchMode !== 'watch'
   const agents = (workers?.workers ?? []).filter((x) => x.kind === 'agent')
@@ -253,17 +255,17 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
   const what =
     kind === 'compile'
       ? counts.changedDocs.length > 0
-        ? `${plural(counts.changedDocs.length, 'document')} changed since the last sync: ${counts.changedDocs.slice(0, 3).join(', ')}${counts.changedDocs.length > 3 ? ', …' : ''}.`
+        ? `${plural(counts.changedDocs.length, 'document')} changed since the last build: ${counts.changedDocs.slice(0, 3).join(', ')}${counts.changedDocs.length > 3 ? ', …' : ''}.`
         : counts.openGoals > 0
-          ? `${plural(counts.openGoals, 'item')} of work left from the last sync.`
-          : 'Nothing has changed since the last sync.'
+          ? `${plural(counts.openGoals, 'item')} of work left from the last build.`
+          : 'Nothing has changed since the last build.'
       : kind === 'gen'
         ? counts.toBuild > 0
-          ? `${plural(counts.toBuild, 'entity', 'entities')} to build from the documents.`
-          : 'Nothing to build: every entity is built or has no requirements yet.'
+          ? `${plural(counts.toBuild, 'entity', 'entities')} to generate from the documents.`
+          : 'Nothing to generate: every entity is generated or has no requirements yet.'
         : counts.tests > 0
           ? `${plural(counts.tests, 'test')} to run; every trace row refreshes.`
-          : 'No tests yet: a build writes one test per criterion.'
+          : 'No tests yet: generating writes one test per criterion.'
   const nothing = (kind === 'gen' && counts.toBuild === 0) || (kind === 'verify' && counts.tests === 0)
   const who = agentMissing
     ? 'Your settings prefer an attached agent, but none is connected. The built-in runner will run instead.'
@@ -287,14 +289,14 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
             </button>
           </div>
         </>
-      ) : kind === 'compile' && needsSyncModel(caps.data) ? (
+      ) : kind === 'compile' && needsBuildModel(caps.data) ? (
         <>
           <p className="why" style={{ margin: '2px 0' }}>
             {what}
           </p>
-          {belowSyncTier(caps.data) && (
+          {belowBuildTier(caps.data) && (
             <p className="why ws-tier" style={{ margin: '2px 0' }}>
-              A sync needs a model of the sync tier (7B and up) or an endpoint; {loadedName(src)} answers questions.
+              A build needs a model of 3B or more, or an endpoint; {loadedName(src)} answers questions.
             </p>
           )}
           <ModelSourcePanel />
@@ -309,6 +311,19 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
           <p className="why" style={{ margin: '2px 0' }}>
             {who}
           </p>
+          {kind === 'compile' && smallBuildModel(caps.data) && (
+            <>
+              <p className="why ws-small" style={{ margin: '2px 0' }}>
+                {loadedName(src)} is a small model: a build runs, and its results are rough. A 7B or larger model, or an endpoint, builds better.
+              </p>
+              {!chooser && (
+                <button type="button" className="ws-stronger" onClick={() => setChooser(true)}>
+                  Choose a stronger model
+                </button>
+              )}
+              {chooser && <ModelSourcePanel />}
+            </>
+          )}
           {error && (
             <p className="why v-bad" style={{ margin: '2px 0' }}>
               {error}
@@ -327,18 +342,18 @@ function ActionSheet({ kind, counts, close }: { kind: ActionChoice; counts: Coun
         <>
           <h3>Modes</h3>
           <div className="modes">
-            <label title="On save: every saved change syncs (spends model budget). On request: changes wait in the Inbox until you run a sync. Shared with attached agents.">
-              <span>Sync</span>
+            <label title="On save: every saved change builds (spends model budget). On request: changes wait in the Inbox until you run a build. Shared with attached agents.">
+              <span>Build</span>
               <select value={manual ? 'queue' : 'watch'} onChange={(e) => put('/api/watch', { mode: e.target.value })}>
-                <option value="queue">{w.syncOnRequest}</option>
-                <option value="watch">{w.syncOnSave}</option>
+                <option value="queue">{w.buildOnRequest}</option>
+                <option value="watch">{w.buildOnSave}</option>
               </select>
             </label>
-            <label title="After sync: a finished sync with entities to build queues a build. On request: building is a click.">
-              <span>Build</span>
+            <label title="After build: a finished build with entities to generate queues a generate run. On request: generating is a click.">
+              <span>Generate</span>
               <select value={genMode} onChange={(e) => put('/api/watch', { gen: e.target.value })}>
-                <option value="manual">{w.buildOnRequest}</option>
-                <option value="auto">{w.buildAfterSync}</option>
+                <option value="manual">{w.generateOnRequest}</option>
+                <option value="auto">{w.generateAfterBuild}</option>
               </select>
             </label>
           </div>

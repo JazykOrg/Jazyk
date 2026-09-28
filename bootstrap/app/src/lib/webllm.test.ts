@@ -37,8 +37,8 @@ describe('the model choices', () => {
 
 describe('tier', () => {
   it('reads the tier from the parameter count', () => {
-    expect(tier(9.2)).toBe('sync')
-    expect(tier(7)).toBe('sync')
+    expect(tier(9.2)).toBe('build')
+    expect(tier(7)).toBe('build')
     expect(tier(6.9)).toBe('chat')
     expect(tier(3)).toBe('chat')
     expect(tier(2.9)).toBe('reader')
@@ -46,7 +46,7 @@ describe('tier', () => {
   })
 
   it('names the tier of a choice by id, and reader for an unknown id', () => {
-    expect(tierOf('gemma-2-9b-it-q4f16_1-MLC')).toBe('sync')
+    expect(tierOf('gemma-2-9b-it-q4f16_1-MLC')).toBe('build')
     expect(tierOf(DEFAULT_MODEL)).toBe('chat')
     expect(tierOf('Qwen2.5-0.5B-Instruct-q4f16_1-MLC')).toBe('reader')
     expect(tierOf('nobody')).toBe('reader')

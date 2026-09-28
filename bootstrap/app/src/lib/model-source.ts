@@ -24,10 +24,10 @@ export function webllmModelOf(s: ModelSource): string {
 }
 
 // The tier of the model a source gives (docs/frontends/wasm.md#model-sources): an
-// endpoint counts as `sync`, the browser's built-in model as `reader`, a downloaded
+// endpoint counts as `build`, the browser's built-in model as `reader`, a downloaded
 // model as its parameter count says.
 export function sourceTier(s: ModelSource): ModelTier {
-  return s.kind === 'endpoint' ? 'sync' : s.kind === 'chrome' ? 'reader' : tierOf(webllmModelOf(s))
+  return s.kind === 'endpoint' ? 'build' : s.kind === 'chrome' ? 'reader' : tierOf(webllmModelOf(s))
 }
 
 const KEY = 'jazyk.modelSource'

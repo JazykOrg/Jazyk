@@ -584,6 +584,9 @@ renders against it:
     chat column offers the model chooser in place of the prompt box.
   - `model`: `configured`, `in-page` (a model loaded in the tab), `loadable` (the
     tab can load one, on request), `needs-key`, or `none`.
+  - `modelTier`: the loaded model's tier, `sync`, `chat`, or `reader`
+    ([model sources](./wasm.md#model-sources)), or `null` with no model; an endpoint
+    and the server's model count as `sync`, the browser's built-in model as `reader`.
   - `rendering`: `server` or `none`. A tab renders no `.svg`; a demo seed ships its
     renderings.
   - `persistence`: where a change goes.

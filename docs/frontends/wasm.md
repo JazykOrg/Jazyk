@@ -399,11 +399,11 @@ an endpoint's key goes only to that endpoint.
   browser owns and runs it, not that it is already on the disk: Chrome fetches the
   weights, a few gigabytes, the first time any page asks, and the page says so
   (`Chrome is downloading its built-in model for the first time`) with the progress
-  the browser reports; later loads are instant. Its context window is small, so a
-  sync's prompt may not fit at all: the session fails with the model's own words
-  ("The input is too large.") and the remedy beside them (a downloaded model or an
-  endpoint), and the build stops at that first failure rather than retrying every
-  batch ([escalation](../compiler/reconciler.md#escalation)).
+  the browser reports; later loads are instant. Its context window is small, so it
+  counts as a `reader` model (the tiers above): chat and questions over the read
+  tools, and a sync asks for a downloaded `sync` model or an endpoint. A prompt it
+  still cannot hold fails with the model's own words ("The input is too large.") and
+  the remedy beside them (a downloaded model or an endpoint).
 - Your endpoint: any OpenAI-compatible chat completions URL (a local server, LocalRouter,
   a provider), with a model name and an optional key. The page calls it directly, so
   the endpoint must allow this page's origin (CORS). Ready at once, nothing to load.

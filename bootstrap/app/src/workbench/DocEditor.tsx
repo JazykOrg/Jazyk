@@ -2,22 +2,27 @@
 // query prefix so docs.changed invalidation refetches it: a clean editor reloads
 // silently, a dirty one gets the conflict bar. The gutter marks changes against
 // the reconciled baseline; the diff toggle shows baseline against current side by
-// side (docs/frontends/gui.md#editor).
+// side. One toggle, Read or Write: Write is the editor, Read the rendered page in
+// its place with the same markers, underlines, bands, and read states
+// (docs/frontends/gui.md#editor).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useGraph, useMatrix, useProject } from '../lib/queries'
 import { useInlineBands, useReqMarks } from '../ide/overlays'
-import { useApp } from '../lib/store'
+import { useApp, type DocMode } from '../lib/store'
 import { useCapabilities } from '../lib/capabilities'
 import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
+import { buildMentionIndex, findQuoteIn, lineOf, quoteLine } from '../lib/mentions'
+import { sectionBySlug, sectionLines } from '../lib/sections'
 import CmHost, { docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
 import { serverBase } from '../lib/backend'
-import MarkdownView from '../components/MarkdownView'
+import MarkdownView, { type MarkdownViewHandle, type ReadDecor } from '../components/MarkdownView'
+import { REVEAL_EVENT } from '../shell/Outline'
 import '../ide/ide.css'
 import '../components/markdown.css'
 
@@ -31,18 +36,6 @@ function contentPath(path: string): string {
   return `/api/docs/content?path=${encodeURIComponent(path)}`
 }
 
-// The preview toggle is a browser-wide preference, remembered across documents
-// (docs/frontends/gui.md#markdown-preview).
-const PREVIEW_KEY = 'jazyk-doc-preview'
-
-function readPreviewPref(): boolean {
-  try {
-    return localStorage.getItem(PREVIEW_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
 function sevClass(sev: Marker['severity']): string {
   return sev === 'error' ? 'sev-error' : sev === 'warning' ? 'sev-warning' : sev === 'info' ? 'sev-info' : 'sev-none'
 }
@@ -52,6 +45,7 @@ export default function DocEditor() {
   const docPath = params['*'] ?? ''
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const loc = useLocation()
   const qc = useQueryClient()
   const projectQ = useProject()
   const docsQ = useDocs()
@@ -60,16 +54,42 @@ export default function DocEditor() {
   const { openNode } = useInspector()
   const setEditorDirty = useApp((a) => a.setEditorDirty)
   const [diffMode, setDiffMode] = useState(false)
-  // Reader: the rendered page alone, for reviewers (docs/frontends/gui.md#docs).
-  const [reader, setReader] = useState(false)
-  const [preview, setPreview] = useState(readPreviewPref)
   const graphQ = useGraph()
   const matrixQ = useMatrix()
   const marks = useReqMarks(graphQ.data, matrixQ.data?.rows ?? {}, docPath)
   const bands = useInlineBands(graphQ.data, docPath)
-  // The text the preview renders: what the editor holds, a beat behind the keystrokes.
-  const [previewText, setPreviewText] = useState('')
+  const mentions = useMemo(() => (graphQ.data ? buildMentionIndex(graphQ.data.entities) : undefined), [graphQ.data])
+  // The text Read renders: what the editor holds, a beat behind the keystrokes.
+  const [readText, setReadText] = useState('')
   const previewTimer = useRef<number | null>(null)
+  // Read or Write: the last choice for this document, else the default. A folder
+  // opened read-only reads; everything else writes (docs/frontends/gui.md#editor).
+  const folderMode = useApp((a) => a.folder?.mode)
+  const chosenMode = useApp((a) => a.docModes[docPath])
+  const setDocMode = useApp((a) => a.setDocMode)
+  const mode: DocMode = chosenMode ?? (folderMode === 'read' ? 'read' : 'write')
+  const reading = mode === 'read'
+  const mdRef = useRef<MarkdownViewHandle>(null)
+  // Where the reader is, for the outline: the cursor's line in Write, the top of
+  // the view in Read, a beat behind the movement.
+  const setEditorLine = useApp((a) => a.setEditorLine)
+  const lineTimer = useRef<number | null>(null)
+  const reportLine = useCallback(
+    (line: number) => {
+      if (lineTimer.current !== null) window.clearTimeout(lineTimer.current)
+      lineTimer.current = window.setTimeout(() => {
+        lineTimer.current = null
+        setEditorLine(docPath, line)
+      }, 120)
+    },
+    [docPath, setEditorLine],
+  )
+  useEffect(
+    () => () => {
+      if (lineTimer.current !== null) window.clearTimeout(lineTimer.current)
+    },
+    [],
+  )
   // Autosave: in the browser, where a write lands without asking (the demo, and a
   // folder in writing mode), the editor saves a beat after typing stops and when the
   // document is left. A read-only folder saves on request and asks whether to write
@@ -95,7 +115,7 @@ export default function DocEditor() {
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
     previewTimer.current = window.setTimeout(() => {
       previewTimer.current = null
-      setPreviewText(text)
+      setReadText(text)
     }, 120)
   }, [])
   useEffect(
@@ -104,16 +124,6 @@ export default function DocEditor() {
     },
     [],
   )
-  const togglePreview = useCallback(() => {
-    setPreview((v) => {
-      try {
-        localStorage.setItem(PREVIEW_KEY, v ? '0' : '1')
-      } catch {
-        // a private window; the choice lives for this page only
-      }
-      return !v
-    })
-  }, [])
 
   // What the running build is doing to this document, if anything.
   const turns = useApp((a) => a.turns)
@@ -378,19 +388,66 @@ export default function DocEditor() {
     }
   }, [loaded])
 
-  // ?section=&quote=: scroll to the section start, highlight the quote once per
-  // distinct target.
+  // Scroll to a section: the editor to its first line (the quote highlighted when
+  // one is named), the Read page to the block holding it.
+  const readingRef = useRef(reading)
+  readingRef.current = reading
+  const reveal = useCallback(
+    (ref: string, quoteText?: string) => {
+      const sec = coverageQ.data?.[docPathRef.current]?.sections[ref]
+      if (!sec) return
+      const [start] = sectionLines(sec)
+      requestAnimationFrame(() => {
+        if (readingRef.current) {
+          mdRef.current?.revealLine(start)
+          // The reader is at the section now, whether or not the page could
+          // scroll it to the top.
+          if (lineTimer.current !== null) window.clearTimeout(lineTimer.current)
+          lineTimer.current = null
+          setEditorLine(docPathRef.current, start)
+        } else hostRef.current?.revealSection(start, quoteText)
+      })
+    },
+    [coverageQ.data, setEditorLine],
+  )
+
+  // ?section=&quote=: once per distinct target.
   const section = searchParams.get('section')
   const quote = searchParams.get('quote')
   useEffect(() => {
     if (!section || !loaded || loaded.path !== docPath) return
-    const sec = coverageQ.data?.[docPath]?.sections[section]
-    if (!sec) return
+    if (!coverageQ.data?.[docPath]?.sections[section]) return
     const key = `${docPath}|${section}|${quote ?? ''}`
     if (revealedKey.current === key) return
     revealedKey.current = key
-    requestAnimationFrame(() => hostRef.current?.revealSection(sec.lines[0], quote ?? undefined))
-  }, [section, quote, coverageQ.data, loaded, docPath])
+    reveal(section, quote ?? undefined)
+  }, [section, quote, coverageQ.data, loaded, docPath, reveal])
+
+  // The outline's click, even when the route already names the section.
+  useEffect(() => {
+    const onReveal = (e: Event) => {
+      const d = (e as CustomEvent<{ doc: string; section: string }>).detail
+      if (d && d.doc === docPathRef.current) reveal(d.section)
+    }
+    window.addEventListener(REVEAL_EVENT, onReveal)
+    return () => window.removeEventListener(REVEAL_EVENT, onReveal)
+  }, [reveal])
+
+  // A link's `#fragment`: the heading with that slug (docs/frontends/gui.md#markdown-preview).
+  const fragment = loc.hash.replace(/^#/, '')
+  useEffect(() => {
+    if (!fragment || !loaded || loaded.path !== docPath) return
+    const key = `${docPath}#${fragment}`
+    if (revealedKey.current === key) return
+    revealedKey.current = key
+    if (readingRef.current) {
+      requestAnimationFrame(() => mdRef.current?.revealSlug(fragment))
+      return
+    }
+    const sections = coverageQ.data?.[docPath]?.sections
+    const ref = sections ? sectionBySlug(sections, fragment) : null
+    if (ref) reveal(ref)
+  }, [fragment, loaded, docPath, coverageQ.data, reveal])
 
   // The pointer inside a banded section holds that turn's result in place, the
   // same hold the files tree gives its rows (docs/frontends/gui.md#editor). The
@@ -424,6 +481,63 @@ export default function DocEditor() {
   const root = projectQ.data?.root
   const sortedMarkers = useMemo(() => [...markers].sort((a, b) => a.line - b.line), [markers])
 
+  // What Read draws over the blocks: the read state and the build band of the
+  // section a block starts in, the requirement markers by their quote's line, and
+  // the bands under their sentences (docs/frontends/gui.md#editor).
+  const decor = useMemo<ReadDecor | undefined>(() => {
+    if (!reading) return undefined
+    const sections = record?.sections ?? {}
+    const coverage = record?.coverage ?? {}
+    const done = build ? build.state === 'done' || build.state === 'failed' : false
+    const secAt = (line: number) => {
+      let best: string | null = null
+      let bestStart = -1
+      for (const [ref, sec] of Object.entries(sections)) {
+        const [start, end] = sectionLines(sec)
+        if (line >= start && line <= end && start > bestStart) {
+          best = ref
+          bestStart = start
+        }
+      }
+      return best
+    }
+    const lineClass = (line: number) => {
+      const ref = secAt(line)
+      if (!ref) return ''
+      const cov = coverage[ref]
+      const cls = [cov ? (cov.state === 'covered' ? 'md-cov-covered' : 'md-cov-nonnorm') : 'md-cov-unprocessed']
+      if (build && build.sections.includes(ref))
+        cls.push(done ? (build.state === 'failed' ? 'build-failed' : 'build-done') : ref === build.active ? 'build-active' : 'build-queued')
+      return cls.join(' ')
+    }
+    const lineTitle = (line: number) => {
+      const ref = secAt(line)
+      if (!ref) return undefined
+      if (build && build.sections.includes(ref))
+        return done
+          ? `${build.label}: ${build.result ?? (build.state === 'failed' ? 'parked' : 'committed')}`
+          : `${build.label}: ${ref === build.active ? 'reconciling this section' : 'queued for this build'}`
+      return coverage[ref]?.note
+    }
+    const markMap = new Map<number, { rid: string; cls: string; tip: string }>()
+    for (const m of marks) {
+      const line = quoteLine(readText, m.quote)
+      if (line !== null && !markMap.has(line)) markMap.set(line, { rid: m.rid, cls: m.cls, tip: m.tip })
+    }
+    const bandMap = new Map<number, typeof bands>()
+    for (const b of bands) {
+      let line: number | null = null
+      if (b.quote) {
+        const hit = findQuoteIn(readText, b.quote)
+        if (hit) line = lineOf(readText, hit.to)
+      }
+      if (line === null && b.line !== undefined) line = b.line
+      if (line === null) continue
+      bandMap.set(line, [...(bandMap.get(line) ?? []), b])
+    }
+    return { lineClass, lineTitle, marks: markMap, bands: bandMap }
+  }, [reading, record, build, marks, bands, readText])
+
   const baseline = baselineQ.data ? baselineQ.data.text : baselineQ.data === null ? null : undefined
   const hasBaseline = baseline !== null && baseline !== undefined
 
@@ -444,32 +558,38 @@ export default function DocEditor() {
         {loaded.path !== docPath && <span className="muted">loading…</span>}
         {saveErr && <span className="error-inline ide-inline">{saveErr}</span>}
         <div className="ide-topbar-right row">
-          <button
-            className={reader ? 'btn-on' : ''}
-            title={reader ? 'back to editing' : 'read the rendered page with the same overlays, no editing'}
-            onClick={() => setReader((v) => !v)}
-          >
-            reader
-          </button>
-          <button
-            className={preview ? 'btn-on' : ''}
-            title={preview ? 'hide the rendered preview' : 'render the markdown beside the text, live'}
-            onClick={togglePreview}
-          >
-            preview
-          </button>
-          <button
-            className={diffMode ? 'btn-on' : ''}
-            disabled={!hasBaseline}
-            title={
-              hasBaseline
-                ? 'side-by-side diff against the last reconciled text'
-                : 'no baseline: this document never reconciled'
-            }
-            onClick={() => setDiffMode((v) => !v)}
-          >
-            diff
-          </button>
+          <span className="ide-mode" role="group" aria-label="Read or Write">
+            <button
+              className={reading ? 'btn-on' : ''}
+              aria-pressed={reading}
+              title="the rendered page, with the same marks, nothing editable"
+              onClick={() => setDocMode(docPath, 'read')}
+            >
+              Read
+            </button>
+            <button
+              className={reading ? '' : 'btn-on'}
+              aria-pressed={!reading}
+              title="the editor"
+              onClick={() => setDocMode(docPath, 'write')}
+            >
+              Write
+            </button>
+          </span>
+          {!reading && (
+            <button
+              className={diffMode ? 'btn-on' : ''}
+              disabled={!hasBaseline}
+              title={
+                hasBaseline
+                  ? 'side-by-side diff against the last reconciled text'
+                  : 'no baseline: this document never reconciled'
+              }
+              onClick={() => setDiffMode((v) => !v)}
+            >
+              diff
+            </button>
+          )}
           {autosave ? (
             <span className="muted" title="changes save on their own a beat after typing stops">
               {dirty ? 'saving…' : 'saved'}
@@ -505,7 +625,7 @@ export default function DocEditor() {
           <button onClick={() => void overwrite()}>overwrite</button>
         </div>
       )}
-      <div className={`ide-split${reader ? ' reader' : ''}`}>
+      <div className={`ide-split${reading ? ' read' : ''}`}>
         <CmHost
           ref={hostRef}
           root={root}
@@ -526,9 +646,20 @@ export default function DocEditor() {
           onSave={() => void save()}
           marks={marks}
           bands={bands}
+          mentions={mentions}
+          onCursorLine={reportLine}
         />
-        {(preview || reader) && !diffMode && (
-          <MarkdownView text={previewText} baseAbs={`${root}/${loaded.path}`} />
+        {reading && (
+          <MarkdownView
+            ref={mdRef}
+            text={readText}
+            baseAbs={`${root}/${loaded.path}`}
+            mentions={mentions}
+            decor={decor}
+            onOpenNode={openNode}
+            docsOpenIn="read"
+            onTopLine={reportLine}
+          />
         )}
       </div>
       <div className="ide-problems">

@@ -101,7 +101,7 @@ export async function connect(port: number, token?: string): Promise<boolean> {
   setBackend(serverBackend(serverUrl(port), currentToken))
   // Everything cached belonged to the project the tab had open before.
   qc.clear()
-  useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, authRequired: false, folder: null, stored: null })
+  useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, authRequired: false, folder: null, stored: null, docModes: {}, editorLine: null })
   touchRecent({ id: `server:${port}`, kind: 'server', name, port, root: answer.root })
   publish({ state: 'connected', port, name, root: answer.root })
   // The first guarded read: a token the server refuses raises the prompt here

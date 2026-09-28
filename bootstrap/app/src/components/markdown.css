@@ -189,7 +189,7 @@
   margin-right: 6px;
 }
 
-/* The editor split: text on the left, the live preview on the right
+/* The editor's place: the text, or in Read the rendered page
    (docs/frontends/gui.md#editor). */
 .ide-split {
   flex: 1;
@@ -204,7 +204,56 @@
 
 .ide-split > .md-preview {
   flex: 1;
-  border-left: 1px solid var(--line);
+}
+
+/* Read carries what Write draws: every block knows its lines, the read state
+   is its left border, a build band its background, a requirement marker sits
+   in its margin, a band follows it (docs/frontends/gui.md#editor). */
+.md-read [data-line] {
+  position: relative;
+}
+
+.md-read > [data-line] {
+  border-left: 3px solid transparent;
+  margin-left: -14px;
+  padding-left: 11px;
+}
+
+.md-read > .md-cov-covered {
+  border-left-color: var(--accent);
+}
+
+.md-read > .md-cov-nonnorm {
+  border-left-color: var(--none);
+}
+
+.md-read > .md-cov-unprocessed {
+  border-left-color: var(--warn);
+}
+
+.md-read .md-req {
+  position: absolute;
+  left: -9px;
+  top: 0.35em;
+  bottom: 0.35em;
+  width: 4px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.md-read > [data-line] > .md-req {
+  left: 3px;
+}
+
+.md-read .md-band {
+  margin: 4px 0 10px;
+}
+
+/* A link to a document the project does not hold says so in place. */
+.md-preview .md-dead-note {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* A rendering opened by itself (docs/frontends/gui.md#markdown-preview). */
@@ -223,14 +272,3 @@
   background: #fff;
 }
 
-/* A narrow screen stacks the preview under the text. */
-@media (max-width: 760px) {
-  .ide-split {
-    flex-direction: column;
-  }
-
-  .ide-split > .md-preview {
-    border-left: none;
-    border-top: 1px solid var(--line);
-  }
-}

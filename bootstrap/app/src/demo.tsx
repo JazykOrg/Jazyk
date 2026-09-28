@@ -177,7 +177,7 @@ async function boot() {
     if (stay) void qc.resetQueries()
     else qc.clear()
     // The conversations and the jobs belonged to the project the tab had open before.
-    useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, jobs: {}, trace: [], turns: {} })
+    useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, jobs: {}, trace: [], turns: {}, docModes: {}, editorLine: null })
     if (!stay) window.location.hash = '#/docs'
   }
 
@@ -188,7 +188,7 @@ async function boot() {
     opened,
     closed: () => {
       qc.clear()
-      useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, jobs: {}, trace: [], turns: {} })
+      useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null, jobs: {}, trace: [], turns: {}, docModes: {}, editorLine: null })
       window.location.hash = '#/'
     },
     refresh: () => qc.invalidateQueries({ queryKey: ['capabilities'] }),

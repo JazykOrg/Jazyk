@@ -96,6 +96,9 @@ export interface FolderState {
 // The action the split button runs (docs/frontends/gui.md#the-action-button).
 export type ActionChoice = 'compile' | 'gen' | 'verify'
 
+// The editor's one toggle (docs/frontends/gui.md#editor).
+export type DocMode = 'read' | 'write'
+
 export interface StoredState {
   // The recent entry's id: `demo:<id>` or `browser:<uuid>`.
   id: string
@@ -131,6 +134,13 @@ interface AppStore {
   activityOpen: boolean
   // The open document's unsaved-edit state, for tree ops that need a save first.
   editorDirty: boolean
+  // Read or Write per document, the last choice remembered for the session
+  // (docs/frontends/gui.md#editor). Absent means the default for the document.
+  docModes: Record<string, DocMode>
+  // Where the reader is in the open document: the line holding the cursor in
+  // Write, the top of the view in Read. The outline follows it
+  // (docs/frontends/gui.md#docs).
+  editorLine: { doc: string; line: number } | null
   // The folder the browser backend has open, its mode, how many changes it has not
   // taken (held in read-only mode, or kept after a failed write), and why the last
   // write failed (docs/frontends/wasm.md#a-folder-on-disk). Null for a stored
@@ -190,6 +200,8 @@ interface AppStore {
   setLastCommit: (generation: number) => void
   setActivityOpen: (v: boolean) => void
   setEditorDirty: (v: boolean) => void
+  setDocMode: (doc: string, mode: DocMode) => void
+  setEditorLine: (doc: string, line: number) => void
   setFolder: (f: FolderState | null) => void
   setStored: (s: StoredState | null) => void
   setModelLoad: (m: { text: string; failed?: boolean } | null) => void
@@ -218,6 +230,8 @@ export const useApp = create<AppStore>((set) => ({
   lastCommit: null,
   activityOpen: readPref('jazyk-activity') === 'open',
   editorDirty: false,
+  docModes: {},
+  editorLine: null,
   folder: null,
   stored: null,
   modelLoad: null,
@@ -280,6 +294,9 @@ export const useApp = create<AppStore>((set) => ({
     set({ activityOpen: v })
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
+  setDocMode: (doc, mode) => set((s) => (s.docModes[doc] === mode ? s : { docModes: { ...s.docModes, [doc]: mode } })),
+  setEditorLine: (doc, line) =>
+    set((s) => (s.editorLine && s.editorLine.doc === doc && s.editorLine.line === line ? s : { editorLine: { doc, line } })),
   setFolder: (folder) => set({ folder }),
   setStored: (stored) => set({ stored }),
   setModelLoad: (modelLoad) => set({ modelLoad }),

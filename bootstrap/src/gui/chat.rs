@@ -384,6 +384,27 @@ pub async fn cancel(State(st): State<SharedState>, Path(id): Path<String>) -> Re
     }
 }
 
+// Remove a conversation: an open prompt is cancelled, the agent session closed, and
+// the transcript deleted from the session store, so a restart does not bring it
+// back. Mirrors docs/frontends/gui.md#chat.
+pub async fn delete_session(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
+    st.chat.restore(&st.out);
+    let Some(sess) = st.chat.sessions.lock().unwrap().remove(&id) else {
+        return super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id));
+    };
+    // Closing waits on the agent, so it runs off the async threads.
+    if let Some(h) = sess.lock().unwrap().handle.take() {
+        tokio::task::spawn_blocking(move || {
+            h.cancel();
+            h.close();
+        });
+    }
+    crate::acp::sessions::remove(&st.out, &id);
+    st.events
+        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+    Json(json!({"ok": true})).into_response()
+}
+
 // Answer a forwarded permission request: {sessionId, id, optionId?}. A missing
 // optionId cancels it.
 pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {

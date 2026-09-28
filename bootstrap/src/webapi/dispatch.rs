@@ -504,6 +504,14 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 None => err(404, format!("no chat session {}", id)),
             }
         }
+        ("DELETE", p) if p.starts_with("/chat/sessions/") => {
+            let id = decode(p.trim_start_matches("/chat/sessions/"));
+            if crate::wasm::chat::remove(&id) {
+                ok(json!({ "ok": true }))
+            } else {
+                err(404, format!("no chat session {}", id))
+            }
+        }
         ("POST", p) if p.starts_with("/chat/sessions/") && p.ends_with("/prompt") => {
             let id = decode(
                 p.trim_start_matches("/chat/sessions/")

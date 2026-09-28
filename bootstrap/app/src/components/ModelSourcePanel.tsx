@@ -1,16 +1,30 @@
 // The model source chooser for the browser editor (docs/frontends/wasm.md#model-sources):
-// a downloaded model, the browser's built-in model, or your own endpoint. The choice is
-// kept in this browser's local storage only.
-import { useEffect, useState } from 'react'
+// a downloaded model, the browser's built-in model, or your own endpoint, one line
+// each with the explanations behind info icons. The choice is kept in this browser's
+// local storage only. In the action button's popover choosing a model loads it
+// (docs/frontends/gui.md#the-action-button).
+import { useEffect, useId, useState } from 'react'
 import { useCapabilities } from '../lib/capabilities'
-import { builtInAvailability, endpointReady, sourceTier, useModelSource, webllmModelOf, writeSource, type SourceKind } from '../lib/model-source'
+import { builtInAvailability, endpointReady, sourceTier, useModelSource, webllmModelOf, writeSource, type ModelSource, type SourceKind } from '../lib/model-source'
 import { useApp } from '../lib/store'
-import { MODEL_CHOICES, TIER_WORDS, downloadedModels, modelName, tier, webgpuAvailable } from '../lib/webllm'
+import { MODEL_CHOICES, TIER_WORDS, downloadedModels, modelName, tier, webgpuAvailable, type ModelTier } from '../lib/webllm'
+import InfoTip from './InfoTip'
 
-export default function ModelSourcePanel() {
+const loadModel = () => window.dispatchEvent(new CustomEvent('jazyk:load-model'))
+
+// What a loaded model's tier means for a build, the tooltip beside its name.
+const TIER_TIPS: Record<ModelTier, string | null> = {
+  build: null,
+  chat: 'A small model: builds run, and their results are rough. A 7B or larger model, or an endpoint, builds better.',
+  reader: 'A build needs a model of 3B or more, or an endpoint. This one answers questions.',
+}
+
+export default function ModelSourcePanel({ loadOnChoose = false }: { loadOnChoose?: boolean }) {
   const src = useModelSource()
   const caps = useCapabilities()
   const load = useApp((a) => a.modelLoad)
+  // One radio group per chooser: the popover, Settings, and the chat pane can show one each.
+  const group = useId()
   const [builtIn, setBuiltIn] = useState<string>('checking')
   const [baseUrl, setBaseUrl] = useState(src.baseUrl ?? '')
   const [model, setModel] = useState(src.model ?? '')
@@ -25,48 +39,62 @@ export default function ModelSourcePanel() {
 
   const ready = caps.data?.model === 'in-page'
   const loadable = caps.data?.model === 'loadable'
-  const choose = (kind: SourceKind) => writeSource({ ...src, kind, baseUrl, model, apiKey })
+  // A source that loads (downloaded, built in) loads at once when chosen in the
+  // popover; an endpoint is ready once saved.
+  const pick = (next: ModelSource) => {
+    writeSource(next)
+    if (loadOnChoose && next.kind !== 'endpoint') loadModel()
+  }
+  const choose = (kind: SourceKind) => pick({ ...src, kind, baseUrl, model, apiKey })
   const chosen = MODEL_CHOICES.find((m) => m.id === webllmModelOf(src)) ?? MODEL_CHOICES[0]
   const saveEndpoint = () => writeSource({ ...src, kind: 'endpoint', baseUrl: baseUrl.trim(), model: model.trim(), apiKey: apiKey.trim() })
   const endpointDirty = baseUrl !== (src.baseUrl ?? '') || model !== (src.model ?? '') || apiKey !== (src.apiKey ?? '')
 
-  const builtInNote =
+  const [builtInNote, builtInTip] =
     builtIn === 'absent'
-      ? 'Not in this browser. It needs Chrome with the built-in AI (Prompt API).'
+      ? ['not in this browser', 'It needs Chrome with the built-in AI (Prompt API).']
       : builtIn === 'unavailable'
-        ? 'This browser has it, but not on this device.'
+        ? ['not on this device', 'This browser has it, but not on this device.']
         : builtIn === 'downloadable' || builtIn === 'downloading'
-          ? 'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small: questions only, no build.'
+          ? [
+              `downloads on first use · ${TIER_WORDS.reader}`,
+              'Chrome has it but not its weights yet: the first use downloads a few gigabytes once, then it loads at once. Its context is small: questions only, no build.',
+            ]
           : builtIn === 'available'
-            ? 'Ready on this device. Its context is small: questions only, no build.'
-            : 'Checking…'
+            ? [`Ready on this device · ${TIER_WORDS.reader}`, 'Its context is small: questions only, no build.']
+            : ['checking…', '']
 
-  const option = (kind: SourceKind, title: string, note: string, disabled: boolean) => (
+  const option = (kind: SourceKind, title: string, note: string, tip: string, disabled: boolean) => (
     <label className={`msrc-option${src.kind === kind ? ' on' : ''}${disabled ? ' off' : ''}`}>
-      <input type="radio" name="model-source" checked={src.kind === kind} disabled={disabled} onChange={() => choose(kind)} />
-      <span>
-        <b>{title}</b>
-        <span className="msrc-note">{note}</span>
-      </span>
+      <input type="radio" name={group} checked={src.kind === kind} disabled={disabled} onChange={() => choose(kind)} />
+      <b>{title}</b>
+      <span className="msrc-note">{note}</span>
+      {tip && <InfoTip text={tip} />}
     </label>
   )
 
+  const readyName =
+    src.kind === 'endpoint' ? `${src.model} at ${src.baseUrl}` : src.kind === 'chrome' ? "the browser's built-in model" : modelName(webllmModelOf(src))
+  const readyTier = sourceTier(src)
+  const tierTip = src.kind === 'endpoint' ? null : TIER_TIPS[readyTier]
+
   return (
     <div className="msrc">
-      <p className="why">Builds and chat run a model. Choose where it comes from.</p>
       {option(
         'webllm',
         'Download a model',
+        // Chosen, the list below names the model; the line stays one line.
+        !webgpuAvailable() ? 'needs WebGPU' : src.kind === 'webllm' ? '' : `${chosen.name} · ${chosen.gb} GB · ${TIER_WORDS[tier(chosen.params)]}`,
         webgpuAvailable()
-          ? `${chosen.name} from Hugging Face, about ${chosen.gb} GB, run on this computer. Downloaded once; the browser keeps it.`
-          : 'Not in this browser: it needs WebGPU (Chrome, Edge, or Safari 26).',
+          ? 'From Hugging Face, run on this computer, downloaded once and kept by the browser. Strongest first: 7B and up builds and chats; 3B chats and builds with rough results; under 3B answers questions only. A bigger model downloads longer, and 7B and up needs several gigabytes free beside the weights.'
+          : 'It needs WebGPU (Chrome, Edge, or Safari 26).',
         !webgpuAvailable(),
       )}
       {src.kind === 'webllm' && webgpuAvailable() && (
         <div className="msrc-form">
           <label>
             Model
-            <select value={chosen.id} onChange={(e) => writeSource({ ...src, webllmModel: e.target.value })} aria-label="Downloaded model">
+            <select value={chosen.id} onChange={(e) => pick({ ...src, webllmModel: e.target.value })} aria-label="Downloaded model">
               {MODEL_CHOICES.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name} · {m.gb} GB · {TIER_WORDS[tier(m.params)]}
@@ -75,14 +103,16 @@ export default function ModelSourcePanel() {
               ))}
             </select>
           </label>
-          <p className="muted">
-            Strongest first. 7B and up builds and chats; 3B chats and builds with rough results; under 3B answers questions only. A bigger model downloads longer, and 7B and up needs several
-            gigabytes free beside the weights.
-          </p>
         </div>
       )}
-      {option('chrome', "The browser's built-in model", builtInNote, builtIn === 'absent' || builtIn === 'unavailable')}
-      {option('endpoint', 'Your endpoint', 'Any OpenAI-compatible API: a local server, LocalRouter, or a provider.', false)}
+      {option('chrome', "The browser's built-in model", builtInNote, builtInTip, builtIn === 'absent' || builtIn === 'unavailable')}
+      {option(
+        'endpoint',
+        'Your endpoint',
+        'OpenAI-compatible',
+        'Any OpenAI-compatible API: a local server, LocalRouter, or a provider. The endpoint must allow calls from this page (CORS).',
+        false,
+      )}
 
       {src.kind === 'endpoint' && (
         <div className="msrc-form">
@@ -102,32 +132,34 @@ export default function ModelSourcePanel() {
             <button onClick={saveEndpoint} disabled={!endpointDirty && endpointReady(src)}>
               Save
             </button>
-            <span className="muted">The endpoint must allow calls from this page (CORS).</span>
+            <InfoTip
+              className="msrc-privacy"
+              text="Kept in this browser's local storage. Nothing is saved on a jazyk server, and the key is sent only to your endpoint."
+            />
           </p>
         </div>
       )}
 
       {ready && (
         <p className="msrc-status v-ok">
-          Ready:{' '}
-          {src.kind === 'endpoint'
-            ? `${src.model} at ${src.baseUrl}`
-            : `${src.kind === 'chrome' ? "the browser's built-in model" : modelName(webllmModelOf(src))}, ${sourceTier(src)} tier (${TIER_WORDS[sourceTier(src)]})`}
-          .
+          Ready: {readyName}
+          {src.kind !== 'endpoint' && ` · ${TIER_WORDS[readyTier]}`}
+          {tierTip && (
+            <>
+              {' '}
+              <InfoTip className="msrc-tier" text={tierTip} />
+            </>
+          )}
         </p>
       )}
       {load && <p className={`msrc-status${load.failed ? ' v-bad' : ''}`}>{load.text}</p>}
       {loadable && src.kind !== 'endpoint' && (
         <p className="row">
-          <button className="run" disabled={!!load && !load.failed} onClick={() => window.dispatchEvent(new CustomEvent('jazyk:load-model'))}>
+          <button className="run" disabled={!!load && !load.failed} onClick={loadModel}>
             {load && !load.failed ? 'Loading…' : 'Load the model'}
           </button>
         </p>
       )}
-
-      <p className="msrc-privacy muted">
-        Your choice is kept in this browser's local storage. Nothing is saved on a jazyk server, and the key is sent only to your endpoint.
-      </p>
     </div>
   )
 }

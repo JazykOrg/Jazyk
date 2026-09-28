@@ -108,7 +108,7 @@ const model: ModelHost = {
   tier: () => (host.available() ? sourceTier(readSource()) : null),
 }
 
-// Loads the chosen source, its progress on the console and in the Build sheet.
+// Loads the chosen source, its progress on the console and in the model chooser.
 function loadModelOnRequest() {
   const s = readSource()
   if (reasonFor(s) || loading || host.available()) return
@@ -212,7 +212,8 @@ async function boot() {
   )
 
   window.addEventListener('jazyk:load-model', loadModelOnRequest)
-  // The Build sheet and Settings choose the source; the choice is already stored.
+  // The chooser (the action popover, Settings, the chat pane) picks the source; the
+  // choice is already stored.
   window.addEventListener('jazyk:model-source-changed', applySource)
   applySource()
   void arrive()

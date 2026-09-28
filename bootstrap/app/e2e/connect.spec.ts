@@ -69,7 +69,9 @@ async function mockServer(page: Page, token = TOKEN) {
       case '/api/docs/content':
         return json({ path: 'docs/plan.md', text: '# Garden plan\n\nA bed of beans by the fence.\n', hash: 'a' })
       case '/api/jobs':
-        return json({ jobs: [] })
+        return req.method() === 'POST' ? json({ id: 1 }) : json({ jobs: [] })
+      case '/api/release':
+        return json({ released: true })
       case '/api/chat/sessions':
         return json({ sessions: [] })
       case '/api/watch':
@@ -110,6 +112,38 @@ test('the connect route reaches the server, stores the token under the port, ope
   await page.goto('/#/')
   const row = page.locator('.proj.recent', { hasText: 'garden' })
   await expect(row.locator('.shape')).toHaveText(`jazyk on this computer · port ${PORT}`)
+  expect(errors).toEqual([])
+})
+
+// The action button on a server (docs/frontends/gui.md#the-action-button): the
+// arrow lists the actions the backend runs with their state and no buttons, the
+// choice becomes the main part, and the main part records the release and starts
+// the job at once.
+test('on a server the arrow lists the actions, the choice becomes the main part, and the main part runs at once', async ({ page }) => {
+  const errors = pageErrors(page)
+  const calls = await mockServer(page)
+  await page.goto(`/#/connect?port=${PORT}&token=${TOKEN}`)
+  await page.waitForURL(/#\/docs/)
+  const main = page.locator('.ws-action > button.main')
+  await expect(main).toHaveText(/Up to date/)
+
+  await page.locator('.ws-top').getByRole('button', { name: 'choose an action' }).click()
+  const pop = page.locator('.ws-pop')
+  const items = pop.getByRole('option')
+  await expect(items).toHaveText([/^Build\s*Up to date/, /^Generate\s*Nothing to generate/, /^Review\s*No tests yet/])
+  await expect(pop.locator('.msrc')).toHaveCount(0)
+  await expect(pop.getByRole('button')).toHaveCount(0)
+  await expect(pop.getByRole('link')).toHaveCount(0)
+  await items.nth(1).click()
+  await expect(pop).toHaveCount(0)
+  await expect(main).toHaveText(/Generate · Nothing to generate/)
+
+  await page.locator('.ws-top').getByRole('button', { name: 'choose an action' }).click()
+  await items.first().click()
+  await expect(main).toHaveText(/Up to date/)
+  await main.click()
+  await expect.poll(() => calls.filter((c) => c.startsWith('POST'))).toEqual(['POST /api/release', 'POST /api/jobs'])
+  await expect(pop).toHaveCount(0)
   expect(errors).toEqual([])
 })
 

@@ -56,8 +56,8 @@ export function useCapabilities() {
   })
 }
 
-// A tab's builds and chat run the page's model: until it is ready, the Build sheet and
-// the chat pane show the model chooser (docs/frontends/wasm.md#model-sources).
+// A tab's builds and chat run the page's model: until it is ready, the action
+// button's popover and the chat pane show the model chooser (docs/frontends/wasm.md#model-sources).
 export function needsPageModel(caps: Capabilities | undefined): boolean {
   return !!caps && caps.backend !== 'server' && caps.model !== 'in-page'
 }
@@ -72,8 +72,9 @@ export function tabJobs(tier: ModelTier | null): JobKind[] {
   return builds(tier) ? ['compile'] : []
 }
 
-// A build needs a model of the build or chat tier: with none, or a reader, the Build
-// sheet shows the chooser in place of the run (docs/frontends/gui.md#the-action-button).
+// A build needs a model of the build or chat tier: with none, or a reader, the action
+// button's main part opens the chooser instead of running
+// (docs/frontends/gui.md#the-action-button).
 // Chat runs on any tier.
 export function needsBuildModel(caps: Capabilities | undefined): boolean {
   return needsPageModel(caps) || (!!caps && caps.backend !== 'server' && !builds(caps.modelTier))
@@ -82,12 +83,6 @@ export function needsBuildModel(caps: Capabilities | undefined): boolean {
 // The loaded model is of the reader tier: it answers questions and does not build.
 export function belowBuildTier(caps: Capabilities | undefined): boolean {
   return !!caps && caps.model === 'in-page' && !!caps.modelTier && !builds(caps.modelTier)
-}
-
-// The loaded model builds with rough results: the sheet runs it and says so, with the
-// chooser a click away.
-export function smallBuildModel(caps: Capabilities | undefined): boolean {
-  return !!caps && caps.backend !== 'server' && caps.model === 'in-page' && caps.modelTier === 'chat'
 }
 
 // Whether the backend runs a job kind: a page hides the action that would start it
@@ -106,7 +101,7 @@ export function whyNot(caps: Capabilities | undefined, need: JobKind | 'agent' |
   if (need === 'docs-write') {
     return caps.docs === 'write' ? null : 'This backend reads the documents but cannot write them.'
   }
-  // A tab that can load its model offers the load in the Build sheet.
+  // A tab that can load its model offers the load in the action button's popover.
   if (need === 'compile' && caps.model === 'loadable') return 'Build runs a model in this browser. Load it first.'
   if (need === 'compile' && belowBuildTier(caps)) return 'A build needs a model of 3B or more, or an endpoint.'
   if (!caps.jobs.includes(need)) {

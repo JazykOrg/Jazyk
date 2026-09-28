@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { belowBuildTier, needsBuildModel, SERVER_CAPABILITIES, smallBuildModel, tabJobs, whyNot, type Capabilities } from './capabilities'
+import { belowBuildTier, needsBuildModel, SERVER_CAPABILITIES, tabJobs, whyNot, type Capabilities } from './capabilities'
 
 // A tab with its model in the given state (docs/frontends/wasm.md#model-sources).
 function tab(model: Capabilities['model'], modelTier: Capabilities['modelTier']): Capabilities {
@@ -15,19 +15,17 @@ describe('tabJobs', () => {
   })
 })
 
-describe('the Build sheet', () => {
+describe('the action button', () => {
   it('runs a build-tier model plainly', () => {
     const caps = tab('in-page', 'build')
     expect(needsBuildModel(caps)).toBe(false)
-    expect(smallBuildModel(caps)).toBe(false)
     expect(whyNot(caps, 'compile')).toBeNull()
   })
 
-  it('runs a chat-tier model and says it is small', () => {
+  it('runs a chat-tier model', () => {
     const caps = tab('in-page', 'chat')
     expect(needsBuildModel(caps)).toBe(false)
     expect(belowBuildTier(caps)).toBe(false)
-    expect(smallBuildModel(caps)).toBe(true)
     expect(whyNot(caps, 'compile')).toBeNull()
   })
 
@@ -35,7 +33,6 @@ describe('the Build sheet', () => {
     const caps = tab('in-page', 'reader')
     expect(needsBuildModel(caps)).toBe(true)
     expect(belowBuildTier(caps)).toBe(true)
-    expect(smallBuildModel(caps)).toBe(false)
     expect(whyNot(caps, 'compile')).toBe('A build needs a model of 3B or more, or an endpoint.')
   })
 
@@ -48,6 +45,5 @@ describe('the Build sheet', () => {
 
   it('never shows it on a server', () => {
     expect(needsBuildModel(SERVER_CAPABILITIES)).toBe(false)
-    expect(smallBuildModel({ ...SERVER_CAPABILITIES, modelTier: 'chat' })).toBe(false)
   })
 })

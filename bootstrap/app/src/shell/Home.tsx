@@ -8,24 +8,14 @@ import { useCapabilities } from '../lib/capabilities'
 import { folderPickerAvailable } from '../lib/folder'
 import { useProjectOpen } from '../lib/open'
 import { whereChangesGo } from '../lib/place'
-import { holdsData, readOnlyPref, setReadOnlyPref, useRecent, type RecentEntry } from '../lib/recent'
+import { DEMOS } from '../lib/demos'
+import { holdsData, kindWords, setReadOnlyPref, useReadOnlyPref, useRecent, type RecentEntry } from '../lib/recent'
 import { useProjects, type ProjectSummary } from '../lib/product'
 import { useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { shapeWords, verdictWords } from '../lib/words'
 import Wizard, { useSettingsExists } from './Wizard'
 import ConnectCard from './ConnectCard'
-
-// The bundled examples (docs/frontends/gui.md#home). The editor entry fetches the
-// fixture named by the id.
-export const DEMOS = [
-  { id: 'shop', name: 'The shop', blurb: 'a small online shop, three entities' },
-  { id: 'sort', name: 'The sort utility', blurb: 'a sort described near pseudo-code, with its code and tests' },
-  { id: 'erp', name: 'The ERP', blurb: 'a warehouse system across six documents' },
-  { id: 'slides', name: 'The slide deck', blurb: 'a deck specified per slide, built to a file' },
-  { id: 'novel', name: 'The novel', blurb: 'a narrative: characters, arcs, settings' },
-  { id: 'org', name: 'The organization', blurb: 'a company handbook' },
-]
 
 const send = (name: string, detail?: unknown) => window.dispatchEvent(new CustomEvent(name, { detail }))
 
@@ -60,16 +50,6 @@ function ProjectRow({ p, dev }: { p: ProjectSummary; dev: boolean }) {
       {body}
     </div>
   )
-}
-
-// The kind of a recent entry in words (docs/frontends/gui.md#home).
-function kindWords(r: RecentEntry): string {
-  if (r.kind === 'demo') return r.edited ? 'demo with your edits' : 'demo'
-  if (r.kind === 'browser') return 'browser project · only in this browser'
-  if (r.kind === 'server') return `jazyk on this computer · port ${r.port ?? r.id.slice('server:'.length)}`
-  const kept = r.kept ?? 0
-  const mode = `folder · ${r.mode === 'write' ? 'writing' : 'read-only'}`
-  return kept > 0 ? `${mode} · ${kept} change${kept === 1 ? '' : 's'} kept in this browser` : mode
 }
 
 // The browser's own recent list (docs/frontends/gui.md#home): a row reopens its
@@ -168,7 +148,7 @@ function NewProjectCard({ canStore }: { canStore: boolean }) {
 // (docs/frontends/wasm.md#a-folder-on-disk). A browser without the File System
 // Access API says what it needs and points at the next card.
 function FolderCard({ picker }: { picker: boolean }) {
-  const [readOnly, setReadOnly] = useState(readOnlyPref)
+  const readOnly = useReadOnlyPref()
   if (!picker)
     return (
       <section className="home-card home-nofolder">
@@ -197,10 +177,7 @@ function FolderCard({ picker }: { picker: boolean }) {
           <input
             type="checkbox"
             checked={readOnly}
-            onChange={(e) => {
-              setReadOnly(e.target.checked)
-              setReadOnlyPref(e.target.checked)
-            }}
+            onChange={(e) => setReadOnlyPref(e.target.checked)}
           />{' '}
           read-only
         </label>

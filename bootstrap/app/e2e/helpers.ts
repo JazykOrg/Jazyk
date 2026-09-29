@@ -50,6 +50,15 @@ export async function projectMenuItems(page: Page): Promise<string[]> {
   return names
 }
 
+// A submenu of the project menu (`Open recent`, `Open demo`), opened from the menu.
+export async function openSubmenu(page: Page, label: string): Promise<Locator> {
+  const menu = await openProjectMenu(page)
+  await menu.getByRole('menuitem', { name: label, exact: true }).click()
+  const sub = page.locator('.ws-menu-sub')
+  await expect(sub).toBeVisible()
+  return sub
+}
+
 export async function chooseMenuItem(page: Page, name: string) {
   const menu = await openProjectMenu(page)
   await menu.getByRole('menuitem', { name, exact: true }).click()

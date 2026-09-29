@@ -123,6 +123,12 @@ test('New project works in a browser without the folder API', async ({ page }) =
   const items = await projectMenuItems(page)
   expect(items).not.toContain('Save to a folder on this computer…')
   expect(items).toContain('Download as .zip')
+  // Open folder stays in the menu, disabled, with the reason as its tooltip.
+  const menu = await openProjectMenu(page)
+  const open = menu.getByRole('menuitem', { name: 'Open folder…' })
+  await expect(open).toHaveAttribute('aria-disabled', 'true')
+  await expect(open).toHaveAttribute('title', /needs Chrome, Edge, or another Chromium browser/)
+  await expect(menu.getByRole('menuitemcheckbox', { name: 'read-only' })).toHaveAttribute('aria-disabled', 'true')
 })
 
 test('forgetting a browser project asks, then deletes it from storage', async ({ page }) => {

@@ -30,6 +30,7 @@ import {
 } from './folder'
 import {
   folderHandle,
+  holdsData,
   readRecent,
   rememberFolder,
   removeRecent,
@@ -37,10 +38,11 @@ import {
   touchRecent,
   updateRecent,
   type FolderMode,
+  type RecentEntry,
 } from './recent'
 import { clearOpen, readOpenId, rememberOpen } from './open'
 import { useApp } from './store'
-import { connect, disconnectServer } from './connect'
+import { connect, currentConnection, disconnectServer } from './connect'
 import { storeToken } from './api'
 import type { WasmBackend, WasmProject } from './wasm-client'
 
@@ -92,7 +94,7 @@ export function installLocalProjects(d: LocalDeps) {
     const c = current
     if (c?.kind === 'folder') {
       const m = c.mirror
-      s.setFolder({ name: c.name, mode: m.currentMode, held: m.keptCount, error: m.error, writing: m.busy, storeError: m.storeError })
+      s.setFolder({ id: c.id, name: c.name, mode: m.currentMode, held: m.keptCount, error: m.error, writing: m.busy, storeError: m.storeError })
       s.setStored(null)
       updateRecent(c.id, { kept: m.keptCount })
       return
@@ -301,6 +303,15 @@ export function installLocalProjects(d: LocalDeps) {
     window.location.hash = '#/'
   }
 
+  // An entry leaves the list with what the browser stored for it: a server's
+  // token, a folder's kept changes and handle, a project's or an edited demo's files.
+  const dropEntry = async (r: RecentEntry) => {
+    if (r.kind === 'server') storeToken(r.port ?? Number(r.id.slice('server:'.length)), null)
+    else if (r.kind === 'folder') await deleteKept(r.id)
+    else await deleteFiles(r.id).catch(() => {})
+    removeRecent(r.id)
+  }
+
   const on = (name: string, fn: (detail: unknown) => Promise<void> | void, what = 'project') =>
     window.addEventListener(name, (e) => {
       Promise.resolve(fn((e as CustomEvent).detail)).catch((err) => fail(what, err))
@@ -381,10 +392,23 @@ export function installLocalProjects(d: LocalDeps) {
             : null
     if (question && !window.confirm(question)) return
     if (question && current?.id === id) closeCurrent()
-    if (r.kind === 'server') storeToken(r.port ?? Number(id.slice('server:'.length)), null)
-    else if (r.kind === 'folder') await deleteKept(id)
-    else await deleteFiles(id).catch(() => {})
-    removeRecent(id)
+    await dropEntry(r)
+  })
+
+  // Clear recent, from the project menu: every entry goes, and what the browser
+  // stored for them is deleted, so it asks first when any entry holds stored data.
+  // The project open in this tab keeps its entry, which its reload reopens from.
+  on('jazyk:clear-recent', async () => {
+    const conn = currentConnection()
+    const keep = current?.id ?? (conn.state === 'connected' ? `server:${conn.port}` : null)
+    const all = readRecent().filter((r) => r.id !== keep)
+    const holding = all.filter(holdsData)
+    if (holding.length > 0) {
+      const names = holding.map((r) => r.name).join(', ')
+      const question = `Clear recent? What this browser stored for ${names} is deleted, so this cannot be undone.`
+      if (!window.confirm(question)) return
+    }
+    for (const r of all) await dropEntry(r)
   })
 
   // Reset to the original: the demo's copy is deleted; an open demo reopens from

@@ -80,6 +80,8 @@ export interface ChatUpdateRow {
 const CHAT_RING = 2000
 
 export interface FolderState {
+  // The recent entry's id: `folder:<uuid>`.
+  id: string
   name: string
   mode: FolderMode
   // Changes the folder has not taken: held in read-only mode, kept after a failed

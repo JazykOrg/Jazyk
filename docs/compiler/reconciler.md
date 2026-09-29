@@ -300,7 +300,9 @@ requirement's neighbors and sticky partners minus the partners its `detail.judge
 lists. Resolving a pair appends the partner to `detail.judged` on every
 `requirement-created` and `requirement-revised` record of either side, so the pair does
 not derive again from the other side's record; the record stands while a candidate
-remains and clears at the sweep when none does. A goal that leaves the board without a
+remains and clears at the sweep when none does. An `edit` option's answer on a pair's
+diagnostic is that pair's judgment and marks it the same way, the records its own
+commit lands included ([answers](./model/diagnostic.md#answers)). A goal that leaves the board without a
 resolution (a pair waiting under the cap below, a side deleted by another goal) marks
 nothing judged. A new record on the requirement (revised in substance again) starts
 with an empty `judged` list, so every candidate derives again with the new cause.

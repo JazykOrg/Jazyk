@@ -450,7 +450,9 @@ its `change` from exactly one record.
   against the subject. An accepted `mark_goal_done` on `g:rejudge-pair:req:a~req:b`
   appends `req:b` to `judged` on every created or revised record of `req:a` and
   `req:a` on every such record of `req:b`, at the commit that carries the claim; the
-  records stay. A record's candidates are its requirement's neighbors and sticky
+  records stay. An `edit` option's answer on a diagnostic whose subjects are two
+  requirements marks that pair judged the same way, on the records its own commit
+  lands too ([answers](./model/diagnostic.md#answers)). A record's candidates are its requirement's neighbors and sticky
   partners minus `judged` ([pairs](./reconciler.md#pairs)); the sweep clears the record
   when no candidate remains, and a pair that leaves the board unresolved (waiting under
   the cap, a side deleted) marks nothing judged. A newer record on the same
@@ -467,7 +469,7 @@ The kinds, who writes them, and the goal each feeds:
 | `section-removed` | the `edit` entry of a build | the sweep, in the same build; the record clears when the sweep has run |
 | `anchor-stale` | the `align` entry (a quote that stops locating) or a `reevaluate` placement | `reconcile-section` |
 | `alignment-pending` | the `align` entry (a proposal a document owes a decision on) | `place-anchors` |
-| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement (a statement that changes only in case or punctuation is refreshed in place and writes no `requirement-revised`, so its judged pairs stand) | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
+| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement (a statement that changes only in case or punctuation is refreshed in place and writes no `requirement-revised`, so its judged pairs stand; an answer's edit lands the record with its diagnostic's pair already in `detail.judged`) | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
 | `criterion-created`, `criterion-revised` | a commit that creates or revises a criterion, or the sweep marking a derived criterion revised because its requirement's statement changed (`via: requirement`) | nothing on the board; the ledger comparison reads them and marks the test keyed to the criterion stale ([the ledger](../consumers/gen.md#the-ledger)) |
 | `criterion-deleted` | a commit or the sweep that deletes a criterion | nothing (trail; the ledger prunes the row) |
 | `requirement-deleted`, `entity-deleted` | a commit that deletes the node (a session or the sweep); the subject is the dead node | nothing (trail; the ledger prunes on `requirement-deleted`). The `node-deleted` and `view-member-gone` records the same commit writes carry the goals |

@@ -117,6 +117,14 @@ answer:
   statement mechanically updated when the replaced text appears in it verbatim. Anchors
   the engine cannot re-anchor mechanically go stale normally and the next build
   reconciles them.
+- The answer is the judgment of the pair the diagnostic concerned. When its subjects
+  are two requirements (a `contradiction`, a `duplicate-requirement`), the commit
+  appends each to `detail.judged` on every `requirement-created` and
+  `requirement-revised` record of the other, the records this commit lands included
+  ([change records](../graph.md#change-records)). The rewrite opens no `rejudge-pair`
+  goal for that pair. Every other goal it opens stays: pairs with the revised
+  requirement's other neighbors, `review-entity`, `declare-edges`, `derive-criteria`,
+  so a conflict the rewrite creates elsewhere is still caught.
 - Choosing an `answer` option or replying freeform records the text
   (`status: handling`) and applies it in an answer session over
   [ACP](../../frontends/acp.md#answer-sessions) (journal entry `answer`): in a chat

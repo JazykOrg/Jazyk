@@ -2112,15 +2112,60 @@ impl Store {
             let Some((a, b)) = crate::goals::pair_members(target) else {
                 continue;
             };
-            for c in self.status.changes.iter_mut() {
-                if c.kind != CHANGE_REQ_CREATED && c.kind != CHANGE_REQ_REVISED {
-                    continue;
+            self.mark_pair_judged(a, b);
+        }
+    }
+
+    // An edit option's answer is the judgment of the pair its diagnostic concerned:
+    // a diagnostic this commit answered `applied` and resolved, whose subjects hold
+    // two requirements, marks them judged against each other. Runs after the commit
+    // lands its records, so the revision the edit caused carries the pair too and
+    // re-judges only its other neighbors.
+    // Mirrors docs/compiler/model/diagnostic.md#answers.
+    fn mark_answered_pairs_judged(&mut self, applied: &[Op]) {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for op in applied {
+            let Op::AnswerDiagnostic { id, answer } = op else {
+                continue;
+            };
+            if answer.status != "applied" {
+                continue;
+            }
+            let Some(d) = self.graph.diagnostics.get(id) else {
+                continue;
+            };
+            if d.lifecycle != "resolved" {
+                continue;
+            }
+            let mut reqs: Vec<String> = Vec::new();
+            for sub in &d.subjects {
+                let sid = self.resolve_id(sub).to_string();
+                if self.graph.requirements.contains_key(&sid) && !reqs.contains(&sid) {
+                    reqs.push(sid);
                 }
-                if c.subject == a {
-                    c.add_judged(b);
-                } else if c.subject == b {
-                    c.add_judged(a);
+            }
+            for (i, a) in reqs.iter().enumerate() {
+                for b in &reqs[i + 1..] {
+                    pairs.push((a.clone(), b.clone()));
                 }
+            }
+        }
+        for (a, b) in pairs {
+            self.mark_pair_judged(&a, &b);
+        }
+    }
+
+    // Append each side to `detail.judged` on every created and revised record of the
+    // other. Mirrors docs/compiler/graph.md#change-records.
+    fn mark_pair_judged(&mut self, a: &str, b: &str) {
+        for c in self.status.changes.iter_mut() {
+            if c.kind != CHANGE_REQ_CREATED && c.kind != CHANGE_REQ_REVISED {
+                continue;
+            }
+            if c.subject == a {
+                c.add_judged(b);
+            } else if c.subject == b {
+                c.add_judged(a);
             }
         }
     }
@@ -4863,6 +4908,7 @@ impl Store {
         self.mark_pairs_judged(&commit.resolved);
         self.prune_records();
         let changes = self.commit_records(batch);
+        self.mark_answered_pairs_judged(&applied);
         let mut mutations: Vec<serde_json::Value> = applied
             .iter()
             .map(|o| serde_json::to_value(o).unwrap_or_default())

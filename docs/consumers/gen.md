@@ -335,9 +335,15 @@ manifest.
   when the deliverable is `handbook`) while the deliverable holds no directory of that
   name restates the root. The file tools, `record_generation`, and `record_binding`
   strip the prefix, keep the path under the root (`hiring.md`), and say so in the
-  reply's `note`, so the worker learns the convention. A deliverable that holds a directory of that name keeps the
-  path as given. The organization handbook's generation once wrote every page one
-  level too deep, under `handbook/handbook/`.
+  reply's `note`, so the worker learns the convention. A deliverable that holds a
+  directory of that name keeps the path as given. The organization handbook's
+  generation once wrote every page one level too deep, under `handbook/handbook/`.
+- Test contents follow the same convention, and the harness cannot rewrite them: a
+  bound test runs from the deliverable directory, so one that opens
+  `handbook/hiring.md` inside the `handbook` deliverable pins the doubled layout, and a
+  later generation that writes under the root copies its pages back down to pass it.
+  The [bind contract](../compiler/goals/prompts/bind-contract.md) states the rule;
+  the repair for a test already bound that way is a re-bind.
 - A corrective retry never costs the parts of an answer the complaint did not name.
   The previous answer goes back with it, the request is to change only what the
   complaint names, and what comes back is merged over it: a retry that returns no

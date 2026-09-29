@@ -705,22 +705,38 @@ restart lands in the same project at the same route, never on Home:
 
 ### The project menu
 
-The top bar's first item is the open project's name, and it is a menu: the one place
-that says where the project's changes go and offers what to do with them, so no
-other chip or badge in the top bar carries that.
+The top bar's first item is the open project's name, and it is a menu, laid out
+like a desktop editor's File menu: the projects open now first, then the ways to
+open another, then what to do with the one in front. It is also the one place that
+says where the project's changes go, so no other chip or badge in the top bar
+carries that.
 
-- The first line: where changes go, in the words above.
-- A folder: its mode and the switch (`Switch to read-only`, `Switch to writing`),
-  its held or kept changes with `Write N changes to the folder`, `Retry`, or
-  `Discard` ([when a folder cannot be written](./wasm.md#when-a-folder-cannot-be-written)).
-  A folder that could not be written also shows a short warning beside the name in
-  the top bar (`N changes not written`), the one exception to the rule above, since
-  it is a problem, not a state; clicking it opens the menu.
-- A browser project or a demo: `Save to a folder on this computer…` (where the File
-  System Access API exists) and `Download as .zip` (a `.zip` of the whole project,
-  every browser). After a save the project is that folder, in writing mode. A demo
-  with edits also offers `Reset to the original`.
-- `Home` and `Close project`.
+- Open projects: the project in this tab, checked, and the projects open in this
+  browser's other tabs (each tab announces its project to the others over a
+  `BroadcastChannel`), each with its kind in words. Choosing another tab's project
+  opens it here too.
+- `Open recent ›`: a submenu of the [Recent](#home) list, newest first, each row
+  with its kind in words; the last row is `Clear recent…` (asks first when an entry
+  holds stored data).
+- `Open folder…`: the folder picker, with `read-only` as a checkbox item under it
+  (off by default). A browser without the File System Access API shows the item
+  disabled with the reason in its tooltip.
+- `Open demo ›`: a submenu of the bundled examples.
+- `New project in this browser…` and `Connect to jazyk on this computer…` (a server
+  already connected shows its port).
+- A separator, then the project in front: where its changes go, in the words above,
+  as a muted line.
+  - A folder: its mode and the switch (`Switch to read-only`, `Switch to writing`),
+    its held or kept changes with `Write N changes to the folder`, `Retry`, or
+    `Discard` ([when a folder cannot be written](./wasm.md#when-a-folder-cannot-be-written)).
+    A folder that could not be written also shows a short warning beside the name
+    in the top bar (`N changes not written`), the one exception to the rule above,
+    since it is a problem, not a state; clicking it opens the menu.
+  - A browser project or a demo: `Save to a folder on this computer…` (where the
+    File System Access API exists) and `Download as .zip` (a `.zip` of the whole
+    project, every browser). After a save the project is that folder, in writing
+    mode. A demo with edits also offers `Reset to the original`.
+- `Home` and `Close project`, last.
 
 `GET /api/projects` lists the projects the server has opened, newest first, each with
 its root, its shape, and its status summary; the server keeps the list in

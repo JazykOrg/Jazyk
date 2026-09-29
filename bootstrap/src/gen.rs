@@ -703,6 +703,137 @@ pub fn confine_rel(path: &str) -> Result<String, String> {
     Ok(parts.join("/"))
 }
 
+// A path that restates the deliverable directory's own name (`handbook/hiring.md`
+// when the deliverable is `handbook`) while the deliverable holds no directory of
+// that name: the path under the root it means (`hiring.md`; empty for the name
+// alone). None when the path keeps as given.
+// Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+pub fn unroot(deliverable: &Path, rel: &str) -> Option<String> {
+    let name = deliverable
+        .vcanonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .or_else(|| deliverable.file_name().map(|n| n.to_string_lossy().to_string()))?;
+    if name.is_empty() {
+        return None;
+    }
+    let rel = rel.trim().replace('\\', "/");
+    let rel = rel.trim_start_matches("./");
+    let rest = if rel == name || rel == format!("{}/", name) {
+        ""
+    } else {
+        rel.strip_prefix(&format!("{}/", name))?
+    };
+    if deliverable.join(&name).vis_dir() {
+        return None;
+    }
+    Some(rest.trim_start_matches('/').to_string())
+}
+
+// The reply's note for a path `unroot` moved under the root.
+pub fn unroot_note(from: &str, to: &str) -> String {
+    format!(
+        "`{}` restates the deliverable directory's own name; paths are relative to the deliverable, so this is `{}`. Write paths without that prefix",
+        from.trim(),
+        if to.is_empty() { "." } else { to }
+    )
+}
+
+// `confine_rel`, then `unroot`: the path the ledger records, with a restated root
+// stripped and noted.
+pub fn confine_in(gs: &GenSettings, path: &str, notes: &mut Vec<String>) -> Result<String, String> {
+    let rel = confine_rel(path)?;
+    match unroot(&gs.deliverable, &rel) {
+        Some(under) if !under.is_empty() => {
+            let note = unroot_note(&rel, &under);
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
+            Ok(under)
+        }
+        _ => Ok(rel),
+    }
+}
+
+// A working directory the same way; the restated root alone is the deliverable.
+pub fn confine_cwd_in(gs: &GenSettings, cwd: &str, notes: &mut Vec<String>) -> Result<String, String> {
+    let c = confine_cwd(cwd)?;
+    if c == "." {
+        return Ok(c);
+    }
+    match unroot(&gs.deliverable, &c) {
+        Some(under) => {
+            let note = unroot_note(&c, &under);
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
+            Ok(if under.is_empty() { ".".into() } else { under })
+        }
+        None => Ok(c),
+    }
+}
+
+// Every path a list names, confined, deduplicated in first-seen order.
+fn confine_list_in(
+    gs: &GenSettings,
+    paths: &[String],
+    notes: &mut Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for p in paths {
+        out.push(confine_in(gs, p, notes)?);
+    }
+    Ok(dedup_keep_order(out))
+}
+
+// Every test artifact the ledger's rows name, headline and criterion tests alike.
+// They are the rows', never an entity's implementation.
+// Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+pub fn test_artifacts(ledger: &Ledger) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for row in ledger.requirements.values() {
+        out.insert(row.test.artifact.clone());
+        for t in row.tests.values() {
+            out.insert(t.test.artifact.clone());
+        }
+    }
+    out.remove("");
+    out
+}
+
+// The entity outside `id`'s component group that records `path`, by slug. Members
+// of one group share their files; everyone else owns theirs alone. `id` may be a
+// requirement (a bind goal's target), which belongs to no group, so every recorded
+// file is someone else's.
+// Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+pub fn file_owner(store: &Store, ledger: &Ledger, id: &str, path: &str) -> Option<String> {
+    let id = store.resolve_id(id);
+    let group = group_root(store, id);
+    ledger
+        .entities
+        .iter()
+        .find(|(slug, e)| {
+            let other = format!("ent:{}", slug);
+            let other = store.resolve_id(&other);
+            other != id && group_root(store, other) != group && e.files.iter().any(|f| f == path)
+        })
+        .map(|(slug, _)| slug.clone())
+}
+
+// The other members of `id`'s component group, the entities whose files it shares.
+// A system, and an entity outside every group, shares with nobody.
+// Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+pub fn shared_with(store: &Store, id: &str) -> Vec<String> {
+    let id = store.resolve_id(id);
+    if is_system(store, id) {
+        return Vec::new();
+    }
+    group_members(store, &group_root(store, id))
+        .into_iter()
+        .filter(|m| m != id)
+        .collect()
+}
+
 // A working directory the same way, where `.` (or nothing) means the deliverable.
 pub fn confine_cwd(cwd: &str) -> Result<String, String> {
     let c = cwd.trim();
@@ -712,14 +843,6 @@ pub fn confine_cwd(cwd: &str) -> Result<String, String> {
     confine_rel(c)
 }
 
-// Every path a list names, confined, deduplicated in first-seen order.
-fn confine_list(paths: &[String]) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    for p in paths {
-        out.push(confine_rel(p)?);
-    }
-    Ok(dedup_keep_order(out))
-}
 
 fn dedup_keep_order(files: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
@@ -1146,22 +1269,28 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
             gone.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
         ));
     }
-    // A record with no files of its own stands only when every requirement of the
-    // entity has a test row whose artifact exists: the entity is carried by other
-    // entities' files. Mirrors docs/compiler/goals/generate.md#gate.
-    if e.files.is_empty() {
+    // A record with no implementing file of its own stands only when every
+    // requirement of the entity has a row naming an implementing file that exists:
+    // the entity is carried by other entities' files. Test artifacts and criteria
+    // files are not implementation. Mirrors docs/compiler/goals/generate.md#gate.
+    let artifacts = test_artifacts(&ledger);
+    let outputs = build_outputs(&ledger);
+    let implementing = |f: &String| {
+        !artifacts.contains(f) && !outputs.contains(f) && gs.deliverable.join(f).vis_file()
+    };
+    if !e.files.iter().any(|f| implementing(f)) {
         let missing: Vec<String> = reqs_of_sorted(store, &id)
             .into_iter()
             .filter(|rid| {
                 !ledger
                     .requirements
                     .get(rid)
-                    .is_some_and(|row| gs.deliverable.join(&row.test.artifact).vis_file())
+                    .is_some_and(|row| row.files.iter().any(|f| implementing(f)))
             })
             .collect();
         if !missing.is_empty() {
             return Err(format!(
-                "the record for `{}` lists no files, and these requirements have no existing test row to stand on: {}; write the entity's part or bind its requirements to the files that carry them",
+                "the record for `{}` lists no implementing file, and these requirements have no row naming a file that realizes them: {}; write the entity's part and record it in files",
                 id,
                 missing.join(", ")
             ));
@@ -1444,7 +1573,10 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
         // Shared requirements confused a Codex session into re-recording them
         // (docs/compiler/goals/generate.md#what-the-model-sees).
-        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; an entity whose every requirement is carried records files: []",
+        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; an entity whose every requirement is carried records files: []; a file a sharedWith member recorded is your group's too: extend it and record it in files",
+        // The entity's component group: members whose files it may write and record
+        // too (docs/consumers/gen.md#file-ownership-and-conventions).
+        "sharedWith": shared_with(store, id),
         "boundTests": rids
             .iter()
             .filter_map(|rid| {
@@ -1509,15 +1641,20 @@ pub fn mark(
             })
             .unwrap_or_default()
     };
-    let files: Vec<String> =
-        confine_list(&str_list(&manifest["files"])).map_err(|e| format!("files: {}", e))?;
+    // A path that restates the deliverable directory's own name is moved under the
+    // root, and the reply says so (docs/consumers/gen.md#file-ownership-and-conventions).
+    let mut path_notes: Vec<String> = Vec::new();
+    let files: Vec<String> = confine_list_in(gs, &str_list(&manifest["files"]), &mut path_notes)
+        .map_err(|e| format!("files: {}", e))?;
     // Support files are the deliverable's, recorded once and rewritable by any later
     // task (docs/consumers/gen.md#file-ownership-and-conventions).
-    let support: Vec<String> = confine_list(&str_list(&manifest["supportFiles"]))
-        .map_err(|e| format!("supportFiles: {}", e))?;
-    let build_produces: Vec<String> = confine_list(&str_list(&manifest["build"]["produces"]))
-        .map_err(|e| format!("build.produces: {}", e))?;
-    let build_cwd = confine_cwd(manifest["build"]["cwd"].as_str().unwrap_or("."))
+    let support: Vec<String> =
+        confine_list_in(gs, &str_list(&manifest["supportFiles"]), &mut path_notes)
+            .map_err(|e| format!("supportFiles: {}", e))?;
+    let build_produces: Vec<String> =
+        confine_list_in(gs, &str_list(&manifest["build"]["produces"]), &mut path_notes)
+            .map_err(|e| format!("build.produces: {}", e))?;
+    let build_cwd = confine_cwd_in(gs, manifest["build"]["cwd"].as_str().unwrap_or("."), &mut path_notes)
         .map_err(|e| format!("build.cwd: {}", e))?;
 
     // Validate the invented choices before any side effect: the scope grades the
@@ -1584,7 +1721,7 @@ pub fn mark(
                     rid
                 ));
             }
-            let artifact = confine_rel(&artifact_raw)
+            let artifact = confine_in(gs, &artifact_raw, &mut path_notes)
                 .map_err(|e| format!("test row for {}: artifact {}", rid, e))?;
             let test = TestRef {
                 kind: kind.clone(),
@@ -1597,7 +1734,7 @@ pub fn mark(
                     .unwrap_or(&test_name(&rid, &r.statement))
                     .to_string(),
                 run,
-                cwd: confine_cwd(t["cwd"].as_str().unwrap_or("."))
+                cwd: confine_cwd_in(gs, t["cwd"].as_str().unwrap_or("."), &mut path_notes)
                     .map_err(|e| format!("test row for {}: cwd {}", rid, e))?,
             };
             let path = artifact_path(&store.out, gs, &test);
@@ -1619,13 +1756,90 @@ pub fn mark(
                     rid, test.name, test.artifact
                 ));
             }
-            let row_files: Vec<String> = match confine_list(&str_list(&t["files"]))
-                .map_err(|e| format!("test row for {}: files {}", rid, e))?
-            {
-                v if v.is_empty() => files.clone(),
-                v => v,
-            };
+            // The row's own `files`; an empty list takes the default below.
+            let row_files: Vec<String> =
+                confine_list_in(gs, &str_list(&t["files"]), &mut path_notes)
+                    .map_err(|e| format!("test row for {}: files {}", rid, e))?;
             rows.push((rid, test, row_files));
+        }
+    }
+    // Ownership and realization, both before any side effect.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    let pre = Ledger::load(&store.out);
+    let mut artifacts = test_artifacts(&pre);
+    for (_, t, _) in &rows {
+        artifacts.insert(t.artifact.clone());
+    }
+    let outputs = build_outputs(&pre);
+    // Implementation: a file that exists and is no test artifact, criteria file, or
+    // build output.
+    let implementing = |f: &String| {
+        !artifacts.contains(f)
+            && !outputs.contains(f)
+            && !build_produces.contains(f)
+            && gs.deliverable.join(f).vis_file()
+    };
+    // A file an entity outside this entity's component group records is theirs. Test
+    // artifacts are the rows' and support files the deliverable's: neither conflicts.
+    for f in &files {
+        if artifacts.contains(f) || support.contains(f) || pre.support.contains(f) {
+            continue;
+        }
+        if let Some(owner) = file_owner(store, &pre, id, f) {
+            return Err(format!(
+                "files: `{}` belongs to entity `{}`, outside this entity's component group; never record another group's file. Write a file of your own for your requirements, or name `{}` on a test row's `files` when it already carries that requirement",
+                f, owner, f
+            ));
+        }
+    }
+    // A row naming no files of its own takes the entity's implementing files, and
+    // keeps the files other entities record for it: a shared requirement stays
+    // carried where it is (docs/consumers/gen.md#file-ownership-and-conventions).
+    let own_impl: Vec<String> = files.iter().filter(|f| implementing(f)).cloned().collect();
+    let rows: Vec<(String, TestRef, Vec<String>)> = rows
+        .into_iter()
+        .map(|(rid, test, own)| {
+            if !own.is_empty() {
+                return (rid, test, own);
+            }
+            let mut v = own_impl.clone();
+            if let Some(prior) = pre.requirements.get(&rid) {
+                for f in &prior.files {
+                    let carried = pre
+                        .entities
+                        .iter()
+                        .any(|(s, e)| s != &slug && e.files.contains(f));
+                    if carried && implementing(f) && !v.contains(f) {
+                        v.push(f.clone());
+                    }
+                }
+            }
+            (rid, test, v)
+        })
+        .collect();
+    // A record realizes the entity's requirements in files: with no implementing file
+    // of its own, every requirement needs a row naming one, this manifest's or the
+    // ledger's (an entity carried by other entities' files).
+    if own_impl.is_empty() {
+        let uncarried: Vec<String> = reqs_of_sorted(store, id)
+            .into_iter()
+            .filter(|rid| {
+                let named = match rows.iter().find(|(r, _, _)| r == rid) {
+                    Some((_, _, fs)) => fs.iter().any(|f| implementing(f)),
+                    None => pre
+                        .requirements
+                        .get(rid)
+                        .is_some_and(|row| row.files.iter().any(|f| implementing(f))),
+                };
+                !named
+            })
+            .collect();
+        if !uncarried.is_empty() {
+            return Err(format!(
+                "files names no file that realizes {}'s requirements (test and criteria files are not implementation), and nothing else carries {}; write the part of the deliverable that realizes them and list it in files. Only an entity whose every requirement is carried by another entity's files records files: []",
+                id,
+                uncarried.join(", ")
+            ));
         }
     }
     // Strip marker lines from the manifest files and collect the sites they anchor.
@@ -1853,6 +2067,9 @@ pub fn mark(
             "informational: the owned files no requirement row names and the significant lines outside every recorded site; the generation is accepted, and a large ratio suggests the deliverable states behavior the documents do not (docs/consumers/gen.md#the-unattached-remainder)"
         },
     });
+    if !path_notes.is_empty() {
+        reply["pathNote"] = json!(path_notes);
+    }
     if !removed.is_empty() {
         reply["removed"] = json!(removed);
         reply["removedNote"] = json!(
@@ -2984,8 +3201,10 @@ mod tests {
         .unwrap();
         ledger.requirements.insert("req:gone-1".into(), gone);
         ledger.save(&out);
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").ok();
         let manifest = serde_json::json!({
-            "files": ["tests/cart.rs"],
+            "files": ["src/cart.rs", "tests/cart.rs"],
             "tests": [{
                 "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
                 "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
@@ -3120,6 +3339,146 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
     }
 
+    // A path that starts with the deliverable directory's own name restates the root
+    // while no directory of that name exists under it: it lands under the root and the
+    // reply says so. A deliverable that holds such a directory keeps the path.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn a_path_restating_the_deliverable_name_lands_under_the_root() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-unroot-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
+        assert_eq!(unroot(&gs.deliverable, "product/src/cart.rs").as_deref(), Some("src/cart.rs"));
+        assert_eq!(unroot(&gs.deliverable, "./product/src/cart.rs").as_deref(), Some("src/cart.rs"));
+        assert_eq!(unroot(&gs.deliverable, "product").as_deref(), Some(""));
+        assert_eq!(unroot(&gs.deliverable, "src/cart.rs"), None);
+        assert_eq!(unroot(&gs.deliverable, "products/cart.rs"), None);
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").unwrap();
+        crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
+        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        let r = mark(&s, "ent:cart", None, &json!({
+            "files": ["product/src/cart.rs"],
+            "tests": [{"requirement": "req:shop-1", "kind": "llm", "label": "judged",
+                       "artifact": "criteria/req-shop-1.md", "name": "req_shop_1", "run": "llm",
+                       "files": ["product/src/cart.rs"]}],
+        }), &gs).unwrap();
+        assert!(r["pathNote"][0].as_str().unwrap().contains("`src/cart.rs`"), "{}", r);
+        let ledger = Ledger::load(&out);
+        assert_eq!(ledger.entities["cart"].files, vec!["src/cart.rs".to_string()]);
+        assert_eq!(ledger.requirements["req:shop-1"].files, vec!["src/cart.rs".to_string()]);
+        // A deliverable that really holds `product/` keeps the path as given.
+        crate::vfs::create_dir_all(gs.deliverable.join("product")).unwrap();
+        assert_eq!(unroot(&gs.deliverable, "product/src/cart.rs"), None);
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // Ownership is the component group's: two members of one group both write and
+    // record the same page, and neither is refused; an entity of another group is.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn members_of_one_group_share_a_page_and_another_group_is_refused() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-group-own-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        let ent = |name: &str, parent: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:org".into(), ent("Org", None));
+        s.graph.entities.insert("ent:operations".into(), ent("Operations", Some("ent:org")));
+        s.graph.entities.insert("ent:store-manager".into(), ent("Store Manager", Some("ent:operations")));
+        s.graph.entities.insert("ent:sales".into(), ent("Sales", Some("ent:org")));
+        for (rid, stmt, e) in [
+            ("req:d-1", "Operations moves shipments.", "ent:operations"),
+            ("req:d-2", "Operations has Store Manager as a role.", "ent:store-manager"),
+            ("req:d-3", "Sales sells to wholesale accounts.", "ent:sales"),
+        ] {
+            s.graph.requirements.insert(
+                rid.into(),
+                Requirement { statement: stmt.into(), entities: vec![e.into()], ..Default::default() },
+            );
+        }
+        crate::vfs::create_dir_all(gs.deliverable.clone()).unwrap();
+        crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
+        crate::vfs::write(gs.deliverable.join("departments.md"), "# Departments\n").unwrap();
+        let row = |rid: &str| {
+            let f = format!("criteria/{}.md", rid.replace(':', "-"));
+            crate::vfs::write(out.join("gen").join(&f), format!("---\nrequirement: {}\n---\n", rid)).unwrap();
+            json!({"requirement": rid, "kind": "llm", "label": "judged", "artifact": f,
+                   "name": rid.replace([':', '-'], "_"), "run": "llm"})
+        };
+        assert!(file_owner(&s, &Ledger::load(&out), "ent:sales", "departments.md").is_none());
+        mark(&s, "ent:operations", None, &json!({"files": ["departments.md"], "tests": [row("req:d-1")]}), &gs)
+            .unwrap();
+        // The same group: shared, never refused.
+        mark(&s, "ent:store-manager", None, &json!({"files": ["departments.md"], "tests": [row("req:d-2")]}), &gs)
+            .unwrap();
+        let ledger = Ledger::load(&out);
+        assert_eq!(ledger.entities["operations"].files, vec!["departments.md".to_string()]);
+        assert_eq!(ledger.entities["store-manager"].files, vec!["departments.md".to_string()]);
+        assert!(file_owner(&s, &ledger, "ent:store-manager", "departments.md").is_none());
+        assert!(file_owner(&s, &ledger, "ent:operations", "departments.md").is_none());
+        // Another group: refused, the owner named.
+        assert_eq!(file_owner(&s, &ledger, "ent:sales", "departments.md").as_deref(), Some("operations"));
+        let err = mark(&s, "ent:sales", None, &json!({"files": ["departments.md"], "tests": [row("req:d-3")]}), &gs)
+            .unwrap_err();
+        assert!(err.contains("`departments.md` belongs to entity `operations`"), "{}", err);
+        assert!(err.contains("component group"), "{}", err);
+        // The system generates alone: the group's page is not its own either, and a
+        // requirement target (a bind goal) owns nothing.
+        assert!(file_owner(&s, &ledger, "ent:org", "departments.md").is_some());
+        assert!(file_owner(&s, &ledger, "req:d-1", "departments.md").is_some());
+        assert_eq!(shared_with(&s, "ent:operations"), vec!["ent:store-manager".to_string()]);
+        assert!(shared_with(&s, "ent:org").is_empty());
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A record names the files that realize the entity's requirements: files that
+    // hold nothing but tests are refused naming the requirements nothing carries,
+    // while an entity whose requirement another entity's files carry records
+    // files: [] and its row keeps those files.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn a_record_with_no_implementing_file_is_refused_unless_carried() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-no-impl-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        s.graph.entities.insert("ent:buyer".into(), Entity { name: "Buyer".into(), ..Default::default() });
+        s.graph.requirements.get_mut("req:shop-1").unwrap().entities =
+            vec!["ent:cart".into(), "ent:buyer".into()];
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests/criteria")).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        let row = json!({"requirement": "req:shop-1", "kind": "llm", "label": "judged",
+                         "artifact": "tests/criteria/req-shop-1.md", "name": "req_shop_1", "run": "llm"});
+        // Nothing but the criteria file: refused, the requirement named.
+        for files in [json!([]), json!(["tests/criteria/req-shop-1.md"])] {
+            let err = mark(&s, "ent:cart", None, &json!({"files": files, "tests": [row.clone()]}), &gs)
+                .unwrap_err();
+            assert!(err.contains("req:shop-1"), "{}", err);
+            assert!(err.contains("not implementation"), "{}", err);
+        }
+        assert!(Ledger::load(&out).entities.is_empty(), "a refusal records nothing");
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").unwrap();
+        mark(&s, "ent:cart", None, &json!({"files": ["src/cart.rs", "tests/criteria/req-shop-1.md"], "tests": [row.clone()]}), &gs)
+            .unwrap();
+        assert_eq!(
+            Ledger::load(&out).requirements["req:shop-1"].files,
+            vec!["src/cart.rs".to_string()],
+            "a test artifact is never a row's implementing file"
+        );
+        // The buyer's one requirement is carried by the cart's file: files: [] stands,
+        // and listing the shared row unchanged keeps the file that carries it.
+        mark(&s, "ent:buyer", None, &json!({"files": [], "tests": [row]}), &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        assert!(ledger.entities["buyer"].files.is_empty());
+        assert_eq!(ledger.requirements["req:shop-1"].files, vec!["src/cart.rs".to_string()]);
+        assert!(gate(&s, &gs, "ent:buyer", false).is_ok());
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
     // A regeneration replaces the file set through the record itself, whichever
     // worker records: what the previous record listed and this manifest omits is
     // removed (snapshotted first), while a file another entity records, a support
@@ -3130,7 +3489,14 @@ mod tests {
         let out = std::env::temp_dir().join(format!("jazyk-gen-remove-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
-        s.graph.entities.insert("ent:shelf".into(), Entity { name: "Shelf".into(), ..Default::default() });
+        // Shelf is part of Cart, one component group under the Shop system, so the
+        // two share their files.
+        s.graph.entities.insert("ent:shop".into(), Entity { name: "Shop".into(), ..Default::default() });
+        s.graph.entities.get_mut("ent:cart").unwrap().parent = Some("ent:shop".into());
+        s.graph.entities.insert(
+            "ent:shelf".into(),
+            Entity { name: "Shelf".into(), parent: Some("ent:cart".into()), ..Default::default() },
+        );
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         for f in ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "Cargo.toml", "src/cart_v2.rs"] {
@@ -3883,7 +4249,7 @@ pub fn gen_one(
         })
         .unwrap_or_default();
     let header = format!(
-        "The deliverable: {}\n{}\nEntity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity; never write to one of them. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
+        "The deliverable: {}\n{}\nEntity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity's component group; never write to a file of an entity outside yours{}. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
         medium_line,
         // A standing build failure means the artifact does not exist: whoever
         // regenerates next has to fix what broke (docs/consumers/gen.md#the-build).
@@ -3906,6 +4272,10 @@ pub fn gen_one(
         task["name"].as_str().unwrap_or_default(),
         task["context"].as_str().unwrap_or_default(),
         task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
+        match shared_with(store, id) {
+            v if v.is_empty() => String::new(),
+            v => format!(" (your group, whose files you may extend: {})", v.join(", ")),
+        },
         serde_json::to_string(&task["generatedFiles"]).unwrap_or_default(),
         if run_commands.is_empty() { "(none yet; this task establishes them)" } else { &run_commands },
         match &task["build"] {
@@ -3913,18 +4283,11 @@ pub fn gen_one(
             b => b.to_string(),
         },
     );
-    // File ownership: a path recorded for a different entity is off limits. One
-    // corrective retry, then the task fails.
+    // File ownership: a path recorded for an entity outside this one's component
+    // group is off limits. One corrective retry, then the task fails.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     let ledger = Ledger::load(&store.out);
-    let own_slug = slug_of(id);
-    let owner_of = |path: &str| -> Option<String> {
-        ledger
-            .entities
-            .iter()
-            .find(|(slug, e)| slug.as_str() != own_slug && e.files.iter().any(|f| f == path))
-            .map(|(slug, _)| slug.clone())
-    };
+    let owner_of = |path: &str| -> Option<String> { file_owner(store, &ledger, id, path) };
     let groups = task["requirementGroups"]
         .as_array()
         .cloned()
@@ -4406,7 +4769,8 @@ pub fn gen_one(
             // not land on a file some entity owns: this task's own product and tests
             // included. Ownership is what stops one file from eating another
             // (docs/consumers/gen.md#file-ownership-and-conventions).
-            if owner_of(path).is_some() || path == product_rel || path == tests_rel {
+            let owned = ledger.entities.values().any(|e| e.files.iter().any(|f| f == path));
+            if owned || path == product_rel || path == tests_rel {
                 continue;
             }
             let p = gs.deliverable.join(path);
@@ -4542,7 +4906,7 @@ pub fn gen_one(
     let choices = parse_choices(store, &manifest)?;
     let unattached = Ledger::load(&store.out)
         .entities
-        .get(&own_slug)
+        .get(&slug_of(id))
         .and_then(|e| e.unattached.clone());
     let mut ws = Store::load(&store.out);
     let ops = choice_ops(&ws, id, &choices, unattached.as_ref());

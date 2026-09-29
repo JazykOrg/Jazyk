@@ -314,7 +314,13 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
 // Mirrors docs/compiler/tools.md#binding-tools.
 // One test reference parsed and checked against the deliverable: the artifact exists
 // and, for a programmatic test, carries the name.
-fn parse_test_ref(store: &Store, gs: &GenSettings, test: &Value, label: &str) -> Result<(TestRef, std::path::PathBuf), String> {
+fn parse_test_ref(
+    store: &Store,
+    gs: &GenSettings,
+    test: &Value,
+    label: &str,
+    notes: &mut Vec<String>,
+) -> Result<(TestRef, std::path::PathBuf), String> {
     let kind = test["kind"].as_str().unwrap_or_default();
     if kind != "programmatic" && kind != "llm" {
         return Err(format!("{}.kind must be `programmatic` or `llm`", label));
@@ -336,10 +342,11 @@ fn parse_test_ref(store: &Store, gs: &GenSettings, test: &Value, label: &str) ->
     let tref = TestRef {
         kind: kind.into(),
         label: test["label"].as_str().unwrap_or("bound").into(),
-        artifact: crate::gen::confine_rel(&artifact).map_err(|e| format!("{}.artifact: {}", label, e))?,
+        artifact: crate::gen::confine_in(gs, &artifact, notes)
+            .map_err(|e| format!("{}.artifact: {}", label, e))?,
         name: name.clone(),
         run,
-        cwd: crate::gen::confine_cwd(test["cwd"].as_str().unwrap_or("."))
+        cwd: crate::gen::confine_cwd_in(gs, test["cwd"].as_str().unwrap_or("."), notes)
             .map_err(|e| format!("{}.cwd: {}", label, e))?,
     };
     let path = artifact_path(&store.out, gs, &tref);
@@ -379,6 +386,9 @@ pub fn record(
     // One test per criterion (docs/consumers/bind.md#the-bind-goal): every criterion
     // of the requirement has an entry under `tests`, each checked like the headline.
     let criteria = store.criteria_of(&rid);
+    // A path that restates the deliverable directory's own name is moved under the
+    // root and noted (docs/consumers/gen.md#file-ownership-and-conventions).
+    let mut path_notes: Vec<String> = Vec::new();
     let mut crit_tests: BTreeMap<String, crate::gen::CritTest> = BTreeMap::new();
     if let Some(list) = tests.as_array() {
         for (i, entry) in list.iter().enumerate() {
@@ -393,7 +403,8 @@ pub fn record(
             if v != "pass" && v != "fail" {
                 return Err(format!("tests[{}].verdict must be `pass` or `fail`", i));
             }
-            let (tref, path) = parse_test_ref(store, gs, entry, &format!("tests[{}]", i))?;
+            let (tref, path) =
+                parse_test_ref(store, gs, entry, &format!("tests[{}]", i), &mut path_notes)?;
             crit_tests.insert(
                 cid,
                 crate::gen::CritTest {
@@ -463,10 +474,11 @@ pub fn record(
     let tref = TestRef {
         kind: kind.into(),
         label: test["label"].as_str().unwrap_or("bound").into(),
-        artifact: crate::gen::confine_rel(&artifact).map_err(|e| format!("test.artifact: {}", e))?,
+        artifact: crate::gen::confine_in(gs, &artifact, &mut path_notes)
+            .map_err(|e| format!("test.artifact: {}", e))?,
         name: name.clone(),
         run,
-        cwd: crate::gen::confine_cwd(test["cwd"].as_str().unwrap_or("."))
+        cwd: crate::gen::confine_cwd_in(gs, test["cwd"].as_str().unwrap_or("."), &mut path_notes)
             .map_err(|e| format!("test.cwd: {}", e))?,
     };
     let path = artifact_path(&store.out, gs, &tref);
@@ -494,7 +506,7 @@ pub fn record(
     // an unimplemented requirement.
     let mut files: Vec<String> = Vec::new();
     for f in files_in.iter().filter(|f| !f.trim().is_empty()) {
-        files.push(crate::gen::confine_rel(f).map_err(|e| format!("files: {}", e))?);
+        files.push(crate::gen::confine_in(gs, f, &mut path_notes).map_err(|e| format!("files: {}", e))?);
     }
     files.sort();
     files.dedup();
@@ -516,6 +528,7 @@ pub fn record(
         if let Some(p) = test["artifact"].as_str() {
             a.insert(p.to_string());
         }
+        a.insert(tref.artifact.clone());
         a
     };
     // Build outputs are dropped the same way: the medium's artifact and what the build
@@ -595,6 +608,9 @@ pub fn record(
             },
         },
     });
+    if !path_notes.is_empty() {
+        reply["pathNote"] = json!(path_notes);
+    }
     if !dropped.is_empty() {
         reply["droppedFiles"] = json!(dropped);
         reply["droppedFilesNote"] = json!(

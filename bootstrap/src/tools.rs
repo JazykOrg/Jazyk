@@ -4176,10 +4176,23 @@ impl ToolSession {
             .unwrap_or_else(|_| self.gen.deliverable.clone())
     }
 
+    // A path that restates the deliverable directory's own name means the path under
+    // the root; the note tells the model so it learns the convention.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    fn unroot_rel(&self, rel: &str) -> (String, Option<String>) {
+        match crate::gen::unroot(&self.gen.deliverable, rel) {
+            Some(under) => {
+                let note = crate::gen::unroot_note(rel, &under);
+                (under, Some(note))
+            }
+            None => (rel.to_string(), None),
+        }
+    }
+
     fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         match name {
             "read_text_file" => {
-                let rel = Self::str_arg(args, "path")?;
+                let (rel, note) = self.unroot_rel(&Self::str_arg(args, "path")?);
                 let path = self.deliverable_path(&rel)?;
                 let text = crate::vfs::read_to_string(&path).map_err(|e| {
                     ToolError::new(
@@ -4197,25 +4210,28 @@ impl ToolSession {
                     .unwrap_or(usize::MAX);
                 let lines: Vec<&str> = text.lines().skip(start).take(limit).collect();
                 let total = text.lines().count();
-                Ok(json!({"content": lines.join("\n"), "totalLines": total}))
+                let mut reply = json!({"content": lines.join("\n"), "totalLines": total});
+                if let Some(n) = note {
+                    reply["note"] = json!(n);
+                }
+                Ok(reply)
             }
             "write_text_file" => {
-                let rel = Self::str_arg(args, "path")?;
+                let raw = Self::str_arg(args, "path")?;
+                let (rel, note) = self.unroot_rel(raw.trim().trim_start_matches("./"));
                 let content = Self::str_arg(args, "content")?;
                 let path = self.deliverable_path(&rel)?;
-                // File ownership: a path recorded for another entity is off limits.
+                // File ownership: a path recorded for an entity outside this session's
+                // component group is off limits; the group shares its files.
                 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-                let own = crate::gen::slug_of(&self.scope.gen_target());
                 let ledger = crate::gen::Ledger::load(&self.snapshot.out);
-                if let Some((owner, _)) = ledger
-                    .entities
-                    .iter()
-                    .find(|(slug, e)| slug.as_str() != own && e.files.iter().any(|f| f == &rel))
+                if let Some(owner) =
+                    crate::gen::file_owner(&self.snapshot, &ledger, &self.scope.gen_target(), &rel)
                 {
                     return Err(ToolError::new(
                         "file-owned",
                         format!(
-                            "`{}` belongs to entity `{}`; never write to another entity's file. Reference it (import, include, read) and pick a path of your own",
+                            "`{}` belongs to entity `{}`, outside your component group; never write to another group's file. Reference it (import, include, link, read) and pick a path of your own",
                             rel, owner
                         ),
                     ));
@@ -4236,10 +4252,14 @@ impl ToolSession {
                     })?;
                 }
                 let total = crate::vfs::read(&path).map(|b| b.len() as u64).unwrap_or(0);
-                Ok(json!({"written": rel, "bytes": content.len(), "appended": append, "fileBytes": total}))
+                let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append, "fileBytes": total});
+                if let Some(n) = note {
+                    reply["note"] = json!(n);
+                }
+                Ok(reply)
             }
             "list_files" => {
-                let rel = Self::opt_str(args, "path").unwrap_or_default();
+                let (rel, note) = self.unroot_rel(&Self::opt_str(args, "path").unwrap_or_default());
                 let base = self.deliverable_root();
                 let root = if rel.is_empty() {
                     base.clone()
@@ -4276,11 +4296,20 @@ impl ToolSession {
                 }
                 out.sort();
                 out.truncate(500);
-                Ok(json!({"files": out}))
+                let mut reply = json!({"files": out});
+                if let Some(n) = note {
+                    reply["note"] = json!(n);
+                }
+                Ok(reply)
             }
             "run_command" => {
                 let command = Self::str_arg(args, "command")?;
                 let cwd_rel = Self::opt_str(args, "cwd").unwrap_or_else(|| ".".into());
+                let cwd_rel = match crate::gen::unroot(&self.gen.deliverable, &cwd_rel) {
+                    Some(under) if under.is_empty() => ".".to_string(),
+                    Some(under) => under,
+                    None => cwd_rel,
+                };
                 let cwd = if cwd_rel == "." {
                     self.gen.deliverable.clone()
                 } else {
@@ -11800,6 +11829,88 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "bad-path");
         crate::vfs::remove_dir_all(&base).ok();
+    }
+
+    // write_text_file shares a file across the component group and refuses it to
+    // another group; a path restating the deliverable's own name lands under the
+    // root with a note, in every file tool.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn file_tools_share_within_a_group_and_unroot_a_restated_deliverable() {
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-group-files-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        let deliverable = dir.join("handbook");
+        crate::vfs::create_dir_all(&deliverable).unwrap();
+        let mut s = Store { out: dir.join("out"), ..Default::default() };
+        s.graph.entities.insert("ent:org".into(), plain("Org"));
+        for (id, name, parent) in [
+            ("ent:operations", "Operations", "ent:org"),
+            ("ent:store-manager", "Store Manager", "ent:operations"),
+            ("ent:sales", "Sales", "ent:org"),
+        ] {
+            let mut e = plain(name);
+            e.parent = Some(parent.into());
+            s.graph.entities.insert(id.into(), e);
+        }
+        let mut ledger = crate::gen::Ledger::load(&s.out);
+        ledger.entities.insert(
+            "operations".into(),
+            crate::gen::EntityGen {
+                fact_hash: String::new(),
+                requirements: Vec::new(),
+                files: vec!["departments.md".into()],
+                unattached: None,
+                recorded_at: None,
+            },
+        );
+        ledger.save(&s.out);
+        let session_for = |target: &str| {
+            let goals = vec![Goal {
+                id: format!("g:generate:{}", target),
+                kind: "generate".into(),
+                mandatory: true,
+                target: target.into(),
+                ..Default::default()
+            }];
+            let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+            t.gen.deliverable = deliverable.clone();
+            t
+        };
+        // A member of the owner's group writes the shared page.
+        let mut t = session_for("ent:store-manager");
+        t.dispatch("write_text_file", &json!({"path": "departments.md", "content": "# Departments\n"}))
+            .unwrap();
+        // Another group is refused, the owner named.
+        let mut t = session_for("ent:sales");
+        let err = t
+            .dispatch("write_text_file", &json!({"path": "departments.md", "content": "x"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "file-owned");
+        assert!(err.message.contains("operations"), "{}", err.message);
+        // The restated root: written, read, and listed under the root, with a note.
+        let v = t
+            .dispatch("write_text_file", &json!({"path": "handbook/sales.md", "content": "# Sales\n"}))
+            .unwrap();
+        assert_eq!(v["written"], "sales.md", "{}", v);
+        assert!(v["note"].as_str().unwrap_or_default().contains("`sales.md`"), "{}", v);
+        assert!(deliverable.join("sales.md").vis_file());
+        assert!(!deliverable.join("handbook").vexists());
+        let v = t.dispatch("read_text_file", &json!({"path": "handbook/sales.md"})).unwrap();
+        assert!(v["content"].as_str().unwrap_or_default().contains("# Sales"), "{}", v);
+        assert!(v["note"].is_string(), "{}", v);
+        let v = t.dispatch("list_files", &json!({"path": "handbook"})).unwrap();
+        assert!(v["files"].as_array().unwrap().iter().any(|f| f == "sales.md"), "{}", v);
+        // A deliverable that really holds `handbook/` keeps the path as given.
+        crate::vfs::create_dir_all(deliverable.join("handbook")).unwrap();
+        let v = t
+            .dispatch("write_text_file", &json!({"path": "handbook/inner.md", "content": "x"}))
+            .unwrap();
+        assert_eq!(v["written"], "handbook/inner.md", "{}", v);
+        assert!(v["note"].is_null(), "{}", v);
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The fan-out variant faces its level's count at mark_goal_done even when the

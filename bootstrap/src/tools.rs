@@ -4231,7 +4231,7 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "file-owned",
                         format!(
-                            "`{}` belongs to entity `{}`, outside your component group; never write to another group's file. Reference it (import, include, link, read) and pick a path of your own",
+                            "`{}` belongs to entity `{}`, outside your component group; never write to another group's file. Reference it (import, include, link, read) and pick a path of your own; when it already carries one of your requirements, name it on that requirement's test row (`files: [path]`) in record_generation",
                             rel, owner
                         ),
                     ));

@@ -1573,7 +1573,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
         // Shared requirements confused a Codex session into re-recording them
         // (docs/compiler/goals/generate.md#what-the-model-sees).
-        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; an entity whose every requirement is carried records files: []; a file a sharedWith member recorded is your group's too: extend it and record it in files",
+        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; a requirement a file of another group carries (its page, its module) is carried by naming that file on its test row (files: [path]); an entity whose every requirement is carried records files: []; a file a sharedWith member recorded is your group's too: extend it and record it in files",
         // The entity's component group: members whose files it may write and record
         // too (docs/consumers/gen.md#file-ownership-and-conventions).
         "sharedWith": shared_with(store, id),
@@ -1836,7 +1836,7 @@ pub fn mark(
             .collect();
         if !uncarried.is_empty() {
             return Err(format!(
-                "files names no file that realizes {}'s requirements (test and criteria files are not implementation), and nothing else carries {}; write the part of the deliverable that realizes them and list it in files. Only an entity whose every requirement is carried by another entity's files records files: []",
+                "files names no file that realizes {}'s requirements (test and criteria files are not implementation), and nothing else carries {}; write the part of the deliverable that realizes them and list it in files, or, where a file another entity recorded already carries a requirement, name that file on the requirement's test row (`files: [path]`). Only an entity whose every requirement is carried by another entity's files records files: []",
                 id,
                 uncarried.join(", ")
             ));

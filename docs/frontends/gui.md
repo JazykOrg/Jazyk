@@ -717,7 +717,8 @@ carries that.
   opens it here too.
 - `Open recent ›`: a submenu of the [Recent](#home) list, newest first, each row
   with its kind in words; the last row is `Clear recent…` (asks first when an entry
-  holds stored data).
+  holds stored data). Clearing keeps the project open in this tab, since a reload
+  reopens it from its entry.
 - `Open folder…`: the folder picker, with `read-only` as a checkbox item under it
   (off by default). A browser without the File System Access API shows the item
   disabled with the reason in its tooltip.

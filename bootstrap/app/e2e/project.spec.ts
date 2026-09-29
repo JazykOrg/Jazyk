@@ -74,10 +74,25 @@ test('the project menu says where changes go and downloads the project', async (
   await openDemo(page, 'The shop')
   expect(await whereChangesGo(page)).toBe('Demo: edits are saved in this browser')
   const items = await projectMenuItems(page)
-  expect(items).toEqual(['Save to a folder on this computer…', 'Download as .zip', 'Home', 'Close project'])
+  expect(items).toEqual([
+    'Open recent',
+    'Open folder…',
+    'Open demo',
+    'New project in this browser…',
+    'Connect to jazyk on this computer…',
+    'Save to a folder on this computer…',
+    'Download as .zip',
+    'Home',
+    'Close project',
+  ])
+  // The project in this tab is the checked one.
+  const menu = await openProjectMenu(page)
+  await expect(menu.getByRole('menuitemcheckbox').first()).toHaveAttribute('aria-checked', 'true')
+  await expect(menu.getByRole('menuitemcheckbox').first()).toContainText('The shop')
+  await page.keyboard.press('Escape')
 
   const download = page.waitForEvent('download')
-  const menu = await openProjectMenu(page)
+  await openProjectMenu(page)
   await menu.getByRole('menuitem', { name: 'Download as .zip' }).click()
   const file = await download
   expect(file.suggestedFilename()).toBe('the-shop.zip')

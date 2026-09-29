@@ -140,7 +140,21 @@ export async function folderHandle(id: string): Promise<FileSystemDirectoryHandl
   }
 }
 
-// The read-only choice beside Open folder, remembered. Writing unless changed.
+// The kind of a recent entry in words (docs/frontends/gui.md#home), on Home's rows
+// and in the project menu.
+export function kindWords(r: Pick<RecentEntry, 'id' | 'kind'> & Partial<RecentEntry>): string {
+  if (r.kind === 'demo') return r.edited ? 'demo with your edits' : 'demo'
+  if (r.kind === 'browser') return 'browser project · only in this browser'
+  if (r.kind === 'server') return `jazyk on this computer · port ${r.port ?? r.id.slice('server:'.length)}`
+  const kept = r.kept ?? 0
+  const mode = `folder · ${r.mode === 'write' ? 'writing' : 'read-only'}`
+  return kept > 0 ? `${mode} · ${kept} change${kept === 1 ? '' : 's'} kept in this browser` : mode
+}
+
+// The read-only choice beside Open folder (Home's card and the project menu),
+// remembered. Writing unless changed.
+const READ_ONLY_CHANGED = 'jazyk:read-only-changed'
+
 export function readOnlyPref(): boolean {
   try {
     return localStorage.getItem(READ_ONLY_KEY) === '1'
@@ -149,10 +163,35 @@ export function readOnlyPref(): boolean {
   }
 }
 
+// Kept in memory too, so a browser that refuses local storage still shows the
+// choice made in this tab.
+let readOnlyNow = readOnlyPref()
+
 export function setReadOnlyPref(v: boolean) {
+  readOnlyNow = v
   try {
     localStorage.setItem(READ_ONLY_KEY, v ? '1' : '0')
   } catch {
     // not remembered
   }
+  window.dispatchEvent(new Event(READ_ONLY_CHANGED))
+}
+
+export function useReadOnlyPref(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const onStorage = (e: StorageEvent) => {
+        if (e.key !== READ_ONLY_KEY) return
+        readOnlyNow = readOnlyPref()
+        notify()
+      }
+      window.addEventListener(READ_ONLY_CHANGED, notify)
+      window.addEventListener('storage', onStorage)
+      return () => {
+        window.removeEventListener(READ_ONLY_CHANGED, notify)
+        window.removeEventListener('storage', onStorage)
+      }
+    },
+    () => readOnlyNow,
+  )
 }

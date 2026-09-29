@@ -1741,7 +1741,8 @@ a.trail-step:hover .trail-label {
 
 /* The menus: the project menu and the action list, one look
    (docs/frontends/gui.md#the-project-menu). */
-.ws-menu {
+.ws-menu,
+.ws-menu-sub {
   min-width: 260px;
   max-width: 360px;
   background: var(--panel);
@@ -1804,6 +1805,96 @@ a.trail-step:hover .trail-label {
   height: 1px;
   background: var(--line);
   margin: 4px 2px;
+}
+
+/* A submenu's trigger: its panel opens beside it. */
+.ws-menu-subtrigger {
+  position: relative;
+  padding-right: 24px;
+}
+
+.ws-menu-subtrigger::after {
+  /* Decoration only: the item's accessible name stays its label. */
+  content: '›' / '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+
+.ws-menu-subtrigger[data-state='open'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ws-menu-sub {
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+}
+
+/* Checkbox items: the open projects and the read-only choice, with a gutter for
+   the tick. */
+.ws-menu-check {
+  position: relative;
+  padding-left: 26px;
+}
+
+.ws-menu-tick {
+  position: absolute;
+  left: 9px;
+  top: 6px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ws-menu-tab .name {
+  font-weight: 600;
+}
+
+/* The two items that ask for one thing first: a new project's name, a server's
+   port. */
+.ws-ask {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 18px 20px;
+  width: min(420px, calc(100vw - 32px));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.ws-ask::backdrop {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.ws-ask h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.ws-ask p {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.ws-ask input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 14px;
+}
+
+.ws-ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ws-ask button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
 }
 
 /* The project menu's trigger keeps the project's look; the caret says it opens. */

@@ -22,7 +22,7 @@ import { probeStorage } from './lib/browser-store'
 import { installLocalProjects } from './lib/local-projects'
 import { installConnect } from './lib/connect'
 import { registerServiceWorker } from './lib/sw'
-import { DEMOS } from './shell/Home'
+import { DEMOS } from './lib/demos'
 import './tokens.css'
 import './app.css'
 

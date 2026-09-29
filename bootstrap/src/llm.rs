@@ -804,6 +804,8 @@ fn read_stream_message<R: BufRead>(
     let mut reasoning_content = String::new();
     let mut reasoning = String::new();
     let mut tcs: Vec<TcAcc> = Vec::new();
+    // The provider's call index → the accumulator it currently feeds.
+    let mut slot: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     let mut usage_tokens: Option<u64> = None;
     let mut usage_billed_tokens: Option<u64> = None;
     let mut usage_cached_tokens = 0u64;
@@ -868,14 +870,23 @@ fn read_stream_message<R: BufRead>(
             }
             if let Some(calls) = delta["tool_calls"].as_array() {
                 for tc in calls {
-                    let idx = tc["index"].as_u64().unwrap_or(0) as usize;
-                    while tcs.len() <= idx {
-                        tcs.push(TcAcc {
-                            id: String::new(),
-                            name: String::new(),
-                            args: String::new(),
-                        });
-                    }
+                    let provider_idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                    let new_id = tc["id"].as_str().filter(|s| !s.is_empty());
+                    // A delta carrying a new call id starts a new call even when its
+                    // index repeats: some endpoints stream each parallel call whole
+                    // under index 0. Mirrors docs/compiler/project-settings.md#llm.
+                    let idx = match slot.get(&provider_idx).copied() {
+                        Some(i) if new_id.is_some_and(|id| !tcs[i].id.is_empty() && tcs[i].id != id) => {
+                            tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
+                            tcs.len() - 1
+                        }
+                        Some(i) => i,
+                        None => {
+                            tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
+                            tcs.len() - 1
+                        }
+                    };
+                    slot.insert(provider_idx, idx);
                     if let Some(id) = tc["id"].as_str() {
                         tcs[idx].id = id.to_string();
                     }
@@ -1017,6 +1028,25 @@ mod tests {
         assert_eq!(msg["reasoning_content"], "the section states a fact");
         assert_eq!(msg["content"], "Recording it.");
         assert_eq!(msg["tool_calls"][0]["function"]["name"], "done");
+    }
+
+    // Parallel calls streamed whole under one index stay separate calls, while a
+    // call split across deltas under its index still joins.
+    // Mirrors docs/compiler/project-settings.md#llm.
+    #[test]
+    fn stream_separates_parallel_calls_that_share_an_index() {
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"read_text_file","arguments":"{\"path\":\"a.md\"}"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_b","function":{"name":"read_text_file","arguments":"{\"path\":"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"b.md\"}"}}]}}]}"#,
+        ]);
+        let (msg, _tokens) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let calls = msg["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2, "{}", msg);
+        assert_eq!(calls[0]["function"]["arguments"], r#"{"path":"a.md"}"#);
+        assert_eq!(calls[1]["id"], "call_b");
+        assert_eq!(calls[1]["function"]["arguments"], r#"{"path":"b.md"}"#);
     }
 
     #[test]

@@ -80,10 +80,11 @@ ledger, not the model's word:
 
 - `mark_goal_done({goal, justification})` is validated against the ledger entry. No
   record, or a stale `factHash`, is rejected naming the gate. A record whose files are
-  all gone is rejected naming them; a record with no files of its own stands when every
-  requirement of the entity has a test row whose artifact exists (an actor whose
-  statements the tool it uses implements writes nothing of its own), and is rejected
-  naming the requirements that have none. A `factHash` that moved
+  all gone is rejected naming them; a record with no implementing file of its own
+  stands when every requirement of the entity has a row naming an implementing file
+  that exists (an actor whose statements the tool it uses implements writes nothing of
+  its own), and is rejected naming the requirements that have none. Test artifacts and
+  criteria files are not implementation. A `factHash` that moved
   mid-session is recorded but leaves the entity pending: the goal derives again with
   the new facts.
 - `record_generation` applies the shape gates, all before any side effect: a row
@@ -97,9 +98,12 @@ ledger, not the model's word:
   the row and the file (the same
   gate `record_binding` applies; the pipeline worker gets one corrective retry before
   it records, and a row still wrong after it falls back to `llm`); a path that
-  escapes the deliverable is rejected naming it; a path another entity owns is
-  rejected with the owner named
+  escapes the deliverable is rejected naming it, and one that restates the deliverable
+  directory's name is normalized under the root with a `note`; a path an entity
+  outside this entity's component group owns is rejected with the owner named
   ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)); a
+  manifest whose `files` name no implementing file while a requirement of the entity
+  has no row naming one is rejected naming those requirements; a
   `built` medium with no build recorded anywhere is rejected
   ([the build](../../consumers/gen.md#the-build)). A record that lands removes the
   files the entity's previous record listed and this manifest omits
@@ -126,7 +130,8 @@ Computed by the harness and rendered under the goal block:
 - The reason and `changed`: the requirement ids added, removed, or reworded.
 - The bound tests the product must make pass and the run commands already recorded:
   one toolchain per deliverable.
-- The other entities' files and what each holds: reference them, never write to them.
+- The other entities' files and what each holds: a group member's are shared, any
+  other entity's are referenced, never written.
 - The build when one exists, and its last failure while it stands, with the files of
   this entity the failure names (`build.lastRun`).
 - The part count for a dense entity.
@@ -161,11 +166,12 @@ medium                             already decided; never re-decided
 build                              the recorded build (reuse and extend, never a second)
 runCommands                        the established toolchain; reuse it
 changed                            requirement ids added, removed, or reworded
-generatedFiles                     other entities' files with what each holds; never write to them
+generatedFiles                     other entities' files with what each holds; never write to them outside sharedWith
+sharedWith                         the entity's component group: members whose files it may write and record too
 supportFiles                       the deliverable-wide files any session may rewrite
 buildEntry, buildError             the build's entry with its content; the standing failure, if any
 boundTests                         tests binding wrote, one per criterion under criteriaTests; make them pass, list them unchanged
-ownershipNote                      a row already passing under another entity's files is carried there: list it unchanged, record no file for it; an entity whose rows are all carried records files: []
+ownershipNote                      a row already passing under another entity's files is carried there: list it unchanged, record no file for it; an entity whose rows are all carried records files: []; a group member's file is shared
 requirementGroups                  each requirement with its statement, quote, openDiagnostics, criteria (id, statement, suggestedTestName) and testName (for a requirement with no criteria)
 contradicted, mediumWarning        the disputed requirements; the medium's standing divergence
 context                            the entity's neighborhood (../context.md#rendering)
@@ -255,9 +261,12 @@ serves these:
   deliverable.
 - `write_text_file({path, content, append?})`: write one file, or append to it when
   `append` is true, so a long file is written in parts that fit a model's reply cap.
-  A path recorded for another entity is rejected with the owner named; during a `bind`
-  goal, a path the ledger records as any entity's implementing file is rejected the
-  same way. The embedded agent once wrote a whole module in one call, the reply was
+  A path recorded for an entity outside the session's component group is rejected with
+  the owner named; during a `bind` goal, a path the ledger records as any entity's
+  implementing file is rejected the same way. A path that restates the deliverable
+  directory's name is normalized under the root, here and in `read_text_file` and
+  `list_files`, and the reply's `note` says so
+  ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)). The embedded agent once wrote a whole module in one call, the reply was
   cut at the model's output cap, the endpoint rejected the unclosed JSON, and every
   generation session after the first two died the same way.
 - `list_files({path?})`: the deliverable tree.

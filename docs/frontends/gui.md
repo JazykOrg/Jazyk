@@ -1080,7 +1080,10 @@ uses:
   rereads the document. The judgment a revised requirement owes (its
   `requirement-revised` record's pairs, see
   [change records](../compiler/graph.md#change-records)) is build work like any
-  other, and the action button counts it.
+  other, and the action button counts it. The pair the question concerned is not
+  judged again: the answer is its judgment
+  ([answers](../compiler/model/diagnostic.md#answers)). The revised requirement's
+  other pairs are.
 - Any other answer (an `answer` option or a freeform reply) records
   `answer.status: handling`, and the card follows it to its outcome: `handled` with
   a link to the change in History, or `failed` with the reason and the question open

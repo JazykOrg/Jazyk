@@ -1030,4 +1030,134 @@ mod tests {
         );
         crate::vfs::remove_dir_all(&dir).ok();
     }
+
+    // An edit option's answer is the judgment of the pair its diagnostic concerned:
+    // the rewrite opens no rejudge-pair for that pair, while the revised requirement
+    // still pairs with its other neighbor.
+    // Mirrors docs/compiler/model/diagnostic.md#answers.
+    #[test]
+    fn edit_answer_judges_the_pair_it_concerned() {
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-answer-pair-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        let quotes = [
+            "An Order is paid by card within 30 days of delivery.",
+            "An Order is paid by card within 21 days of delivery.",
+            "An Order paid by card is refunded within 60 days of delivery.",
+        ];
+        crate::vfs::write(
+            dir.join("docs/pay.md"),
+            format!("# Pay\n\n{}\n\n{}\n\n{}\n", quotes[0], quotes[1], quotes[2]),
+        )
+        .unwrap();
+        let project = Project::load(&dir);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let sec = s.docs["docs/pay.md"].sections.keys().next().unwrap().clone();
+        let mut ops = vec![Op::CreateEntity {
+            id: "ent:order".into(),
+            entity: crate::model::Entity {
+                name: "Order".into(),
+                ..Default::default()
+            },
+        }];
+        for (i, q) in quotes.iter().enumerate() {
+            ops.push(Op::CreateRequirement {
+                id: format!("req:pay-{}", i + 1),
+                requirement: crate::model::Requirement {
+                    statement: q.to_string(),
+                    entities: vec!["ent:order".into()],
+                    source: Some(SourceRef {
+                        doc: "docs/pay.md".into(),
+                        section: sec.clone(),
+                        quote: q.to_string(),
+                    }),
+                    ..Default::default()
+                },
+            });
+        }
+        let report = s.apply(ops, &session());
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        // Earlier builds judged every pair: no created record is left.
+        s.status
+            .changes
+            .retain(|c| c.kind != crate::store::CHANGE_REQ_CREATED);
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: Diagnostic {
+                    rule: "contradiction".into(),
+                    severity: "error".into(),
+                    subjects: vec!["req:pay-1".into(), "req:pay-2".into()],
+                    message: "an Order cannot be due in both 30 and 21 days".into(),
+                    reasoning: None,
+                    lifecycle: "open".into(),
+                    triage: None,
+                    prompt: Some(DiagnosticPrompt {
+                        question: "which bound holds?".into(),
+                        options: vec![PromptOption {
+                            label: "21 days".into(),
+                            edit: Some(SuggestedEdit {
+                                doc: "docs/pay.md".into(),
+                                section: sec.clone(),
+                                old_text: "within 30 days".into(),
+                                new_text: "within 21 days".into(),
+                            }),
+                            answer: None,
+                        }],
+                        freeform: false,
+                    }),
+                    answer: None,
+                    created: None,
+                    updated: None,
+                },
+            }],
+            &session(),
+        );
+        let id = s
+            .graph
+            .diagnostics
+            .iter()
+            .find(|(_, d)| d.rule == "contradiction")
+            .map(|(id, _)| id.clone())
+            .unwrap();
+        drop(s);
+
+        answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
+        let s = Store::load(&out);
+        assert!(s.graph.requirements["req:pay-1"].statement.contains("within 21 days"));
+        // Both others are computed neighbors of the revised requirement.
+        let nbrs: Vec<String> = s
+            .requirement_neighbors_scored("req:pay-1")
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        assert!(nbrs.contains(&"req:pay-2".to_string()), "{:?}", nbrs);
+        assert!(nbrs.contains(&"req:pay-3".to_string()), "{:?}", nbrs);
+        let revised = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == crate::store::CHANGE_REQ_REVISED && c.subject == "req:pay-1")
+            .expect("the rewrite revised req:pay-1");
+        assert_eq!(revised.judged(), vec!["req:pay-2".to_string()]);
+        let board =
+            crate::board::Board::derive(&s, &project, &crate::board::tests::control_auto());
+        let pair = |a: &str, b: &str| crate::goals::pair_target(a, b);
+        let ids: Vec<&str> = board.goals.iter().map(|g| g.id.as_str()).collect();
+        let judged = format!("g:rejudge-pair:{}", pair("req:pay-1", "req:pay-2"));
+        let other = format!("g:rejudge-pair:{}", pair("req:pay-1", "req:pay-3"));
+        assert!(board.goal(&judged).is_none(), "{:?}", ids);
+        assert!(board.waiting_pair(&pair("req:pay-1", "req:pay-2")).is_none());
+        assert!(board.goal(&other).is_some(), "{:?}", ids);
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
 }

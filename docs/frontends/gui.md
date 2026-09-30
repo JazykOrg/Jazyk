@@ -332,7 +332,8 @@ The out directory:
 - `GET /api/out/file?path=`: one file under the out directory, as its bytes with the
   content type its extension names (`image/svg+xml` for `.svg`, `image/png` for
   `.png`, `text/markdown` for `.md`, `text/plain` for `.puml`, `.yaml`, `.txt`,
-  `.json`, and `.jsonl`, `application/octet-stream` otherwise). Read-only, no write
+  `.json`, and `.jsonl`, the types `GET /api/deliverable/raw` adds, and
+  `application/octet-stream` otherwise). Read-only, no write
   verb. The path is relative to the out directory and validated: no absolute path,
   no traversal, no hidden component, no symlink escape; a path that leaves the out
   directory is refused with `400`, a missing file is `404`. This is what the
@@ -1038,11 +1039,13 @@ shows follows what the product is:
     count of the rest).
   - The test summary: the [trace matrix](#trace-matrix)'s counts by status, with a
     link to the matrix.
-- A project whose deliverable holds no file has no product yet. The overview says so
-  and offers the Generate action (the To generate page).
+- A project whose deliverable holds no file, tests aside, has no product yet. The
+  overview says so and offers the Generate action (the To generate page).
 
 Tests aside means a test artifact the [ledger](../consumers/gen.md#the-ledger)
-records, and any file under a `test`, `tests`, or `criteria` directory. Below the
+records, and any file under a `test`, `tests`, or `criteria` directory. A deliverable
+at the project's root holds the project too: its documents and its `jazyk.toml` are
+the source, never the product. Below the
 product, the overview keeps the product's numbers: files, described, not described,
 sections read, and the test summary.
 

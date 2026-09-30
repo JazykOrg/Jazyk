@@ -216,6 +216,9 @@ by no binding are unclaimed: behavior the code carries that no requirement descr
 
 - The scope is the [`gen.code`](../compiler/project-settings.md#generation) glob when
   set, otherwise every file under the deliverable minus the standard exclusions.
+- A build output is never unclaimed: it is made, not written. That is every path in
+  the [build](./gen.md#the-build)'s `produces`, and the medium's `artifact` while no
+  build is recorded (a built deck a fixture carries).
 - The report surfaces in `jazyk status`, in the [GUI](../frontends/gui.md), in the
   whole-build report, and in `monitor` and `await_changes` payloads.
 - It is the worklist [decompilation](./decompile.md) consumes: unclaimed territory is

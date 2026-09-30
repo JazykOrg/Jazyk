@@ -1605,6 +1605,7 @@ mod tests {
                                     section: sec.clone(),
                                     old_text: "within 30 days".into(),
                                     new_text: "within 21 days".into(),
+                                    facts: Vec::new(),
                                 }),
                                 answer: None,
                             },

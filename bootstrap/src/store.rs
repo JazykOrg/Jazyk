@@ -483,6 +483,13 @@ pub struct ProseEdit {
 }
 
 impl ProseEdit {
+    // A text with the replaced run swapped for the new one, when the run locates in it
+    // (whitespace-insensitively).
+    pub fn splice(&self, text: &str) -> Option<String> {
+        md::locate_bytes(text, &self.old_text)
+            .map(|(b, e)| format!("{}{}{}", &text[..b], self.new_text, &text[e..]))
+    }
+
     // Locate the replacement in the document on disk. A non-empty `old_text` must
     // locate inside the section's stored body, so the same phrase elsewhere in the
     // document never catches the edit (a section the tree no longer holds falls back to
@@ -2462,6 +2469,25 @@ impl Store {
         Ok(report)
     }
 
+    // The requirements a prose replacement touches: those quoted from the edited
+    // section whose quote contains the replaced text, each with its rewritten quote.
+    pub fn quote_rewrites(&self, edit: &ProseEdit) -> Vec<(String, String)> {
+        if edit.old_text.trim().is_empty() {
+            return Vec::new();
+        }
+        self.graph
+            .requirements
+            .iter()
+            .filter_map(|(qid, r)| {
+                let src = r.source.as_ref()?;
+                if src.doc != edit.doc || src.section != edit.section {
+                    return None;
+                }
+                edit.splice(&src.quote).map(|q| (qid.clone(), q))
+            })
+            .collect()
+    }
+
     // The mechanical re-anchoring a prose replacement owes: requirement sources and
     // entity mentions in the edited section whose quote contains the replaced text.
     fn reanchor_ops(&self, edit: &ProseEdit, ops: &[Op]) -> Vec<Op> {
@@ -2483,20 +2509,12 @@ impl Store {
                 _ => false,
             })
         };
-        let splice = |text: &str| -> Option<String> {
-            md::locate_bytes(text, &edit.old_text)
-                .map(|(b, e)| format!("{}{}{}", &text[..b], edit.new_text, &text[e..]))
-        };
-        for (qid, r) in &self.graph.requirements {
-            let Some(src) = r.source.as_ref() else {
-                continue;
-            };
-            if src.doc != edit.doc || src.section != edit.section || handled(qid) {
+        let splice = |text: &str| edit.splice(text);
+        for (qid, new_quote) in self.quote_rewrites(edit) {
+            if handled(&qid) {
                 continue;
             }
-            let Some(new_quote) = splice(&src.quote) else {
-                continue;
-            };
+            let r = &self.graph.requirements[&qid];
             out.push(Op::UpdateRequirement {
                 id: qid.clone(),
                 statement: splice(&r.statement),
@@ -2630,6 +2648,7 @@ impl Store {
                         section: section.clone(),
                         old_text: old.clone(),
                         new_text: sentence.to_string(),
+                        facts: Vec::new(),
                     }),
                     answer: None,
                 });

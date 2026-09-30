@@ -1034,6 +1034,26 @@ pub fn run_answer(args: &[String], opts: &Options) -> i32 {
         }
         Ok(v) => {
             println!("jazyk: applied: {}", v["note"].as_str().unwrap_or_default());
+            // The fact changes that rode with the prose, and the transitions left to
+            // review. Mirrors docs/compiler/model/diagnostic.md#answers.
+            for f in v["facts"].as_array().into_iter().flatten() {
+                println!("  fact: {} {} = {}", f["id"].as_str().unwrap_or_default(), f["field"].as_str().unwrap_or_default(), f["value"]);
+            }
+            for f in v["followed"].as_array().into_iter().flatten() {
+                let t = &f["transition"];
+                println!(
+                    "  transition: {} {} -> {}",
+                    f["id"].as_str().unwrap_or_default(),
+                    t["from"].as_str().unwrap_or_default(),
+                    t["to"].as_str().unwrap_or_default()
+                );
+            }
+            for id in v["review"].as_array().into_iter().flatten() {
+                println!(
+                    "  transition left to review: {} (the rewrite does not map one to one)",
+                    id.as_str().unwrap_or_default()
+                );
+            }
             0
         }
         Err(e) => {

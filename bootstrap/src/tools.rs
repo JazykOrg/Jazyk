@@ -911,7 +911,13 @@ pub(crate) fn prompt_schema() -> Value {
                 "edit": {"type": "object", "properties": {
                     "doc": {"type": "string"},
                     "section": {"type": "string", "description": "the section, as /ref or the full doc.md#/ref"},
-                    "old_text": {"type": "string"}, "new_text": {"type": "string"}},
+                    "old_text": {"type": "string"}, "new_text": {"type": "string"},
+                    "facts": {"type": "array", "description": "the fact changes the rewrite implies for the requirements quoted from this section (e.g. a transition's new `to`), applied with the prose",
+                        "items": {"type": "object", "properties": {
+                            "id": {"type": "string", "description": "a requirement quoted from the edit's section"},
+                            "field": {"type": "string", "enum": ["statement", "entities", "edges", "transition", "facets"]},
+                            "value": {"description": "the field's whole new value, in the shape update_requirement takes"}},
+                            "required": ["id", "field", "value"]}}},
                     "required": ["doc", "section", "old_text", "new_text"]},
                 "answer": {"type": "string"}
             }, "required": ["label"]}},
@@ -4942,6 +4948,156 @@ impl ToolSession {
             .unwrap_or_default()
     }
 
+    // Parse an edit option's `facts` argument: a list of {id, field, value}. Absent or
+    // empty is no facts. Mirrors docs/compiler/model/diagnostic.md#prompts.
+    fn parse_facts(&self, v: &Value) -> Result<Vec<crate::model::FactChange>, ToolError> {
+        if !Self::present(v) {
+            return Ok(Vec::new());
+        }
+        let Some(arr) = v.as_array() else {
+            return Err(ToolError::new(
+                "bad-fact",
+                "edit.facts is a list of {id, field, value}".into(),
+            ));
+        };
+        let mut out = Vec::new();
+        for f in arr {
+            if !Self::present(f) {
+                continue;
+            }
+            let (Some(id), Some(field)) = (
+                f["id"].as_str().filter(|s| !s.trim().is_empty()),
+                f["field"].as_str().filter(|s| !s.trim().is_empty()),
+            ) else {
+                return Err(ToolError::new(
+                    "bad-fact",
+                    "each of edit.facts needs an id and a field: {id, field, value}".into(),
+                ));
+            };
+            out.push(crate::model::FactChange {
+                id: id.trim().to_string(),
+                field: field.trim().to_string(),
+                value: f["value"].clone(),
+            });
+        }
+        Ok(out)
+    }
+
+    // Gate an edit option's fact changes and turn each into the one-field
+    // update_requirement it applies as: the requirement is quoted from the edit's
+    // section, the field is editable, and the value passes the gates that tool runs on
+    // it. Facts apply in order, so a transition or an edge after an `entities` change
+    // is judged against the new list. Mirrors docs/compiler/model/diagnostic.md#prompts.
+    pub(crate) fn fact_ops(
+        &self,
+        doc: &str,
+        section: &str,
+        facts: &[crate::model::FactChange],
+    ) -> Result<Vec<Op>, ToolError> {
+        let mut listed: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut ops = Vec::new();
+        for (k, f) in facts.iter().enumerate() {
+            let fail = |rule: &str, msg: String| ToolError::new(rule, format!("fact {}: {}", k, msg));
+            let rid = self.canon_req_id(&f.id).map_err(|e| fail(&e.rule, e.message))?;
+            let Some(r) = self.snapshot.graph.requirements.get(&rid) else {
+                return Err(fail(
+                    "unknown-id",
+                    format!("`{}` is not committed yet; a fact names a requirement the graph holds", rid),
+                ));
+            };
+            let here = r
+                .source
+                .as_ref()
+                .is_some_and(|q| q.doc == doc && q.section == section);
+            if !here {
+                return Err(fail(
+                    "bad-fact",
+                    format!(
+                        "{} is not quoted from {}#{}; a fact names a requirement the rewrite touches",
+                        rid, doc, section
+                    ),
+                ));
+            }
+            let ents = listed
+                .entry(rid.clone())
+                .or_insert_with(|| r.entities.clone())
+                .clone();
+            let (mut statement, mut entities, mut edges, mut transition, mut facets) =
+                (None, None, None, None, None);
+            match f.field.as_str() {
+                "statement" => {
+                    let v = f.value.as_str().map(str::trim).unwrap_or_default();
+                    statement_present(v).map_err(|e| fail(&e.rule, e.message))?;
+                    statement = Some(v.to_string());
+                }
+                "entities" => {
+                    let Some(arr) = f.value.as_array() else {
+                        return Err(fail("bad-fact", "entities takes a list of entity ids".into()));
+                    };
+                    let mut canon: Vec<String> = Vec::new();
+                    for e in arr {
+                        let raw = e.as_str().unwrap_or_default().trim();
+                        if raw.is_empty() {
+                            continue;
+                        }
+                        match self.canon_entity_id(raw) {
+                            Some(id) if !canon.contains(&id) => canon.push(id),
+                            Some(_) => {}
+                            None => {
+                                let e = self.unknown_entity_error(raw);
+                                return Err(fail(&e.rule, e.message));
+                            }
+                        }
+                    }
+                    if canon.is_empty() {
+                        return Err(fail("bad-fact", "entities names at least one entity".into()));
+                    }
+                    listed.insert(rid.clone(), canon.clone());
+                    entities = Some(canon);
+                }
+                "edges" => {
+                    let Some(arr) = f.value.as_array() else {
+                        return Err(fail(
+                            "bad-fact",
+                            "edges takes a list of {a, b, type?, cardinality?}".into(),
+                        ));
+                    };
+                    edges = Some(parse_edges(self, arr, Some(&ents)).map_err(|e| fail(&e.rule, e.message))?);
+                }
+                "transition" => {
+                    transition = Some(
+                        self.parse_transition(&f.value, &ents)
+                            .map_err(|e| fail(&e.rule, e.message))?,
+                    );
+                }
+                "facets" => {
+                    facets = Some(parse_facets(&f.value).map_err(|e| fail(&e.rule, e.message))?);
+                }
+                other => {
+                    return Err(fail(
+                        "bad-fact",
+                        format!(
+                            "field `{}` is not a fact an edit sets; one of: {}",
+                            other,
+                            crate::model::FACT_FIELDS.join(", ")
+                        ),
+                    ))
+                }
+            }
+            ops.push(Op::UpdateRequirement {
+                id: rid,
+                statement,
+                entities,
+                edges,
+                transition,
+                facets,
+                source: None,
+                provenance: None,
+            });
+        }
+        Ok(ops)
+    }
+
     // Parse and gate a diagnostic prompt argument: at most 4 options, label
     // required, exactly one of edit or answer per option, and an edit's old_text
     // must locate in its section. Mirrors docs/compiler/model/diagnostic.md#prompts.
@@ -5041,11 +5197,17 @@ impl ToolSession {
                             format!("option {}: old_text does not locate in {}#{}; copy it verbatim from the section", i, doc, section),
                         ));
                     }
+                    let facts = self
+                        .parse_facts(&e["facts"])
+                        .map_err(|err| ToolError::new(&err.rule, format!("option {}: {}", i, err.message)))?;
+                    self.fact_ops(&doc, &section, &facts)
+                        .map_err(|err| ToolError::new(&err.rule, format!("option {}: {}", i, err.message)))?;
                     Some(SuggestedEdit {
                         doc,
                         section,
                         old_text,
                         new_text,
+                        facts,
                     })
                 } else {
                     None
@@ -12378,5 +12540,50 @@ mod tests {
             r["children"],
             json!([{"member": "ent:server", "view": "view:class/server"}])
         );
+    }
+
+    // An edit option's facts are gated at report time: a requirement quoted from the
+    // edit's section, an editable field, a value the update_requirement gates accept.
+    // Mirrors docs/compiler/model/diagnostic.md#prompts.
+    #[test]
+    fn a_prompt_edits_facts_pass_the_requirement_gates() {
+        let mut t = session();
+        let old = "The Shopping Cart holds items a Customer intends to buy.";
+        t.snapshot
+            .graph
+            .requirements
+            .insert("req:shop-1".into(), quoted_req(old, &["ent:customer"], old));
+        let prompt = |section: &str, facts: Value| {
+            let old_text = if section == "/shop" { "intro text" } else { "holds items" };
+            normalize_args(&json!({"prompt": {"question": "Which?", "options": [
+                {"label": "A", "edit": {"doc": "shop.md", "section": section,
+                 "old_text": old_text, "new_text": "keeps items", "facts": facts}}]}}))
+        };
+        let ok = prompt("/shop/cart", json!([{"id": "shop-1", "field": "transition",
+            "value": {"subject": "ent:customer", "from": "browsing", "to": "buying"}}]));
+        let p = t.parse_prompt(&ok["prompt"]).unwrap().unwrap();
+        let facts = &p.options[0].edit.as_ref().unwrap().facts;
+        assert_eq!(facts.len(), 1);
+        let ops = t.fact_ops("shop.md", "/shop/cart", facts).unwrap();
+        assert!(matches!(&ops[0], Op::UpdateRequirement { id, transition: Some(tr), .. }
+            if id == "req:shop-1" && tr.to == "buying"));
+        // An entity list first: the transition after it is judged against the new list.
+        t.snapshot.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        let reordered = prompt("/shop/cart", json!([
+            {"id": "req:shop-1", "field": "entities", "value": ["ent:cart"]},
+            {"id": "req:shop-1", "field": "transition", "value": {"subject": "ent:customer", "from": "a", "to": "b"}}]));
+        let err = t.parse_prompt(&reordered["prompt"]).unwrap_err();
+        assert!(err.message.contains("fact 1") && err.message.contains("not among"), "{}", err.message);
+        let wrong_field = prompt("/shop/cart", json!([{"id": "req:shop-1", "field": "definition", "value": "x"}]));
+        let err = t.parse_prompt(&wrong_field["prompt"]).unwrap_err();
+        assert_eq!(err.rule, "bad-fact");
+        let elsewhere = prompt("/shop", json!([{"id": "req:shop-1", "field": "facets",
+            "value": [{"facet": "behavior", "reasoning": "a step"}]}]));
+        let err = t.parse_prompt(&elsewhere["prompt"]);
+        let err = match err {
+            Err(e) => e,
+            Ok(_) => panic!("a requirement quoted elsewhere is refused"),
+        };
+        assert!(err.message.contains("not quoted from"), "{}", err.message);
     }
 }

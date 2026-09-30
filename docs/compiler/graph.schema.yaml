@@ -731,6 +731,30 @@ definitions:
                   description: Empty when the edit inserts a sentence, as a ratification proposal does
                 new_text:
                   type: string
+                facts:
+                  description: The fact changes the rewrite implies for the requirements it touches, applied in the same changeset as the prose
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - id
+                      - field
+                      - value
+                    properties:
+                      id:
+                        type: string
+                        description: A requirement quoted from the edit's section
+                      field:
+                        type: string
+                        enum:
+                          - statement
+                          - entities
+                          - edges
+                          - transition
+                          - facets
+                      value:
+                        description: The field's new content, in the shape update_requirement takes
+                    additionalProperties: false
               additionalProperties: false
             answer:
               description: A prefilled reply, handled by the model over ACP

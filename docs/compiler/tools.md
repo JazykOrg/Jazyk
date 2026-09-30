@@ -216,8 +216,11 @@ a mutating reply previews the goals the mutation will open
   re-reporting the same finding updates it. `prompt`
   attaches a question with suggested resolutions
   ([prompts](./model/diagnostic.md#prompts)); a `decision` requires one. Its gates: at
-  most 4 options, each with a `label` and exactly one of `edit` or `answer`, and an
-  `edit`'s `old_text` must locate in its section when non-empty. A diagnostic with an
+  most 4 options, each with a `label` and exactly one of `edit` or `answer`, an
+  `edit`'s `old_text` must locate in its section when non-empty, and each of an
+  `edit`'s `facts` (`{id, field, value}`, the fact changes the rewrite implies) names a
+  requirement quoted from that section and passes the gates `update_requirement` runs
+  on the field. A diagnostic with an
   unanswered prompt opens the blocked [`answer`](./goals/answer.md) goal. The reply
   carries the finding's `id` (a re-report answers with the id it updates), and the
   session's own staged findings are visible to `diagnostics`, `update_diagnostic`,

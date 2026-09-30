@@ -280,8 +280,11 @@ its proposal), or an `answer` goal (`g:answer:diag:decision-2`).
   (`edit` options with their document and replacement text, `answer` options with
   their label), and whether freeform is accepted, then exit 1. Nothing is written.
   Both together, or an `--option` that is not a whole number, is a usage error.
-- `--option N`: choose one option. An `edit` option applies as a dual write and
-  resolves the diagnostic in one changeset; on a ratification proposal it is the
+- `--option N`: choose one option. An `edit` option applies as a dual write, with the
+  fact changes its rewrite implies
+  ([answers](../compiler/model/diagnostic.md#answers)), and resolves the diagnostic in
+  one changeset, printing each fact it changed and each transition it left to review;
+  on a ratification proposal it is the
   accept ([the human path](../compiler/goals/ratify.md#the-human-path)) and the fact's
   provenance flips to `quote`. The retract option of a ratification proposal is
   deterministic too. Any other option records `handling` and runs an

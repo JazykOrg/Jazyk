@@ -2775,6 +2775,7 @@ mod tests {
                                 section: "/orders/service".into(),
                                 old_text: String::new(),
                                 new_text: "The order service contains a pricing module.".into(),
+                                facts: Vec::new(),
                             }),
                             answer: None,
                         },

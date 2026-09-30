@@ -1432,17 +1432,17 @@ from the graph's mentions, quotes, and section tree.
   rendering; the lens returns under the Developer toggle.
 - Entity mentions are underlined so what is clickable is discoverable; hover shows
   the card. In Write a plain click places the cursor, as on any text, and the caret
-  resting on a mention marks its entity (the [board](#the-board)
-  highlights the link to it); Cmd-click (Ctrl-click off macOS) opens the entity: the
-  inspector in Lenses, a tab in Tabs, a window beside the document on the Board. In
-  Read, where there is no cursor, a click opens it. A mention is every occurrence of an entity's
-  name (or an alias the graph records) in the text, matched case-insensitively
-  on word boundaries, in Read and in Write alike, on a server and in a tab: the
-  graph's `mentions` say which sections define an entity, the name index says
-  where its name appears, and the editor draws both without the LSP. A name that
-  is also part of a longer entity's name underlines the longer one. A link's
-  destination is a path, never a mention. In Read a mention inside a link keeps
-  the link's click; in Write a Cmd-click on it follows the link.
+  resting on a mention marks its entity (the [board](#the-board) highlights the link
+  to it); Cmd-click (Ctrl-click off macOS) opens the entity: the inspector in
+  Lenses, a tab in Tabs, a window beside the document on the Board. In Read, where
+  there is no cursor, a click opens it. A mention is every occurrence of an entity's
+  name (or an alias the graph records) in the text, matched case-insensitively on
+  word boundaries, in Read and in Write alike, on a server and in a tab: the graph's
+  `mentions` say which sections define an entity, the name index says where its name
+  appears, and the editor draws both without the LSP. A name that is also part of a
+  longer entity's name underlines the longer one. A link's destination is a path,
+  never a mention. In Read a mention inside a link keeps the link's click; in Write
+  a Cmd-click on it follows the link.
 - Hovering a requirement's sentence shows the [requirement card](./lsp.md#capabilities):
   the requirement, the code, and the test, each linked, with the trace status. The
   card's links stay inside the app.
@@ -1600,7 +1600,7 @@ both.
 - Focus: opening or showing an item from outside its window (the navigator, a
   Cmd-click on a mention, a link, a portal, search) moves the view so its window
   fills 80 percent of the board, centered, never above 100 percent zoom for a page
-  or 150 percent for an entity card. The remaining margin is where its links show
+  or 125 percent for an entity card. The remaining margin is where its links show
   (below). The view stays free: a pan or a zoom moves away from the focus, and a
   double click on a title bar returns to it.
 - The graph layer (on by default, the `Graph` toggle) draws the entities the
@@ -1611,7 +1611,8 @@ both.
     most (a dotted link);
   - an entity: its neighbours; a requirement: its entities; a diagram: its members.
 - An open entity window stands for its entity in place of a chip. The relationships
-  between the entities shown are links, one per direction with the strongest type.
+  between the entities shown are links, one per pair with the strongest type's verb
+  and an arrowhead for each direction the pair's contributions run.
   A window opened from inside another (a link, a Cmd-click on a mention) is placed
   beside it with a link back to it. A click on a chip selects it; a double click
   opens its entity beside it.
@@ -1622,11 +1623,17 @@ both.
   - both ends in view: no portal;
   - one end out of view: one portal, on the link where it meets the view's edge;
   - both ends out of view with the link crossing the view: a portal at each side;
-  - the link wholly out of view (or hidden under a window): nothing.
-- The linkage rides on the visible part of every link, centered between its
-  portals: the relationship's verb (or `defines`, `mentions`, `opened from`) and the
-  count of requirements behind the link, collapsed. A click expands the
-  requirements' statements, each opening its requirement beside the link:
+  - the link wholly out of view: nothing.
+- A stretch of a link under another window is hidden, as the line is: a portal shows
+  only where the stretch reaching the view's edge is uncovered, and a link with no
+  uncovered stretch shows nothing. A portal or a linkage keeps to the margin beside
+  the windows, one portal per node on each side; in a thin margin the name wraps to
+  two lines and the linkage keeps only its count, the rest on hover.
+- The linkage rides on the longest uncovered stretch of every link, centered between
+  its portals: the relationship's verb (or `defines`, `mentions`, `names`,
+  `opened from`) and the count of requirements behind the link, collapsed. A click
+  expands the requirements' statements, each opening its requirement beside the
+  link:
   - between two entities, the requirements of the relationship's contributions in
     both directions;
   - between a document and an entity, the requirements quoted from that document

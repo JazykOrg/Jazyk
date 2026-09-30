@@ -1,7 +1,7 @@
 // The board's pure logic (docs/frontends/gui.md#the-board, plans/workspace.md#board):
-// where a window goes and how big, which entity chips the open windows bring, the
-// links between them with the requirements behind each, the zoom levels, the focus
-// zoom, and where a link's portals and linkage sit on screen. No React here, so the
+// where a window goes and how big, the links between the open windows with the
+// requirements behind each, the focused window's fan of unopened entities, the zoom
+// levels, the focus zoom, and where a link's portals and linkage sit on screen. No React here, so the
 // rules are unit tested.
 import type { Graph } from '../../lib/api'
 import { relationPhrase } from '../../lib/present'
@@ -21,11 +21,9 @@ export interface Point {
 }
 
 // What the board remembers per project: every window's rect by its item's page
-// (the path without its query), the chips a person dragged or `Arrange` placed, the
-// graph layer's toggle, and the viewport.
+// (the path without its query), the fan's toggle, and the viewport.
 export interface Saved {
   windows: Record<string, Rect>
-  chips: Record<string, Point>
   graph: boolean
   viewport?: { x: number; y: number; zoom: number }
 }
@@ -44,16 +42,9 @@ export const FOCUS_MAX_PAGE = 1
 export const FOCUS_MAX_CARD = 1.25
 export const WIN_MIN_W = 320
 export const WIN_MIN_H = 220
-export const CHIP_W = 210
-export const CHIP_H = 34
-export const CHIP_STEP = 48
-// The chips sit in a column this far right of their window: out of view when the
-// window is focused, so they show as portals in its margin.
-export const CHIP_GAP = 200
-// The horizontal gap between two windows side by side: the chips' gutter.
-export const WIN_GAP = 640
-// The chips a window brings, at most.
-export const CHIPS_PER_WINDOW = 12
+// The horizontal gap between two windows side by side: out of view when one is
+// focused, so the other shows as a portal.
+export const WIN_GAP = 320
 // The windows live at once (plans/workspace.md#cost).
 export const LIVE_MAX = 6
 
@@ -81,12 +72,6 @@ export function zoomOut(level: Level): number | null {
   }
 }
 
-// Chips and their labels grow on the cards level so they stay named, and keep that
-// size and place on the titles level.
-export function chipScale(level: Level): number {
-  return level === 'card' || level === 'title' ? 2.2 : 1
-}
-
 export interface Size {
   w: number
   h: number
@@ -111,7 +96,7 @@ export function focusZoom(r: Rect, board: Size, kind: string): number {
 const storeKey = (project: string) => `jazyk.board:${project}`
 
 export function emptySaved(): Saved {
-  return { windows: {}, chips: {}, graph: true }
+  return { windows: {}, graph: true }
 }
 
 function finite(...n: unknown[]): boolean {
@@ -127,9 +112,6 @@ export function readSaved(project: string | null): Saved {
     const v = JSON.parse(raw) as Partial<Saved>
     for (const [k, r] of Object.entries(v.windows ?? {})) {
       if (r && finite(r.x, r.y, r.w, r.h)) out.windows[k] = { x: r.x, y: r.y, w: r.w, h: r.h }
-    }
-    for (const [k, p] of Object.entries(v.chips ?? {})) {
-      if (p && finite(p.x, p.y)) out.chips[k] = { x: p.x, y: p.y }
     }
     if (typeof v.graph === 'boolean') out.graph = v.graph
     const vp = v.viewport
@@ -168,11 +150,6 @@ function freeSlot(x: number, y: number, w: number, h: number, taken: Rect[]): Re
 // A window opened from another goes to its right, below any window already there.
 export function placeBeside(anchor: Rect, taken: Rect[], w = WIN_W, h = WIN_H): Rect {
   return freeSlot(anchor.x + anchor.w + WIN_GAP, anchor.y, w, h, taken)
-}
-
-// A window opened from a chip goes just right of the chip.
-export function placeNear(p: Point, taken: Rect[], w = WIN_W, h = WIN_H): Rect {
-  return freeSlot(p.x + CHIP_W + 80, p.y - 60, w, h, taken)
 }
 
 // A window opened from nowhere goes right of the rightmost window, level with it.
@@ -216,7 +193,6 @@ export function definingDoc(g: Graph, id: string): string | undefined {
 
 // A window is its item's page: the path without the query (paths.ts).
 export const windowId = (path: string) => `w:${itemKey(path)}`
-export const chipId = (entity: string) => `c:${entity}`
 
 // defines (a document to an entity it defines), mentions (a document to one it
 // mentions), names (a requirement or a diagram to its entities), a relationship,
@@ -238,19 +214,9 @@ export interface LayerEdge {
   reqs: string[]
 }
 
-export interface LayerChip {
-  entity: string
-  // The window whose column the chip sits in.
-  owner: string
-  // Its place in that column, and how many the column holds.
-  index: number
-  count: number
-}
-
 export interface Layer {
-  chips: LayerChip[]
   edges: LayerEdge[]
-  // The node each present entity is drawn as: its own window, else its chip.
+  // The window each open entity is drawn as.
   entityNode: Map<string, string>
 }
 
@@ -268,12 +234,17 @@ const KIND_VERB: Record<Exclude<EdgeKind, 'rel'>, string> = {
   from: 'opened from',
 }
 
-// The entities a window brings as chips and the link each gets to the window, the
-// defined ones first, at most CHIPS_PER_WINDOW. An entity window's neighbours link
-// through their relationships instead.
-function windowEntities(g: Graph, item: Item): { entity: string; edge?: 'def' | 'men' | 'ref' }[] {
+export interface Brought {
+  entity: string
+  // The link to the window once the entity is open; an entity window's neighbours
+  // link through their relationships instead.
+  edge?: 'def' | 'men' | 'ref'
+}
+
+// The entities a window brings, the defined ones first, then the most mentioned.
+export function windowEntities(g: Graph, item: Item): Brought[] {
   const kind = itemKind(item.path)
-  const cap = <T,>(xs: T[]) => xs.slice(0, CHIPS_PER_WINDOW)
+  const cap = <T,>(xs: T[]) => xs
   if (kind === 'doc') {
     const doc = docOf(item.path)
     const defined: string[] = []
@@ -365,14 +336,13 @@ export function linkRequirements(g: Graph, a: Subject, b: Subject): string[] {
   return [...out].filter((id) => g.requirements[id]).sort()
 }
 
-// The graph layer over the open windows: the chips, each linked to its window, the
-// relationship links between every present entity (one per pair, its verb the
-// strongest type's), and a link from a window to one opened from inside it. Every
-// link carries the requirements behind it.
-export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean): Layer {
+// The links between the open windows: a window to the open entities it brings, the
+// relationships between open entities (one per pair, its verb the strongest type's),
+// and a window to one opened from inside it. Every link carries the requirements
+// behind it.
+export function buildLayer(items: Item[], g: Graph | undefined): Layer {
   const entityNode = new Map<string, string>()
   const edges: LayerEdge[] = []
-  const chips: LayerChip[] = []
   const paths = new Set(items.map((i) => itemKey(i.path)))
   const subjectOfNode = new Map<string, Subject>()
   if (g) {
@@ -382,33 +352,20 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
       const id = canonical(g, nodeOf(item.path))
       if (g.entities[id] && !entityNode.has(id)) entityNode.set(id, windowId(item.path))
     }
-  }
-  if (g && graphOn) {
-    const columns = new Map<string, number>()
     for (const item of items) {
       for (const { entity, edge } of windowEntities(g, item)) {
-        if (!entityNode.has(entity)) {
-          const owner = itemKey(item.path)
-          const index = columns.get(owner) ?? 0
-          columns.set(owner, index + 1)
-          chips.push({ entity, owner, index, count: 0 })
-          entityNode.set(entity, chipId(entity))
-          subjectOfNode.set(chipId(entity), { entity })
-        }
-        const target = entityNode.get(entity)!
-        if (edge && target !== windowId(item.path)) {
-          edges.push({
-            id: `${edge}:${itemKey(item.path)}->${entity}`,
-            source: windowId(item.path),
-            target,
-            kind: edge,
-            label: KIND_VERB[edge],
-            reqs: linkRequirements(g, subjectOfPath(g, item.path), { entity }),
-          })
-        }
+        const target = entityNode.get(entity)
+        if (!edge || !target || target === windowId(item.path)) continue
+        edges.push({
+          id: `${edge}:${itemKey(item.path)}->${entity}`,
+          source: windowId(item.path),
+          target,
+          kind: edge,
+          label: KIND_VERB[edge],
+          reqs: linkRequirements(g, subjectOfPath(g, item.path), { entity }),
+        })
       }
     }
-    for (const c of chips) c.count = columns.get(c.owner) ?? 1
     // One link per pair: the first direction seen, the strongest type's verb, and
     // arrowheads both ways when the pair has contributions both ways.
     const pairs = new Map<string, { a: string; b: string; type: string; ab: boolean; ba: boolean }>()
@@ -452,15 +409,93 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
     const reqs = g ? linkRequirements(g, subjectOfNode.get(s) ?? {}, subjectOfNode.get(t) ?? {}) : []
     edges.push({ id: `from:${itemKey(item.from)}->${itemKey(item.path)}`, source: s, target: t, kind: 'from', label: KIND_VERB.from, reqs })
   }
-  return { chips, edges, entityNode }
+  return { edges, entityNode }
 }
 
-// A chip's place when nobody moved it: in its window's column, the column spread
-// over the window's height and centered on it.
-export function chipSpot(owner: Rect, index: number, count: number, scale: number): Point {
-  const step = Math.max(CHIP_STEP * scale, owner.h / Math.max(count, 1))
-  const top = owner.y + owner.h / 2 - (step * count) / 2 + (step - CHIP_H * scale) / 2
-  return { x: owner.x + owner.w + CHIP_GAP, y: Math.round(top + index * step) }
+// ---- the fan: the focused window's unopened entities, below it ----
+
+// The fan's order: the entity under the caret, then the ones the caret rested on
+// most recently, then the window's own order (defined, then most mentioned).
+export function fanOrder(brought: string[], caret: string | null, recent: string[]): string[] {
+  const has = new Set(brought)
+  const out: string[] = []
+  const add = (e: string) => {
+    if (has.has(e) && !out.includes(e)) out.push(e)
+  }
+  if (caret) add(caret)
+  for (const e of recent) add(e)
+  for (const e of brought) add(e)
+  return out
+}
+
+export const FAN_CHIP_H = 28
+export const FAN_GAP = 10
+// The drop from the window to the row: FAN_DROP when there is room, never less
+// than FAN_MIN_DROP (below that, the row sits along the view's bottom edge).
+export const FAN_DROP = 52
+export const FAN_MIN_DROP = 18
+export const FAN_MORE_W = 64
+
+// A fan chip's width for its name.
+export function fanChipWidth(name: string): number {
+  return Math.max(90, Math.min(200, 44 + name.length * 7))
+}
+
+export interface FanSlot {
+  // The index into the ordered entities, or -1 for the `+N` chip.
+  index: number
+  box: Rect
+}
+
+export interface FanLayout {
+  // Lines leave `anchor` for each slot's top center, when there is room below.
+  anchor: Point | null
+  slots: FanSlot[]
+  // How many entities the row leaves out (the `+N` chip lists them).
+  more: number
+}
+
+// The fan's row under a window on screen: as many chips as fit, the first straight
+// under the window's bottom center and the next alternating right and left, a `+N`
+// chip at the right end for the rest. With no room below the window, the row sits
+// along the view's bottom edge and draws no lines.
+export function layoutFan(win: Rect, widths: number[], view: Rect): FanLayout {
+  const room = Math.min(view.w - 2 * FAN_GAP, Math.max(win.w, 420))
+  const avail = view.y + view.h - 4 - (win.y + win.h) - FAN_CHIP_H
+  const below = avail >= FAN_MIN_DROP
+  const drop = Math.min(FAN_DROP, avail)
+  const taken: number[] = []
+  let used = 0
+  for (let i = 0; i < widths.length; i++) {
+    const rest = widths.length - i - 1
+    const need = used + (used ? FAN_GAP : 0) + widths[i] + (rest > 0 ? FAN_GAP + FAN_MORE_W : 0)
+    if (need > room) break
+    used += (used ? FAN_GAP : 0) + widths[i]
+    taken.push(i)
+  }
+  const more = widths.length - taken.length
+  // Center out: 0 in the middle, then 1 right, 2 left, 3 right, ...
+  const row: number[] = []
+  for (const i of taken) {
+    if (i % 2 === 1) row.push(i)
+    else row.unshift(i)
+  }
+  if (more > 0) row.push(-1)
+  const w = (i: number) => (i < 0 ? FAN_MORE_W : widths[i])
+  const total = row.reduce((a, i) => a + w(i), 0) + FAN_GAP * Math.max(row.length - 1, 0)
+  const anchorX = Math.min(Math.max(win.x + win.w / 2, view.x), view.x + view.w)
+  // The first chip sits under the anchor, the row kept inside the view.
+  const first = row.indexOf(taken[0] ?? -1)
+  const left = first > 0 ? row.slice(0, first).reduce((a, i) => a + w(i) + FAN_GAP, 0) : 0
+  const want = first >= 0 ? anchorX - w(row[first]) / 2 - left : anchorX - total / 2
+  let x = Math.min(Math.max(want, view.x + FAN_GAP), view.x + view.w - FAN_GAP - total)
+  const y = below ? win.y + win.h + drop : view.y + view.h - FAN_CHIP_H - 8
+  const slots: FanSlot[] = row.map((i) => {
+    const box = { x, y, w: w(i), h: FAN_CHIP_H }
+    x += w(i) + FAN_GAP
+    return { index: i, box }
+  })
+  return { anchor: below ? { x: anchorX, y: win.y + win.h } : null, slots, more }
 }
 
 // ---- links on screen: where a link's portals and its linkage sit ----

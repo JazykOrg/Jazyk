@@ -1,8 +1,8 @@
 // The Board arrangement (docs/frontends/gui.md#the-board, plans/workspace.md#board):
-// the open items as windows on a dotted table top, the entities they bring as chips
-// linked to them and to each other, a focused window filling 80 percent of the view
-// with its links' portals in the margin, and what the board draws changing with the
-// zoom down to titles. The shell (Workspace.tsx) loads it lazily when the Board
+// the open items as windows on a dotted table top with the links between them, a
+// focused window filling 80 percent of the view with its links' portals in the
+// margin and its unopened entities fanned out below it, and what the board draws
+// changing with the zoom down to titles. The shell (Workspace.tsx) loads it lazily when the Board
 // arrangement first shows.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -33,20 +33,15 @@ import { edgeTypes, type BoardEdgeType } from './edges'
 import {
   buildLayer,
   canonical,
-  chipId,
-  chipScale,
-  chipSpot,
-  CHIP_H,
-  CHIP_STEP,
-  CHIP_W,
   docOf,
+  fanOrder,
   focusZoom,
   levelOf,
   nearest,
   nodeOf,
   placeBeside,
-  placeNear,
   placeRight,
+  windowEntities,
   readSaved,
   windowId,
   windowSize,
@@ -57,8 +52,9 @@ import {
   type Rect,
   type Saved,
 } from './model'
-import { nodeTypes, type BoardNode, type ChipData, type WindowData } from './nodes'
+import { nodeTypes, type BoardNode, type WindowData } from './nodes'
 import { Links, type NodeName } from './links'
+import { Fan, type FanEntity } from './fan'
 import { useRuntime } from './runtime'
 
 const GLYPH: Record<ReturnType<typeof itemKind>, string> = {
@@ -104,7 +100,31 @@ function LevelWatcher() {
   return null
 }
 
-function Toolbar({ graphOn, toggleGraph, arrange, fit }: { graphOn: boolean; toggleGraph: () => void; arrange: () => void; fit: () => void }) {
+const MAP_KEY = 'jazyk.board.map'
+
+function readMap(): boolean {
+  try {
+    return localStorage.getItem(MAP_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function Toolbar({
+  graphOn,
+  toggleGraph,
+  mapOn,
+  toggleMap,
+  arrange,
+  fit,
+}: {
+  graphOn: boolean
+  toggleGraph: () => void
+  mapOn: boolean
+  toggleMap: () => void
+  arrange: () => void
+  fit: () => void
+}) {
   const zoom = useStore((s) => s.transform[2])
   const level = levelOf(zoom)
   const words = { live: 'pages', still: 'stills', card: 'cards', title: 'titles' }
@@ -116,8 +136,11 @@ function Toolbar({ graphOn, toggleGraph, arrange, fit }: { graphOn: boolean; tog
       <button onClick={fit} title="Fit everything (Z)">
         Fit
       </button>
-      <button className={graphOn ? 'on' : ''} aria-pressed={graphOn} onClick={toggleGraph} title="The entities and the relationships between the windows">
+      <button className={graphOn ? 'on' : ''} aria-pressed={graphOn} onClick={toggleGraph} title="The focused window's unopened entities, fanned out below it">
         Graph
+      </button>
+      <button className={mapOn ? 'on' : ''} aria-pressed={mapOn} onClick={toggleMap} title="A minimap of the whole board">
+        Map
       </button>
       <span className="board-zoom mono" title="Escape zooms out one level">
         {Math.round(zoom * 100)}% · {words[level]}
@@ -151,14 +174,13 @@ function BoardCanvas({ project }: { project: string | null }) {
     return () => window.clearTimeout(t)
   }, [project, saved])
 
-  const layer = useMemo(() => buildLayer(items, g, saved.graph), [items, g, saved.graph])
-  const scale = chipScale(level)
+  const layer = useMemo(() => buildLayer(items, g), [items, g])
 
   // Where each new window goes, at its size (a page at 80 percent of the board, an
-  // entity as a card): beside the window it was opened from, beside the chip it was
-  // opened from, else right of the rightmost window. Windows are keyed by their
-  // item's page (the path without its query).
-  const hints = useRef(new Map<string, { from?: string; near?: Point }>())
+  // entity as a card): beside the window it was opened from, else right of the
+  // rightmost window. Windows are keyed by their item's page (the path without its
+  // query).
+  const hints = useRef(new Map<string, { from?: string }>())
   useEffect(() => {
     const missing = items.filter((i) => !saved.windows[itemKey(i.path)])
     if (missing.length === 0) return
@@ -173,7 +195,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       const from = hint?.from ?? it.from
       const anchor = from ? windows[itemKey(from)] : undefined
       const { w, h } = windowSize(itemKind(it.path), board)
-      windows[key] = anchor ? placeBeside(anchor, taken, w, h) : hint?.near ? placeNear(hint.near, taken, w, h) : placeRight(taken, w, h)
+      windows[key] = anchor ? placeBeside(anchor, taken, w, h) : placeRight(taken, w, h)
     }
     setSaved((s) => ({ ...s, windows }))
   }, [items, saved.windows, storeApi])
@@ -207,38 +229,47 @@ function BoardCanvas({ project }: { project: string | null }) {
     focusRect(r, itemKind(focusedKey))
   }, [focusedKey, saved.windows, focusRect])
 
-  // The rect every window and chip sits in, at the chips' size on this level.
+  // The rect every window sits in.
   const rects = useMemo(() => {
     const m = new Map<string, Rect>()
     for (const it of items) {
       const r = saved.windows[itemKey(it.path)]
       if (r) m.set(windowId(it.path), r)
     }
-    for (const c of layer.chips) {
-      const owner = saved.windows[c.owner]
-      if (!owner) continue
-      const p = saved.chips[c.entity] ?? chipSpot(owner, c.index, c.count, scale)
-      m.set(chipId(c.entity), { x: p.x, y: p.y, w: CHIP_W * scale, h: CHIP_H * scale })
-    }
     return m
-  }, [items, saved.windows, saved.chips, layer, scale])
+  }, [items, saved.windows])
 
-  // The caret on a mention in a document window: that entity's node and the link
-  // between them, when there is one.
+  // The caret on a mention in a document window: that entity's window and the link
+  // to it when it is open, else its chip in the fan.
+  const caretEntity = caret && g ? canonical(g, caret.id) : null
+  useEffect(() => {
+    if (caretEntity) useRuntime.getState().touchRecent(caretEntity)
+  }, [caretEntity])
   const hot = useMemo(() => {
-    if (!caret || !g) return { node: null as string | null, edge: null as string | null }
+    if (!caret || !g || !caretEntity) return { node: null as string | null, edge: null as string | null }
     const doc = items.find((i) => itemKind(i.path) === 'doc' && docOf(i.path) === caret.doc)
-    const node = layer.entityNode.get(canonical(g, caret.id)) ?? null
+    const node = layer.entityNode.get(caretEntity) ?? null
     if (!doc || !node) return { node: null, edge: null }
     const w = windowId(doc.path)
     const edge = layer.edges.find((e) => (e.source === w && e.target === node) || (e.source === node && e.target === w))
     return { node, edge: edge?.id ?? null }
-  }, [caret, g, items, layer])
+  }, [caret, caretEntity, g, items, layer])
+
+  // The fan: the focused window's entities that are not open, in the fan's order.
+  const recent = useRuntime((s) => s.recent)
+  const focusedItem = items.find((i) => itemKey(i.path) === focusedKey)
+  const fanEntities = useMemo<FanEntity[]>(() => {
+    if (!g || !focusedItem || !saved.graph) return []
+    const brought = windowEntities(g, focusedItem)
+      .map((b) => b.entity)
+      .filter((e) => !layer.entityNode.has(e))
+    const ownCaret = caret && itemKind(focusedItem.path) === 'doc' && docOf(focusedItem.path) === caret.doc ? caretEntity : null
+    return fanOrder(brought, ownCaret, recent).map((id) => ({ id, name: g.entities[id]?.name ?? id, kind: kindWord(g.entities[id]?.stereotype) }))
+  }, [g, focusedItem, saved.graph, layer, caret, caretEntity, recent])
 
   // Node data objects are kept while they are equal, so a drag re-renders only the
   // node being dragged and never a live page.
   const windowData = useRef(new Map<string, WindowData>())
-  const chipData = useRef(new Map<string, ChipData>())
   const nodes = useMemo<BoardNode[]>(() => {
     const out: BoardNode[] = []
     const framed = level === 'live' || level === 'still'
@@ -261,43 +292,11 @@ function BoardCanvas({ project }: { project: string | null }) {
         height: r.h,
         data,
         dragHandle: framed ? '.bw-title' : undefined,
-        // On the titles level a title reads over the chips around it.
-        zIndex: level === 'title' ? 4 : isFocused ? 2 : 1,
-      })
-    }
-    for (const c of layer.chips) {
-      const owner = saved.windows[c.owner]
-      if (!owner) continue
-      // On the cards level an unmoved window's column keeps to the window's height.
-      const pinned = saved.chips[c.entity]
-      if (!pinned && level === 'card' && c.index >= Math.max(3, Math.floor(owner.h / (CHIP_STEP * scale)))) continue
-      const e = g?.entities[c.entity]
-      const r = rects.get(chipId(c.entity))!
-      let data = chipData.current.get(c.entity)
-      const next: ChipData = {
-        entity: c.entity,
-        name: e?.name ?? c.entity,
-        kind: kindWord(e?.stereotype),
-        scale,
-        selected: selected === c.entity,
-        hot: hot.node === chipId(c.entity),
-      }
-      if (!data || data.name !== next.name || data.kind !== next.kind || data.scale !== next.scale || data.selected !== next.selected || data.hot !== next.hot) {
-        data = next
-        chipData.current.set(c.entity, data)
-      }
-      out.push({
-        id: chipId(c.entity),
-        type: 'chip',
-        position: { x: r.x, y: r.y },
-        width: r.w,
-        height: r.h,
-        data,
-        zIndex: 3,
+        zIndex: isFocused ? 2 : 1,
       })
     }
     return out
-  }, [items, saved.windows, saved.chips, layer, g, level, scale, focusedKey, selected, rects, hot.node])
+  }, [items, saved.windows, level, focusedKey, hot.node])
 
   // The links drawn: the ones whose two nodes are on the board.
   const shown = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes])
@@ -316,7 +315,7 @@ function BoardCanvas({ project }: { project: string | null }) {
     }))
   }, [drawn, hot.edge])
 
-  // What a portal names: a window's title, a chip's entity.
+  // What a portal names: a window's title.
   const names = useMemo(() => {
     const m = new Map<string, NodeName>()
     for (const it of items) {
@@ -328,29 +327,19 @@ function BoardCanvas({ project }: { project: string | null }) {
       }
       m.set(windowId(it.path), { glyph: GLYPH[kind], name: shorten(name, 40) })
     }
-    for (const c of layer.chips) m.set(chipId(c.entity), { glyph: '◆', name: shorten(g?.entities[c.entity]?.name ?? c.entity, 40) })
     return m
-  }, [items, layer, g])
+  }, [items, g])
 
   const onNodesChange = useCallback((changes: NodeChange<BoardNode>[]) => {
-    let moved = false
-    const windows: Record<string, Rect> = {}
-    const chips: Record<string, Point> = {}
+    const windows: Record<string, Point> = {}
     for (const c of changes) {
-      if (c.type !== 'position' || !c.position) continue
-      if (c.id.startsWith('w:')) {
-        windows[c.id.slice(2)] = { x: c.position.x, y: c.position.y, w: 0, h: 0 }
-        moved = true
-      } else if (c.id.startsWith('c:')) {
-        chips[c.id.slice(2)] = { x: c.position.x, y: c.position.y }
-        moved = true
-      }
+      if (c.type === 'position' && c.position && c.id.startsWith('w:')) windows[c.id.slice(2)] = c.position
     }
-    if (!moved) return
+    if (Object.keys(windows).length === 0) return
     setSaved((s) => {
       const w = { ...s.windows }
       for (const [p, r] of Object.entries(windows)) if (w[p]) w[p] = { ...w[p], x: r.x, y: r.y }
-      return { ...s, windows: w, chips: { ...s.chips, ...chips } }
+      return { ...s, windows: w }
     })
   }, [])
 
@@ -378,41 +367,31 @@ function BoardCanvas({ project }: { project: string | null }) {
 
   // Refs so the actions stay one object for the board's life: a live page never
   // re-renders because the board did.
-  const state = useRef({ saved, rects, layer, scale })
-  state.current = { saved, rects, layer, scale }
+  const state = useRef({ saved, rects, layer })
+  state.current = { saved, rects, layer }
   const actions = useMemo<BoardActions>(() => {
     const zoomToNode = (id: string) => {
       const r = state.current.rects.get(id)
-      if (!r) return
-      if (id.startsWith('w:')) focusRect(r, itemKind(id.slice(2)))
-      else void rf.setCenter(r.x + r.w / 2, r.y + r.h / 2, { zoom: Math.max(rf.getZoom(), 0.9), duration: 450 })
+      if (r) focusRect(r, itemKind(id.slice(2)))
     }
     return {
       zoomToNode,
       // A portal: focus the node at the far end of the link.
       go: (id) => {
         zoomToNode(id)
-        if (id.startsWith('w:')) {
-          const ws = useWorkspace.getState()
-          const item = ws.items.find((i) => windowId(i.path) === id)
-          if (item && itemKey(ws.focused ?? '') !== itemKey(item.path)) {
-            selfFocus.current = itemKey(item.path)
-            ws.focusItem(item.path)
-          }
-        } else if (id.startsWith('c:')) useWorkspace.getState().select(id.slice(2))
+        const ws = useWorkspace.getState()
+        const item = ws.items.find((i) => windowId(i.path) === id)
+        if (item && itemKey(ws.focused ?? '') !== itemKey(item.path)) {
+          selfFocus.current = itemKey(item.path)
+          ws.focusItem(item.path)
+        }
       },
       // Through the shell's moves, so an open page is focused (and retargeted)
       // rather than opened twice.
-      open: (path, { from, near }) => {
+      open: (path, { from, background }) => {
         const key = itemKey(path)
-        if (!useWorkspace.getState().items.some((i) => itemKey(i.path) === key)) {
-          if (from) hints.current.set(key, { from })
-          else if (near) {
-            const r = state.current.rects.get(chipId(near))
-            if (r) hints.current.set(key, { near: { x: r.x + r.w - CHIP_W, y: r.y } })
-          }
-        }
-        showPath(path, from ? { from } : {})
+        if (from && !useWorkspace.getState().items.some((i) => itemKey(i.path) === key)) hints.current.set(key, { from })
+        showPath(path, { ...(from ? { from } : {}), ...(background ? { background } : {}) })
       },
       close: (path) => {
         closePath(path)
@@ -435,15 +414,23 @@ function BoardCanvas({ project }: { project: string | null }) {
     }
   }, [focusRect, rf])
 
-  // A requirement from a link's linkage opens beside the link's window end, else
-  // beside its chip.
+  // A requirement from a link's linkage opens beside the link's source window.
   const openRequirement = useCallback(
     (id: string, edge: LayerEdge) => {
       const path = `/model/requirements/${encodeURIComponent(id)}`
       const windowEnd = [edge.source, edge.target].find((n) => n.startsWith('w:'))
       const item = windowEnd ? useWorkspace.getState().items.find((i) => windowId(i.path) === windowEnd) : undefined
-      if (item) actions.open(path, { from: item.path })
-      else actions.open(path, { near: edge.source.slice(2) })
+      actions.open(path, item ? { from: item.path } : {})
+    },
+    [actions],
+  )
+
+  // A chip in the fan opens its entity beside the focused window, which keeps the
+  // focus; the entity stays on the board until it is closed.
+  const openFromFan = useCallback(
+    (entity: string) => {
+      const from = useWorkspace.getState().focused
+      actions.open(`/model/entities/${encodeURIComponent(entity)}`, from ? { from, background: true } : {})
     },
     [actions],
   )
@@ -456,8 +443,6 @@ function BoardCanvas({ project }: { project: string | null }) {
         // a still, a card, or a title zooms to it.
         if (t.closest('.bw-close, .bw-resize, button')) return
         if (useRuntime.getState().level !== 'live' && t.closest('.bw-body')) actions.zoomToNode(node.id)
-      } else if (node.type === 'chip') {
-        useWorkspace.getState().select((node.data as ChipData).entity)
       }
     },
     [actions],
@@ -469,9 +454,6 @@ function BoardCanvas({ project }: { project: string | null }) {
       if (node.type === 'window') {
         if (t.closest('.bw-body.nodrag, .bw-close')) return
         actions.zoomToNode(node.id)
-      } else if (node.type === 'chip') {
-        const entity = (node.data as ChipData).entity
-        actions.open(`/model/entities/${encodeURIComponent(entity)}`, { near: entity })
       }
     },
     [actions],
@@ -502,23 +484,30 @@ function BoardCanvas({ project }: { project: string | null }) {
   const arrange = useCallback(async () => {
     const { arrange: layout } = await import('./arrange')
     const { saved: s, rects: rs, layer: l } = state.current
-    // The chips take their size on the cards level, so no two overlap at any zoom.
-    const big = chipScale('card')
-    const nodesIn = [...rs.entries()].map(([id, r]) => (id.startsWith('c:') ? { id, w: CHIP_W * big, h: CHIP_H * big } : { id, w: r.w, h: r.h }))
+    const nodesIn = [...rs.entries()].map(([id, r]) => ({ id, w: r.w, h: r.h }))
     const edgesIn = l.edges.map((e) => ({ source: e.source, target: e.target }))
     const pos = layout({ nodes: nodesIn, edges: edgesIn })
     const windows = { ...s.windows }
-    const chips = { ...s.chips }
-    for (const [id, p] of pos) {
-      if (id.startsWith('w:') && windows[id.slice(2)]) windows[id.slice(2)] = { ...windows[id.slice(2)], x: p.x, y: p.y }
-      else if (id.startsWith('c:')) chips[id.slice(2)] = p
-    }
-    setSaved((x) => ({ ...x, windows, chips }))
+    for (const [id, p] of pos) if (windows[id.slice(2)]) windows[id.slice(2)] = { ...windows[id.slice(2)], x: p.x, y: p.y }
+    setSaved((x) => ({ ...x, windows }))
     // The arranged board shows as cards at the least, never as titles.
     window.setTimeout(() => void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1, minZoom: 0.16 }), 60)
   }, [rf])
 
   const toggleGraph = useCallback(() => setSaved((s) => ({ ...s, graph: !s.graph })), [])
+  const [mapOn, setMapOn] = useState(readMap)
+  const toggleMap = useCallback(
+    () =>
+      setMapOn((v) => {
+        try {
+          localStorage.setItem(MAP_KEY, v ? '0' : '1')
+        } catch {
+          // not remembered
+        }
+        return !v
+      }),
+    [],
+  )
 
   const colorMode = theme === 'auto' ? 'system' : theme
   return (
@@ -550,10 +539,13 @@ function BoardCanvas({ project }: { project: string | null }) {
       >
         <LevelWatcher />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.6} />
-        <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />
+        {mapOn && <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />}
         <Links edges={drawn} rects={rects} names={names} level={level} hotEdge={hot.edge} onGo={actions.go} onOpenRequirement={openRequirement} />
+        {focusedItem && level !== 'title' && saved.windows[itemKey(focusedItem.path)] && (
+          <Fan key={itemKey(focusedItem.path)} win={saved.windows[itemKey(focusedItem.path)]} entities={fanEntities} hot={caretEntity} onOpen={openFromFan} />
+        )}
         <Panel position="top-left">
-          <Toolbar graphOn={saved.graph} toggleGraph={toggleGraph} arrange={() => void arrange()} fit={fit} />
+          <Toolbar graphOn={saved.graph} toggleGraph={toggleGraph} mapOn={mapOn} toggleMap={toggleMap} arrange={() => void arrange()} fit={fit} />
         </Panel>
         {items.length === 0 && (
           <Panel position="top-center" className="board-empty">

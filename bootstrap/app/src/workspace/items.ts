@@ -41,7 +41,7 @@ interface WorkspaceState {
   // The node the Connections panel shows (an entity, a requirement, a diagnostic).
   selected: string | null
   loadProject: (project: string | null) => void
-  openItem: (path: string, opts?: { preview?: boolean; from?: string }) => void
+  openItem: (path: string, opts?: { preview?: boolean; from?: string; background?: boolean }) => void
   closeItem: (path: string) => void
   focusItem: (path: string) => void
   pinItem: (path: string) => void
@@ -90,7 +90,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     set({ project, items, focused, selected: null })
   },
   // Opening an open item focuses it. A preview open replaces the current preview
-  // item; any other open adds the item after the focused one.
+  // item; any other open adds the item after the focused one. A background open
+  // (the board's fan) adds it and leaves the focus where it is.
   openItem: (path, opts = {}) => {
     const { items, focused, project } = get()
     let next = items
@@ -107,8 +108,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     } else if (!opts.preview) {
       next = items.map((i) => (i.path === path ? { ...i, preview: false } : i))
     }
-    set({ items: next, focused: path })
-    save(project, next, path)
+    const nextFocus = opts.background ? focused : path
+    set({ items: next, focused: nextFocus })
+    save(project, next, nextFocus)
   },
   closeItem: (path) => {
     const { items, focused, project } = get()

@@ -1,5 +1,5 @@
 // The board's nodes: a window per open item (live, still, a card, or its title by
-// zoom; an entity always a card of its own), and a chip per entity the windows bring.
+// zoom; an entity always a card of its own).
 import { Component, memo, Suspense, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Handle, NodeResizeControl, Position, useStore, type Node, type NodeProps } from '@xyflow/react'
 import { useQuery } from '@tanstack/react-query'
@@ -339,20 +339,6 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   )
 })
 
-export type ChipData = { entity: string; name: string; kind: string; scale: number; selected: boolean; hot: boolean }
-export type ChipNodeType = Node<ChipData, 'chip'>
+export const nodeTypes = { window: WindowNode }
 
-export const ChipNode = memo(function ChipNode({ data }: NodeProps<ChipNodeType>) {
-  return (
-    <div className={`bc${data.selected ? ' sel' : ''}${data.hot ? ' hot' : ''}`} style={{ fontSize: 13 * data.scale }} title={data.kind ? `${data.name} · ${data.kind}` : data.name} data-entity={data.entity}>
-      <Handles />
-      <span className="bc-glyph">◆</span>
-      <span className="bc-name">{data.name}</span>
-      {data.kind && data.scale === 1 && <span className="bc-kind">{data.kind}</span>}
-    </div>
-  )
-})
-
-export const nodeTypes = { window: WindowNode, chip: ChipNode }
-
-export type BoardNode = WindowNodeType | ChipNodeType
+export type BoardNode = WindowNodeType

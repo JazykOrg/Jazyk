@@ -10,13 +10,14 @@ export function findItem(path: string): Item | undefined {
 }
 
 // Show a path: focus (and retarget) its open item, or open it.
-export function showPath(path: string, opts: { preview?: boolean; from?: string } = {}) {
+export function showPath(path: string, opts: { preview?: boolean; from?: string; background?: boolean } = {}) {
   const ws = useWorkspace.getState()
   const open = findItem(path)
   if (!open) {
     ws.openItem(path, opts)
     return
   }
+  if (opts.background) return
   if (open.path !== path) useWorkspace.setState((s) => ({ items: s.items.map((i) => (i === open ? { ...i, path } : i)) }))
   // focusItem remembers the retargeted list with the focus.
   ws.focusItem(path)

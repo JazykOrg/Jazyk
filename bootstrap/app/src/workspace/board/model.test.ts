@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Entity, Graph, Relationship } from '../../lib/api'
 import {
   buildLayer,
-  chipId,
-  chipSpot,
   clampBox,
+  fanOrder,
+  layoutFan,
+  windowEntities,
   fitMargin,
   visiblePieces,
   clipSegment,
@@ -111,36 +112,68 @@ describe('placement', () => {
   })
 })
 
-describe('the graph layer', () => {
-  it('links a document to the entities it defines and to the ones it mentions, each with the requirements behind it', () => {
-    const l = buildLayer([{ path: '/docs/docs/backend.md' }], G, true)
+describe('the links between open windows', () => {
+  const BACKEND_DOC = { path: '/docs/docs/backend.md' }
+  const INV = { path: '/model/entities/ent%3Ainventory', from: '/docs/docs/backend.md' }
+  const BACK = { path: '/model/entities/ent%3Abackend' }
+  const PROD = { path: '/model/entities/ent%3Aproduct' }
+  it('a document alone has no links; what it brings is its fan', () => {
+    const l = buildLayer([BACKEND_DOC], G)
+    expect(l.edges).toEqual([])
     // backend.md defines Inventory Management (its first mention) and mentions Backend.
-    expect(l.chips.map((c) => c.entity)).toEqual(['ent:inventory', 'ent:backend'])
-    expect(l.chips.every((c) => c.count === 2)).toBe(true)
-    expect(l.edges.filter((e) => e.kind === 'def').map((e) => e.target)).toEqual([chipId('ent:inventory')])
-    const men = l.edges.find((e) => e.kind === 'men')!
-    expect(men).toMatchObject({ target: chipId('ent:backend'), label: 'mentions', reqs: ['req:holds'] })
+    expect(windowEntities(G, BACKEND_DOC)).toEqual([
+      { entity: 'ent:inventory', edge: 'def' },
+      { entity: 'ent:backend', edge: 'men' },
+    ])
+  })
+  it('links a document to the open entities it defines and mentions, each with the requirements behind it', () => {
+    const l = buildLayer([BACKEND_DOC, INV, BACK], G)
+    expect(l.edges.find((e) => e.kind === 'def')).toMatchObject({ target: windowId(INV.path), label: 'defines', reqs: ['req:holds'] })
+    expect(l.edges.find((e) => e.kind === 'men')).toMatchObject({ target: windowId(BACK.path), label: 'mentions', reqs: ['req:holds'] })
     const rel = l.edges.find((e) => e.kind === 'rel')!
-    expect(rel).toMatchObject({ source: chipId('ent:backend'), target: chipId('ent:inventory'), label: 'is made of', reqs: ['req:holds'] })
+    expect(rel).toMatchObject({ source: windowId(BACK.path), target: windowId(INV.path), label: 'is made of', reqs: ['req:holds'] })
+    // The document already links to the entity, so no second link for `from`.
+    expect(l.edges.some((e) => e.kind === 'from')).toBe(false)
   })
   it('draws one link per pair with the strongest type, both ways when contributions run both ways', () => {
-    const l = buildLayer([{ path: '/docs/docs/sub/inventory.md' }], G, true)
-    const rel = l.edges.filter((e) => e.kind === 'rel')
+    const rel = buildLayer([INV, PROD], G).edges.filter((e) => e.kind === 'rel')
     expect(rel).toHaveLength(1)
     expect(rel[0]).toMatchObject({ type: 'aggregation', label: 'has', both: true, reqs: ['req:stock'] })
   })
-  it('an open entity window stands for its entity and brings its neighbours', () => {
-    const l = buildLayer([{ path: '/docs/docs/backend.md' }, { path: '/model/entities/ent%3Ainventory', from: '/docs/docs/backend.md' }], G, true)
-    expect(l.entityNode.get('ent:inventory')).toBe(windowId('/model/entities/ent%3Ainventory'))
-    expect(l.chips.map((c) => c.entity)).toContain('ent:product')
-    expect(l.edges.some((e) => e.kind === 'def' && e.target === windowId('/model/entities/ent%3Ainventory'))).toBe(true)
-    // The document already links to the window, so no second edge for `from`.
-    expect(l.edges.some((e) => e.kind === 'from')).toBe(false)
-  })
-  it('with the layer off only the opened-from edges remain', () => {
-    const l = buildLayer([{ path: '/docs/docs/main.md' }, { path: '/docs/docs/backend.md', from: '/docs/docs/main.md' }], G, false)
-    expect(l.chips).toEqual([])
+  it('links a window to one opened from inside it', () => {
+    const l = buildLayer([{ path: '/docs/docs/main.md' }, { path: '/docs/docs/backend.md', from: '/docs/docs/main.md' }], G)
     expect(l.edges.map((e) => e.kind)).toEqual(['from'])
+  })
+})
+
+describe('the fan', () => {
+  it('orders the caret, the recent, then the window’s own order', () => {
+    expect(fanOrder(['a', 'b', 'c', 'd'], 'c', ['d', 'x', 'c'])).toEqual(['c', 'd', 'a', 'b'])
+    expect(fanOrder(['a', 'b'], null, [])).toEqual(['a', 'b'])
+  })
+  const view: Rect = { x: 0, y: 0, w: 1000, h: 800 }
+  it('puts the first chip under the window, the next right and left, and a +N for the rest', () => {
+    const win: Rect = { x: 250, y: 50, w: 500, h: 600 }
+    const f = layoutFan(win, [100, 100, 100, 100, 100, 100], view)
+    expect(f.anchor).toEqual({ x: 500, y: 650 })
+    const first = f.slots.find((s) => s.index === 0)!
+    expect(first.box.x + first.box.w / 2).toBe(500)
+    expect(f.slots.find((s) => s.index === 1)!.box.x).toBeGreaterThan(first.box.x)
+    expect(f.slots.find((s) => s.index === 2)!.box.x).toBeLessThan(first.box.x)
+    expect(f.more).toBeGreaterThan(0)
+    expect(f.slots[f.slots.length - 1].index).toBe(-1)
+    for (const s of f.slots) expect(s.box.y).toBe(650 + 52)
+  })
+  it('drops less when the room below is short', () => {
+    const f = layoutFan({ x: 250, y: 50, w: 500, h: 700 }, [100], view)
+    expect(f.anchor).toEqual({ x: 500, y: 750 })
+    expect(f.slots[0].box.y).toBe(750 + 18)
+  })
+  it('without room below, sits along the view’s bottom edge with no lines', () => {
+    const f = layoutFan({ x: 100, y: 50, w: 800, h: 740 }, [100, 100], view)
+    expect(f.anchor).toBeNull()
+    expect(f.more).toBe(0)
+    expect(f.slots[0].box.y + f.slots[0].box.h).toBeLessThanOrEqual(800)
   })
 })
 
@@ -151,18 +184,6 @@ describe('requirements behind a link', () => {
     expect(linkRequirements(G, { entity: 'ent:inventory' }, { doc: 'docs/main.md' })).toEqual([])
     expect(linkRequirements(G, { requirement: 'req:stock' }, { entity: 'ent:product' })).toEqual(['req:stock'])
     expect(linkRequirements(G, { doc: 'docs/sub/inventory.md' }, { requirement: 'req:stock' })).toEqual(['req:stock'])
-  })
-})
-
-describe('chip spots', () => {
-  it('spread the column over the window and center it', () => {
-    const owner = { x: 0, y: 0, w: 800, h: 600 }
-    const first = chipSpot(owner, 0, 3, 1)
-    const last = chipSpot(owner, 2, 3, 1)
-    expect(first.x).toBeGreaterThan(800)
-    expect(first.y).toBeGreaterThanOrEqual(0)
-    expect(last.y + 34).toBeLessThanOrEqual(600)
-    expect(Math.round((first.y + last.y + 34) / 2)).toBe(300)
   })
 })
 
@@ -227,11 +248,10 @@ describe('live windows', () => {
 
 describe('memory', () => {
   beforeEach(() => localStorage.clear())
-  it('keeps the windows, the pinned chips, the layer toggle, and the viewport per project', () => {
-    writeSaved('demo:erp', { windows: { '/docs/a.md': { x: 1, y: 2, w: 3, h: 4 } }, chips: { 'ent:x': { x: 5, y: 6 } }, graph: false, viewport: { x: 1, y: 1, zoom: 0.5 } })
+  it('keeps the windows, the fan toggle, and the viewport per project', () => {
+    writeSaved('demo:erp', { windows: { '/docs/a.md': { x: 1, y: 2, w: 3, h: 4 } }, graph: false, viewport: { x: 1, y: 1, zoom: 0.5 } })
     const back = readSaved('demo:erp')
     expect(back.windows['/docs/a.md']).toEqual({ x: 1, y: 2, w: 3, h: 4 })
-    expect(back.chips['ent:x']).toEqual({ x: 5, y: 6 })
     expect(back.graph).toBe(false)
     expect(back.viewport?.zoom).toBe(0.5)
     expect(readSaved('demo:other').windows).toEqual({})

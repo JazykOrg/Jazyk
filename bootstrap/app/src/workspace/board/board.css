@@ -208,47 +208,6 @@
   font-weight: 600;
 }
 
-/* A chip */
-.bc {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  gap: 0.45em;
-  padding: 0 0.8em;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 999px;
-  background: var(--board-chip);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.bc.sel {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent);
-}
-
-.bc-glyph {
-  color: var(--accent);
-  font-size: 0.8em;
-}
-
-.bc-name {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bc-kind {
-  color: var(--muted);
-  font-size: 0.85em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* Links */
 .board .be-def {
   stroke-dasharray: 6 5;
@@ -276,7 +235,6 @@
   opacity: 1;
 }
 
-.bc.hot,
 .bw.hot {
   border-color: var(--warn, #d9822b);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn, #d9822b) 60%, transparent), var(--board-shadow);
@@ -296,27 +254,46 @@
   pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px 0 6px;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
   border-radius: 999px;
   background: var(--panel);
   color: var(--ink);
   box-shadow: var(--board-shadow);
-  font: inherit;
   font-size: 12.5px;
-  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
 }
 
+.bl-go {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 .bl-portal:hover {
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
   border-color: var(--accent);
-  /* A portal narrowed to its margin shows its whole name on hover. */
-  width: max-content !important;
-  max-width: 280px;
-  z-index: 2;
+}
+
+.bl-go:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.bl-portal > .bl-count {
+  flex: none;
+  margin-right: 4px;
+  border: 0;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
 }
 
 .bl-portal.hot {
@@ -325,13 +302,27 @@
 }
 
 .bl-portal.narrow {
-  align-items: flex-start;
-  gap: 4px;
-  padding: 4px 6px 3px 5px;
   border-radius: 10px;
   font-size: 11px;
   line-height: 1.2;
   white-space: normal;
+}
+
+.bl-portal.narrow {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.bl-portal.narrow > .bl-count {
+  align-self: flex-start;
+  margin: 0 0 4px 18px;
+}
+
+.bl-portal.narrow .bl-go {
+  height: auto;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px 3px 5px;
 }
 
 .bl-portal.narrow .bl-name {
@@ -340,10 +331,6 @@
   -webkit-box-orient: vertical;
   overflow-wrap: break-word;
   text-align: left;
-}
-
-.bl-portal.narrow:hover {
-  height: auto !important;
 }
 
 .bl-portal.narrow .bl-glyph {
@@ -407,6 +394,10 @@
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.bl-panel .bl-head {
+  cursor: default;
 }
 
 .bl-head:disabled {
@@ -519,7 +510,7 @@
   pointer-events: none;
 }
 
-/* The titles level: every window only its title, where it is; chips as dots. */
+/* The titles level: every window only its title, where it is. */
 .bw.lv-title {
   cursor: zoom-in;
 }
@@ -540,16 +531,6 @@
   font-weight: 700;
   line-height: 1.15;
   white-space: nowrap;
-}
-
-.board.lv-title .bc {
-  justify-content: center;
-  padding: 0;
-}
-
-.board.lv-title .bc-name,
-.board.lv-title .bc-kind {
-  display: none;
 }
 
 /* The toolbar and the minimap */
@@ -596,10 +577,6 @@
   fill: color-mix(in srgb, var(--muted) 35%, transparent);
 }
 
-.board-minimap .mm-chip {
-  fill: var(--accent);
-}
-
 .board-empty {
   color: var(--muted);
   background: var(--panel);
@@ -609,3 +586,117 @@
   margin-top: 60px;
 }
 
+
+/* The fan: the focused window's unopened entities, below it. */
+.board-fan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  overflow: hidden;
+}
+
+.bf-lines {
+  position: absolute;
+  inset: 0;
+}
+
+.bf-lines path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 55%, var(--xy-edge-stroke));
+  stroke-width: 1.3;
+  stroke-dasharray: 3 4;
+}
+
+.bf-lines path.hot {
+  stroke: var(--warn, #d9822b);
+  stroke-width: 2.2;
+  stroke-dasharray: none;
+}
+
+.bf-chip {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--board-chip) 88%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.bf-chip:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--board-chip);
+}
+
+.bf-chip.hot {
+  border: 2px solid var(--warn, #d9822b);
+}
+
+.bf-more {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.bf-more.on {
+  border-style: solid;
+}
+
+.bf-glyph {
+  color: var(--accent);
+  font-size: 0.8em;
+}
+
+.bf-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.bf-list {
+  position: absolute;
+  pointer-events: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 280px;
+  min-width: 200px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--board-shadow);
+}
+
+.bf-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.bf-list button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.bf-kind {
+  color: var(--muted);
+  font-size: 0.9em;
+}

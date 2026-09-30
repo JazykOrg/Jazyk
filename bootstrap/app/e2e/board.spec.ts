@@ -1,6 +1,6 @@
 // The Board arrangement (docs/frontends/gui.md#the-board): the open items as windows
-// on a table top, the graph drawn between them, focus and the links' portals, the
-// zoom levels down to titles, the remembered layout.
+// on a table top with the links between them, the focused window's fan, focus and the
+// links' portals, the zoom levels down to titles, the remembered layout.
 import { expect, test, type Page } from '@playwright/test'
 import { offline, pageErrors } from './helpers'
 
@@ -8,6 +8,7 @@ const BACKEND = '/docs/docs/backend.md'
 const FRONTEND = '/docs/docs/frontend.md'
 const INVENTORY_DOC = '/docs/docs/subsystems/inventory.md'
 const BACKEND_ENTITY = '/model/entities/ent%3Abackend'
+const INVENTORY = '/model/entities/ent%3Ainventory-management'
 
 const win = (page: Page, path: string) => page.locator(`.react-flow__node-window[data-id="w:${path}"]`)
 const docRow = (page: Page, name: string) => page.locator('.wsn .ide-doc-name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) })
@@ -88,28 +89,32 @@ test('opening two documents puts two windows on the board, each its page', async
   expect(errors).toEqual([])
 })
 
-test('the graph layer draws the entities a document brings and the relationships between them', async ({ page }) => {
+test('the focused document fans its unopened entities out below it, and a click opens one for good', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)
-  const chip = page.locator('.react-flow__node-chip .bc[data-entity="ent:inventory-management"]')
-  await expect(chip).toContainText('Inventory Management')
-  // A relationship link from or to it.
-  const rel = page.locator('.react-flow__edge[data-id^="rel:"][data-id*="ent:inventory-management"]')
-  await expect(rel.first()).toBeAttached()
-  // The document links to the entities it defines with a dashed link, to the ones it
-  // mentions with a dotted one.
-  await expect(page.locator(`.react-flow__edge[data-id="def:${BACKEND}->ent:inventory-management"]`)).toBeAttached()
-  await expect(page.locator(`.react-flow__edge[data-id^="men:${BACKEND}->"]`).first()).toBeAttached()
-  // A click selects the chip; the toggle hides the layer.
+  await zoomTo(page, BACKEND)
+  // Nothing but the window is on the board; the entities it brings are the fan.
+  await expect(page.locator('.react-flow__node')).toHaveCount(1)
+  const chip = page.locator('.board-fan .bf-chip[data-entity="ent:inventory-management"]')
+  await expect(chip).toBeVisible()
+  const box = (await win(page, BACKEND).boundingBox())!
+  const c = (await chip.boundingBox())!
+  expect(c.y).toBeGreaterThan(box.y + box.height - 2)
+  await expect(page.locator('.board-fan .bf-lines path').first()).toBeAttached()
+  // A click opens it beside the document, which keeps the focus.
   await chip.click()
-  await expect(chip).toHaveClass(/sel/)
+  await expect(win(page, INVENTORY)).toBeAttached()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await expect(page.locator(`.react-flow__edge[data-id="def:${BACKEND}->ent:inventory-management"]`)).toBeAttached()
+  await expect(chip).toHaveCount(0)
+  // The toggle hides the fan.
   await page.locator('.board-tools').getByRole('button', { name: 'Graph' }).click()
-  await expect(page.locator('.react-flow__node-chip')).toHaveCount(0)
+  await expect(page.locator('.board-fan')).toHaveCount(0)
   await page.locator('.board-tools').getByRole('button', { name: 'Graph' }).click()
-  await expect(chip).toBeAttached()
+  await expect(page.locator('.board-fan')).toBeVisible()
 })
 
-test('a focused document fills most of the board, its entities show as portals in the margin, and the linkage expands', async ({ page }) => {
+test('a link with one end out of view is one portal carrying its count, and one linkage expands at a time', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)
   await zoomTo(page, BACKEND)
@@ -118,20 +123,25 @@ test('a focused document fills most of the board, its entities show as portals i
   const box = (await win(page, BACKEND).boundingBox())!
   expect(box.width / board.width).toBeGreaterThan(0.7)
   expect(box.width / board.width).toBeLessThan(0.9)
-  // The chips sit out of view; their links carry portals at the board's edge.
-  const portal = page.locator('.bl-portal[data-node="c:ent:inventory-management"]')
+  await page.locator('.board-fan .bf-chip[data-entity="ent:inventory-management"]').click()
+  await expect(win(page, INVENTORY)).toBeAttached()
+  await settle(page)
+  // The entity sits out of view: its portal is in the margin, the count folded in.
+  const portal = page.locator(`.bl-portal[data-node="w:${INVENTORY}"]`)
   await expect(portal).toBeVisible()
   const p = (await portal.boundingBox())!
   expect(p.x).toBeGreaterThan(box.x + box.width - 4)
-  // The linkage on the link: the verb and the requirements behind it, collapsed.
-  const label = page.locator(`.bl-label[data-edge="def:${BACKEND}->ent:inventory-management"]`)
-  await expect(label.locator('.bl-head')).toHaveAttribute('title', /^defines: \d+ requirement/)
-  await label.locator('.bl-head').click()
-  await expect(label.locator('.bl-reqs li').first()).toBeVisible()
-  // A click on the portal goes to the entity.
-  await portal.click()
+  await expect(page.locator(`.bl-label[data-edge="def:${BACKEND}->ent:inventory-management"]:not(.bl-panel)`)).toHaveCount(0)
+  await portal.locator('.bl-count').click()
+  const panel = page.locator(`.bl-panel[data-edge="def:${BACKEND}->ent:inventory-management"]`)
+  await expect(panel.locator('.bl-reqs li').first()).toBeVisible()
+  await portal.locator('.bl-count').click()
+  await expect(panel).toHaveCount(0)
+  // A click on the portal's name goes to the entity.
+  await portal.locator('.bl-go').click()
+  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Ainventory-management$/)
   await settle(page)
-  await expect(page.locator('.react-flow__node-chip .bc[data-entity="ent:inventory-management"]')).toBeInViewport()
+  await expect(win(page, INVENTORY)).toBeInViewport()
 })
 
 test('zooming out to titles keeps every window where it is and draws only its title', async ({ page }) => {
@@ -186,10 +196,10 @@ test('a plain click on a mention places the cursor and highlights its link; Cmd-
   const mention = doc.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()
   await expect(mention).toBeVisible()
   await mention.click()
-  // Only the cursor moved: nothing opened, and the link to the entity lights up.
+  // Only the cursor moved: nothing opened, and the entity lights up at the front of the fan.
   await expect(win(page, BACKEND_ENTITY)).toHaveCount(0)
-  await expect(page.locator('.react-flow__node-chip .bc[data-entity="ent:backend"]')).toHaveClass(/hot/)
-  await expect(page.locator('.bl-portal[data-node="c:ent:backend"]')).toHaveClass(/hot/)
+  const fanChip = page.locator('.board-fan .bf-chip[data-entity="ent:backend"]')
+  await expect(fanChip).toHaveClass(/hot/)
 
   await mention.click({ modifiers: ['ControlOrMeta'] })
   const entity = win(page, BACKEND_ENTITY)
@@ -200,15 +210,14 @@ test('a plain click on a mention places the cursor and highlights its link; Cmd-
   const width = await doc.evaluate((el) => (el as HTMLElement).offsetWidth)
   expect(b.x).toBeGreaterThan(a.x + width)
   expect(b.y).toBe(a.y)
-  // The document's link now ends at the entity's window, and its chip gave way to it.
+  // The document links to the entity's window now.
   await expect(page.locator(`.react-flow__edge[data-id="men:${BACKEND}->ent:backend"]`)).toBeAttached()
-  await expect(page.locator('.react-flow__node-chip .bc[data-entity="ent:backend"]')).toHaveCount(0)
   await expect(page).toHaveURL(/#\/model\/entities\/ent%3Abackend$/)
   // Focused on the card, the document it came from is a portal on the link back.
   await settle(page)
   const back = page.locator(`.bl-portal[data-node="w:${BACKEND}"]`)
   await expect(back).toBeVisible()
-  await back.click()
+  await back.locator('.bl-go').click()
   await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
   await settle(page)
   await expect(doc.locator('.cm-content')).toBeInViewport()

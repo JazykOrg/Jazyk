@@ -1557,6 +1557,49 @@ streaming into a build thread from the MCP transcript and onto the board from th
 commits; otherwise the GUI runs its own job. `POST /api/release` with `{stage}`
 records a release without running anything.
 
+## Workspace (experimental)
+
+A switch in Settings, `Workspace: Lenses | Tabs | Board`, remembered per browser and
+`Lenses` by default, tries the layout [plans/workspace.md](../../plans/workspace.md)
+proposes. The other two replace the lenses; the owner picks the default after using
+both.
+
+- Items: every page the app serves is an item, one path in the page table, with a
+  title and a kind. An item renders against its own path, so any page shows in a tab
+  or a board window as it does in the center.
+- The navigator is one column in both: Documents, Outline (following the cursor),
+  Product (`Overview`, the file tree, `Trace`, `Tests`), Diagrams and Generated
+  (collapsed). There is no Model head; entities and requirements open from mentions,
+  markers, the Connections panel, diagram boxes, and search.
+- Connections replaces the [inspector](#inspector): a panel docked under the center,
+  showing the node last clicked (a mention, a marker, a diagram box, a search result)
+  compactly: an entity as its connections picture, where a click on a neighbour shows
+  the links and requirements between the two. `Open` opens the node as a tab or a
+  window. The panel collapses to a strip and never takes width from the text; on a
+  narrow screen it is a bottom sheet.
+- Tabs: editor groups with tabs, split right or down from a tab's menu or by dragging
+  a tab to an edge. A single click in the navigator opens a preview tab (italic
+  title) that the next single click replaces; a double click, an edit, or a pin keeps
+  it. The address bar is the focused tab's path. The tabs and splits are remembered
+  per project. On a narrow screen one tab shows at a time with a tab switcher.
+- Board: a table top, white with light dots, that pans and zooms. Every open item is
+  a window with a title bar to drag, a resize corner, and a close. The graph layer
+  (on by default) draws the entities the windows mention or define as chips beside
+  them and the relationships between those entities as edges with their verbs; a
+  document window links to the entities it defines. Opening from inside a window
+  places the new window beside it with an edge and pans to it. Windows stay where
+  they are dragged, remembered per project; `Arrange` lays them out by the graph. A
+  minimap sits in a corner.
+- The board draws by zoom: near 100 percent the windows are live pages (at most six
+  live at once, the ones nearest the view's center); from 40 to 80 percent still
+  renderings a click zooms to; from 15 to 40 percent cards with a title, a kind, a
+  few lines, and a status; under 15 percent groups (documents by folder, entities by
+  the component holding them) with counts, the edges between groups lifted the way
+  [diagrams](../compiler/diagrams.md) lift them. A double click zooms to a window or a
+  group, `Escape` zooms out one level, `Z` fits everything.
+- Tabs and Board are one set of open items: switching keeps them, and closing a
+  window closes its tab.
+
 ## Developer toggle
 
 One switch in the status bar (also `⌘⇧D`), remembered per browser, off by default.

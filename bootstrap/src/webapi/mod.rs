@@ -9,6 +9,7 @@ pub mod docs;
 pub mod facts;
 pub mod inbox;
 pub mod outfiles;
+pub mod overview;
 pub mod product;
 pub mod status;
 pub mod views;

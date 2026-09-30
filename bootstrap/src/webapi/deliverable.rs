@@ -198,6 +198,22 @@ pub fn deliverable_file(out_dir: &Path, gs: &GenSettings, path: &str) -> Result<
     }
 }
 
+// `GET /api/deliverable/raw?path=`: one product file's bytes, what the overview
+// renders a built artifact from and downloads. The same confinement as the file
+// read. Mirrors docs/frontends/gui.md#api (deliverable).
+pub fn deliverable_raw(gs: &GenSettings, path: &str) -> Result<Vec<u8>, Refusal> {
+    let Some(abs) = safe_under(&gs.deliverable, path) else {
+        if !lexical_ok(path) || gs.deliverable.join(path).vexists() {
+            return Err((400, format!("invalid deliverable path {}", path)));
+        }
+        return Err((404, format!("no file {}", path)));
+    };
+    if abs.vis_dir() {
+        return Err((404, format!("{} is a directory", path)));
+    }
+    crate::vfs::read(&abs).map_err(|e| (404, format!("cannot read {}: {}", path, e)))
+}
+
 // `GET /api/deliverable/baseline?path=`: the file as it stood before the last
 // generation run rewrote it, from the snapshot generation takes at write time. 404
 // when generation never rewrote the file. Mirrors docs/frontends/gui.md#api

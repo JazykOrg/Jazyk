@@ -627,8 +627,13 @@ pub fn unclaimed(proj: &crate::project::Project, store: &Store, gs: &GenSettings
         claimed.insert(row.test.artifact.clone());
     }
     claimed.extend(ledger.support.iter().cloned());
+    // A build output is made, not written: the build's `produces`, and the medium's
+    // artifact when no build is recorded yet.
     if let Some(b) = &ledger.build {
         claimed.extend(b.produces.iter().cloned());
+    }
+    if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built() && !m.artifact.is_empty()) {
+        claimed.insert(m.artifact.trim_start_matches("./").to_string());
     }
     // Docs are source, never unclaimed implementation.
     let docs: BTreeSet<std::path::PathBuf> = proj.doc_files().into_iter().collect();
@@ -1264,6 +1269,18 @@ mod tests {
         let mut proj = crate::project::Project::default();
         proj.root = s.out.clone();
         let un = unclaimed(&proj, &s, &gs);
+        assert!(un.contains(&"orphan.sh".to_string()), "{:?}", un);
+        // A built medium's artifact is made, not written: never unclaimed.
+        crate::vfs::create_dir_all(gs.deliverable.join("dist")).unwrap();
+        crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), [0x50u8, 0x4b]).unwrap();
+        crate::vfs::create_dir_all(s.out.join("gen")).unwrap();
+        crate::vfs::write(
+            s.out.join("gen/ledger.yaml"),
+            "medium:\n  form: deck\n  produced: built\n  artifact: dist/deck.pptx\n",
+        )
+        .unwrap();
+        let un = unclaimed(&proj, &s, &gs);
+        assert!(!un.contains(&"dist/deck.pptx".to_string()), "{:?}", un);
         assert!(un.contains(&"orphan.sh".to_string()), "{:?}", un);
     }
 }

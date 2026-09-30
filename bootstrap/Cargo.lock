@@ -1264,6 +1264,7 @@ dependencies = [
  "agent-client-protocol",
  "async-io",
  "axum",
+ "base64 0.22.1",
  "console_error_panic_hook",
  "futures",
  "futures-util",

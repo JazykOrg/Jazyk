@@ -456,6 +456,29 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 &param(&q, "path").unwrap_or_default(),
             ))
         }
+        // The envelope carries JSON, so a product file's bytes travel base64-encoded
+        // and the page decodes them into what the server sends as the body.
+        ("GET", "/deliverable/raw") => {
+            use base64::Engine as _;
+            let p = project();
+            let rel = param(&q, "path").unwrap_or_default();
+            answer(
+                super::deliverable::deliverable_raw(&crate::gen::GenSettings::resolve(&p), &rel).map(
+                    |bytes| {
+                        json!({
+                            "path": rel,
+                            "size": bytes.len(),
+                            "contentType": super::outfiles::content_type(&rel),
+                            "base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        })
+                    },
+                ),
+            )
+        }
+        ("GET", "/product/overview") => {
+            let p = project();
+            ok(super::overview::overview_value(&p, &crate::gen::GenSettings::resolve(&p)))
+        }
         ("GET", "/deliverable/baseline") => answer(super::deliverable::deliverable_baseline(
             &out(),
             &param(&q, "path").unwrap_or_default(),

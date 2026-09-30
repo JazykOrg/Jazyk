@@ -56,13 +56,36 @@ prompt:
 
 - `question`: one sentence, addressed to a person.
 - `options`: up to 4 choices. Each has a `label` and exactly one of:
-  - `edit`: a suggested edit, `{doc, section, old_text, new_text}`, the
+  - `edit`: a suggested edit, `{doc, section, old_text, new_text, facts?}`, the
     same shape the [dual-write tools](../../frontends/acp.md#dual-write-tools) use.
     `old_text` non-empty: `new_text` overwrites it; `old_text` empty: `new_text` is
     appended to the end of the section's body. Choosing an `edit` is
     deterministic: no model runs.
+    - `facts`: optional, the fact changes the rewrite implies for the requirements it
+      touches, each `{id, field, value}`. `id` is a requirement quoted from the
+      edit's section; `field` is one of `statement`, `entities`, `edges`,
+      `transition`, `facets`; `value` is the field's new content in the shape
+      [`edit_fact`](../tools.md#chat-tools) and `update_requirement` take. The model
+      proposing the option fills it when the rewrite changes a structured fact, e.g.
+      a transition's destination. See [answers](#answers).
   - `answer`: a prefilled reply. Choosing it hands the reply to the model.
 - `freeform`: whether a typed reply is accepted (handled like an `answer`).
+
+E.g., an option whose rewrite changes where a transition lands:
+
+```yaml
+- label: "Make the midpoint match the Theo arc table (rival)"
+  edit:
+    doc: docs/arcs.md
+    section: /arcs/the-midpoint
+    old_text: "Theo moves from acquaintance to ally."
+    new_text: "Theo moves from acquaintance to rival."
+    facts:
+      - id: req:arcs-29
+        field: transition
+        value: {subject: ent:theo, from: acquaintance, to: rival,
+                trigger: "Ines confronts Theo about the survey"}
+```
 
 Who writes prompts: [sessions](../sessions.md) (`rejudge-pair`, `review-entity`,
 `abstract-entity`, and chat sessions) attach them through `report_diagnostic`
@@ -82,7 +105,12 @@ question).
 
 Gates: an `edit` option's `old_text` must locate in its section
 (whitespace-insensitively) when it is non-empty, `label` is required, and `edit` and
-`answer` are mutually exclusive per option. A `contradiction` or a
+`answer` are mutually exclusive per option. Each of an edit's `facts` names a
+requirement quoted from the edit's section and an editable field, and its `value`
+passes the same gates `update_requirement` runs on that field (a transition's subject
+among the requirement's entities, edge ends among them, facets from the catalog,
+entities that exist); facts apply in order, so a `transition` after an `entities`
+change is judged against the new list. A `contradiction` or a
 A [criterion](./criterion.md) is a subject like any node: a test case that contradicts
 the rule it exercises is a `contradiction` with the requirement and the criterion as
 its two subjects. `duplicate-requirement` names both sides in `subjects`; one subject is refused, since
@@ -117,6 +145,35 @@ answer:
   statement mechanically updated when the replaced text appears in it verbatim. Anchors
   the engine cannot re-anchor mechanically go stale normally and the next build
   reconciles them.
+- The rewrite carries its fact changes in the same changeset. Each of the option's
+  `facts` applies after the re-anchoring as an `update_requirement` on its one field,
+  through the gates that tool runs ([prompts](#prompts)). The changeset is all or
+  nothing: a fact change the gates refuse fails the whole answer with the reason, the
+  document and the graph stay as they were, and no answer is recorded, so the
+  diagnostic stays answerable (`update_diagnostic` can re-author the option).
+- A re-anchored requirement whose `transition` no listed fact sets follows the rewrite
+  mechanically (a ratification proposal's edit excepted: the accepted fact already
+  holds its value). The harness diffs the requirement's old quote against its new
+  quote word by word (case-insensitive; a word is a run of letters, digits,
+  apostrophes, and hyphens) into replaced runs, each removing some old words and
+  inserting some new ones:
+  - `from` and `to`: a state whose words no replaced run touches stays. When the
+    state's words occur once in the old quote and one replaced run removes exactly
+    them and inserts at least one word, the state becomes the inserted words.
+  - `trigger`: a trigger whose words no replaced run touches stays. When its words
+    occur once in the old quote and every run touching them lies inside them and
+    replaces words with words, each run is spliced into the trigger.
+  - A state or trigger the old quote does not name stays.
+  - Anything else is ambiguous (a state removed with nothing in its place, a run
+    wider than the state, a state named twice): the transition stays as it was, the
+    `review-entity` goals the revised requirement opens on its entities re-read it,
+    and the answer's reply names the requirement.
+
+  E.g.: the old quote "Theo moves from acquaintance to ally." rewritten to "Theo moves
+  from acquaintance to rival." replaces one run, `ally` → `rival`, exactly the `to`
+  state: the transition becomes `to: rival` in the same changeset. Rewritten to "Theo
+  turns against her.", one run removes `moves from acquaintance to ally`, wider than
+  either state: the transition stays and the review decides.
 - The answer is the judgment of the pair the diagnostic concerned. When its subjects
   are two requirements (a `contradiction`, a `duplicate-requirement`), the commit
   appends each to `detail.judged` on every `requirement-created` and

@@ -181,7 +181,7 @@ test('the outline follows the top of the view in Read', async ({ page }) => {
   await expect(outline.locator('.outline-row.active .outline-title')).toHaveText(titles[titles.length - 1])
 })
 
-test('entity mentions are underlined in Write and in Read, and a click opens the entity', async ({ page }) => {
+test('entity mentions are underlined in Write and in Read; Cmd-click opens the entity in Write, a click in Read', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/backend.md')
   // The editor draws the lines in view; the mention sits at the end of the document.
@@ -193,9 +193,14 @@ test('entity mentions are underlined in Write and in Read, and a click opens the
   // The alias too, and the longer name where two overlap.
   await expect(page.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()).toBeVisible()
   await expect(page.locator('.cm-content .entity-mark', { hasText: /^User Management$/ })).toBeVisible()
-  await mention.click()
-  await expect(page).toHaveURL(/node=ent%3Ainventory-management/)
-  await expect(page.locator('.wb-inspector')).toContainText('Inventory Management')
+  // A plain click only places the cursor; Cmd-click opens the entity (a mention
+  // outside a link: inside one, the link wins).
+  const backend = page.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()
+  await backend.click()
+  await expect(page).not.toHaveURL(/node=/)
+  await backend.click({ modifiers: ['ControlOrMeta'] })
+  await expect(page).toHaveURL(/node=ent%3Abackend/)
+  await expect(page.locator('.wb-inspector')).toContainText('Backend')
 
   await page.locator('.ide-mode').getByRole('button', { name: 'Read' }).click()
   const readMention = page.locator('.md-read .entity-mark', { hasText: 'Inventory Management' })

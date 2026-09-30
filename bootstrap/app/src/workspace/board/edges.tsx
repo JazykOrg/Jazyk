@@ -1,60 +1,28 @@
-// The board's edges: a straight line between two nodes' borders, the verb at its
-// middle, so a relationship reads the same whichever side the nodes sit on.
+// The board's links: a straight line between two nodes' borders, so a portal and
+// the linkage (links.tsx) sit on the line the eye follows. The linkage draws in
+// screen space over the board, not here.
 import { memo } from 'react'
-import { BaseEdge, EdgeLabelRenderer, useInternalNode, useStore, type Edge, type EdgeProps, type InternalNode } from '@xyflow/react'
-import type { EdgeKind } from './model'
+import { BaseEdge, useInternalNode, type Edge, type EdgeProps, type InternalNode } from '@xyflow/react'
+import { borderPoint, type EdgeKind } from './model'
 
-export type BoardEdgeData = { kind: EdgeKind | 'lift'; label?: string; scale: number }
+export type BoardEdgeData = { kind: EdgeKind; hot: boolean }
 export type BoardEdgeType = Edge<BoardEdgeData, 'floating'>
 
-function box(n: InternalNode) {
-  const w = n.measured?.width ?? n.width ?? 0
-  const h = n.measured?.height ?? n.height ?? 0
+function rect(n: InternalNode) {
   const { x, y } = n.internals.positionAbsolute
-  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 }
+  return { x, y, w: n.measured?.width ?? n.width ?? 0, h: n.measured?.height ?? n.height ?? 0 }
 }
 
-// Where the line from a box's center toward (tx, ty) leaves the box.
-function border(b: ReturnType<typeof box>, tx: number, ty: number) {
-  const dx = tx - b.cx
-  const dy = ty - b.cy
-  if (dx === 0 && dy === 0) return { x: b.cx, y: b.cy }
-  const sx = dx === 0 ? Infinity : b.w / 2 / Math.abs(dx)
-  const sy = dy === 0 ? Infinity : b.h / 2 / Math.abs(dy)
-  const s = Math.min(sx, sy)
-  return { x: b.cx + dx * s, y: b.cy + dy * s }
-}
-
-export const FloatingEdge = memo(function FloatingEdge({ id, source, target, data, markerEnd }: EdgeProps<BoardEdgeType>) {
+export const FloatingEdge = memo(function FloatingEdge({ id, source, target, data, markerEnd, markerStart }: EdgeProps<BoardEdgeType>) {
   const s = useInternalNode(source)
   const t = useInternalNode(target)
-  const zoom = useStore((st) => (data?.kind === 'lift' ? st.transform[2] : 1))
   if (!s || !t) return null
-  const a = box(s)
-  const b = box(t)
-  const p = border(a, b.cx, b.cy)
-  const q = border(b, a.cx, a.cy)
+  const a = rect(s)
+  const b = rect(t)
+  const p = borderPoint(a, { x: b.x + b.w / 2, y: b.y + b.h / 2 })
+  const q = borderPoint(b, { x: a.x + a.w / 2, y: a.y + a.h / 2 })
   const path = `M ${p.x},${p.y} L ${q.x},${q.y}`
-  const scale = data?.kind === 'lift' ? 1 / Math.max(zoom, 0.01) : (data?.scale ?? 1)
-  return (
-    <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} className={`be be-${data?.kind ?? 'rel'}`} style={data?.kind === 'lift' ? { strokeWidth: 2.5 * scale } : undefined} />
-      {data?.label && (
-        <EdgeLabelRenderer>
-          <div
-            className={`be-label be-label-${data.kind}`}
-            style={{
-              transform: `translate(-50%, -50%) translate(${(p.x + q.x) / 2}px, ${(p.y + q.y) / 2}px)`,
-              fontSize: 11 * scale,
-              padding: `${1 * scale}px ${5 * scale}px`,
-            }}
-          >
-            {data.label}
-          </div>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  )
+  return <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} className={`be be-${data?.kind ?? 'rel'}${data?.hot ? ' be-hot' : ''}`} />
 })
 
 export const edgeTypes = { floating: FloatingEdge }

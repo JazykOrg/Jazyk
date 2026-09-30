@@ -269,13 +269,15 @@ const [linkField, setLinks] = decoField() // entity marks over LSP document link
 // links draw the same class on a server; the tab has only these.
 const setMentions = StateEffect.define<MentionIndex | null>()
 
+const OPEN_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl'
+
 function mentionDecos(state: EditorState, index: MentionIndex | null): DecorationSet {
   if (!index || !index.re) return Decoration.none
   const text = state.doc.toString()
   const decos = findMentions(text, index).map((m) =>
     Decoration.mark({
       class: 'entity-mark',
-      attributes: { 'data-entity': m.id, title: index.names.find((n) => n.id === m.id)?.name ?? m.name },
+      attributes: { 'data-entity': m.id, title: `${index.names.find((n) => n.id === m.id)?.name ?? m.name} (${OPEN_KEY}-click to open)` },
     }).range(m.from, m.to),
   )
   return Decoration.set(decos, true)
@@ -296,6 +298,21 @@ const mentionField = StateField.define<{ index: MentionIndex | null; decos: Deco
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
 })
+// The entity whose underlined mention holds the caret (an empty selection), or null.
+function caretEntity(state: EditorState): string | null {
+  const sel = state.selection.main
+  if (!sel.empty) return null
+  let id: string | null = null
+  state.field(mentionField).decos.between(sel.head, sel.head, (from, to, value) => {
+    if (from <= sel.head && sel.head <= to) {
+      id = (value.spec.attributes as Record<string, string> | undefined)?.['data-entity'] ?? null
+      return false
+    }
+    return undefined
+  })
+  return id
+}
+
 const [lensField, setLenses] = decoField() // requirement lenses above their quotes
 const [quoteField, setQuote] = decoField() // the ?quote= highlight
 const [inlineField, setInline] = decoField() // question and proposal bands under sentences
@@ -468,6 +485,8 @@ interface Props {
   mentions?: MentionIndex
   // The 1-based line holding the cursor, on every move; the outline follows it.
   onCursorLine?: (line: number) => void
+  // The entity whose mention the caret rests on, or null, on every move.
+  onCaretEntity?: (id: string | null) => void
   // Changes the editor did not make, marked until they fade.
   flashes?: FlashLines[]
 }
@@ -760,16 +779,9 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     })
 
     const clicks = EditorView.domEventHandlers({
-      // A plain click on an underlined mention opens the entity in the inspector;
-      // the cursor still lands where it was clicked. A drag never opens anything.
-      click: (e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return false
-        const mark = (e.target as HTMLElement).closest('[data-entity]') as HTMLElement | null
-        const id = mark?.dataset.entity
-        if (!id) return false
-        propsRef.current.onOpenNode?.(id)
-        return false
-      },
+      // A plain click places the cursor, on a mention as anywhere; Cmd-click
+      // (Ctrl-click) on an underlined mention opens its entity, and a link around
+      // the mention wins (docs/frontends/gui.md#editor).
       mousedown: (e, view) => {
         const el = e.target as HTMLElement
         const md = el.closest('[data-md-href]') as HTMLElement | null
@@ -778,6 +790,12 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
         if (mod && md?.dataset.mdHref) {
           e.preventDefault()
           routeHref(md.dataset.mdHref)
+          return true
+        }
+        const mention = (el.closest('.entity-mark[data-entity]') as HTMLElement | null)?.dataset.entity
+        if (mod && e.button === 0 && mention && propsRef.current.onOpenNode) {
+          e.preventDefault()
+          propsRef.current.onOpenNode(mention)
           return true
         }
         if (mod && lspLink?.dataset.lspTarget) {
@@ -821,8 +839,10 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     })
 
     const listener = EditorView.updateListener.of((u) => {
-      if (u.selectionSet || u.docChanged)
+      if (u.selectionSet || u.docChanged) {
         propsRef.current.onCursorLine?.(u.state.doc.lineAt(u.state.selection.main.head).number)
+        propsRef.current.onCaretEntity?.(caretEntity(u.state))
+      }
       if (!u.docChanged) return
       const text = u.state.doc.toString()
       propsRef.current.lsp.didChange(uri, text)

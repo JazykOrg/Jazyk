@@ -1,7 +1,8 @@
-// The board's pure logic (docs/frontends/gui.md#workspace-experimental,
-// plans/workspace.md#board): where a window goes, which entity chips the open
-// windows bring, the edges between them, the zoom levels, and the groups the
-// overview draws. No React here, so the rules are unit tested.
+// The board's pure logic (docs/frontends/gui.md#the-board, plans/workspace.md#board):
+// where a window goes and how big, which entity chips the open windows bring, the
+// links between them with the requirements behind each, the zoom levels, the focus
+// zoom, and where a link's portals and linkage sit on screen. No React here, so the
+// rules are unit tested.
 import type { Graph } from '../../lib/api'
 import { relationPhrase } from '../../lib/present'
 import { itemKind, itemTitle, type Item } from '../items'
@@ -29,30 +30,41 @@ export interface Saved {
   viewport?: { x: number; y: number; zoom: number }
 }
 
+// A page window's size when the board's size is not known yet; otherwise it opens
+// at FOCUS of the board (pageSize).
 export const WIN_W = 760
 export const WIN_H = 620
+// An entity window is a card, not a page.
+export const ENTITY_W = 440
+export const ENTITY_H = 320
+// The share of the board a focused window fills; the rest is its links' margin.
+export const FOCUS = 0.8
+// The most a focus zooms in: a page reads at 100 percent, a card may grow.
+export const FOCUS_MAX_PAGE = 1
+export const FOCUS_MAX_CARD = 1.25
 export const WIN_MIN_W = 320
 export const WIN_MIN_H = 220
 export const CHIP_W = 210
 export const CHIP_H = 34
 export const CHIP_STEP = 48
-// The chips sit in a column this far right of their window.
-export const CHIP_GAP = 44
+// The chips sit in a column this far right of their window: out of view when the
+// window is focused, so they show as portals in its margin.
+export const CHIP_GAP = 200
 // The horizontal gap between two windows side by side: the chips' gutter.
-export const WIN_GAP = 480
+export const WIN_GAP = 640
 // The chips a window brings, at most.
 export const CHIPS_PER_WINDOW = 12
 // The windows live at once (plans/workspace.md#cost).
 export const LIVE_MAX = 6
 
-export type Level = 'live' | 'still' | 'card' | 'group'
+export type Level = 'live' | 'still' | 'card' | 'title'
 
 // The zoom levels of plans/workspace.md#zoom-levels.
 export function levelOf(zoom: number): Level {
   if (zoom >= 0.8) return 'live'
   if (zoom >= 0.4) return 'still'
   if (zoom >= 0.15) return 'card'
-  return 'group'
+  return 'title'
 }
 
 // The zoom `Escape` steps out to from a level.
@@ -69,9 +81,31 @@ export function zoomOut(level: Level): number | null {
   }
 }
 
-// Chips and their labels grow on the cards level so they stay named.
+// Chips and their labels grow on the cards level so they stay named, and keep that
+// size and place on the titles level.
 export function chipScale(level: Level): number {
-  return level === 'card' ? 2.2 : 1
+  return level === 'card' || level === 'title' ? 2.2 : 1
+}
+
+export interface Size {
+  w: number
+  h: number
+}
+
+// A new window's size: an entity is a card; any other page opens at FOCUS of the
+// board, so it is focused at 100 percent.
+export function windowSize(kind: string, board: Size | null): Size {
+  if (kind === 'entity') return { w: ENTITY_W, h: ENTITY_H }
+  if (!board || board.w < 200 || board.h < 200) return { w: WIN_W, h: WIN_H }
+  return { w: Math.max(WIN_MIN_W, Math.round(board.w * FOCUS)), h: Math.max(WIN_MIN_H, Math.round(board.h * FOCUS)) }
+}
+
+// The zoom a focus lands on: the window fills FOCUS of the board, a page never above
+// 100 percent and a card never above FOCUS_MAX_CARD.
+export function focusZoom(r: Rect, board: Size, kind: string): number {
+  const cap = kind === 'entity' ? FOCUS_MAX_CARD : FOCUS_MAX_PAGE
+  const z = Math.min((board.w * FOCUS) / Math.max(r.w, 1), (board.h * FOCUS) / Math.max(r.h, 1))
+  return Math.max(0.05, Math.min(cap, z))
 }
 
 const storeKey = (project: string) => `jazyk.board:${project}`
@@ -183,26 +217,34 @@ export function definingDoc(g: Graph, id: string): string | undefined {
 // A window is its item's page: the path without the query (paths.ts).
 export const windowId = (path: string) => `w:${itemKey(path)}`
 export const chipId = (entity: string) => `c:${entity}`
-export const groupId = (key: string) => `g:${key}`
 
-export type EdgeKind = 'rel' | 'def' | 'ref' | 'from'
+// defines (a document to an entity it defines), mentions (a document to one it
+// mentions), names (a requirement or a diagram to its entities), a relationship,
+// and opened-from (a window to one opened from inside it).
+export type EdgeKind = 'rel' | 'def' | 'men' | 'ref' | 'from'
 
 export interface LayerEdge {
   id: string
   source: string
   target: string
   kind: EdgeKind
-  label?: string
-  // The relationship type, for the lifted edges' label.
+  // The verb the linkage shows.
+  label: string
+  // The relationship type, strongest of the pair's contributions.
   type?: string
+  // A relationship with contributions both ways: arrowheads at both ends.
+  both?: boolean
+  // The requirements behind the link (docs/frontends/gui.md#the-board).
+  reqs: string[]
 }
 
 export interface LayerChip {
   entity: string
   // The window whose column the chip sits in.
   owner: string
-  // Its place in that column.
+  // Its place in that column, and how many the column holds.
   index: number
+  count: number
 }
 
 export interface Layer {
@@ -219,11 +261,19 @@ const strength = (t: string | undefined) => {
   return i < 0 ? STRENGTH.length : i
 }
 
-// The entities a window brings as chips, the defined ones (drawn with a dashed
-// edge) first, at most CHIPS_PER_WINDOW.
-function windowEntities(g: Graph, item: Item): { entity: string; edge?: 'def' | 'ref' }[] {
+const KIND_VERB: Record<Exclude<EdgeKind, 'rel'>, string> = {
+  def: 'defines',
+  men: 'mentions',
+  ref: 'names',
+  from: 'opened from',
+}
+
+// The entities a window brings as chips and the link each gets to the window, the
+// defined ones first, at most CHIPS_PER_WINDOW. An entity window's neighbours link
+// through their relationships instead.
+function windowEntities(g: Graph, item: Item): { entity: string; edge?: 'def' | 'men' | 'ref' }[] {
   const kind = itemKind(item.path)
-  const cap = (xs: { entity: string; edge?: 'def' | 'ref' }[]) => xs.slice(0, CHIPS_PER_WINDOW)
+  const cap = <T,>(xs: T[]) => xs.slice(0, CHIPS_PER_WINDOW)
   if (kind === 'doc') {
     const doc = docOf(item.path)
     const defined: string[] = []
@@ -236,7 +286,7 @@ function windowEntities(g: Graph, item: Item): { entity: string; edge?: 'def' | 
     const byName = (a: string, b: string) => (g.entities[a]?.name ?? a).localeCompare(g.entities[b]?.name ?? b)
     defined.sort(byName)
     mentioned.sort((a, b) => b.n - a.n || byName(a.id, b.id))
-    return cap([...defined.map((entity) => ({ entity, edge: 'def' as const })), ...mentioned.map((m) => ({ entity: m.id }))])
+    return cap([...defined.map((entity) => ({ entity, edge: 'def' as const })), ...mentioned.map((m) => ({ entity: m.id, edge: 'men' as const }))])
   }
   if (kind === 'entity') {
     const self = canonical(g, nodeOf(item.path))
@@ -254,21 +304,80 @@ function windowEntities(g: Graph, item: Item): { entity: string; edge?: 'def' | 
   }
   if (kind === 'diagram') {
     const v = g.views[nodeOf(item.path)]
-    return cap((v?.members ?? []).map((e) => canonical(g, e)).filter((e) => g.entities[e]).map((entity) => ({ entity })))
+    return cap((v?.members ?? []).map((e) => canonical(g, e)).filter((e) => g.entities[e]).map((entity) => ({ entity, edge: 'ref' as const })))
   }
   return []
 }
 
-// The graph layer over the open windows: the chips, the relationship edges between
-// every present entity with its verb, the dashed edges from a document to the
-// entities it defines, and an edge from a window to one opened from it.
+// What a node on the board stands for, for the requirements behind a link.
+export type Subject = { doc: string } | { entity: string } | { requirement: string } | Record<string, never>
+
+export function subjectOfPath(g: Graph, path: string): Subject {
+  const kind = itemKind(path)
+  if (kind === 'doc') return { doc: docOf(path) }
+  if (kind === 'entity') return { entity: canonical(g, nodeOf(path)) }
+  if (kind === 'requirement') return { requirement: canonical(g, nodeOf(path)) }
+  return {}
+}
+
+// The document a requirement is quoted from.
+function reqDoc(g: Graph, id: string): string | undefined {
+  const r = g.requirements[id]
+  return r?.source?.doc ?? r?.provenance?.quote?.doc
+}
+
+// The requirements behind a link between two subjects: a relationship's
+// contributions both ways, the requirements a document quotes that name an entity,
+// a requirement itself beside its entity or its document.
+export function linkRequirements(g: Graph, a: Subject, b: Subject): string[] {
+  const out = new Set<string>()
+  const ent = (s: Subject) => ('entity' in s ? s.entity : null)
+  const doc = (s: Subject) => ('doc' in s ? s.doc : null)
+  const req = (s: Subject) => ('requirement' in s ? s.requirement : null)
+  const [ea, eb] = [ent(a), ent(b)]
+  if (ea && eb) {
+    for (const rel of Object.values(g.relationships)) {
+      for (const c of rel.contributions) {
+        const x = canonical(g, c.a)
+        const y = canonical(g, c.b)
+        if ((x === ea && y === eb) || (x === eb && y === ea)) for (const r of c.requirements ?? []) out.add(canonical(g, r))
+      }
+    }
+  }
+  for (const [s, t] of [
+    [a, b],
+    [b, a],
+  ] as const) {
+    const d = doc(s)
+    const e = ent(t)
+    const r = req(s)
+    if (d && e) {
+      for (const [id, q] of Object.entries(g.requirements)) {
+        if (reqDoc(g, id) === d && (q.entities ?? []).some((x) => canonical(g, x) === e)) out.add(id)
+      }
+    }
+    if (r && g.requirements[r]) {
+      if (e && (g.requirements[r].entities ?? []).some((x) => canonical(g, x) === e)) out.add(r)
+      const dt = doc(t)
+      if (dt && reqDoc(g, r) === dt) out.add(r)
+    }
+  }
+  return [...out].filter((id) => g.requirements[id]).sort()
+}
+
+// The graph layer over the open windows: the chips, each linked to its window, the
+// relationship links between every present entity (one per pair, its verb the
+// strongest type's), and a link from a window to one opened from inside it. Every
+// link carries the requirements behind it.
 export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean): Layer {
   const entityNode = new Map<string, string>()
   const edges: LayerEdge[] = []
   const chips: LayerChip[] = []
   const paths = new Set(items.map((i) => itemKey(i.path)))
+  const subjectOfNode = new Map<string, Subject>()
   if (g) {
     for (const item of items) {
+      subjectOfNode.set(windowId(item.path), subjectOfPath(g, item.path))
       if (itemKind(item.path) !== 'entity') continue
       const id = canonical(g, nodeOf(item.path))
       if (g.entities[id] && !entityNode.has(id)) entityNode.set(id, windowId(item.path))
@@ -282,34 +391,54 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
           const owner = itemKey(item.path)
           const index = columns.get(owner) ?? 0
           columns.set(owner, index + 1)
-          chips.push({ entity, owner, index })
+          chips.push({ entity, owner, index, count: 0 })
           entityNode.set(entity, chipId(entity))
+          subjectOfNode.set(chipId(entity), { entity })
         }
         const target = entityNode.get(entity)!
         if (edge && target !== windowId(item.path)) {
-          edges.push({ id: `${edge}:${itemKey(item.path)}->${entity}`, source: windowId(item.path), target, kind: edge })
+          edges.push({
+            id: `${edge}:${itemKey(item.path)}->${entity}`,
+            source: windowId(item.path),
+            target,
+            kind: edge,
+            label: KIND_VERB[edge],
+            reqs: linkRequirements(g, subjectOfPath(g, item.path), { entity }),
+          })
         }
       }
     }
-    const pairs = new Map<string, { a: string; b: string; type: string }>()
+    for (const c of chips) c.count = columns.get(c.owner) ?? 1
+    // One link per pair: the first direction seen, the strongest type's verb, and
+    // arrowheads both ways when the pair has contributions both ways.
+    const pairs = new Map<string, { a: string; b: string; type: string; ab: boolean; ba: boolean }>()
     for (const rel of Object.values(g.relationships)) {
       for (const c of rel.contributions) {
         const a = canonical(g, c.a)
         const b = canonical(g, c.b)
         if (a === b || !entityNode.has(a) || !entityNode.has(b)) continue
-        const key = `${a}->${b}`
+        const key = [a, b].sort().join('|')
+        const type = c.type || 'dependency'
         const had = pairs.get(key)
-        if (!had || strength(c.type) < strength(had.type)) pairs.set(key, { a, b, type: c.type || 'dependency' })
+        if (!had) {
+          pairs.set(key, { a, b, type, ab: true, ba: false })
+          continue
+        }
+        if (had.a === a) had.ab = true
+        else had.ba = true
+        if (strength(type) < strength(had.type)) had.type = type
       }
     }
-    for (const [key, p] of pairs) {
+    for (const p of pairs.values()) {
       edges.push({
-        id: `rel:${key}`,
+        id: `rel:${p.a}->${p.b}`,
         source: entityNode.get(p.a)!,
         target: entityNode.get(p.b)!,
         kind: 'rel',
         type: p.type,
+        both: p.ab && p.ba,
         label: relationPhrase(p.type, true),
+        reqs: linkRequirements(g, { entity: p.a }, { entity: p.b }),
       })
     }
   }
@@ -318,193 +447,169 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
     if (!item.from || !paths.has(itemKey(item.from))) continue
     const s = windowId(item.from)
     const t = windowId(item.path)
-    if (linked.has([s, t].sort().join('|'))) continue
+    if (s === t || linked.has([s, t].sort().join('|'))) continue
     linked.add([s, t].sort().join('|'))
-    edges.push({ id: `from:${itemKey(item.from)}->${itemKey(item.path)}`, source: s, target: t, kind: 'from' })
+    const reqs = g ? linkRequirements(g, subjectOfNode.get(s) ?? {}, subjectOfNode.get(t) ?? {}) : []
+    edges.push({ id: `from:${itemKey(item.from)}->${itemKey(item.path)}`, source: s, target: t, kind: 'from', label: KIND_VERB.from, reqs })
   }
   return { chips, edges, entityNode }
 }
 
-// A chip's place when nobody moved it: in its window's column.
-export function chipSpot(owner: Rect, index: number, scale: number): Point {
-  return { x: owner.x + owner.w + CHIP_GAP, y: owner.y + index * CHIP_STEP * scale }
+// A chip's place when nobody moved it: in its window's column, the column spread
+// over the window's height and centered on it.
+export function chipSpot(owner: Rect, index: number, count: number, scale: number): Point {
+  const step = Math.max(CHIP_STEP * scale, owner.h / Math.max(count, 1))
+  const top = owner.y + owner.h / 2 - (step * count) / 2 + (step - CHIP_H * scale) / 2
+  return { x: owner.x + owner.w + CHIP_GAP, y: Math.round(top + index * step) }
 }
 
-// The component holding an entity: its `parent` chain up to the direct child of
-// the root. A leaf directly under a root joins the root's group, a root with
-// children is its own, and a root alone is in no component ('').
-export function componentOf(g: Graph, id: string, parents?: Set<string>): string {
-  const chain = [id]
-  const seen = new Set(chain)
-  let cur = id
-  for (let i = 0; i < 64; i++) {
-    const p = g.entities[cur]?.parent
-    if (!p || !g.entities[p] || seen.has(p)) break
-    chain.push(p)
-    seen.add(p)
-    cur = p
-  }
-  const hasChildren = parents ?? new Set(Object.values(g.entities).map((e) => e.parent ?? ''))
-  if (chain.length >= 3) return chain[chain.length - 2]
-  if (chain.length === 2) return hasChildren.has(id) ? id : chain[1]
-  return hasChildren.has(id) ? id : ''
+// ---- links on screen: where a link's portals and its linkage sit ----
+
+// Where the line from a box's center toward `to` leaves the box.
+export function borderPoint(r: Rect, to: Point): Point {
+  const cx = r.x + r.w / 2
+  const cy = r.y + r.h / 2
+  const dx = to.x - cx
+  const dy = to.y - cy
+  if (dx === 0 && dy === 0) return { x: cx, y: cy }
+  const sx = dx === 0 ? Infinity : r.w / 2 / Math.abs(dx)
+  const sy = dy === 0 ? Infinity : r.h / 2 / Math.abs(dy)
+  const s = Math.min(sx, sy)
+  return { x: cx + dx * s, y: cy + dy * s }
 }
 
-function dirOf(doc: string): string {
-  const i = doc.lastIndexOf('/')
-  return i < 0 ? '' : doc.slice(0, i)
-}
-
-const KIND_LABEL: Record<string, string> = {
-  product: 'Product',
-  generated: 'Generated',
-  requirement: 'Requirements',
-  diagram: 'Diagrams',
-  inbox: 'Inbox',
-  history: 'History',
-  other: 'Pages',
-}
-
-export interface Group {
-  key: string
-  label: string
-  // What kind of region: a folder of documents, a component, a kind of page.
-  kind: 'folder' | 'component' | 'kind'
-  members: string[]
-  documents: number
-  entities: number
-  pages: number
-  // The region the overview draws, and the members' own bounds a zoom goes to.
-  rect: Rect
-  bounds: Rect
-}
-
-export interface GroupEdge {
-  id: string
-  source: string
-  target: string
-  count: number
-  label: string
-}
-
-// The overview's groups: documents by folder, entities (windows and chips) by the
-// component holding them, other pages by kind; each a region around its members.
-// The edges between members lift to one edge per pair of groups with a count.
-export function buildGroups(
-  items: Item[],
-  layer: Layer,
-  g: Graph | undefined,
-  rects: Map<string, Rect>,
-): { groups: Group[]; edges: GroupEdge[] } {
-  const byKey = new Map<string, Omit<Group, 'rect' | 'bounds'>>()
-  const groupOfNode = new Map<string, string>()
-  const add = (node: string, key: string, label: string, kind: Group['kind'], what: 'documents' | 'entities' | 'pages') => {
-    let grp = byKey.get(key)
-    if (!grp) {
-      grp = { key, label, kind, members: [], documents: 0, entities: 0, pages: 0 }
-      byKey.set(key, grp)
+// The part of the segment p→q inside the rect, as parameters along it (Liang-Barsky).
+export function clipSegment(p: Point, q: Point, r: Rect): [number, number] | null {
+  const dx = q.x - p.x
+  const dy = q.y - p.y
+  let t0 = 0
+  let t1 = 1
+  const edges: [number, number][] = [
+    [-dx, p.x - r.x],
+    [dx, r.x + r.w - p.x],
+    [-dy, p.y - r.y],
+    [dy, r.y + r.h - p.y],
+  ]
+  for (const [pp, qq] of edges) {
+    if (pp === 0) {
+      if (qq < 0) return null
+      continue
     }
-    grp.members.push(node)
-    grp[what]++
-    groupOfNode.set(node, key)
-  }
-  const parents = new Set(Object.values(g?.entities ?? {}).map((e) => e.parent ?? ''))
-  const entityGroup = (id: string): [string, string] => {
-    const comp = g ? componentOf(g, id, parents) : id
-    return comp ? [`comp:${comp}`, g?.entities[comp]?.name ?? comp] : ['comp:', 'Other entities']
-  }
-  for (const item of items) {
-    const node = windowId(item.path)
-    if (!rects.has(node)) continue
-    const kind = itemKind(item.path)
-    if (kind === 'doc') {
-      const dir = dirOf(docOf(item.path))
-      add(node, `folder:${dir}`, dir ? `${dir}/` : 'Documents', 'folder', 'documents')
-    } else if (kind === 'entity' && g) {
-      const [key, label] = entityGroup(canonical(g, nodeOf(item.path)))
-      add(node, key, label, 'component', 'entities')
-    } else if (kind === 'requirement' && g?.requirements[canonical(g, nodeOf(item.path))]?.entities?.length) {
-      const first = g.requirements[canonical(g, nodeOf(item.path))].entities![0]
-      const [key, label] = entityGroup(canonical(g, first))
-      add(node, key, label, 'component', 'pages')
+    const t = qq / pp
+    if (pp < 0) {
+      if (t > t1) return null
+      if (t > t0) t0 = t
     } else {
-      add(node, `kind:${kind}`, KIND_LABEL[kind] ?? itemTitle(item.path), 'kind', 'pages')
+      if (t < t0) return null
+      if (t < t1) t1 = t
     }
   }
-  for (const c of layer.chips) {
-    const node = chipId(c.entity)
-    if (!rects.has(node)) continue
-    const [key, label] = entityGroup(c.entity)
-    add(node, key, label, 'component', 'entities')
-  }
-  // Each group's members' bounds, then the regions laid out as a grid in the
-  // order the members sit (left to right, then top to bottom), over the same
-  // extent, so the overview reads as the board seen from far and no two regions
-  // overlap. A region's size follows its member count.
-  const bounded = [...byKey.values()].map((grp) => {
-    let x0 = Infinity
-    let y0 = Infinity
-    let x1 = -Infinity
-    let y1 = -Infinity
-    for (const m of grp.members) {
-      const r = rects.get(m)!
-      x0 = Math.min(x0, r.x)
-      y0 = Math.min(y0, r.y)
-      x1 = Math.max(x1, r.x + r.w)
-      y1 = Math.max(y1, r.y + r.h)
+  return t0 <= t1 ? [t0, t1] : null
+}
+
+export interface LinkOnScreen {
+  // The visible part of the link, border to border, clipped to the view.
+  from: Point
+  to: Point
+  // An end outside the view: a portal for that end sits at `from` (the source's)
+  // or `to` (the target's).
+  sourceOut: boolean
+  targetOut: boolean
+  // The direction from the source toward the target, in radians.
+  angle: number
+}
+
+const inside = (p: Point, r: Rect) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+
+// A link between two rects as the view shows it: the border-to-border segment
+// clipped to the view, or null when none of it shows (wholly out of view, shorter
+// than `min`, or the two rects overlapping so there is no line between them).
+export function linkOnScreen(a: Rect, b: Rect, view: Rect, min = 12): LinkOnScreen | null {
+  const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 }
+  const cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 }
+  const p = borderPoint(a, cb)
+  const q = borderPoint(b, ca)
+  // Overlapping rects: the border points cross over.
+  if (inside(p, b) || inside(q, a)) return null
+  const t = clipSegment(p, q, view)
+  if (!t) return null
+  const from = { x: p.x + (q.x - p.x) * t[0], y: p.y + (q.y - p.y) * t[0] }
+  const to = { x: p.x + (q.x - p.x) * t[1], y: p.y + (q.y - p.y) * t[1] }
+  if (Math.hypot(to.x - from.x, to.y - from.y) < min) return null
+  return { from, to, sourceOut: !inside(p, view), targetOut: !inside(q, view), angle: Math.atan2(cb.y - ca.y, cb.x - ca.x) }
+}
+
+// A box of size w×h centered at `at`, moved inside the view.
+export function clampBox(at: Point, w: number, h: number, view: Rect): Rect {
+  const x = Math.min(Math.max(at.x - w / 2, view.x), view.x + view.w - w)
+  const y = Math.min(Math.max(at.y - h / 2, view.y), view.y + view.h - h)
+  return { x, y, w, h }
+}
+
+// The box moved off the ones already placed: stepped along the axis the view's edge
+// runs, so a column of portals stacks instead of piling up.
+export function avoid(box: Rect, placed: Rect[], view: Rect, gap = 4): Rect {
+  const hits = (r: Rect) => placed.some((o) => r.x < o.x + o.w + gap && o.x < r.x + r.w + gap && r.y < o.y + o.h + gap && o.y < r.y + r.h + gap)
+  if (!hits(box)) return box
+  const vertical = box.x <= view.x + 1 || box.x + box.w >= view.x + view.w - 1
+  for (let i = 1; i < 24; i++) {
+    for (const sign of [1, -1]) {
+      const d = sign * i * ((vertical ? box.h : box.w) + gap) * 0.5
+      const r = vertical ? { ...box, y: box.y + d } : { ...box, x: box.x + d }
+      if (r.x < view.x || r.y < view.y || r.x + r.w > view.x + view.w || r.y + r.h > view.y + view.h) continue
+      if (!hits(r)) return r
     }
-    return { grp, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } }
-  })
-  const groups: Group[] = []
-  if (bounded.length > 0) {
-    const all = bounded.reduce(
-      (a, { bounds: b }) => ({ x0: Math.min(a.x0, b.x), y0: Math.min(a.y0, b.y), x1: Math.max(a.x1, b.x + b.w), y1: Math.max(a.y1, b.y + b.h) }),
-      { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity },
-    )
-    const n = bounded.length
-    const cols = Math.ceil(Math.sqrt(n * 1.5))
-    const rows = Math.ceil(n / cols)
-    const cell = Math.max(1400, Math.max(all.x1 - all.x0, all.y1 - all.y0) / Math.max(cols, rows))
-    const most = Math.max(...bounded.map((b) => b.grp.members.length))
-    const cx = (all.x0 + all.x1) / 2
-    const cy = (all.y0 + all.y1) / 2
-    const ordered = bounded
-      .map((b) => ({ ...b, mx: b.bounds.x + b.bounds.w / 2, my: b.bounds.y + b.bounds.h / 2 }))
-      .sort((a, b) => a.my - b.my)
-    // Rows by height first, then each row left to right.
-    const placed: typeof ordered = []
-    for (let r = 0; r < rows; r++) placed.push(...ordered.slice(r * cols, (r + 1) * cols).sort((a, b) => a.mx - b.mx))
-    placed.forEach(({ grp, bounds }, i) => {
-      const col = i % cols
-      const row = Math.floor(i / cols)
-      const f = 0.45 + 0.3 * Math.sqrt(grp.members.length / most)
-      const w = cell * f
-      const h = cell * f * 0.7
-      const x = cx + (col - (cols - 1) / 2) * cell - w / 2
-      const y = cy + (row - (rows - 1) / 2) * cell * 0.8 - h / 2
-      groups.push({ ...grp, rect: { x, y, w, h }, bounds })
-    })
   }
-  const lifted = new Map<string, { source: string; target: string; count: number; labels: Set<string> }>()
-  for (const e of layer.edges) {
-    const a = groupOfNode.get(e.source)
-    const b = groupOfNode.get(e.target)
-    if (!a || !b || a === b) continue
-    const id = `${a}->${b}`
-    let l = lifted.get(id)
-    if (!l) {
-      l = { source: groupId(a), target: groupId(b), count: 0, labels: new Set() }
-      lifted.set(id, l)
+  return box
+}
+
+// The parts of the segment from→to not under any of the rects (the windows drawn
+// over the link), as parameter ranges along it, in order.
+export function visiblePieces(from: Point, to: Point, covers: Rect[]): [number, number][] {
+  let pieces: [number, number][] = [[0, 1]]
+  for (const r of covers) {
+    const hit = clipSegment(from, to, r)
+    if (!hit) continue
+    const next: [number, number][] = []
+    for (const [a, b] of pieces) {
+      if (hit[1] <= a || hit[0] >= b) next.push([a, b])
+      else {
+        if (hit[0] > a) next.push([a, hit[0]])
+        if (hit[1] < b) next.push([hit[1], b])
+      }
     }
-    l.count++
-    l.labels.add(e.kind === 'rel' ? (e.label ?? '') : e.kind === 'def' ? 'defines' : e.kind === 'ref' ? 'names' : 'opened')
+    pieces = next
   }
-  const edges: GroupEdge[] = [...lifted.entries()].map(([id, l]) => {
-    const one = l.labels.size === 1 ? [...l.labels][0] : ''
-    const label = one ? (l.count > 1 ? `${one} (${l.count})` : one) : `${l.count} links`
-    return { id: `lift:${id}`, source: l.source, target: l.target, count: l.count, label }
-  })
-  return { groups, edges }
+  return pieces
+}
+
+// Which edge of the view a box sits against, if any.
+export function sideOf(box: Rect, view: Rect): 'left' | 'right' | 'top' | 'bottom' | 'inside' {
+  if (box.x <= view.x + 1) return 'left'
+  if (box.x + box.w >= view.x + view.w - 1) return 'right'
+  if (box.y <= view.y + 1) return 'top'
+  if (box.y + box.h >= view.y + view.h - 1) return 'bottom'
+  return 'inside'
+}
+
+// A box against the view's left or right edge narrowed to the margin between that
+// edge and the windows beside it, so it covers no text; never below `min` wide.
+export function fitMargin(box: Rect, covers: Rect[], view: Rect, min: number): Rect {
+  const side = sideOf(box, view)
+  const rows = covers.filter((o) => o.y < box.y + box.h && box.y < o.y + o.h && o.x < box.x + box.w && box.x < o.x + o.w)
+  if (rows.length === 0) return box
+  if (side === 'right') {
+    const right = view.x + view.w
+    const left = Math.max(...rows.map((o) => o.x + o.w)) + 4
+    const w = Math.max(min, right - left)
+    return w < box.w ? { ...box, x: right - w, w } : box
+  }
+  if (side === 'left') {
+    const right = Math.min(...rows.map((o) => o.x)) - 4
+    const w = Math.max(min, right - view.x)
+    return w < box.w ? { ...box, x: view.x, w } : box
+  }
+  return box
 }
 
 // The windows nearest the view's center, at most LIVE_MAX.

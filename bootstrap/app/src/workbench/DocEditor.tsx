@@ -90,6 +90,11 @@ export default function DocEditor() {
     },
     [],
   )
+  // The entity under the caret, for the board's highlight; cleared when the
+  // document closes.
+  const setCaretEntity = useApp((a) => a.setCaretEntity)
+  const reportCaret = useCallback((id: string | null) => setCaretEntity(docPath, id), [docPath, setCaretEntity])
+  useEffect(() => () => setCaretEntity(docPath, null), [docPath, setCaretEntity])
   // Autosave: in the browser, where a write lands without asking (the demo, and a
   // folder in writing mode), the editor saves a beat after typing stops and when the
   // document is left. A read-only folder saves on request and asks whether to write
@@ -678,6 +683,7 @@ export default function DocEditor() {
           bands={bands}
           mentions={mentions}
           onCursorLine={reportLine}
+          onCaretEntity={reportCaret}
           flashes={flashLines}
         />
         {reading && (

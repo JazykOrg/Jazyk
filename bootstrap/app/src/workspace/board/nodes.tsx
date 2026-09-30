@@ -1,5 +1,5 @@
-// The board's nodes: a window per open item (live, still, or a card by zoom), a
-// chip per entity the windows bring, a region per group on the overview.
+// The board's nodes: a window per open item (live, still, a card, or its title by
+// zoom; an entity always a card of its own), and a chip per entity the windows bring.
 import { Component, memo, Suspense, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Handle, NodeResizeControl, Position, useStore, type Node, type NodeProps } from '@xyflow/react'
 import { useQuery } from '@tanstack/react-query'
@@ -14,7 +14,7 @@ import { itemKey, nodePagePath, splitSelection } from '../paths'
 import { showPath } from '../actions'
 import ItemNavigation, { type ItemNavigate } from './ItemNavigation'
 import { useBoardActions } from './actions'
-import { canonical, docOf, nodeOf, WIN_MIN_H, WIN_MIN_W, type Group } from './model'
+import { canonical, docOf, nodeOf, WIN_MIN_H, WIN_MIN_W } from './model'
 import { registerBody, stillOf, useRuntime } from './runtime'
 
 const GLYPH: Record<ReturnType<typeof itemKind>, string> = {
@@ -40,7 +40,7 @@ function Handles() {
   )
 }
 
-export type WindowData = { path: string; focused: boolean }
+export type WindowData = { path: string; focused: boolean; hot: boolean }
 export type WindowNodeType = Node<WindowData, 'window'>
 
 // The title an item's window shows: an entity's or a requirement's own words where
@@ -118,28 +118,76 @@ function useDocText(doc: string) {
   })
 }
 
-function EntitySummary({ id }: { id: string }) {
+// An entity's window: a card, not a page (docs/frontends/gui.md#the-board). Its
+// name, kind, parent, definition, attributes, and counts; its connections are the
+// board's links around it. The parent and the defining document open beside it.
+const EntityCard = memo(function EntityCard({ path }: { path: string }) {
   const { data: g } = useGraph()
-  const e = g?.entities[id]
+  const actions = useBoardActions()
+  if (!g) return <p className="bw-empty">loading…</p>
+  const id = canonical(g, nodeOf(path))
+  const e = g.entities[id]
   if (!e) return <p className="bw-empty">{id}</p>
+  const chain: string[] = []
+  for (let cur = e.parent; cur && g.entities[cur] && chain.length < 4 && !chain.includes(cur); cur = g.entities[cur].parent) chain.unshift(cur)
+  const parts = Object.values(g.entities).filter((x) => x.parent === id).length
+  const reqs = Object.values(g.requirements).filter((r) => r.entities?.some((x) => canonical(g, x) === id)).length
+  const docs = [...new Set((e.mentions ?? []).map((m) => m.doc))]
+  const home = e.provenance?.quote?.doc ?? e.mentions?.[0]?.doc
+  const attrs = e.attributes ?? []
+  const open = (to: string) => actions.open(to, { from: path })
   return (
-    <div className="bw-read">
-      <h1>{e.name}</h1>
-      {e.stereotype && <p className="muted">{kindWord(e.stereotype)}</p>}
-      {e.definition && <p>{e.definition}</p>}
-      {(e.attributes?.length ?? 0) > 0 && (
-        <ul>
-          {e.attributes!.map((a) => (
+    <div className="bw-entity">
+      <div className="bwe-kind">
+        {GLYPH.entity} {kindWord(e.stereotype) || 'Entity'}
+        {chain.length > 0 && (
+          <span className="bwe-chain">
+            {' '}in{' '}
+            {chain.map((c, i) => (
+              <span key={c}>
+                {i > 0 && ' › '}
+                <button className="bwe-link nodrag" onClick={() => open(`/model/entities/${encodeURIComponent(c)}`)}>
+                  {g.entities[c].name}
+                </button>
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+      <h2 className="bwe-name">{e.name}</h2>
+      {e.definition && <p className="bwe-def">{shorten(e.definition, 320)}</p>}
+      {attrs.length > 0 && (
+        <ul className="bwe-attrs">
+          {attrs.slice(0, 8).map((a) => (
             <li key={a.name}>
               <b>{a.name}</b>
               {a.value ? `: ${a.value}` : a.type ? `: ${a.type}` : ''}
             </li>
           ))}
+          {attrs.length > 8 && <li className="muted">{attrs.length - 8} more</li>}
         </ul>
       )}
+      <div className="bwe-counts">
+        <span>
+          {reqs} {reqs === 1 ? 'requirement' : 'requirements'}
+        </span>
+        {parts > 0 && (
+          <span>
+            {parts} {parts === 1 ? 'part' : 'parts'}
+          </span>
+        )}
+        <span>
+          in {docs.length} {docs.length === 1 ? 'document' : 'documents'}
+        </span>
+        {home && (
+          <button className="bwe-link nodrag" onClick={() => open(`/docs/${home}`)} title={`Open ${home} beside it`}>
+            {GLYPH.doc} {home.split('/').pop()}
+          </button>
+        )}
+      </div>
     </div>
   )
-}
+})
 
 // A still for a window never drawn live in this tab: a document in its Read form,
 // an entity's summary, else the title.
@@ -155,7 +203,6 @@ function ReadStill({ path, title }: { path: string; title: string }) {
       </div>
     )
   }
-  if (kind === 'entity' && g) return <EntitySummary id={canonical(g, nodeOf(path))} />
   return (
     <div className="bw-read">
       <h1>{title}</h1>
@@ -237,17 +284,39 @@ const CardBody = memo(function CardBody({ path, title }: { path: string; title: 
   )
 })
 
+// The farthest level: only the title, sized to read on screen, where the window is.
+function TitleBody({ path, title }: { path: string; title: string }) {
+  const zoom = useStore((st) => st.transform[2])
+  const size = 14 / Math.max(zoom, 0.01)
+  return (
+    <div className="bw-titleonly" style={{ fontSize: size }}>
+      <span className="bw-glyph">{GLYPH[itemKind(path)]}</span> {title}
+    </div>
+  )
+}
+
 export const WindowNode = memo(function WindowNode({ id, data, width, height, positionAbsoluteX, positionAbsoluteY }: NodeProps<WindowNodeType>) {
-  const { path, focused } = data
+  const { path, focused, hot } = data
   const level = useRuntime((s) => s.level)
-  const live = useRuntime((s) => s.level === 'live' && s.live.includes(itemKey(path)))
+  const kind = itemKind(path)
+  const entity = kind === 'entity'
+  const live = useRuntime((s) => s.level === 'live' && (entity || s.live.includes(itemKey(path))))
   const actions = useBoardActions()
   const title = useItemTitle(path)
-  const kind = itemKind(path)
+  const framed = level === 'live' || level === 'still'
+  let body: ReactNode
+  if (level === 'title') body = <TitleBody path={path} title={title} />
+  else if (level === 'card') body = <CardBody path={path} title={title} />
+  else if (entity) body = <EntityCard path={path} />
+  else body = live ? <LiveBody path={path} /> : <StillBody path={path} title={title} />
   return (
-    <div className={`bw lv-${level}${focused ? ' focused' : ''}${live ? ' is-live' : ''}`} data-path={path} onPointerDownCapture={() => actions.focus(path)}>
+    <div
+      className={`bw lv-${level}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
+      data-path={path}
+      onPointerDownCapture={() => actions.focus(path)}
+    >
       <Handles />
-      {level !== 'card' && (
+      {framed && (
         <div className="bw-title" onDoubleClick={() => actions.zoomToNode(id)} title={path}>
           <span className="bw-glyph">{GLYPH[kind]}</span>
           <span className="bw-name">{title}</span>
@@ -256,10 +325,8 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
           </button>
         </div>
       )}
-      <div className={`bw-body${live ? ' nodrag nowheel nopan' : ''}`}>
-        {level === 'card' ? <CardBody path={path} title={title} /> : live ? <LiveBody path={path} /> : <StillBody path={path} title={title} />}
-      </div>
-      {level !== 'card' && (
+      <div className={`bw-body${live ? ' nodrag nowheel nopan' : ''}`}>{body}</div>
+      {framed && (
         <NodeResizeControl
           className="bw-resize"
           position="bottom-right"
@@ -272,12 +339,12 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   )
 })
 
-export type ChipData = { entity: string; name: string; kind: string; scale: number; selected: boolean }
+export type ChipData = { entity: string; name: string; kind: string; scale: number; selected: boolean; hot: boolean }
 export type ChipNodeType = Node<ChipData, 'chip'>
 
 export const ChipNode = memo(function ChipNode({ data }: NodeProps<ChipNodeType>) {
   return (
-    <div className={`bc${data.selected ? ' sel' : ''}`} style={{ fontSize: 13 * data.scale }} title={data.kind ? `${data.name} · ${data.kind}` : data.name} data-entity={data.entity}>
+    <div className={`bc${data.selected ? ' sel' : ''}${data.hot ? ' hot' : ''}`} style={{ fontSize: 13 * data.scale }} title={data.kind ? `${data.name} · ${data.kind}` : data.name} data-entity={data.entity}>
       <Handles />
       <span className="bc-glyph">◆</span>
       <span className="bc-name">{data.name}</span>
@@ -286,32 +353,6 @@ export const ChipNode = memo(function ChipNode({ data }: NodeProps<ChipNodeType>
   )
 })
 
-export type GroupData = { group: Group }
-export type GroupNodeType = Node<GroupData, 'group'>
+export const nodeTypes = { window: WindowNode, chip: ChipNode }
 
-export const GroupNode = memo(function GroupNode({ data, width }: NodeProps<GroupNodeType>) {
-  const zoom = useStore((s) => s.transform[2])
-  const g = data.group
-  const counts = [
-    g.documents ? `${g.documents} ${g.documents === 1 ? 'document' : 'documents'}` : '',
-    g.entities ? `${g.entities} ${g.entities === 1 ? 'entity' : 'entities'}` : '',
-    g.pages ? `${g.pages} ${g.pages === 1 ? 'page' : 'pages'}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
-  // The label keeps its size on screen whatever the zoom, within its region.
-  const s = Math.min(1 / Math.max(zoom, 0.01), (width ?? 1000) / 150)
-  return (
-    <div className={`bg bg-${g.kind}`}>
-      <Handles />
-      <div className="bg-label" style={{ fontSize: 15 * s, padding: `${6 * s}px ${10 * s}px` }}>
-        <b>{g.label}</b>
-        <span className="bg-counts">{counts}</span>
-      </div>
-    </div>
-  )
-})
-
-export const nodeTypes = { window: WindowNode, chip: ChipNode, group: GroupNode }
-
-export type BoardNode = WindowNodeType | ChipNodeType | GroupNodeType
+export type BoardNode = WindowNodeType | ChipNodeType

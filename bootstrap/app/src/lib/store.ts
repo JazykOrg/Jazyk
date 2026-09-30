@@ -166,6 +166,9 @@ interface AppStore {
   // Write, the top of the view in Read. The outline follows it
   // (docs/frontends/gui.md#docs).
   editorLine: { doc: string; line: number } | null
+  // The entity whose mention the caret rests on in Write, for the board's highlight
+  // (docs/frontends/gui.md#editor).
+  caretEntity: { doc: string; id: string } | null
   // The folder the browser backend has open, its mode, how many changes it has not
   // taken (held in read-only mode, or kept after a failed write), and why the last
   // write failed (docs/frontends/wasm.md#a-folder-on-disk). Null for a stored
@@ -240,6 +243,7 @@ interface AppStore {
   setEditorDirty: (v: boolean) => void
   setDocMode: (doc: string, mode: DocMode) => void
   setEditorLine: (doc: string, line: number) => void
+  setCaretEntity: (doc: string, id: string | null) => void
   setFolder: (f: FolderState | null) => void
   setStored: (s: StoredState | null) => void
   setModelLoad: (m: { text: string; failed?: boolean } | null) => void
@@ -270,6 +274,7 @@ export const useApp = create<AppStore>((set, get) => ({
   editorDirty: false,
   docModes: {},
   editorLine: null,
+  caretEntity: null,
   folder: null,
   stored: null,
   modelLoad: null,
@@ -358,6 +363,11 @@ export const useApp = create<AppStore>((set, get) => ({
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
   setDocMode: (doc, mode) => set((s) => (s.docModes[doc] === mode ? s : { docModes: { ...s.docModes, [doc]: mode } })),
+  setCaretEntity: (doc, id) =>
+    set((s) => {
+      if (!id) return s.caretEntity && s.caretEntity.doc === doc ? { caretEntity: null } : s
+      return s.caretEntity && s.caretEntity.doc === doc && s.caretEntity.id === id ? s : { caretEntity: { doc, id } }
+    }),
   setEditorLine: (doc, line) =>
     set((s) => (s.editorLine && s.editorLine.doc === doc && s.editorLine.line === line ? s : { editorLine: { doc, line } })),
   setFolder: (folder) => set({ folder }),

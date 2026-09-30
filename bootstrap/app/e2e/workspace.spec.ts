@@ -1,6 +1,6 @@
 // The workspace behind the switch (docs/frontends/gui.md#workspace-experimental): Tabs
 // replace the lenses and the inspector, the navigator opens preview tabs, tabs split
-// and come back on a reload, and Connections shows what a mention names.
+// and come back on a reload, and a Cmd-click on a mention opens its entity as a tab.
 import { expect, test, type Page } from '@playwright/test'
 import { offline, openDemo, pageErrors, typeAtEnd } from './helpers'
 
@@ -32,7 +32,7 @@ test('switching to Tabs shows no lenses and no inspector, with the switch in the
   await expect(nav.getByRole('button', { name: /Documents/ })).toBeVisible()
   await expect(nav.getByRole('button', { name: /Product/ })).toBeVisible()
   await expect(nav.getByRole('button', { name: /^.?\s*Model/ })).toHaveCount(0)
-  await expect(page.locator('.wsc')).toBeVisible()
+  await expect(page.locator('.wsc')).toHaveCount(0)
   // Back to the lenses from the top bar.
   await top.getByRole('radio', { name: 'Lenses' }).click()
   await expect(page.locator('.ws-top').getByRole('link', { name: 'Model', exact: true })).toBeVisible()
@@ -94,30 +94,26 @@ test('split right shows two documents side by side, and a reload restores the ta
   await expect(page).toHaveURL(/#\/docs\/docs\/main\.md$/)
 })
 
-test('a mention shows the entity in Connections, a neighbour the links between them, and Open opens its page as a tab', async ({ page }) => {
+test('a plain click on a mention places the cursor, and Cmd-click opens its entity as a tab', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await toTabs(page)
   await page.goto('/#/docs/docs/backend.md')
   const item = page.locator('.wst-item[data-item="/docs/docs/backend.md"]')
-  await item.locator('.cm-content .cm-line').last().click()
-  await page.keyboard.press('Control+End')
-  const mention = item.locator('.cm-content .entity-mark', { hasText: 'Inventory Management' })
+  // `backend system` in the first paragraph names the Backend (a mention outside a link).
+  const mention = item.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()
   await expect(mention).toBeVisible()
-  await mention.click()
-  await expect(page).toHaveURL(/node=ent%3Ainventory-management/)
-  const panel = page.locator('.wsc')
-  await expect(panel.locator('.wsc-title')).toHaveText('Inventory Management')
-  await expect(panel.locator('.connections svg')).toBeVisible()
-  // Selecting does not open anything.
   const before = await tabs(page).count()
-  await panel.locator('.cn-n').first().click()
-  await expect(panel.locator('.cn-why')).toBeVisible()
+  await mention.click()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await expect(tabs(page)).toHaveCount(before)
 
-  await panel.getByRole('button', { name: 'Open', exact: true }).click()
-  await expect(tab(page, '/model/entities/ent%3Ainventory-management')).toBeVisible()
+  await mention.click({ modifiers: ['ControlOrMeta'] })
+  await expect(tab(page, '/model/entities/ent%3Abackend')).toBeVisible()
   await expect(tabs(page)).toHaveCount(before + 1)
-  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Ainventory-management$/)
-  await expect(page.locator('.wst-item[data-item="/model/entities/ent%3Ainventory-management"] h1')).toContainText('Inventory Management')
+  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Abackend$/)
+  await expect(page.locator('.wst-item[data-item="/model/entities/ent%3Abackend"] h1')).toContainText('Backend')
+  // There is no Connections panel.
+  await expect(page.locator('.wsc')).toHaveCount(0)
 })
 
 test('an edit keeps a preview tab', async ({ page }) => {
@@ -170,11 +166,4 @@ test('on a narrow screen one item shows and the switcher lays the open items out
   await expect(grid).toHaveCount(0)
   await expect(page).toHaveURL(/#\/docs\/docs\/main\.md$/)
 
-  // Connections is a bottom sheet here, for a selection only.
-  await expect(page.getByRole('dialog', { name: 'Connections' })).toHaveCount(0)
-  await page.goto('/#/docs/docs/main.md?node=ent%3Ainventory-management')
-  const sheet = page.getByRole('dialog', { name: 'Connections' })
-  await expect(sheet.locator('.wsc-title')).toHaveText('Inventory Management')
-  await sheet.getByRole('button', { name: 'close Connections' }).click()
-  await expect(sheet).toHaveCount(0)
 })

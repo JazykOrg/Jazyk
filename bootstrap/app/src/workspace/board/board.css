@@ -1,5 +1,6 @@
-/* The Board arrangement (docs/frontends/gui.md#workspace-experimental): a white
-   table top with light dots, windows, chips, and groups over it. */
+/* The Board arrangement (docs/frontends/gui.md#the-board): a white table top with
+   light dots, windows and chips over it, and the links' portals and linkage over
+   the whole in screen space. */
 .board {
   position: relative;
   flex: 1;
@@ -16,7 +17,6 @@
   --board-window: var(--panel);
   --board-shadow: 0 1px 2px rgba(20, 30, 25, 0.08), 0 8px 24px rgba(20, 30, 25, 0.1);
   --board-chip: #eef6f4;
-  --board-region: rgba(14, 122, 109, 0.05);
 }
 
 .board .react-flow.dark {
@@ -26,7 +26,6 @@
   --xy-minimap-background-color: #181e1b;
   --board-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
   --board-chip: #1d2a27;
-  --board-region: rgba(53, 179, 162, 0.07);
 }
 
 .board-handle {
@@ -250,42 +249,15 @@
   text-overflow: ellipsis;
 }
 
-/* A group on the overview */
-.bg {
-  width: 100%;
-  height: 100%;
-  border: 2px dashed color-mix(in srgb, var(--accent) 50%, transparent);
-  border-radius: 24px;
-  background: var(--board-region);
-  cursor: zoom-in;
-}
-
-.bg-folder {
-  border-color: color-mix(in srgb, var(--info) 50%, transparent);
-  background: color-mix(in srgb, var(--info) 6%, transparent);
-}
-
-.bg-kind {
-  border-color: color-mix(in srgb, var(--muted) 50%, transparent);
-  background: color-mix(in srgb, var(--muted) 5%, transparent);
-}
-
-.bg-label {
-  display: inline-flex;
-  flex-direction: column;
-  color: var(--ink);
-  white-space: nowrap;
-}
-
-.bg-counts {
-  color: var(--muted);
-  font-size: 0.8em;
-}
-
-/* Edges */
-.board .be-def,
-.board .be-ref {
+/* Links */
+.board .be-def {
   stroke-dasharray: 6 5;
+}
+
+.board .be-men,
+.board .be-ref {
+  stroke-dasharray: 2 5;
+  opacity: 0.75;
 }
 
 .board .be-from {
@@ -298,23 +270,286 @@
   stroke-width: 1.5;
 }
 
-.board .be-lift {
-  stroke: var(--accent);
-  opacity: 0.8;
+.board .react-flow__edge-path.be-hot {
+  stroke: var(--warn, #d9822b);
+  stroke-width: 3;
+  opacity: 1;
 }
 
-.be-label {
+.bc.hot,
+.bw.hot {
+  border-color: var(--warn, #d9822b);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn, #d9822b) 60%, transparent), var(--board-shadow);
+}
+
+/* The portals and the linkage, in screen space over the board. */
+.board-links {
   position: absolute;
+  inset: 0;
   pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+.bl-portal {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--board-shadow);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bl-portal:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  border-color: var(--accent);
+  /* A portal narrowed to its margin shows its whole name on hover. */
+  width: max-content !important;
+  max-width: 280px;
+  z-index: 2;
+}
+
+.bl-portal.hot {
+  border-color: var(--warn, #d9822b);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn, #d9822b) 60%, transparent);
+}
+
+.bl-portal.narrow {
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px 3px 5px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.bl-portal.narrow .bl-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: break-word;
+  text-align: left;
+}
+
+.bl-portal.narrow:hover {
+  height: auto !important;
+}
+
+.bl-portal.narrow .bl-glyph {
+  display: none;
+}
+
+.bl-arrow {
+  flex: none;
+  display: inline-block;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.bl-glyph {
+  flex: none;
+  color: var(--accent);
+}
+
+.bl-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.bl-label {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   background: var(--xy-background-color);
   color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+}
+
+.bl-label.open {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--board-shadow);
+  z-index: 1;
+}
+
+.bl-label.hot {
+  border-color: var(--warn, #d9822b);
+}
+
+.bl-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.bl-head:disabled {
+  cursor: default;
+}
+
+.bl-verb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bl-count {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.bl-reqs {
+  list-style: none;
+  margin: 0;
+  padding: 2px 4px 4px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.bl-reqs button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 6px;
+  border: 0;
   border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.bl-reqs button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* An entity window: a card of its own, not a page. */
+.bw-entity {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px;
+  font-size: 13px;
+}
+
+.bwe-kind {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.bwe-chain {
+  color: var(--muted);
+}
+
+.bwe-name {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.bwe-def {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.bwe-attrs {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+}
+
+.bwe-counts {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bwe-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.bwe-link:hover {
+  text-decoration: underline;
+}
+
+.bw.lv-still .bw-entity {
+  pointer-events: none;
+}
+
+/* The titles level: every window only its title, where it is; chips as dots. */
+.bw.lv-title {
+  cursor: zoom-in;
+}
+
+/* The title reads at the same size on screen at any zoom, past the window's edges
+   when the window is smaller than its name. */
+.bw.lv-title,
+.bw.lv-title .bw-body {
+  overflow: visible;
+}
+
+.bw-titleonly {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.15;
   white-space: nowrap;
 }
 
-.be-label-lift {
-  color: var(--ink);
-  font-weight: 600;
+.board.lv-title .bc {
+  justify-content: center;
+  padding: 0;
+}
+
+.board.lv-title .bc-name,
+.board.lv-title .bc-kind {
+  display: none;
 }
 
 /* The toolbar and the minimap */
@@ -363,10 +598,6 @@
 
 .board-minimap .mm-chip {
   fill: var(--accent);
-}
-
-.board-minimap .mm-group {
-  fill: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .board-empty {

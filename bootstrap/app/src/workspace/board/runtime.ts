@@ -7,13 +7,24 @@ import type { Level } from './model'
 interface Runtime {
   level: Level
   live: string[]
+  // The links whose requirements are expanded, by edge id.
+  expanded: Record<string, true>
   setLevel: (level: Level) => void
   setLive: (live: string[]) => void
+  toggleLink: (id: string) => void
 }
 
 export const useRuntime = create<Runtime>((set, get) => ({
   level: 'live',
   live: [],
+  expanded: {},
+  toggleLink: (id) =>
+    set((s) => {
+      const expanded = { ...s.expanded }
+      if (expanded[id]) delete expanded[id]
+      else expanded[id] = true
+      return { expanded }
+    }),
   setLevel: (level) => {
     if (level === get().level) return
     if (level !== 'live') captureAll()

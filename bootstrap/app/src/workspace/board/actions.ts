@@ -4,6 +4,8 @@ import { createContext, useContext } from 'react'
 
 export interface BoardActions {
   zoomToNode: (id: string) => void
+  // A portal's click: focus the node at the far end of a link.
+  go: (id: string) => void
   // Opens `path` as a window: beside the item `from`, or beside `near` (a chip).
   open: (path: string, opts: { from?: string; near?: string }) => void
   close: (path: string) => void

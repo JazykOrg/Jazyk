@@ -1431,15 +1431,18 @@ from the graph's mentions, quotes, and section tree.
   the requirement in the inspector. The marker replaces the code lens as the default
   rendering; the lens returns under the Developer toggle.
 - Entity mentions are underlined so what is clickable is discoverable; hover shows
-  the card, click opens the inspector. A mention is every occurrence of an entity's
+  the card. In Write a plain click places the cursor, as on any text, and the caret
+  resting on a mention marks its entity (the [board](#the-board)
+  highlights the link to it); Cmd-click (Ctrl-click off macOS) opens the entity: the
+  inspector in Lenses, a tab in Tabs, a window beside the document on the Board. In
+  Read, where there is no cursor, a click opens it. A mention is every occurrence of an entity's
   name (or an alias the graph records) in the text, matched case-insensitively
   on word boundaries, in Read and in Write alike, on a server and in a tab: the
   graph's `mentions` say which sections define an entity, the name index says
   where its name appears, and the editor draws both without the LSP. A name that
   is also part of a longer entity's name underlines the longer one. A link's
   destination is a path, never a mention. In Read a mention inside a link keeps
-  the link's click; in Write a plain click opens the entity and a modified click
-  follows the link.
+  the link's click; in Write a Cmd-click on it follows the link.
 - Hovering a requirement's sentence shows the [requirement card](./lsp.md#capabilities):
   the requirement, the code, and the test, each linked, with the trace status. The
   card's links stay inside the app.
@@ -1569,14 +1572,11 @@ both.
   or a board window as it does in the center.
 - The navigator is one column in both: Documents, Outline (following the cursor),
   Product (`Overview`, the file tree, `Trace`, `Tests`), Diagrams and Generated
-  (collapsed). There is no Model head; entities and requirements open from mentions,
-  markers, the Connections panel, diagram boxes, and search.
-- Connections replaces the [inspector](#inspector): a panel docked under the center,
-  showing the node last clicked (a mention, a marker, a diagram box, a search result)
-  compactly: an entity as its connections picture, where a click on a neighbour shows
-  the links and requirements between the two. `Open` opens the node as a tab or a
-  window. The panel collapses to a strip and never takes width from the text; on a
-  narrow screen it is a bottom sheet.
+  (collapsed). There is no Model head; entities and requirements open from mentions
+  (Cmd-click), markers, diagram boxes, and search.
+- There is no [inspector](#inspector) and no side panel. A node opened from a page
+  (a mention, a marker, a diagram box, a search result) opens as its own item: a tab
+  in Tabs, a window on the Board, where the board itself draws its connections.
 - Tabs: editor groups with tabs, split right or down from a tab's menu or by dragging
   a tab to an edge. A single click in the navigator opens a preview tab (italic
   title) that the next single click replaces; a double click, an edit, or a pin keeps
@@ -1586,39 +1586,69 @@ both.
   tabs and splits are remembered per project. A hidden tab keeps its page only while
   it is among the eight most recently shown. On a narrow screen one tab shows at a
   time with a tab switcher that lays the open items out as a grid.
-- Board: a table top, white with light dots (dark with dim dots on the dark theme),
-  that pans with the wheel, a drag, or Space and a drag, and zooms with a pinch or
-  Ctrl and the wheel. Every open item is a window with a title bar to drag, a resize
-  corner, and a close; a press in a window focuses its item. The graph layer (on by
-  default, the `Graph` toggle) draws the entities the windows bring as chips in a
-  column beside them, at most twelve per window:
+
+### The Board
+
+- A table top, white with light dots (dark with dim dots on the dark theme), that
+  pans with the wheel, a drag, or Space and a drag, and zooms with a pinch or Ctrl
+  and the wheel. Every open item is a window with a title bar to drag, a resize
+  corner, and a close; a press in a window focuses its item without moving the board.
+- A page window (a document, a product page, a requirement, a diagram) opens at 80
+  percent of the board's width and height at 100 percent zoom. An entity window is a
+  card, not a page: its name, kind, parent, definition, attributes, and counts, with
+  its connections drawn on the board around it.
+- Focus: opening or showing an item from outside its window (the navigator, a
+  Cmd-click on a mention, a link, a portal, search) moves the view so its window
+  fills 80 percent of the board, centered, never above 100 percent zoom for a page
+  or 150 percent for an entity card. The remaining margin is where its links show
+  (below). The view stays free: a pan or a zoom moves away from the focus, and a
+  double click on a title bar returns to it.
+- The graph layer (on by default, the `Graph` toggle) draws the entities the
+  windows bring as chips in a column beside them, at most twelve per window, each
+  linked to its window:
   - a document: the entities it defines (an entity is defined in the document of its
-    quote, else of its first mention) and then the ones it mentions most;
+    quote, else of its first mention; a dashed link) and then the ones it mentions
+    most (a dotted link);
   - an entity: its neighbours; a requirement: its entities; a diagram: its members.
 - An open entity window stands for its entity in place of a chip. The relationships
-  between the entities shown are edges with their verbs, one per direction with the
-  strongest type; a document window links to the entities it defines with a dashed
-  edge. A click on a chip selects it for Connections; a double click opens its entity
-  beside it. Opening from inside a window (a link, or a mention, which also selects
-  its entity) places the new window beside it with an edge and pans to it. Windows
-  stay where they are dragged and resized, remembered per project with the moved
-  chips and the view; `Arrange` lays the windows and the chips out in layers, left to
-  right by the graph. A toolbar holds `Arrange`, `Fit`, `Graph`, and the zoom; a
-  minimap sits in a corner.
-- The board draws by zoom: near 100 percent the windows are live pages (at most six
-  live at once, the ones nearest the view's center among those in view); from 40 to
-  80 percent stills (the page as it was last drawn live, else its Read form) a click
-  zooms to; from 15 to 40 percent cards with a title, a kind, a few lines, and a
-  status, the chips grown so their names read; under 15 percent groups with counts,
-  the edges between groups lifted the way [diagrams](../compiler/diagrams.md) lift
-  them:
-  - documents by folder;
-  - entities by the component holding them: the ancestor directly under a root, a
-    leaf directly under a root with the root, a root alone under `Other entities`;
-  - other pages by kind.
-- The groups sit in a grid in the order their members sit on the board, so no two
-  overlap. A double click zooms to a window or a group, and a click on a group zooms
-  to it too. `Escape` zooms out one level, `Z` fits everything.
+  between the entities shown are links, one per direction with the strongest type.
+  A window opened from inside another (a link, a Cmd-click on a mention) is placed
+  beside it with a link back to it. A click on a chip selects it; a double click
+  opens its entity beside it.
+- Every link is a straight line between two borders. Where a link leaves the view,
+  a portal sits on it at the view's edge: the node at the far end, by glyph and
+  name, with an arrow pointing the way the link goes; a click on the portal focuses
+  that node. The name shows only while its node is out of view:
+  - both ends in view: no portal;
+  - one end out of view: one portal, on the link where it meets the view's edge;
+  - both ends out of view with the link crossing the view: a portal at each side;
+  - the link wholly out of view (or hidden under a window): nothing.
+- The linkage rides on the visible part of every link, centered between its
+  portals: the relationship's verb (or `defines`, `mentions`, `opened from`) and the
+  count of requirements behind the link, collapsed. A click expands the
+  requirements' statements, each opening its requirement beside the link:
+  - between two entities, the requirements of the relationship's contributions in
+    both directions;
+  - between a document and an entity, the requirements quoted from that document
+    that name the entity;
+  - between a requirement and an entity, the requirement itself.
+- The caret in a document window resting on a mention highlights that entity's chip
+  or window and the link between them, when there is one.
+- Windows stay where they are dragged and resized, remembered per project with the
+  moved chips and the view; `Arrange` lays the windows and the chips out in layers,
+  left to right by the graph. A toolbar holds `Arrange`, `Fit`, `Graph`, and the
+  zoom; a minimap sits in a corner.
+- The board draws by zoom, every window where it is at every level:
+  - near 100 percent the windows are live pages (at most six live at once, the ones
+    nearest the view's center among those in view);
+  - from 40 to 80 percent stills (the page as it was last drawn live, else its Read
+    form) a click zooms to;
+  - from 15 to 40 percent cards: a title, a kind, a few lines, and a status, the
+    chips grown so their names read;
+  - under 15 percent titles: each window only its title, sized to read on screen,
+    the chips as dots, the links and portals kept, the linkage hidden.
+- A double click on a title bar focuses its window. `Escape` zooms out one level,
+  `Z` fits everything.
 - Tabs and Board are one set of open items: switching keeps them, and closing a
   window closes its tab.
 

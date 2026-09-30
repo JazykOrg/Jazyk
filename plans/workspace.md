@@ -62,21 +62,13 @@ One column, the same in both arrangements:
 - Generated: the generated pages, collapsed by default.
 
 There is no Model head. Entities and requirements are reached from where they matter:
-a mention in the text, a marker in the margin, the Connections panel, a diagram box,
-search. The pages they open are the same entity and requirement pages as today.
+a mention in the text (Cmd-click), a marker in the margin, a diagram box, search. The pages they open are the same entity and requirement pages as today.
 
-## Connections replaces the inspector
+## No inspector, no Connections panel
 
-The inspector column goes. What it showed is the Connections panel, docked at the
-bottom of the center like VS Code's panel, following the selection:
-
-- The cursor on a mention, or a click on a mention, a margin marker, a diagram box,
-  a search result: the panel shows that node's page compactly. For an entity it is the
-  connections picture; clicking a neighbour shows the links and requirements between
-  the two, as today; `Open` opens the node as a tab (or a window on the board).
-- The panel keeps its height and its open state per browser; it collapses to a
-  strip. It never takes width from the text.
-- On a phone it is a bottom sheet over the editor, dismissed by a swipe.
+The inspector column goes. A Connections panel docked under the center was built and
+then dropped on the owner's review: the board draws an entity's connections better
+than a panel can. A node opened from a page opens as its own item (a tab, a window).
 
 ## Tabs
 
@@ -101,7 +93,7 @@ A table top, white with light dots, that pans and zooms without end.
   as edges with their verb; a document window links to the chips of the entities it
   defines; a requirement links to the product file that implements it when both are
   on the board.
-- Opening from inside a window (a mention, a link, a neighbour in Connections) places
+- Opening from inside a window (a mention, a link) places
   the new window beside the one it came from, with an edge between them, and pans to
   it. Nothing opens on top of the text a person was reading.
 - The layout is the person's: windows stay where they are dragged, remembered per
@@ -118,12 +110,12 @@ The board changes what it draws as it zooms, so every level stays readable:
 | near 100% | live pages, editable | chips and edges beside them |
 | 40 to 80% | still renderings of the pages; a click zooms to the window | same |
 | 15 to 40% | cards: title, kind, a few lines, status | chips named, edges with verbs |
-| under 15% | groups: documents by folder, entities by the component that holds them, each a labeled region with counts | edges between groups, lifted like the diagrams lift them |
+| under 15% | titles only, every window where it is | chips as dots, links and portals |
 
-- Double click a window or a group: zoom to it. `Escape`: zoom out one level. `Z`:
-  fit everything. Pinch or Ctrl and the wheel zoom; Space and a drag pan.
-- The overview is the macOS gesture: every window and every group at once, and a
-  click on one zooms into it.
+- Double click a window: focus it. `Escape`: zoom out one level. `Z`: fit
+  everything. Pinch or Ctrl and the wheel zoom; Space and a drag pan.
+- The overview keeps every window where it is. A first build regrouped them by folder
+  and component at the farthest zoom; the owner found the rearranging disorienting.
 
 ### Cost
 
@@ -151,20 +143,35 @@ menu while the toggle is on.
    a tab or a window can show any page.
 2. Tabs behind the switch: the unified navigator, editor groups with tabs and splits
    (the `dockview` library), preview tabs, the address bar synced, tabs restored,
-   the Connections panel in the inspector's place, the phone's bottom sheet and tab
-   switcher.
+   the phone's tab switcher.
 3. Board behind the switch: the table top (the `@xyflow/react` library: pan, zoom,
    dotted background, minimap, edges), windows over `AppRoutes`, the graph layer, the
-   zoom levels, groups from the component tree, the remembered layout, `Arrange`.
+   zoom levels, the remembered layout, `Arrange`.
 4. The zoom bridge between the two.
 5. The owner tries both, picks the default, and the lenses and the Model pages as a
    destination go.
 
+## Focus and portals (the owner's second pass)
+
+The owner's review of the first Board build, 2026-09-30:
+
+- A focused window fills 80 percent of the view. The 20 percent margin is where its
+  neighbours show: every link leaving the view carries a portal at the view's edge
+  naming the node at the far end, with an arrow toward it and a click that focuses
+  it. A link with both ends in view has no portal; a link crossing the view with both
+  ends out of it has one at each side; a link wholly out of view has none.
+- The linkage (the verb and the requirements behind the link, collapsed) rides
+  centered on the visible part of the link, between its portals.
+- An entity is not a page on the board: its window is a compact card, and its
+  connections are the board's links.
+- A plain click on a mention places the cursor; Cmd-click opens the entity. The
+  caret on a mention highlights the link to it.
+- The farthest zoom keeps every window in place and draws only titles.
+
+gui.md#the-board states the rules as built.
+
 ## Open questions for the owner
 
-- Does the Connections panel follow the cursor (it changes as the caret moves over
-  mentions) or only a click? Recommended: a click, with the cursor's entity shown as
-  a hint in the panel's title, so reading is never interrupted.
 - Is the board a workspace of its own, remembered apart from the tabs, or always the
   tabs zoomed out? Recommended: one set of items, two arrangements, so nothing is
   open in one and missing in the other.

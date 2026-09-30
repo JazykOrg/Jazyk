@@ -168,6 +168,12 @@ The owner's review of the first Board build, 2026-09-30:
   caret on a mention highlights the link to it.
 - The farthest zoom keeps every window in place and draws only titles.
 
+A third pass, the same day: the board drew every entity the open windows brought as a
+chip, which was too many to read. Now only open items stay on the board; the focused
+window fans its unopened entities out below it, transient, a few at a time (the
+caret's most recent first), and a click opens one for good. One linkage expands at a
+time, and a lone portal carries its link's count instead of a separate linkage.
+
 gui.md#the-board states the rules as built.
 
 ## Open questions for the owner

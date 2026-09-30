@@ -1597,32 +1597,44 @@ both.
   percent of the board's width and height at 100 percent zoom. An entity window is a
   card, not a page: its name, kind, parent, definition, attributes, and counts, with
   its connections drawn on the board around it.
+- Only open items are on the board. The links between open windows stay drawn while
+  both are open; nothing else is placed on the board by itself.
 - Focus: opening or showing an item from outside its window (the navigator, a
   Cmd-click on a mention, a link, a portal, search) moves the view so its window
   fills 80 percent of the board, centered, never above 100 percent zoom for a page
   or 125 percent for an entity card. The remaining margin is where its links show
   (below). The view stays free: a pan or a zoom moves away from the focus, and a
   double click on a title bar returns to it.
-- The graph layer (on by default, the `Graph` toggle) draws the entities the
-  windows bring as chips in a column beside them, at most twelve per window, each
-  linked to its window:
+- The fan: the focused window shows the entities it brings that are not open yet,
+  transient, below it. Lines leave the window's bottom center and fan down to a row
+  of chips, the first straight down, the next to either side. The fan is gone when
+  another window takes the focus. A click on a chip opens its entity as a window
+  beside the focused one, which keeps the focus, and from then on the entity stays
+  on the board until it is closed. What a window brings:
   - a document: the entities it defines (an entity is defined in the document of its
-    quote, else of its first mention; a dashed link) and then the ones it mentions
-    most (a dotted link);
+    quote, else of its first mention) and the ones it mentions;
   - an entity: its neighbours; a requirement: its entities; a diagram: its members.
-- An open entity window stands for its entity in place of a chip. The relationships
-  between the entities shown are links, one per pair with the strongest type's verb
-  and an arrowhead for each direction the pair's contributions run.
-  A window opened from inside another (a link, a Cmd-click on a mention) is placed
-  beside it with a link back to it. A click on a chip selects it; a double click
-  opens its entity beside it.
+- The row holds as many chips as fit under the window, in this order: the entity
+  under the caret, then the ones the caret rested on most recently, then the defined
+  ones, then the most mentioned. A last `+N` chip lists the rest; a click on one
+  opens it the same way. Without room below the window (its bottom edge out of
+  view), the row sits along the view's bottom edge without lines. The `Graph`
+  toggle hides the fan.
+- The links between open windows: the relationships between open entities, one per
+  pair with the strongest type's verb and an arrowhead for each direction the pair's
+  contributions run; a document to an open entity it defines (dashed) or mentions
+  (dotted); a requirement or a diagram to its open entities; a window to one opened
+  from inside it. A window opened from inside another (a link, a Cmd-click on a
+  mention, a chip in the fan) is placed beside it.
 - Every link is a straight line between two borders. Where a link leaves the view,
   a portal sits on it at the view's edge: the node at the far end, by glyph and
   name, with an arrow pointing the way the link goes; a click on the portal focuses
   that node. The name shows only while its node is out of view:
-  - both ends in view: no portal;
-  - one end out of view: one portal, on the link where it meets the view's edge;
-  - both ends out of view with the link crossing the view: a portal at each side;
+  - both ends in view: no portal, the linkage alone at the link's middle;
+  - one end out of view: one portal where the link meets the view's edge, the
+    linkage folded into it (its count beside the name);
+  - both ends out of view with the link crossing the view: a portal at each side and
+    the linkage between them;
   - the link wholly out of view: nothing.
 - A stretch of a link under another window is hidden, as the line is: a portal shows
   only where the stretch reaching the view's edge is uncovered, and a link with no
@@ -1632,28 +1644,29 @@ both.
 - The linkage rides on the longest uncovered stretch of every link, centered between
   its portals: the relationship's verb (or `defines`, `mentions`, `names`,
   `opened from`) and the count of requirements behind the link, collapsed. A click
-  expands the requirements' statements, each opening its requirement beside the
-  link:
+  on the count expands the requirements' statements, each opening its requirement
+  beside the link; one linkage is expanded at a time, so expanding one folds the
+  one before:
   - between two entities, the requirements of the relationship's contributions in
     both directions;
   - between a document and an entity, the requirements quoted from that document
     that name the entity;
   - between a requirement and an entity, the requirement itself.
-- The caret in a document window resting on a mention highlights that entity's chip
-  or window and the link between them, when there is one.
+- The caret in a document window resting on a mention highlights that entity: its
+  window and the link to it when it is open, else its chip in the fan, which it
+  brings to the front of the row.
 - Windows stay where they are dragged and resized, remembered per project with the
-  moved chips and the view; `Arrange` lays the windows and the chips out in layers,
-  left to right by the graph. A toolbar holds `Arrange`, `Fit`, `Graph`, and the
+  view; `Arrange` lays the windows out in layers, left to right by the links between
+  them. A toolbar holds `Arrange`, `Fit`, `Graph`, and the
   zoom; a minimap sits in a corner.
 - The board draws by zoom, every window where it is at every level:
   - near 100 percent the windows are live pages (at most six live at once, the ones
     nearest the view's center among those in view);
   - from 40 to 80 percent stills (the page as it was last drawn live, else its Read
     form) a click zooms to;
-  - from 15 to 40 percent cards: a title, a kind, a few lines, and a status, the
-    chips grown so their names read;
+  - from 15 to 40 percent cards: a title, a kind, a few lines, and a status;
   - under 15 percent titles: each window only its title, sized to read on screen,
-    the chips as dots, the links and portals kept, the linkage hidden.
+    the links and portals kept, the linkage and the fan hidden.
 - A double click on a title bar focuses its window. `Escape` zooms out one level,
   `Z` fits everything.
 - Tabs and Board are one set of open items: switching keeps them, and closing a

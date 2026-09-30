@@ -312,6 +312,20 @@ Deliverable:
   [incremental regeneration](../consumers/gen.md#incremental-regeneration)). `404`
   when generation never rewrote the file. Reads are confined to the baseline
   directory.
+- `GET /api/deliverable/raw?path=`: one product file as its bytes, with the content
+  type its extension names (the out directory's types below, plus `image/jpeg`,
+  `image/gif`, `image/webp`, `application/pdf`, and the Office types for `.pptx`,
+  `.docx`, and `.xlsx`). This is what the [overview](#overview) renders a built
+  artifact from and what its `Download` saves. The same confinement as the file read.
+  A download link carries no bearer header, so the `token` query parameter authorizes
+  it.
+- `GET /api/product/overview`: what the [overview](#overview) shows. `kind` is
+  `written`, `built`, `program`, or `none`; the reply carries the recorded `medium`
+  and `build`, the test run `commands` (the first three distinct, `moreCommands`
+  counting the rest), and per kind: `parts` (each prose file's path and text, in
+  reading order, with `order` saying `index` or `names`), `artifacts` (each path with
+  whether it `exists`, its `size`, and its content type), or `readme` (its path, the
+  tree it came from, `deliverable` or `docs`, and its text).
 
 The out directory:
 
@@ -968,8 +982,9 @@ served live from `GET /api/entities/{id}/card` and `GET /api/views/{id}/page`:
 
 ### Product
 
-The navigator has six sections:
+The navigator has seven sections:
 
+- Overview, first: the product as it stands ([overview](#overview)).
 - Files: the product tree, each file with its ownership badge (the entities and
   requirements the [ledger](../consumers/gen.md#the-ledger) binds to it) and a stale
   dot after a generate run changed it.
@@ -980,6 +995,56 @@ The navigator has six sections:
 - Generated docs: the pages [docsgen](../consumers/docsgen.md) writes, rendered.
 - Product form: the recorded [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated): form,
   toolchain, build command, last run, and the medium warning when one stands.
+
+#### Overview
+
+The lens opens on the product itself, served by `GET /api/product/overview`. What it
+shows follows what the product is:
+
+- A written product reads as one document: the novel's manuscript, the organization's
+  handbook. A product is written when its
+  [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+  says `produced: written` (or no medium is recorded) and more than half of its files,
+  tests aside, are prose (`.md`, `.markdown`, `.txt`). Its parts are those prose files,
+  in reading order:
+  - An index at the deliverable's root (`README.md` or `index.md`) comes first, then
+    the files it links to in the order it links them, then the rest by file name.
+  - Without an index, the order is the file names, a number in a name compared as a
+    number (`2-the-lease.md` before `10-the-dawn.md`).
+  - Each part renders the way Read renders a document in the [editor](#editor), its
+    links and images resolved against its own path.
+  - `Print / Save as PDF` prints the assembled document alone: the browser's print,
+    with a print stylesheet that leaves out the workspace around it. The browser's
+    `Save as PDF` destination makes the PDF.
+- A built product (`produced: built`) shows what its
+  [build](../consumers/gen.md#the-build) produces: each path in `produces`, or the
+  medium's `artifact` when no build is recorded, with its size and a `Download`
+  action. The bytes come from `GET /api/deliverable/raw`.
+  - A `.pptx` renders in the page as its slides. The PowerPoint renderer loads only
+    when a deck is shown, so the page's first script does not grow.
+  - An image (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`) shows inline. A `.pdf`
+    shows in the browser's own PDF viewer.
+  - Anything else is a download with its size.
+  - An artifact the deliverable does not hold says so and names the build command
+    that makes it.
+- A program is any other product, e.g. a written medium whose files are mostly source
+  code (the sort utility, the ERP). It shows:
+  - Its README, rendered: the file named `README` at the deliverable's root (any
+    case, with or without `.md`, `.markdown`, or `.txt`). Without one, the project's
+    root document stands in (the first `[roots]` file, else the first document), since
+    the documents are what the program is made from. The page says which it shows.
+  - How to run it: the medium's form and toolchain, the build command when one is
+    recorded, and the recorded test run commands (the first three distinct ones and a
+    count of the rest).
+  - The test summary: the [trace matrix](#trace-matrix)'s counts by status, with a
+    link to the matrix.
+- A project whose deliverable holds no file has no product yet. The overview says so
+  and offers the Generate action (the To generate page).
+
+Tests aside means a test artifact the [ledger](../consumers/gen.md#the-ledger)
+records, and any file under a `test`, `tests`, or `criteria` directory. Below the
+product, the overview keeps the product's numbers: files, described, not described,
+sections read, and the test summary.
 
 #### Product file viewer
 

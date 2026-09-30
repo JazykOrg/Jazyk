@@ -271,6 +271,13 @@ lens shows in a tab what it shows on a machine:
   [sites](../consumers/gen.md#traceability), the code lenses of the product file
   viewer. `GET /api/deliverable/baseline` answers the file as it stood before the
   last generation, when the project carries that snapshot.
+- `GET /api/product/overview`: the product as the [overview](./gui.md#overview)
+  shows it, a written product's parts in reading order, a built product's artifacts,
+  or a program's README and run commands.
+- `GET /api/deliverable/raw`: one product file's bytes, a built artifact the overview
+  renders or downloads. The tab's envelope carries JSON, so the body is
+  `{ "path", "size", "contentType", "base64" }`, the bytes base64-encoded, and the
+  page decodes it into the same bytes the server sends.
 - `GET /api/verify/matrix`: the trace matrix, every requirement with its
   [derived status](../consumers/gen.md#status-is-derived-never-stored), and the Tests
   page built from it. The status is derived from the ledger and the files in the
@@ -655,12 +662,26 @@ its product folder when it has one, and its whole `.jazyk` as last built (the
 shards, the journal, the coverage, the rendered diagrams, the ledger), packed by
 `app/scripts/pack-demo.mjs` into one JSON per example under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
 for replays, leases, worker registrations, sockets, dotfiles (`.jazyk` itself is the
-one dotfolder carried, since it is the out directory), `__pycache__`, an
-archived out directory, and any file that is not UTF-8 text (a built deck, a compiled
-module) are left out: a stale worker registration would be reaped on the first
-read, and that removal would count as an edit, and a binary file would only arrive
-as replacement characters. A packed file unpacks byte for byte (a byte order mark
-stays). The fixtures are committed, since the
+one dotfolder carried, since it is the out directory), `__pycache__`,
+`node_modules`, `.git`, and an archived out directory are left out: a stale worker
+registration would be reaped on the first read, and that removal would count as an
+edit. A skipped directory stays out whatever it holds, so a compiled module under
+`__pycache__` never reaches a fixture.
+
+A fixture maps each file's path to its content. A UTF-8 text file is a JSON string.
+Any other file (a built deck, an image) is an object holding its bytes in standard
+base64, so a built artifact reaches the tab:
+
+```json
+{
+  "docs/README.md": "# The deck\n",
+  "deliverable/dist/jazyk-slides.pptx": { "base64": "UEsDBBQAAAAIA..." }
+}
+```
+
+The page decodes a `{ "base64" }` value into the file's bytes as it seeds the tab's
+tree, and a text value into its UTF-8 bytes. A packed file unpacks byte for byte,
+text and binary alike (a byte order mark stays). The fixtures are committed, since the
 examples' out directories are not, and `npm run pack-demos` repacks all of them
 after an example is rebuilt. The page fetches a fixture when its demo is picked
 rather than carrying them all.
@@ -749,8 +770,10 @@ a build in a tab shows its progress on the action button and opens its build thr
 in the chat, the chat's prompt box takes a first question with no conversation
 open, the action list offers only what the backend runs, the project menu says
 where changes go and downloads the project, the page loads and opens a demo it has
-seen with the network off, and the connect route reaches a mocked local server and
-lists it in Recent. The deploy workflow runs them after the build and
+seen with the network off, the connect route reaches a mocked local server and
+lists it in Recent, and the Product overview reads the novel as one document with
+its print action, renders the deck's slides from its `.pptx` and downloads the file
+whole, and shows the sort utility's README and test summary. The deploy workflow runs them after the build and
 publishes only when they pass.
 
 - `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
@@ -758,15 +781,16 @@ publishes only when they pass.
   the recent list, the coalescing store writer, the folder mirror, the model
   sources, and the presentation words. The same run covers the demo fixture scripts
   under `app/scripts/` (one `<script>.test.mjs` beside each, in node): `pack-demo.mjs`
-  and `unpack-demo.mjs` round-trip a project tree, minus the skipped entries and the
-  binary files, byte for byte; `ledger-count.py` counts a ledger with a quoted
+  and `unpack-demo.mjs` round-trip a project tree minus the skipped entries, its
+  text and binary files byte for byte; `ledger-count.py` counts a ledger with a quoted
   verdict, a criterion's verdict beside its row's, a verdict line inside a block
   scalar `evidence`, a failing row, and an unverified row. They need no build and no
   browser, so CI runs them on every change to `bootstrap/`.
 
 The page's first script carries the app alone. What only some visits use loads when
-it is first used: the model's code when the model loads, and the graph layout
-library when the Developer [map](./gui.md#map) opens.
+it is first used: the model's code when the model loads, the graph layout
+library when the Developer [map](./gui.md#map) opens, and the PowerPoint renderer
+when the Product [overview](./gui.md#overview) shows a deck.
 
 The wasm target lives in the rustup toolchain. A `cargo` earlier on `PATH` from
 another installation (a Homebrew rustc has no wasm std) is the usual failure;
@@ -796,7 +820,9 @@ The page is installable and works without a network once it has loaded once:
 
 - A service worker (Workbox through `vite-plugin-pwa`) precaches the app shell:
   `index.html`, the scripts and styles, the wasm module and its bindings, the
-  fonts, the icons, and the web manifest. It serves them cache-first, and updates
+  fonts, the icons, and the web manifest, the scripts loaded on first use included
+  (the PowerPoint renderer, the graph layout library), so a deck renders offline.
+  The model's code is the one script left out. It serves them cache-first, and updates
   the cache in the background when a new build is deployed; the next load runs the
   new version.
 - A demo's fixture (`demos/<id>.json`) is cached when it is first fetched and

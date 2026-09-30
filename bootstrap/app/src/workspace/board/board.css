@@ -1,0 +1,380 @@
+/* The Board arrangement (docs/frontends/gui.md#workspace-experimental): a white
+   table top with light dots, windows, chips, and groups over it. */
+.board {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.board .react-flow {
+  --xy-background-color: #ffffff;
+  --xy-background-pattern-color: #d3d9d6;
+  --xy-edge-stroke: #8d9894;
+  --xy-minimap-background-color: #ffffff;
+  --board-window: var(--panel);
+  --board-shadow: 0 1px 2px rgba(20, 30, 25, 0.08), 0 8px 24px rgba(20, 30, 25, 0.1);
+  --board-chip: #eef6f4;
+  --board-region: rgba(14, 122, 109, 0.05);
+}
+
+.board .react-flow.dark {
+  --xy-background-color: #121614;
+  --xy-background-pattern-color: #2f3834;
+  --xy-edge-stroke: #6d7874;
+  --xy-minimap-background-color: #181e1b;
+  --board-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
+  --board-chip: #1d2a27;
+  --board-region: rgba(53, 179, 162, 0.07);
+}
+
+.board-handle {
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+}
+
+/* A window */
+.bw {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--board-window);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--board-shadow);
+  overflow: hidden;
+}
+
+.bw.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--board-shadow);
+}
+
+.bw-title {
+  flex: none;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  cursor: grab;
+  user-select: none;
+  font-size: 13px;
+}
+
+.bw-title:active {
+  cursor: grabbing;
+}
+
+.bw-glyph {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.bw-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.bw-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.bw-close:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.bw-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.bw-live,
+.item-nav {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bw-still {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  cursor: zoom-in;
+}
+
+.bw.lv-still .bw-body,
+.bw.lv-live:not(.is-live) .bw-body {
+  cursor: zoom-in;
+}
+
+.bw-still > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.bw-read {
+  overflow: hidden;
+  padding: 18px 28px;
+}
+
+.bw-empty {
+  color: var(--muted);
+  padding: 18px;
+}
+
+.bw-resize.react-flow__resize-control.handle {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 60%, transparent 60%, transparent 72%, var(--muted) 72%, var(--muted) 82%, transparent 82%);
+  transform: translate(-100%, -100%);
+  opacity: 0.7;
+}
+
+/* The cards level: every window a card whose words read at a quarter of the size. */
+.bw.lv-card {
+  cursor: grab;
+}
+
+.bw-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 36px 44px;
+  overflow: hidden;
+}
+
+.bw-card-kind {
+  font-size: 34px;
+  color: var(--accent);
+}
+
+.bw-card-title {
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.bw-card-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  font-size: 30px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.bw-card-lines p {
+  margin: 0 0 10px;
+}
+
+.bw-card-status {
+  font-size: 30px;
+  font-weight: 600;
+}
+
+/* A chip */
+.bc {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0 0.8em;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  background: var(--board-chip);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bc.sel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.bc-glyph {
+  color: var(--accent);
+  font-size: 0.8em;
+}
+
+.bc-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bc-kind {
+  color: var(--muted);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A group on the overview */
+.bg {
+  width: 100%;
+  height: 100%;
+  border: 2px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 24px;
+  background: var(--board-region);
+  cursor: zoom-in;
+}
+
+.bg-folder {
+  border-color: color-mix(in srgb, var(--info) 50%, transparent);
+  background: color-mix(in srgb, var(--info) 6%, transparent);
+}
+
+.bg-kind {
+  border-color: color-mix(in srgb, var(--muted) 50%, transparent);
+  background: color-mix(in srgb, var(--muted) 5%, transparent);
+}
+
+.bg-label {
+  display: inline-flex;
+  flex-direction: column;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.bg-counts {
+  color: var(--muted);
+  font-size: 0.8em;
+}
+
+/* Edges */
+.board .be-def,
+.board .be-ref {
+  stroke-dasharray: 6 5;
+}
+
+.board .be-from {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.board .be-rel {
+  stroke: color-mix(in srgb, var(--accent) 70%, var(--xy-edge-stroke));
+  stroke-width: 1.5;
+}
+
+.board .be-lift {
+  stroke: var(--accent);
+  opacity: 0.8;
+}
+
+.be-label {
+  position: absolute;
+  pointer-events: none;
+  background: var(--xy-background-color);
+  color: var(--muted);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.be-label-lift {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The toolbar and the minimap */
+.board-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--board-shadow);
+  font-size: 13px;
+}
+
+.board-tools button {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.board-tools button.on {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  border-color: var(--accent);
+}
+
+.board-zoom {
+  color: var(--muted);
+  padding: 0 8px;
+  min-width: 96px;
+}
+
+.board-minimap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.board-minimap .mm-window {
+  fill: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+
+.board-minimap .mm-chip {
+  fill: var(--accent);
+}
+
+.board-minimap .mm-group {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.board-empty {
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-top: 60px;
+}
+

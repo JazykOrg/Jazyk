@@ -1580,8 +1580,12 @@ both.
 - Tabs: editor groups with tabs, split right or down from a tab's menu or by dragging
   a tab to an edge. A single click in the navigator opens a preview tab (italic
   title) that the next single click replaces; a double click, an edit, or a pin keeps
-  it. The address bar is the focused tab's path. The tabs and splits are remembered
-  per project. On a narrow screen one tab shows at a time with a tab switcher.
+  it. An item is open once, so a tab alone in its group does not split. The address
+  bar is the focused tab's path, and a navigation anywhere (a link in a page, the
+  navigator, search, back and forward) opens or focuses the item for its path. The
+  tabs and splits are remembered per project. A hidden tab keeps its page only while
+  it is among the eight most recently shown. On a narrow screen one tab shows at a
+  time with a tab switcher that lays the open items out as a grid.
 - Board: a table top, white with light dots, that pans and zooms. Every open item is
   a window with a title bar to drag, a resize corner, and a close. The graph layer
   (on by default) draws the entities the windows mention or define as chips beside

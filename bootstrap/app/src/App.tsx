@@ -20,6 +20,8 @@ import { useNarrow } from './lib/narrow'
 // (docs/frontends/wasm.md#building).
 import Inspector from './workbench/Inspector'
 import ChatPane from './chat/ChatPane'
+import Workspace from './workspace/Workspace'
+import { useWorkspace } from './workspace/items'
 import './workbench/workbench.css'
 import './shell/shell.css'
 
@@ -83,9 +85,17 @@ export default function App() {
   useEffect(() => setNavOpen(false), [loc.pathname, loc.search])
   // The panes need a project; until one is open every route but Home goes home.
   const panes = !home && open === true
+  // The workspace switch (docs/frontends/gui.md#workspace-experimental): Tabs or Board
+  // replace the lenses, the navigator, and the inspector once a project is open.
+  const arrangement = useWorkspace((w) => w.arrangement)
+  const workspace = panes && !reopening && arrangement !== 'lenses'
 
   return (
     <div className={`ws${navOpen ? ' nav-open' : ''}`}>
+      {workspace ? (
+        <Workspace openPalette={() => setPalette((n) => n + 1)} />
+      ) : (
+      <>
       <TopBar openPalette={() => setPalette((n) => n + 1)} open={open === true} toggleNav={() => setNavOpen((v) => !v)} />
       <div className="ws-body">
         {panes && <Navigator />}
@@ -105,6 +115,8 @@ export default function App() {
         </div>
         {panes && !narrow && <ChatPane />}
       </div>
+      </>
+      )}
       <StatusBar />
       {open === true && <CommandPalette openSignal={palette} />}
       <CommitNote />

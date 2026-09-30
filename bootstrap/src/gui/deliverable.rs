@@ -3,8 +3,13 @@
 // docs/frontends/gui.md#api (deliverable).
 use super::api::refused;
 use super::state::SharedState;
-use crate::webapi::deliverable::{deliverable_baseline, deliverable_file, deliverable_value};
+use crate::webapi::deliverable::{
+    deliverable_baseline, deliverable_file, deliverable_raw, deliverable_value,
+};
+use crate::webapi::outfiles::content_type;
+use crate::webapi::overview::overview_value;
 use axum::extract::{Query, State};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::Deserialize;
 
@@ -41,4 +46,35 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
         Ok(v) => Json(v).into_response(),
         Err(r) => refused(r),
     }
+}
+
+// One product file as bytes with its content type: a built artifact the overview
+// renders or downloads (docs/frontends/gui.md#api, deliverable).
+pub async fn raw(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Response {
+    let gs = st.gs();
+    let path = p.path.clone();
+    let result = tokio::task::spawn_blocking(move || deliverable_raw(&gs, &path))
+        .await
+        .expect("deliverable raw read");
+    match result {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, content_type(&p.path)),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(r) => refused(r),
+    }
+}
+
+// The Product lens's overview (docs/frontends/gui.md#overview).
+pub async fn overview(State(st): State<SharedState>) -> Json<serde_json::Value> {
+    let (proj, gs) = (st.proj(), st.gs());
+    let v = tokio::task::spawn_blocking(move || overview_value(&proj, &gs))
+        .await
+        .expect("product overview");
+    Json(v)
 }

@@ -24,6 +24,13 @@ pub fn content_type(rel: &str) -> &'static str {
     match ext.as_str() {
         "svg" => "image/svg+xml",
         "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "md" => "text/markdown; charset=utf-8",
         "puml" | "yaml" | "yml" | "txt" | "json" | "jsonl" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
@@ -161,6 +168,12 @@ mod tests {
         assert_eq!(content_type("diagrams/class/a.puml"), "text/plain; charset=utf-8");
         assert_eq!(content_type("status.yaml"), "text/plain; charset=utf-8");
         assert_eq!(content_type("graph/blob"), "application/octet-stream");
+        assert_eq!(
+            content_type("dist/deck.pptx"),
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        );
+        assert_eq!(content_type("dist/book.pdf"), "application/pdf");
+        assert_eq!(content_type("cover.JPG"), "image/jpeg");
     }
 
     // The listing walks one directory recursively, skips hidden entries, and lists

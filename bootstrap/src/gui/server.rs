@@ -153,6 +153,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
+        .route("/deliverable/raw", get(deliverable::raw))
+        .route("/product/overview", get(deliverable::overview))
         .route("/out/file", get(outfiles::file))
         .route("/out/list", get(outfiles::list))
         .route("/trace", get(jobs::list_traces))
@@ -331,5 +333,41 @@ mod tests {
             let r = send(st.clone(), Request::builder().uri(path).body(Body::empty()).unwrap()).await;
             assert_eq!(r.status(), StatusCode::NOT_FOUND, "{}", path);
         }
+    }
+
+    // A built artifact is served as its bytes with its content type, a download link
+    // authorized by the token in the query (docs/frontends/gui.md#api, deliverable).
+    #[tokio::test]
+    async fn a_product_file_is_served_raw_with_its_content_type() {
+        let st = state(Some("secret"), "https://raw.test");
+        let deck = st.gs().deliverable.join("dist/deck.pptx");
+        std::fs::create_dir_all(deck.parent().unwrap()).unwrap();
+        let bytes: Vec<u8> = (0..=255u8).chain([0x50, 0x4b]).collect();
+        std::fs::write(&deck, &bytes).unwrap();
+        let r = send(
+            st.clone(),
+            get_from("/api/deliverable/raw?path=dist/deck.pptx&token=secret", "https://raw.test"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            hdr(&r, "content-type"),
+            Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        );
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), bytes.as_slice());
+        let r = send(
+            st.clone(),
+            get_from("/api/deliverable/raw?path=../x&token=secret", "https://raw.test"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let r = send(
+            st.clone(),
+            get_from("/api/product/overview?token=secret", "https://raw.test"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        std::fs::remove_dir_all(&st.root).ok();
     }
 }

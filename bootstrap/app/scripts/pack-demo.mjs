@@ -1,6 +1,6 @@
 // Pack jazyk projects into the fixtures the browser backend boots from: every file
-// of a project, path and text, as one JSON the editor fetches when the project is
-// picked. See docs/frontends/wasm.md#the-demo.
+// of a project, path and content (text, or `{ base64 }` for a binary file), as one
+// JSON the editor fetches when the project is picked. See docs/frontends/wasm.md#the-demo.
 //
 //   node pack-demo.mjs <out-dir> <id>=<project-dir> [<id>=<project-dir> ...]
 import { readFileSync, writeFileSync, readdirSync, lstatSync, mkdirSync } from 'node:fs'
@@ -19,9 +19,10 @@ if (!dest || pairs.length === 0) {
 // tab, and that removal would count as an edit of the demo.
 const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'workers', 'node_modules', '__pycache__', '.git', '.jazyk.bak'])
 
-// A fixture carries text: a binary file (a built deck, a compiled module) would only
-// arrive as replacement characters, so it is left out. A byte order mark is part of
-// the file and is kept, so an unpacked file is the packed one byte for byte.
+// A text file is packed as its text; any other file (a built deck, an image) as
+// `{ base64 }`, its bytes in standard base64, so a built artifact reaches the tab.
+// A byte order mark is part of the file and is kept, so an unpacked file is the
+// packed one byte for byte.
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 function textOf(bytes) {
   try {
@@ -56,17 +57,19 @@ for (const pair of pairs) {
   let binary = 0
   for (const p of walk(src, []).sort()) {
     const rel = relative(src, p).split('\\').join('/')
-    const text = textOf(readFileSync(p))
+    const raw = readFileSync(p)
+    const text = textOf(raw)
     if (text === null) {
+      out[rel] = { base64: raw.toString('base64') }
       binary++
-      continue
+    } else {
+      out[rel] = text
     }
-    out[rel] = text
-    bytes += text.length
+    bytes += raw.length
     count++
   }
   const file = join(dest, `${id}.json`)
   writeFileSync(file, JSON.stringify(out))
-  const left = binary > 0 ? `, ${binary} binary file(s) left out` : ''
-  console.log(`packed ${count} files, ${(bytes / 1024).toFixed(0)}KB, into ${file}${left}`)
+  const bin = binary > 0 ? `, ${binary} of them binary` : ''
+  console.log(`packed ${count} files${bin}, ${(bytes / 1024).toFixed(0)}KB, into ${file}`)
 }

@@ -13,6 +13,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@aiden0z/pptx-renderer": "^1.3.0",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-markdown": "^6.5.2",

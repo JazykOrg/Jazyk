@@ -1,8 +1,10 @@
 # Plan: the product, its versions, and its deployment
 
-Status: proposal, not scheduled. Written 2026-09-29. Nothing here is implemented or
-documented under `docs/`. The docs-first rule applies: every phase below names the
-pages that change before the code does.
+Status: proposal. Written 2026-09-29. Phase 1 (show the artifact) is implemented and
+documented ([overview](../docs/frontends/gui.md#overview),
+[the demo](../docs/frontends/wasm.md#the-demo)); the rest is not scheduled. The
+docs-first rule applies: every phase below names the pages that change before the
+code does.
 
 Read with [generation](../docs/consumers/gen.md), [binding](../docs/consumers/bind.md),
 [the control plane](../docs/compiler/control-plane.md), the GUI's
@@ -154,9 +156,9 @@ Each phase stands on its own and is useful before the next.
    fixture, decoded into the tab's tree) so a built artifact reaches the tab. The
    Product lens gains Overview: a written product assembled in reading order with
    print to PDF, a built product's `produces` shown or offered for download, a program's
-   README and test summary. The slide deck's build also exports its slides as PNG so
-   the tab can show them without an Office viewer. Pages: gui.md#product, wasm.md#the-demo,
-   gen.md#the-build.
+   README and test summary. The deck renders from its `.pptx` in the page, through a
+   PowerPoint renderer loaded on first use, so the build exports no PNG. Pages:
+   gui.md#product, wasm.md#the-demo.
 2. Product versions. `gen/versions/` and content-addressed artifacts, a version
    recorded when a gen run ends green, the Versions view with diff and Restore, the GC
    prune. Pages: gen.md#the-ledger (a new section), graph.md#garbage-collection,

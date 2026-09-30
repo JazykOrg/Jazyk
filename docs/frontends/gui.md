@@ -1462,9 +1462,11 @@ from the graph's mentions, quotes, and section tree.
 - A change to the open document that the editor did not make (a dual write, an
   answer, a build's answer session, another writer) lands as the smallest edit that
   turns the old text into the new, so the rest of the text, the scroll position, and
-  the selection stay where they were. The changed lines are marked for a few seconds,
-  then the mark fades: "changed by your answer" when an answer made the change,
-  "changed outside the editor" otherwise. Read marks the same blocks. An editor with
+  the selection stay where they were. The changed lines are marked for a few seconds
+  from the moment the document is shown, then the mark fades, so a change made from
+  the Inbox is still marked when its document opens later (within ten minutes):
+  "changed by your answer" when an answer made the change, "changed outside the
+  editor" otherwise. Read marks the same blocks. An editor with
   unsaved changes raises the conflict bar instead.
 - The editor diffs against the last-built text (`GET /api/docs/baseline`): changed,
   added, and deleted lines mark the gutter, updated live. A `diff` toggle swaps the

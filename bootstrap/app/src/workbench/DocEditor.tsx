@@ -491,7 +491,12 @@ export default function DocEditor() {
   const sortedMarkers = useMemo(() => [...markers].sort((a, b) => a.line - b.line), [markers])
 
   // The marks over this document's changes, as line ranges in the text it holds.
+  // Showing the document starts their hold and fade.
   const allFlashes = useApp((a) => a.flashes)
+  const armFlashes = useApp((a) => a.armFlashes)
+  useEffect(() => {
+    if (docPath && allFlashes.some((f) => f.doc === docPath && !f.armed)) armFlashes(docPath)
+  }, [allFlashes, docPath, armFlashes])
   const flashLines = useMemo<FlashLines[]>(() => {
     const out: FlashLines[] = []
     for (const f of allFlashes) {

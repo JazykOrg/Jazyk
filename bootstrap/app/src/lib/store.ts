@@ -110,6 +110,8 @@ export interface Flash {
   label: string
   at: number
   fading: boolean
+  // Whether its hold and fade have started, which happens when it is first shown.
+  armed?: boolean
   text?: string
   lines?: [number, number]
 }
@@ -190,6 +192,7 @@ interface AppStore {
   flashes: Flash[]
   answeredAt: number
   addFlash: (f: { doc: string; label: string; text?: string; lines?: [number, number] }) => void
+  armFlashes: (doc: string) => void
   noteAnswered: () => void
   // The words a change the editor did not make carries.
   changeLabel: () => string
@@ -284,11 +287,21 @@ export const useApp = create<AppStore>((set, get) => ({
   chatUpdates: {},
   flashes: [],
   answeredAt: 0,
+  // A mark waits for its document to be shown: the hold and the fade start when the
+  // editor first draws it (armFlashes), so a change made from the Inbox is still
+  // marked when the document opens later. One never shown goes after ten minutes.
   addFlash: (f) => {
     const id = flashSeq++
-    set((s) => ({ flashes: [...s.flashes, { ...f, id, at: Date.now(), fading: false }] }))
-    window.setTimeout(() => set((s) => ({ flashes: s.flashes.map((x) => (x.id === id ? { ...x, fading: true } : x)) })), FLASH_HOLD_MS)
-    window.setTimeout(() => set((s) => ({ flashes: s.flashes.filter((x) => x.id !== id) })), FLASH_HOLD_MS + FLASH_FADE_MS)
+    set((s) => ({ flashes: [...s.flashes, { ...f, id, at: Date.now(), fading: false, armed: false }] }))
+    window.setTimeout(() => set((s) => ({ flashes: s.flashes.filter((x) => x.id !== id || x.armed) })), ANSWER_WINDOW_MS)
+  },
+  armFlashes: (doc) => {
+    const fresh = get().flashes.filter((x) => x.doc === doc && !x.armed)
+    if (fresh.length === 0) return
+    const ids = new Set(fresh.map((x) => x.id))
+    set((s) => ({ flashes: s.flashes.map((x) => (ids.has(x.id) ? { ...x, armed: true } : x)) }))
+    window.setTimeout(() => set((s) => ({ flashes: s.flashes.map((x) => (ids.has(x.id) ? { ...x, fading: true } : x)) })), FLASH_HOLD_MS)
+    window.setTimeout(() => set((s) => ({ flashes: s.flashes.filter((x) => !ids.has(x.id)) })), FLASH_HOLD_MS + FLASH_FADE_MS)
   },
   noteAnswered: () => set({ answeredAt: Date.now() }),
   changeLabel: () =>

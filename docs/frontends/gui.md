@@ -1657,8 +1657,9 @@ both.
   brings to the front of the row.
 - Windows stay where they are dragged and resized, remembered per project with the
   view; `Arrange` lays the windows out in layers, left to right by the links between
-  them. A toolbar holds `Arrange`, `Fit`, `Graph`, and the
-  zoom; a minimap sits in a corner.
+  them. A toolbar holds `Arrange`, `Fit`, `Graph`, `Map` (a
+  minimap in the bottom corner, off by default, remembered per browser), and the
+  zoom.
 - The board draws by zoom, every window where it is at every level:
   - near 100 percent the windows are live pages (at most six live at once, the ones
     nearest the view's center among those in view);

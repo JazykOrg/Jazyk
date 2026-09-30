@@ -24,6 +24,7 @@ import { Journal, Prompt, Runs, Workers } from './DevPages'
 import { DiagramGallery, DiagramPage, EntityPage, ModelHome, RequirementPage } from './ModelPages'
 import { FilesHome, GeneratedHome, NotDescribed, ProductForm, ProductHome, Tests, ToBuild } from './ProductPages'
 const MapCenter = lazy(() => import('../workbench/MapCenter'))
+const BoardDemo = lazy(() => import('../workspace/board/BoardDemo'))
 
 function Scroll({ children }: { children: React.ReactNode }) {
   return <div className="ws-scroll">{children}</div>
@@ -123,6 +124,7 @@ export default function AppRoutes({ location }: { location?: string }) {
       <Route path="/history/diff" element={<Scroll><ReleaseDiff /></Scroll>} />
       <Route path="/history/:gen" element={<Scroll><Changeset /></Scroll>} />
       <Route path="/settings" element={<Scroll><Settings /></Scroll>} />
+      <Route path="/lab/board" element={<Suspense fallback={null}><BoardDemo /></Suspense>} />
       <Route path="/dev" element={<DevGate><DevHome /></DevGate>} />
       <Route path="/dev/board" element={<DevGate><Scroll><Board /></Scroll></DevGate>} />
       <Route path="/dev/runs" element={<DevGate><Runs /></DevGate>} />

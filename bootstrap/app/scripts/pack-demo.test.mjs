@@ -1,7 +1,7 @@
 // @vitest-environment node
 // The pack/unpack round trip of a demo fixture (docs/frontends/wasm.md#the-demo):
-// what pack-demo.mjs leaves out is exactly the skipped entries and the binary files,
-// and every file that is packed unpacks byte for byte.
+// what pack-demo.mjs leaves out is exactly the skipped entries, a binary file is
+// packed as `{ base64 }`, and every file that is packed unpacks byte for byte.
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -37,7 +37,7 @@ function tree(root) {
 }
 
 describe('pack-demo and unpack-demo', () => {
-  it('round-trips a project minus the skipped entries and the binary files', () => {
+  it('round-trips a project minus the skipped entries, binary files included', () => {
     const work = mkdtempSync(join(tmpdir(), 'jazyk-pack-'))
     try {
       const src = join(work, 'project')
@@ -51,6 +51,10 @@ describe('pack-demo and unpack-demo', () => {
         'code/empty.txt': '',
         // A byte order mark is part of the file's bytes.
         'docs/bom.md': Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from('# With a BOM\n')]),
+        // Not UTF-8: a lone continuation byte and an overlong sequence.
+        'deck/built.bin': Buffer.from([0x00, 0xff, 0xfe, 0x80, 0xc0, 0xaf, 0x41]),
+        // Every byte value, as a built artifact holds them.
+        'deck/dist/all.pptx': Buffer.from(Array.from({ length: 512 }, (_, i) => (i * 7) % 256)),
       }
       const skipped = {
         '.editorconfig': 'root = true\n',
@@ -60,8 +64,9 @@ describe('pack-demo and unpack-demo', () => {
         '.jazyk.bak/status.yaml': 'version: 1\n',
         'code/__pycache__/main.cpython-310.pyc': 'cached\n',
         'code/node_modules/dep/index.js': 'module.exports = 1\n',
-        // Not UTF-8: a lone continuation byte and an overlong sequence.
-        'deck/built.bin': Buffer.from([0x00, 0xff, 0xfe, 0x80, 0xc0, 0xaf, 0x41]),
+        // A skipped directory stays out whatever it holds, a binary file too.
+        'deck/__pycache__/theme.cpython-312.pyc': Buffer.from([0x00, 0xff, 0x0d, 0x0a]),
+        'code/node_modules/dep/addon.node': Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0xff]),
       }
       for (const [rel, content] of Object.entries(kept)) put(src, rel, content)
       for (const [rel, content] of Object.entries(skipped)) put(src, rel, content)
@@ -69,10 +74,13 @@ describe('pack-demo and unpack-demo', () => {
       const demos = join(work, 'demos')
       const packed = run('pack-demo.mjs', [demos, `demo=${src}`])
       expect(packed).toContain(`packed ${Object.keys(kept).length} files`)
-      expect(packed).toContain('1 binary file(s) left out')
+      expect(packed).toContain('2 of them binary')
 
       const fixture = JSON.parse(readFileSync(join(demos, 'demo.json'), 'utf8'))
       expect(Object.keys(fixture).sort()).toEqual(Object.keys(kept).sort())
+      // Text stays a string; a binary file is its bytes in base64.
+      expect(fixture['docs/main.md']).toBe('# Shop\n\nThe Cart holds items.\n')
+      expect(fixture['deck/built.bin']).toEqual({ base64: Buffer.from(kept['deck/built.bin']).toString('base64') })
 
       const dest = join(work, 'unpacked')
       run('unpack-demo.mjs', [join(demos, 'demo.json'), dest])

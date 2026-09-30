@@ -23,6 +23,7 @@ import { installLocalProjects } from './lib/local-projects'
 import { installConnect } from './lib/connect'
 import { registerServiceWorker } from './lib/sw'
 import { DEMOS } from './lib/demos'
+import { decodeFixture } from './lib/fixture'
 import './tokens.css'
 import './app.css'
 
@@ -141,13 +142,13 @@ function loadModelOnRequest() {
 
 // The bundled projects (docs/frontends/wasm.md#the-demo): one fixture per example,
 // packed by scripts/pack-demos.sh, fetched when picked rather than carried in the
-// page.
-async function fetchDemo(id: string): Promise<{ files: Record<string, string>; name: string }> {
+// page. A binary file arrives as `{ base64 }` and seeds the tree as its bytes.
+async function fetchDemo(id: string): Promise<{ files: Record<string, string | Uint8Array>; name: string }> {
   const demo = DEMOS.find((d) => d.id === id)
   if (!demo) throw new Error(`no demo named ${id}`)
   const res = await fetch(`demos/${id}.json`)
   if (!res.ok) throw new Error(`${demo.name}: the fixture failed to load (${res.status})`)
-  const files = (await res.json()) as Record<string, string>
+  const files = decodeFixture((await res.json()) as Record<string, unknown>)
   return { files, name: demo.name }
 }
 

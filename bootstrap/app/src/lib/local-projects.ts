@@ -54,7 +54,7 @@ export interface LocalDeps {
   closed: () => void
   // The descriptor changed: the persistence moved.
   refresh: () => void
-  fetchDemo: (id: string) => Promise<{ files: Record<string, string>; name: string }>
+  fetchDemo: (id: string) => Promise<{ files: Record<string, string | Uint8Array>; name: string }>
   demoName: (id: string) => string
 }
 

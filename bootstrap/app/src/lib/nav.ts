@@ -6,6 +6,7 @@
 import { useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { useApp } from './store'
+import { useWorkspace } from '../workspace/items'
 
 // Open a node in the inspector; an entity moves the explorer with it.
 export function selectNodeParams(next: URLSearchParams, id: string) {
@@ -22,6 +23,10 @@ export function useInspector(): {
   const node = sp.get('node')
   const openNode = useCallback(
     (id: string) => {
+      // In the workspace the selection is the Connections panel's; the URL keeps
+      // ?node= so the link still shares (docs/frontends/gui.md#workspace-experimental).
+      const ws = useWorkspace.getState()
+      if (ws.arrangement !== 'lenses') ws.select(id)
       setSp(
         (p) => {
           const next = new URLSearchParams(p)

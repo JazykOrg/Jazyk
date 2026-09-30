@@ -1,0 +1,467 @@
+/* The workspace (docs/frontends/gui.md#workspace-experimental): one navigator, the
+   open items as Tabs or a Board, Connections docked under them. */
+
+/* The arrangement switch in the top bar. */
+.ws-arrange {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.ws-arrange button {
+  background: none;
+  border: none;
+  border-right: 1px solid var(--line);
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ws-arrange button:last-child {
+  border-right: none;
+}
+
+.ws-arrange button.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.ws-lenses-bare {
+  margin-left: 6px;
+}
+
+/* The navigator. */
+.wsn-fold {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+
+.wsn-fold:not(.open) {
+  padding-bottom: 0;
+}
+
+.wsn-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 8px 10px 4px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wsn-head:hover {
+  color: var(--ink);
+}
+
+.wsn-chev {
+  width: 10px;
+  font-size: 10px;
+}
+
+.wsn-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* The fold names the section; the explorer's own label would repeat it. */
+.wsn-fold .wb-explorer-label {
+  display: none;
+}
+
+.wsn-fold .wb-explorer-section + .wb-explorer-section {
+  border-top: none;
+}
+
+.wsn .outline {
+  border-bottom: 1px solid var(--line);
+}
+
+/* The center: the items over the Connections panel. */
+.wsw-center {
+  display: flex;
+  flex-direction: column;
+}
+
+.wsw-items {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Tabs. */
+.wst-dock {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.wst-dock > .dv-dockview,
+.wst-dock > div {
+  height: 100%;
+}
+
+.wst-dock .dockview-theme-light {
+  --dv-group-view-background-color: var(--panel);
+  --dv-tabs-and-actions-container-background-color: var(--bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-tab-divider-color: var(--line);
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--muted);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-separator-border: var(--line);
+  --dv-paneview-header-border-color: var(--line);
+  --dv-sash-color: var(--line);
+  --dv-active-sash-color: var(--accent);
+  --dv-tabs-and-actions-container-height: 32px;
+  --dv-tabs-and-actions-container-font-size: 12.5px;
+  --dv-context-menu-background-color: var(--panel);
+  --dv-context-menu-color: var(--ink);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  color-scheme: inherit;
+  font-family: var(--sans);
+}
+
+.wst-dock .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--line);
+}
+
+.wst-dock .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.wst-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 4px 0 10px;
+  max-width: 240px;
+  user-select: none;
+}
+
+.wst-tab.preview .wst-title {
+  font-style: italic;
+}
+
+.wst-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wst-icon {
+  font-size: 11px;
+  color: var(--muted);
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.wst-icon.k-entity,
+.wst-icon.k-requirement {
+  color: var(--accent);
+}
+
+.wst-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  visibility: hidden;
+  flex-shrink: 0;
+}
+
+.dv-tab:hover .wst-close,
+.dv-active-tab .wst-close,
+.wst-card .wst-close {
+  visibility: visible;
+}
+
+.wst-close:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.wst-item {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+/* A narrow screen: one item, a switcher for the rest. */
+.wst-narrow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.wst-narrow-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.wst-narrow-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.wst-switcher {
+  min-width: 26px;
+  height: 22px;
+  border: 1.5px solid var(--ink);
+  border-radius: 5px;
+  background: none;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wst-narrow .wst-item {
+  flex: 1;
+}
+
+.wst-grid {
+  position: absolute;
+  inset: 31px 0 0 0;
+  z-index: 15;
+  background: var(--bg);
+  padding: 12px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.wst-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  min-height: 96px;
+}
+
+.wst-card.on {
+  border-color: var(--accent);
+}
+
+.wst-card.preview .wst-title {
+  font-style: italic;
+}
+
+.wst-card-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  background: none;
+  border: none;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wst-card-main .wst-title {
+  white-space: normal;
+  font-weight: 600;
+}
+
+.wst-card-path {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+
+.wst-card .wst-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+/* Connections, docked under the center. */
+.wsc {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-height: 30px;
+}
+
+.wsc-resize {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+
+.wsc-resize:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.wsc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.wsc.open .wsc-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.wsc-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.wsc-kind {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.wsc-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.wsc-open {
+  font-size: 12px;
+  padding: 2px 10px;
+  flex-shrink: 0;
+}
+
+.wsc-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 16px 16px;
+}
+
+.wsc-body .connections svg {
+  max-height: 260px;
+}
+
+.wsc-empty {
+  margin: 6px 0;
+}
+
+.wsc-x {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* On a narrow screen: a bottom sheet over the item. */
+.wsc-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.2);
+}
+
+.wsc-grab {
+  height: 18px;
+  flex-shrink: 0;
+  position: relative;
+  touch-action: none;
+}
+
+.wsc-grab::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 7px;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+@media (max-width: 760px) {
+  .wsw.nav-open .ws-nav {
+    transform: none;
+    box-shadow: 0 0 24px rgb(0 0 0 / 0.25);
+  }
+
+  .wsw.nav-open .ws-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: rgb(0 0 0 / 0.2);
+  }
+
+  .ws-arrange button {
+    padding: 3px 6px;
+  }
+}

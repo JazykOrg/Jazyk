@@ -1,9 +1,9 @@
-// The Product lens's center pages (docs/frontends/gui.md#product): the overview,
-// the files landing, the tests, Not described with the Document action, the
+// The Product lens's center pages (docs/frontends/gui.md#product): the overview
+// (the product itself, ProductOverview.tsx, then its numbers), the files landing, the tests, Not described with the Document action, the
 // generated docs landing, the product form.
 import { Link } from 'react-router'
 import { post } from '../lib/api'
-import { useDeliverable, useMatrix, useOutList, useProject, useStatus, useWorkers } from '../lib/queries'
+import { useDeliverable, useMatrix, useOutList, useProductOverview, useProject, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { useCanRun } from '../lib/capabilities'
 import { useWords } from '../lib/words'
@@ -11,12 +11,14 @@ import { verifyClass } from '../components/Chip'
 import { outHref } from '../lib/nav'
 import NodeLink from '../components/NodeLink'
 import Work from './Work'
+import Overview from './ProductOverview'
 import '../shell/shell.css'
 
 export function ProductHome() {
   const w = useWords()
   const { data: proj } = useProject()
   const deliv = useDeliverable()
+  const ov = useProductOverview()
   const matrix = useMatrix()
   const workers = useWorkers()
   const { data: s } = useStatus()
@@ -24,41 +26,35 @@ export function ProductHome() {
   const files = deliv.data?.files ?? []
   const described = files.filter((f) => f.owners.entities.length + f.owners.requirements.length > 0).length
   return (
-    <div className="ws-scroll narrow">
+    <div className="ws-scroll narrow product-overview">
       <div className="page-head">
         <h1>{w.product}</h1>
         {proj && <span className="mono muted">{proj.deliverable}</span>}
       </div>
-      {deliv.data && files.length === 0 && (
-        <div className="empty-state">
-          <b>No product yet</b>
-          {proj?.deliverable ? `Nothing is in ${proj.deliverable} yet. Run ${w.generate.toLowerCase()} to produce it from the documents, or point Settings at an existing product folder.` : 'Name a product folder in Settings.'}
-          <div className="actions">
-            <Link to="/settings" className="btn">
-              Settings
-            </Link>
-          </div>
-        </div>
-      )}
+      {ov.error && <p className="v-bad">The overview did not load: {ov.error instanceof Error ? ov.error.message : String(ov.error)}</p>}
+      {ov.data && proj && <Overview ov={ov.data} root={proj.deliverable} projectRoot={proj.root} counts={counts} />}
       {files.length > 0 && (
-        <div className="stat-strip">
-          <Link to="/product/files" className="stat">
-            <b>{files.length}</b> files
-          </Link>
-          <span className="stat" title="product files a document describes">
-            <b>{described}</b> described
-          </span>
-          <Link to="/product/not-described" className="stat" title="product files no document describes">
-            <b>{workers.data?.unclaimed ?? files.length - described}</b> {w.notDescribed.toLowerCase()}
-          </Link>
-          {s && (
-            <span className="stat" title="sections of the documents the model has read">
-              <b>{s.coverage.covered}</b>/{s.coverage.total} sections read
+        <>
+          <h2>Numbers</h2>
+          <div className="stat-strip">
+            <Link to="/product/files" className="stat">
+              <b>{files.length}</b> files
+            </Link>
+            <span className="stat" title="product files a document describes">
+              <b>{described}</b> described
             </span>
-          )}
-        </div>
+            <Link to="/product/not-described" className="stat" title="product files no document describes">
+              <b>{workers.data?.unclaimed ?? files.length - described}</b> {w.notDescribed.toLowerCase()}
+            </Link>
+            {s && (
+              <span className="stat" title="sections of the documents the model has read">
+                <b>{s.coverage.covered}</b>/{s.coverage.total} sections read
+              </span>
+            )}
+          </div>
+        </>
       )}
-      {Object.keys(counts).length > 0 && (
+      {Object.keys(counts).length > 0 && ov.data?.kind !== 'program' && (
         <>
           <h2>{w.trace}</h2>
           <p>
@@ -238,11 +234,11 @@ export function ProductForm() {
           {b.lastRun && (
             <p className="row" style={{ margin: '2px 0' }}>
               <b>last run</b>
-              <span className={b.lastRun.exitCode === 0 ? 'v-ok' : 'v-bad'}>{b.lastRun.exitCode === 0 ? 'succeeded' : `exit ${b.lastRun.exitCode ?? '?'}`}</span>
+              <span className={b.lastRun.ok ? 'v-ok' : 'v-bad'}>{b.lastRun.ok ? 'succeeded' : 'failed'}</span>
               {b.lastRun.at && <span className="muted mono">{String(b.lastRun.at)}</span>}
             </p>
           )}
-          {b.lastRun?.evidence && <p className="muted mono" style={{ margin: '2px 0' }}>{String(b.lastRun.evidence)}</p>}
+          {b.lastRun?.error && <p className="muted mono" style={{ margin: '2px 0' }}>{String(b.lastRun.error)}</p>}
         </div>
       )}
     </div>

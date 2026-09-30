@@ -16,6 +16,7 @@ import {
   type JournalEntry,
   type OutFileInfo,
   type PreviewData,
+  type ProductOverview,
   type Project,
   type Status,
   type TreeData,
@@ -168,6 +169,11 @@ export const useNode = (id: string) =>
 
 export const useDeliverable = () =>
   useQuery({ queryKey: ['deliverable'], queryFn: () => get<Deliverable>('/api/deliverable'), ...opts })
+
+// The product itself, as the overview shows it (docs/frontends/gui.md#overview).
+// Under the deliverable's key, so a finished job refetches it with the listing.
+export const useProductOverview = () =>
+  useQuery({ queryKey: ['deliverable', 'overview'], queryFn: () => get<ProductOverview>('/api/product/overview'), ...opts })
 
 // The files under one directory of the out directory, recursively
 // (docs/frontends/gui.md#api, the out directory). Refetched when a build commits.

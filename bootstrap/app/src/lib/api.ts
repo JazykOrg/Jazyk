@@ -3,6 +3,7 @@
 // under `jazyk.server.<port>`, and travels as a bearer header on the server backend
 // (docs/frontends/gui.md#serving).
 import { backend, serverBase } from './backend'
+import { fromBase64 } from './fixture'
 import { useApp } from './store'
 
 // The server this page is connected to, if any: its port and the token in use.
@@ -121,6 +122,24 @@ export async function getText(path: string): Promise<string> {
     throw failure(r.status, r.body)
   }
   return r.text
+}
+
+// One product file's bytes (docs/frontends/gui.md#api, deliverable): a built
+// artifact the overview renders or downloads. A server sends the bytes as the body,
+// fetched with the token in the query as an image is; the tab's envelope carries
+// JSON, so its body holds them in base64 (docs/frontends/wasm.md#the-product).
+export async function productBytes(path: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const route = `/api/deliverable/raw?path=${encodeURIComponent(path)}`
+  if (serverBase() !== null) {
+    const res = await fetch(apiUrl(route))
+    if (!res.ok) {
+      if (res.status === 401) useApp.getState().setAuthRequired(true)
+      throw failure(res.status, await res.json().catch(() => null))
+    }
+    return { bytes: new Uint8Array(await res.arrayBuffer()), contentType: res.headers.get('content-type') ?? 'application/octet-stream' }
+  }
+  const body = await req<{ base64: string; contentType: string }>('GET', route)
+  return { bytes: fromBase64(body.base64), contentType: body.contentType }
 }
 
 export const get = <T = unknown,>(path: string) => req<T>('GET', path)
@@ -714,8 +733,28 @@ export interface BuildSpec {
   run?: string
   cwd?: string
   produces?: string[]
-  lastRun?: { at?: string; exitCode?: number; evidence?: string; [k: string]: unknown } | null
+  // The last run of the build (docs/consumers/gen.md#the-build): when, whether it
+  // succeeded, and the tail of what it said when it did not.
+  lastRun?: { at?: string; ok?: boolean; error?: string; [k: string]: unknown } | null
   [k: string]: unknown
+}
+
+// The Product lens's overview (docs/frontends/gui.md#overview), GET /api/product/overview.
+export interface ProductOverview {
+  kind: 'written' | 'built' | 'program' | 'none'
+  medium?: Medium | null
+  build?: BuildSpec | null
+  // The recorded test run commands, the first few distinct ones, and how many more.
+  commands: { run: string; cwd: string }[]
+  moreCommands: number
+  // written: the prose files in reading order.
+  parts?: { path: string; text: string }[]
+  order?: 'index' | 'names'
+  index?: string | null
+  // built: what the build produces.
+  artifacts?: { path: string; exists: boolean; size: number | null; contentType: string }[]
+  // program: the README, from the deliverable or from the documents.
+  readme?: { path: string; tree: 'deliverable' | 'docs'; text: string } | null
 }
 
 export interface Deliverable {

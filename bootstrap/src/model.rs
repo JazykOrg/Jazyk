@@ -596,7 +596,23 @@ pub struct SuggestedEdit {
     pub section: String,
     pub old_text: String,
     pub new_text: String,
+    // The fact changes the rewrite implies for the requirements it touches, applied in
+    // the same changeset. Mirrors docs/compiler/model/diagnostic.md#prompts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facts: Vec<FactChange>,
 }
+
+// One field of one requirement set to a new value: `statement`, `entities`, `edges`,
+// `transition`, or `facets`, the value in the shape update_requirement takes.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FactChange {
+    pub id: String,
+    pub field: String,
+    pub value: serde_json::Value,
+}
+
+// The requirement fields an edit option's `facts` may set.
+pub const FACT_FIELDS: [&str; 5] = ["statement", "entities", "edges", "transition", "facets"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DiagnosticAnswer {

@@ -2133,6 +2133,7 @@ pub fn choice_ops(
                     section,
                     old_text: String::new(),
                     new_text: c.choice.clone(),
+                    facts: Vec::new(),
                 }),
                 answer: None,
             });

@@ -223,6 +223,7 @@ mod tests {
                         section: sec.clone(),
                         old_text: "a rival".into(),
                         new_text: "an ally".into(),
+                        facts: Vec::new(),
                     }),
                     answer: None,
                 },

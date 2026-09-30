@@ -5,10 +5,13 @@
 // Mirrors docs/compiler/model/diagnostic.md#answers and
 // docs/frontends/acp.md#answer-sessions.
 
-use crate::model::{DiagnosticAnswer, Provenance, SourceRef};
+use crate::model::{DiagnosticAnswer, Provenance, SourceRef, Transition};
 use crate::project::Project;
 use crate::store::{Commit, Op, ProseEdit, Store, WriteEdit};
+use crate::tools::{ToolSession, WorkScope};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
+use std::ops::Range;
 use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
@@ -125,6 +128,68 @@ pub fn answer(
         let mut s = Store::load(out);
         s.sync_docs(&parsed);
         let mut ops = Vec::new();
+        // The fact changes the rewrite implies: the option's listed facts through the
+        // update_requirement gates, then the mechanical transition follow for every
+        // touched requirement whose transition no fact sets. Mirrors
+        // docs/compiler/model/diagnostic.md#answers.
+        let mut followed = Vec::new();
+        let mut review = Vec::new();
+        if !ratify {
+            let mut set_transition = BTreeSet::new();
+            if !e.facts.is_empty() {
+                let session = ToolSession::new(
+                    s.clone(),
+                    WorkScope::serving("mcp-write"),
+                    crate::limits::SESSION_MUTATIONS,
+                    crate::limits::CONTEXT_BUDGET,
+                );
+                let fact_ops = session
+                    .fact_ops(&e.doc, &e.section, &e.facts)
+                    .map_err(|err| {
+                        format!(
+                            "the option's fact change is refused ({}): {}; nothing was applied, and update_diagnostic can re-author the option",
+                            err.rule, err.message
+                        )
+                    })?;
+                for op in &fact_ops {
+                    if let Op::UpdateRequirement {
+                        id,
+                        transition: Some(_),
+                        ..
+                    } = op
+                    {
+                        set_transition.insert(id.clone());
+                    }
+                }
+                ops.extend(fact_ops);
+            }
+            for (qid, new_quote) in s.quote_rewrites(&prose) {
+                if set_transition.contains(&qid) {
+                    continue;
+                }
+                let r = &s.graph.requirements[&qid];
+                let (Some(t), Some(src)) = (r.transition.as_ref(), r.source.as_ref()) else {
+                    continue;
+                };
+                match follow_transition(&src.quote, &new_quote, t) {
+                    Follow::Stays => {}
+                    Follow::Moves(next) => {
+                        followed.push(json!({"id": qid, "transition": next}));
+                        ops.push(Op::UpdateRequirement {
+                            id: qid.clone(),
+                            statement: None,
+                            entities: None,
+                            edges: None,
+                            transition: Some(next),
+                            facets: None,
+                            source: None,
+                            provenance: None,
+                        });
+                    }
+                    Follow::Ambiguous => review.push(qid.clone()),
+                }
+            }
+        }
         if ratify {
             // Accepting the proposal flips the fact's provenance to the landed
             // sentence in the same changeset; the store resolves the proposal.
@@ -154,13 +219,20 @@ pub fn answer(
             });
         }
         let kind = if ratify { "ratify" } else { "answer" };
-        s.dual_write(&project.root, &prose, ops, &Commit::store(kind), write)
+        // An answer lands whole or not at all: a fact change the commit gates refuse
+        // puts the prose back and records no answer.
+        let commit = Commit {
+            all_or_nothing: !ratify,
+            ..Commit::store(kind)
+        };
+        s.dual_write(&project.root, &prose, ops, &commit, write)
             .map_err(|e| format!("commit skipped: {}", e))?;
         // The edit as it landed, so a frontend can mark the changed text in an open
         // editor (docs/frontends/gui.md#questions).
         return Ok(json!({
             "status": "applied", "resolved": true, "doc": e.doc,
             "edit": {"doc": e.doc, "section": e.section, "newText": prose.new_text},
+            "facts": e.facts, "followed": followed, "review": review,
             "note": if ratify {
                 "the sentence landed and the fact is quoted from it; no recompile is owed for it"
             } else {
@@ -219,6 +291,188 @@ pub fn answer(
         return Err(report.skipped.join("; "));
     }
     Ok(json!({"status": "handling", "id": rid, "reply": text}))
+}
+
+// What a rewrite does to a requirement's transition. Mirrors
+// docs/compiler/model/diagnostic.md#answers.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Follow {
+    // No replaced run touches a state or the trigger the old quote names.
+    Stays,
+    // Every touched part maps one to one: the transition as the new quote states it.
+    Moves(Transition),
+    // A touched part does not map one to one; the review decides.
+    Ambiguous,
+}
+
+// One word of a quote: its lowercased text and its byte range in the quote.
+struct Word {
+    text: String,
+    at: Range<usize>,
+}
+
+// A word is a run of letters, digits, apostrophes, and hyphens, trimmed of leading and
+// trailing apostrophes and hyphens.
+fn words(s: &str) -> Vec<Word> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '\u{2019}' || c == '-';
+    let is_edge = |c: char| c == '\'' || c == '\u{2019}' || c == '-';
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    let push = |b: usize, e: usize, out: &mut Vec<Word>| {
+        let run = &s[b..e];
+        let lead = run.len() - run.trim_start_matches(is_edge).len();
+        let trail = run.len() - run.trim_end_matches(is_edge).len();
+        if lead + trail < run.len() {
+            let (b, e) = (b + lead, e - trail);
+            out.push(Word {
+                text: s[b..e].to_lowercase(),
+                at: b..e,
+            });
+        }
+    };
+    for (i, c) in s.char_indices() {
+        match (is_word(c), start) {
+            (true, None) => start = Some(i),
+            (false, Some(b)) => {
+                push(b, i, &mut out);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(b) = start {
+        push(b, s.len(), &mut out);
+    }
+    out
+}
+
+// The replaced runs between two word lists: an LCS alignment, each maximal stretch of
+// unmatched words one run (old range, new range). Ties delete before they insert, so
+// the runs are deterministic.
+fn replaced_runs(a: &[Word], b: &[Word]) -> Vec<(Range<usize>, Range<usize>)> {
+    let (n, m) = (a.len(), b.len());
+    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if a[i].text == b[j].text {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let mut runs = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    let mut open: Option<(usize, usize)> = None;
+    while i < n || j < m {
+        if i < n && j < m && a[i].text == b[j].text {
+            if let Some((oi, oj)) = open.take() {
+                runs.push((oi..i, oj..j));
+            }
+            i += 1;
+            j += 1;
+            continue;
+        }
+        open.get_or_insert((i, j));
+        if j == m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1]) {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    if let Some((oi, oj)) = open {
+        runs.push((oi..n, oj..m));
+    }
+    runs
+}
+
+// Where a phrase's words occur in a word list.
+fn occurrences(hay: &[Word], needle: &[Word]) -> Vec<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return Vec::new();
+    }
+    (0..=hay.len() - needle.len())
+        .filter(|&p| hay[p..p + needle.len()].iter().zip(needle).all(|(x, y)| x.text == y.text))
+        .collect()
+}
+
+// Whether a replaced run touches the words at `span`: its removed words overlap them,
+// or it inserts strictly inside them.
+fn touches(run: &(Range<usize>, Range<usize>), span: &Range<usize>) -> bool {
+    let old = &run.0;
+    if old.is_empty() {
+        old.start > span.start && old.start < span.end
+    } else {
+        old.start < span.end && span.start < old.end
+    }
+}
+
+// Follow a quote rewrite onto a requirement's transition: a state one replaced run
+// removes exactly (and replaces with words) takes the inserted words; a trigger whose
+// touching runs all replace words inside it takes them spliced in; anything else a run
+// touches is ambiguous. Mirrors docs/compiler/model/diagnostic.md#answers.
+pub(crate) fn follow_transition(old: &str, new: &str, t: &Transition) -> Follow {
+    let (a, b) = (words(old), words(new));
+    let runs = replaced_runs(&a, &b);
+    let new_text = |r: &Range<usize>| new[b[r.start].at.start..b[r.end - 1].at.end].to_string();
+    let spans = |w: &[Word]| -> Vec<Range<usize>> {
+        occurrences(&a, w).into_iter().map(|p| p..p + w.len()).collect()
+    };
+    let mut next = t.clone();
+    let mut moved = false;
+    for to in [false, true] {
+        let value = if to { &t.to } else { &t.from };
+        let spans = spans(&words(value));
+        let hit: Vec<&(Range<usize>, Range<usize>)> = runs
+            .iter()
+            .filter(|r| spans.iter().any(|s| touches(r, s)))
+            .collect();
+        if hit.is_empty() {
+            continue;
+        }
+        if spans.len() != 1 || hit.len() != 1 || hit[0].0 != spans[0] || hit[0].1.is_empty() {
+            return Follow::Ambiguous;
+        }
+        let state = new_text(&hit[0].1);
+        if to {
+            next.to = state;
+        } else {
+            next.from = state;
+        }
+        moved = true;
+    }
+    if let Some(trigger) = &t.trigger {
+        let tw = words(trigger);
+        let spans = spans(&tw);
+        let hit: Vec<&(Range<usize>, Range<usize>)> = runs
+            .iter()
+            .filter(|r| spans.iter().any(|s| touches(r, s)))
+            .collect();
+        if !hit.is_empty() {
+            if spans.len() != 1 {
+                return Follow::Ambiguous;
+            }
+            let span = &spans[0];
+            let inside = hit.iter().all(|(o, n)| {
+                !o.is_empty() && !n.is_empty() && o.start >= span.start && o.end <= span.end
+            });
+            if !inside {
+                return Follow::Ambiguous;
+            }
+            let mut text = trigger.clone();
+            for (o, n) in hit.iter().rev() {
+                let (first, last) = (&tw[o.start - span.start], &tw[o.end - 1 - span.start]);
+                text.replace_range(first.at.start..last.at.end, &new_text(n));
+            }
+            next.trigger = Some(text);
+            moved = true;
+        }
+    }
+    if moved {
+        Follow::Moves(next)
+    } else {
+        Follow::Stays
+    }
 }
 
 // The attribute a proposal names: the entity is the subject and the message carries
@@ -882,6 +1136,7 @@ mod tests {
                                 section: sec.clone(),
                                 old_text: "within 30 days".into(),
                                 new_text: "within 21 days".into(),
+                                facts: Vec::new(),
                             }),
                             answer: None,
                         }],
@@ -1001,6 +1256,7 @@ mod tests {
                                 section: refunds.clone(),
                                 old_text: "within 30 days".into(),
                                 new_text: "within 14 days".into(),
+                                facts: Vec::new(),
                             }),
                             answer: None,
                         }],
@@ -1110,6 +1366,7 @@ mod tests {
                                 section: sec.clone(),
                                 old_text: "within 30 days".into(),
                                 new_text: "within 21 days".into(),
+                                facts: Vec::new(),
                             }),
                             answer: None,
                         }],
@@ -1159,5 +1416,267 @@ mod tests {
         assert!(board.waiting_pair(&pair("req:pay-1", "req:pay-2")).is_none());
         assert!(board.goal(&other).is_some(), "{:?}", ids);
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    fn arc(from: &str, to: &str, trigger: &str) -> Transition {
+        Transition {
+            subject: "ent:theo".into(),
+            from: from.into(),
+            to: to.into(),
+            trigger: Some(trigger.into()),
+            guard: None,
+        }
+    }
+
+    // The mechanical follow: a replaced run that is exactly one state moves it, a run
+    // inside the trigger splices into it, an untouched transition stays, and a run
+    // wider than a state is ambiguous. Mirrors docs/compiler/model/diagnostic.md#answers.
+    #[test]
+    fn a_rewrite_follows_onto_a_transition_only_when_one_to_one() {
+        let t = arc("acquaintance", "ally", "Ines confronts Theo about the survey");
+        let old = "When\nInes confronts Theo about the survey, Theo moves from acquaintance to ally.";
+        let new = "When\nInes confronts Theo about the survey, Theo moves from acquaintance to rival.";
+        assert_eq!(
+            follow_transition(old, new, &t),
+            Follow::Moves(arc("acquaintance", "rival", "Ines confronts Theo about the survey"))
+        );
+        // A table row: the pipes are not words.
+        let row = arc("acquaintance", "rival", "Ines confronts Theo about the survey");
+        assert_eq!(
+            follow_transition(
+                "| acquaintance | rival | Ines confronts Theo about the survey |",
+                "| acquaintance | ally | Ines confronts Theo about the survey |",
+                &row
+            ),
+            Follow::Moves(arc("acquaintance", "ally", "Ines confronts Theo about the survey"))
+        );
+        // Both states replaced one to one.
+        assert_eq!(
+            follow_transition(
+                "Theo moves from acquaintance to ally.",
+                "Theo moves from stranger to rival.",
+                &t
+            ),
+            Follow::Moves(arc("stranger", "rival", "Ines confronts Theo about the survey"))
+        );
+        // A run inside the trigger splices into it.
+        assert_eq!(
+            follow_transition(old, &old.replace("the survey", "the ledger"), &t),
+            Follow::Moves(arc("acquaintance", "ally", "Ines confronts Theo about the ledger"))
+        );
+        // A rewrite that touches neither state nor trigger leaves it.
+        assert_eq!(
+            follow_transition(old, &old.replace("moves", "shifts"), &t),
+            Follow::Stays
+        );
+        // One run removes both states with no one-to-one replacement.
+        assert_eq!(
+            follow_transition(
+                "Theo moves from acquaintance to ally.",
+                "Theo turns against her.",
+                &t
+            ),
+            Follow::Ambiguous
+        );
+        // A state removed with nothing in its place.
+        assert_eq!(
+            follow_transition(
+                "Theo moves from acquaintance to ally.",
+                "Theo moves from acquaintance.",
+                &t
+            ),
+            Follow::Ambiguous
+        );
+    }
+
+    // A project with one quoted transition requirement and a contradiction whose one
+    // edit option rewrites its sentence to `new_text`, carrying `facts`.
+    fn seed_arc(label: &str, new_text: &str, facts: Vec<crate::model::FactChange>) -> (Project, PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-answer-arc-{}-{}",
+            label,
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        let quote = "When Ines confronts Theo about the survey, Theo moves from acquaintance to ally.";
+        crate::vfs::write(
+            dir.join("docs/arcs.md"),
+            format!("# Arcs\n\n## The midpoint\n\n{}\n", quote),
+        )
+        .unwrap();
+        let project = Project::load(&dir);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let sec = s.docs["docs/arcs.md"]
+            .sections
+            .keys()
+            .find(|k| k.contains("midpoint"))
+            .unwrap()
+            .clone();
+        let entity = |name: &str| crate::model::Entity {
+            name: name.into(),
+            ..Default::default()
+        };
+        let report = s.apply(
+            vec![
+                Op::CreateEntity { id: "ent:ines".into(), entity: entity("Ines") },
+                Op::CreateEntity { id: "ent:theo".into(), entity: entity("Theo") },
+                Op::CreateRequirement {
+                    id: "req:arcs-29".into(),
+                    requirement: crate::model::Requirement {
+                        statement: quote.into(),
+                        entities: vec!["ent:ines".into(), "ent:theo".into()],
+                        transition: Some(arc(
+                            "acquaintance",
+                            "ally",
+                            "Ines confronts Theo about the survey",
+                        )),
+                        source: Some(SourceRef {
+                            doc: "docs/arcs.md".into(),
+                            section: sec.clone(),
+                            quote: quote.into(),
+                        }),
+                        ..Default::default()
+                    },
+                },
+                Op::ReportDiagnostic {
+                    id: String::new(),
+                    diagnostic: Diagnostic {
+                        rule: "contradiction".into(),
+                        severity: "error".into(),
+                        subjects: vec!["req:arcs-29".into()],
+                        message: "ally or rival".into(),
+                        reasoning: None,
+                        lifecycle: "open".into(),
+                        triage: None,
+                        prompt: Some(DiagnosticPrompt {
+                            question: "Ally or rival?".into(),
+                            options: vec![PromptOption {
+                                label: "rival".into(),
+                                edit: Some(SuggestedEdit {
+                                    doc: "docs/arcs.md".into(),
+                                    section: sec.clone(),
+                                    old_text: "Theo moves from acquaintance to ally.".into(),
+                                    new_text: new_text.into(),
+                                    facts,
+                                }),
+                                answer: None,
+                            }],
+                            freeform: true,
+                        }),
+                        answer: None,
+                        created: None,
+                        updated: None,
+                    },
+                },
+            ],
+            &session(),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let did = s.graph.diagnostics.keys().next().unwrap().clone();
+        (project, out, did)
+    }
+
+    // An option with no facts: the transition follows the rewrite mechanically, in the
+    // same changeset as the prose. Mirrors docs/compiler/model/diagnostic.md#answers.
+    #[test]
+    fn an_answer_moves_the_transition_its_rewrite_changes() {
+        let (project, out, did) = seed_arc("follow", "Theo moves from acquaintance to rival.", Vec::new());
+        let before = Store::load(&out).status.generation;
+        let v = answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
+        assert_eq!(v["followed"][0]["id"], "req:arcs-29", "{}", v);
+        let s = Store::load(&out);
+        assert_eq!(s.status.generation, before + 1, "one changeset");
+        let r = &s.graph.requirements["req:arcs-29"];
+        assert!(r.statement.ends_with("to rival."), "{}", r.statement);
+        assert_eq!(
+            r.transition,
+            Some(arc("acquaintance", "rival", "Ines confronts Theo about the survey"))
+        );
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
+        crate::vfs::remove_dir_all(&project.root).ok();
+    }
+
+    // Listed facts apply through the update_requirement gates in the same changeset,
+    // and a requirement whose transition a fact sets is not followed mechanically.
+    #[test]
+    fn an_answer_applies_the_options_listed_facts() {
+        let facts = vec![
+            crate::model::FactChange {
+                id: "req:arcs-29".into(),
+                field: "transition".into(),
+                value: json!({"subject": "ent:theo", "from": "acquaintance", "to": "rival",
+                              "trigger": "Ines confronts Theo about the stolen survey"}),
+            },
+            crate::model::FactChange {
+                id: "req:arcs-29".into(),
+                field: "facets".into(),
+                value: json!([{"facet": "behavior", "reasoning": "a stance change on a plot event"}]),
+            },
+        ];
+        let (project, out, did) = seed_arc("facts", "Theo moves from acquaintance to rival.", facts);
+        let before = Store::load(&out).status.generation;
+        let v = answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
+        assert_eq!(v["followed"], json!([]), "{}", v);
+        let s = Store::load(&out);
+        assert_eq!(s.status.generation, before + 1, "one changeset");
+        let r = &s.graph.requirements["req:arcs-29"];
+        assert_eq!(
+            r.transition,
+            Some(arc("acquaintance", "rival", "Ines confronts Theo about the stolen survey"))
+        );
+        assert_eq!(r.facets.len(), 1);
+        assert_eq!(r.facets[0].facet, "behavior");
+        assert!(r.source.as_ref().unwrap().quote.ends_with("to rival."));
+        let entry = journal_kind(&out, before + 1);
+        assert_eq!(entry.kind, "answer");
+        crate::vfs::remove_dir_all(&project.root).ok();
+    }
+
+    // A fact the gates refuse fails the whole answer: the document, the graph, and the
+    // diagnostic stay as they were, and the diagnostic stays answerable.
+    #[test]
+    fn a_refused_fact_fails_the_whole_answer() {
+        let facts = vec![crate::model::FactChange {
+            id: "req:arcs-29".into(),
+            field: "transition".into(),
+            value: json!({"subject": "ent:survey", "from": "hidden", "to": "found"}),
+        }];
+        let (project, out, did) = seed_arc("refused", "Theo moves from acquaintance to rival.", facts);
+        let before = Store::load(&out).status.generation;
+        let err = answer(&project, &out, &did, Reply::Choice(0), None).unwrap_err();
+        assert!(err.contains("refused") && err.contains("ent:survey"), "{}", err);
+        let text = crate::vfs::read_to_string(project.root.join("docs/arcs.md")).unwrap();
+        assert!(text.contains("to ally."), "{}", text);
+        let s = Store::load(&out);
+        assert_eq!(s.status.generation, before, "nothing committed");
+        let d = &s.graph.diagnostics[&did];
+        assert_eq!(d.lifecycle, "open");
+        assert!(d.answer.is_none());
+        assert_eq!(s.graph.requirements["req:arcs-29"].transition.as_ref().unwrap().to, "ally");
+        crate::vfs::remove_dir_all(&project.root).ok();
+    }
+
+    // An ambiguous rewrite leaves the transition as it was, names the requirement in
+    // the reply, and the revision opens the review that re-reads it.
+    #[test]
+    fn an_ambiguous_rewrite_leaves_the_transition_to_review() {
+        let (project, out, did) = seed_arc("ambiguous", "Theo turns against her.", Vec::new());
+        let v = answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
+        assert_eq!(v["review"], json!(["req:arcs-29"]), "{}", v);
+        assert_eq!(v["followed"], json!([]), "{}", v);
+        let s = Store::load(&out);
+        let r = &s.graph.requirements["req:arcs-29"];
+        assert!(r.statement.ends_with("Theo turns against her."), "{}", r.statement);
+        assert_eq!(
+            r.transition,
+            Some(arc("acquaintance", "ally", "Ines confronts Theo about the survey"))
+        );
+        assert!(s.status.has_change(crate::store::CHANGE_REQ_REVISED, "req:arcs-29"));
+        crate::vfs::remove_dir_all(&project.root).ok();
     }
 }

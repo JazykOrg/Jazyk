@@ -2281,7 +2281,17 @@ impl McpServer {
                         true,
                     ));
                 }
-                let scope = WorkScope::serving(if is_write { "mcp-write" } else { "mcp-read" });
+                let mut scope =
+                    WorkScope::serving(if is_write { "mcp-write" } else { "mcp-read" });
+                // A ledger session's serving holds its batch by id: the batch target is
+                // whose component group the file tools write for, so a group session
+                // extends its members' files and a regeneration rewrites its own.
+                // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+                if let Some((_, target)) =
+                    self.bridge.only.as_deref().and_then(crate::goals::parse_goal_id)
+                {
+                    scope.target = target.to_string();
+                }
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -3057,6 +3067,69 @@ mod tests {
         assert!(!with.iter().any(|n| n == "write_text_file"), "{:?}", with);
         let without = tool_names(&serve(false));
         assert!(!without.iter().any(|n| n == "read_text_file"), "{:?}", without);
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // A ledger session's serving holds its batch by id, and its file tools write for
+    // that batch's component group: a member's file is extended, another group's is
+    // refused. Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn a_ledger_serving_writes_for_its_batch_group() {
+        use crate::model::Entity;
+        let dir = bare_dir("ledger-group-write");
+        crate::vfs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n\n[gen]\ndeliverable = \"handbook\"\n",
+        )
+        .unwrap();
+        crate::vfs::create_dir_all(dir.join("handbook")).unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let mut s = Store::load(&out);
+        let ent = |name: &str, parent: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:area".into(), ent("Area", None));
+        s.graph.entities.insert("ent:claim".into(), ent("Claim", Some("ent:area")));
+        s.graph.entities.insert("ent:receipt".into(), ent("Receipt", Some("ent:claim")));
+        s.graph.entities.insert("ent:tool".into(), ent("Tool", Some("ent:area")));
+        s.save();
+        let mut ledger = crate::gen::Ledger::load(&out);
+        ledger.entities.insert(
+            "receipt".into(),
+            crate::gen::EntityGen {
+                fact_hash: String::new(),
+                requirements: Vec::new(),
+                files: vec!["claim.md".into()],
+                unattached: None,
+                recorded_at: None,
+            },
+        );
+        ledger.save(&out);
+        let serving = |only: &str| {
+            McpServer::with_bridge(
+                project.clone(),
+                out.clone(),
+                vec!["generate".to_string()],
+                true,
+                BridgeFlags { serve_files: true, only: Some(only.into()), ..Default::default() },
+            )
+        };
+        let write = |srv: &McpServer| -> Value {
+            srv.handle(
+                "tools/call",
+                &json!({"name": "write_text_file", "arguments": {"path": "claim.md", "content": "# Claim\n"}}),
+            )
+            .unwrap()
+        };
+        let r = write(&serving("g:generate:ent:claim"));
+        assert!(!r["isError"].as_bool().unwrap_or(false), "{}", r);
+        assert!(dir.join("handbook/claim.md").vis_file());
+        let r = write(&serving("g:generate:ent:tool"));
+        assert!(r["isError"].as_bool().unwrap_or(false), "{}", r);
+        assert!(r.to_string().contains("file-owned"), "{}", r);
         crate::vfs::remove_dir_all(&dir).ok();
     }
 

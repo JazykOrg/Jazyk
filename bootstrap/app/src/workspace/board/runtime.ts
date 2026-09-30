@@ -59,7 +59,3 @@ function captureAll() {
 export function stillOf(path: string): Still | undefined {
   return stills.get(path)
 }
-
-export function dropStill(path: string) {
-  stills.delete(path)
-}

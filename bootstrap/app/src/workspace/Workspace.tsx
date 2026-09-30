@@ -5,7 +5,7 @@
 // The address bar is the focused item's path. A navigation anywhere (a link in a
 // page, the navigator, search, back and forward) shows the item for its path instead
 // of replacing the center, and a `?node=` in it selects that node for Connections.
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import TopBar from '../shell/TopBar'
 import ChatPane from '../chat/ChatPane'
@@ -19,8 +19,10 @@ import { findItem, pinPath, showPath } from './actions'
 import WorkspaceNavigator, { takePreviewOpen } from './Navigator'
 import ConnectionsPanel from './ConnectionsPanel'
 import Tabs, { NarrowTabs } from './Tabs'
-import BoardArrangement from './board/Board'
 import './workspace.css'
+
+// The board carries the canvas library; it loads when the Board arrangement first shows.
+const BoardArrangement = lazy(() => import('./board/Board'))
 
 export default function Workspace({ openPalette }: { openPalette: () => void }) {
   const loc = useLocation()
@@ -95,7 +97,7 @@ export default function Workspace({ openPalette }: { openPalette: () => void }) 
         {navOpen && <div className="ws-scrim" onClick={() => setNavOpen(false)} />}
         <div className="ws-centerrow">
           <main className="ws-center wsw-center">
-            <div className="wsw-items">{arrangement === 'board' ? <BoardArrangement /> : narrow ? <NarrowTabs show={show} /> : <Tabs />}</div>
+            <div className="wsw-items">{arrangement === 'board' ? <Suspense fallback={null}><BoardArrangement /></Suspense> : narrow ? <NarrowTabs show={show} /> : <Tabs />}</div>
             <ConnectionsPanel narrow={narrow} />
           </main>
         </div>

@@ -1,7 +1,8 @@
 // The Board arrangement (docs/frontends/gui.md#workspace-experimental,
 // plans/workspace.md#board): the open items as windows on a dotted table top, the
 // entities they bring as chips with the relationships drawn between them, and what
-// the board draws changing with the zoom down to groups. The shell loads it lazily.
+// the board draws changing with the zoom down to groups. The shell (Workspace.tsx)
+// loads it lazily when the Board arrangement first shows.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
@@ -22,7 +23,10 @@ import './board.css'
 import { useGraph, useProject } from '../../lib/queries'
 import { useApp } from '../../lib/store'
 import { kindWord } from '../../lib/present'
+import { treeProjectKey } from '../../lib/tree'
 import { useWorkspace } from '../items'
+import { itemKey } from '../paths'
+import { closePath, showPath } from '../actions'
 import { BoardActionsContext, type BoardActions } from './actions'
 import { edgeTypes, type BoardEdgeType } from './edges'
 import {
@@ -53,12 +57,11 @@ import { nodeTypes, type BoardNode, type ChipData, type WindowData } from './nod
 import { useRuntime } from './runtime'
 
 // The project the items belong to: the shell loads it; a board mounted alone
-// loads the open project's id itself.
+// loads it the way the shell does.
 function useEnsureProject() {
   const project = useWorkspace((s) => s.project)
-  const local = useApp((a) => a.stored?.id ?? a.folder?.id ?? null)
   const { data: proj } = useProject()
-  const key = local ?? proj?.root ?? null
+  const key = treeProjectKey(proj?.root ?? '') || null
   useEffect(() => {
     if (!useWorkspace.getState().project && key) useWorkspace.getState().loadProject(key)
   }, [key])
@@ -133,44 +136,47 @@ function BoardCanvas({ project }: { project: string | null }) {
   const scale = chipScale(level)
 
   // Where each new window goes: beside the window it was opened from, beside the
-  // chip it was opened from, else right of the rightmost window.
+  // chip it was opened from, else right of the rightmost window. Windows are keyed
+  // by their item's page (the path without its query).
   const hints = useRef(new Map<string, { from?: string; near?: Point }>())
   useEffect(() => {
-    const missing = items.filter((i) => !saved.windows[i.path])
+    const missing = items.filter((i) => !saved.windows[itemKey(i.path)])
     if (missing.length === 0) return
     const windows = { ...saved.windows }
     for (const it of missing) {
-      const taken = items.filter((i) => windows[i.path]).map((i) => windows[i.path])
-      const hint = hints.current.get(it.path)
-      hints.current.delete(it.path)
+      const key = itemKey(it.path)
+      const taken = items.filter((i) => windows[itemKey(i.path)]).map((i) => windows[itemKey(i.path)])
+      const hint = hints.current.get(key)
+      hints.current.delete(key)
       const from = hint?.from ?? it.from
-      const anchor = from ? windows[from] : undefined
-      windows[it.path] = anchor ? placeBeside(anchor, taken) : hint?.near ? placeNear(hint.near, taken) : placeRight(taken)
+      const anchor = from ? windows[itemKey(from)] : undefined
+      windows[key] = anchor ? placeBeside(anchor, taken) : hint?.near ? placeNear(hint.near, taken) : placeRight(taken)
     }
     setSaved((s) => ({ ...s, windows }))
   }, [items, saved.windows])
 
   // Opening pans to the new window; a click on a window focuses it without moving.
+  const focusedKey = focused ? itemKey(focused) : null
   const seenFocus = useRef<string | null | undefined>(undefined)
   const selfFocus = useRef<string | null>(null)
   useEffect(() => {
-    if (!focused) return
-    const r = saved.windows[focused]
-    if (!r || seenFocus.current === focused) return
+    if (!focusedKey) return
+    const r = saved.windows[focusedKey]
+    if (!r || seenFocus.current === focusedKey) return
     const first = seenFocus.current === undefined
-    seenFocus.current = focused
-    if (first || selfFocus.current === focused) {
+    seenFocus.current = focusedKey
+    if (first || selfFocus.current === focusedKey) {
       selfFocus.current = null
       return
     }
     rf.setCenter(r.x + r.w / 2, r.y + r.h / 2, { zoom: rf.getZoom(), duration: 400 })
-  }, [focused, saved.windows, rf])
+  }, [focusedKey, saved.windows, rf])
 
   // The rect every window and chip sits in (chips at their unscaled size).
   const rects = useMemo(() => {
     const m = new Map<string, Rect>()
     for (const it of items) {
-      const r = saved.windows[it.path]
+      const r = saved.windows[itemKey(it.path)]
       if (r) m.set(windowId(it.path), r)
     }
     for (const c of layer.chips) {
@@ -192,12 +198,14 @@ function BoardCanvas({ project }: { project: string | null }) {
     const out: BoardNode[] = []
     const group = level === 'group'
     for (const it of items) {
-      const r = saved.windows[it.path]
+      const key = itemKey(it.path)
+      const r = saved.windows[key]
       if (!r) continue
-      let data = windowData.current.get(it.path)
-      if (!data || data.focused !== (focused === it.path)) {
-        data = { path: it.path, focused: focused === it.path }
-        windowData.current.set(it.path, data)
+      const isFocused = focusedKey === key
+      let data = windowData.current.get(key)
+      if (!data || data.focused !== isFocused || data.path !== it.path) {
+        data = { path: it.path, focused: isFocused }
+        windowData.current.set(key, data)
       }
       out.push({
         id: windowId(it.path),
@@ -208,7 +216,7 @@ function BoardCanvas({ project }: { project: string | null }) {
         data,
         dragHandle: level === 'card' ? undefined : '.bw-title',
         hidden: group,
-        zIndex: focused === it.path ? 2 : 1,
+        zIndex: isFocused ? 2 : 1,
       })
     }
     for (const c of layer.chips) {
@@ -249,7 +257,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       })
     }
     return out
-  }, [items, saved.windows, saved.chips, layer, g, level, scale, focused, selected, overview])
+  }, [items, saved.windows, saved.chips, layer, g, level, scale, focusedKey, selected, overview])
 
   const edges = useMemo<BoardEdgeType[]>(() => {
     const arrow = { type: MarkerType.ArrowClosed, width: 16, height: 16 }
@@ -294,7 +302,7 @@ function BoardCanvas({ project }: { project: string | null }) {
     const [tx, ty, zoom] = transform
     const view = { x: -tx / zoom, y: -ty / zoom, w: width / zoom, h: height / zoom }
     const inView = items
-      .map((i) => [i.path, saved.windows[i.path]] as [string, Rect | undefined])
+      .map((i) => [itemKey(i.path), saved.windows[itemKey(i.path)]] as [string, Rect | undefined])
       .filter((e): e is [string, Rect] => !!e[1])
       .filter(([, r]) => r.x < view.x + view.w && view.x < r.x + r.w && r.y < view.y + view.h && view.y < r.y + r.h)
     useRuntime.getState().setLive(nearest(inView, { x: view.x + view.w / 2, y: view.y + view.h / 2 }))
@@ -313,7 +321,8 @@ function BoardCanvas({ project }: { project: string | null }) {
   const zoomToRect = useCallback(
     (r: Rect, minZoom: number) => {
       const { width, height } = storeApi.getState()
-      const z = Math.min(1, Math.max(minZoom, Math.min(width / (r.w + 80), height / (r.h + 80))))
+      // Room above for the toolbar, so a window's title bar stays reachable.
+      const z = Math.min(1, Math.max(minZoom, Math.min(width / (r.w + 80), height / (r.h + 150))))
       void rf.setCenter(r.x + r.w / 2, r.y + r.h / 2, { zoom: z, duration: 450 })
     },
     [rf, storeApi],
@@ -334,27 +343,37 @@ function BoardCanvas({ project }: { project: string | null }) {
         const r = state.current.rects.get(id)
         if (r) zoomToRect(r, 0.2)
       },
+      // Through the shell's moves, so an open page is focused (and retargeted)
+      // rather than opened twice.
       open: (path, { from, near }) => {
-        const ws = useWorkspace.getState()
-        if (!ws.items.some((i) => i.path === path)) {
-          if (from) hints.current.set(path, { from })
+        const key = itemKey(path)
+        if (!useWorkspace.getState().items.some((i) => itemKey(i.path) === key)) {
+          if (from) hints.current.set(key, { from })
           else if (near) {
             const r = state.current.rects.get(chipId(near))
-            if (r) hints.current.set(path, { near: { x: r.x + (state.current.scale - 1) * CHIP_W, y: r.y } })
+            if (r) hints.current.set(key, { near: { x: r.x + (state.current.scale - 1) * CHIP_W, y: r.y } })
           }
         }
-        ws.openItem(path, from ? { from } : undefined)
+        showPath(path, from ? { from } : {})
       },
       close: (path) => {
-        useWorkspace.getState().closeItem(path)
+        closePath(path)
         setSaved((s) => {
           const w = { ...s.windows }
-          delete w[path]
+          delete w[itemKey(path)]
           return { ...s, windows: w }
         })
       },
-      resize: (path, r) => setSaved((s) => ({ ...s, windows: { ...s.windows, [path]: { x: r.x, y: r.y, w: Math.round(r.w), h: Math.round(r.h) } } })),
-      chipAt: (entity) => state.current.rects.get(chipId(entity)),
+      resize: (path, r) => setSaved((s) => ({ ...s, windows: { ...s.windows, [itemKey(path)]: { x: r.x, y: r.y, w: Math.round(r.w), h: Math.round(r.h) } } })),
+      // A press in a window focuses its item without moving the board; the press
+      // lands before the page's own click, so a page that opens another item on
+      // that click leaves the new item focused.
+      focus: (path) => {
+        const ws = useWorkspace.getState()
+        if (itemKey(ws.focused ?? '') === itemKey(path)) return
+        selfFocus.current = itemKey(path)
+        ws.focusItem(path)
+      },
     }),
     [zoomToRect],
   )
@@ -363,15 +382,10 @@ function BoardCanvas({ project }: { project: string | null }) {
     (e, node) => {
       const t = e.target as HTMLElement
       if (node.type === 'window') {
+        // A press anywhere in a window already focused it (WindowNode); a click on
+        // a still or a card zooms to it.
         if (t.closest('.bw-close, .bw-resize')) return
-        const lv = useRuntime.getState().level
-        const path = (node.data as WindowData).path
-        if (lv !== 'live' && t.closest('.bw-body')) {
-          actions.zoomToNode(node.id)
-        } else if (useWorkspace.getState().focused !== path) {
-          selfFocus.current = path
-          useWorkspace.getState().focusItem(path)
-        }
+        if (useRuntime.getState().level !== 'live' && t.closest('.bw-body')) actions.zoomToNode(node.id)
       } else if (node.type === 'chip') {
         useWorkspace.getState().select((node.data as ChipData).entity)
       } else if (node.type === 'group') {
@@ -440,8 +454,9 @@ function BoardCanvas({ project }: { project: string | null }) {
       else if (id.startsWith('c:')) chips[id.slice(2)] = p
     }
     setSaved((x) => ({ ...x, windows, chips }))
-    window.setTimeout(fit, 60)
-  }, [fit])
+    // The arranged board shows as cards at the least, never as groups.
+    window.setTimeout(() => void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1, minZoom: 0.16 }), 60)
+  }, [rf])
 
   const toggleGraph = useCallback(() => setSaved((s) => ({ ...s, graph: !s.graph })), [])
 
@@ -475,7 +490,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       >
         <LevelWatcher />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.6} />
-        <MiniMap pannable zoomable position="bottom-right" className="board-minimap" nodeClassName={(n) => `mm-${n.type}`} />
+        <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />
         <Panel position="top-left">
           <Toolbar graphOn={saved.graph} toggleGraph={toggleGraph} arrange={() => void arrange()} fit={fit} />
         </Panel>

@@ -5,6 +5,7 @@
 import type { Graph } from '../../lib/api'
 import { relationPhrase } from '../../lib/present'
 import { itemKind, itemTitle, type Item } from '../items'
+import { itemKey } from '../paths'
 
 export interface Rect {
   x: number
@@ -18,8 +19,9 @@ export interface Point {
   y: number
 }
 
-// What the board remembers per project: every window's rect, the chips a person
-// dragged or `Arrange` placed, the graph layer's toggle, and the viewport.
+// What the board remembers per project: every window's rect by its item's page
+// (the path without its query), the chips a person dragged or `Arrange` placed, the
+// graph layer's toggle, and the viewport.
 export interface Saved {
   windows: Record<string, Rect>
   chips: Record<string, Point>
@@ -172,21 +174,14 @@ export function nodeOf(path: string): string {
   return ''
 }
 
-// The page a graph node opens as, or null for a node without one of its own.
-export function pathOfNode(id: string): string | null {
-  if (id.startsWith('ent:')) return `/model/entities/${encodeURIComponent(id)}`
-  if (id.startsWith('req:')) return `/model/requirements/${encodeURIComponent(id)}`
-  if (id.startsWith('view:')) return `/model/diagrams/${encodeURIComponent(id)}`
-  return null
-}
-
 // The document an entity is defined in: its quote's, else its first mention's.
 export function definingDoc(g: Graph, id: string): string | undefined {
   const e = g.entities[id]
   return e?.provenance?.quote?.doc ?? e?.mentions?.[0]?.doc
 }
 
-export const windowId = (path: string) => `w:${path}`
+// A window is its item's page: the path without the query (paths.ts).
+export const windowId = (path: string) => `w:${itemKey(path)}`
 export const chipId = (entity: string) => `c:${entity}`
 export const groupId = (key: string) => `g:${key}`
 
@@ -271,7 +266,7 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
   const entityNode = new Map<string, string>()
   const edges: LayerEdge[] = []
   const chips: LayerChip[] = []
-  const paths = new Set(items.map((i) => i.path))
+  const paths = new Set(items.map((i) => itemKey(i.path)))
   if (g) {
     for (const item of items) {
       if (itemKind(item.path) !== 'entity') continue
@@ -284,14 +279,15 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
     for (const item of items) {
       for (const { entity, edge } of windowEntities(g, item)) {
         if (!entityNode.has(entity)) {
-          const index = columns.get(item.path) ?? 0
-          columns.set(item.path, index + 1)
-          chips.push({ entity, owner: item.path, index })
+          const owner = itemKey(item.path)
+          const index = columns.get(owner) ?? 0
+          columns.set(owner, index + 1)
+          chips.push({ entity, owner, index })
           entityNode.set(entity, chipId(entity))
         }
         const target = entityNode.get(entity)!
         if (edge && target !== windowId(item.path)) {
-          edges.push({ id: `${edge}:${item.path}->${entity}`, source: windowId(item.path), target, kind: edge })
+          edges.push({ id: `${edge}:${itemKey(item.path)}->${entity}`, source: windowId(item.path), target, kind: edge })
         }
       }
     }
@@ -319,12 +315,12 @@ export function buildLayer(items: Item[], g: Graph | undefined, graphOn: boolean
   }
   const linked = new Set(edges.map((e) => [e.source, e.target].sort().join('|')))
   for (const item of items) {
-    if (!item.from || !paths.has(item.from)) continue
+    if (!item.from || !paths.has(itemKey(item.from))) continue
     const s = windowId(item.from)
     const t = windowId(item.path)
     if (linked.has([s, t].sort().join('|'))) continue
     linked.add([s, t].sort().join('|'))
-    edges.push({ id: `from:${item.from}->${item.path}`, source: s, target: t, kind: 'from' })
+    edges.push({ id: `from:${itemKey(item.from)}->${itemKey(item.path)}`, source: s, target: t, kind: 'from' })
   }
   return { chips, edges, entityNode }
 }
@@ -389,11 +385,6 @@ export interface GroupEdge {
   target: string
   count: number
   label: string
-}
-
-export interface Placed {
-  // Every window and chip node on the board with its rect.
-  rects: Map<string, Rect>
 }
 
 // The overview's groups: documents by folder, entities (windows and chips) by the

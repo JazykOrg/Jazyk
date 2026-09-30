@@ -10,9 +10,11 @@ import { get } from '../../lib/api'
 import { useCoverage, useDocs, useGraph, useMatrix } from '../../lib/queries'
 import { kindWord, shorten, statusWord } from '../../lib/present'
 import { itemKind, itemTitle, useWorkspace } from '../items'
+import { itemKey, nodePagePath, splitSelection } from '../paths'
+import { showPath } from '../actions'
 import ItemNavigation, { type ItemNavigate } from './ItemNavigation'
 import { useBoardActions } from './actions'
-import { canonical, docOf, nodeOf, pathOfNode, WIN_MIN_H, WIN_MIN_W, type Group, type Level } from './model'
+import { canonical, docOf, nodeOf, WIN_MIN_H, WIN_MIN_W, type Group } from './model'
 import { registerBody, stillOf, useRuntime } from './runtime'
 
 const GLYPH: Record<ReturnType<typeof itemKind>, string> = {
@@ -65,53 +67,40 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
   }
 }
 
-// The page itself, navigating through the item: a new page opens as a window
-// beside this one, a mention selects its node and opens its page beside, a change
-// of this page's own query stays here.
-function LiveBody({ path }: { path: string }) {
-  const [loc, setLoc] = useState(path)
+// The page itself, rendered against its item's path and navigating through the
+// item: another page opens as a window beside this one, a `?node=` (a mention, a
+// marker) selects the node and opens its page beside, and a change of this page's
+// own query retargets the item in place (plans/workspace.md#board).
+const LiveBody = memo(function LiveBody({ path }: { path: string }) {
   const actions = useBoardActions()
-  const ref = useRef<HTMLDivElement | null>(null)
-  const setRef = useCallback(
-    (el: HTMLDivElement | null) => {
-      ref.current = el
-      registerBody(path, el)
-    },
-    [path],
-  )
+  const key = itemKey(path)
+  const setRef = useCallback((el: HTMLDivElement | null) => registerBody(key, el), [key])
   const onNavigate = useCallback<ItemNavigate>(
     (to) => {
-      const cur = new URL(loc, 'http://board')
-      const next = new URL(to, cur)
-      if (next.pathname === cur.pathname) {
-        const node = next.searchParams.get('node')
-        if (node && node !== cur.searchParams.get('node')) {
-          useWorkspace.getState().select(node)
-          const page = pathOfNode(node)
-          if (page) actions.open(page, { from: path })
-        }
-        next.searchParams.delete('node')
-        next.searchParams.delete('entity')
-        const qs = next.searchParams.toString()
-        setLoc(`${next.pathname}${qs ? `?${qs}` : ''}`)
-        return
+      const u = new URL(to, new URL(path, 'http://board'))
+      const { path: target, node } = splitSelection(`${u.pathname}${u.search}${u.hash}`)
+      if (node) {
+        useWorkspace.getState().select(node)
+        const page = nodePagePath(node)
+        if (page && itemKey(page) !== key) actions.open(page, { from: path })
       }
-      actions.open(`${next.pathname}${next.search}`, { from: path })
+      if (itemKey(target) !== key) actions.open(target, { from: path })
+      else if (!node && target !== path) showPath(target)
     },
-    [loc, path, actions],
+    [path, key, actions],
   )
   return (
     <div className="bw-live" ref={setRef}>
       <PageBoundary>
         <ItemNavigation onNavigate={onNavigate}>
           <Suspense fallback={<p className="bw-empty">loading…</p>}>
-            <AppRoutes location={loc} />
+            <AppRoutes location={path} />
           </Suspense>
         </ItemNavigation>
       </PageBoundary>
     </div>
   )
-}
+})
 
 interface DocContent {
   path: string
@@ -174,8 +163,8 @@ function ReadStill({ path, title }: { path: string; title: string }) {
   )
 }
 
-function StillBody({ path, title }: { path: string; title: string }) {
-  const still = stillOf(path)
+const StillBody = memo(function StillBody({ path, title }: { path: string; title: string }) {
+  const still = stillOf(itemKey(path))
   const ref = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const el = ref.current
@@ -196,10 +185,10 @@ function StillBody({ path, title }: { path: string; title: string }) {
       <ReadStill path={path} title={title} />
     </div>
   )
-}
+})
 
 // A card: the title, the kind, a few lines, a status (plans/workspace.md#zoom-levels).
-function CardBody({ path, title }: { path: string; title: string }) {
+const CardBody = memo(function CardBody({ path, title }: { path: string; title: string }) {
   const kind = itemKind(path)
   const doc = kind === 'doc' ? docOf(path) : ''
   const text = useDocText(doc)
@@ -246,17 +235,17 @@ function CardBody({ path, title }: { path: string; title: string }) {
       {status && <div className="bw-card-status">{status}</div>}
     </div>
   )
-}
+})
 
 export const WindowNode = memo(function WindowNode({ id, data, width, height, positionAbsoluteX, positionAbsoluteY }: NodeProps<WindowNodeType>) {
   const { path, focused } = data
   const level = useRuntime((s) => s.level)
-  const live = useRuntime((s) => s.level === 'live' && s.live.includes(path))
+  const live = useRuntime((s) => s.level === 'live' && s.live.includes(itemKey(path)))
   const actions = useBoardActions()
   const title = useItemTitle(path)
   const kind = itemKind(path)
   return (
-    <div className={`bw lv-${level}${focused ? ' focused' : ''}${live ? ' is-live' : ''}`} data-path={path}>
+    <div className={`bw lv-${level}${focused ? ' focused' : ''}${live ? ' is-live' : ''}`} data-path={path} onPointerDownCapture={() => actions.focus(path)}>
       <Handles />
       {level !== 'card' && (
         <div className="bw-title" onDoubleClick={() => actions.zoomToNode(id)} title={path}>
@@ -326,4 +315,3 @@ export const GroupNode = memo(function GroupNode({ data, width }: NodeProps<Grou
 export const nodeTypes = { window: WindowNode, chip: ChipNode, group: GroupNode }
 
 export type BoardNode = WindowNodeType | ChipNodeType | GroupNodeType
-export type { Level }

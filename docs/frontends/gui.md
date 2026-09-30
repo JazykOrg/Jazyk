@@ -1586,21 +1586,39 @@ both.
   tabs and splits are remembered per project. A hidden tab keeps its page only while
   it is among the eight most recently shown. On a narrow screen one tab shows at a
   time with a tab switcher that lays the open items out as a grid.
-- Board: a table top, white with light dots, that pans and zooms. Every open item is
-  a window with a title bar to drag, a resize corner, and a close. The graph layer
-  (on by default) draws the entities the windows mention or define as chips beside
-  them and the relationships between those entities as edges with their verbs; a
-  document window links to the entities it defines. Opening from inside a window
-  places the new window beside it with an edge and pans to it. Windows stay where
-  they are dragged, remembered per project; `Arrange` lays them out by the graph. A
+- Board: a table top, white with light dots (dark with dim dots on the dark theme),
+  that pans with the wheel, a drag, or Space and a drag, and zooms with a pinch or
+  Ctrl and the wheel. Every open item is a window with a title bar to drag, a resize
+  corner, and a close; a press in a window focuses its item. The graph layer (on by
+  default, the `Graph` toggle) draws the entities the windows bring as chips in a
+  column beside them, at most twelve per window:
+  - a document: the entities it defines (an entity is defined in the document of its
+    quote, else of its first mention) and then the ones it mentions most;
+  - an entity: its neighbours; a requirement: its entities; a diagram: its members.
+- An open entity window stands for its entity in place of a chip. The relationships
+  between the entities shown are edges with their verbs, one per direction with the
+  strongest type; a document window links to the entities it defines with a dashed
+  edge. A click on a chip selects it for Connections; a double click opens its entity
+  beside it. Opening from inside a window (a link, or a mention, which also selects
+  its entity) places the new window beside it with an edge and pans to it. Windows
+  stay where they are dragged and resized, remembered per project with the moved
+  chips and the view; `Arrange` lays the windows and the chips out in layers, left to
+  right by the graph. A toolbar holds `Arrange`, `Fit`, `Graph`, and the zoom; a
   minimap sits in a corner.
 - The board draws by zoom: near 100 percent the windows are live pages (at most six
-  live at once, the ones nearest the view's center); from 40 to 80 percent still
-  renderings a click zooms to; from 15 to 40 percent cards with a title, a kind, a
-  few lines, and a status; under 15 percent groups (documents by folder, entities by
-  the component holding them) with counts, the edges between groups lifted the way
-  [diagrams](../compiler/diagrams.md) lift them. A double click zooms to a window or a
-  group, `Escape` zooms out one level, `Z` fits everything.
+  live at once, the ones nearest the view's center among those in view); from 40 to
+  80 percent stills (the page as it was last drawn live, else its Read form) a click
+  zooms to; from 15 to 40 percent cards with a title, a kind, a few lines, and a
+  status, the chips grown so their names read; under 15 percent groups with counts,
+  the edges between groups lifted the way [diagrams](../compiler/diagrams.md) lift
+  them:
+  - documents by folder;
+  - entities by the component holding them: the ancestor directly under a root, a
+    leaf directly under a root with the root, a root alone under `Other entities`;
+  - other pages by kind.
+- The groups sit in a grid in the order their members sit on the board, so no two
+  overlap. A double click zooms to a window or a group, and a click on a group zooms
+  to it too. `Escape` zooms out one level, `Z` fits everything.
 - Tabs and Board are one set of open items: switching keeps them, and closing a
   window closes its tab.
 

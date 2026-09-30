@@ -111,7 +111,10 @@ temperature = 0
   to relay non-streaming tool call responses); if the streaming retry succeeds,
   streaming stays on for the rest of the run. A streamed response is assembled from its
   deltas, including any `reasoning_content` or `reasoning` deltas, so it carries the
-  same fields as a non-streaming reply. Some providers reject reasoning fields echoed
+  same fields as a non-streaming reply. A tool call delta that carries a new call `id`
+  starts a new call even when its `index` repeats: an Ollama endpoint behind a router
+  streams each parallel call whole under index 0, and joining their arguments made
+  every call of the reply unparseable. Some providers reject reasoning fields echoed
   back in the message history; on such a rejection the client strips them from outgoing
   messages for the rest of the run. The session transcript and trace keep the text (see
   [the embedded agent](../frontends/acp.md#the-embedded-agent)).

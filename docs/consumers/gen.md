@@ -232,8 +232,10 @@ the graph at batch time, never stored:
   members' relationships, and each later session receives the earlier parts as files
   with what they hold. Members whose facts match the ledger are not regenerated: their
   files ride in the package as context, the way other entities' parts do.
-- Each member records its own manifest through `record_generation`, so ownership, fact
-  hashes, and incremental regeneration stay per entity.
+- Each member records its own manifest through `record_generation`, so fact hashes and
+  incremental regeneration stay per entity. File ownership is the group's
+  ([file ownership](#file-ownership-and-conventions)): a page two members realize is
+  written by the session and recorded by both.
 
 A flat graph (no `parent` anywhere) has no groups, and the entity is the unit
 throughout. Nothing configures this; the containment the documents state, or an
@@ -262,11 +264,28 @@ manifest.
 ## File ownership and conventions
 
 - Every deliverable file belongs to the entity whose session wrote it, recorded in
-  [the ledger](#the-ledger). A session never overwrites another entity's files: the
-  harness rejects a file path already recorded for a different entity and asks the
-  worker for another path (one corrective retry, then the goal fails). Using another
-  entity's files goes through references (imports, includes), never through rewriting
-  them.
+  [the ledger](#the-ledger), and ownership is shared across the entity's
+  [component group](#grouping-by-component). The members of one group write and
+  record each other's files: one session composes the group's part, and a
+  document-like medium puts a component on one page (a handbook page for a department
+  and its roles). An entity outside every group (a system, the entities of a flat
+  graph) shares with nobody.
+- A session never overwrites a file an entity outside its group records: the harness
+  rejects the path at `write_text_file` and at `record_generation`, naming the owner,
+  and asks the worker for another path (one corrective retry, then the goal fails).
+  Using another group's files goes through references (imports, includes, links),
+  never through rewriting them. Test artifacts and criteria files are the rows', not
+  an entity's: listing one is never an ownership conflict.
+- A record names the files that realize the entity's requirements. `record_generation`
+  rejects a manifest whose `files` name no implementing file (test artifacts, criteria
+  files, and build outputs are not implementation) while a requirement of the entity
+  has no row naming one, and the rejection names those requirements: the session
+  writes the entity's part, or names the file that carries a requirement on that
+  requirement's row. An entity whose every requirement is carried by other entities'
+  files (an actor whose statements the tool it uses implements) records `files: []`.
+  The organization handbook once recorded `files: []` for fourteen entities whose page
+  another group had recorded first, and every one of their rows failed for want of an
+  implementing file.
 - The goal package names those files with the statements they carry, not just their
   paths. A composite deliverable is assembled from parts other sessions wrote, and a path
   alone says nothing about what is inside; the statements do, and they are what the
@@ -312,6 +331,19 @@ manifest.
   hashes, or removes reaches outside the deliverable (criteria paths resolve under
   the out directory the same way). The served file tools apply the same rule
   ([file and command tools](../compiler/goals/generate.md#file-and-command-tools)).
+- A path that starts with the deliverable directory's own name (`handbook/hiring.md`
+  when the deliverable is `handbook`) while the deliverable holds no directory of that
+  name restates the root. The file tools, `record_generation`, and `record_binding`
+  strip the prefix, keep the path under the root (`hiring.md`), and say so in the
+  reply's `note`, so the worker learns the convention. A deliverable that holds a
+  directory of that name keeps the path as given. The organization handbook's
+  generation once wrote every page one level too deep, under `handbook/handbook/`.
+- Test contents follow the same convention, and the harness cannot rewrite them: a
+  bound test runs from the deliverable directory, so one that opens
+  `handbook/hiring.md` inside the `handbook` deliverable pins the doubled layout, and a
+  later generation that writes under the root copies its pages back down to pass it.
+  The [bind contract](../compiler/goals/prompts/bind-contract.md) states the rule;
+  the repair for a test already bound that way is a re-bind.
 - A corrective retry never costs the parts of an answer the complaint did not name.
   The previous answer goes back with it, the request is to change only what the
   complaint names, and what comes back is merged over it: a retry that returns no

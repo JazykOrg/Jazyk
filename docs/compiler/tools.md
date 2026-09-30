@@ -626,7 +626,10 @@ sandboxed to the deliverable, when the profile sets
 holds after symlinks resolve: a path is relative, carries no `..`, and its deepest
 existing ancestor canonicalizes under the canonical deliverable directory, so a link
 inside the deliverable that points outside is refused (`bad-path`) like `..` would be,
-and `list_files` does not list it.
+and `list_files` does not list it. A path that starts with the deliverable directory's
+own name while the deliverable holds no directory of that name is normalized under
+the root, and the reply's `note` says so
+([file ownership](../consumers/gen.md#file-ownership-and-conventions)).
 
 - `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
   the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where
@@ -655,7 +658,12 @@ and `list_files` does not list it.
   them to the graph: `{files: [...], supportFiles?: [...], tests: [{requirement, kind,
   label, artifact, name, run, cwd}], build?}`, `supportFiles` the deliverable-wide
   files ownership never applies to
-  ([file ownership](../consumers/gen.md#file-ownership-and-conventions)). Marking strips every single-line marker comment from the
+  ([file ownership](../consumers/gen.md#file-ownership-and-conventions)). A `files`
+  path an entity outside the entity's component group records is refused
+  (`bad-manifest`) naming the owner, and so is a `files` list with no implementing
+  file while a requirement of the entity has no row naming one. A path that restates
+  the deliverable directory's name is normalized under the root and named in the
+  reply's `note`. Marking strips every single-line marker comment from the
   manifest files and records each as an anchored site on its requirement's row
   ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps
   and [prunes rows](../consumers/gen.md#deletion-prunes-the-ledger) whose requirement

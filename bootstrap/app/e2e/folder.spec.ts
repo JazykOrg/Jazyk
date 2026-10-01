@@ -307,6 +307,33 @@ test('a read-only folder opens its documents in Read, a writing folder in Write'
   await expect(page.locator('.cm-content')).toBeVisible()
 })
 
+// An empty folder reached in the workspace shows the wizard there, and once set up
+// the tree's head starts the first document (docs/frontends/gui.md#the-setup-wizard).
+test('an empty folder shows the wizard in the workspace, and the tree starts its first document', async ({ page }) => {
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory()
+    await root.removeEntry('empty', { recursive: true }).catch(() => {})
+    await root.getDirectoryHandle('empty', { create: true })
+    ;(window as unknown as { __pickDir?: string }).__pickDir = 'empty'
+  })
+  await page.getByRole('button', { name: 'Open folder…' }).click()
+  await expect(page.locator('.wizard h2')).toHaveText('Set up this project')
+  await page.goto('/#/docs')
+  const wizard = page.locator('.wsw-items .wizard')
+  await expect(wizard).toBeVisible()
+  await wizard.locator('textarea').first().fill('docs/**/*.md')
+  await page.getByRole('button', { name: 'Write jazyk.toml' }).click()
+  await expect(page.locator('.wsw-items .wizard')).toHaveCount(0)
+  await expect(page.locator('.wsn .ft-file[data-path="jazyk.toml"]')).toBeVisible()
+  await page.locator('.wsn .ft-head').getByRole('button', { name: '+ document' }).click()
+  const input = page.locator('.wsn .ft-input')
+  await expect(input).toBeFocused()
+  await input.fill('intro')
+  await input.press('Enter')
+  await expect(page).toHaveURL(/#\/docs\/docs\/intro\.md$/)
+  await expect.poll(() => readProjectFile(page, 'docs/intro.md', 'empty')).toContain('# Intro')
+})
+
 test('picking the same folder twice gives one Recent row', async ({ page }) => {
   await openFolder(page, 'read')
   await page.goto('/#/')

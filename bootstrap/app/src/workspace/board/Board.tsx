@@ -24,7 +24,7 @@ import './board.css'
 import { useGraph, useProject } from '../../lib/queries'
 import { useApp } from '../../lib/store'
 import { kindWord, shorten } from '../../lib/present'
-import { treeProjectKey } from '../../lib/tree'
+import { useProjectKey } from '../../lib/tree'
 import { itemKind, itemTitle, useWorkspace } from '../items'
 import { itemKey } from '../paths'
 import { closePath, showPath } from '../actions'
@@ -67,7 +67,7 @@ import { useRuntime } from './runtime'
 function useEnsureProject() {
   const project = useWorkspace((s) => s.project)
   const { data: proj } = useProject()
-  const key = treeProjectKey(proj?.root ?? '') || null
+  const key = useProjectKey(proj?.root ?? '') || null
   useEffect(() => {
     if (!useWorkspace.getState().project && key) useWorkspace.getState().loadProject(key)
   }, [key])

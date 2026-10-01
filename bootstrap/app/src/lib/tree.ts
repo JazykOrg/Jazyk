@@ -1,6 +1,7 @@
 // The file tree the navigator draws (docs/frontends/gui.md#docs): folders first,
 // then files, each level sorted by name; which folders stand open, remembered per
 // project; and the glob the documents are matched by, so a file outside it dims.
+import { useApp } from './store'
 import { readOpenId } from './open'
 
 export interface TreeFile<T> {
@@ -141,6 +142,12 @@ const CLOSED_KEY = 'jazyk.tree.closed'
 // root).
 export function treeProjectKey(fallback: string): string {
   return readOpenId() ?? fallback
+}
+
+// The same key, live: a component using it follows a project switch at once.
+export function useProjectKey(fallback: string): string {
+  const id = useApp((a) => a.openId)
+  return id ?? fallback
 }
 
 export function readClosedFolders(head: string, projectKey: string): Set<string> {

@@ -13,12 +13,13 @@ import ChatPane from '../chat/ChatPane'
 import { useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { useNarrow } from '../lib/narrow'
-import { treeProjectKey } from '../lib/tree'
+import { useProjectKey } from '../lib/tree'
 import { useWorkspace } from './items'
 import { isShellPath, itemKey, nodePagePath, splitSelection } from './paths'
 import { findItem, pinPath, showPath, skipClosed } from './actions'
 import WorkspaceNavigator, { takePreviewOpen } from './Navigator'
 import Tabs, { NarrowTabs } from './Tabs'
+import Wizard, { useSettingsExists } from '../shell/Wizard'
 import './workspace.css'
 
 // The board carries the canvas library; it loads when the Board arrangement first shows.
@@ -32,7 +33,10 @@ export default function Workspace({ openPalette }: { openPalette: () => void }) 
   const project = useWorkspace((w) => w.project)
   const loadProject = useWorkspace((w) => w.loadProject)
   const { data: proj } = useProject()
-  const key = treeProjectKey(proj?.root ?? '') || null
+  const settings = useSettingsExists()
+  const needsSetup = settings.data ? !settings.data.exists : false
+  const placeName = useApp((a) => a.folder?.name ?? a.stored?.name)
+  const key = useProjectKey(proj?.root ?? '') || null
   const [navOpen, setNavOpen] = useState(false)
   useEffect(() => setNavOpen(false), [loc.pathname, loc.search])
 
@@ -114,7 +118,23 @@ export default function Workspace({ openPalette }: { openPalette: () => void }) 
         {navOpen && <div className="ws-scrim" onClick={() => setNavOpen(false)} />}
         <div className="ws-centerrow">
           <main className="ws-center wsw-center">
-            <div className="wsw-items">{arrangement === 'board' ? <Suspense fallback={null}><BoardArrangement /></Suspense> : narrow ? <NarrowTabs show={show} /> : <Tabs />}</div>
+            <div className="wsw-items">
+              {needsSetup && proj && settings.data ? (
+                // A folder without jazyk.toml: the setup wizard in place of the items
+                // until the file is written (docs/frontends/gui.md#the-setup-wizard).
+                <div className="ws-scroll">
+                  <Wizard payload={settings.data} root={placeName ?? proj.root} />
+                </div>
+              ) : arrangement === 'board' ? (
+                <Suspense fallback={null}>
+                  <BoardArrangement />
+                </Suspense>
+              ) : narrow ? (
+                <NarrowTabs show={show} />
+              ) : (
+                <Tabs />
+              )}
+            </div>
           </main>
         </div>
         {!narrow && <ChatPane />}

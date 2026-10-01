@@ -12,7 +12,7 @@ import { useDeliverable, useDocs, useMatrix, useOutList, useProject, useProjectF
 import { useDocDelivLinks } from '../lib/links'
 import { useInbox } from '../lib/product'
 import { outHref } from '../lib/nav'
-import { matchesGlob, treeProjectKey, type TreeFile } from '../lib/tree'
+import { matchesGlob, useProjectKey, type TreeFile } from '../lib/tree'
 import { useApp, type TurnProgress } from '../lib/store'
 import FileTree, { type TreeActions } from './FileTree'
 import '../ide/ide.css'
@@ -139,7 +139,7 @@ export default function Explorer({ sections = ['docs', 'deliverable', 'generated
   const editorDirty = useApp((a) => a.editorDirty)
   const turns = useApp((a) => a.turns)
   const turnHold = useApp((a) => a.turnHold)
-  const projectKey = treeProjectKey(projectQ.data?.root ?? 'project')
+  const projectKey = useProjectKey(projectQ.data?.root ?? 'project')
   // Edited since its last build: the pending mark (docs/frontends/gui.md#docs).
   const pendingDocs = useMemo(() => new Set(inbox.data?.pending.docs ?? []), [inbox.data])
   const docsGlob = projectQ.data?.docsGlob ?? NO_GLOB
@@ -337,7 +337,7 @@ export function ProjectExplorer() {
   const docsQ = useDocs()
   const inbox = useInbox()
   const turns = useApp((a) => a.turns)
-  const projectKey = treeProjectKey(projectQ.data?.root ?? 'project')
+  const projectKey = useProjectKey(projectQ.data?.root ?? 'project')
   const docPath = loc.pathname.startsWith('/docs/') ? decodeURIComponent(loc.pathname.slice('/docs/'.length)) : ''
   const docActions = useDocActions(docPath)
   const pendingDocs = useMemo(() => new Set(inbox.data?.pending.docs ?? []), [inbox.data])
@@ -434,6 +434,7 @@ export function ProjectExplorer() {
           placeholder="name.md"
           actions={docActions}
           actionsFor={isDocPath}
+          createIn={[...docRoots][0] ?? ''}
           badges={(f) => {
             const d = docInfo.get(f.path)
             if (!d) return null

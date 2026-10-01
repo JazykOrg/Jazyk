@@ -24,6 +24,7 @@ export function rememberOpen(id: string) {
   } catch {
     // not remembered
   }
+  useApp.getState().setOpenId(id)
 }
 
 export function clearOpen() {
@@ -32,6 +33,7 @@ export function clearOpen() {
   } catch {
     // nothing to clear
   }
+  useApp.getState().setOpenId(null)
 }
 
 export function useProjectOpen(): boolean | undefined {

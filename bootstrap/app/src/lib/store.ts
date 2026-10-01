@@ -176,6 +176,11 @@ interface AppStore {
   // What the caret rests on in Write: the entity of the mention under it and the
   // requirements whose quote holds it (docs/frontends/gui.md#editor).
   caret: Caret | null
+  // The Recent id of the project open in this tab (lib/open.ts), live, so what is
+  // remembered per project (the workspace's items, the tree's folders) follows a
+  // switch at once.
+  openId: string | null
+  setOpenId: (id: string | null) => void
   // A quote to reveal in its document's editor, taken by the editor showing that
   // document (a requirement's line on the board, docs/frontends/gui.md#the-linkage).
   reveal: { doc: string; quote: string; n: number } | null
@@ -287,6 +292,14 @@ export const useApp = create<AppStore>((set, get) => ({
   docMode: null,
   editorLine: null,
   caret: null,
+  openId: (() => {
+    try {
+      return localStorage.getItem('jazyk.open')
+    } catch {
+      return null
+    }
+  })(),
+  setOpenId: (openId) => set((s) => (s.openId === openId ? s : { openId })),
   reveal: null,
   folder: null,
   stored: null,

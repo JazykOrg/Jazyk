@@ -192,4 +192,8 @@ test('opening a demo after a connection leaves the server for the backend in the
   await expect(page.locator('.cm-content')).toBeVisible()
   // Nothing more went to the server once the demo was open.
   expect(calls.slice(before).filter((c) => !c.includes('/api/events'))).toEqual([])
+  // The server keeps running: it stays among the open projects in the menu.
+  await page.locator('.ws-project').click()
+  await expect(page.locator('.ws-menu .ws-menu-tab', { hasText: 'garden' })).toContainText('running')
+  await page.keyboard.press('Escape')
 })

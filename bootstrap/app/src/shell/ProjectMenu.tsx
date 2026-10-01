@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { storageAvailable } from '../lib/browser-store'
 import { useCapabilities } from '../lib/capabilities'
-import { DEFAULT_PORT, useConnection } from '../lib/connect'
+import { DEFAULT_PORT, ping, useConnection } from '../lib/connect'
 import { DEMOS } from '../lib/demos'
 import { folderPickerAvailable } from '../lib/folder'
 import { unwrittenCount, whereChangesGo } from '../lib/place'
@@ -224,6 +224,15 @@ export default function ProjectMenu({ open, name, root }: { open: boolean; name:
           ? { entryId: `server:${conn.port}`, name: conn.name, kind: 'server' }
           : null
   const others = useOtherTabs(mine)
+  // The jazyk gui servers on this computer from Recent that still answer: they keep
+  // running after this tab switches away, so they stay among the open projects.
+  const [running, setRunning] = useState<string[]>([])
+  const askServers = () => {
+    const servers = recent.filter((r) => r.kind === 'server' && r.id !== mine?.entryId && !others.some((t) => t.entryId === r.id))
+    void Promise.all(servers.map(async (r) => ((await ping(r.port ?? Number(r.id.slice('server:'.length)))) ? r.id : null))).then((ids) =>
+      setRunning(ids.filter((x): x is string => x !== null)),
+    )
+  }
   const byId = new Map(recent.map((r) => [r.id, r]))
   const words = (p: TabProject) => kindWords(byId.get(p.entryId) ?? { id: p.entryId, kind: p.kind })
 
@@ -244,8 +253,12 @@ export default function ProjectMenu({ open, name, root }: { open: boolean; name:
         open={menuOpen}
         onOpenChange={(v) => {
           setMenuOpen(v)
-          // Asks the other tabs again; one that does not answer leaves the list.
-          if (v) tabPresence()?.ping()
+          // Asks the other tabs and the servers again; one that does not answer
+          // leaves the list.
+          if (v) {
+            tabPresence()?.ping()
+            askServers()
+          }
         }}
       >
         <DropdownMenu.Trigger asChild>
@@ -295,7 +308,23 @@ export default function ProjectMenu({ open, name, root }: { open: boolean; name:
                 <span className="state">{words(t)} · in another tab</span>
               </DropdownMenu.CheckboxItem>
             ))}
-            {(open || others.length > 0) && <DropdownMenu.Separator className="ws-menu-sep" />}
+            {running.map((id) => {
+              const r = byId.get(id)
+              if (!r) return null
+              return (
+                <DropdownMenu.CheckboxItem
+                  key={id}
+                  className="ws-menu-item ws-menu-check ws-menu-tab"
+                  checked={false}
+                  onSelect={() => send('jazyk:open-recent', id)}
+                  title="a jazyk gui still running on this computer; choose it to open it here"
+                >
+                  <span className="name">{r.name}</span>
+                  <span className="state">{kindWords(r)} · running</span>
+                </DropdownMenu.CheckboxItem>
+              )
+            })}
+            {(open || others.length > 0 || running.length > 0) && <DropdownMenu.Separator className="ws-menu-sep" />}
 
             <Sub label="Open recent" disabled={recent.length === 0} title={recent.length === 0 ? 'nothing opened in this browser yet' : undefined}>
               {recent.map((r) => (

@@ -73,6 +73,19 @@ test('a tab collapses into the Board and a window expands back into Tabs, over t
   await expect(page.locator('.wst-dock .dv-active-tab .wst-tab')).toHaveAttribute('data-path', '/docs/docs/frontend.md')
 })
 
+test('the open items are each project’s own: switching projects swaps them, switching back restores them', async ({ page }) => {
+  await openDemo(page, 'The ERP')
+  await toTabs(page)
+  await docRow(page, 'backend.md').dblclick()
+  await expect(tab(page, '/docs/docs/backend.md')).toBeVisible()
+  await openDemo(page, 'The shop')
+  await expect(page.locator('.ws-project')).toContainText('The shop')
+  await expect(tab(page, '/docs/docs/backend.md')).toHaveCount(0)
+  await openDemo(page, 'The ERP')
+  await expect(page.locator('.ws-project')).toContainText('The ERP')
+  await expect(tab(page, '/docs/docs/backend.md')).toBeVisible()
+})
+
 test('in Tabs every tab has a close and nothing closes on its own', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await toTabs(page)

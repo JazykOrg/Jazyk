@@ -1,6 +1,6 @@
 // The workspace's moves over the items store, by item rather than by exact path: a
 // path with another query shows the open item for the same page, retargeted
-// (docs/frontends/gui.md#workspace-experimental).
+// (docs/frontends/gui.md#workspace).
 import { useWorkspace, type Item } from './items'
 import { itemKey } from './paths'
 
@@ -31,7 +31,45 @@ export function pinPath(path: string) {
   else useWorkspace.getState().openItem(path)
 }
 
+// The item a close-as-back is leaving: the history steps that belonged to it are
+// skipped on the way back (Workspace.tsx).
+export const closing: { key: string | null } = { key: null }
+
+// The browser's position in the app's history (the router keeps it in the state).
+function historyIndex(): number {
+  const st = window.history.state as { idx?: number } | null
+  return typeof st?.idx === 'number' ? st.idx : 0
+}
+
+// Close an item. Closing the focused item is a back: the item shown before it comes
+// to the front. With no earlier step in the app, the next item takes the focus.
 export function closePath(path: string) {
   const open = findItem(path)
-  if (open) useWorkspace.getState().closeItem(open.path)
+  if (!open) return
+  const ws = useWorkspace.getState()
+  const focused = ws.focused !== null && itemKey(ws.focused) === itemKey(open.path)
+  if (focused && historyIndex() > 0 && ws.items.length > 1) {
+    closing.key = itemKey(open.path)
+    ws.closeItem(open.path, { viaBack: true })
+    window.history.back()
+    return
+  }
+  ws.closeItem(open.path)
+}
+
+// Back while closing: 'skip' when the history step is the closed item's and the
+// walk went one further back; 'other' when that step is the first one, so another
+// open item takes the focus; 'none' otherwise.
+export function skipClosed(path: string): 'skip' | 'other' | 'none' {
+  if (!closing.key) return 'none'
+  if (itemKey(path) !== closing.key) {
+    closing.key = null
+    return 'none'
+  }
+  if (historyIndex() > 0) {
+    window.history.back()
+    return 'skip'
+  }
+  closing.key = null
+  return 'other'
 }

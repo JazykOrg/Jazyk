@@ -1,4 +1,4 @@
-// The workspace (docs/frontends/gui.md#workspace-experimental, plans/workspace.md): the
+// The workspace (docs/frontends/gui.md#workspace, plans/workspace.md): the
 // top bar without lenses, one navigator, the open items as Tabs or a Board, and the
 // chat column. There is no inspector: a node opens as its own item.
 //
@@ -16,7 +16,7 @@ import { useNarrow } from '../lib/narrow'
 import { treeProjectKey } from '../lib/tree'
 import { useWorkspace } from './items'
 import { isShellPath, itemKey, nodePagePath, splitSelection } from './paths'
-import { findItem, pinPath, showPath } from './actions'
+import { findItem, pinPath, showPath, skipClosed } from './actions'
 import WorkspaceNavigator, { takePreviewOpen } from './Navigator'
 import Tabs, { NarrowTabs } from './Tabs'
 import './workspace.css'
@@ -43,18 +43,32 @@ export default function Workspace({ openPalette }: { openPalette: () => void }) 
   // Where the address bar is, without the selection: a focus that already matches it
   // navigates nowhere.
   const here = useRef(splitSelection(loc.pathname + loc.search + loc.hash).path)
+  // A `?node=` step stands for the node's page: the page takes its place in the
+  // history rather than a step after it, so back leaves the page.
+  const replaceNext = useRef(false)
 
   // The address bar into the items.
   useEffect(() => {
     if (!project) return
     const { path, node } = splitSelection(loc.pathname + loc.search + loc.hash)
     here.current = path
+    // A close is a back: the steps of the closed item are walked past.
+    const skip = skipClosed(path)
+    if (skip === 'skip') return
+    if (skip === 'other') {
+      const first = useWorkspace.getState().items[0]
+      if (first) useWorkspace.getState().focusItem(first.path)
+      return
+    }
     if (node) useWorkspace.getState().select(node)
     const preview = takePreviewOpen()
     const from = useWorkspace.getState().focused ?? undefined
     if (!isShellPath(path)) showPath(path, { preview, from: from && itemKey(from) !== itemKey(path) ? from : undefined })
     const page = node ? nodePagePath(node) : null
-    if (page && itemKey(page) !== itemKey(path)) showPath(page, { from: isShellPath(path) ? undefined : path })
+    if (page && itemKey(page) !== itemKey(path)) {
+      replaceNext.current = true
+      showPath(page, { from: isShellPath(path) ? undefined : path })
+    }
     // loc.key: the same path navigated again still shows (and selects) it.
   }, [loc.key, loc.pathname, loc.search, loc.hash, project])
 
@@ -72,7 +86,9 @@ export default function Workspace({ openPalette }: { openPalette: () => void }) 
         }
         if (s.focused === here.current) return
         here.current = s.focused
-        navigate(s.focused)
+        const replace = replaceNext.current
+        replaceNext.current = false
+        navigate(s.focused, { replace })
       }),
     [navigate],
   )

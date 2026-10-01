@@ -11,7 +11,8 @@ export interface BoardActions {
   open: (path: string, opts: { from?: string; background?: boolean }) => void
   close: (path: string) => void
   resize: (path: string, rect: { x: number; y: number; w: number; h: number }) => void
-  focus: (path: string) => void
+  // A press in a window; `move` false for a press on its bar.
+  focus: (path: string, move?: boolean) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)

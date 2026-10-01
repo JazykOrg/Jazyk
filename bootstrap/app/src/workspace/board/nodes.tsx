@@ -350,7 +350,7 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
     <div
       className={`bw lv-${level}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
       data-path={path}
-      onPointerDownCapture={() => actions.focus(path)}
+      onPointerDownCapture={(e) => actions.focus(path, !(e.target as HTMLElement).closest('.bw-title'))}
     >
       <Handles />
       {framed && (
@@ -371,6 +371,14 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
           <span className="bw-glyph">{GLYPH[kind]}</span>
           <span className="bw-name">{kind === 'doc' ? docOf(path) : title}</span>
           {kind === 'doc' && <DocBar doc={docOf(path)} />}
+          <button
+            className="bw-arrange nodrag"
+            aria-label={`Show ${title} as tabs`}
+            title="Expand into Tabs"
+            onClick={() => useWorkspace.getState().setArrangement('tabs', path)}
+          >
+            ⤢
+          </button>
           <button className="bw-close nodrag" aria-label={`Close ${title}`} onClick={() => actions.close(path)}>
             ×
           </button>

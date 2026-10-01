@@ -1,4 +1,4 @@
-// The Docs lens as a code editor has it (docs/frontends/gui.md#docs): the file tree
+// The documents as a code editor has them (docs/frontends/gui.md#docs): the file tree
 // with its actions on the rows, the outline that follows the editor, the one Read
 // or Write toggle (#editor), the links that work in Read (#markdown-preview), and
 // the entity mentions underlined in a tab.
@@ -14,7 +14,9 @@ test.beforeEach(async ({ page }, info) => {
   await offline(page)
 })
 
-const dirRow = (page: import('@playwright/test').Page, name: string) => page.locator('.ws-nav .ft-dir', { has: page.locator('.ft-dirname', { hasText: new RegExp(`^${name}$`) }) })
+// A folder row in the navigator's Documents (or another fold's) tree.
+const dirRow = (page: import('@playwright/test').Page, name: string, fold = 'documents') =>
+  page.locator(`.ws-nav [data-fold="${fold}"] .ft-dir`, { has: page.locator('.ft-dirname', { hasText: new RegExp(`^${name}$`) }) })
 
 test('the tree has collapsible folders, remembered per project, folders first', async ({ page }) => {
   await openDemo(page, 'The ERP')
@@ -23,7 +25,7 @@ test('the tree has collapsible folders, remembered per project, folders first', 
   await expect(nav.locator('.wb-explorer-label').first()).toHaveText('documents')
   await expect(nav.locator('.ft .ft-row').first()).toHaveClass(/ft-dir/)
   // Under docs/: the folders (pages, subsystems) before the files, each by name.
-  const names = await nav.locator('.ft .ft-row[aria-level="2"] .ft-name').allTextContents()
+  const names = await nav.locator('[data-fold="documents"] .ft .ft-row[aria-level="2"] .ft-name').allTextContents()
   expect(names).toEqual(['pages', 'subsystems', 'backend.md', 'frontend.md', 'main.md'])
 
   const inventory = nav.locator('.ide-doc-name', { hasText: 'inventory.md' })
@@ -111,50 +113,50 @@ test('the outline follows the cursor in Write and a click scrolls the editor', a
   await page.goto('/#/docs/docs/backend.md')
   const outline = page.locator('.outline')
   await expect(outline.locator('.outline-row')).toHaveCount(4)
-  await page.locator('.cm-content').getByText('More to come soon.').click()
+  await page.locator('.cm-content:visible').getByText('More to come soon.').click()
   await expect(outline.locator('.outline-row.active .outline-title')).toHaveText('Sub-systems')
-  await page.locator('.cm-content').getByText('It is backed by a PostgreSQL').click()
+  await page.locator('.cm-content:visible').getByText('It is backed by a PostgreSQL').click()
   await expect(outline.locator('.outline-row.active .outline-title')).toHaveText('Backend system')
 
   // Clicking a section moves the editor there; the outline follows it back.
   await outline.locator('.outline-row', { hasText: 'Database' }).click()
   await expect(outline.locator('.outline-row.active .outline-title')).toHaveText('Database')
-  await expect(page.locator('.cm-content').getByText('Database', { exact: true })).toBeInViewport()
+  await expect(page.locator('.cm-content:visible').getByText('Database', { exact: true })).toBeInViewport()
 })
 
 test('the one switch: Write is the editor, Read the page in its place, for every document at once', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/backend.md')
-  const toggle = page.locator('.ide-mode')
+  const toggle = page.locator('.ide-mode:visible')
   await expect(toggle.getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.cm-content')).toBeVisible()
-  await expect(page.locator('.md-read')).toHaveCount(0)
+  await expect(page.locator('.cm-content:visible')).toBeVisible()
+  await expect(page.locator('.md-read:visible')).toHaveCount(0)
   // No pane beside the editor, no reader button.
   await expect(page.locator('.ide-topbar').getByRole('button', { name: /preview|reader/i })).toHaveCount(0)
 
   await toggle.getByRole('button', { name: 'Read' }).click()
-  await expect(page.locator('.md-read')).toBeVisible()
-  await expect(page.locator('.cm-content')).toBeHidden()
-  await expect(page.locator('.md-read h1').first()).toHaveText('Backend system')
+  await expect(page.locator('.md-read:visible')).toBeVisible()
+  await expect(page.locator('.cm-content:visible')).toBeHidden()
+  await expect(page.locator('.md-read:visible h1').first()).toHaveText('Backend system')
   // The read states and the requirement markers ride along.
-  await expect(page.locator('.md-read > .md-cov-covered').first()).toBeVisible()
-  await expect(page.locator('.md-read .md-req').first()).toBeVisible()
+  await expect(page.locator('.md-read:visible > .md-cov-covered').first()).toBeVisible()
+  await expect(page.locator('.md-read:visible .md-req').first()).toBeVisible()
 
   // Every document follows the switch.
   await page.goto('/#/docs/docs/main.md')
   await expect(toggle.getByRole('button', { name: 'Read' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.md-read')).toBeVisible()
+  await expect(page.locator('.md-read:visible')).toBeVisible()
   await toggle.getByRole('button', { name: 'Write' }).click()
   await page.goto('/#/docs/docs/backend.md')
   await expect(toggle.getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.cm-content')).toBeVisible()
+  await expect(page.locator('.cm-content:visible')).toBeVisible()
 })
 
 test('links work in Read: a document opens in Read, a missing one says so, an anchor stays', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/backend.md')
-  await page.locator('.ide-mode').getByRole('button', { name: 'Read' }).click()
-  const read = page.locator('.md-read')
+  await page.locator('.ide-mode:visible').getByRole('button', { name: 'Read' }).click()
+  const read = page.locator('.md-read:visible')
   // The link the ERP writes to a document it does not hold.
   const dead = read.locator('.md-dead', { hasText: 'database documentation' })
   await expect(dead).toContainText('not in this project')
@@ -167,14 +169,14 @@ test('links work in Read: a document opens in Read, a missing one says so, an an
   // A relative link opens the document, in Read.
   await read.getByRole('link', { name: 'frontend interface' }).click()
   await page.waitForURL(/#\/docs\/docs\/frontend\.md/)
-  await expect(page.locator('.ide-mode').getByRole('button', { name: 'Read' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.md-read h1').first()).toHaveText('Warehouse interface')
+  await expect(page.locator('.ide-mode:visible').getByRole('button', { name: 'Read' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.md-read:visible h1').first()).toHaveText('Warehouse interface')
 })
 
 test('the outline follows the top of the view in Read', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/subsystems/user.md')
-  await page.locator('.ide-mode').getByRole('button', { name: 'Read' }).click()
+  await page.locator('.ide-mode:visible').getByRole('button', { name: 'Read' }).click()
   const outline = page.locator('.outline')
   const titles = await outline.locator('.outline-title').allTextContents()
   expect(titles.length).toBeGreaterThan(2)
@@ -187,31 +189,32 @@ test('entity mentions are underlined in Write and in Read; Cmd-click opens the e
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/backend.md')
   // The editor draws the lines in view; the mention sits at the end of the document.
-  await page.locator('.cm-content .cm-line').last().click()
+  await page.locator('.cm-content:visible .cm-line').last().click()
   await page.keyboard.press('Control+End')
-  const mention = page.locator('.cm-content .entity-mark', { hasText: 'Inventory Management' })
+  const mention = page.locator('.cm-content:visible .entity-mark', { hasText: 'Inventory Management' })
   await expect(mention).toBeVisible()
   await expect(mention).toHaveAttribute('data-entity', 'ent:inventory-management')
   // The alias too, and the longer name where two overlap.
-  await expect(page.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()).toBeVisible()
-  await expect(page.locator('.cm-content .entity-mark', { hasText: /^User Management$/ })).toBeVisible()
+  await expect(page.locator('.cm-content:visible .entity-mark', { hasText: 'backend system' }).first()).toBeVisible()
+  await expect(page.locator('.cm-content:visible .entity-mark', { hasText: /^User Management$/ })).toBeVisible()
   // A plain click only places the cursor; Cmd-click opens the entity (a mention
   // outside a link: inside one, the link wins).
-  const backend = page.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()
+  const backend = page.locator('.cm-content:visible .entity-mark', { hasText: 'backend system' }).first()
   await backend.click()
   await expect(page).not.toHaveURL(/node=/)
   await backend.click({ modifiers: ['ControlOrMeta'] })
-  await expect(page).toHaveURL(/node=ent%3Abackend/)
-  await expect(page.locator('.wb-inspector')).toContainText('Backend')
+  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Abackend$/)
+  await expect(page.locator('h1:visible').first()).toContainText('Backend')
+  await page.goBack()
 
-  await page.locator('.ide-mode').getByRole('button', { name: 'Read' }).click()
-  const readMention = page.locator('.md-read .entity-mark', { hasText: 'Inventory Management' })
+  await page.locator('.ide-mode:visible').getByRole('button', { name: 'Read' }).click()
+  const readMention = page.locator('.md-read:visible .entity-mark', { hasText: 'Inventory Management' })
   await expect(readMention).toBeVisible()
-  const plain = page.locator('.md-read p .entity-mark', { hasText: 'backend system' }).first()
+  const plain = page.locator('.md-read:visible p .entity-mark', { hasText: 'backend system' }).first()
   await expect(plain).toBeVisible()
   await page.goto('/#/docs/docs/backend.md')
   await plain.click()
-  await expect(page).toHaveURL(/node=ent%3Abackend/)
+  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Abackend$/)
 })
 
 test('the product files and the generated pages are trees of the same kind', async ({ page }) => {
@@ -220,8 +223,9 @@ test('the product files and the generated pages are trees of the same kind', asy
   const nav = page.locator('.ws-nav')
   await expect(nav.locator('.ft .ft-dir').first()).toBeVisible()
   await expect(nav.locator('.ft .ft-file', { hasText: 'server.js' })).toBeVisible()
-  await page.goto('/#/product/generated')
-  await expect(nav.locator('.ft .ft-file', { hasText: 'backend.md' }).first()).toBeVisible()
-  await dirRow(page, 'entities').click()
-  await expect(dirRow(page, 'entities')).toHaveAttribute('aria-expanded', 'false')
+  // The generated pages are a fold of their own, closed until opened.
+  await nav.locator('[data-fold="generated"] .wsn-head').click()
+  await expect(nav.locator('[data-fold="generated"] .ft .ft-file', { hasText: 'backend.md' }).first()).toBeVisible()
+  await dirRow(page, 'entities', 'generated').click()
+  await expect(dirRow(page, 'entities', 'generated')).toHaveAttribute('aria-expanded', 'false')
 })

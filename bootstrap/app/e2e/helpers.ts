@@ -100,17 +100,15 @@ export async function envelope(page: Page, method: string, path: string, body?: 
 // read-only folder) renders only the lines of its empty viewport, so an assertion
 // on `.cm-content` needs Write first.
 export async function toWrite(page: Page) {
-  const write = page.locator('.ide-mode').getByRole('button', { name: 'Write' })
+  const write = page.locator('.ide-mode:visible').getByRole('button', { name: 'Write' })
   await expect(write).toBeVisible()
   if ((await write.getAttribute('aria-pressed')) !== 'true') await write.click()
 }
 
-// Clicks the last line rather than the middle of the text: a click on an
-// underlined entity name opens the inspector, and in CI's layout the middle of a
-// document is often one.
+// Clicks the last line rather than the middle of the text, the way a person appends.
 export async function typeAtEnd(page: Page, text: string) {
   await toWrite(page)
-  await page.locator('.cm-content .cm-line').last().click()
+  await page.locator('.cm-content:visible .cm-line').last().click()
   await page.keyboard.press('Control+End')
   await page.keyboard.type(text)
 }

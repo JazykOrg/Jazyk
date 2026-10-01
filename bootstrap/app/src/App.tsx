@@ -1,27 +1,21 @@
-// The workspace shell: top bar | navigator | center + inspector | chat column,
-// status bar under everything. Navigation swaps panes, never the page
-// (docs/frontends/gui.md#layout).
+// The app shell: the workspace once a project is open (top bar, navigator, the open
+// items, the chat column), Home and the connect route before; the status bar under
+// everything (docs/frontends/gui.md#layout).
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useLocation } from 'react-router'
 import TopBar from './shell/TopBar'
 import AppRoutes from './routes/AppRoutes'
 import StatusBar from './shell/StatusBar'
-import Navigator from './shell/Navigator'
 import CommandPalette from './components/CommandPalette'
 import ConnectionGuard from './components/ConnectionGuard'
 import { useApp } from './lib/store'
-import { useInspector } from './lib/nav'
 import { ExploreHistory } from './lib/explore'
 import { useCapabilities } from './lib/capabilities'
 import { useProject } from './lib/queries'
 import { useProjectOpen } from './lib/open'
-import { useNarrow } from './lib/narrow'
 // The map pulls in the graph layout library; it loads when the map first opens
 // (docs/frontends/wasm.md#building).
-import Inspector from './workbench/Inspector'
-import ChatPane from './chat/ChatPane'
 import Workspace from './workspace/Workspace'
-import { useWorkspace } from './workspace/items'
 import './workbench/workbench.css'
 import './shell/shell.css'
 
@@ -70,7 +64,6 @@ function DevInit() {
 
 export default function App() {
   const loc = useLocation()
-  const { node, openNode, closeNode } = useInspector()
   const [palette, setPalette] = useState(0)
   // The connect route needs no project either: it is how one gets opened.
   const home = loc.pathname === '/' || loc.pathname === '/connect'
@@ -79,16 +72,14 @@ export default function App() {
   // The remembered project reopens before any route renders, Home included
   // (docs/frontends/gui.md#the-open-project).
   const reopening = useApp((a) => a.reopening)
-  const narrow = useNarrow()
   // On a narrow screen the navigator is a drawer, closed again by any navigation.
   const [navOpen, setNavOpen] = useState(false)
   useEffect(() => setNavOpen(false), [loc.pathname, loc.search])
   // The panes need a project; until one is open every route but Home goes home.
   const panes = !home && open === true
-  // The workspace switch (docs/frontends/gui.md#workspace-experimental): Tabs or Board
-  // replace the lenses, the navigator, and the inspector once a project is open.
-  const arrangement = useWorkspace((w) => w.arrangement)
-  const workspace = panes && !reopening && arrangement !== 'lenses'
+  // The workspace (docs/frontends/gui.md#workspace): Tabs or a Board once a project
+  // is open; Home, the connect route, and a folder waiting for permission otherwise.
+  const workspace = panes && !reopening
 
   return (
     <div className={`ws${navOpen ? ' nav-open' : ''}`}>
@@ -98,8 +89,6 @@ export default function App() {
       <>
       <TopBar openPalette={() => setPalette((n) => n + 1)} open={open === true} toggleNav={() => setNavOpen((v) => !v)} />
       <div className="ws-body">
-        {panes && <Navigator />}
-        {panes && navOpen && <div className="ws-scrim" onClick={() => setNavOpen(false)} />}
         <div className="ws-centerrow">
           <main className="ws-center">
             {reopening ? null : !home && !open && pendingFolder ? (
@@ -110,10 +99,7 @@ export default function App() {
             <AppRoutes />
             )}
           </main>
-          {/* On a narrow screen the inspector is a drawer, there only for a selection. */}
-          {panes && (!narrow || node) && <Inspector node={node} openNode={openNode} close={closeNode} />}
         </div>
-        {panes && !narrow && <ChatPane />}
       </div>
       </>
       )}

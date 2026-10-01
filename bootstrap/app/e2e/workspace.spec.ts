@@ -1,6 +1,7 @@
-// The workspace behind the switch (docs/frontends/gui.md#workspace-experimental): Tabs
-// replace the lenses and the inspector, the navigator opens preview tabs, tabs split
-// and come back on a reload, and a Cmd-click on a mention opens its entity as a tab.
+// The workspace (docs/frontends/gui.md#workspace): Tabs by default with no lenses and
+// no inspector, the Board one button away over the same items and history, closing
+// the focused item as a back, preview tabs, splits that come back on a reload, and a
+// Cmd-click on a mention opening its entity as a tab.
 import { expect, test, type Page } from '@playwright/test'
 import { offline, openDemo, pageErrors, typeAtEnd } from './helpers'
 
@@ -8,9 +9,9 @@ test.beforeEach(async ({ page }) => {
   await offline(page)
 })
 
+// The workspace opens in Tabs; the settings page is the first tab.
 async function toTabs(page: Page) {
   await page.goto('/#/settings')
-  await page.locator('.settings-workspace select').selectOption('tabs')
   await expect(page.locator('.wst-dock')).toBeVisible()
 }
 
@@ -18,26 +19,62 @@ const tabs = (page: Page) => page.locator('.wst-dock .dv-tab')
 const tab = (page: Page, path: string) => page.locator(`.wst-dock .wst-tab[data-path="${path}"]`)
 const docRow = (page: Page, name: string) => page.locator('.wsn .ide-doc-name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) })
 
-test('switching to Tabs shows no lenses and no inspector, with the switch in the top bar', async ({ page }) => {
+test('Tabs is the layout: no lenses, no inspector, one navigator', async ({ page }) => {
   const errors = pageErrors(page)
   await openDemo(page, 'The ERP')
   await toTabs(page)
   const top = page.locator('.ws-top')
   for (const lens of ['Docs', 'Model', 'Product']) await expect(top.getByRole('link', { name: lens, exact: true })).toHaveCount(0)
   await expect(top.getByRole('link', { name: /^Inbox/ })).toBeVisible()
-  await expect(top.getByRole('radio', { name: 'Tabs' })).toHaveAttribute('aria-checked', 'true')
+  await expect(top.getByRole('radio')).toHaveCount(0)
   await expect(page.locator('.wb-inspector')).toHaveCount(0)
   // One navigator: Documents and Product, no Model head.
   const nav = page.locator('.wsn')
   await expect(nav.getByRole('button', { name: /Documents/ })).toBeVisible()
   await expect(nav.getByRole('button', { name: /Product/ })).toBeVisible()
   await expect(nav.getByRole('button', { name: /^.?\s*Model/ })).toHaveCount(0)
-  await expect(page.locator('.wsc')).toHaveCount(0)
-  // Back to the lenses from the top bar.
-  await top.getByRole('radio', { name: 'Lenses' }).click()
-  await expect(page.locator('.ws-top').getByRole('link', { name: 'Model', exact: true })).toBeVisible()
-  await expect(page.locator('.wst-dock')).toHaveCount(0)
   expect(errors).toEqual([])
+})
+
+test('a tab collapses into the Board and a window expands back into Tabs, over the same items and history', async ({ page }) => {
+  await openDemo(page, 'The ERP')
+  await toTabs(page)
+  await docRow(page, 'main.md').dblclick()
+  await docRow(page, 'backend.md').dblclick()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await tab(page, '/docs/docs/backend.md').locator('.wst-arrange').click()
+  const win = (path: string) => page.locator(`.react-flow__node-window[data-id="w:${path}"]`)
+  await expect(win('/docs/docs/backend.md').locator('.bw')).toHaveClass(/focused/)
+  await expect(win('/docs/docs/main.md')).toBeAttached()
+  await expect(page.locator('.wst-dock')).toHaveCount(0)
+  // Back walks the same history on the Board.
+  await page.goBack()
+  await expect(page).toHaveURL(/#\/docs\/docs\/main\.md$/)
+  await expect(win('/docs/docs/main.md').locator('.bw')).toHaveClass(/focused/)
+  // The window expands back into Tabs, with that tab in front, and forward still works.
+  await win('/docs/docs/main.md').locator('.bw-arrange').click()
+  await expect(page.locator('.wst-dock')).toBeVisible()
+  await expect(page.locator('.wst-dock .dv-active-tab .wst-tab')).toHaveAttribute('data-path', '/docs/docs/main.md')
+  await page.goForward()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await expect(page.locator('.wst-dock .dv-active-tab .wst-tab')).toHaveAttribute('data-path', '/docs/docs/backend.md')
+})
+
+test('closing the focused tab goes back to the one shown before it', async ({ page }) => {
+  await openDemo(page, 'The ERP')
+  await toTabs(page)
+  await docRow(page, 'main.md').dblclick()
+  await docRow(page, 'backend.md').dblclick()
+  await docRow(page, 'frontend.md').dblclick()
+  // main.md shown again: the history is main, backend, frontend, main.
+  await tab(page, '/docs/docs/main.md').click()
+  await expect(page).toHaveURL(/#\/docs\/docs\/main\.md$/)
+  await tab(page, '/docs/docs/main.md').locator('.wst-close').click()
+  await expect(page).toHaveURL(/#\/docs\/docs\/frontend\.md$/)
+  await expect(tab(page, '/docs/docs/main.md')).toHaveCount(0)
+  await tab(page, '/docs/docs/frontend.md').locator('.wst-close').click()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await expect(page.locator('.wst-dock .dv-active-tab .wst-tab')).toHaveAttribute('data-path', '/docs/docs/backend.md')
 })
 
 test('a single click opens a preview tab the next one replaces; a double click keeps it', async ({ page }) => {

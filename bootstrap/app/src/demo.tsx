@@ -37,6 +37,21 @@ const qc = new QueryClient({
 })
 installConnect({ qc })
 
+// A step that changes nothing is no step: a push to the address already shown (a
+// double click, a link to the page in front, the workspace focusing what the address
+// names) replaces it, so back and forward walk only real moves
+// (docs/frontends/gui.md#workspace).
+{
+  const push = window.history.pushState.bind(window.history)
+  window.history.pushState = (data: unknown, unused: string, url?: string | URL | null) => {
+    if (url != null && new URL(String(url), window.location.href).href === window.location.href) {
+      window.history.replaceState(data, unused, url)
+      return
+    }
+    push(data, unused, url)
+  }
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root')!)
 
 function Splash({ lines }: { lines: string[] }) {

@@ -1,11 +1,11 @@
 // The workspace's items: every open page, one path each, shared by the Tabs and
-// Board arrangements (docs/frontends/gui.md#workspace-experimental, plans/workspace.md).
+// Board arrangements (docs/frontends/gui.md#workspace, plans/workspace.md).
 // An item renders anywhere through the page table (routes/AppRoutes.tsx) against its
 // own path. The arrangement is a per-browser switch; the open items are remembered
 // per project.
 import { create } from 'zustand'
 
-export type Arrangement = 'lenses' | 'tabs' | 'board'
+export type Arrangement = 'tabs' | 'board'
 
 export interface Item {
   // The page's path with its query, e.g. `/docs/docs/main.md` or
@@ -24,15 +24,19 @@ const itemsKey = (project: string) => `jazyk.workspace.items:${project}`
 function readArrangement(): Arrangement {
   try {
     const v = localStorage.getItem(ARRANGEMENT_KEY)
-    return v === 'tabs' || v === 'board' ? v : 'lenses'
+    return v === 'board' ? 'board' : 'tabs'
   } catch {
-    return 'lenses'
+    return 'tabs'
   }
 }
 
 interface WorkspaceState {
   arrangement: Arrangement
-  setArrangement: (a: Arrangement) => void
+  // Switch the arrangement; `arrive` is the item the other arrangement shows in front
+  // (the board focuses its window fully).
+  setArrangement: (a: Arrangement, arrive?: string) => void
+  arrive: string | null
+  takeArrive: () => void
   // The project the items belong to (the open project's recent id or root).
   project: string | null
   items: Item[]
@@ -42,7 +46,9 @@ interface WorkspaceState {
   selected: string | null
   loadProject: (project: string | null) => void
   openItem: (path: string, opts?: { preview?: boolean; from?: string; background?: boolean }) => void
-  closeItem: (path: string) => void
+  // Close an item. `viaBack` leaves no focus behind: the history's back that follows
+  // brings the item shown before it to the front (docs/frontends/gui.md#workspace).
+  closeItem: (path: string, opts?: { viaBack?: boolean }) => void
   focusItem: (path: string) => void
   pinItem: (path: string) => void
   select: (node: string | null) => void
@@ -59,14 +65,19 @@ function save(project: string | null, items: Item[], focused: string | null) {
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   arrangement: readArrangement(),
-  setArrangement: (arrangement) => {
+  setArrangement: (arrangement, arrive) => {
     try {
       localStorage.setItem(ARRANGEMENT_KEY, arrangement)
     } catch {
       // not remembered
     }
-    set({ arrangement })
+    const items = get().items
+    const focus = arrive && items.some((i) => i.path === arrive) ? arrive : get().focused
+    set({ arrangement, arrive: arrive ?? null, focused: focus })
+    save(get().project, items, focus)
   },
+  arrive: null,
+  takeArrive: () => set({ arrive: null }),
   project: null,
   items: [],
   focused: null,
@@ -112,12 +123,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     set({ items: next, focused: nextFocus })
     save(project, next, nextFocus)
   },
-  closeItem: (path) => {
+  closeItem: (path, opts = {}) => {
     const { items, focused, project } = get()
     const at = items.findIndex((i) => i.path === path)
     if (at < 0) return
     const next = items.filter((i) => i.path !== path)
-    const nextFocus = focused === path ? (next[at] ?? next[at - 1] ?? null)?.path ?? null : focused
+    const nextFocus = focused !== path ? focused : opts.viaBack ? null : ((next[at] ?? next[at - 1] ?? null)?.path ?? null)
     set({ items: next, focused: nextFocus })
     save(project, next, nextFocus)
   },

@@ -35,7 +35,9 @@ import {
   canonical,
   docOf,
   caretEntities,
+  flyFrame,
   focusZoom,
+  FLY_MS,
   levelOf,
   nearest,
   nodeOf,
@@ -202,17 +204,66 @@ function BoardCanvas({ project }: { project: string | null }) {
 
   // Focus: the window fills 80 percent of the board, centered; its links show in the
   // margin (docs/frontends/gui.md#the-board).
-  const focusRect = useCallback(
-    (r: Rect, kind: string, duration = 450) => {
-      const { width, height } = storeApi.getState()
-      const zoom = focusZoom(r, { w: width, h: height }, kind)
-      void rf.setCenter(r.x + r.w / 2, r.y + r.h / 2, { zoom, duration })
+  // One short flight: the center moves while the zoom eases down (to 75 percent at
+  // most, on a long move) and back up, in FLY_MS. A press on the table top or a wheel
+  // stops it where it is.
+  const flight = useRef(0)
+  const flying = useRef(false)
+  const landed = useRef<() => void>(() => {})
+  const flyTo = useCallback(
+    (cx: number, cy: number, z: number) => {
+      const { width, height, transform } = storeApi.getState()
+      const [tx, ty, z0] = transform
+      const from = { cx: (width / 2 - tx) / z0, cy: (height / 2 - ty) / z0, z: z0 }
+      const to = { cx, cy, z }
+      const far = Math.hypot((to.cx - from.cx) * z0, (to.cy - from.cy) * z0) > width / 2
+      const id = ++flight.current
+      flying.current = true
+      const start = performance.now()
+      const step = (now: number) => {
+        if (id !== flight.current) return
+        const t = Math.min(1, (now - start) / FLY_MS)
+        const c = flyFrame(from, to, t, far)
+        void rf.setViewport({ x: width / 2 - c.cx * c.z, y: height / 2 - c.cy * c.z, zoom: c.z })
+        if (t < 1) requestAnimationFrame(step)
+        else {
+          flying.current = false
+          landed.current()
+        }
+      }
+      requestAnimationFrame(step)
     },
     [rf, storeApi],
   )
+  useEffect(() => {
+    const stop = (e: Event) => {
+      // A press on the table top or a wheel takes the view back; a press in a
+      // window starts its own flight.
+      const t = e.target as Element
+      if (!flying.current || (e.type === 'pointerdown' && (!t.closest?.('.react-flow__pane') || t.closest('.react-flow__node')))) return
+      flight.current++
+      flying.current = false
+      landed.current()
+    }
+    const el = document.querySelector('.board')
+    el?.addEventListener('pointerdown', stop, true)
+    el?.addEventListener('wheel', stop, true)
+    return () => {
+      el?.removeEventListener('pointerdown', stop, true)
+      el?.removeEventListener('wheel', stop, true)
+    }
+  }, [])
 
-  // Opening or showing an item from outside its window focuses it; a press inside a
-  // window focuses its item without moving the board.
+  const focusRect = useCallback(
+    (r: Rect, kind: string) => {
+      const { width, height } = storeApi.getState()
+      flyTo(r.x + r.w / 2, r.y + r.h / 2, focusZoom(r, { w: width, h: height }, kind))
+    },
+    [flyTo, storeApi],
+  )
+
+  // Opening or showing an item from outside its window focuses it, and so does
+  // arriving from Tabs; a press inside a window focuses it (actions.focus).
   const focusedKey = focused ? itemKey(focused) : null
   const seenFocus = useRef<string | null | undefined>(undefined)
   const selfFocus = useRef<string | null>(null)
@@ -222,6 +273,13 @@ function BoardCanvas({ project }: { project: string | null }) {
     if (!r || seenFocus.current === focusedKey) return
     const first = seenFocus.current === undefined
     seenFocus.current = focusedKey
+    const arrive = useWorkspace.getState().arrive
+    if (arrive && itemKey(arrive) === focusedKey) {
+      useWorkspace.getState().takeArrive()
+      selfFocus.current = null
+      focusRect(r, itemKind(focusedKey))
+      return
+    }
     if ((first && initialViewport.current) || selfFocus.current === focusedKey) {
       selfFocus.current = null
       return
@@ -362,10 +420,14 @@ function BoardCanvas({ project }: { project: string | null }) {
   }, [computeLive])
 
   const onMoveEnd = useCallback(() => {
+    // A flight lands once, at its end.
+    if (flying.current) return
     computeLive()
     const vp = rf.getViewport()
     setSaved((s) => ({ ...s, viewport: { x: vp.x, y: vp.y, zoom: vp.zoom } }))
   }, [computeLive, rf])
+
+  landed.current = onMoveEnd
 
   // Refs so the actions stay one object for the board's life: a live page never
   // re-renders because the board did.
@@ -407,14 +469,29 @@ function BoardCanvas({ project }: { project: string | null }) {
       // A press in a window focuses its item without moving the board; the press
       // lands before the page's own click, so a page that opens another item on
       // that click leaves the new item focused.
-      focus: (path) => {
+      // A press in a window focuses it: the view moves to it unless it is the focused
+      // window, wholly in view at its focus zoom (or `move` is false: a press on the
+      // bar, whose click focuses unless it was a drag).
+      focus: (path, move = true) => {
         const ws = useWorkspace.getState()
-        if (itemKey(ws.focused ?? '') === itemKey(path)) return
-        selfFocus.current = itemKey(path)
+        const key = itemKey(path)
+        const isFocused = itemKey(ws.focused ?? '') === key
+        const r = state.current.rects.get(windowId(path))
+        if (move && r) {
+          const { width, height, transform } = storeApi.getState()
+          const [tx, ty, z] = transform
+          const sx = r.x * z + tx
+          const sy = r.y * z + ty
+          const whole = sx >= -2 && sy >= -2 && sx + r.w * z <= width + 2 && sy + r.h * z <= height + 2
+          const near = z >= focusZoom(r, { w: width, h: height }, itemKind(key)) * 0.95
+          if (!isFocused || !whole || !near) focusRect(r, itemKind(key))
+        }
+        if (isFocused) return
+        selfFocus.current = key
         ws.focusItem(path)
       },
     }
-  }, [focusRect, rf])
+  }, [focusRect, rf, storeApi])
 
   // A requirement from a link's linkage opens beside the link's source window.
   const openRequirement = useCallback(
@@ -465,10 +542,8 @@ function BoardCanvas({ project }: { project: string | null }) {
     (e, node) => {
       const t = e.target as HTMLElement
       if (node.type === 'window') {
-        // A press anywhere in a window already focused it (WindowNode); a click on
-        // a still, a card, or a title zooms to it.
-        if (t.closest('.bw-close, .bw-resize, button')) return
-        if (useRuntime.getState().level !== 'live' && t.closest('.bw-body')) actions.zoomToNode(node.id)
+        // A press anywhere in a window already focused it (WindowNode).
+        void t
       }
     },
     [actions],
@@ -485,7 +560,12 @@ function BoardCanvas({ project }: { project: string | null }) {
     [actions],
   )
 
-  const fit = useCallback(() => void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1 }), [rf])
+  const fit = useCallback(() => {
+    // A fit takes over from a flight under way.
+    flight.current++
+    flying.current = false
+    void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1 })
+  }, [rf])
 
   // A click on the empty table top fits everything; a pan that ends there does not.
   const pressAt = useRef<{ x: number; y: number } | null>(null)
@@ -505,12 +585,47 @@ function BoardCanvas({ project }: { project: string | null }) {
     [fit],
   )
 
+  // The browser's own page zoom is off while the Board shows: Ctrl and the wheel, a
+  // trackpad pinch, and Cmd or Ctrl with + - 0 zoom the board instead
+  // (docs/frontends/gui.md#the-board).
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault()
+        void rf.zoomIn({ duration: 200 })
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault()
+        void rf.zoomOut({ duration: 200 })
+      } else if (e.key === '0') {
+        e.preventDefault()
+        fit()
+      }
+    }
+    const onGesture = (e: Event) => e.preventDefault()
+    window.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('keydown', onKey, true)
+    document.addEventListener('gesturestart', onGesture)
+    document.addEventListener('gesturechange', onGesture)
+    return () => {
+      window.removeEventListener('wheel', onWheel)
+      window.removeEventListener('keydown', onKey, true)
+      document.removeEventListener('gesturestart', onGesture)
+      document.removeEventListener('gesturechange', onGesture)
+    }
+  }, [rf, fit])
+
   // `Escape` zooms out one level, `Z` fits everything; neither while typing or
   // inside a live page.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || editable(e.target)) return
       if (e.key === 'Escape') {
+        flight.current++
+        flying.current = false
         const z = zoomOut(levelOf(rf.getZoom()))
         if (z !== null) {
           e.preventDefault()

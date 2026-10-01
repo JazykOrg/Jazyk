@@ -382,7 +382,7 @@ test('a failed build says why under the batch, never nothing committed', async (
   // The tree marks the document with an icon whose tooltip carries the why.
   const icon = page.locator('.ide-build-icon[data-state="unread"]').first()
   await expect(icon).toHaveAttribute('title', /was not read/)
-  await expect(page.locator('.ft')).not.toContainText('nothing committed')
+  await expect(page.locator('.wsn')).not.toContainText('nothing committed')
 
   // The run ends on its own; nothing anywhere says `nothing committed`, and no
   // goal id shows in the default mode.

@@ -1,9 +1,10 @@
-// The workspace's one navigator (docs/frontends/gui.md#workspace-experimental):
+// The workspace's one navigator (docs/frontends/gui.md#workspace):
 // Documents, the open document's Outline, Product (Overview, the file tree, Trace,
 // Tests), and Diagrams and Generated collapsed. There is no Model head. A single
 // click opens a preview item, a double click keeps it.
 import { useState } from 'react'
-import { NavLink } from 'react-router'
+import { NavLink, useLocation } from 'react-router'
+import { AreaSections, hasAreaSections } from '../shell/Navigator'
 import Explorer from '../workbench/Explorer'
 import Outline from '../shell/Outline'
 import { useDeliverable, useMatrix, useViews } from '../lib/queries'
@@ -122,6 +123,18 @@ function Diagrams() {
   )
 }
 
+// The sections of the focused item's area (the Inbox, History, the Developer pages,
+// the model, Settings), leading the navigator while that item is in front.
+function AreaFold() {
+  const loc = useLocation()
+  if (!hasAreaSections(loc.pathname)) return null
+  return (
+    <div className="wsn-area" data-fold="area">
+      <AreaSections path={loc.pathname} />
+    </div>
+  )
+}
+
 export default function WorkspaceNavigator() {
   return (
     <aside
@@ -136,6 +149,7 @@ export default function WorkspaceNavigator() {
         if (p) pinPath(p)
       }}
     >
+      <AreaFold />
       <Fold id="documents" title="Documents">
         <Explorer sections={['docs']} />
       </Fold>

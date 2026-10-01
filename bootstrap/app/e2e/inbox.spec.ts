@@ -54,18 +54,18 @@ test('the Inbox counts what its sections list, and pending changes render', asyn
 
   // Every question the count names is a card with its options.
   await page.goto('/#/inbox/questions')
-  await expect(page.locator('.inbox-item')).toHaveCount(r.sections.questions.length)
-  await expect(page.locator('.inbox-item .opts button').first()).toBeVisible()
+  await expect(page.locator('.inbox-item:visible')).toHaveCount(r.sections.questions.length)
+  await expect(page.locator('.inbox-item .opts button:visible').first()).toBeVisible()
 
   // Pending changes render: the list or its empty state, never an endless loading.
   await page.goto('/#/inbox/pending')
-  await expect(page.locator('.ws-scroll').getByText(/^(Nothing pending|Documents changed since their last build|Entities to generate)$/).first()).toBeVisible()
-  await expect(page.locator('.ws-scroll').getByText('loading…')).toHaveCount(0)
+  await expect(page.locator('.ws-scroll:visible').getByText(/^(Nothing pending|Documents changed since their last build|Entities to generate)$/).first()).toBeVisible()
+  await expect(page.locator('.ws-scroll:visible').getByText('loading…')).toHaveCount(0)
 })
 
 test('an edit option applies and the question leaves the list', async ({ page }) => {
   await page.goto('/#/inbox/questions')
-  const card = page.locator('.inbox-item[data-diag="diag:contradiction-2"]')
+  const card = page.locator('.inbox-item[data-diag="diag:contradiction-2"]:visible')
   await expect(card).toBeVisible()
   await card.getByRole('button', { name: /Make the midpoint match the Theo arc table/ }).click()
   await expect(card).toHaveCount(0)
@@ -79,7 +79,7 @@ test('an edit option applies and the question leaves the list', async ({ page })
 test('a freeform answer sends on Enter, Shift+Enter makes a new line, and the next build acts on it', async ({ page }) => {
   const before = await api<Rollup>(page, 'GET', '/api/inbox')
   await page.goto('/#/inbox/questions')
-  const card = page.locator('.inbox-item[data-diag="diag:contradiction-3"]')
+  const card = page.locator('.inbox-item[data-diag="diag:contradiction-3"]:visible')
   const box = card.getByRole('textbox', { name: 'answer in your own words' })
   await box.click()
   await box.pressSequentially('Theo is 34.')
@@ -101,10 +101,10 @@ test('a freeform answer sends on Enter, Shift+Enter makes a new line, and the ne
 
 test('Seen, Won\'t fix, and Hide change a problem\'s state', async ({ page }) => {
   await page.goto('/#/inbox/problems')
-  const first = page.locator('.inbox-item').first()
+  const first = page.locator('.inbox-item:visible').first()
   await expect(first).toBeVisible()
   const id = (await first.getAttribute('data-diag')) as string
-  const card = page.locator(`.inbox-item[data-diag="${id}"]`)
+  const card = page.locator(`.inbox-item[data-diag="${id}"]:visible`)
   const button = (name: string) => card.locator('.triage').getByRole('button', { name, exact: true })
 
   await button('Seen').click()
@@ -130,11 +130,9 @@ test('Seen, Won\'t fix, and Hide change a problem\'s state', async ({ page }) =>
   expect(after.sections.problems.length).toBe(before.sections.problems.length - 1)
 })
 
-test('the inspector shows the Inbox card for a problem, with its options and working triage', async ({ page }) => {
+test('a problem’s card holds its options and working triage', async ({ page }) => {
   await page.goto('/#/inbox/questions')
-  const card = page.locator('.ws-scroll .inbox-item[data-diag="diag:contradiction-1"]')
-  await card.getByRole('link', { name: 'diag:contradiction-1', exact: true }).click()
-  const panel = page.locator('.wb-inspector .inbox-item[data-diag="diag:contradiction-1"]')
+  const panel = page.locator('.ws-scroll:visible .inbox-item[data-diag="diag:contradiction-1"]')
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button', { name: /Make arcs agree that Theo turns it down/ })).toBeVisible()
   await expect(panel.getByRole('button', { name: /Make plot agree that Ines declines it/ })).toBeVisible()

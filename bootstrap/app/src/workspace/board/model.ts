@@ -646,6 +646,37 @@ export function fitMargin(box: Rect, covers: Rect[], view: Rect, min: number): R
   return box
 }
 
+// ---- the focus move: one short flight, moving and zooming together ----
+
+export interface Camera {
+  // The world point at the view's center, and the zoom.
+  cx: number
+  cy: number
+  z: number
+}
+
+// How long a focus move takes, and the zoom it passes through when it travels far.
+export const FLY_MS = 350
+export const FLY_DIP = 0.75
+
+const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+
+// The camera at time t (0 to 1) of a flight. The center moves the whole time; the
+// zoom eases down to `dip` by halfway and back up to the target, never below where it
+// starts or ends, so a long move passes 75 percent instead of zooming far out. A
+// short move (`far` false) zooms straight from start to end.
+export function flyFrame(from: Camera, to: Camera, t: number, far: boolean, dip = FLY_DIP): Camera {
+  const k = ease(Math.min(Math.max(t, 0), 1))
+  const cx = from.cx + (to.cx - from.cx) * k
+  const cy = from.cy + (to.cy - from.cy) * k
+  const lo = far ? Math.min(dip, from.z, to.z) : Math.min(from.z, to.z)
+  let z: number
+  if (!far || lo >= Math.min(from.z, to.z)) z = from.z + (to.z - from.z) * k
+  else if (t < 0.5) z = from.z + (lo - from.z) * ease(t * 2)
+  else z = lo + (to.z - lo) * ease((t - 0.5) * 2)
+  return { cx, cy, z }
+}
+
 // The windows nearest the view's center, at most LIVE_MAX.
 export function nearest(rects: [string, Rect][], center: Point, max = LIVE_MAX): string[] {
   return rects

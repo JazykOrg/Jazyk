@@ -9,6 +9,7 @@ import {
   fitMargin,
   visiblePieces,
   clipSegment,
+  flyFrame,
   focusZoom,
   levelOf,
   linkOnScreen,
@@ -185,6 +186,24 @@ describe('requirements behind a link', () => {
     expect(linkRequirements(G, { entity: 'ent:inventory' }, { doc: 'docs/main.md' })).toEqual([])
     expect(linkRequirements(G, { requirement: 'req:stock' }, { entity: 'ent:product' })).toEqual(['req:stock'])
     expect(linkRequirements(G, { doc: 'docs/sub/inventory.md' }, { requirement: 'req:stock' })).toEqual(['req:stock'])
+  })
+})
+
+describe('the focus move', () => {
+  it('moves and zooms together, passing 75 percent on a long move and no lower', () => {
+    const a = { cx: 0, cy: 0, z: 1 }
+    const b = { cx: 3000, cy: 0, z: 1 }
+    expect(flyFrame(a, b, 0, true)).toEqual(a)
+    expect(flyFrame(a, b, 1, true)).toEqual(b)
+    const mid = flyFrame(a, b, 0.5, true)
+    expect(mid.z).toBeCloseTo(0.75)
+    expect(mid.cx).toBeCloseTo(1500)
+    for (let t = 0; t <= 1; t += 0.05) expect(flyFrame(a, b, t, true).z).toBeGreaterThanOrEqual(0.75 - 1e-9)
+  })
+  it('never dips below where it starts or ends, and a short move zooms straight', () => {
+    const far = { cx: 0, cy: 0, z: 0.3 }
+    expect(flyFrame(far, { cx: 2000, cy: 0, z: 1 }, 0.5, true).z).toBeGreaterThan(0.3)
+    expect(flyFrame({ cx: 0, cy: 0, z: 1 }, { cx: 50, cy: 0, z: 1 }, 0.5, false).z).toBe(1)
   })
 })
 

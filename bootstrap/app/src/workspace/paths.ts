@@ -1,4 +1,4 @@
-// Pure helpers the workspace's arrangements share (docs/frontends/gui.md#workspace-experimental):
+// Pure helpers the workspace's arrangements share (docs/frontends/gui.md#workspace):
 // what identifies an item among the open ones, the selection a URL carries, the page a
 // node opens as, and the recently shown items that stay mounted.
 

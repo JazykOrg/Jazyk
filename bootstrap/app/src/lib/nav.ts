@@ -23,10 +23,9 @@ export function useInspector(): {
   const node = sp.get('node')
   const openNode = useCallback(
     (id: string) => {
-      // In the workspace the selection is the Connections panel's; the URL keeps
-      // ?node= so the link still shares (docs/frontends/gui.md#workspace-experimental).
-      const ws = useWorkspace.getState()
-      if (ws.arrangement !== 'lenses') ws.select(id)
+      // The workspace opens the node's page as an item; the URL keeps ?node= so the
+      // link still shares (docs/frontends/gui.md#workspace).
+      useWorkspace.getState().select(id)
       setSp(
         (p) => {
           const next = new URLSearchParams(p)

@@ -1,4 +1,4 @@
-/* The workspace (docs/frontends/gui.md#workspace-experimental): one navigator, the
+/* The workspace (docs/frontends/gui.md#workspace): one navigator, the
    open items as Tabs or a Board, Connections docked under them. */
 
 /* The arrangement switch in the top bar. */
@@ -180,7 +180,8 @@
   color: var(--accent);
 }
 
-.wst-close {
+.wst-close,
+.wst-arrange {
   background: none;
   border: none;
   color: var(--muted);
@@ -194,13 +195,20 @@
   flex-shrink: 0;
 }
 
+.wst-arrange {
+  font-size: 13px;
+}
+
 .dv-tab:hover .wst-close,
 .dv-active-tab .wst-close,
+.dv-tab:hover .wst-arrange,
+.dv-active-tab .wst-arrange,
 .wst-card .wst-close {
   visibility: visible;
 }
 
-.wst-close:hover {
+.wst-close:hover,
+.wst-arrange:hover {
   background: var(--bg);
   color: var(--ink);
 }
@@ -335,4 +343,11 @@
   .ws-arrange button {
     padding: 3px 6px;
   }
+}
+
+/* The focused item's area sections, leading the navigator. */
+.wsn-area {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 4px;
 }

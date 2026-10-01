@@ -23,6 +23,7 @@ import {
   lineNumbers,
   drawSelection,
   highlightSpecialChars,
+  scrollPastEnd,
   rectangularSelection,
 } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -702,7 +703,9 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       })
       .filter((d): d is NonNullable<typeof d> => d !== null)
       .sort((a, b) => a.from - b.from)
-    view.dispatch({ effects: setInline.of(Decoration.set(decos, true)) })
+    // A band that comes or goes changes heights: the snapshot keeps the text under
+    // the reader where it was (docs/frontends/gui.md#inbox: an answer lands in place).
+    view.dispatch({ effects: [setInline.of(Decoration.set(decos, true)), view.scrollSnapshot()] })
   }
 
   const applyCoverage = (view: EditorView) => {
@@ -892,6 +895,9 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     return [
       lineNumbers(),
       highlightSpecialChars(),
+      // Room after the last line, so text that comes or goes near the end (a band
+      // answered, a line removed) never pulls the view (docs/frontends/gui.md#editor).
+      scrollPastEnd(),
       history(),
       drawSelection(),
       rectangularSelection(),
@@ -1133,9 +1139,11 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
         const change = minimalChange(view.state.doc.toString(), text)
         let lines: [number, number] | null = null
         if (change) {
-          // The selection maps through the change and the view keeps its scroll
-          // anchor. The change is not the person's, so undo does not take it back.
-          view.dispatch({ changes: change, annotations: Transaction.addToHistory.of(false) })
+          // The selection maps through the change and the snapshot keeps the text
+          // under the reader where it was. The change is not the person's, so undo
+          // does not take it back.
+          const set = view.state.changes(change)
+          view.dispatch({ changes: set, annotations: Transaction.addToHistory.of(false), effects: view.scrollSnapshot().map(set) })
           const end = change.from + change.insert.length
           lines = [view.state.doc.lineAt(change.from).number, view.state.doc.lineAt(end).number]
         }

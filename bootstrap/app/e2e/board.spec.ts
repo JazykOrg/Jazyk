@@ -170,6 +170,38 @@ test('a link with one end out of view is one portal carrying its requirements; a
   await expect(page).toHaveURL(/#\/model\/requirements\//)
 })
 
+test('closing the focused window goes back to the one shown before it, and a press in a half-seen window focuses it fully', async ({ page }) => {
+  await openBoard(page)
+  await openDoc(page, 'backend.md', BACKEND)
+  await openDoc(page, 'frontend.md', FRONTEND)
+  await zoomTo(page, FRONTEND)
+  await expect(page).toHaveURL(/#\/docs\/docs\/frontend\.md$/)
+  const board = (await page.locator('.board .react-flow').boundingBox())!
+  await docRow(page, 'backend.md').dblclick()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await settle(page)
+  // frontend.md shown again: the history is backend, frontend, backend, frontend.
+  await docRow(page, 'frontend.md').dblclick()
+  await settle(page)
+  // backend.md sits left of frontend.md: pan until its right part shows at the left edge.
+  await page.mouse.move(board.x + board.width / 2, board.y + 20)
+  await page.mouse.wheel(-650, 0)
+  await settle(page)
+  const before = (await win(page, BACKEND).boundingBox())!
+  expect(before.x).toBeLessThan(board.x)
+  expect(before.x + before.width).toBeGreaterThan(board.x + 60)
+  await page.mouse.click(before.x + before.width - 30, before.y + before.height / 2)
+  await settle(page)
+  const after = (await win(page, BACKEND).boundingBox())!
+  expect(after.x).toBeGreaterThan(board.x)
+  expect(after.x + after.width).toBeLessThan(board.x + board.width)
+  // Closing the focused window is a back: frontend.md was shown before.
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
+  await win(page, BACKEND).getByRole('button', { name: /^Close/ }).click()
+  await expect(page).toHaveURL(/#\/docs\/docs\/frontend\.md$/)
+  await expect(win(page, FRONTEND).locator('.bw')).toHaveClass(/focused/)
+})
+
 test('zooming out to titles keeps every window where it is and draws only its title', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)

@@ -92,9 +92,10 @@ test('the trace matrix renders a row per requirement and exports from the tab', 
 
 test('the generated pages list and one opens rendered', async ({ page }) => {
   await openDemo(page, 'The sort utility')
-  await page.goto('/#/product/generated')
-  await page.locator('.ws-nav').getByRole('link', { name: 'index.md', exact: true }).click()
-  await expect(page.locator('.ws-center h1').first()).toHaveText('Index')
+  // The generated pages are the navigator's last fold, closed until opened.
+  await page.locator('.ws-nav [data-fold="generated"] .wsn-head').click()
+  await page.locator('.ws-nav [data-fold="generated"]').getByRole('link', { name: 'index.md', exact: true }).click()
+  await expect(page.locator('.ws-center h1:visible').first()).toHaveText('Index')
 })
 
 test('an entity page reads by name, states its relations once, and explains a connection', async ({ page }) => {
@@ -118,8 +119,8 @@ test('a requirement keeps the Requirements list and shows where it comes from', 
   await page.locator('.wb-list-row').first().click()
   await page.waitForURL(/#\/model\/requirements\//)
   await expect(page.locator('.wb-side-tabs a.active')).toHaveText('Requirements')
-  await expect(page.locator('.ws-center')).toContainText('Where it comes from')
-  await expect(page.locator('.ws-center .source-quote blockquote')).toBeVisible()
+  await expect(page.locator('.ws-center .wst-item:visible')).toContainText('Where it comes from')
+  await expect(page.locator('.ws-center .source-quote:visible blockquote')).toBeVisible()
 })
 
 test('a diagram shows its picture in the tab', async ({ page }) => {

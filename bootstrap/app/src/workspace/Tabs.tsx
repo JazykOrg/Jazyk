@@ -1,4 +1,4 @@
-// The Tabs arrangement (docs/frontends/gui.md#workspace-experimental): editor groups
+// The Tabs arrangement (docs/frontends/gui.md#workspace): editor groups
 // with tabs that split right or down, from a tab's menu or by dragging a tab to an
 // edge, over the workspace's open items. Each tab renders its item's page against
 // its own path. The layout (groups, splits, sizes) is remembered per project beside
@@ -103,6 +103,18 @@ function ItemTab({ api, params }: IDockviewPanelHeaderProps<{ path: string }>) {
       </span>
       <span className="wst-title">{title}</span>
       <button
+        className="wst-arrange"
+        aria-label={`show ${title} on the Board`}
+        title="Collapse into the Board"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          useWorkspace.getState().setArrangement('board', path)
+        }}
+      >
+        ⤡
+      </button>
+      <button
         className="wst-close"
         aria-label={`close ${title}`}
         onMouseDown={(e) => e.stopPropagation()}
@@ -164,6 +176,10 @@ export default function Tabs() {
   // then are echoes, not a person's moves.
   const syncing = useRef(false)
   const [ready, setReady] = useState(0)
+  // Until the store's items are first applied, the layout's activations are its own
+  // restore (the tab last in front when it was saved), not a person's choice: the
+  // focused item wins, as when the Board expands into Tabs.
+  const applied = useRef(false)
 
   // The store's items onto the layout: add the missing, drop the closed, retarget the
   // moved, and bring the focused to the front. A preview replaced in the store takes
@@ -203,6 +219,22 @@ export default function Tabs() {
     } finally {
       syncing.current = false
     }
+    if (!applied.current) {
+      // The restore's own activation may land after this; the focused item stays.
+      window.setTimeout(() => {
+        applied.current = true
+        const fk = useWorkspace.getState().focused
+        const fp = fk ? api.getPanel(itemKey(fk)) : undefined
+        if (fp && api.activePanel !== fp) {
+          syncing.current = true
+          try {
+            fp.api.setActive()
+          } finally {
+            syncing.current = false
+          }
+        }
+      }, 0)
+    }
     writeLayout(useWorkspace.getState().project, api)
   }, [])
 
@@ -225,7 +257,7 @@ export default function Tabs() {
       // tab they close leaves the store. A move between groups fires no removal (the
       // layout holds its events while it moves a panel), so a removal is a close.
       api.onDidActivePanelChange((ev) => {
-        if (syncing.current || !ev.panel) return
+        if (syncing.current || !applied.current || !ev.panel) return
         const path = (ev.panel.params as { path?: string } | undefined)?.path
         if (!path) return
         useRecent.getState().touch(ev.panel.id)
@@ -297,7 +329,7 @@ export default function Tabs() {
 }
 
 // On a narrow screen one item shows at a time, with a switcher that lays the open
-// items out as a grid (docs/frontends/gui.md#workspace-experimental).
+// items out as a grid (docs/frontends/gui.md#workspace).
 export function NarrowTabs({ show }: { show: (path: string) => void }) {
   const items = useWorkspace((w) => w.items)
   const focused = useWorkspace((w) => w.focused)

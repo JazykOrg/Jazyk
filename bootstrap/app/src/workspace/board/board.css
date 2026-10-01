@@ -89,6 +89,23 @@
   font-weight: 600;
 }
 
+.bw-arrange {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.bw-arrange:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
 .bw-close {
   border: 0;
   background: transparent;

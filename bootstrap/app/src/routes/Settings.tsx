@@ -10,7 +10,6 @@ import { useProject } from '../lib/queries'
 import { useCapabilities } from '../lib/capabilities'
 import { useApp } from '../lib/store'
 import { useWords } from '../lib/words'
-import { ArrangementSetting } from '../workspace/ArrangementSwitch'
 import './routes.css'
 
 interface SettingsPayload {
@@ -427,7 +426,6 @@ export default function Settings() {
       )}
       <ProjectSettings />
       <Workflow browser={browser} />
-      <ArrangementSetting />
     </>
   )
 }

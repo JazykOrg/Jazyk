@@ -8,7 +8,7 @@ step.
 
 ## Start here
 
-- Read the repo root `CLAUDE.md` first (docs first, the writing style, commit as you go).
+- Read the repo root `AGENTS.md` first (docs first, the writing style, commit as you go).
 - The concept: [criterion](../docs/compiler/model/criterion.md). The goal that writes
   them: [derive-criteria](../docs/compiler/goals/derive-criteria.md) and its contract
   under `goals/prompts/`. The method: [criteria skill](../docs/compiler/skills/criteria.md).

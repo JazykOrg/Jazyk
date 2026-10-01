@@ -144,7 +144,7 @@ LocalRouter; the default local model fails judgment-heavy goals.
   the dogfood.
 - [ ] Docs tree and binary agree: no page describes machinery the binary lacks, no
   behavior lacks a page, prompts and skills are `include_str!` bytes, and the root
-  `CLAUDE.md` describes the landed design.
+  `AGENTS.md` describes the landed design.
 - [ ] Full docs gen and verify run to verdicts. The archive drops the old ledger, so
   binding runs fresh ([the ledger](./consumers/gen.md#the-ledger)).
 - [ ] `jazyk benchmark` under the landed harness on the four graded kinds, both

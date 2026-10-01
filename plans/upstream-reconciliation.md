@@ -7,7 +7,7 @@ encode). Every behavior below lands in `docs/` first, then in `bootstrap/`.
 
 ## Start here
 
-- The repo root `CLAUDE.md` (docs first, the writing style, the division of labor).
+- The repo root `AGENTS.md` (docs first, the writing style, the division of labor).
 - Provenance and ratification: [provenance](../docs/compiler/model.md#provenance),
   [ratification proposals](../docs/compiler/model/diagnostic.md#ratification-proposals),
   [the ratify goal](../docs/compiler/goals/ratify.md),

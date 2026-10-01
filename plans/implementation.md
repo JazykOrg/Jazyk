@@ -8,7 +8,7 @@ phases).
 
 ## Start here
 
-- Read the repo root `CLAUDE.md` first. It carries the hard rules: docs first,
+- Read the repo root `AGENTS.md` first. It carries the hard rules: docs first,
   the docs writing style (short declarative sentences, no em dashes, backticks
   for identifiers), commit identity and no co-author trailers, the GUI rebuild
   rule, LocalRouter as the LLM endpoint.
@@ -125,7 +125,7 @@ every page extractable (the docs are compiler input) and in the house style.
 | `consumers/decompile.md`, `pm.md` | Light touch-ups. |
 | `benchmark/` | Mark deferred; keep the harness compiling. |
 | `TODO.md` | Refresh against this landing. |
-| repo root `CLAUDE.md` | Rewrite the Architecture and Repo layout sections to the landed design (they describe the outgoing turn design, and the layout listing is already stale); keep the norms sections untouched. |
+| repo root `AGENTS.md` | Rewrite the Architecture and Repo layout sections to the landed design (they describe the outgoing turn design, and the layout listing is already stale); keep the norms sections untouched. |
 
 ## The code
 
@@ -213,9 +213,9 @@ Workstreams in dependency order, all in `bootstrap/src/`.
   accepting it flips the fact's provenance to `quote`.
 - Docs tree and binary agree: no page describes machinery the binary lacks,
   and no behavior lacks a page. Prompts and skills are bytes shared between
-  docs and binary via `include_str!`. The root `CLAUDE.md` describes the
+  docs and binary via `include_str!`. The root `AGENTS.md` describes the
   landed design.
-- Committed and pushed per the root `CLAUDE.md` norms, tree clean.
+- Committed and pushed per the root `AGENTS.md` norms, tree clean.
 
 ## Deferred, explicitly
 

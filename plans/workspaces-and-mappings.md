@@ -849,7 +849,7 @@ warnings = [
   but the base keeps later moves cheap.
 - The store lands at `.jazyk/jazyk/` at the repo root. `docs/jazyk.toml` is deleted.
   Running from `docs/` walks up to the root file, as the redirect did by hand.
-- `CLAUDE.md` changes its store and layout lines.
+- `AGENTS.md` changes its store and layout lines.
 - A second dogfood spec is possible later: `bootstrap` mapping `docs/` onto
   `bootstrap/src/**` read-only, the adoption case run on jazyk itself. Not part of
   this plan's steps.
@@ -975,7 +975,7 @@ a whole-project rerun.
 
 ### Step 10: the dogfood and the examples
 
-- Docs first: `CLAUDE.md`, `project-settings.md#redirect` removed (or marked for
+- Docs first: `AGENTS.md`, `project-settings.md#redirect` removed (or marked for
   removal), `docs/TODO.md`.
 - Code: the repo-root `jazyk.toml` rewritten, `docs/jazyk.toml` deleted, the redirect
   error, one multi-spec example.

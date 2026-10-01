@@ -307,7 +307,7 @@ before create; a lookalike of an existing area reuses it).
 | `docs/frontends/gui.md`, `viewer.md`, `cli.md` | tree, breadcrumb, shape line |
 | `docs/compiler/tools.schema.yaml`, `graph.schema.yaml` | the two tools, the `children` field |
 
-Every edit follows the docs style in the root `CLAUDE.md`: short declarative
+Every edit follows the docs style in the root `AGENTS.md`: short declarative
 sentences, no em dashes, backticks for identifiers, relative links with heading
 anchors, statements extractable (docs is also the compiler's input).
 
@@ -337,7 +337,7 @@ the `level-shape` check; the reparent flip.
 ## Stages
 
 Each stage is one workflow: parallel agents with disjoint file ownership, a shared
-brief (this plan plus `CLAUDE.md`), and an independent verifier (build, test, docs
+brief (this plan plus `AGENTS.md`), and an independent verifier (build, test, docs
 checks) before commit. Commit per stage on the `levels` branch, docs first.
 
 1. Docs: every page in the table above, one agent per page or page pair, then a

@@ -24,7 +24,7 @@ import { useNodeName } from '../lib/present'
 import { itemKind, itemTitle, useWorkspace, type Item } from './items'
 import { itemKey, touchRecent } from './paths'
 import { KINDS } from './kinds'
-import { ArrangeContext, CloseButton, ItemBar } from './ItemControls'
+import { ArrangeContext, CloseButton, hasOwnBar, ItemBar } from './ItemControls'
 import { closePath, pinPath } from './actions'
 
 // At most this many tabs stay mounted; the rest render when shown again.
@@ -77,7 +77,7 @@ function ItemTab({ api, params }: IDockviewPanelHeaderProps<{ path: string }>) {
   const kind = itemKind(path)
   return (
     <div
-      className={`wst-tab k-${kind}${item?.preview ? ' preview' : ''}`}
+      className={`wst-tab kp k-${kind}${item?.preview ? ' preview' : ''}`}
       data-path={itemKey(path)}
       title={itemKey(path)}
       onDoubleClick={() => pinPath(path)}
@@ -113,7 +113,7 @@ function ItemPanel({ api, params }: IDockviewPanelProps<{ path: string }>) {
     <div className={`wst-item k-${itemKind(path)}`} data-item={key}>
       <ArrangeContext.Provider value={arrange}>
         {/* A document's second bar is its editor's; any other page gets this one. */}
-        {itemKind(path) !== 'doc' && <ItemBar path={path} />}
+        {!hasOwnBar(path) && <ItemBar path={path} />}
         {visible || recent ? <AppRoutes location={path} /> : null}
       </ArrangeContext.Provider>
     </div>

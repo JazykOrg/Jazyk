@@ -42,6 +42,8 @@ function sevClass(sev: Marker['severity']): string {
   return sev === 'error' ? 'sev-error' : sev === 'warning' ? 'sev-warning' : sev === 'info' ? 'sev-info' : 'sev-none'
 }
 
+const lastRevealed = new Map<string, string>()
+
 export default function DocEditor() {
   const params = useParams()
   const docPath = params['*'] ?? ''
@@ -182,7 +184,9 @@ export default function DocEditor() {
   const [markers, setMarkers] = useState<Marker[]>([])
   const savingRef = useRef(false)
   const pendingLine = useRef<{ path: string; line: number } | null>(null)
-  const revealedKey = useRef('')
+  // The target last revealed in each document, kept across editors: an editor that
+  // mounts again (a board window going live) does not jump back to it.
+  const revealedKey = useMemo(() => ({ get current() { return lastRevealed.get(docPath) ?? '' }, set current(v: string) { lastRevealed.set(docPath, v) } }), [docPath])
 
   const rootRef = useRef<string | undefined>(undefined)
   rootRef.current = projectQ.data?.root

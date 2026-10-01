@@ -527,6 +527,31 @@ interface Props {
   flashes?: FlashLines[]
 }
 
+// Where each document was left: its selection and its scroll, kept for the page's
+// life across editors, so a document that comes back (a board window going live
+// again, a tab remounted) opens where it was (docs/frontends/gui.md#editor).
+const leftAt = new Map<string, { anchor: number; head: number; topPos: number; offset: number }>()
+
+// Kept while the editor is on the page only: a detached editor reads a scroll of 0.
+function remember(view: EditorView, uri: string) {
+  if (!view.dom.isConnected) return
+  const sel = view.state.selection.main
+  const top = view.scrollDOM.scrollTop
+  const block = view.lineBlockAtHeight(top)
+  leftAt.set(uri, { anchor: sel.anchor, head: sel.head, topPos: block.from, offset: top - block.top })
+}
+
+// Back to where a document was left: its top line at the top, then the offset. An
+// editor that just mounted is not measured yet and drops the scroll, so it tries a
+// few frames until the line is there.
+function restore(view: EditorView, was: { topPos: number; offset: number }, tries = 8) {
+  const pos = Math.min(was.topPos, view.state.doc.length)
+  const there = () => view.dom.isConnected && view.lineBlockAtHeight(view.scrollDOM.scrollTop).from >= pos - 1 && view.scrollDOM.scrollTop > 0
+  if (pos === 0 || there()) return
+  if (view.dom.isConnected && view.scrollDOM.clientHeight > 0) view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: -was.offset }) })
+  if (tries > 0) window.setTimeout(() => restore(view, was, tries - 1), 60)
+}
+
 // Whitespace-insensitive quote search, preferring a match at or after fromPos.
 function findQuote(state: EditorState, quoteText: string, fromPos: number): { from: number; to: number } | null {
   const words = quoteText.trim().split(/\s+/).filter((w) => w !== '')
@@ -881,6 +906,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     const listener = EditorView.updateListener.of((u) => {
       if (u.selectionSet || u.docChanged) {
         propsRef.current.onCursorLine?.(u.state.doc.lineAt(u.state.selection.main.head).number)
+        if (openedUri.current && u.selectionSet) remember(u.view, openedUri.current)
         const c = caretContext(u.state)
         propsRef.current.onCaretContext?.(c.entity, c.reqs)
       }
@@ -966,7 +992,12 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
   useEffect(() => {
     const view = new EditorView({ parent: divRef.current! })
     viewRef.current = view
+    const onScroll = () => {
+      if (openedUri.current) remember(view, openedUri.current)
+    }
+    view.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
     return () => {
+      view.scrollDOM.removeEventListener('scroll', onScroll)
       for (const [uri, unsub] of diagUnsubs.current) {
         unsub()
         propsRef.current.lsp.didClose(uri)
@@ -989,8 +1020,12 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     if (!view || !props.path) return
     const uri = docUri(props.root, props.path)
     if (openedUri.current === uri) return
-    if (openedUri.current) states.current.set(openedUri.current, view.state)
+    if (openedUri.current) {
+      states.current.set(openedUri.current, view.state)
+      remember(view, openedUri.current)
+    }
     let state = states.current.get(uri)
+    const fresh = !state
     if (!state) {
       state = EditorState.create({ doc: props.initialText, extensions: buildExtensions(uri) })
       baselines.current.set(uri, props.initialText)
@@ -1010,6 +1045,16 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     }
     openedUri.current = uri
     view.setState(state)
+    // A document this page had open before comes back where it was left.
+    const was = fresh ? leftAt.get(uri) : undefined
+    if (was) {
+      const len = view.state.doc.length
+      view.dispatch({ selection: { anchor: Math.min(was.anchor, len), head: Math.min(was.head, len) } })
+      restore(view, was)
+    } else if (!fresh) {
+      const back = leftAt.get(uri)
+      if (back) restore(view, back)
+    }
     propsRef.current.onDirty(view.state.doc.toString() !== baselines.current.get(uri))
     propsRef.current.onText?.(view.state.doc.toString())
     propsRef.current.onCursorLine?.(view.state.doc.lineAt(view.state.selection.main.head).number)

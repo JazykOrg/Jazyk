@@ -2,7 +2,9 @@
 // file or the pin of anything else on its title bar, and the switch between Tabs and
 // the Board at the end of its second bar.
 import { createContext, useContext } from 'react'
-import { isPinned, useWorkspace } from './items'
+import { isPinned, itemKind, itemTitle, useWorkspace } from './items'
+import { useNodeName } from '../lib/present'
+import { KINDS } from './kinds'
 
 // A thumbtack, filled when pinned.
 function PinIcon({ pinned }: { pinned: boolean }) {
@@ -85,12 +87,28 @@ export function ArrangeButton() {
   )
 }
 
-// The second bar of any page but a document (whose editor draws its own): the page's
-// path, and the switch at its end.
+// The kinds whose page draws its own second bar (the editor's, the product file
+// viewer's, the generated page viewer's), which carries the switch itself.
+export function hasOwnBar(path: string): boolean {
+  const k = itemKind(path)
+  return k === 'doc' || k === 'file' || k === 'test' || k === 'generated'
+}
+
+// The second bar of a page without one of its own: its kind and its name (never an
+// id in the default mode), and the switch at its end.
 export function ItemBar({ path }: { path: string }) {
+  const p = path.split(/[?#]/)[0]
+  const kind = itemKind(p)
+  const name = useNodeName()
+  const segs = p.split('/').filter(Boolean)
+  const node = kind === 'entity' || kind === 'requirement' || kind === 'diagram' ? decodeURIComponent(segs[segs.length - 1] ?? '') : ''
+  const label = node ? name(node) : kind === 'other' || kind === 'product' ? itemTitle(p) : ''
   return (
     <div className="ws-bar2">
-      <span className="mono ws-bar2-path">{path.split(/[?#]/)[0]}</span>
+      <span className="ws-bar2-path">
+        <span className="ws-bar2-kind">{KINDS[kind].label}</span>
+        {label && <span> · {label.length > 90 ? `${label.slice(0, 89)}…` : label}</span>}
+      </span>
       <ArrangeButton />
     </div>
   )

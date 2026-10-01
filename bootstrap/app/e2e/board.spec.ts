@@ -278,6 +278,27 @@ test('every window has a pin and a close; an unpinned window is held by the focu
   await expect(win(page, BACKEND).locator('.bw')).toHaveClass(/floating/)
 })
 
+test('a document comes back where it was left', async ({ page }) => {
+  await openBoard(page)
+  await openDoc(page, 'backend.md', BACKEND)
+  await openDoc(page, 'frontend.md', FRONTEND)
+  await docRow(page, 'backend.md').dblclick()
+  await settle(page)
+  const scroller = win(page, BACKEND).locator('.cm-scroller')
+  await win(page, BACKEND).locator('.cm-line').last().click()
+  await page.keyboard.press('Control+End')
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  const top = await scroller.evaluate((el) => el.scrollTop)
+  expect(top).toBeGreaterThan(0)
+  // Away to frontend.md and back: the flight holds the live level, and an editor
+  // that mounts again opens where it was.
+  await docRow(page, 'frontend.md').dblclick()
+  await settle(page)
+  await docRow(page, 'backend.md').dblclick()
+  await settle(page)
+  await expect.poll(() => win(page, BACKEND).locator('.cm-scroller').evaluate((el) => el.scrollTop)).toBeGreaterThan(top - 30)
+})
+
 test('zooming out to titles keeps every window where it is and draws only its title', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)

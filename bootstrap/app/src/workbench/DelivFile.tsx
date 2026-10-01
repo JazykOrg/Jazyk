@@ -25,6 +25,7 @@ import { useInspector } from '../lib/nav'
 import { lineMarks } from '../lib/diff'
 import MarkdownView from '../components/MarkdownView'
 import '../routes/routes.css'
+import { ArrangeButton } from '../workspace/ItemControls'
 import '../components/markdown.css'
 
 // A resolved site from the ledger: located against the current text (line is null
@@ -375,6 +376,7 @@ export default function DelivFile() {
           >
             diff
           </button>
+          <ArrangeButton />
         </div>
       </div>
       {markdown && !source && !diffMode && projectQ.data ? (

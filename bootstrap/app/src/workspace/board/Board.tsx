@@ -89,7 +89,10 @@ export default function BoardArrangement() {
 // The level follows the zoom; a window leaving live keeps its still.
 function LevelWatcher() {
   const level = useStore((s) => levelOf(s.transform[2]))
-  useEffect(() => useRuntime.getState().setLevel(level), [level])
+  const flying = useRuntime((s) => s.flying)
+  useEffect(() => {
+    if (!flying) useRuntime.getState().setLevel(level)
+  }, [level, flying])
   return null
 }
 
@@ -188,6 +191,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       const far = Math.hypot((to.cx - from.cx) * z0, (to.cy - from.cy) * z0) > width / 2
       const id = ++flight.current
       flying.current = true
+      useRuntime.getState().setFlying(true)
       const start = performance.now()
       const step = (now: number) => {
         if (id !== flight.current) return
@@ -197,6 +201,7 @@ function BoardCanvas({ project }: { project: string | null }) {
         if (t < 1) requestAnimationFrame(step)
         else {
           flying.current = false
+          useRuntime.getState().setFlying(false)
           landed.current()
         }
       }
@@ -212,6 +217,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       if (!flying.current || (e.type === 'pointerdown' && (!t.closest?.('.react-flow__pane') || t.closest('.react-flow__node')))) return
       flight.current++
       flying.current = false
+      useRuntime.getState().setFlying(false)
       landed.current()
     }
     const el = document.querySelector('.board')
@@ -549,6 +555,7 @@ function BoardCanvas({ project }: { project: string | null }) {
     // A fit takes over from a flight under way.
     flight.current++
     flying.current = false
+    useRuntime.getState().setFlying(false)
     void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1 })
   }, [rf])
 
@@ -611,6 +618,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       if (e.key === 'Escape') {
         flight.current++
         flying.current = false
+        useRuntime.getState().setFlying(false)
         const z = zoomOut(levelOf(rf.getZoom()))
         if (z !== null) {
           e.preventDefault()

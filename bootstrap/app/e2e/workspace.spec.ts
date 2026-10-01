@@ -87,7 +87,6 @@ test('in Tabs every tab has a close and nothing closes on its own', async ({ pag
 
 test('an entity’s states link to its state diagram', async ({ page }) => {
   await openDemo(page, 'The novel')
-  await toTabs(page)
   await page.goto('/#/model/entities/ent%3Areport')
   await page.locator('.wst-item:visible').getByRole('link', { name: 'see the states' }).click()
   await expect(page).toHaveURL(/#\/model\/diagrams\/view%3Astate%2Freport$/)

@@ -11,6 +11,7 @@ import { outFileUrl } from '../lib/mdlinks'
 import MarkdownView from '../components/MarkdownView'
 import OutSvg from '../components/OutSvg'
 import '../ide/ide.css'
+import { ArrangeButton } from '../workspace/ItemControls'
 import '../components/markdown.css'
 
 function isImage(path: string): boolean {
@@ -72,8 +73,8 @@ export default function OutFile() {
       <div className="ide-topbar">
         <span className="mono">{path}</span>
         <span className="muted">read-only</span>
-        {markdown && (
-          <div className="ide-topbar-right row">
+        <div className="ide-topbar-right row">
+          {markdown && (
             <button
               className={source ? 'btn-on' : ''}
               title={source ? 'back to the rendered page' : 'the markdown as written'}
@@ -81,8 +82,9 @@ export default function OutFile() {
             >
               source
             </button>
-          </div>
-        )}
+          )}
+          <ArrangeButton />
+        </div>
       </div>
       {image ? (
         <div className="out-image">{isSvg(path) ? <OutSvg rel={path} alt={path} /> : <img src={outFileUrl(path)} alt={path} />}</div>

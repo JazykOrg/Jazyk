@@ -6,6 +6,10 @@ import type { Level } from './model'
 
 interface Runtime {
   level: Level
+  // A focus flight is under way: the level holds until it lands, so a dip below
+  // the live zoom does not turn the live pages into stills and back.
+  flying: boolean
+  setFlying: (v: boolean) => void
   live: string[]
   // The one link whose requirements are expanded, by edge id.
   expanded: string | null
@@ -20,6 +24,8 @@ interface Runtime {
 
 export const useRuntime = create<Runtime>((set, get) => ({
   level: 'live',
+  flying: false,
+  setFlying: (flying) => set({ flying }),
   live: [],
   expanded: null,
   shown: null,

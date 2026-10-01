@@ -555,3 +555,78 @@
 .bw-close.pin.on .pin-icon {
   transform: none;
 }
+
+/* A kind's pattern (docs/frontends/gui.md#workspace): a faint pattern in the kind's
+   color on white, a different shape per kind, so kinds read apart without telling
+   colors apart. Any element with `kp` and a `k-` class draws it; `--s` sets the
+   pattern's size. Used on a window's title bar, on a tab, and on a zoomed-out
+   window. */
+.kp {
+  --pat: color-mix(in srgb, var(--k) 20%, transparent);
+  --s: 18px;
+  background-color: var(--panel);
+}
+
+.kp.k-doc {
+  background-image: repeating-linear-gradient(0deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+.kp.k-file {
+  background-image:
+    linear-gradient(var(--pat) calc(var(--s) * 0.07), transparent calc(var(--s) * 0.07)),
+    linear-gradient(90deg, var(--pat) calc(var(--s) * 0.07), transparent calc(var(--s) * 0.07));
+  background-size: calc(var(--s) * 0.7) calc(var(--s) * 0.7);
+}
+
+.kp.k-test {
+  background-image: radial-gradient(var(--pat) calc(var(--s) * 0.08), transparent calc(var(--s) * 0.1));
+  background-size: calc(var(--s) * 0.45) calc(var(--s) * 0.45);
+}
+
+.kp.k-generated {
+  background-image: repeating-linear-gradient(45deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+.kp.k-project {
+  background-image: linear-gradient(90deg, var(--pat) calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08));
+  background-size: calc(var(--s) * 0.6) calc(var(--s) * 0.6);
+}
+
+.kp.k-entity {
+  background-image: radial-gradient(var(--pat) calc(var(--s) * 0.18), transparent calc(var(--s) * 0.2));
+  background-size: var(--s) var(--s);
+}
+
+.kp.k-requirement {
+  background-image: repeating-linear-gradient(-45deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+.kp.k-diagram {
+  background-image:
+    repeating-linear-gradient(45deg, var(--pat) 0 calc(var(--s) * 0.06), transparent calc(var(--s) * 0.06) calc(var(--s) * 0.5)),
+    repeating-linear-gradient(-45deg, var(--pat) 0 calc(var(--s) * 0.06), transparent calc(var(--s) * 0.06) calc(var(--s) * 0.5));
+}
+
+.kp.k-product,
+.kp.k-inbox,
+.kp.k-history,
+.kp.k-other {
+  background-image: repeating-linear-gradient(90deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+/* A tab: its kind's pattern, stronger when it is the one in front. */
+.wst-tab.kp {
+  --s: 14px;
+  border-radius: 4px 4px 0 0;
+  padding: 0 4px;
+}
+
+.dv-active-tab .wst-tab.kp {
+  --pat: color-mix(in srgb, var(--k) 32%, transparent);
+  box-shadow: inset 0 -2px 0 var(--k);
+}
+
+.ws-bar2-kind {
+  color: var(--k, var(--muted));
+  font-weight: 600;
+}

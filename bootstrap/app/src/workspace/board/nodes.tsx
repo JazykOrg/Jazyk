@@ -10,7 +10,7 @@ import { get } from '../../lib/api'
 import { useCoverage, useDocs, useGraph, useMatrix } from '../../lib/queries'
 import { kindWord, shorten, statusWord } from '../../lib/present'
 import { useApp } from '../../lib/store'
-import { ArrangeContext, CloseButton, ItemBar, PinButton } from '../ItemControls'
+import { ArrangeContext, CloseButton, hasOwnBar, ItemBar, PinButton } from '../ItemControls'
 import LinksBar from './linksbar'
 import { isPinned, itemKind, itemTitle, useWorkspace } from '../items'
 import { itemKey, nodePagePath, splitSelection } from '../paths'
@@ -345,7 +345,7 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   const arrange = useMemo(() => ({ path, to: 'tabs' as const }), [path])
   return (
     <div
-      className={`bw k-${kind} lv-${level}${pinned ? ' pinned' : ' floating'}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
+      className={`bw k-${kind} lv-${level}${level === 'card' || level === 'title' ? ' kp' : ''}${pinned ? ' pinned' : ' floating'}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
       data-path={path}
       // A press focuses the item without moving the board, so a press and a drag
       // moves the window; a click (released where it started) focuses it fully.
@@ -365,14 +365,14 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
     >
       <Handles />
       {framed && (
-        <div className="bw-title" title={path}>
+        <div className={`bw-title kp k-${kind}`} title={path}>
           <span className="bw-glyph">{KINDS[kind].glyph}</span>
           <span className="bw-name">{kind === 'doc' ? docOf(path) : title}</span>
           <PinButton className="bw-close nodrag" path={path} title={title} />
           <CloseButton className="bw-close nodrag" title={title} onClose={() => actions.close(path)} />
         </div>
       )}
-      {framed && kind !== 'doc' && (
+      {framed && !hasOwnBar(path) && (
         <ArrangeContext.Provider value={arrange}>
           <ItemBar path={path} />
         </ArrangeContext.Provider>

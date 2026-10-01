@@ -1618,8 +1618,8 @@ and back and forward.
   table (a solid border, a flat shadow, its pin filled and upright).
 - The navigator is one column in both: the project tree, and under it the Outline
   of the open document (following the cursor), each scrolling on its own. While the
-  focused item belongs to an area with sections of its own, the navigator leads with
-  them: the Inbox's sections with their counts, the builds under History, the
+  focused item belongs to an area with sections of its own, those sections sit under
+  the tree too, above the Outline, so the tree never moves as they come and go: the Inbox's sections with their counts, the builds under History, the
   Developer pages, the model's lists under a model page, the settings under
   Settings. Entities, requirements, and diagrams open from mentions (Cmd-click),
   markers, diagram boxes, links bars, and search; the product overview from

@@ -734,10 +734,13 @@ open another, then what to do with the one in front. It is also the one place th
 says where the project's changes go, so no other chip or badge in the top bar
 carries that.
 
-- Open projects: the project in this tab, checked, and the projects open in this
+- Open projects: the project in this tab, checked, the projects open in this
   browser's other tabs (each tab announces its project to the others over a
-  `BroadcastChannel`), each with its kind in words. Choosing another tab's project
-  opens it here too.
+  `BroadcastChannel`), and every `jazyk gui` on this computer from the Recent list
+  that still answers its ping (asked each time the menu opens), each with its kind
+  in words. A server stays here after this tab switches to another project, since
+  it keeps running. Choosing another tab's project or a running server opens it
+  here.
 - `Open recent ›`: a submenu of the [Recent](#home) list, newest first, each row
   with its kind in words; the last row is `Clear recent…` (asks first when an entry
   holds stored data). Clearing keeps the project open in this tab, since a reload
@@ -1599,6 +1602,9 @@ and back and forward.
   `?node=` step stands for the node's page, which takes its place, so back from the
   page leaves it.
 
+- The open items, the arrangement's tabs and windows, and the history of what was
+  shown are remembered per project (by the open project's Recent id): switching
+  projects swaps them for the other project's, and switching back restores them.
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab
   or a board window as it does in the center. Each kind has its own glyph and color

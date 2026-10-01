@@ -1572,7 +1572,10 @@ and back and forward.
   the items in the order they were shown, in either arrangement. Closing the focused
   item is a back: the item that was shown before it comes to the front (skipping
   steps that belonged to the closed item). Closing an item that is not focused
-  leaves the focus where it is.
+  leaves the focus where it is. A step that changes nothing is no step: opening the
+  item already in front (a double click, a link to the page shown) adds none. A
+  `?node=` step stands for the node's page, which takes its place, so back from the
+  page leaves it.
 
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab

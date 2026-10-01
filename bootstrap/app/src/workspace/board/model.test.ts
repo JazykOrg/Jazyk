@@ -168,18 +168,12 @@ describe('references', () => {
     expect(Math.round((left + last.x + last.w) / 2)).toBe(500)
     expect(f.more).toBeGreaterThan(0)
     expect(f.slots[f.slots.length - 1].index).toBe(-1)
-    for (const s of f.slots) expect(s.box.y).toBe(650 + 52)
+    for (const s of f.slots) expect(s.box.y).toBe(650 + 40)
   })
-  it('drops less when the room below is short', () => {
-    const f = layoutFan({ x: 250, y: 50, w: 500, h: 700 }, [100], view)
-    expect(f.anchor).toEqual({ x: 500, y: 750 })
-    expect(f.slots[0].box.y).toBe(750 + 18)
-  })
-  it('without room below, sits along the view’s bottom edge with no lines', () => {
+  it('always hangs below the window, past the view’s edge when it must', () => {
     const f = layoutFan({ x: 100, y: 50, w: 800, h: 740 }, [100, 100], view)
-    expect(f.anchor).toBeNull()
-    expect(f.more).toBe(0)
-    expect(f.slots[0].box.y + f.slots[0].box.h).toBeLessThanOrEqual(800)
+    expect(f.anchor).toEqual({ x: 500, y: 790 })
+    expect(f.slots[0].box.y).toBe(790 + 40)
   })
 })
 

@@ -5,8 +5,8 @@
 // them, and a click on a card opens that item beside the window and focuses it.
 import { memo, useEffect, useMemo, useState } from 'react'
 import { useStore } from '@xyflow/react'
-import { useDocs, useGraph } from '../../lib/queries'
-import { kindWord, shorten } from '../../lib/present'
+import { useDocs, useGraph, useView } from '../../lib/queries'
+import { shorten } from '../../lib/present'
 import { itemKind, itemTitle } from '../items'
 import { KINDS } from '../kinds'
 import { canonical, docOf, layoutFan, linkGroups, linkedDocs, nodeOf, type LinkGroup, type Rect } from './model'
@@ -90,38 +90,36 @@ export default LinksBar
 // ---- the cards a shown group lays out below its window ----
 
 const CARD_W = 210
-const CARD_H = 92
+const CARD_H = 110
 const INSET = 10
 
+// A diagram's picture, scaled to fit its card.
+function DiagramPreview({ id }: { id: string }) {
+  const view = useView(id)
+  const svg = view.data?.svg
+  if (!svg) return <span className="bl-mini-empty">{view.isLoading ? 'drawing…' : 'no picture yet'}</span>
+  return <span className="bl-mini-svg" aria-hidden="true" dangerouslySetInnerHTML={{ __html: svg }} />
+}
+
+// A card: the item's glyph and name in its kind's color; a diagram's card its
+// picture under the name.
 function MiniCard({ path, onOpen }: { path: string; onOpen: () => void }) {
   const { data: g } = useGraph()
   const kind = itemKind(path)
   let title = itemTitle(path)
-  let line = ''
-  if (g && kind === 'entity') {
-    const e = g.entities[canonical(g, nodeOf(path))]
-    title = e?.name ?? title
-    line = [kindWord(e?.stereotype), e?.definition].filter(Boolean).join(' · ')
-  } else if (g && kind === 'requirement') {
-    const r = g.requirements[canonical(g, nodeOf(path))]
-    title = r?.statement ?? title
-    line = r?.entities?.map((x) => g.entities[canonical(g, x)]?.name).filter(Boolean).join(', ') ?? ''
-  } else if (g && kind === 'diagram') {
-    const v = g.views[nodeOf(path)]
-    title = v?.title ?? title
-    line = `${v?.kind ?? ''} diagram · ${v?.members?.length ?? 0} members`
-  } else if (kind === 'doc') {
-    const d = docOf(path)
-    title = d.split('/').pop() ?? d
-    line = d
-  }
+  if (g && kind === 'entity') title = g.entities[canonical(g, nodeOf(path))]?.name ?? title
+  else if (g && kind === 'requirement') title = g.requirements[canonical(g, nodeOf(path))]?.statement ?? title
+  else if (g && kind === 'diagram') title = g.views[nodeOf(path)]?.title ?? title
+  else if (kind === 'doc') title = docOf(path).split('/').pop() ?? title
   return (
-    <button className={`bl-mini k-${kind}`} onClick={onOpen} title={`Open ${title}`} data-path={path}>
-      <span className="bl-mini-kind">
-        {KINDS[kind].glyph} {KINDS[kind].label}
+    <button className={`bl-mini k-${kind}${kind === 'diagram' ? ' bl-mini-diagram' : ''}`} onClick={onOpen} title={kind === 'doc' ? docOf(path) : title} data-path={path}>
+      <span className="bl-mini-title">
+        <span className="bl-mini-glyph" aria-hidden="true">
+          {KINDS[kind].glyph}
+        </span>{' '}
+        {shorten(title, 120)}
       </span>
-      <span className="bl-mini-title">{shorten(title, 90)}</span>
-      {line && <span className="bl-mini-line">{shorten(line, 120)}</span>}
+      {kind === 'diagram' && <DiagramPreview id={nodeOf(path)} />}
     </button>
   )
 }
@@ -148,16 +146,11 @@ export const LinkCards = memo(function LinkCards({ win, onOpen }: { win: Rect; o
   if (!shown || paths.length === 0 || width < 50) return null
   const view: Rect = { x: INSET, y: INSET, w: width - 2 * INSET, h: height - 2 * INSET }
   const r: Rect = { x: win.x * zoom + tx, y: win.y * zoom + ty, w: win.w * zoom, h: win.h * zoom }
-  // Without room below, the row sits just above the window's links bar.
-  const bar = document.querySelector(`.react-flow__node-window[data-id="w:${CSS.escape(shown.path.split(/[?#]/)[0])}"] .bw-links`)
-  const pane = document.querySelector('.board .react-flow')?.getBoundingClientRect()
-  const floor = bar && pane ? bar.getBoundingClientRect().top - pane.top : undefined
   const fan = layoutFan(
     r,
     paths.map(() => CARD_W),
     view,
     CARD_H,
-    floor,
   )
   const rest = paths.slice(paths.length - fan.more)
   const more = fan.slots.find((s) => s.index === -1)

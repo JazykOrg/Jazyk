@@ -510,10 +510,8 @@ export function caretEntities(g: Graph, entity: string | null, reqs: string[], o
 
 export const FAN_CHIP_H = 28
 export const FAN_GAP = 10
-// The drop from the window to the row: FAN_DROP when there is room, never less
-// than FAN_MIN_DROP (below that, the row sits along the view's bottom edge).
-export const FAN_DROP = 52
-export const FAN_MIN_DROP = 18
+// The drop from the window to the row.
+export const FAN_DROP = 40
 export const FAN_MORE_W = 64
 
 // A fan chip's width for its name.
@@ -537,15 +535,10 @@ export interface FanLayout {
 
 // The fan's row under a window on screen: as many chips as fit, left to right in
 // order, the row centered under the window's bottom center, a `+N` chip at the right
-// end for the rest. With no room below the window, the row sits along the view's
-// bottom edge (or above `floor`) and draws no lines.
-// `floor`, when given, is the highest the row's bottom may sit without room below
-// (so it never covers what is there, e.g. the window's links bar).
-export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_H, floor?: number): FanLayout {
+// end for the rest. The row always hangs below the window, past the view's bottom
+// edge when the window reaches it, with lines from the window's bottom center.
+export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_H): FanLayout {
   const room = Math.min(view.w - 2 * FAN_GAP, Math.max(win.w, 420))
-  const avail = view.y + view.h - 4 - (win.y + win.h) - h
-  const below = avail >= FAN_MIN_DROP
-  const drop = Math.min(FAN_DROP, avail)
   const taken: number[] = []
   let used = 0
   for (let i = 0; i < widths.length; i++) {
@@ -562,13 +555,13 @@ export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_
   const total = row.reduce((a, i) => a + w(i), 0) + FAN_GAP * Math.max(row.length - 1, 0)
   const anchorX = Math.min(Math.max(win.x + win.w / 2, view.x), view.x + view.w)
   let x = Math.min(Math.max(anchorX - total / 2, view.x + FAN_GAP), view.x + view.w - FAN_GAP - total)
-  const y = below ? win.y + win.h + drop : Math.min(view.y + view.h - h - 8, floor !== undefined ? floor - h - 6 : Infinity)
+  const y = win.y + win.h + FAN_DROP
   const slots: FanSlot[] = row.map((i) => {
     const box = { x, y, w: w(i), h }
     x += w(i) + FAN_GAP
     return { index: i, box }
   })
-  return { anchor: below ? { x: anchorX, y: win.y + win.h } : null, slots, more }
+  return { anchor: { x: anchorX, y: win.y + win.h }, slots, more }
 }
 
 // ---- links on screen: where a link's portals and its linkage sit ----

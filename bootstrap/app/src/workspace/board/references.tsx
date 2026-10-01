@@ -53,16 +53,11 @@ export const References = memo(function References({
     const r: Rect = { x: win.x * zoom + tx, y: win.y * zoom + ty, w: win.w * zoom, h: win.h * zoom }
     if (r.x > view.x + view.w || r.x + r.w < view.x || r.y > view.y + view.h || r.y + r.h < view.y) return null
     const boxes = refs.map((x) => cardBox(x.reqs.map((id) => g?.requirements[id]?.statement ?? id), expanded === refCardId(x.entity)))
-    // Without room below, the row sits just above the window's links bar.
-    const bar = document.querySelector('.react-flow__node-window .bw.focused .bw-links')
-    const pane = document.querySelector('.board .react-flow')?.getBoundingClientRect()
-    const floor = bar && pane ? bar.getBoundingClientRect().top - pane.top : undefined
     return layoutFan(
       r,
       boxes.map((b) => b.w),
       view,
       Math.max(...boxes.map((b) => b.h)),
-      floor,
     )
   }, [win, refs, tx, ty, zoom, width, height, expanded, g])
 

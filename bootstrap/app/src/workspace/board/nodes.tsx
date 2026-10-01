@@ -12,7 +12,7 @@ import { kindWord, shorten, statusWord } from '../../lib/present'
 import { useApp } from '../../lib/store'
 import { ArrangeContext, CloseOrPin, ItemBar } from '../ItemControls'
 import LinksBar from './linksbar'
-import { itemKind, itemTitle, useWorkspace } from '../items'
+import { isFileItem, itemKind, itemTitle, useWorkspace } from '../items'
 import { itemKey, nodePagePath, splitSelection } from '../paths'
 import { showPath } from '../actions'
 import ItemNavigation, { type ItemNavigate } from './ItemNavigation'
@@ -335,10 +335,13 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   else if (entity) body = <EntityCard path={path} />
   else body = live ? <LiveBody path={path} /> : <StillBody path={path} title={title} />
   const press = useRef<{ x: number; y: number } | null>(null)
+  // A transient item floats while unpinned and sits on the table once pinned.
+  const transient = !isFileItem(path)
+  const pinned = useWorkspace((w) => !!w.items.find((i) => i.path === path)?.pinned)
   const arrange = useMemo(() => ({ path, to: 'tabs' as const }), [path])
   return (
     <div
-      className={`bw k-${kind} lv-${level}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
+      className={`bw k-${kind} lv-${level}${transient ? (pinned ? ' pinned' : ' floating') : ''}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
       data-path={path}
       // A press focuses the item without moving the board, so a press and a drag
       // moves the window; a click (released where it started) focuses it fully.

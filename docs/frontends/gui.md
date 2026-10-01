@@ -1640,11 +1640,10 @@ and back and forward.
   `Product` in the top bar.
 - The project tree is the whole project directory (`GET /api/project/files`): every
   folder and file, `jazyk.toml` and the out directory included, folders first, each
-  folder collapsed until opened (remembered per project). Above it, `New document` and
-  `New folder` create in the documents folder (the one the docs glob names, made
-  when it does not exist yet, e.g. in a project just set up), so an empty project
-  can start its first document; the same actions sit on the documents folders'
-  rows. What a folder or a file is
+  folder collapsed until opened (remembered per project). The documents folder (the one
+  the docs glob names) always shows, even before it exists (e.g. in a project just
+  set up), with `New document` and `New folder` on its row; the first document or
+  folder made in it makes it. What a folder or a file is
   shows on its row:
   - the documents folder (the folder the docs glob reads, e.g. `docs/`) and the
     product folder (the deliverable) are marked with their kind's color and glyph;

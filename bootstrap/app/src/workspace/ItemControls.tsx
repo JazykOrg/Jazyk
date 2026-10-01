@@ -2,7 +2,7 @@
 // file or the pin of anything else on its title bar, and the switch between Tabs and
 // the Board at the end of its second bar.
 import { createContext, useContext } from 'react'
-import { isFileItem, useWorkspace } from './items'
+import { isPinned, useWorkspace } from './items'
 
 // A thumbtack, filled when pinned.
 function PinIcon({ pinned }: { pinned: boolean }) {
@@ -14,24 +14,31 @@ function PinIcon({ pinned }: { pinned: boolean }) {
   )
 }
 
-// A file's close, or the pin of a transient item.
-export function CloseOrPin({ path, title, onClose, className }: { path: string; title: string; onClose: () => void; className: string }) {
-  const pinned = useWorkspace((w) => !!w.items.find((i) => i.path === path)?.pinned)
-  if (isFileItem(path)) {
-    return (
-      <button
-        className={className}
-        aria-label={`close ${title}`}
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation()
-          onClose()
-        }}
-      >
-        <span aria-hidden="true">×</span>
-      </button>
-    )
-  }
+// An item's close: in Tabs on every tab, on the Board on every window.
+export function CloseButton({ title, onClose, className }: { title: string; onClose: () => void; className: string }) {
+  return (
+    <button
+      className={className}
+      aria-label={`close ${title}`}
+      title="Close"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClose()
+      }}
+    >
+      <span aria-hidden="true">×</span>
+    </button>
+  )
+}
+
+// A board window's pin: a file opens pinned, anything else unpinned; an unpinned
+// window stays open only while the focus holds it (docs/frontends/gui.md#workspace).
+export function PinButton({ path, title, className }: { path: string; title: string; className: string }) {
+  const pinned = useWorkspace((w) => {
+    const it = w.items.find((i) => i.path === path)
+    return it ? isPinned(it) : false
+  })
   return (
     <button
       className={`${className} pin${pinned ? ' on' : ''}`}

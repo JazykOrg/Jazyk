@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isFileItem, prune, type Item } from './items'
+import { isFileItem, isPinned, prune, type Item } from './items'
 
 const A = '/docs/docs/a.md'
 const B = '/model/entities/ent%3Ab'
@@ -24,6 +24,15 @@ describe('held items', () => {
     expect(prune(pinned, C).map((i) => i.path)).toEqual([A, C])
     // and it stays when the focus moves away
     expect(prune(pinned, A).map((i) => i.path)).toEqual([A, C])
+  })
+  it('a file opens pinned, and an unpinned file is held like anything else', () => {
+    expect(isPinned({ path: A })).toBe(true)
+    expect(isPinned({ path: B })).toBe(false)
+    const D = '/docs/docs/d.md'
+    // A unpinned, D (pinned by default) focused: D holds nothing but itself.
+    expect(prune([{ path: A, pinned: false }, { path: D, from: A }], D).map((i) => i.path)).toEqual([D])
+    // B unpinned, opened from the unpinned A: focusing B holds A.
+    expect(prune([{ path: A, pinned: false }, { path: B, from: A }], B).map((i) => i.path)).toEqual([A, B])
   })
   it('with nothing focused, everything stays', () => {
     expect(prune(items, null)).toBe(items)

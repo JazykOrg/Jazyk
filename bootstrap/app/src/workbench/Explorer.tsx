@@ -371,6 +371,20 @@ export function ProjectExplorer() {
     [data, projectQ.data],
   )
   const kinds = useMemo(() => new Map((data?.files ?? []).map((f) => [f.path, classifyFile(f.path, where)])), [data, where])
+  // A test's result, from the requirements it tests: pass, fail, or none yet.
+  const matrix = useMatrix()
+  const testResult = useMemo(() => {
+    const rows = matrix.data?.rows ?? {}
+    const byFile = new Map((delivQ.data?.files ?? []).map((f) => [f.path, f.owners.tests]))
+    const out = new Map<string, 'pass' | 'fail' | 'none'>()
+    for (const [path, k] of kinds) {
+      if (k.kind !== 'test') continue
+      const rel = where.deliverable ? path.slice(where.deliverable.length + 1) : path
+      const st = (byFile.get(rel) ?? []).map((r) => rows[r]?.status)
+      out.set(path, st.some((x) => x === 'failing' || x === 'partial') ? 'fail' : st.some((x) => x === 'verified') ? 'pass' : 'none')
+    }
+    return out
+  }, [kinds, delivQ.data, matrix.data, where])
   const docRoots = useMemo(() => new Set(where.docsGlob.map(globRoot).filter(Boolean)), [where])
 
   // The open item's file, highlighted in the tree.
@@ -394,9 +408,13 @@ export function ProjectExplorer() {
           current={current}
           defaultClosed
           hrefFor={(f) => kinds.get(f.path)?.href ?? `/project/${f.path}`}
-          fileClass={(f) => `pf k-${kinds.get(f.path)?.kind ?? 'project'}`}
+          fileClass={(f) => `pf k-${kinds.get(f.path)?.kind ?? 'project'}${testResult.has(f.path) ? ` t-${testResult.get(f.path)}` : ''}`}
           fileGlyph={(f) => (
-            <span className="pf-glyph" aria-hidden="true">
+            <span
+              className="pf-glyph"
+              aria-hidden="true"
+              title={testResult.has(f.path) ? { pass: 'its tests pass', fail: 'a test fails', none: 'no result yet' }[testResult.get(f.path)!] : undefined}
+            >
               {GLYPH[kinds.get(f.path)?.kind ?? 'project']}
             </span>
           )}

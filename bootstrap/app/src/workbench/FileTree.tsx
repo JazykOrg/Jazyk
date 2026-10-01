@@ -440,9 +440,8 @@ data-path={f.path}
         onFocus={() => setFocused(f.path)}
         onClick={() => setFocused(f.path)}
       >
-        <span className="ft-chev" aria-hidden="true" />
+        <span className="ft-chev" aria-hidden="true">{fileGlyph?.(f)}</span>
         <Link to={hrefFor(f)} className="ft-link" tabIndex={-1}>
-          {fileGlyph?.(f)}
           <span className={`ft-name${nameClass ? ` ${nameClass}` : ''}`}>{f.name}</span>
           {badges?.(f)}
         </Link>

@@ -1,7 +1,7 @@
-// The workspace's one navigator (docs/frontends/gui.md#workspace): the focused
-// item's area sections when it has them, the whole project directory as a tree with
-// every file typed by kind, and under it the open document's Outline, each part
-// scrolling on its own. A single click opens a preview item, a double click keeps it.
+// The workspace's one navigator (docs/frontends/gui.md#workspace): the whole project
+// directory as a tree with every file typed by kind, and under it the focused item's
+// area sections when it has them and the open document's Outline, each part
+// scrolling on its own, so the tree never moves when they come and go. A single click opens a preview item, a double click keeps it.
 import { useLocation } from 'react-router'
 import { AreaSections, hasAreaSections } from '../shell/Navigator'
 import { ProjectExplorer } from '../workbench/Explorer'
@@ -47,10 +47,10 @@ export default function WorkspaceNavigator() {
         if (p) pinPath(p)
       }}
     >
-      <AreaFold />
       <div className="wsn-tree">
         <ProjectExplorer />
       </div>
+      <AreaFold />
       <div className="wsn-outline">
         <Outline />
       </div>

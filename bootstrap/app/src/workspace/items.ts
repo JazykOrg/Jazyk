@@ -16,7 +16,8 @@ export interface Item {
   // The item it was opened from, so the board can place it beside that one and draw
   // an edge between them; an unpinned item holds the one it came from.
   from?: string
-  // A transient item (not a file) kept whether or not it is held.
+  // Kept on the Board whether or not it is held; absent means the default (a file
+  // pinned, anything else unpinned).
   pinned?: boolean
 }
 
@@ -27,10 +28,20 @@ export function isFileItem(path: string): boolean {
   return FILE_KINDS.has(itemKind(path))
 }
 
-// The items still open after the focus moves (docs/frontends/gui.md#workspace): every
-// file, every pinned item, and the items the focus holds. The focused item holds
-// itself, and an unpinned transient item holds the item it was opened from, on back
-// until a file or a pinned item. With nothing focused, everything stays.
+// Whether an item is pinned: as set, else a file is and anything else is not.
+export function isPinned(item: Item): boolean {
+  return item.pinned ?? isFileItem(item.path)
+}
+
+// The items still open after the focus moves on the Board
+// (docs/frontends/gui.md#workspace): every pinned item, and the items the focus
+// holds. The focused item holds itself, and an unpinned item holds the item it was
+// opened from, on back until a pinned one. With nothing focused, everything stays.
+// Holding applies on the Board only; in Tabs nothing closes on its own.
+function pruneOn(arrangement: Arrangement, items: Item[], focused: string | null): Item[] {
+  return arrangement === 'board' ? prune(items, focused) : items
+}
+
 export function prune(items: Item[], focused: string | null): Item[] {
   if (!focused) return items
   const byKey = new Map(items.map((i) => [i.path.split(/[?#]/)[0], i]))
@@ -40,10 +51,10 @@ export function prune(items: Item[], focused: string | null): Item[] {
     const key = cur.path.split(/[?#]/)[0]
     if (held.has(key)) break
     held.add(key)
-    if (isFileItem(cur.path) || cur.pinned || !cur.from) break
+    if (isPinned(cur) || !cur.from) break
     cur = byKey.get(cur.from.split(/[?#]/)[0])
   }
-  const next = items.filter((i) => isFileItem(i.path) || i.pinned || held.has(i.path.split(/[?#]/)[0]))
+  const next = items.filter((i) => isPinned(i) || held.has(i.path.split(/[?#]/)[0]))
   return next.length === items.length ? items : next
 }
 
@@ -129,7 +140,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         // a corrupt entry reads as none
       }
     }
-    set({ project, items: prune(items, focused), focused, selected: null })
+    set({ project, items: pruneOn(readArrangement(), items, focused), focused, selected: null })
   },
   // Opening an open item focuses it. A preview open replaces the current preview
   // item; any other open adds the item after the focused one. A background open
@@ -151,7 +162,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       next = items.map((i) => (i.path === path ? { ...i, preview: false } : i))
     }
     const nextFocus = opts.background ? focused : path
-    next = prune(next, nextFocus)
+    next = pruneOn(get().arrangement, next, nextFocus)
     set({ items: next, focused: nextFocus })
     save(project, next, nextFocus)
   },
@@ -167,7 +178,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   focusItem: (path) => {
     const { items, project } = get()
     if (!items.some((i) => i.path === path)) return
-    const next = prune(items, path)
+    const next = pruneOn(get().arrangement, items, path)
     set({ items: next, focused: path })
     save(project, next, path)
   },
@@ -179,8 +190,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   togglePin: (path) => {
     const { items, focused, project } = get()
-    const next = prune(
-      items.map((i) => (i.path === path && !isFileItem(i.path) ? { ...i, pinned: !i.pinned } : i)),
+    const next = pruneOn(
+      get().arrangement,
+      items.map((i) => (i.path === path ? { ...i, pinned: !isPinned(i) } : i)),
       focused,
     )
     set({ items: next })

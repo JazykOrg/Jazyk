@@ -21,10 +21,10 @@ import {
 import 'dockview-react/dist/styles/dockview.css'
 import AppRoutes from '../routes/AppRoutes'
 import { useNodeName } from '../lib/present'
-import { isFileItem, itemKind, itemTitle, useWorkspace, type Item } from './items'
+import { itemKind, itemTitle, useWorkspace, type Item } from './items'
 import { itemKey, touchRecent } from './paths'
 import { KINDS } from './kinds'
-import { ArrangeContext, CloseOrPin, ItemBar } from './ItemControls'
+import { ArrangeContext, CloseButton, ItemBar } from './ItemControls'
 import { closePath, pinPath } from './actions'
 
 // At most this many tabs stay mounted; the rest render when shown again.
@@ -77,7 +77,7 @@ function ItemTab({ api, params }: IDockviewPanelHeaderProps<{ path: string }>) {
   const kind = itemKind(path)
   return (
     <div
-      className={`wst-tab k-${kind}${item?.preview ? ' preview' : ''}${isFileItem(path) ? '' : ' transient'}${item?.pinned ? ' pinned' : ''}`}
+      className={`wst-tab k-${kind}${item?.preview ? ' preview' : ''}`}
       data-path={itemKey(path)}
       title={itemKey(path)}
       onDoubleClick={() => pinPath(path)}
@@ -93,7 +93,7 @@ function ItemTab({ api, params }: IDockviewPanelHeaderProps<{ path: string }>) {
         {KINDS[kind].glyph}
       </span>
       <span className="wst-title">{title}</span>
-      <CloseOrPin className="wst-close" path={path} title={title} onClose={() => api.close()} />
+      <CloseButton className="wst-close" title={title} onClose={() => api.close()} />
     </div>
   )
 }
@@ -173,7 +173,9 @@ export default function Tabs() {
         }
         const replaced = gone.find((p) => p.group && p.group.panels.includes(p))
         const at = replaced ? replaced.group.panels.indexOf(replaced) : -1
-        const group = replaced?.group ?? api.activeGroup
+        // A new tab joins the active group, else the first: added inactive, the tabs
+        // would otherwise each start a group of their own (a split).
+        const group = replaced?.group ?? api.activeGroup ?? api.groups[0]
         api.addPanel({
           id: key,
           component: 'item',

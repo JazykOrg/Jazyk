@@ -119,10 +119,22 @@
 .project-tree .pf-glyph {
   color: var(--k);
   font-size: 11px;
-  width: 12px;
-  margin-right: 4px;
   display: inline-block;
+  width: 100%;
   text-align: center;
+}
+
+/* A test's glyph shows its result. */
+.project-tree .ft-row.t-pass .pf-glyph {
+  color: #2e8b57;
+}
+
+.project-tree .ft-row.t-fail .pf-glyph {
+  color: var(--err);
+}
+
+.project-tree .ft-row.t-none .pf-glyph {
+  color: var(--muted);
 }
 
 .project-tree .ft-row.pf-dir .ft-dirname {
@@ -483,23 +495,6 @@
   color: var(--accent);
 }
 
-/* A transient item's pin, in place of a close. */
-.wst-close.pin {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  visibility: visible;
-  opacity: 0.55;
-}
-
-.wst-close.pin.on {
-  opacity: 1;
-  color: var(--accent);
-}
-
-.wst-tab.transient:not(.pinned) .wst-title {
-  font-style: italic;
-}
 
 /* Every button on a tab or a bar (a close, a pin, the switch): one size, its glyph
    centered (docs/frontends/gui.md#workspace). */

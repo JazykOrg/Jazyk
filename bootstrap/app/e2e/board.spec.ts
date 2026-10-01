@@ -247,6 +247,37 @@ test('a press and a drag on a zoomed-out window moves it without focusing in', a
   expect(await position(page, BACKEND)).not.toEqual(before)
 })
 
+test('every window has a pin and a close; an unpinned window is held by the focus, a pin keeps it', async ({ page }) => {
+  await openBoard(page)
+  await openDoc(page, 'backend.md', BACKEND)
+  const B = '/model/entities/ent%3Abackend'
+  const C = '/model/entities/ent%3Ainventory-management'
+  // A file opens pinned; an entity unpinned, floating.
+  await expect(win(page, BACKEND).locator('.bw-title .pin')).toHaveClass(/on/)
+  await expect(win(page, BACKEND).getByRole('button', { name: /^close /i })).toBeVisible()
+  await page.goto(`/#${B}`)
+  await expect(win(page, B).locator('.bw')).toHaveClass(/floating/)
+  await page.goto(`/#${C}`)
+  // C came from B, so B is held while C has the focus.
+  await expect(win(page, B)).toBeAttached()
+  // Back on the file, neither is held.
+  await page.goto('/#/docs/docs/backend.md')
+  await expect(win(page, B)).toHaveCount(0)
+  await expect(win(page, C)).toHaveCount(0)
+  // Again, and pin C this time: C stays, B is let go.
+  await page.goto(`/#${B}`)
+  await page.goto(`/#${C}`)
+  await expect(win(page, B)).toBeAttached()
+  await win(page, C).locator('.bw-title .pin').click()
+  await expect(win(page, C).locator('.bw')).toHaveClass(/pinned/)
+  await expect(win(page, B)).toHaveCount(0)
+  await page.goto('/#/docs/docs/backend.md')
+  await expect(win(page, C)).toBeAttached()
+  // An unpinned file is held like anything else.
+  await win(page, BACKEND).locator('.bw-title .pin').click()
+  await expect(win(page, BACKEND).locator('.bw')).toHaveClass(/floating/)
+})
+
 test('zooming out to titles keeps every window where it is and draws only its title', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)

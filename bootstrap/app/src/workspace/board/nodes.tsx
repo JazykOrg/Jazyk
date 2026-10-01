@@ -10,9 +10,9 @@ import { get } from '../../lib/api'
 import { useCoverage, useDocs, useGraph, useMatrix } from '../../lib/queries'
 import { kindWord, shorten, statusWord } from '../../lib/present'
 import { useApp } from '../../lib/store'
-import { ArrangeContext, CloseOrPin, ItemBar } from '../ItemControls'
+import { ArrangeContext, CloseButton, ItemBar, PinButton } from '../ItemControls'
 import LinksBar from './linksbar'
-import { isFileItem, itemKind, itemTitle, useWorkspace } from '../items'
+import { isPinned, itemKind, itemTitle, useWorkspace } from '../items'
 import { itemKey, nodePagePath, splitSelection } from '../paths'
 import { showPath } from '../actions'
 import ItemNavigation, { type ItemNavigate } from './ItemNavigation'
@@ -335,13 +335,15 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   else if (entity) body = <EntityCard path={path} />
   else body = live ? <LiveBody path={path} /> : <StillBody path={path} title={title} />
   const press = useRef<{ x: number; y: number } | null>(null)
-  // A transient item floats while unpinned and sits on the table once pinned.
-  const transient = !isFileItem(path)
-  const pinned = useWorkspace((w) => !!w.items.find((i) => i.path === path)?.pinned)
+  // An unpinned window floats; a pinned one sits on the table.
+  const pinned = useWorkspace((w) => {
+    const it = w.items.find((i) => i.path === path)
+    return it ? isPinned(it) : true
+  })
   const arrange = useMemo(() => ({ path, to: 'tabs' as const }), [path])
   return (
     <div
-      className={`bw k-${kind} lv-${level}${transient ? (pinned ? ' pinned' : ' floating') : ''}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
+      className={`bw k-${kind} lv-${level}${pinned ? ' pinned' : ' floating'}${focused ? ' focused' : ''}${live ? ' is-live' : ''}${entity ? ' bw-ent' : ''}${hot ? ' hot' : ''}`}
       data-path={path}
       // A press focuses the item without moving the board, so a press and a drag
       // moves the window; a click (released where it started) focuses it fully.
@@ -364,7 +366,8 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
         <div className="bw-title" title={path}>
           <span className="bw-glyph">{KINDS[kind].glyph}</span>
           <span className="bw-name">{kind === 'doc' ? docOf(path) : title}</span>
-          <CloseOrPin className="bw-close nodrag" path={path} title={title} onClose={() => actions.close(path)} />
+          <PinButton className="bw-close nodrag" path={path} title={title} />
+          <CloseButton className="bw-close nodrag" title={title} onClose={() => actions.close(path)} />
         </div>
       )}
       {framed && kind !== 'doc' && (

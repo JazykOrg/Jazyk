@@ -1596,7 +1596,7 @@ both.
   corner, and a close; a press in a window focuses its item without moving the board.
 - A document window has one bar: its glyph and path, the unsaved mark, the `Read`,
   `Write`, `Diff` switch, the save state (or `save`), and the close. The bar drags
-  the window and a double click on it focuses it.
+  the window, and a click on it (not a drag) focuses it.
 - A page window (a document, a product page, a requirement, a diagram) opens at 80
   percent of the board's width and height at 100 percent zoom. An entity window is a
   card, not a page: its name, kind, parent, definition, attributes, and counts, with
@@ -1608,7 +1608,7 @@ both.
   fills 80 percent of the board, centered, never above 100 percent zoom for a page
   or 125 percent for an entity card. The remaining margin is where its links show
   (below). The view stays free: a pan or a zoom moves away from the focus, and a
-  double click on a title bar returns to it.
+  click on a window's bar returns to it.
 - References: when the caret in the focused document window rests on something
   the graph knows, the entities it concerns that are not open show below the
   window, transient: the entity of the mention under the caret, and the entities of
@@ -1659,8 +1659,8 @@ both.
   - from 15 to 40 percent cards: a title, a kind, a few lines, and a status;
   - under 15 percent titles: each window only its title, sized to read on screen,
     the links and portals kept, the linkage and the references hidden.
-- A double click on a title bar focuses its window. `Escape` zooms out one level,
-  `Z` fits everything.
+- A click on a window's bar (not a drag) focuses the window. A click on the empty
+  table top fits everything, as `Fit` and `Z` do. `Escape` zooms out one level.
 - Tabs and Board are one set of open items: switching keeps them, and closing a
   window closes its tab.
 

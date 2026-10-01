@@ -4,6 +4,11 @@ Recommendation: ship cloud-only projects first. Add GitHub-backed projects as a
 separate choice when needed. A project has one authority for source files. Do not
 build continuous two-way synchronization in the first release.
 
+In the [workflow proposal](./workflows.md), the front door offers computer and cloud
+homes. GitHub is an optional repository connection within a home, not another place
+where Jazyk runs. GitHub publishing is deferred from the first cloud beta. The
+storage alternatives below remain useful when that integration is added.
+
 This recommendation is still a proposal. GitHub-first is reasonable for a beta
 limited to developers with existing repositories. The owner asked for options and
 work estimates rather than an assumed dual-storage design.
@@ -25,9 +30,28 @@ source; Jazyk retains graph state, unpublished work, and recovery checkpoints. T
 copies are not a second independently editable source repository. The UI should say
 this plainly when selecting the mode.
 
-Git alone is insufficient because `.jazyk/` is normally ignored. Compiling from empty
-can create new ids and lose decrees, proposals, and history. That is a new compilation,
-not a faithful restore.
+### GitHub can store the graph
+
+GitHub can preserve graph identities and decisions. The prior wording, "Git alone
+is insufficient", was too absolute. A source-only repository is insufficient when
+the graph is not committed. `.jazyk/` is ignored by the current defaults, so an
+ordinary source checkout does not include that state.
+
+There are two valid policies:
+
+- Store source in Git and durable graph state in a matching Jazyk checkpoint.
+  This is the proposed cloud default, not a GitHub limitation.
+- Explicitly include a consistent durable graph checkpoint in Git alongside the
+  corresponding source. That preserves ids, decrees, proposals, diagnostics, and
+  journal/ledger history when restored with a compatible compiler. Exclude locks,
+  credentials, caches, and transient process state. Define the export contract
+  before adding an automatic "include graph" publishing option.
+
+The second policy trades portable history against larger commits, possible sensitive
+graph/trace content, and divergent graph histories that ordinary text merges cannot
+validate semantically. A linear, single-writer checkpoint history is simpler.
+Neither policy requires rebuilding from prose. Compiling from empty can create new
+ids and loses decisions that existed only in the graph; it is not a faithful restore.
 
 ## Options
 
@@ -220,6 +244,7 @@ Release options:
 - Both alternative modes at launch: 16–29 days. More complete, but delays the beta.
 - Automatic mirroring/sync: defer. It is not necessary to offer either storage choice.
 
-The user's choice can be `Store in Jazyk` or `Connect GitHub`. The internal recovery
-copy is an implementation detail with an honest retention/export explanation, not
-an extra storage mode the user has to manage.
+When GitHub integration ships, storage setup can offer `Store in Jazyk` or
+`Connect GitHub`. Both cloud options show `Runs on Jazyk Cloud`; source authority
+and graph backup policy appear in storage details. The recovery copy needs an honest
+retention/export explanation, not another independently editable project mode.

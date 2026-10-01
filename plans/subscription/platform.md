@@ -140,10 +140,11 @@ exact paths are specified during phase 1. Implement the
   provider throttling/outages keep separate retry and backoff semantics.
 
 No arbitrary upstream URL in a subscription request. BYOK is a separate access path.
-Cloud beta BYOK uses encrypted customer credentials held by a broker, initially for
-OpenRouter through the already supported integration. It consumes no Jazyk inference
-allowance but still consumes runtime entitlement. Other providers and generic
-private/local endpoint tunneling can follow.
+The [workflow proposal](./workflows.md) defers cloud BYOK from the first beta.
+When added, hold encrypted customer credentials in a broker, initially for OpenRouter
+through the already supported integration. It consumes no Jazyk inference allowance
+but still consumes runtime entitlement. Other providers and generic private/local
+endpoint tunneling can follow. Local BYOK remains available throughout.
 
 ## AWS deployment
 

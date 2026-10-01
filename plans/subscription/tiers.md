@@ -6,11 +6,12 @@ settled by the owner's Canadian location.
 
 ## What is free and what is paid
 
-- Free: local CLI, GUI, browser-local workflows, own endpoints, own API keys, and ACP
-  agents. No Jazyk account required and no recurring hosted model/compute allowance.
+- Free: native local CLI/GUI, own endpoints, own API keys, ACP agents, and the limited
+  browser playground in the [workflow proposal](./workflows.md). No Jazyk account
+  required and no recurring hosted model/compute allowance.
 - Subscription: managed model access, usable locally and in cloud sessions.
-- Cloud runtime: separately purchased compute/storage entitlement. It works with
-  either managed models or a supported BYOK configuration.
+- Cloud runtime: separately purchased compute/storage entitlement. Managed models
+  in the first beta. A supported BYOK configuration is later work.
 - Later promotion: perhaps C$20 off the first paid invoice, or a separately defined
   inference grant. No promotion is enabled initially. A social identity alone does
   not prevent repeat claims.

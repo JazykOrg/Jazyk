@@ -32,6 +32,11 @@ Create these pages when their implementation phase starts:
 - `docs/web/accounts.md`: account and usage screens.
 - `docs/web/projects.md`: storage choice, save, publish, export.
 
+Start web work from the [workflow proposal](./workflows.md) and
+[prototype](./ux/index.html). `docs/web/` owns the unified picker, run/save/AI labels,
+and upgrade journeys. The frontend specs retain native ACP/LSP and browser capability
+contracts. Narrowing browser onboarding must include a transition for existing projects.
+
 The [GUI spec](../../docs/frontends/gui.md) mixes server and page behavior. When web
 work starts, move page-only sections into `docs/web/` and leave links from the
 existing page. Keep the local API/capability contract in `docs/frontends/`. Update

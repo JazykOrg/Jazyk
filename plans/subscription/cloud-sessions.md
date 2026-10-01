@@ -47,9 +47,10 @@ The cloud does not derive, store, route, or prioritize compiler goals.
 - A customer's product secret used by generated code can be read or exfiltrated by
   that code. Supply only narrowly scoped test credentials, with explicit user choice.
   Do not promise that the harness can hide a secret from code that must consume it.
-- Cloud beta BYOK supports the OpenRouter integration with customer credentials.
-  Keep long-lived customer keys encrypted outside the runtime. A laptop endpoint is not
-  reachable merely because it works in local Jazyk; private tunnels are later work.
+- The first cloud beta uses managed AI, per the [workflow scope](./workflows.md).
+  Defer cloud BYOK. A later supported-provider integration can start with OpenRouter,
+  keeping long-lived customer keys encrypted outside the runtime. A laptop endpoint
+  is not reachable merely because it works locally; private tunnels are later work.
 
 Enforce egress outside the guest. Start with the model gateway, scoped storage
 transfer, and a maintained set of required package endpoints. GitHub access goes
@@ -83,10 +84,14 @@ unresponsive processes, and a cancelled build. These changes also benefit local 
 Add a cloud backend beside the existing local-server and browser paths. Reuse the
 capability descriptor and project API. Unsupported operations remain explicit.
 The page gains account/project selection and runtime/backup/usage status.
+Use the common project picker with `Runs on`, `Saved in`, and `AI`. A subscription
+change does not move the project. Changing its home is an explicit export/import.
+Native local ACP/LSP support remains. Remote cloud IDE attachment is later work.
 
 The relay checks account/project ownership, active lease, origin, and connection
-credentials. It proxies the project API, SSE, and LSP WebSocket with reconnect and
-bounded idle handling. The raw provider URL must not bypass access control.
+credentials. It proxies the web editor's project API, SSE, and any required LSP
+WebSocket with reconnect and bounded idle handling. This does not expose a remote
+ACP/IDE service. The raw provider URL must not bypass access control.
 
 The runtime launcher configures headless serving and relay authentication using a
 generic remote-server contract. Avoid teaching the core binary about E2B, Stripe,

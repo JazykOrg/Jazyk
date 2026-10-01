@@ -4,6 +4,10 @@ Status: revised proposal, 2026-10-01. Owner decisions below are settled. Prices,
 provider selection, and effort are proposals. This revision changes the plan only.
 It does not provision services, run paid benchmarks, or change compiler behavior.
 
+Start with [project workflows and launch scope](./workflows.md) and its
+[clickable UX prototype](./ux/index.html). The current review is about narrowing
+the product choices. Hosting, model catalogs, and prices remain supporting research.
+
 ## Owner decisions
 
 | Topic | Decision |
@@ -24,13 +28,17 @@ that the owner selected CAD or restricted sales to Canadian customers.
 
 ## Recommendation
 
+- Offer two full project homes: `On this computer` and `In Jazyk Cloud`. Show run
+  location, saved location, and AI source together in one project picker. CLI and
+  IDEs use the same computer project. Keep a limited browser playground for discovery.
 - Sell managed model access for local Jazyk first. Keep BYOK available without an
   account. A subscriber can use their own provider for some work and the subscription
   for the rest.
 - Publish a credit rate card and a billing-period allowance. Apply weekly and 5-hour
   pacing limits as well. Reserve cost before each upstream request.
-- Expose model policies for compilation, judgment, coding, verification, and chat.
-  Start with a small tested catalog. Do not assume cheap extraction is accurate.
+- Default AI to one source and `Auto`. Put model policies for compilation, judgment,
+  coding, verification, and chat under advanced settings. Start with a small tested
+  catalog. Do not assume cheap extraction is accurate.
 - Use Stripe Checkout, Billing, and Customer Portal in the Canadian account. Use
   Stripe Tax where applicable. Jazyk remains the merchant.
 - Run the trusted platform on AWS, outside the compiler package and the machines
@@ -41,10 +49,14 @@ that the owner selected CAD or restricted sales to Canadian customers.
 - Start cloud projects with versioned checkpoints in S3 and download/export. Add
   GitHub-backed projects separately. Every project has one source authority.
 - Price cloud compute separately initially. A local subscriber need not buy unused
-  compute. A cloud user with their own model key still pays for compute and storage.
+  compute. Start the cloud beta with managed AI. Defer cloud BYOK, paid browser
+  inference, and new WASM-folder onboarding as described in the workflow proposal.
 
 ## The files
 
+- [workflows.md](./workflows.md): proposed in/out scope, project picker, upgrade and
+  IDE journeys, playground limits, and explicit transfers.
+- [ux/index.html](./ux/index.html): interactive prototype with simulated projects.
 - [market.md](./market.md): Kiro review, verified comparisons, and lessons.
 - [tiers.md](./tiers.md): allowance, windows, economics, and spending stops.
 - [models.md](./models.md): task routing, BYOK, frontier models, and measurement.
@@ -78,7 +90,8 @@ that the owner selected CAD or restricted sales to Canadian customers.
 - A response header cannot report final streaming cost before completion. Use request
   receipts and a usage API.
 - Rebuilding from prose loses ids, decrees, proposals, and judgment history. The
-  persistent graph needs durable storage even when GitHub owns the source files.
+  persistent graph needs durable storage. GitHub can store it when it is explicitly
+  included; the current default ignores `.jazyk/`. Source-only Git is not a full backup.
 - Pause is not a universal free-storage guarantee. Disks, snapshots, retention, and
   cross-cloud traffic belong in the estimate.
 - `[executors]` selects agents, not embedded model profiles. Per-task model selection
@@ -115,19 +128,23 @@ implementing behavior. Commit and push each coherent change.
 
 | Phase | Work and documentation first | Exit condition | Effort |
 |---|---|---|---|
-| 0. Measure and specify | Generic usage records, model policies, stop semantics. Update `docs/compiler/`, `docs/benchmark/`, and relevant schemas. See [measurement](./models.md#measurement-gate). | Quality and cost table for representative tasks, warm/cold cache, failures, and retries. | 4–8 days |
+| 0a. Workflow scope and web foundation | Review [prototype](./ux/index.html). Specify shared projects, location labels, AI selection, playground transition, and IDE upgrade in `docs/web/` and frontend specs before implementing them. | Local use needs no login. The picker explains run location, storage, and AI. Subscription activation does not move files or replace external agents. | Short design review, then 7–13 implementation days overlapping phases 1 and 3 |
+| 0b. Measure and specify | Generic usage records, model policies, stop semantics. Update `docs/compiler/`, `docs/benchmark/`, and relevant schemas. See [measurement](./models.md#measurement-gate). | Quality and cost table for representative tasks, warm/cold cache, failures, and retries. | 4–8 days |
 | 1. Local subscription | `docs/cloud/` account, billing, gateway specs; `docs/web/` usage UI; CLI login and provider selection. AWS service, Stripe test mode, reservations, receipts. | Logged-out BYOK works. Streaming works. Concurrent requests and duplicate webhooks cannot overspend or double-grant. | 15–25 days |
 | 2. Execution and provider trial | Command limits in consumer/tool specs. Cloud session and operations specs. Run [sandbox acceptance checks](./sandboxes.md#selection-gate). | Restore, cancellation, egress, SSE/WS, and usage reconciliation pass on the chosen provider. | 6–10 days |
-| 3. Cloud-only private beta | Storage/session specs and web project flow. Orchestrator, relay, compute wallet, supported-provider BYOK, checkpoints, private preview, export. | VM loss preserves graph ids. One writer survives service failover. Exhaustion stops safely. | 10–18 days orchestration plus 6–10 days storage |
+| 3. Cloud-only private beta | Storage/session specs and web project flow. Orchestrator, relay, compute wallet, managed AI, checkpoints, private preview, export/import. | VM loss preserves graph ids. One writer survives service failover. Exhaustion stops safely. | 10–18 days orchestration plus 6–10 days storage |
 | 4. GitHub-backed projects | Cloud GitHub/storage specs and web publish/PR flow. | Import, explicit publish, moved branches, revoked installation, and restore preserve work without force-pushing. | 8–15 days, plus 2–4 if both storage modes ship together |
 | 5. Public launch | Reconciliation, deletion/retention, restore drills, support, monitored rollout, pricing publication. | Measured margin and capacity pass. Cancellation and export work. No unresolved billing or data-loss defects. | 5–10 days |
 
-The first local paid release is roughly 19–33 engineering days before contingency.
-A cloud-only private beta adds roughly 22–38 days. Storage alternatives and overlap
-are detailed in [storage.md](./storage.md#effort-and-release-options).
+The earlier inference/billing estimate is 19–33 engineering days before contingency.
+The explicit UX work above overlaps it and the cloud flow; rescope the combined
+estimate after reviewing the prototype. A cloud-only private beta adds roughly
+22–38 platform/storage days. Storage alternatives and overlap are detailed in
+[storage.md](./storage.md#effort-and-release-options).
 
-Top-ups can follow the first local beta. Teams, annual discounts, automatic product
-deployment, two-way local/cloud sync, and signup incentives are later work.
+Top-ups can follow the first local beta. Cloud BYOK, remote cloud IDE attachment,
+teams, annual discounts, automatic product deployment, two-way local/cloud sync,
+and signup incentives are later work.
 
 Measurement uses the configured LocalRouter endpoint unless the owner requests a
 change. Select candidate routes through it where possible. This plan does not pick
@@ -135,6 +152,12 @@ another default model or authorize a paid benchmark campaign.
 
 ## Remaining decisions
 
+- Accept the [workflow scope](./workflows.md#in-later-and-out): two full project
+  homes, a limited playground, and CLI/IDE as interfaces to the computer project.
+- Accept moving paid browser inference and new WASM-folder onboarding out of the
+  primary flow, with a transition/export path for existing browser projects.
+- Accept deferring cloud BYOK and GitHub publishing until after the first cloud beta.
+  Local BYOK, local Git, ACP, and LSP remain supported.
 - Public CAD prices versus USD pricing from the Canadian account. The
   [draft economics](./tiers.md#illustrative-local-tiers) use CAD explicitly.
 - Initial sales territories, province, and tax registrations. Resolve during billing

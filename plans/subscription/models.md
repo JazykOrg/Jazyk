@@ -4,7 +4,17 @@ The subscription supports a tested catalog, potentially including frontier model
 All supported models draw from the same allowance at published rates. Model family
 is not a billing tier. A more expensive model consumes the allowance faster.
 
-## Independent choices
+## Supported combinations
+
+The implementation has separate execution, agent, and model settings. Do not expose
+their Cartesian product as onboarding. Follow the [workflow scope](./workflows.md):
+
+- Computer project: own provider, managed subscription, or existing external agent.
+- Cloud beta: managed subscription. Add supported-provider BYOK later.
+- Browser playground: optional experimental reading assistance. Browser BYOK and
+  paid inference are outside the proposed launch flow.
+
+The table describes underlying distinctions, not four setup questions for every user.
 
 | Choice | Options | Owns the bill |
 |---|---|---|
@@ -23,7 +33,8 @@ never combine a Jazyk token with an arbitrary endpoint inherited from project co
 
 ## User controls
 
-The first settings screen has a default policy and optional task overrides:
+The first settings screen selects an AI source and defaults to `Auto`. Optional task
+overrides live under advanced settings:
 
 | Purpose | Existing work covered | Policy question |
 |---|---|---|

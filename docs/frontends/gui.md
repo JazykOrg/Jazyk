@@ -1612,7 +1612,10 @@ and back and forward.
   the unpinned items no longer held close. E.g.: on document A, entity B opens from
   A and entity C from B; with C focused, B stays (C was opened from it). Focusing A
   closes B and C. Pinning C instead keeps C and lets B go. A pinned item unpins with
-  the same pin.
+  the same pin. It shows: on the Board an unpinned window floats off the table (a
+  dashed border in its kind's color, a deep shadow), and pinned it sits on the
+  table (a solid border, a flat shadow, its pin filled and upright); in Tabs an
+  unpinned tab's title is italic and its pin hollow and tilted.
 - The navigator is one column in both: the project tree, and under it the Outline
   of the open document (following the cursor), each scrolling on its own. While the
   focused item belongs to an area with sections of its own, the navigator leads with
@@ -1678,10 +1681,12 @@ and back and forward.
 - Every window ends in a links bar: what the item links to, grouped by kind with a
   count (`2 documents · 6 requirements · 3 entities`), the item's own kind first (a
   document's other documents first, an entity's other entities first). Hovering a
-  group shows its items as cards in a row centered below the window, in order (a
-  click keeps them shown, a
-  second click or `Escape` hides them); a click on a card opens that item beside the
-  window and focuses it. What links to what:
+  group shows its items as cards in a row centered below the window, in order, each
+  card its item's glyph and name in its kind's color and nothing else, a diagram's
+  card the diagram itself scaled to fit. The row always hangs below the window,
+  running past the view's bottom edge when the window reaches it. A click on a
+  group keeps its cards shown, a second click or `Escape` hides them; a click on a
+  card opens that item beside the window and focuses it. What links to what:
   - a document: the documents it links to and the documents that mention the
     entities it defines; the entities it defines or mentions; the requirements
     quoted from it; the diagrams of its entities;
@@ -1709,9 +1714,9 @@ and back and forward.
   With the caret on nothing (or in Read), there are none. A card is the
   [linkage](#the-linkage) between the document and the entity, titled by the
   entity; a click on the title opens the entity beside the document and focuses it,
-  and from then on it stays on the board until it is closed. Without room below
-  the window, the row sits just above the window's links bar without lines. What a window
-  brings, for its links:
+  and from then on it stays on the board until it is closed. The row always hangs
+  below the window, running past the view's bottom edge when the window reaches it.
+  What a window brings, for its links:
   - a document: the entities it defines (an entity is defined in the document of its
     quote, else of its first mention) and the ones it mentions;
   - an entity: its neighbours; a requirement: its entities; a diagram: its members.

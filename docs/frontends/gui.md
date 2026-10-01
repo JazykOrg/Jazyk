@@ -1483,6 +1483,9 @@ from the graph's mentions, quotes, and section tree.
   it (in Read), a link with an anchor scrolls to the heading, a link into the out
   directory opens the generated page or the diagram, and an external link opens a
   new tab. A link to a document the project does not hold says so in place.
+- The editor scrolls past the last line by its own height, so text that comes or
+  goes near the end (an answered question's band, an edit landing from elsewhere)
+  never pulls the view.
 - Saving writes through the documents API with the conditional hash, so an edit made
   outside the GUI is never silently overwritten.
 - In the browser, where a write lands without asking (a demo, a browser project, and

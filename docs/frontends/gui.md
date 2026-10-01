@@ -1598,7 +1598,8 @@ and back and forward.
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab
   or a board window as it does in the center. Each kind has its own glyph and color
-  on its tab, its window's bars, its cards, and its row in the project tree: a
+  on its tab, its window's whole border and bars, its cards, and its row in the
+  project tree: a
   document, a product file, a test, a generated page, a project file, an entity, a
   requirement, a diagram, and the app's pages (Inbox, History, Settings, the
   Developer pages). Every button on a tab or a bar (a close, a pin, the switch) is

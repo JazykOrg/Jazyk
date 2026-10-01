@@ -1602,9 +1602,9 @@ and back and forward.
   `?node=` step stands for the node's page, which takes its place, so back from the
   page leaves it.
 
-- The open items, the arrangement's tabs and windows, and the history of what was
-  shown are remembered per project (by the open project's Recent id): switching
-  projects swaps them for the other project's, and switching back restores them.
+- The open items and the arrangement's tabs and windows are remembered per project
+  (by the open project's Recent id): switching projects swaps them for the other
+  project's, and switching back restores them.
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab
   or a board window as it does in the center. Each kind has its own glyph and color

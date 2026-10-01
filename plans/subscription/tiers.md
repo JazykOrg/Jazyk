@@ -1,167 +1,205 @@
 # Tiers, quotas, and unit economics
 
-Every number here is a placeholder until phase 0 measures what a build costs
-([README](./README.md#phases)). The method is what this file proposes; the numbers
-show that the method yields sensible tiers at today's prices.
+Prices and caps below are illustrative, pending [measurement](./models.md#measurement-gate).
+Customer prices use CAD. Supplier rates use USD. Currency choice is proposed, not
+settled by the owner's Canadian location.
 
-## The unit: usage in dollars
+## What is free and what is paid
 
-A quota is counted in usage: model spend in US dollars at the upstream list price of
-the route the gateway used, cache reads at the cache-read price. The user sees
-percentage bars, never raw dollars, with a translation into builds ("about 6 builds
-of a project this size").
+- Free: local CLI, GUI, browser-local workflows, own endpoints, own API keys, and ACP
+  agents. No Jazyk account required and no recurring hosted model/compute allowance.
+- Subscription: managed model access, usable locally and in cloud sessions.
+- Cloud runtime: separately purchased compute/storage entitlement. It works with
+  either managed models or a supported BYOK configuration.
+- Later promotion: perhaps C$20 off the first paid invoice, or a separately defined
+  inference grant. No promotion is enabled initially. A social identity alone does
+  not prevent repeat claims.
 
-Why dollars and not requests or tokens:
+This avoids bundling 25–300 compute hours into local model plans before their cost
+and demand are known.
 
-- The market moved there for good reasons ([market.md#lessons](./market.md#lessons)).
-  A request count is gamed by long turns; a token count treats a cache read like an
-  output token, though one costs a hundred times the other.
-- Expensive models drain the quota faster on their own, so one quota covers the whole
-  model menu without multipliers.
-- Usage spent anywhere costs jazyk exactly what it counts, so a quota sized to the
-  price never loses money, whatever the client.
+## The usage unit
 
-The gateway counts usage from each response's `usage` block (input, cached input,
-output) times the route's price table. It never trusts a figure from the client or
-the sandbox.
+Proposed rate: 100 credits represent US$1 of usage at the published Jazyk model rate
+card. Credits are a service allowance, not money withdrawable from an account.
+Internally use integer micro-units; round only the display, not every tiny call.
 
-## The windows
-
-Two rolling windows, both enforced at the gateway:
-
-- The week: rolling 7 days. The real cap. Sized from the price (below).
-- The window: rolling 5 hours, 30% of the week. It spreads use so capacity planning
-  holds and a runaway build cannot burn a week in an afternoon. 30% means a week is
-  about three and a half full windows.
-
-A monthly cap is implied: 4.33 weeks. No rollover. No daily cap.
-
-Concurrency per account caps parallel model requests: 2 on Pro, 4 on Max, 8 on Ultra.
-Jazyk builds are sequential by design, so 2 covers a build plus a chat; more than
-that is resale or sharing.
-
-## Sizing rule
-
-A tier is sized so that a subscriber who maxes every week and every compute unit costs
-no more than the price after fees. Margin comes from the fact that most subscribers
-use a fraction:
+For each request, normalize the provider's actual billable categories:
 
 ```
-net         = price - merchant fee (about 5% + $0.50)
-compute     = compute units × $0.17   (E2B, 2 vCPU 4 GB, per hour)
-storage     = snapshot storage at object storage rates
-weekly cap  = (net - compute - storage) / 4.33
+debit = uncached_input × input_rate
+      + cached_input × cache_read_rate
+      + cache_writes × cache_write_rate
+      + output_and_billable_reasoning × output_rate
+      + other_supported_billable_items
 ```
 
-At 35% average utilization, the gross margin is about 60% of net. This is stricter
-than the open-model resellers (3 to 6 times the price, relying on averages) and
-deliberately so: start tight, then raise quotas as the measured utilization allows.
-Every change is then an increase.
+Provider schemas differ. Some include reasoning within output and cached tokens
+within total input. Do not charge those twice. Exclude unsupported billable features
+until metering handles them. When reserving, assume a cache miss and any applicable
+cache-write/long-context premiums.
 
-## The tiers
+Customer debit and supplier cost are separate ledger fields. Store rate-card version,
+provider route, usage source, upstream request id, request receipt, and corrections.
+Show credit amounts, percentage bars, and rate details. Do not hide the unit behind
+only percentages or promise a fixed number of builds.
+
+Price updates apply to future requests under a published version. Pin the rate
+version for an admitted session for a bounded time. Never retroactively reprice
+completed calls. Emergency removal of an uneconomic route is explicit.
+
+## Windows and hard limits
+
+Proposed allowance `B` per paid monthly billing period:
+
+- Billing period: `B`, a hard aggregate allowance.
+- Rolling 7 days: at most `0.30 × B` of included usage.
+- Rolling 5 hours: at most `0.10 × B` of included usage.
+- Account concurrent model calls: initially 2 / 4 / 8 by tier, subject to measured
+  provider capacity. This is a capacity control, not proof against sharing.
+- A user can set a lower per-run spend cap. The gateway enforces it for managed use.
+
+Each request must fit every applicable limit including outstanding reservations.
+Rolling windows release allowance as individual charges age out; report the next
+availability and the full replenishment time, not a fictitious single reset.
+Billing-period renewal does not clear rolling history.
+
+A rolling week is not a monthly ceiling. `4.33 × weekly cap` is a long-run average,
+not a bound on one billing period. This is why the previous sizing rule is replaced.
+
+## Illustrative local tiers
 
 | | Free | Pro | Max | Ultra |
-|---|---|---|---|---|
-| Price per month | $0 | $20 | $60 | $200 |
-| Weekly usage at cost | none (your own key) | $3.25 | $10 | $32 |
-| 5-hour window | none | $1.00 | $3.00 | $9.50 |
-| Compute units per month | one-time trial, 3 | 25 | 80 | 300 |
-| Largest sandbox | 2 vCPU, 4 GB | 2 vCPU, 4 GB | 4 vCPU, 8 GB (2 units per hour) | 8 vCPU, 16 GB (4 units per hour) |
-| Cloud projects running at once | 1 (trial) | 1 | 2 | 4 |
-| Project storage | 1 GB | 5 GB | 25 GB | 100 GB |
-| Concurrent model requests | n/a | 2 | 4 | 8 |
-| Network | registries only | registries plus an allowlist | full internet, after account age | full internet |
+|---|---:|---:|---:|---:|
+| Monthly price | C$0 | C$29 | C$79 | C$199 |
+| Included credits | 0 | 800 | 2,400 | 6,400 |
+| Rate-card equivalent, USD | 0 | $8 | $24 | $64 |
+| Rolling weekly credits | 0 | 240 | 720 | 1,920 |
+| Rolling 5-hour credits | 0 | 80 | 240 | 640 |
+| Concurrent managed requests | 0 | 2 | 4 | 8 |
+| Included cloud compute | None | None initially | None initially | None initially |
 
-- Annual billing: two months free.
-- Free keeps the whole binary: the local CLI and GUI with any OpenAI-compatible
-  endpoint or ACP agent, and the wasm demo on jazyk.dev. The cloud trial needs a
-  verified card.
-- Worst-case check for Max: net $56.50, compute 80 × $0.17 = $13.60, storage about
-  $0.60, weekly cap (56.50 − 13.60 − 0.60) / 4.33 = $9.77.
+The same supported model catalog is available across paid tiers, subject to the
+user's policy. Frontier use is allowed when benchmarked and accounted for at its
+rate. A request too large for a tier's window needs a smaller batch, a cheaper
+route, or an explicit paid balance. The same applies to a large compilation.
 
-### What a week buys
+Launch one or two paid tiers if that makes operation simpler. The third row is a
+sizing example, not a requirement to launch three plans. No annual discount initially.
+An annual plan needs its own revenue-per-month calculation and monthly grants.
 
-Assumed jazyk mix [E]: 25% uncached input, 70% cache reads, 5% output. Blended price
-per 1M tokens and tokens per week:
+## Worked economics
 
-| Model and route | Blended $/1M | Pro | Max | Ultra |
-|---|---|---|---|---|
-| DeepSeek V4.1-Flash, official, peak | 0.14 | 23M | 72M | 230M |
-| MiniMax M3 | 0.18 | 18M | 56M | 180M |
-| Kimi K2.7 Code, OpenRouter | 0.46 | 7M | 22M | 69M |
-| GLM-5.3, Z.AI | 0.75 | 4.3M | 13M | 43M |
-| Sonnet 5.5, for comparison | 1.14 | 2.9M | 8.8M | 28M |
+Assumptions, not a live FX quote:
 
-The TODO list records one three-sentence document billing 401k tokens. At that rate
-Pro on GLM-5.3 is about ten such builds a week. Token efficiency is the product's
-margin: cutting the per-round overhead (about 48k characters resent per round) moves
-every number in this table, so it belongs in phase 0, before the prices are set.
+- `F = 1.45 CAD/USD`, a planning conversion rate; stress-test at 1.60 as well.
+- Canadian domestic-card fees of 2.9% + C$0.30, plus 0.7% Billing and an illustrative
+  0.5% Stripe Tax charge where applicable. See [Canadian billing](./platform.md#canadian-billing).
+- 6% supplier funding/fee reserve, rounding above OpenRouter Standard's published
+  5.5%. Adjust for funding minimums, actual fee mechanics, discounts, and settlement.
+- Per-account operating/refund reserve `R` of C$4 / C$7 / C$12. These are estimates.
+- Tax collected is not revenue. The simplified table excludes fees on collected tax,
+  international-card/FX surcharges, and nonrecoverable taxes; launch costing adds them.
 
-## The model menu
+```
+net_before_models = price × (1 - 0.041) - 0.30
+model_cost_CAD    = B_USD × 1.06 × F
+contribution     = net_before_models - model_cost_CAD - R
+```
 
-The gateway exposes aliases, never raw upstream ids, so a route can change without a
-client change:
+| Tier | Net before models | Models at 100% use | Reserve | Contribution before shared fixed costs |
+|---|---:|---:|---:|---:|
+| Pro | C$27.51 | C$12.30 | C$4 | C$11.22 |
+| Max | C$75.46 | C$36.89 | C$7 | C$31.57 |
+| Ultra | C$190.54 | C$98.37 | C$12 | C$80.17 |
 
-- `jazyk/fast`: the cheapest model that passes the benchmark's extraction tier
-  (candidates: DeepSeek V4.1-Flash, GLM-5.3-Flash, Qwen3.8-Flash).
-- `jazyk/standard`: the strongest open model at a sane price (candidates: MiniMax M3,
-  DeepSeek V4-Pro, Kimi K2.7 Code, GLM-5.3).
-- `jazyk/auto`: the default. Routes per goal kind, the way `[executors]` already
-  allows: alignment and extraction on `fast`, judgment and GC on `standard`. The
-  routing table comes from phase 0's benchmark results, per goal kind.
+For Pro at `F = 1.60`, model cost rises to C$13.57 and contribution falls to C$9.94.
+This is contribution, not profit or a no-loss guarantee. Shared hosting, support,
+provider minimums, and sparse early adoption can still make the product unprofitable.
+A C$200 shared monthly service floor would need about 18 fully used Pro accounts
+at the base assumptions, before owner compensation. Measure that floor.
 
-Each alias pins provider and quantization on OpenRouter, or calls the provider
-directly where direct is cheaper with caching (DeepSeek's own API: off-peak prices and
-cache reads at $0.003 to $0.006). Prompt caching only pays when follow-up calls land
-on the same provider, so the gateway pins a session's calls with OpenRouter's
-`session_id` (the jazyk session id).
+Do not copy a vendor's 3x list-price allowance without its economics. If these caps
+buy too little useful work, improve token efficiency, find better routes, change
+prices, or decline to launch that offer. Lower utilization is not a substitute for
+measuring the worst case.
 
-Frontier models stay outside the quota at first: the user's own key in `[llm]`, or an
-external ACP agent through `[executors]`. A BYOK project consumes compute units only.
+## Cloud pricing
 
-## Past the limit
+Start with a separately prepaid runtime balance and a published size/hour rate.
+Compute is charged while the environment is running, including time waiting for an
+LLM and unattended jobs. BYOK does not make the runtime free.
 
-When the window or the week runs out:
+For an E2B-sized 2 vCPU / 4 GiB instance, US$0.1656/hour is a current supplier
+compute example. At the planning FX rate that is about C$0.24/hour before the fixed
+provider fee, persistence, egress, retries, and platform overhead. A customer rate
+around C$0.50–0.75/hour is only a test range. Do not sell it before reconciling real
+bills. Other providers need different CPU-activity assumptions.
+See [sandbox costs](./sandboxes.md#cost-comparison).
 
-1. The build stops at the next goal boundary (below), the graph stays consistent, and
-   the verdict says when the window resets.
-2. The user picks: wait; buy a top-up; switch the project to their own key; or
-   upgrade.
+Specify storage size, retained checkpoints, export bandwidth, and idle retention as
+separate entitlements. A prepaid C$10 runtime purchase cannot imply perpetual free
+storage. Start with a small paid cloud entitlement or a clearly disclosed retention
+period, and leave its exact price to the provider trial.
 
-Top-ups are prepaid packs ($5, $20, $50) at list price plus 20%, valid 12 months, used
-only after the window and the week are spent. Prepaid means no bad debt, and the
-margin pays for the merchant fee. Compute top-ups work the same way. There is no
-postpaid overage: a surprise bill is the backlash the market keeps relearning.
+## Admission and settlement
 
-## How jazyk enforces and shows it
+A quota balance endpoint is advisory. The atomic gateway transaction is authoritative:
 
-The gateway enforces; jazyk makes enforcement painless. Goals are derived from disk
-and a changeset commits atomically, so stopping between sessions loses nothing.
+1. Authenticate and resolve an allowed model/rate version. Check account status,
+   concurrency, request size, context length, and output/reasoning bounds.
+2. Reserve a conservative maximum cost against all limits before forwarding. Include
+   existing reservations. A run-level budget has its own shared balance.
+3. Forward once, with an internal request id and an upstream id where available.
+4. Settle actual provider usage and release unused reservation. Settlement is
+   idempotent. Record corrections as new ledger entries.
+5. If a stream breaks or usage is absent, keep a bounded pending reservation and
+   reconcile with the provider. Stop admitting more uncertain exposure at a low
+   account/global threshold. Do not assume missing usage means zero or release a
+   still-billable request merely because its client disconnected.
 
-- Before each session, jazyk asks the gateway for the remaining quota
-  (`GET /v1/quota`) and compares it with the batch's estimate. If the batch cannot
-  fit, the build stops before the session starts, rather than failing mid-session and
-  wasting the tokens a retry and a park would cost.
-- A session that started under quota finishes: the gateway allows an overrun bounded
-  by one session's budget (`SESSION_ROUNDS` rounds). The overrun is charged.
-- A gateway refusal is typed: HTTP 429 with
-  `{"error": {"type": "quota_exhausted", "window": "5h" | "week", "resetsAt": ...}}`.
-  `llm.rs` maps it to its own error, not a transient failure, so the retry loop and
-  `ENDPOINT_BREAKER` do not spin on it.
-- A stopped build reports a verdict of `paused` with the reason and the reset time,
-  beside `converged` and the rest. `jazyk compile` after the reset resumes from disk.
-- Estimates: `jazyk preview` already assembles the next prompt. A whole-build estimate
-  sums the board's batches, calibrated by `jazyk status --costs` history per goal
-  kind, and states it as a share of the window and the week ("this build: about 15%
-  of your window"). The GUI shows it on the build button.
-- Usage visibility: `jazyk usage` (window, week, compute, top-ups, reset times), a
-  line in `jazyk status`, and bars in the GUI.
-- The journal records `model` and `cost` on each session entry, from the gateway's
-  response header (`x-jazyk-cost`), so `jazyk status --costs` reports dollars beside
-  tokens. This is useful without any subscription and lands in phase 0.
+Reservations retain the grant, billing period, and server admission timestamp they
+were assigned. Late settlement must not move an old request onto a fresh monthly
+allowance or erase its rolling-window history. Test renewals with calls in flight.
 
-Pages: [sessions.md](../../docs/compiler/sessions.md) (quota check before a session),
-[compilation.md](../../docs/compiler/compilation.md) (the `paused` verdict),
-[graph.md](../../docs/compiler/graph.md) (journal `model`, `cost`),
-[cli.md](../../docs/frontends/cli.md) (`jazyk login`, `jazyk usage`),
-[gui.md](../../docs/frontends/gui.md) (usage bars, the estimate).
+An identical retry key returns the original status/receipt and does not launch a
+second call. A genuinely new upstream attempt gets a new entry. Timeouts with
+unknown upstream state are reconciled before automatic retries can multiply charges.
+Client/sandbox token reports are never authoritative.
+
+## Exhaustion and continuation
+
+- Admission fails before starting a request that cannot fit its reservation.
+- An already reserved call can finish within its limits. A started multi-round
+  session is not guaranteed to finish. A round count alone cannot fund that promise.
+- Prefer stopping before the next batch using an estimate. If a later call cannot
+  be admitted, discard uncommitted staged changes, preserve committed generations,
+  and record a resumable resource stop without marking goals failed or consuming
+  semantic retry/parking allowances. Interrupted paid work remains visible.
+- Use a typed `quota_exhausted` or `budget_exhausted` response, distinct from transient
+  provider 429s. Include the limiting window, remaining balance, and next availability.
+- Keep build lifecycle state separate from the graph's convergence verdict. A
+  billing stop must not imply semantic convergence or create a diagnostic.
+- Allow waiting, changing the selected provider/model, or deliberately spending a
+  paid top-up. Never automatically change who pays.
+
+Whole-build estimates include uncertainty and possible additional goals. Initially
+show the next batch and recent comparable runs; a sum of today's board is not a
+reliable upper bound on a reconciliation cascade.
+
+## Top-ups and promotions
+
+Add prepaid top-ups after the core ledger is proven. Display CAD purchase amount,
+credits received, and the applicable model rate card. Include processing fees when
+setting pack size. No automatic recharge or postpaid overage by default.
+
+Included allowance is used first when eligible. If a pacing window blocks it, using
+paid credits requires an explicit setting/action. Paid credits bypass included-use
+windows, but never safety, concurrency, model, or user spend caps. Preserve purchased
+balances across cancellation; allow paid-balance model use without automatically
+renewing the subscription. Set expiry/refund terms before sale, not by copying Kiro.
+
+A later signup incentive is a distinct promotional ledger grant with a global campaign
+budget and one-claim controls across linked identities. Prefer a first-paid-invoice
+discount for an initial experiment. A $20 inference grant incurs supplier liability;
+a $20 invoice discount instead reduces revenue. Do not conflate them.

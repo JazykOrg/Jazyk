@@ -1,103 +1,186 @@
 # The platform behind jazyk.dev
 
-Today jazyk.dev is a static page on S3 and CloudFront, and jazyk has no backend. A
-subscription needs a small trusted service: accounts, billing, the model gateway, and,
-for cloud sessions, the project registry, the orchestrator, and the relay. This file
-covers all but the sandbox side, which [cloud-sessions.md](./cloud-sessions.md)
-covers.
+The trusted service owns accounts, entitlements, usage reservations, project metadata,
+and runtime orchestration. It does not own compiler goals or mutate graph shards.
+See [boundaries](./boundaries.md) and [cloud execution](./cloud-sessions.md).
 
-## Components
+## Components and trust
 
-| Component | Does | Holds |
+| Component | Responsibility | Persistent state |
 |---|---|---|
-| `api.jazyk.dev` | accounts, sign-in, subscription state, project registry, API for the page | Postgres |
-| The gateway | OpenAI-compatible endpoint, quota windows, routing, metering | provider keys, usage ledger |
-| The orchestrator | creates, resumes, pauses, snapshots sandboxes | sandbox provider key |
-| The relay | proxies the page's API, SSE, and LSP WebSocket to a sandbox | per-session tokens |
-| The proxies | egress filter, git credential proxy | git tokens |
-| Object storage | project snapshots, artifacts | user data |
+| API and account UI | Identity, devices, access, subscriptions, project list | Postgres |
+| Model gateway | Admission, routing, streaming, settlement, receipts | Usage ledger and reservations |
+| Runtime orchestrator | Start, fence, stop, reconcile provider inventory | Project lease, runtime state, compute ledger |
+| Relay | Authorized project API, events, LSP WebSocket | Short-lived connection state |
+| Storage service | Checkpoint manifests, uploads, recovery, exports | S3 and Postgres pointers |
+| GitHub integration | Installation access, import, explicit branch publish/PR | Installation and repository bindings |
+| Preview service | Private access to an untrusted app | Expiring access grants |
 
-One Rust service (axum, as the GUI already uses) can hold all of these as modules at
-first, with the egress proxy as a separate process. It never shares a host with user
-code.
+One service with modules and background jobs is enough initially. Postgres supplies
+transactions, uniqueness, and durable job state. Add Redis or a separate queue only
+when measurements justify it. Gateway traffic and user code never share a runtime.
 
-## Accounts
+Use HTTP/streaming, OAuth, Stripe, SQL, AWS, and archive libraries. Start with one
+OpenRouter integration and a small catalog. Jazyk-specific admission/ledger logic
+is custom; provider wire protocols and credential proxies are not an excuse to
+hand-roll standard infrastructure. Compare an existing proxy if multiple direct
+provider protocols later justify one.
 
-- Sign-in with GitHub (most users have it, and phase 4 needs a GitHub link anyway)
-  and an email link as the fallback. OAuth through a crate, sessions in Postgres.
-  A hosted auth service (WorkOS, Clerk, Supabase Auth) is the alternative if time
-  matters more than one more vendor.
-- An account owns projects, a subscription, top-ups, and device tokens.
-- `jazyk login` runs the OAuth device flow and stores a device token in
-  `~/.jazyk/config.toml`. The token scopes to the gateway only, can be revoked from
-  the page, and lists its devices.
-- Teams wait until phase 5: one owner per account until then.
+## Accounts and local access
 
-## Billing
+- Google and GitHub sign-in via established OAuth/OIDC libraries or a hosted auth
+  service. GitHub login and a GitHub App repository installation are separate grants.
+- Use stable provider subjects as identities. Explicitly authenticate account linking;
+  matching email addresses alone must not merge paid accounts or promotional grants.
+- One account owner initially. Organizations, seats, and pooled team budgets come later.
+- `jazyk login` uses a browser/device authorization flow. Issue revocable device
+  credentials for the managed model service, with short-lived access tokens.
+- Store refresh credentials through an OS credential-store library. A documented
+  permission-restricted file fallback is for headless systems. Keep secrets out of
+  project TOML and browser local storage.
+- Login creates a named provider profile; activation is explicit. Existing CLI/env
+  overrides and LocalRouter remain meaningful. Logout/revocation does not disable
+  local BYOK.
+- Browser sessions use secure, HTTP-only cookies, CSRF protection, and exact origin
+  checks. Authorize project access on every relay connection and operation.
 
-The tiers are flat fees with quotas jazyk enforces itself, plus prepaid top-ups. The
-billing provider needs subscriptions and one-time purchases, nothing metered. That
-widens the choice to every merchant of record.
+Local subscription use uploads model context to the gateway/upstream, even though
+execution and project files stay local. State this at provider selection. Local-only
+model use has a different data path.
 
-- Recommended: a merchant of record (Paddle, Polar, or Stripe Managed Payments). From
-  Slovakia, selling to consumers worldwide, it removes VAT OSS filing and every
-  foreign registration for about 3.5 to 5% of revenue.
-- The alternative is Stripe Billing with Stripe Tax, jazyk as the merchant: cheaper
-  per transaction, a tax filing burden on the owner.
-- Webhooks set the subscription state in Postgres; the gateway reads tier and limits
-  from there (cached), never from the provider live.
-- Card verification for the cloud trial goes through the same provider.
-- Downgrades take effect at the period end; upgrades at once, with the new quotas
-  immediately.
+## Canadian billing
 
-## The gateway
+Use the owner's Canadian Stripe account with its actual sole-proprietor details,
+bank settlement settings, business address, and statement descriptor. Do not select
+a merchant of record or assume an EU business. The proposed checkout currency is CAD;
+USD and other currencies can be evaluated later.
 
-An OpenAI-compatible endpoint at `https://api.jazyk.dev/v1`. Jazyk already resolves
-`base_url` and `api_key` by precedence, so a logged-in local binary and a sandbox
-both reach it with no new client code: `JAZYK_LLM_BASE_URL` plus a token.
+Use hosted Checkout for purchase, Billing for subscription lifecycle, and Customer
+Portal for payment method and cancellation. Jazyk's ledger grants service allowances;
+Stripe is not the source of token usage. Keep compute and model balances distinct.
 
-- Auth: a device token (local) or a short-lived session token minted per cloud
-  session, scoped to one project.
-- Before forwarding: check the tier, the window, the week, and concurrency; resolve
-  the alias to a route ([tiers.md#the-model-menu](./tiers.md#the-model-menu)).
-- After: compute the cost from the `usage` block and the route's price table, write
-  it to the usage ledger (account, project, model, route, tokens, cost, time), return
-  `x-jazyk-cost`.
-- Streaming passes through; usage is read from the final chunk (`include_usage`,
-  which jazyk already requests).
-- Price tables are configuration, refreshed from OpenRouter's model API daily, with
-  alerts when a price moves.
-- Kill switches: per account, per model, global spend per hour.
-- `GET /v1/quota` returns the windows, the week, top-ups, and reset times.
+Official fee references read 2026-10-01:
 
-Build it rather than run LiteLLM or a similar proxy: the windows, the session
-overrun, the typed refusal, and the estimate endpoint are domain logic, and the
-pass-through is a few hundred lines on crates jazyk already uses.
+| Item | Published Canadian standard rate | Planning implication |
+|---|---|---|
+| [Card payments](https://stripe.com/en-ca/pricing) | 2.9% + C$0.30 domestic; +0.8% international; +2% if currency conversion is required | Include the actual card mix and settlement arrangement. |
+| [Billing](https://stripe.com/en-ca/billing/pricing) | 0.7% of Billing volume, pay as you go | Add to payment fees. |
+| [Tax](https://stripe.com/en-ca/tax/pricing) | 0.5% per applicable transaction through no-code integrations where registered | Configuration and product choice matter; filing services are separate. |
 
-Upstream accounts: OpenRouter (pinned providers, one key, 5.5% top-up fee) for most
-models; DeepSeek's own API when off-peak pricing and its cache reads beat it. Never a
-coding plan: their terms forbid backends and automation
-([market.md](./market.md#lessons)).
+Custom account pricing can differ. Fees may apply to amounts including collected
+tax. Collected tax is a liability, not model budget. [Tier math](./tiers.md#worked-economics)
+is a simplified stress case, not an accountant's settlement statement.
 
-## Hosting
+Jazyk remains the merchant and handles registrations and returns. Stripe Tax can
+calculate supported Canadian taxes from registrations and customer information; it
+does not establish which registrations this particular business needs.
+Source: [Stripe's Canadian tax documentation](https://docs.stripe.com/tax/supported-countries/canada).
 
-- Recommended: the existing AWS account in eu-central-1, beside jazyk.dev's bucket.
-  One small instance or container for the service, RDS or a managed Postgres, S3 for
-  snapshots. EU data residency for GDPR.
-- Hetzner or Fly are cheaper for the service itself; the sandbox provider dominates
-  the bill either way ([sandboxes.md#cost-math](./sandboxes.md#cost-math)).
-- `api.jazyk.dev` for the API and the relay. Previews of user products go on a
-  separate registrable domain (for example `jazyk.app`), never a subdomain of
-  jazyk.dev, so a generated app cannot read the page's storage or cookies.
-- Deploys follow the existing pattern: GitHub Actions with OIDC, monitored to the end.
+For most businesses, CRA's small-supplier test uses C$30,000 of worldwide taxable
+supplies in a calendar quarter or across four consecutive quarters, with associated
+persons included. It is not simply Canadian sales or this application's revenue.
+The timing of registration depends on how the threshold is crossed. Provincial tax
+rules and sales outside Canada need separate evaluation. Record province, existing
+registrations, customer location evidence, product tax classification, and initial
+sales territories before enabling live checkout.
+Source: [CRA registration rules](https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/gst-hst-businesses/when-register-charge.html).
 
-## Privacy and terms
+Charging through Canada does not require Canada-only customers or Canada-only data
+processing. Do not infer either restriction from the merchant address.
 
-- Subprocessors: the merchant of record, the sandbox provider, OpenRouter and the
-  model providers it routes to (some outside the EU), AWS. Published in a list.
-- Prompts and project content pass through the gateway; the ledger stores counts and
-  costs, never content. Traces stay inside the project's `.jazyk/`.
-- Terms forbid resale and account sharing (the concurrency cap enforces it), and
-  forbid using compute for mining, scanning, or mail.
-- Account deletion deletes snapshots, sandboxes, and tokens; the ledger keeps
-  anonymized rows for accounting.
+## Payment and entitlement state
+
+Stripe events can arrive more than once or out of order. Verify signatures, persist
+event ids, process idempotently, and reconcile periodically against Stripe's current
+subscription/invoice state. Source: [subscription webhooks](https://docs.stripe.com/billing/subscriptions/webhooks).
+
+- Grant the billing-period allowance only for a confirmed successful payment or an
+  explicitly funded promotion. A Checkout redirect does not grant access.
+- Uniquely key each grant by account, paid invoice/line, and allowance period. Keep
+  Stripe customer/subscription ids server-owned and validate the expected price/currency.
+- Use anniversary billing periods initially. No retroactive free first-month grant.
+- Upgrades apply after payment. Grant only the documented, paid incremental allowance,
+  proportional to the remaining period if the price difference is prorated. Retain
+  spent usage and rolling-window history. Never mint a full new month for a tiny
+  proration payment.
+- Downgrades and cancellation take effect at paid period end. Cancellation stops
+  renewal, not access to existing project exports.
+- Failed renewal blocks new paid admissions once the paid entitlement ends. Handle
+  in-flight reserved calls and checkpoint an active runtime within a bounded stop grace.
+- Refunds and disputes create compensating entries. Revoke unused associated grants
+  and suspend further spending if needed. Do not silently create a postpaid debt.
+- Model top-ups and compute purchases each have their own idempotent grant. Preserve
+  purchased balances across cancellation under the published terms.
+
+Test duplicate/delayed events, renewal failure, upgrade/downgrade races, refund after
+partial use, linked identities, tax calculation, and portal cancellation before live
+billing. Use Stripe test mode until these pass.
+
+## Gateway
+
+Expose an OpenAI-compatible model endpoint plus a separate account/usage API. The
+exact paths are specified during phase 1. Implement the
+[reservation protocol](./tiers.md#admission-and-settlement), not a preflight-only check.
+
+- Device credentials are account-scoped for model access. Cloud credentials are
+  short-lived and restricted to account, project, runtime lease, and spend envelope.
+- Accept supported models and features only. Context/output/reasoning bounds let the
+  service reserve a defensible upper cost. Do not accept a client-supplied dollar bill.
+- Pass streams through and settle from provider usage. Record the upstream id and
+  status even if the client closes its connection.
+- Return an early request id, then expose the final receipt through a receipt/usage
+  endpoint or a documented final event. No final-cost header before streaming ends.
+- Track inference cost separately from funding fees. Reconcile usage and supplier
+  invoices; unexplained differences alarm and can disable a route.
+- Rate-card changes are versioned. Polling a supplier catalog detects changes; it does
+  not silently rewrite the customer's charge history.
+- Enforce per-account and global spend/concurrency limits. An account may have several
+  local devices. All devices and cloud runtimes share the same atomic ledger.
+- Quota exhaustion is typed and non-retryable until allowance changes. Ordinary
+  provider throttling/outages keep separate retry and backoff semantics.
+
+No arbitrary upstream URL in a subscription request. BYOK is a separate access path.
+Cloud beta BYOK uses encrypted customer credentials held by a broker, initially for
+OpenRouter through the already supported integration. It consumes no Jazyk inference
+allowance but still consumes runtime entitlement. Other providers and generic
+private/local endpoint tunneling can follow.
+
+## AWS deployment
+
+Proposed beta:
+
+- One AWS region, one deployable API/worker service on ECS/Fargate, and managed
+  Postgres with backups. Use S3 for immutable checkpoint objects and artifacts,
+  Secrets Manager/KMS for service secrets, and existing deployment OIDC patterns.
+- Prefer `ca-central-1` for account/project data if the selected services and sandbox
+  placement fit. `us-east-1` is a valid simpler alternative when co-location wins.
+  Existing static-site hosting does not force the backend region.
+- Compare regional service availability, latency, database/egress cost, and operational
+  access before choosing. There is no Canada-only or EU-only residency promise.
+- Keep private database access and least-privilege service roles. User sandboxes get
+  neither a task role for this service nor broad S3 access.
+- Budget for the load balancer, database floor, logs, backups, network transfer, and
+  NAT/VPC networking where used. The small beta service is not cost-free at idle.
+- Planning envelope: roughly US$100–300/month for a modest managed deployment before
+  inference, sandboxes, significant traffic, and support. This is an estimate to
+  replace with a concrete regional configuration and calculator result in phase 1.
+
+The service must support streaming responses and long-lived SSE/WS with explicit
+idle timeouts. Deploys drain connections and resume idempotent background jobs.
+Pin compiler image versions independently of web and service releases.
+
+## Data and operations
+
+- Ledger rows hold counts, prices, ids, and timestamps, not prompt contents.
+- Disable body logging in gateway/error middleware. Project traces can contain source
+  and secrets; keep them private and subject to retention/export policy.
+- Publish processing locations and subprocessors for billing, storage, sandboxes,
+  aggregator, and resolved model providers. Do not equate storage region with inference.
+- Reconcile Stripe, provider request receipts, active sandboxes, and durable checkpoints
+  on independent jobs. A restart must not lose reservations or leave orphaned compute.
+- Revoke tokens immediately on deletion. Delete project objects, versions, runtimes,
+  snapshots, and secrets through a retriable job. Show the retention schedule for
+  backups and legally required financial records; do not promise instant deletion of
+  every accounting record.
+- Retain portable exports when an account stops paying for the documented grace
+  period. Avoid permanent free storage as an accidental cancellation policy.

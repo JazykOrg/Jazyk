@@ -1,119 +1,186 @@
-# Research: sandboxes and how others isolate cloud agents
+# Global sandbox research
 
-Researched 2026-10-01. Marks as in [market.md](./market.md): **[V]** vendor page read
-today, **[S]** search results or third parties (several 2026 comparisons are written
-by competing vendors), **[M]** memory, **[E]** estimate.
+Reviewed 2026-10-01 from the primary sources linked below. Prices are USD before
+tax. Published features are not measured Jazyk results. There is no EU-only filter
+and no assumption that Canadian billing requires Canadian compute.
 
-## How others isolate
+## Workload and selection criteria
 
-| Product | Isolation | Egress | Credentials | Persistence and idle |
-|---|---|---|---|---|
-| Claude Code cloud | A VM per session, 4 vCPU, 16 GB, 30 GB [V] | A proxy for all traffic; levels None, Trusted (default: registries, GitHub, cloud SDKs), Full, Custom [V] | GitHub proxy swaps a scoped credential for the real token after checking the operation; an agent proxy adds API keys for listed hosts [V] | Setup cached as a filesystem snapshot for about 7 days; an idle VM pauses with its files after minutes and is later reclaimed, then rebuilt from the conversation [V] |
-| OpenAI Codex cloud | A container per task (`codex-universal`) [V]; OpenAI is acquiring Ona as the future runtime [S] | Internet during setup; none during the agent phase by default, or a domain allowlist [V] | Secrets exist only during setup and are removed before the agent runs [V] | Containers cached up to 12 hours [V] |
-| Cursor cloud agents | A Firecracker microVM per agent, in a separate AWS account [V] | On by default; allowlist modes [V] | Encrypted, injected as env vars, stripped from transcripts [V] | Encrypted VM snapshots, deleted after 90 days idle [V] |
-| Google Jules | A short-lived GCP VM per task [S] | n/a | n/a | Snapshot after the setup script [S] |
-| GitHub Copilot agent | An ephemeral Actions runner VM [S] | Firewall: registries plus allowlist [S] | Actions secrets [M] | The branch and PR [S] |
-| Devin | A VM per session; self-hosted "Outposts" [S] | n/a | n/a | Machine snapshots [M] |
-| Replit | Own fleet; copy-on-write block storage, git commit per checkpoint, forkable Postgres [S] | n/a | n/a | Constant-time snapshots [S] |
-| Lovable | Modal sandboxes (gVisor), 20k concurrent at peak [S] | n/a | n/a | n/a |
-| Bolt | WebContainers in the browser [S]: no native toolchains, so not an option for jazyk | n/a | n/a | n/a |
-| Vercel v0 | Vercel Sandbox, Firecracker [S] | n/a | n/a | n/a |
-| Manus | An E2B sandbox per task [V] | n/a | n/a | n/a |
+Jazyk needs a Linux environment with its Rust binary, shell, native toolchains,
+long-lived dev processes, and access to the GUI API, SSE, and LSP WebSocket. A useful
+trial includes Rust/Node builds and the ERP fixture with a database. Test the required
+commands directly; a provider's Python code-interpreter demo is not sufficient.
 
-What they share: a VM boundary per tenant; egress through a proxy outside the
-sandbox, registries allowed by default; long-lived credentials never inside; setup
-snapshotted once; idle VMs paused, then reclaimed, with git and the conversation
-enough to rebuild.
+Priorities, in order:
 
-Sources: [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web),
-[cloud environments](https://code.claude.com/docs/en/cloud-environments),
-[Claude Code sandboxing](https://anthropic.com/engineering/claude-code-sandboxing),
-[Codex cloud environment](https://learn.chatgpt.com/docs/environments/cloud-environment),
-[Cursor security](https://prod.cursor.com/docs/cloud-agent/security),
-[Jules](https://jules.google/docs/environment/),
-[Copilot firewall](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/customize-the-agent-firewall),
-[Devin Outposts](https://docs.devin.ai/cloud/outposts/overview),
-[Lovable on Modal](https://modal.com/blog/lovable-case-study),
-[Manus on E2B](https://e2b.dev/customers/how-manus-uses-e2b-to-provide-agents-with-virtual-computers).
+1. Isolation and network policy outside the untrusted runtime.
+2. Durable export and recovery of source, graph, ledger, and product state.
+3. Working toolchains, process control, streams, previews, and database behavior.
+4. Total monthly cost at small scale, including idle/wait time and fixed fees.
+5. Regions and measured latency to AWS storage/control and model providers.
+6. Operational work, support, limits, and ability to leave the provider.
 
-## Sandbox providers
+A VM is a strong candidate boundary. gVisor is also a deliberate isolation mechanism;
+ordinary shared-host containers are not equivalent. Do not claim every cloud agent
+uses Firecracker or that one runtime name alone proves security.
 
-| Provider | Isolation | vCPU-hour | GB-hour | Pause and snapshot | Max lifetime | EU | Self-host |
-|---|---|---|---|---|---|---|---|
-| E2B | Firecracker | $0.0504 [V] | $0.0162 [V] | Memory and filesystem pause, kept indefinitely, resume about 1 s [V] | 1 h Hobby, 24 h Pro ($150/month), reset on resume [V] | reported [S]; US company | open-source infra (Terraform, Nomad, Firecracker); BYOC on Enterprise [V] |
-| Northflank | Kata or gVisor [S] | $0.0167 [V] | $0.0083 [V] | Scale to zero with volumes kept; no memory snapshot [S] | none [S] | EU West [V] | BYOC on AWS, GCP, Azure at no extra cost [V] |
-| Fly Machines | Firecracker | about $0.043/h for 2 vCPU 4 GB [V] | included | Suspend with memory up to 4 GB, not durable [V] | none | yes | no |
-| Daytona | Sysbox, Kata optional [S] | $0.0504 [V] | $0.0162 [V] | Stop and start keep files [S] | n/a | n/a | core closed since June 2026 [V] |
-| Modal | gVisor | about $0.071 [V] | about $0.024 [V] | Filesystem and memory snapshots [S] | n/a | regional multipliers [V] | no |
-| Vercel Sandbox | Firecracker [S] | $0.128, active CPU only [S] | $0.0212 [S] | Filesystem snapshots, 30 days [S] | 24 h Pro [S] | yes | no |
-| Cloudflare Containers | VM-based [M] | $0.072, active only [V] | $0.009 [V] | Sleep; disk is ephemeral [M] | n/a | global | no |
-| Blaxel | microVM | about $0.041 per GB-hour, CPU included [V] | included | Resume in about 25 ms with memory; standby free [V] | indefinite standby [S] | US, EU [S] | no |
-| Morph Cloud | VM snapshots | $0.05 per 1 vCPU + 4 GB hour [S] | included | Branch a running VM in under 250 ms [S] | n/a | n/a | no |
-| Runloop, CodeSandbox, Beam | microVM or gVisor | $0.07 to $0.11 [S] | | Snapshots [S] | | | |
+## Provider comparison
 
-Most offer TypeScript and Python SDKs plus a REST API; the orchestrator calls the REST
-API from Rust.
-
-Sources: [E2B pricing](https://e2b.dev/pricing),
-[E2B persistence](https://docs.e2b.dev/sandbox/persistence),
-[E2B internet access](https://e2b.dev/docs/sandbox/internet-access),
-[Northflank pricing](https://northflank.com/pricing),
-[Fly pricing](https://docs.fly.io/about/pricing/),
-[Fly suspend](https://fly.io/docs/reference/suspend-resume/),
-[Daytona](https://github.com/daytonaio/daytona),
-[Modal pricing](https://modal.com/pricing),
-[Vercel Sandbox](https://vercel.com/docs/sandbox/pricing),
-[Cloudflare Containers](https://developers.cloudflare.com/containers/pricing/),
-[Blaxel](https://blaxel.ai/pricing).
-
-## Self-hosting
-
-- Firecracker: about 125 ms boot, about 5 MB per VM, the strongest isolation per unit
-  of cost. Needs KVM, so bare metal: Hetzner dedicated servers have it, Hetzner Cloud
-  VMs do not [M].
-- gVisor: runs without KVM, larger attack surface than a VM.
-- Kata: OCI containers in a VM, the natural fit for Kubernetes.
-- Building blocks: `kubernetes-sigs/agent-sandbox` (CRDs over gVisor or Kata, v1.0,
-  GKE GA in May 2026) [S]; `e2b-dev/infra` (Apache-2.0, GCP first-class, bare metal
-  planned) [S]; `microsandbox` (Rust, libkrun, single server) [S].
-- Hetzner raised prices in April and June 2026 [V]: AX42 €97.30 a month (8 cores,
-  64 GB), AX102 €257.30 (16 cores, 128 GB).
-- The burden: kernel and Firecracker patching, images, snapshot storage and GC,
-  capacity and failover, the egress proxy, abuse complaints that Hetzner forwards and
-  can answer by null-routing. One to two weeks to build, a few hours a week after.
-
-Source: [Hetzner price adjustment](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/).
-
-## Cost math
-
-Assumption [E]: each active user runs 20 hours a month of a 2 vCPU, 4 GB sandbox:
-40 vCPU-hours and 80 GB-hours.
-
-| Option | Per user | 100 users | 1,000 users |
+| Provider | Isolation and geography | Persistence/lifecycle | Fit and work |
 |---|---|---|---|
-| E2B, plus $150 Pro | $3.31 | $481 | $3,462 |
-| Northflank, plus 10 GB volume | $2.83 | $283 | $2,833 |
-| Fly, EU, plus 10 GB volume | $2.45 | $245 | $2,450 |
-| Daytona | $3.70 | $370 | $3,700 |
-| Modal, EU | $5.95 | $595 | $5,950 |
-| Hetzner self-host (AX102, 2x CPU overcommit) | n/a | 2 servers for redundancy, about €520 | 6 to 7 servers for about 150 at peak, about €1,750, plus storage and ops time |
+| E2B | Firecracker-based managed sandboxes; enterprise material lists US, EU, APAC. Confirm the exact region available on the purchased plan. | Filesystem and memory pause; docs say paused state has no automatic expiry. Runtime limits depend on plan. | Strong general-purpose starting point. Custom templates and native tools. A fixed Pro fee matters in a small beta. |
+| Vercel Sandbox | Firecracker; published regions include North America, Europe, Asia, Australia, South America, Africa, and Montréal. | Persistent sandboxes restore filesystem snapshots; restart application processes. Persistent drives are also offered. | Strong alternative for LLM-wait-heavy workloads. Native network rules and credential brokering reduce integration work. Verify custom image/toolchain behavior. |
+| Daytona | Default container runtime and explicit Linux VM/Windows options; shared `us` and `eu` regions. | VM pause retains memory; stopped/paused disk can remain billed. Container archive differs. | Serious alternative, not excluded by an old Sysbox-only description. Test the exact runtime class, region quota, and image restrictions. |
+| Modal | gVisor and explicit VM runtimes; selectable regions across clouds. | Filesystem/memory snapshot capabilities and volumes; semantics depend on runtime. | Credible, especially for full Linux/Docker needs. Old claims that Modal is gVisor-only are obsolete. Region premiums and physical-core billing matter. |
+| Northflank | Managed sandbox runtimes, including Kata microVMs; US, Europe, Asia. BYOC runtime selection is explicit. | Persistent volumes and service lifecycle; verify pause behavior for the selected offering. | Low listed compute cost. More platform/network/storage integration to validate than a simple code sandbox API. |
+| Fly Machines | Firecracker VMs with programmatic machine lifecycle. | Local volumes and suspend/resume; do not use suspend as the only backup. | Useful if owning the runtime lifecycle is acceptable. Compare CPU class and regional capacity, not a shared-CPU headline against dedicated vCPU prices. |
+| AWS ECS/Fargate | Each task has a hardware virtualization boundary; regional AWS service availability. | Design for task restart and restore from durable storage. | Keeps procurement on AWS. More orchestration/preview/egress work; restrictions on privileged execution can limit toolchains. |
+| Blaxel | Per-sandbox microVMs; confirm available region and capacity before selecting. | Standby preserves state; snapshots and persistent volumes have separate charges. | Worth revisiting for rapid suspend/resume. Test whether an active Jazyk worker waiting on a model can actually suspend usefully. |
+| Cloudflare Containers | Managed container platform integrated with Workers. | Treat runtime disk/lifecycle as provider-specific; require independent checkpoints. | An alternative if the web stack moves toward Workers. Additional integration and full-toolchain validation make it a later candidate here. |
 
-- At 100 users, managed wins: self-hosting costs the same before counting the owner's
-  time.
-- At 1,000 users, self-hosting saves $1k to $2k a month at real operational risk.
-  Moving from E2B to `e2b-infra` on bare metal keeps the same API.
-- Model tokens dominate: a frontier model at 20 agent-hours a month is $50 to $300 per
-  user, the sandbox $1 to $6. Build the gateway and the quotas before optimizing the
-  sandbox provider.
+Primary references for the table:
+
+- E2B: [enterprise infrastructure](https://e2b.dev/enterprise),
+  [persistence](https://docs.e2b.dev/sandbox/persistence),
+  [network controls](https://docs.e2b.dev/network/internet-access),
+  [external secret injection](https://docs.e2b.dev/secrets).
+- Vercel: [sandbox](https://vercel.com/sandbox),
+  [regions](https://vercel.com/docs/sandbox/concepts/regions),
+  [persistence](https://vercel.com/docs/sandbox/concepts/persistent-sandboxes).
+- Daytona: [runtime types](https://www.daytona.io/docs/en/sandboxes/),
+  [isolation](https://www.daytona.io/docs/en/isolation/),
+  [regions](https://www.daytona.io/docs/en/regions/),
+  [billing by lifecycle state](https://www.daytona.io/docs/en/billing/).
+- Modal: [runtimes](https://modal.com/docs/guide/sandboxes),
+  [networking/isolation](https://modal.com/docs/guide/sandbox-networking),
+  [regions](https://modal.com/docs/guide/region-selection).
+- Northflank: [managed sandbox use](https://northflank.com/docs/v1/application/use-cases/run-code-in-sandboxes),
+  [BYOC isolation](https://northflank.com/docs/v1/application/sandboxes/sandboxes-in-your-own-cloud),
+  [pricing and locations](https://northflank.com/pricing).
+- Fly: [Machines](https://docs.fly.io/machines/),
+  [suspend](https://docs.fly.io/reference/suspend-resume/),
+  [volumes and pricing](https://docs.fly.io/about/pricing/).
+- AWS: [Fargate security and restrictions](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-security-considerations.html).
+- Blaxel: [runtime and persistence prices](https://blaxel.ai/pricing).
+- Cloudflare: [container lifecycle](https://developers.cloudflare.com/containers/concepts/architecture/).
+
+This is a shortlist for Jazyk, not an exhaustive vendor ranking. Self-hosting, other
+managed devbox suppliers, and BYOC remain alternatives if these fail the workload.
+No unsupported self-host licensing claims are used to eliminate a managed provider.
+
+E2B's network documentation limits domain filtering to HTTP/TLS on ports 80/443;
+other ports use IP rules. It also documents shared-endpoint caveats and beta request
+transforms. Include those details in the trial rather than treating a hostname
+allowlist as complete isolation. Source: [network controls](https://docs.e2b.dev/network/internet-access).
+
+## Cost comparison
+
+Published unit rates, then calculated examples. Match region and resource class
+before using any figure for procurement. Do not include promotional free credits in
+recurring economics.
+
+| Provider | Relevant published rates | Calculated 2 vCPU / 4 GiB running hour |
+|---|---|---:|
+| [E2B](https://e2b.dev/pricing) | $0.0504/vCPU-hour + $0.0162/GiB-hour; Pro $150/month separately | $0.1656 |
+| [Daytona](https://www.daytona.io/pricing) | Same CPU/RAM rates; disk $0.000108/GiB-hour, with a stated free allowance | $0.1656 plus disk |
+| [Vercel, iad1](https://vercel.com/docs/sandbox/pricing) | $0.128/active CPU-hour + $0.0212/GB-hour provisioned memory | $0.0848 + $0.256 × CPU utilization |
+| [Modal](https://modal.com/pricing) | $0.00003942/physical-core-second, one core described as 2 vCPU equivalent; $0.00000667/GiB-second | $0.23796 at one requested/used core, before regional premiums |
+| [Northflank](https://northflank.com/pricing) | $0.01667/vCPU-hour + $0.00833/GB-hour; volume $0.15/GB-month | About $0.06666 plus volume |
+| [Fargate, us-east-1 Linux x86](https://aws.amazon.com/fargate/pricing/) | $0.000011244/vCPU-second + $0.000001235/GB-second | $0.0987408 before storage/network additions |
+| [Blaxel](https://blaxel.ai/pricing) | $0.0000115/GB RAM-second active runtime; CPU scales with memory | $0.1656 for 4 GB; CPU allocation is not a directly equivalent guarantee |
+
+Modal bills the higher of requested/used resources. The table is a reservation-based
+example, not evidence of equal build throughput across providers. Vercel's active
+CPU meter is different from a provisioned vCPU meter.
+
+Assume 20 running hours per account per month:
+
+| Scenario | Variable compute per account | 100 accounts | 1,000 accounts |
+|---|---:|---:|---:|
+| E2B | $3.31 | $481.20 including $150 base | $3,462 including $150 base |
+| Daytona, before disk | $3.31 | $331.20 | $3,312 |
+| Vercel, 10% CPU utilization | $2.21 | $220.80 plus plan charges | $2,208 plus plan charges |
+| Vercel, 100% CPU utilization | $6.82 | $681.60 plus plan charges | $6,816 plus plan charges |
+| Modal, above requested resources | $4.76 | $475.92 | $4,759.20 |
+| Northflank, before volume | $1.33 | $133.32 | $1,333.20 |
+| Fargate, above region/architecture | $1.97 | $197.48 | $1,974.82 |
+
+These are deliberately compute comparisons, not total invoices:
+
+- E2B Pro currently lists 24-hour sessions and 100 concurrent sandboxes. Higher
+  concurrency changes fees. Ten accounts carry $15/account of its base fee; 100
+  carry $1.50. Peak concurrency is independent of monthly hours.
+- Ignoring fixed fees, Vercel's example becomes cheaper than E2B below about 31.6%
+  CPU utilization. Measure Jazyk's model-wait/build mix before choosing. Regional
+  rates, storage, and traffic can reverse that result.
+- Daytona disk can accrue while stopped/paused. At the published disk rate, 10 GiB
+  reserved for 730 hours is about $0.79 before any free allowance. Do not assume
+  the allowance applies separately to every project.
+- Northflank/Fly 10 GB volumes at the listed $0.15/GB-month add $1.50/month even if
+  compute barely runs. Fly snapshots are a separate line item.
+- Add provider snapshot/image storage, S3 recovery objects, requests, model traffic,
+  preview/download egress, cross-region transfer, build cache storage, and retained
+  projects. Provider-supported pause is not a backup retention policy.
+- A 15-minute idle tail on each of 20 visits adds 5 running hours, 25% above this
+  example. Idle behavior can matter more than headline CPU price.
 
 ## Recommendation
 
-- E2B for the beta: Firecracker, memory pause kept indefinitely, domain-level egress
-  rules, a REST API, and an open-source exit to self-hosting. Confirm the EU region
-  and the data processing terms before signing up.
-- Northflank as the fallback: 2.5 times cheaper per hour, EU West, free BYOC; the
-  egress proxy and the pause are jazyk's to build.
-- Avoid WebContainers (no native toolchains), Daytona for self-hosting (closed), and
-  Modal (highest price, gVisor only).
-- Behind a `Sandbox` interface in the orchestrator, so the switch to Northflank or to
-  self-hosting is one module.
+Trial E2B and Vercel against the same acceptance list. E2B is the default integration
+candidate for a general Linux workspace with memory pause. Vercel is the strongest
+cost/geography challenger here, including a documented Canadian location and low
+active-CPU charges while waiting. Restarting dev processes after filesystem restore
+may be sufficient for Jazyk; memory preservation is useful, not mandatory.
+
+Bring Daytona's explicit Linux VM runtime into the trial if fixed fees, capacity,
+or compatibility make the first two unattractive. Modal and Northflank remain
+credible alternatives rather than being excluded on outdated isolation assumptions.
+Keep the trusted control plane on AWS whichever sandbox wins.
+
+Use a small internal adapter for create/inspect/stop/delete, exec, file transfer,
+network policy, preview access, and checkpoint operations. Report capabilities such
+as memory pause and durable volumes explicitly. Switching provider also requires
+export/restore, image, network, and cost validation; it is not just replacing a module.
+Use the provider's maintained SDK or supported API client, not custom transports.
+
+## Selection gate
+
+Allocate 3–5 days within phase 2 for the initial comparison, plus bounded provider
+usage once funded. Record provider, plan, region, image, date, and observed cost.
+
+- Boot Jazyk, Rust/Node toolchains, a web server, and the ERP database. Exercise the
+  required build/test/setup commands and any required Docker support.
+- Measure cold start, resume, build throughput, idle CPU, model-wait CPU, streaming
+  latency, and SSE/WS reconnects. Compare p50 and p95, not advertised startup alone.
+- Write graph generations and product files, pause, resume, kill the VM, then restore
+  from an independent checkpoint. Verify ids, decrees, proposals, and ledger bindings.
+- Enforce egress outside the guest. Test direct-IP/IPv6 bypass, DNS changes, metadata
+  access, credential scoping, and cross-project access. Confirm package registries
+  still work under the chosen rules.
+- Disconnect the page, exhaust model/compute budget, lose the orchestrator, and reach
+  the provider lifetime limit. Work remains recoverable and compute eventually stops.
+- Check raw preview URLs cannot bypass authentication. Verify downloads cannot read
+  arbitrary platform objects.
+- Reconcile observed resource use against provider billing, including disk while
+  paused, snapshot retention, and transfer. Confirm account limits for beta size.
+
+Exit: documented pass/fail results, a selected region/plan, realistic invoice
+estimates at 10/100/1,000 accounts, and a tested exit path. Procurement remains open
+until then; the research alone does not establish a universal best provider.
+
+## Self-hosting
+
+Defer a custom Firecracker/Kata fleet. AWS, other global cloud/bare-metal suppliers,
+and managed BYOC are all candidates; this is not a Hetzner-only decision. Hardware
+virtualization support depends on the actual instance type and platform.
+
+E2B also advertises an Apache-2.0 single-node Embed package requiring Linux x86-64
+with KVM. This is a possible prototype/exit route to evaluate, not proof that a
+redundant production fleet is already operated for Jazyk.
+Source: [E2B deployment options](https://e2b.dev/enterprise).
+
+The comparison must include spare capacity, failure recovery, images, guest/host
+patches, observability, network enforcement, abuse handling, backups, and operator
+time. Do not promise a production multi-tenant fleet in one or two weeks or trigger
+migration at an arbitrary $2,000 bill. Revisit when measured savings pay for the
+engineering and ongoing operations, with an acceptable recovery story.

@@ -1,151 +1,150 @@
 # Plan: subscriptions and cloud sessions for jazyk.dev
 
-Status: proposal. Written 2026-10-01. Nothing here is scheduled. The docs-first rule
-applies: every phase names the pages that change before the code does. Every step that
-costs money (model runs for measurement, a sandbox provider account, a server, a
-merchant of record) needs the owner's approval per action.
+Status: revised proposal, 2026-10-01. Owner decisions below are settled. Prices,
+provider selection, and effort are proposals. This revision changes the plan only.
+It does not provision services, run paid benchmarks, or change compiler behavior.
 
-## The owner's ask
+## Owner decisions
 
-- A monthly subscription to jazyk.dev with several tiers. A tier grants a weekly quota
-  and a session quota, the way coding agent subscriptions do.
-- The models are mostly cheap open-weight models, bought through OpenRouter or a
-  similar provider. Research how other harnesses price, especially the ones that
-  resell open models.
-- Cloud sessions: jazyk running in the cloud, so a project is actually built and a
-  product produced in a session, not only compiled into a graph. Isolation matters.
-  Research the existing infrastructure and how others do it.
+| Topic | Decision |
+|---|---|
+| Local subscription | Yes. One allowance for local `jazyk` and cloud sessions. Ship local access first. |
+| Own provider | Keep local endpoints, API keys, and external ACP agents usable without a Jazyk subscription. Support mixing access methods by task. |
+| Models | A measured selection, potentially including frontier models. Expensive models consume more allowance. Compilation, coding, and review may use different models. |
+| Merchant | A Canadian sole proprietor using the existing Stripe account. Remove the Slovakia and merchant-of-record assumptions. |
+| Control plane | AWS is acceptable. No EU-only constraint. |
+| Sandboxes | Compare global providers. Select after testing the actual Jazyk workload. |
+| Storage | Keep the first version simple. Evaluate cloud storage and GitHub as alternative project modes, with effort estimates. |
+| Free | Local use only. A social-login promotion, perhaps $20, is a later option. No recurring hosted inference or compute grant at launch. |
+| Documentation | Cloud and web specs belong under `docs/`, separated from the compiler for a possible future open-source split. |
+
+Currency is not settled by the merchant's location. This plan uses CAD for proposed
+customer prices and USD for upstream costs. That is a planning choice, not a claim
+that the owner selected CAD or restricted sales to Canadian customers.
+
+## Recommendation
+
+- Sell managed model access for local Jazyk first. Keep BYOK available without an
+  account. A subscriber can use their own provider for some work and the subscription
+  for the rest.
+- Publish a credit rate card and a billing-period allowance. Apply weekly and 5-hour
+  pacing limits as well. Reserve cost before each upstream request.
+- Expose model policies for compilation, judgment, coding, verification, and chat.
+  Start with a small tested catalog. Do not assume cheap extraction is accurate.
+- Use Stripe Checkout, Billing, and Customer Portal in the Canadian account. Use
+  Stripe Tax where applicable. Jazyk remains the merchant.
+- Run the trusted platform on AWS, outside the compiler package and the machines
+  running user code.
+- Compare E2B and Vercel first, then Daytona if either fails the workload or cost
+  gates. Keep Modal and Northflank as credible alternatives. This is a conditional
+  shortlist, not a provider commitment.
+- Start cloud projects with versioned checkpoints in S3 and download/export. Add
+  GitHub-backed projects separately. Every project has one source authority.
+- Price cloud compute separately initially. A local subscriber need not buy unused
+  compute. A cloud user with their own model key still pays for compute and storage.
 
 ## The files
 
-- [market.md](./market.md): what coding agent subscriptions and open-model resellers
-  charge and how their limits work, the token prices underneath, what heavy users
-  consume, and the lessons from their price changes.
-- [tiers.md](./tiers.md): the quota unit, the windows, the tiers with their numbers,
-  the unit economics, overage, the model menu, and how jazyk itself enforces and shows
-  the quota.
-- [platform.md](./platform.md): the services behind jazyk.dev: accounts, billing, the
-  model gateway, the project registry, hosting.
-- [cloud-sessions.md](./cloud-sessions.md): jazyk in a sandbox per project: the
-  architecture, isolation, egress, credentials, persistence, previews of the product,
-  lifecycle, abuse, and the changes to jazyk.
-- [sandboxes.md](./sandboxes.md): how Codex, Claude Code, Cursor, Copilot, Devin,
-  Replit, and Lovable isolate sessions, the sandbox providers with prices, the
-  self-host options, and the cost math.
+- [market.md](./market.md): Kiro review, verified comparisons, and lessons.
+- [tiers.md](./tiers.md): allowance, windows, economics, and spending stops.
+- [models.md](./models.md): task routing, BYOK, frontier models, and measurement.
+- [platform.md](./platform.md): Canadian Stripe billing, accounts, gateway, and AWS.
+- [sandboxes.md](./sandboxes.md): global providers and workload cost math.
+- [storage.md](./storage.md): storage alternatives, recovery, and effort.
+- [cloud-sessions.md](./cloud-sessions.md): execution, lifecycle, and previews.
+- [boundaries.md](./boundaries.md): documentation and package separation.
 
 ## Terms
 
-Jazyk already uses "session" for one model run over a goal batch. This plan keeps that
-meaning and names the rest:
+- Session: one existing Jazyk model session over a goal batch.
+- Usage window: the proposed rolling 5-hour allowance, not a Jazyk session.
+- Billing period: the paid monthly subscription interval.
+- Cloud session: a project's runtime from start or resume to stop or pause.
+- Credit: a published amount of model usage. The example rate is 100 credits per
+  US$1 at Jazyk's versioned rate card, not a promise of cash value.
+- Compute hour: one running hour at the specified sandbox size.
+- Checkpoint: a consistent, durable project version, including its persistent graph.
 
-- Window: the rolling 5-hour quota, what Claude and Codex call the session limit.
-- Week: the rolling 7-day quota.
-- Cloud session: one project's sandbox, running jazyk, from resume to pause.
-- Usage: model spend in US dollars at the upstream list price of the route used, the
-  one unit every quota is counted in.
-- Compute unit: one hour of a 2 vCPU, 4 GB sandbox.
+## Findings that change the previous plan
 
-## Today
+- Kiro illustrates shared local/cloud allowance and model-weighted credits. Arbitrary
+  BYOK in its standard clients was not established from the official pages reviewed.
+  OpenCode and Zed are clearer references for that feature.
+- Rolling weeks do not imply a hard monthly cap of `4.33 × weekly allowance`.
+  Concurrent calls, billing boundaries, annual discounts, and unpaid upgrades need
+  explicit accounting.
+- A quota check followed by an unreserved request can overspend. Counting rounds
+  does not bound dollar cost. The gateway needs atomic reservations.
+- A response header cannot report final streaming cost before completion. Use request
+  receipts and a usage API.
+- Rebuilding from prose loses ids, decrees, proposals, and judgment history. The
+  persistent graph needs durable storage even when GitHub owns the source files.
+- Pause is not a universal free-storage guarantee. Disks, snapshots, retention, and
+  cross-cloud traffic belong in the estimate.
+- `[executors]` selects agents, not embedded model profiles. Per-task model selection
+  and typed budget stops require documented compiler changes.
+- Hiding a key from a command's environment does not protect it from a compromised
+  sandbox. Account-wide credentials stay outside it.
 
-- Everything is local. `jazyk gui` binds `127.0.0.1`, mints a token per start, and
-  jazyk.dev (a static page on S3 and CloudFront) connects to it. The page also runs
-  the compiler as wasm in the tab with an in-page or user-supplied model.
-- There is no backend, no account, no billing, and no price data. Cost tracking counts
-  tokens (journal `tokens`, `cachedTokens`, `status.yaml` `costs`, `report_spend`),
-  never money, and the journal does not record the model per entry.
-- Build and test commands run as plain `sh -c` in the deliverable. The only
-  confinement is the path check on tool arguments. There is no timeout on
-  `run_command`, `run_build`, or the test runners, although
-  [generate.md](../../docs/compiler/goals/generate.md) says `run_command` is bounded
-  by one.
-- No hosted open model has been benchmarked. `qwen3.8:27b` is capable for generation
-  and verification but not for compilation. The TODO list notes about 48k characters
-  resent per round, and one three-sentence document billed 401k tokens.
+## Current implementation
 
-## The shape of it
+These observations come from the repository:
 
-Two products on one account, shipped in that order:
+- [GUI](../../docs/frontends/gui.md) and [browser backend](../../docs/frontends/wasm.md)
+  already distinguish local-server and browser capabilities. Cloud execution is new.
+- [LLM settings](../../docs/compiler/project-settings.md) accept an endpoint and
+  credentials. Explicit CLI and environment settings retain their precedence.
+  Login must not silently replace LocalRouter or a project's endpoint.
+- [Executors](../../docs/compiler/project-settings.md#executors) separate batches by
+  agent. Model-policy compatibility becomes another batching constraint.
+- [Journal entries](../../bootstrap/src/model.rs) carry token counts, including
+  external-agent reports. These are diagnostics, not a trusted billing ledger.
+- [The process seam](../../bootstrap/src/sys.rs) runs `sh -c` with `.output()`.
+  Generation and verification call it. Timeout, cancellation, and bounded output
+  need work before cloud release.
+- [TODO](../../docs/TODO.md) records repeated prompt overhead. Existing
+  [validation](../../bootstrap/VALIDATION.md) has mixed model results. Neither
+  establishes a hosted catalog or a reliable cost per successful project.
 
-1. Jazyk Pro for your own machine. A subscription buys model usage through a jazyk
-   gateway. `jazyk login` points the local binary at it. No compute is hosted, so the
-   first paid product carries no isolation risk and tests whether people pay.
-2. Cloud sessions. The same subscription adds compute units. A project lives in a
-   Firecracker microVM from a managed provider (E2B first). jazyk.dev connects to it
-   through a relay as it connects to a local server today. The project is built, its
-   tests run, and the product is previewed and downloaded from there.
+## Delivery sequence
 
-Every quota is counted in usage, at the gateway, outside anything the user controls.
-The windows follow the industry shape: a 5-hour window and a week. Each tier is sized
-so that a user who maxes every window costs no more than the price, and a typical user
-leaves a healthy margin. Raising a quota later is welcome. Cutting one causes the
-backlash every vendor in [market.md](./market.md#lessons) went through.
+Estimates are engineering days for one experienced maintainer, including specs and
+focused tests. They are planning ranges, not measured delivery times. Vendor access,
+benchmark runs, and product iteration add elapsed time. Write the named specs before
+implementing behavior. Commit and push each coherent change.
 
-## Phases
+| Phase | Work and documentation first | Exit condition | Effort |
+|---|---|---|---|
+| 0. Measure and specify | Generic usage records, model policies, stop semantics. Update `docs/compiler/`, `docs/benchmark/`, and relevant schemas. See [measurement](./models.md#measurement-gate). | Quality and cost table for representative tasks, warm/cold cache, failures, and retries. | 4–8 days |
+| 1. Local subscription | `docs/cloud/` account, billing, gateway specs; `docs/web/` usage UI; CLI login and provider selection. AWS service, Stripe test mode, reservations, receipts. | Logged-out BYOK works. Streaming works. Concurrent requests and duplicate webhooks cannot overspend or double-grant. | 15–25 days |
+| 2. Execution and provider trial | Command limits in consumer/tool specs. Cloud session and operations specs. Run [sandbox acceptance checks](./sandboxes.md#selection-gate). | Restore, cancellation, egress, SSE/WS, and usage reconciliation pass on the chosen provider. | 6–10 days |
+| 3. Cloud-only private beta | Storage/session specs and web project flow. Orchestrator, relay, compute wallet, supported-provider BYOK, checkpoints, private preview, export. | VM loss preserves graph ids. One writer survives service failover. Exhaustion stops safely. | 10–18 days orchestration plus 6–10 days storage |
+| 4. GitHub-backed projects | Cloud GitHub/storage specs and web publish/PR flow. | Import, explicit publish, moved branches, revoked installation, and restore preserve work without force-pushing. | 8–15 days, plus 2–4 if both storage modes ship together |
+| 5. Public launch | Reconciliation, deletion/retention, restore drills, support, monitored rollout, pricing publication. | Measured margin and capacity pass. Cancellation and export work. No unresolved billing or data-loss defects. | 5–10 days |
 
-Each phase stands on its own.
+The first local paid release is roughly 19–33 engineering days before contingency.
+A cloud-only private beta adds roughly 22–38 days. Storage alternatives and overlap
+are detailed in [storage.md](./storage.md#effort-and-release-options).
 
-0. Measure (days, with approved model spend). Record the model and the cost per
-   journal entry. Benchmark the candidate open models through OpenRouter with pinned
-   providers. Compile and generate `bootstrap/example/f1`, `f2`, `example-sort`, and
-   `example-erp` with each, and table the tokens, cache ratio, and dollars per build.
-   Cut the per-round overhead the TODO names. The tier numbers in
-   [tiers.md](./tiers.md) are placeholders until this table exists. Pages:
-   [graph.md](../../docs/compiler/graph.md) (journal fields),
-   [benchmark.md](../../docs/benchmark/benchmark.md), `known-results.yaml`.
-1. Accounts, the gateway, and the subscription for local use. Sign-in on jazyk.dev,
-   the merchant of record, the gateway with its windows, `jazyk login`, usage bars in
-   the CLI and the GUI, a build that parks at a goal boundary when the quota runs
-   out, and an estimate before a build. Pages: a new `docs/frontends/cloud.md`,
-   [cli.md](../../docs/frontends/cli.md), [gui.md](../../docs/frontends/gui.md),
-   [sessions.md](../../docs/compiler/sessions.md),
-   [compilation.md](../../docs/compiler/compilation.md),
-   [project-settings.md](../../docs/compiler/project-settings.md),
-   [site.md](../../docs/site.md) (a pricing page).
-2. Hardening jazyk for untrusted commands. Timeouts, output caps, and process-group
-   kill on every command, an environment scrubbed of secrets, and a `[cloud]` setup
-   command. This is worth doing locally too. Pages:
-   [gen.md](../../docs/consumers/gen.md), [generate.md](../../docs/compiler/goals/generate.md),
-   [project-settings.md](../../docs/compiler/project-settings.md).
-3. Cloud sessions, invite only. The orchestrator on E2B, a microVM per project, the
-   relay, the GUI's cloud backend, default-deny egress, credentials only at the
-   proxies, persistence to object storage, idle pause. Pages: `docs/frontends/cloud.md`,
-   [gui.md#connecting-to-a-local-jazyk](../../docs/frontends/gui.md#connecting-to-a-local-jazyk)
-   (a cloud backend beside it), [control-plane.md](../../docs/compiler/control-plane.md).
-4. The product in the cloud. Preview URLs on a separate domain, artifact downloads,
-   GitHub through the git proxy, import from a repository or an example. Pages:
-   `docs/frontends/cloud.md`, [gui.md#product](../../docs/frontends/gui.md#product).
-5. Open to everyone. Abuse heuristics, top-up credits, teams. Revisit self-hosting on
-   Hetzner bare metal when managed sandbox spend passes about $2k a month
-   ([sandboxes.md](./sandboxes.md#cost-math)).
+Top-ups can follow the first local beta. Teams, annual discounts, automatic product
+deployment, two-way local/cloud sync, and signup incentives are later work.
 
-Phase 0 decides whether the economics work at all: a subscription is a margin on the
-cost of a build, and that cost is not measured yet.
+Measurement uses the configured LocalRouter endpoint unless the owner requests a
+change. Select candidate routes through it where possible. This plan does not pick
+another default model or authorize a paid benchmark campaign.
 
-## Open questions for the owner
+## Remaining decisions
 
-- Can the subscription be used from a local `jazyk`, not only in the cloud?
-  Recommended: yes, it is phase 1 and the cheapest way to learn. Since the quota is
-  counted at cost, usage spent outside jazyk loses no money; the concurrency cap stops
-  resale.
-- Frontier models: resell them inside the quota (they drain it about 8 times faster
-  than DeepSeek Flash), or only through the user's own key? Recommended: the user's
-  own key or an external ACP agent (Claude Code, Codex) at first; add a strong tier to
-  the menu when phase 0 shows which goal kinds need it.
-- The merchant of record: Paddle, Polar, or Stripe Managed Payments; or Stripe Billing
-  with VAT filed from Slovakia. Recommended: a merchant of record
-  ([platform.md#billing](./platform.md#billing)).
-- Price in USD or EUR. Recommended: USD on the page (the market prices in USD), the
-  merchant of record localizes.
-- The sandbox provider: E2B (best fit, US company, EU region to confirm) or Northflank
-  (EU West, about 2.5 times cheaper, more to build). Recommended: E2B for the beta
-  behind a `Sandbox` interface, Northflank as the fallback.
-- Where the control plane runs: the existing AWS account (eu-central-1) or Hetzner or
-  Fly. Recommended: AWS, beside the existing hosting, unless cost says otherwise.
-- Project storage in the cloud: a jazyk-hosted git repository per project, the user's
-  GitHub, or both. Recommended: object storage snapshots always, GitHub optional.
-- A free tier: local only (the binary stays fully usable with any endpoint) plus a
-  one-time cloud trial after card verification. Recommended: yes, and never free
-  compute without a card.
-- Do the cloud pages live in `docs/` (behavior of the binary and the page) with prices
-  only on the site? Recommended: yes. `docs/` states what jazyk does with a quota and
-  a sandbox; the numbers live on jazyk.org's pricing page.
+- Public CAD prices versus USD pricing from the Canadian account. The
+  [draft economics](./tiers.md#illustrative-local-tiers) use CAD explicitly.
+- Initial sales territories, province, and tax registrations. Resolve during billing
+  setup, not from the repository's timezone.
+- Which measured models meet each task's quality bar, and the frontier-use budget.
+- The sandbox winner after the same workload runs on the finalists.
+- Whether GitHub is needed for the first cloud beta. Default: cloud-only first.
+  [GitHub-first](./storage.md#effort-and-release-options) suits a developer-only beta.
+- The later promotion's currency and meaning: invoice discount or inference credits.
+  Google/GitHub login alone does not establish a unique human.
+
+Keep unresolved commercial choices here. Accepted behavior moves into the separated
+specifications described in [boundaries.md](./boundaries.md).

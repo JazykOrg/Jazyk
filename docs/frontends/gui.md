@@ -1580,7 +1580,10 @@ and back and forward.
 - The navigator is one column in both: Documents, Outline (following the cursor),
   Product (`Overview`, the file tree, `Trace`, `Tests`), Diagrams and Generated
   (collapsed). There is no Model head; entities and requirements open from mentions
-  (Cmd-click), markers, diagram boxes, and search.
+  (Cmd-click), markers, diagram boxes, and search. While the focused item belongs to
+  an area with sections of its own, the navigator leads with them: the Inbox's
+  sections with their counts, the builds under History, the Developer pages, the
+  model's lists under a model page, the settings under Settings.
 - There is no side panel. A node opened from a page
   (a mention, a marker, a diagram box, a search result) opens as its own item: a tab
   in Tabs, a window on the Board, where the board itself draws its connections.

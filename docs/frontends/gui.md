@@ -806,7 +806,8 @@ Addressable state: `/docs/<path>` (a document in the editor), `/model/<section>`
 `/model/<section>/<id>` (entities, requirements, criteria, diagrams, relations,
 states), `/product/<section>` and `/product/files/<path>` (files, trace, tests,
 not-described, generated, form), `/inbox/<section>`, `/history/<generation>`,
-`/settings`, and `/dev/<section>` for the Developer pages. `?node=` opens the node's
+`/settings`, `/project/<path>` (any other project file, as text), and `/dev/<section>`
+for the Developer pages. `?node=` opens the node's
 page as an item; a document takes `?section=` and `?quote=` to reveal and
 highlight a quote; a product file takes `?site=<requirement>` or `?line=`; a diagram
 takes `?detail=` ([explore](#explore)); `?run=` selects a run under Developer. Every

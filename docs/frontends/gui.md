@@ -1495,6 +1495,9 @@ from the graph's mentions, quotes, and section tree.
   it (in Read), a link with an anchor scrolls to the heading, a link into the out
   directory opens the generated page or the diagram, and an external link opens a
   new tab. A link to a document the project does not hold says so in place.
+- A document opens where it was left while the page lives: its cursor, its
+  selection, and its scroll come back when its editor mounts again (a board window
+  going live again, a tab reopened).
 - The editor scrolls past the last line by its own height, so text that comes or
   goes near the end (an answered question's band, an edit landing from elsewhere)
   never pulls the view.
@@ -1581,9 +1584,10 @@ the same workspace seen two ways: switching keeps the open items, the focused on
 and back and forward.
 
 - Every item has two bars: its title bar (the tab, or a window's title bar) with the
-  glyph, the title, and the close or the pin, and under it the item's own bar: a
-  document's editor bar (path, unsaved mark, `Read`/`Write`/`Diff`, save state), any
-  other item's path. The second bar ends with the switch: `⤡` (collapse into the
+  glyph, the title, and the close (and on the Board the pin), and under it the
+  item's own bar: a document's editor bar (path, unsaved mark, `Read`/`Write`/`Diff`,
+  save state), a product file's or a generated page's viewer bar, or for any other
+  page its kind and what it names. A page never shows a third bar. The second bar ends with the switch: `⤡` (collapse into the
   Board) in Tabs, `⤢` (expand into Tabs) on the Board. It shows the other
   arrangement with that item focused. The arrangement is remembered per browser.
 - History: every focus is a step in the browser's history, so back and forward walk
@@ -1599,7 +1603,8 @@ and back and forward.
   title and a kind. An item renders against its own path, so any page shows in a tab
   or a board window as it does in the center. Each kind has its own glyph and color
   on its tab, its window's whole border and bars, its cards, and its row in the
-  project tree: a
+  project tree, and its pattern (below) on its tab and its window's title bar at
+  every zoom: a
   document, a product file, a test, a generated page, a project file, an entity, a
   requirement, a diagram, and the app's pages (Inbox, History, Settings, the
   Developer pages). Every button on a tab or a bar (a close, a pin, the switch) is

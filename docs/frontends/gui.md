@@ -244,7 +244,7 @@ Facts:
 
 - `POST /api/facts/{id}/edit` with `{field, value, note?, proposal?}`: edit one fact
   through the graph, the [edit paths](../compiler/compilation.md#edit-paths) the
-  inspector uses. `id` is a node id; `field` is a field of it (`definition`, an
+  node pages use. `id` is a node id; `field` is a field of it (`definition`, an
   attribute value, `statement`, an edge's `type` or `cardinality`, `transition`, a
   view's `members`).
   - A quote-provenanced fact without `proposal`: nothing commits. The server asks the
@@ -468,8 +468,8 @@ The GUI is the product's front door: a hosted or local editor for the people who
 the documents and the product they describe. The compiler's machinery (goals, cones,
 tiers, batches, leases, releases, sessions, GC, the verdict) stays behind one
 [Developer toggle](#developer-toggle). The default mode speaks the product words in
-the [vocabulary](#vocabulary) table, organizes the workspace around three
-[lenses](#lenses) over one graph, and gathers every request the compiler makes of a
+the [vocabulary](#vocabulary) table, organizes the [workspace](#workspace) as open items over one
+graph, and gathers every request the compiler makes of a
 human into one [Inbox](#inbox).
 
 Who it serves:
@@ -554,8 +554,7 @@ beside the product word wherever both apply.
 
 ### Presentation
 
-A page reads without knowing jazyk. Four rules hold on every page and in the
-inspector:
+A page reads without knowing jazyk. Four rules hold on every page:
 
 - Names and sentences, never ids. An entity shows as its name, a requirement as its
   statement, a criterion as its statement, a document reference as the file name and
@@ -695,7 +694,7 @@ its settings are written.
 - `Write jazyk.toml` writes the file through `PUT /api/settings`. In a tab the write
   goes where every change goes: into the folder in writing mode, held with the other
   changes in read-only mode until the folder is switched to writing, so a look at a
-  folder never leaves a file behind. The documents lens then opens with what the
+  folder never leaves a file behind. The documents then open with what the
   glob matched, and the [action button](#the-action-button) runs the first build,
   with its plan visible and an estimate beside it on a server.
 - It names the shape it detected: "documents only", "documents and product", or
@@ -760,18 +759,16 @@ its root, its shape, and its status summary; the server keeps the list in
 
 ## Layout
 
-One workspace page. Navigation swaps panes, never the page. Five regions:
+One workspace page. Navigation opens and focuses items, never replaces the page. Four
+regions:
 
-- The top bar: the [project menu](#the-project-menu), the three lenses as tabs
-  (Docs, Model, Product), Inbox with its count, History, the command palette, the
-  action button, and settings.
-- The navigator: the left column, the active lens's navigation.
-- The center: the open item. The editor, a model page, a product page, the Inbox, a
-  History diff, the settings form.
-- The inspector: the detail pane beside the center, never replacing it. Selecting a
-  node anywhere (a sentence marker, a diagram box, a list row, an id chip, a code
-  lens) shows its detail here. Closable (its close button, or Escape outside a text
-  field); the center keeps its state under it. On a narrow screen it is a drawer.
+- The top bar: the [project menu](#the-project-menu), Inbox with its count, History,
+  the Developer menu while the [toggle](#developer-toggle) is on, the command
+  palette, the action button, and settings.
+- The navigator: the left column, one for the whole project (see
+  [workspace](#workspace)).
+- The center: the open items, as [Tabs or a Board](#workspace): documents in the
+  editor, model pages, product pages, the Inbox, a History diff, the settings form.
 - The chat column: the far right, collapsible to a strip with an unread mark. See
   [chat](#chat).
 
@@ -783,13 +780,12 @@ counts ride beside it, because a project can be up to date with open errors stan
 
 There is no bottom activity panel. Its control line is the action button, its build
 progress is the chat column's build thread, and its run console is the Developer
-lens's [Runs](#runs).
+page [Runs](#runs).
 
 On a narrow screen (a phone, 760 pixels wide or less) the center takes the width.
 The navigator is a drawer opened from a menu button at the left of the top bar and
-closed by any navigation, the inspector is a drawer over the center shown only while
-a node is selected, the chat column is hidden, the editor's preview stacks under the
-text, and the top bar and the status bar scroll sideways.
+closed by any navigation, one item shows at a time, the chat column is hidden, and
+the top bar and the status bar scroll sideways.
 
 Until a project is open, the top bar shows only the project menu and every route
 but Home redirects to Home. A connected server always has one open; the browser
@@ -800,8 +796,8 @@ Addressable state: `/docs/<path>` (a document in the editor), `/model/<section>`
 `/model/<section>/<id>` (entities, requirements, criteria, diagrams, relations,
 states), `/product/<section>` and `/product/files/<path>` (files, trace, tests,
 not-described, generated, form), `/inbox/<section>`, `/history/<generation>`,
-`/settings`, and `/dev/<section>` under the Developer lens. `?node=` holds the
-inspector selection; a document takes `?section=` and `?quote=` to reveal and
+`/settings`, and `/dev/<section>` for the Developer pages. `?node=` opens the node's
+page as an item; a document takes `?section=` and `?quote=` to reveal and
 highlight a quote; a product file takes `?site=<requirement>` or `?line=`; a diagram
 takes `?detail=` ([explore](#explore)); `?run=` selects a run under Developer. Every
 URL the previous layout served (`/files/*`, `/graph`, `/board`, `/work`, `/journal/*`,
@@ -847,12 +843,13 @@ popover what the backend cannot run with the reason, Document (decompile) with i
 area from the [not described](#not-described) list, `Preview prompt` (the
 [preview pane](#preview) on the next batch), and the mode switches.
 
-## Lenses
+## Pages
 
-Three navigators over one graph. Selecting anything shows the same card in the
-inspector and highlights its linkage in every visible lens: a document tints the
-product files its requirements bind to and the entities it defines; a product file
-tints the documents its requirements anchor in; an entity tints its mentions.
+What each kind of item shows, by the part of the project it belongs to: the
+documents, the model, the product. Every page opens as an item in the
+[workspace](#workspace), a tab or a board window, and the navigator reaches the
+documents and the product; the model's pages open from mentions, markers, diagram
+boxes, and search.
 
 ### Docs
 
@@ -890,7 +887,7 @@ position as much as a table of contents.
 
 The center is the [editor](#editor), in Read or Write.
 
-The inspector for a section: its read state, the requirements extracted from it with
+The page for a section: its read state, the requirements extracted from it with
 their statements, the entities it defines, its problems, and what the last build did
 here.
 
@@ -954,7 +951,7 @@ The center is a page per selection:
 - The criteria page: the given, when, and then of each criterion, its kind, its
   measure, and its binding.
 
-Every id in a page opens the inspector; the page never changes under it.
+Every id in a page opens that node's page as an item beside it.
 
 #### Explore
 
@@ -999,7 +996,7 @@ The navigator has seven sections:
 
 #### Overview
 
-The lens opens on the product itself, served by `GET /api/product/overview`. What it
+The product overview opens on the product itself, served by `GET /api/product/overview`. What it
 shows follows what the product is:
 
 - A written product reads as one document: the novel's manuscript, the organization's
@@ -1055,7 +1052,7 @@ A product file opens read-only in the center:
 
 - Every resolved [site](../consumers/gen.md#traceability) shows as a code lens above
   its line (the requirement id and trace status). Clicking it opens the requirement
-  in the inspector and highlights the sentence in the Docs lens. Lost sites are
+  on its page and highlights the sentence in its document. Lost sites are
   flagged.
 - The viewer diffs against the file's baseline from the last generate run
   (`GET /api/deliverable/baseline`): gutter marks on the lines that run changed,
@@ -1102,7 +1099,7 @@ preview depends on the tree the file lives in:
   other file under the out directory opens as read-only text, a `.png` as the image,
   and a `.svg` inline with its links live. A diagram's links stay in the app
   wherever the diagram shows: a box's link to its entity card
-  (`docsgen/entities/<slug>.md`) opens the entity in the inspector, a level link
+  (`docsgen/entities/<slug>.md`) opens the entity's page, a level link
   opens that level's view, and a link to another generated page opens it.
 - A source document opens in Write or Read by the [editor](#editor)'s one toggle;
   Read is this rendering in the editor's place, never a pane beside it.
@@ -1206,7 +1203,7 @@ list here too, graded by their severity.
 ### Problems
 
 Open diagnostics by severity, the rollup's `problems` ids: the rule, the message, the
-reasoning, the subjects (each a jump: a node opens the inspector, a section opens the
+reasoning, the subjects (each a jump: a node opens its page, a section opens the
 editor), and the triage actions (Seen, Hidden, Won't fix, posted to
 `POST /api/diagnostics/{id}/triage`). A triage action shows its pending state, then
 the new state; a refusal shows inline. Hidden items sit behind a filter and never
@@ -1312,7 +1309,7 @@ The column's behaviors:
   toggle. The [Developer toggle](#developer-toggle) expands every payload, the rounds, the
   tokens, and the loaded-set panel: the [loaded set](../compiler/context.md#the-loaded-set)
   as the serving renders it, re-rendered on every mutating tool reply, each item
-  opening in the inspector.
+  opening its page.
 - [Slash commands](./acp.md#slash-commands): the same catalog the IDE proxy
   advertises, completed in the prompt box. A build command runs through the job
   queue and streams into a build thread.
@@ -1351,9 +1348,9 @@ travel as `chat.update` events, elided like `job.trace`; permission requests as
 
 ## Inspector
 
-The detail pane for one node, opened from anywhere, layered over nothing. It shows
-the same layout as the node's page ([entity page, requirement page](#model)), narrower,
-under the same [presentation](#presentation) rules. What each kind carries:
+There is no inspector pane: a node opened from anywhere opens as its own item, its
+page ([entity page, requirement page](#model)) under the same
+[presentation](#presentation) rules. What each kind's page carries:
 
 - An entity: name, definition, scope, stereotype, parent (opens it) and children,
   attributes (each with its provenance), mentions (each opens the editor at the
@@ -1386,18 +1383,18 @@ under the same [presentation](#presentation) rules. What each kind carries:
   node's YAML.
 
 Justification walks. Every rendered element walks to the sentence behind it, and the
-inspector is the walk ([justification closure](../compiler/compilation.md#checks)):
+node pages are the walk ([justification closure](../compiler/compilation.md#checks)):
 an arrow opens its relation, the relation lists its contributing requirements, each
 requirement shows its sentence, and the sentence opens the editor at the quote. A
 walk that reaches an Inferred or Your edit fact ends on its open proposal instead of
 a quote, with the upstream nodes beside it.
 
-Editing facts. Fields in the inspector are editable in place: a definition, an
+Editing facts. Fields on a node's page are editable in place: a definition, an
 attribute value, a statement, an edge's type or cardinality, a transition, a
 diagram's members. Saving goes through `POST /api/facts/{id}/edit`, the
 [edit paths](../compiler/compilation.md#edit-paths):
 
-- A Quoted fact: the inspector shows the proposed sentence rewrite as a diff of the
+- A Quoted fact: the page shows the proposed sentence rewrite as a diff of the
   sentence in its document. Accepting commits the dual write (the graph mutation and
   the prose replacement in one changeset, the document not re-dirtied); the open
   editor on that document updates in place. Declining lands the edit as Your edit
@@ -1406,7 +1403,7 @@ diagram's members. Saving goes through `POST /api/facts/{id}/edit`, the
   The proposal appears in the [Inbox](#proposals) at once.
 - A default diagram: any edit clears its `default` mark and the recompute leaves it
   alone from that commit on ([default views](../compiler/model/view.md#default-views));
-  the inspector says so before the save and offers no delete while `default` is set.
+  the page says so before the save and offers no delete while `default` is set.
 
 ## Editor
 
@@ -1428,13 +1425,13 @@ from the graph's mentions, quotes, and section tree.
   is rewritten by rendering.
 - Requirement sentences carry a marker in the left margin colored by their rollup:
   extracted only, verified, failing, stale, question open. Clicking the marker opens
-  the requirement in the inspector. The marker replaces the code lens as the default
+  the requirement's page. The marker replaces the code lens as the default
   rendering; the lens returns under the Developer toggle.
 - Entity mentions are underlined so what is clickable is discoverable; hover shows
   the card. In Write a plain click places the cursor, as on any text, and the caret
   marks what it rests on: the entity of a mention, and every requirement whose quote
-  holds it (the [board](#the-board) shows them); Cmd-click (Ctrl-click off macOS) opens the entity: the inspector in
-  Lenses, a tab in Tabs, a window beside the document on the Board. In Read, where
+  holds it (the [board](#the-board) shows them); Cmd-click (Ctrl-click off macOS) opens the entity: a tab in Tabs, a window
+  beside the document on the Board. In Read, where
   there is no cursor, a click opens it. A mention is every occurrence of an entity's
   name (or an alias the graph records) in the text, matched case-insensitively on
   word boundaries, in Read and in Write alike, on a server and in a tab: the graph's
@@ -1552,7 +1549,7 @@ empty board.
 `GET /api/workers` reports the control plane: the modes, the registered
 [workers](../compiler/control-plane.md#workers-and-leases) with their heartbeats and
 held batches, the live leases, and the gated goal counts. The action button's tooltip names who
-will run ("claude-code agent, waiting for you"), and the Developer lens's
+will run ("claude-code agent, waiting for you"), and the Developer
 [Workers](#workers-1) page renders the whole snapshot. The click dispatches by the
 `worker` preference ([dispatch](../compiler/control-plane.md#dispatch)): with an agent
 registered and preferred, the click records the release and the agent claims the
@@ -1561,12 +1558,21 @@ streaming into a build thread from the MCP transcript and onto the board from th
 commits; otherwise the GUI runs its own job. `POST /api/release` with `{stage}`
 records a release without running anything.
 
-## Workspace (experimental)
+## Workspace
 
-A switch in Settings, `Workspace: Lenses | Tabs | Board`, remembered per browser and
-`Lenses` by default, tries the layout [plans/workspace.md](../../plans/workspace.md)
-proposes. The other two replace the lenses; the owner picks the default after using
-both.
+The open items in one of two arrangements, Tabs (the default) and Board, over one set
+of items and one history ([plans/workspace.md](../../plans/workspace.md)). Both are
+the same workspace seen two ways: switching keeps the open items, the focused one,
+and back and forward.
+
+- The switch is a button left of each item's close: `Board` (collapse) on a tab,
+  `Tabs` (expand) on a board window. It shows the other arrangement with that item
+  focused. The arrangement is remembered per browser.
+- History: every focus is a step in the browser's history, so back and forward walk
+  the items in the order they were shown, in either arrangement. Closing the focused
+  item is a back: the item that was shown before it comes to the front (skipping
+  steps that belonged to the closed item). Closing an item that is not focused
+  leaves the focus where it is.
 
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab
@@ -1575,7 +1581,7 @@ both.
   Product (`Overview`, the file tree, `Trace`, `Tests`), Diagrams and Generated
   (collapsed). There is no Model head; entities and requirements open from mentions
   (Cmd-click), markers, diagram boxes, and search.
-- There is no [inspector](#inspector) and no side panel. A node opened from a page
+- There is no side panel. A node opened from a page
   (a mention, a marker, a diagram box, a search result) opens as its own item: a tab
   in Tabs, a window on the Board, where the board itself draws its connections.
 - Tabs: editor groups with tabs, split right or down from a tab's menu or by dragging
@@ -1593,7 +1599,11 @@ both.
 - A table top, white with light dots (dark with dim dots on the dark theme), that
   pans with the wheel, a drag, or Space and a drag, and zooms with a pinch or Ctrl
   and the wheel. Every open item is a window with a title bar to drag, a resize
-  corner, and a close; a press in a window focuses its item without moving the board.
+  corner, and a close. A press in a window that is not focused, or not wholly in
+  view, focuses it the way a click on its bar does, at any zoom; a press in the
+  focused window wholly in view moves nothing. The browser's own page zoom (Ctrl and
+  the wheel or a pinch outside the board's handling, Cmd or Ctrl with `+`, `-`, `0`)
+  is off while the Board shows: the keys zoom the board instead.
 - A document window has one bar: its glyph and path, the unsaved mark, the `Read`,
   `Write`, `Diff` switch, the save state (or `save`), and the close. The bar drags
   the window, and a click on it (not a drag) focuses it.
@@ -1695,12 +1705,13 @@ stretch (or folded into its lone portal, or as a reference):
 One switch in the status bar (also `⌘⇧D`), remembered per browser, off by default.
 `jazyk gui --dev` starts with it on. When on:
 
-- The Developer lens appears in the top bar with the pages below.
+- The Developer menu appears in the top bar with the pages below, each opening as
+  an item.
 - The [action button](#the-action-button)'s list shows every action, the ones the
   backend cannot run with the reason, plus Document (decompile) with its area,
   `Preview prompt`, and the mode switches.
 - Compiler words appear beside product words in labels and in the status bar.
-- The inspector gains goal cards, change records, and the `Raw` tab.
+- Node pages gain goal cards, change records, and the `Raw` tab.
 - The chat expands tool payloads, rounds, tokens, and the loaded-set panel.
 - The editor shows the requirement code lenses beside the markers.
 - The status bar adds the event-stream sequence, the store lock state, and the last
@@ -1741,10 +1752,10 @@ same board `jazyk status` counts, whichever process runs the build.
   while both show, and the line lights as the `goal.opened` event fires. The board is
   the ripple, live.
 - A card click opens the build thread holding the goal in the chat column when a
-  session holds it; otherwise it opens the goal in the inspector with its explanation
+  session holds it; otherwise it opens the goal's page with its explanation
   (`GET /api/explain?target=`).
 - Card actions: `preview` opens the [preview pane](#preview) on the batch this goal
-  would join; `explain` and `ripple` open the inspector; a blocked `answer` card jumps
+  would join; `explain` and `ripple` open a page; a blocked `answer` card jumps
   to its question in the [Inbox](#questions), a blocked `ratify` card to its
   [proposal](#proposals); a `split-view` or `abstract-entity` card offers `dismiss`,
   which stages [`bump_limit`](../compiler/graph.md#mutations) on the node (through
@@ -1791,7 +1802,7 @@ The run console: a run is one job plus what it committed.
   inline in order, each expandable to its mutations and reasoning, its resolved goals
   with their justifications, and the goals it opened with their causes.
 - The whole-build report: one click opens the run's ripple
-  (`GET /api/ripple?generation=` at the run's first generation) in the inspector: the
+  (`GET /api/ripple?generation=` at the run's first generation) on a page: the
   causality DAG, the cost beside it, and the parked and failed goals with reasons.
 
 ### Preview
@@ -1846,7 +1857,7 @@ under `<out>/diagrams/`:
   every relationship touching a hidden descendant lifts to the parent: one arrow per
   direction and type, promoted to the strongest type in the group, with a count label
   ([lifting and collapse](../compiler/diagrams.md#lifting-and-collapse)). Clicking a
-  lifted arrow lists the concrete edges beneath it in the inspector. Lifting is
+  lifted arrow lists the concrete edges beneath it on its page. Lifting is
   computed on the server by the same code the emitters use, so the map and the
   rendered picture never disagree.
 - Views as overlays: `?view=` draws that view's membership and nothing else, the
@@ -1896,7 +1907,7 @@ not for the project's authors; nothing here is a statement about the documents.
 ## Empty states and failure
 
 - Every panel has an empty state that says what fills it and offers the action: a
-  project with no build yet offers Build; a Product lens with no product folder offers
+  project with no build yet offers Build; a product page with no product folder offers
   the settings; an Inbox with nothing waiting says so.
 - A slow backend shows a skeleton for at most two seconds, then a banner naming the
   request still pending. A read that another process blocks (the store busy under a

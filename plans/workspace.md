@@ -1,6 +1,6 @@
 # Plan: one workspace instead of three lenses
 
-Status: proposal with an experimental build behind a switch. Written 2026-09-30. The
+Status: shipped as the layout; the lenses are gone. Written 2026-09-30. The
 shipped layout stays the default until the owner picks. The docs-first rule applies:
 [gui.md#workspace-experimental](../docs/frontends/gui.md#workspace-experimental) states
 what the switch turns on before the code does.
@@ -182,7 +182,12 @@ requirement's line highlights its quote in the document, a button beside it open
 it. Read, Write, and Diff are one switch for every document, and a document window
 on the board has one bar.
 
-gui.md#the-board states the rules as built.
+A fifth pass: the lenses go. Tabs is the default, the Board one button away on
+each item (collapse on a tab, expand on a window), over one set of items and one
+history: closing the focused item is a back. The browser's page zoom is off while
+the Board shows, and a press in any window focuses it fully.
+
+gui.md#workspace and gui.md#the-board state the rules as built.
 
 ## Open questions for the owner
 

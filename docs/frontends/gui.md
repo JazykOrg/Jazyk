@@ -1655,7 +1655,7 @@ both.
   - near 100 percent the windows are live pages (at most six live at once, the ones
     nearest the view's center among those in view);
   - from 40 to 80 percent stills (the page as it was last drawn live, else its Read
-    form) a click zooms to;
+    form) a click zooms to, each link carrying its verb only, no requirement lines;
   - from 15 to 40 percent cards: a title, a kind, a few lines, and a status;
   - under 15 percent titles: each window only its title, sized to read on screen,
     the links and portals kept, the linkage and the references hidden.
@@ -1671,7 +1671,8 @@ stretch (or folded into its lone portal, or as a reference):
 
 - A head: the relationship's verb (or `defines`, `mentions`, `names`, `opened
   from`), or the portal's or the reference's title.
-- Two lines of the requirements behind the link, one statement per line cut to fit,
+- Near 100 percent only (from stills outward the card is its head alone): two lines
+  of the requirements behind the link, one statement per line cut to fit,
   then a line `N more` that expands the card to all of them. One card is expanded
   at a time, so expanding one folds the one before. The requirements behind a link:
   - between two entities, the requirements of the relationship's contributions in

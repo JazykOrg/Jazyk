@@ -53,8 +53,8 @@
 }
 
 .bw.focused {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), var(--board-shadow);
+  border-color: var(--k, var(--line));
+  box-shadow: 0 0 0 1px var(--k, var(--line)), var(--board-shadow);
 }
 
 .bw-title {
@@ -274,7 +274,7 @@
   pointer-events: auto;
   display: flex;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel);
   color: var(--ink);
@@ -600,7 +600,7 @@
   display: flex;
   flex-direction: column;
   padding: 0 0 4px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
@@ -799,7 +799,7 @@
 
 /* A window's kind: its color on the top edge and the glyph. */
 .bw[class*='k-'] {
-  border-top: 3px solid var(--k);
+  border: 2px solid color-mix(in srgb, var(--k) 55%, var(--panel));
 }
 
 .bw[class*='k-'] .bw-glyph {
@@ -864,8 +864,7 @@
   flex-direction: column;
   gap: 3px;
   padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-top: 3px solid var(--k, var(--accent));
+  border: 2px solid color-mix(in srgb, var(--k, var(--line)) 55%, var(--panel));
   border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
@@ -1010,38 +1009,110 @@
 }
 
 .bw.floating.focused {
-  box-shadow: 0 0 0 1px var(--accent), 0 28px 64px rgba(20, 30, 25, 0.36), 0 8px 18px rgba(20, 30, 25, 0.22);
+  box-shadow: 0 0 0 1px var(--k), 0 28px 64px rgba(20, 30, 25, 0.36), 0 8px 18px rgba(20, 30, 25, 0.22);
 }
 
 .bw.pinned {
-  border: 1px solid var(--line);
-  border-top: 3px solid var(--k);
+  border: 2px solid color-mix(in srgb, var(--k) 55%, var(--panel));
   box-shadow: 0 1px 2px rgba(20, 30, 25, 0.1);
 }
 
 .bw.pinned.focused {
-  border-color: var(--accent);
-  border-top-color: var(--k);
-  box-shadow: 0 0 0 1px var(--accent), 0 1px 2px rgba(20, 30, 25, 0.1);
+  border-color: var(--k);
+  box-shadow: 0 0 0 1px var(--k), 0 1px 2px rgba(20, 30, 25, 0.1);
 }
 
 .react-flow.dark .bw.floating {
   box-shadow: 0 22px 48px rgba(0, 0, 0, 0.6), 0 6px 14px rgba(0, 0, 0, 0.45);
 }
 
-/* Zoomed out (cards, titles): each window tinted with its kind's color and bordered
-   thick in it, so the kinds stand out from far away; dashed while unpinned. The
-   border is in board pixels, so it grows as the zoom falls. */
+/* Zoomed out (cards, titles): each window carries its kind as a pattern as well as
+   a color, so kinds read apart without telling colors apart: a white ground, a faint
+   pattern in the kind's color, a thick light border; dashed while unpinned. Sizes
+   are in board pixels, so the titles level draws them larger. */
 .bw.lv-card,
 .bw.lv-title {
-  background: color-mix(in srgb, var(--k) 14%, var(--panel));
-  border: 8px solid color-mix(in srgb, var(--k) 75%, var(--panel));
+  --pat: color-mix(in srgb, var(--k) 22%, transparent);
+  --s: 22px;
+  background-color: var(--panel);
+  border: 6px solid color-mix(in srgb, var(--k) 45%, var(--panel));
   box-shadow: none;
   transform: none;
 }
 
 .bw.lv-title {
-  border-width: 18px;
+  --s: 90px;
+  border-width: 16px;
+}
+
+/* Ruled lines: a document. */
+.bw.k-doc.lv-card,
+.bw.k-doc.lv-title {
+  background-image: repeating-linear-gradient(0deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+/* A grid: a product file. */
+.bw.k-file.lv-card,
+.bw.k-file.lv-title {
+  background-image:
+    linear-gradient(var(--pat) calc(var(--s) * 0.07), transparent calc(var(--s) * 0.07)),
+    linear-gradient(90deg, var(--pat) calc(var(--s) * 0.07), transparent calc(var(--s) * 0.07));
+  background-size: calc(var(--s) * 0.7) calc(var(--s) * 0.7);
+}
+
+/* Small dots: a test. */
+.bw.k-test.lv-card,
+.bw.k-test.lv-title {
+  background-image: radial-gradient(var(--pat) calc(var(--s) * 0.08), transparent calc(var(--s) * 0.1));
+  background-size: calc(var(--s) * 0.45) calc(var(--s) * 0.45);
+}
+
+/* Rising diagonals: a generated page. */
+.bw.k-generated.lv-card,
+.bw.k-generated.lv-title {
+  background-image: repeating-linear-gradient(45deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+/* Short dashes: a project file. */
+.bw.k-project.lv-card,
+.bw.k-project.lv-title {
+  background-image: linear-gradient(90deg, var(--pat) calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08));
+  background-size: calc(var(--s) * 0.6) calc(var(--s) * 0.6);
+  background-position: 0 0;
+  -webkit-mask-image: none;
+}
+
+/* Large dots: an entity. */
+.bw.k-entity.lv-card,
+.bw.k-entity.lv-title {
+  background-image: radial-gradient(var(--pat) calc(var(--s) * 0.18), transparent calc(var(--s) * 0.2));
+  background-size: var(--s) var(--s);
+}
+
+/* Falling diagonals: a requirement. */
+.bw.k-requirement.lv-card,
+.bw.k-requirement.lv-title {
+  background-image: repeating-linear-gradient(-45deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
+}
+
+/* A cross-hatch: a diagram. */
+.bw.k-diagram.lv-card,
+.bw.k-diagram.lv-title {
+  background-image:
+    repeating-linear-gradient(45deg, var(--pat) 0 calc(var(--s) * 0.06), transparent calc(var(--s) * 0.06) calc(var(--s) * 0.5)),
+    repeating-linear-gradient(-45deg, var(--pat) 0 calc(var(--s) * 0.06), transparent calc(var(--s) * 0.06) calc(var(--s) * 0.5));
+}
+
+/* Upright lines: an app page. */
+.bw.k-product.lv-card,
+.bw.k-product.lv-title,
+.bw.k-inbox.lv-card,
+.bw.k-inbox.lv-title,
+.bw.k-history.lv-card,
+.bw.k-history.lv-title,
+.bw.k-other.lv-card,
+.bw.k-other.lv-title {
+  background-image: repeating-linear-gradient(90deg, var(--pat) 0 calc(var(--s) * 0.08), transparent calc(var(--s) * 0.08) calc(var(--s) * 0.5));
 }
 
 .bw.floating.lv-card,
@@ -1051,8 +1122,16 @@
 
 .bw.focused.lv-card,
 .bw.focused.lv-title {
-  border-color: var(--k);
-  background: color-mix(in srgb, var(--k) 22%, var(--panel));
+  --pat: color-mix(in srgb, var(--k) 32%, transparent);
+  border-color: color-mix(in srgb, var(--k) 70%, var(--panel));
+}
+
+/* The words stay readable over the pattern: a white backing that hugs them. */
+.bw.lv-card .bw-card > *,
+.bw.lv-title .bw-titletext {
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border-radius: 6px;
+  padding: 0 0.2em;
 }
 
 .bw.lv-title .bw-titleonly,

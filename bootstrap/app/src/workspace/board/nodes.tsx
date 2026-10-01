@@ -315,7 +315,9 @@ function TitleBody({ path, title }: { path: string; title: string }) {
   const size = 14 / Math.max(zoom, 0.01)
   return (
     <div className="bw-titleonly" style={{ fontSize: size }}>
-      <span className="bw-glyph">{KINDS[itemKind(path)].glyph}</span> {title}
+      <span className="bw-titletext">
+        <span className="bw-glyph">{KINDS[itemKind(path)].glyph}</span> {title}
+      </span>
     </div>
   )
 }

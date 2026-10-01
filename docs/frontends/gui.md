@@ -1757,6 +1757,9 @@ and back and forward.
   - from 40 to 80 percent stills (the page as it was last drawn live, else its Read
     form) a click zooms to, each link carrying its verb only, no requirement lines;
   - from 15 to 40 percent cards: a title, a kind, a few lines, and a status;
+    from here outward a window's background is a light tint of its kind's color
+    and its border a thick line in that color (dashed while unpinned), so each kind
+    stands out from far away;
   - under 15 percent titles: each window only its title, sized to read on screen,
     the links and portals kept, the linkage and the references hidden.
 - A click on a window's bar (not a drag) focuses the window. A click on the empty

@@ -434,7 +434,7 @@ export function ProjectExplorer() {
           placeholder="name.md"
           actions={docActions}
           actionsFor={isDocPath}
-          createIn={[...docRoots][0] ?? ''}
+          alwaysFolders={[...docRoots]}
           badges={(f) => {
             const d = docInfo.get(f.path)
             if (!d) return null

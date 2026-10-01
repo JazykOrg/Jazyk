@@ -46,9 +46,9 @@ interface Props<T extends { path: string }> {
   folderBadge?: (dir: string) => ReactNode
   // Which folders and files the actions (create, rename, delete) apply to.
   actionsFor?: (path: string) => boolean
-  // A head above the tree with New document and New folder, creating in this
-  // folder ('' for the top), made when it does not exist yet.
-  createIn?: string
+  // Folders shown even when nothing is in them yet (the documents folder of a
+  // project just set up); the first file made in one makes it.
+  alwaysFolders?: string[]
 }
 
 function InlineInput({
@@ -100,7 +100,7 @@ type Edit = { mode: 'create' | 'folder'; dir: string } | { mode: 'rename'; path:
 const CONFIRM_MS = 4000
 
 export default function FileTree<T extends { path: string }>(props: Props<T>) {
-  const { head: headProp, projectKey, items, current, hrefFor, dim, related, badges, onHover, nameClass, actions: allActions, placeholder, defaultClosed, fileClass, fileGlyph, folderClass, folderBadge, actionsFor, createIn } = props
+  const { head: headProp, projectKey, items, current, hrefFor, dim, related, badges, onHover, nameClass, actions: allActions, placeholder, defaultClosed, fileClass, fileGlyph, folderClass, folderBadge, actionsFor, alwaysFolders } = props
   // With folders closed by default, the remembered set is the opened folders.
   const head = defaultClosed ? `${headProp}#open` : headProp
   const navigate = useNavigate()
@@ -117,7 +117,8 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
   const confirmTimer = useRef<number | null>(null)
   const rowRefs = useRef(new Map<string, HTMLDivElement>())
 
-  const nodes = useMemo(() => buildTree(items, phantoms), [items, phantoms])
+  const always = useMemo(() => (alwaysFolders ?? []).filter((d) => d && !items.some((it) => it.path.startsWith(`${d}/`))), [alwaysFolders, items])
+  const nodes = useMemo(() => buildTree(items, [...always, ...phantoms]), [items, phantoms, always])
   // A phantom folder that got its first file is a real one now.
   useEffect(() => {
     setPhantoms((ps) => {
@@ -488,29 +489,8 @@ data-path={f.path}
     )
   }
 
-  // The head's actions: the folder is made (a phantom until it holds a file) when
-  // it does not exist yet.
-  const headCreate = (folder: boolean) => {
-    if (createIn === undefined) return
-    if (createIn && !nodes.some((n) => n.path === createIn) && !items.some((it) => it.path.startsWith(`${createIn}/`))) {
-      setPhantoms((ps) => (ps.includes(createIn) ? ps : [...ps, createIn]))
-    }
-    if (folder) startFolder(createIn)
-    else startCreate(createIn)
-  }
-
   return (
     <div className="ft" role="tree" onKeyDown={onKeyDown}>
-      {createIn !== undefined && actions && (
-        <div className="ft-head">
-          <button className="ft-head-btn" onClick={() => headCreate(false)} title={`New document in ${createIn || 'the project'}`}>
-            + document
-          </button>
-          <button className="ft-head-btn" onClick={() => headCreate(true)} title={`New folder in ${createIn || 'the project'}`}>
-            + folder
-          </button>
-        </div>
-      )}
       {editRow('', 0)}
       {rows.map(renderRow)}
       {err && <p className="error-inline ft-err">{err}</p>}

@@ -308,8 +308,9 @@ test('a read-only folder opens its documents in Read, a writing folder in Write'
 })
 
 // An empty folder reached in the workspace shows the wizard there, and once set up
-// the tree's head starts the first document (docs/frontends/gui.md#the-setup-wizard).
-test('an empty folder shows the wizard in the workspace, and the tree starts its first document', async ({ page }) => {
+// its documents folder, shown before it exists, starts the first document
+// (docs/frontends/gui.md#the-setup-wizard).
+test('an empty folder shows the wizard in the workspace, and its documents folder starts the first document', async ({ page }) => {
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory()
     await root.removeEntry('empty', { recursive: true }).catch(() => {})
@@ -325,7 +326,12 @@ test('an empty folder shows the wizard in the workspace, and the tree starts its
   await page.getByRole('button', { name: 'Write jazyk.toml' }).click()
   await expect(page.locator('.wsw-items .wizard')).toHaveCount(0)
   await expect(page.locator('.wsn .ft-file[data-path="jazyk.toml"]')).toBeVisible()
-  await page.locator('.wsn .ft-head').getByRole('button', { name: '+ document' }).click()
+  // The documents folder shows before it exists, with its own actions.
+  const docs = page.locator('.wsn .ft-dir[data-path="docs"]')
+  await expect(docs).toBeVisible()
+  await expect(page.locator('.wsn .ft-head')).toHaveCount(0)
+  await docs.hover()
+  await docs.getByRole('button', { name: 'New document in docs' }).click()
   const input = page.locator('.wsn .ft-input')
   await expect(input).toBeFocused()
   await input.fill('intro')

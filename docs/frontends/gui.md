@@ -771,8 +771,8 @@ its root, its shape, and its status summary; the server keeps the list in
 One workspace page. Navigation opens and focuses items, never replaces the page. Four
 regions:
 
-- The top bar: the [project menu](#the-project-menu), Inbox with its count, History,
-  Product (the [product overview](#overview)),
+- The top bar: the [project menu](#the-project-menu), Product (the
+  [product overview](#overview)),
   the Developer menu while the [toggle](#developer-toggle) is on, the command
   palette, the action button, and settings.
 - The navigator: the left column, one for the whole project (see
@@ -1636,7 +1636,11 @@ and back and forward.
     its kind's glyph and color, and a document its read state and problem marks.
   - A click opens the file as its kind opens: a document in the editor, a product
     file in the product file viewer, a generated page rendered, any other file as
-    text, read only.
+    text, read only. A file the app has a page for opens that page: `jazyk.toml`
+    the [settings](#settings), a journal entry (`<out>/journal/g<N>.yaml`) its build
+    in [History](#history), `<out>/status.yaml` History, and the diagnostics shard
+    the [Inbox](#inbox). The Inbox and History open from these rows and from the
+    status bar (the waiting count, the build state, the problem counts).
 - There is no side panel. A node opened from a page
   (a mention, a marker, a diagram box, a search result) opens as its own item: a tab
   in Tabs, a window on the Board, where the board itself draws its connections.
@@ -1696,8 +1700,8 @@ and back and forward.
   links show (below). The view stays free: a pan or a zoom moves away from the focus, and a
   click on a window's bar returns to it.
 - References: when the caret in the focused document window rests on something
-  the graph knows, the entities it concerns that are not open show below the
-  window, transient: the entity of the mention under the caret, and the entities of
+  the graph knows, the entities it concerns show below the window, transient, open
+  or not (a click on an open one's title focuses its window): the entity of the mention under the caret, and the entities of
   every requirement whose quote holds the caret. Lines leave the window's bottom
   center and fan down to a row of reference cards, left to right in order, the row
   centered under the window, as many as fit; the rest are gone until the caret
@@ -1706,7 +1710,7 @@ and back and forward.
   [linkage](#the-linkage) between the document and the entity, titled by the
   entity; a click on the title opens the entity beside the document and focuses it,
   and from then on it stays on the board until it is closed. Without room below
-  the window, the row sits along the view's bottom edge without lines. What a window
+  the window, the row sits just above the window's links bar without lines. What a window
   brings, for its links:
   - a document: the entities it defines (an entity is defined in the document of its
     quote, else of its first mention) and the ones it mentions;

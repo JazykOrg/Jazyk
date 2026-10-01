@@ -57,19 +57,10 @@ import {
 import { nodeTypes, type BoardNode, type WindowData } from './nodes'
 import { Links, type NodeName } from './links'
 import { References, type Reference } from './references'
+import { LinkCards } from './linksbar'
+import { KINDS } from '../kinds'
 import { useRuntime } from './runtime'
 
-const GLYPH: Record<ReturnType<typeof itemKind>, string> = {
-  doc: '¶',
-  product: '▣',
-  generated: '⎘',
-  entity: '◆',
-  requirement: '✓',
-  diagram: '◇',
-  inbox: '✉',
-  history: '↺',
-  other: '▢',
-}
 
 // The project the items belong to: the shell loads it; a board mounted alone
 // loads it the way the shell does.
@@ -385,7 +376,7 @@ function BoardCanvas({ project }: { project: string | null }) {
         const id = canonical(g, nodeOf(it.path))
         name = g.entities[id]?.name ?? g.requirements[id]?.statement ?? g.views[id]?.title ?? name
       }
-      m.set(windowId(it.path), { glyph: GLYPH[kind], name: shorten(name, 40) })
+      m.set(windowId(it.path), { glyph: KINDS[kind].glyph, name: shorten(name, 40) })
     }
     return m
   }, [items, g])
@@ -504,6 +495,18 @@ function BoardCanvas({ project }: { project: string | null }) {
     [actions],
   )
 
+  // A card under a window's links bar opens its item beside that window and focuses
+  // it; the cards go.
+  const shownGroup = useRuntime((s) => s.shown)
+  const openFromCards = useCallback(
+    (path: string) => {
+      const from = useRuntime.getState().shown?.path
+      useRuntime.getState().hideGroup()
+      actions.open(path, from ? { from } : {})
+    },
+    [actions],
+  )
+
   // A reference's title opens its entity beside the focused document and focuses
   // it; the entity stays on the board until it is closed.
   const openReference = useCallback(
@@ -516,9 +519,11 @@ function BoardCanvas({ project }: { project: string | null }) {
 
   // A requirement's line reveals its quote in its document: in the window holding
   // that document (focused), else in the document opened beside the focused window.
+  const graphRef = useRef(g)
+  graphRef.current = g
   const reveal = useCallback(
     (rid: string) => {
-      const r = g?.requirements[rid]
+      const r = graphRef.current?.requirements[rid]
       const doc = r?.source?.doc ?? r?.provenance?.quote?.doc
       const quote = r?.source?.quote ?? r?.provenance?.quote?.quote
       if (!doc || !quote) {
@@ -530,8 +535,9 @@ function BoardCanvas({ project }: { project: string | null }) {
       if (win) actions.go(windowId(win.path))
       else actions.open(`/docs/${doc}`, { from: useWorkspace.getState().focused ?? undefined })
     },
-    [g, actions],
+    [actions],
   )
+  const windowActions = useMemo<BoardActions>(() => ({ ...actions, reveal }), [actions, reveal])
 
   const openRequirementFromRef = useCallback(
     (rid: string) => actions.open(`/model/requirements/${encodeURIComponent(rid)}`, { from: useWorkspace.getState().focused ?? undefined }),
@@ -670,7 +676,7 @@ function BoardCanvas({ project }: { project: string | null }) {
 
   const colorMode = theme === 'auto' ? 'system' : theme
   return (
-    <BoardActionsContext.Provider value={actions}>
+    <BoardActionsContext.Provider value={windowActions}>
       <ReactFlow<BoardNode, BoardEdgeType>
         nodes={nodes}
         edges={edges}
@@ -701,7 +707,8 @@ function BoardCanvas({ project }: { project: string | null }) {
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.6} />
         {mapOn && <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />}
         <Links edges={drawn} rects={rects} names={names} level={level} hotEdge={hot.edge} hotReqs={hotReqs} onGo={actions.go} onReveal={reveal} onOpenRequirement={openRequirement} />
-        {focusedItem && refs.length > 0 && saved.windows[itemKey(focusedItem.path)] && (
+        {shownGroup && saved.windows[itemKey(shownGroup.path)] && <LinkCards win={saved.windows[itemKey(shownGroup.path)]} onOpen={openFromCards} />}
+        {!shownGroup && focusedItem && refs.length > 0 && saved.windows[itemKey(focusedItem.path)] && (
           <References
             key={itemKey(focusedItem.path)}
             win={saved.windows[itemKey(focusedItem.path)]}

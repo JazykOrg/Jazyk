@@ -83,24 +83,27 @@ test('opening two documents puts two windows on the board, each its page', async
   await zoomTo(page, FRONTEND)
   await expect(win(page, FRONTEND).locator('.cm-content')).toBeVisible()
   // Closing a window closes its item.
-  await win(page, FRONTEND).getByRole('button', { name: /^Close/ }).click()
+  await win(page, FRONTEND).getByRole('button', { name: /^close /i }).click()
   await expect(win(page, FRONTEND)).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
-test('a document window has one bar, and a click on the empty table top fits everything', async ({ page }) => {
+test('a document window has two bars, and a click on the empty table top fits everything', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)
   await zoomTo(page, BACKEND)
-  const bar = win(page, BACKEND).locator('.bw-title')
-  await expect(bar).toContainText('docs/backend.md')
+  // The title bar: the path and the close; the editor's bar under it: the switch, the save state, the expand.
+  const title = win(page, BACKEND).locator('.bw-title')
+  await expect(title).toContainText('docs/backend.md')
+  await expect(title.getByRole('button', { name: /^close /i })).toBeVisible()
+  const bar = win(page, BACKEND).locator('.ide-topbar')
   await expect(bar.locator('.ide-mode').getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
   await expect(bar).toContainText('saved')
-  await expect(win(page, BACKEND).locator('.ide-topbar')).toHaveCount(0)
+  await expect(bar.getByRole('button', { name: 'Expand into Tabs' })).toBeVisible()
   // The switch turns every document.
   await bar.locator('.ide-mode').getByRole('button', { name: 'Read' }).click()
   await expect(win(page, BACKEND).locator('.md-read')).toBeVisible()
-  await bar.locator('.ide-mode').getByRole('button', { name: 'Write' }).click()
+  await win(page, BACKEND).locator('.ide-topbar .ide-mode').getByRole('button', { name: 'Write' }).click()
   await expect(win(page, BACKEND).locator('.cm-content')).toBeVisible()
   // Nothing shows below the document until the caret rests on something.
   await expect(page.locator('.board-refs')).toHaveCount(0)
@@ -197,9 +200,49 @@ test('closing the focused window goes back to the one shown before it, and a pre
   expect(after.x + after.width).toBeLessThan(board.x + board.width)
   // Closing the focused window is a back: frontend.md was shown before.
   await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
-  await win(page, BACKEND).getByRole('button', { name: /^Close/ }).click()
+  await win(page, BACKEND).getByRole('button', { name: /^close /i }).click()
   await expect(page).toHaveURL(/#\/docs\/docs\/frontend\.md$/)
   await expect(win(page, FRONTEND).locator('.bw')).toHaveClass(/focused/)
+})
+
+test('the links bar groups what a window links to; hovering shows them as cards and a card opens and focuses its item', async ({ page }) => {
+  await openBoard(page)
+  await openDoc(page, 'backend.md', BACKEND)
+  await zoomTo(page, BACKEND)
+  const bar = win(page, BACKEND).locator('.bw-links')
+  // A document's other documents come first.
+  await expect(bar.locator('.bw-link-group').first()).toHaveClass(/k-doc/)
+  await bar.locator('.bw-link-group.k-entity').hover()
+  const cards = page.locator('.board-cards .bl-mini[data-path^="/model/entities/"]')
+  await expect(cards.first()).toBeVisible()
+  const target = await cards.first().getAttribute('data-path')
+  await cards.first().click()
+  await expect(page).toHaveURL(new RegExp(`#${target!.replace(/[.%]/g, (c) => `\\${c}`)}$`))
+  await expect(win(page, target!)).toBeAttached()
+  await expect(page.locator('.board-cards')).toHaveCount(0)
+})
+
+test('a press and a drag on a zoomed-out window moves it without focusing in', async ({ page }) => {
+  await openBoard(page)
+  await openDoc(page, 'backend.md', BACKEND)
+  await zoomTo(page, BACKEND)
+  await blur(page)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.board-zoom')).toContainText('stills')
+  await settle(page)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.board-zoom')).toContainText('cards')
+  await settle(page)
+  const before = await position(page, BACKEND)
+  const box = (await win(page, BACKEND).boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 40, { steps: 8 })
+  await page.mouse.up()
+  await settle(page)
+  // Still zoomed out, the window moved.
+  await expect(page.locator('.board-zoom')).toContainText('cards')
+  expect(await position(page, BACKEND)).not.toEqual(before)
 })
 
 test('zooming out to titles keeps every window where it is and draws only its title', async ({ page }) => {

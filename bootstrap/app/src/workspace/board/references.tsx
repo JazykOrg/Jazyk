@@ -8,7 +8,8 @@ import { memo, useMemo } from 'react'
 import { useStore } from '@xyflow/react'
 import { layoutFan, type Rect } from './model'
 import { useRuntime } from './runtime'
-import LinkCard, { CARD_W, cardHeight } from './card'
+import LinkCard, { cardBox } from './card'
+import { useGraph } from '../../lib/queries'
 
 const INSET = 10
 
@@ -44,20 +45,21 @@ export const References = memo(function References({
   const width = useStore((s) => s.width)
   const height = useStore((s) => s.height)
   const expanded = useRuntime((s) => s.expanded)
+  const { data: g } = useGraph()
 
   const fan = useMemo(() => {
     if (width < 50 || height < 50 || refs.length === 0) return null
     const view: Rect = { x: INSET, y: INSET, w: width - 2 * INSET, h: height - 2 * INSET }
     const r: Rect = { x: win.x * zoom + tx, y: win.y * zoom + ty, w: win.w * zoom, h: win.h * zoom }
     if (r.x > view.x + view.w || r.x + r.w < view.x || r.y > view.y + view.h || r.y + r.h < view.y) return null
-    const h = Math.max(...refs.map((x) => cardHeight(x.reqs.length, expanded === refCardId(x.entity))))
+    const boxes = refs.map((x) => cardBox(x.reqs.map((id) => g?.requirements[id]?.statement ?? id), expanded === refCardId(x.entity)))
     return layoutFan(
       r,
-      refs.map(() => CARD_W),
+      boxes.map((b) => b.w),
       view,
-      h,
+      Math.max(...boxes.map((b) => b.h)),
     )
-  }, [win, refs, tx, ty, zoom, width, height, expanded])
+  }, [win, refs, tx, ty, zoom, width, height, expanded, g])
 
   if (!fan) return null
   return (

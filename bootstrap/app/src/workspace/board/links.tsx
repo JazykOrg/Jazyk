@@ -5,10 +5,11 @@
 // part, between its portals; with one end out of view it folds into that end's
 // portal. Its requirement lines show only near 100 percent.
 import { memo, useMemo } from 'react'
-import { useStore } from '@xyflow/react'
+import { EdgeLabelRenderer, useStore } from '@xyflow/react'
+import { useGraph } from '../../lib/queries'
 import { avoid, clampBox, fitMargin, linkOnScreen, sideOf, visiblePieces, type LayerEdge, type Level, type Point, type Rect } from './model'
 import { useRuntime } from './runtime'
-import LinkCard, { CARD_W, cardHeight } from './card'
+import LinkCard, { cardBox } from './card'
 
 export interface NodeName {
   glyph: string
@@ -72,6 +73,8 @@ export const Links = memo(function Links({
   const width = useStore((s) => s.width)
   const height = useStore((s) => s.height)
   const expanded = useRuntime((s) => s.expanded)
+  const { data: g } = useGraph()
+  const texts = (e: LayerEdge) => e.reqs.map((id) => g?.requirements[id]?.statement ?? id)
   // The requirement lines show only near 100 percent; farther out a link carries
   // its verb alone.
   const withReqs = level === 'live'
@@ -122,7 +125,8 @@ export const Links = memo(function Links({
         let box: Rect
         let narrow = false
         if (card) {
-          box = clampBox(point, CARD_W, cardHeight(e.reqs.length, expanded === e.id), view)
+          const b = cardBox(texts(e), expanded === e.id)
+          box = clampBox(point, b.w, b.h, view)
         } else {
           box = clampBox(point, portalWidth(name.name), PORTAL_H, view)
           const fitted = fitMargin(box, coverRects, view, MIN_W)
@@ -141,17 +145,24 @@ export const Links = memo(function Links({
     }
     for (const { edge, at } of labels) {
       const n = reqsOf(edge)
-      let box = n > 0 ? clampBox(at, CARD_W, cardHeight(n, expanded === edge.id), view) : clampBox(at, verbWidth(edge.label), 22, view)
+      const b = cardBox(texts(edge), expanded === edge.id)
+      let box = n > 0 ? clampBox(at, b.w, b.h, view) : clampBox(at, verbWidth(edge.label), 22, view)
       if (n === 0) box = fitMargin(box, coverRects, view, 40)
       box = avoid(box, boxes, view)
       boxes.push(box)
       out.push({ kind: 'label', key: `l:${edge.id}`, edge, box })
     }
     return out
-  }, [edges, rects, names, level, withReqs, tx, ty, zoom, width, height, expanded])
+  }, [edges, rects, names, level, withReqs, tx, ty, zoom, width, height, expanded, g])
 
+  // Drawn in the viewport's edge-label layer, beneath the windows, with the
+  // viewport's transform undone so the boxes stay in screen pixels.
   return (
-    <div className="board-links">
+    <EdgeLabelRenderer>
+    <div
+      className="board-links"
+      style={{ width, height, transform: `translate(${-tx / zoom}px, ${-ty / zoom}px) scale(${1 / zoom})` }}
+    >
       {placed.map((p) => {
         const hot = p.edge.id === hotEdge
         if (p.kind === 'portal') {
@@ -160,13 +171,13 @@ export const Links = memo(function Links({
           const head = <PortalHead name={p.name} angle={p.angle} onGo={() => onGo(p.node)} />
           if (p.card) {
             return (
-              <div key={p.key} className={`bl-portal lc${hot ? ' hot' : ''}`} style={{ ...pos, maxHeight: p.box.h }} data-node={p.node} data-edge={p.edge.id}>
+              <div key={p.key} className={`bl-portal lc nodrag nopan${hot ? ' hot' : ''}`} style={{ ...pos, maxHeight: p.box.h }} data-node={p.node} data-edge={p.edge.id}>
                 <LinkCard id={p.edge.id} head={head} reqs={p.edge.reqs} hotReqs={hotReqs} onReveal={onReveal} onOpenRequirement={(rid) => onOpenRequirement(rid, p.edge)} />
               </div>
             )
           }
           return (
-            <div key={p.key} className={`bl-portal${hot ? ' hot' : ''}${p.narrow ? ' narrow' : ''}`} style={{ ...pos, height: p.box.h }} data-node={p.node}>
+            <div key={p.key} className={`bl-portal nodrag nopan${hot ? ' hot' : ''}${p.narrow ? ' narrow' : ''}`} style={{ ...pos, height: p.box.h }} data-node={p.node}>
               {head}
             </div>
           )
@@ -175,7 +186,7 @@ export const Links = memo(function Links({
         return (
           <div
             key={p.key}
-            className={`bl-label${n > 0 ? ' lc' : ''} bl-${p.edge.kind}${hot ? ' hot' : ''}`}
+            className={`bl-label nodrag nopan${n > 0 ? ' lc' : ''} bl-${p.edge.kind}${hot ? ' hot' : ''}`}
             style={{ left: p.box.x, top: p.box.y, width: p.box.w, maxHeight: p.box.h }}
             data-edge={p.edge.id}
           >
@@ -190,5 +201,6 @@ export const Links = memo(function Links({
         )
       })}
     </div>
+    </EdgeLabelRenderer>
   )
 })

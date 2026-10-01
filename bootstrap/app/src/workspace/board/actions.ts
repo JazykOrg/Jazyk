@@ -13,6 +13,8 @@ export interface BoardActions {
   resize: (path: string, rect: { x: number; y: number; w: number; h: number }) => void
   // A press in a window; `move` false for a press on its bar.
   focus: (path: string, move?: boolean) => void
+  // A requirement's line: its quote revealed in its document.
+  reveal?: (rid: string) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)

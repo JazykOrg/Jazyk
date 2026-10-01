@@ -107,13 +107,6 @@ export interface Caret {
   reqs: string[]
 }
 
-export interface DocStatus {
-  dirty: boolean
-  autosave: boolean
-  error?: string
-  conflict: boolean
-  canDiff: boolean
-}
 
 // A change the editor did not make, marked in the text until it fades
 // (docs/frontends/gui.md#editor): located by the text that landed (an applied
@@ -176,10 +169,6 @@ interface AppStore {
   // Read, Write, or Diff for every document at once, the last choice for the
   // session; null is the default for the open folder (docs/frontends/gui.md#editor).
   docMode: DocMode | null
-  // What each open document's editor reports for a bar it does not draw itself (a
-  // board window's): unsaved changes, saving on its own, an error, a conflict, and
-  // whether it has a baseline to diff against.
-  docStatus: Record<string, DocStatus>
   // Where the reader is in the open document: the line holding the cursor in
   // Write, the top of the view in Read. The outline follows it
   // (docs/frontends/gui.md#docs).
@@ -263,7 +252,6 @@ interface AppStore {
   setActivityOpen: (v: boolean) => void
   setEditorDirty: (v: boolean) => void
   setDocMode: (mode: DocMode) => void
-  setDocStatus: (doc: string, status: DocStatus | null) => void
   setEditorLine: (doc: string, line: number) => void
   setCaret: (doc: string, entity: string | null, reqs: string[]) => void
   setReveal: (doc: string, quote: string) => void
@@ -297,7 +285,6 @@ export const useApp = create<AppStore>((set, get) => ({
   activityOpen: readPref('jazyk-activity') === 'open',
   editorDirty: false,
   docMode: null,
-  docStatus: {},
   editorLine: null,
   caret: null,
   reveal: null,
@@ -389,19 +376,6 @@ export const useApp = create<AppStore>((set, get) => ({
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
   setDocMode: (mode) => set((s) => (s.docMode === mode ? s : { docMode: mode })),
-  setDocStatus: (doc, status) =>
-    set((s) => {
-      const had = s.docStatus[doc]
-      if (!status) {
-        if (!had) return s
-        const next = { ...s.docStatus }
-        delete next[doc]
-        return { docStatus: next }
-      }
-      if (had && had.dirty === status.dirty && had.autosave === status.autosave && had.error === status.error && had.conflict === status.conflict && had.canDiff === status.canDiff)
-        return s
-      return { docStatus: { ...s.docStatus, [doc]: status } }
-    }),
   setReveal: (doc, quote) => set((s) => ({ reveal: { doc, quote, n: (s.reveal?.n ?? 0) + 1 } })),
   takeReveal: (n) => set((s) => (s.reveal?.n === n ? { reveal: null } : s)),
   setCaret: (doc, entity, reqs) =>

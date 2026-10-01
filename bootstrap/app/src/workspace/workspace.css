@@ -175,9 +175,37 @@
   flex-shrink: 0;
 }
 
-.wst-icon.k-entity,
-.wst-icon.k-requirement {
-  color: var(--accent);
+/* One color per kind of item (docs/frontends/gui.md#workspace): its tab's glyph,
+   its window's top edge and glyph, its cards. */
+:root {
+  --k-doc: #2f6fd0;
+  --k-file: #7a52c7;
+  --k-test: #b8432f;
+  --k-generated: #6b7a78;
+  --k-product: #3d8a5a;
+  --k-entity: #0e7a6d;
+  --k-requirement: #c27417;
+  --k-diagram: #1f8f9c;
+  --k-inbox: #a8731c;
+  --k-history: #6b7a78;
+  --k-other: #6b7a78;
+}
+
+.k-doc { --k: var(--k-doc); }
+.k-file { --k: var(--k-file); }
+.k-test { --k: var(--k-test); }
+.k-generated { --k: var(--k-generated); }
+.k-product { --k: var(--k-product); }
+.k-entity { --k: var(--k-entity); }
+.k-requirement { --k: var(--k-requirement); }
+.k-diagram { --k: var(--k-diagram); }
+.k-inbox { --k: var(--k-inbox); }
+.k-history { --k: var(--k-history); }
+.k-other { --k: var(--k-other); }
+
+.wst-icon[class*='k-'] {
+  color: var(--k);
+  font-weight: 700;
 }
 
 .wst-close,
@@ -350,4 +378,63 @@
   border-bottom: 1px solid var(--line);
   padding-bottom: 6px;
   margin-bottom: 4px;
+}
+
+/* An item's second bar (any page but a document, whose editor draws its own). */
+.ws-bar2 {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 12px;
+  min-height: 28px;
+}
+
+.ws-bar2-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+/* The switch between Tabs and the Board, at the end of the second bar. */
+.ws-arrange-btn {
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 4px;
+  width: 26px;
+  height: 22px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ws-arrange-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A transient item's pin, in place of a close. */
+.wst-close.pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  visibility: visible;
+  opacity: 0.55;
+}
+
+.wst-close.pin.on {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.wst-tab.transient:not(.pinned) .wst-title {
+  font-style: italic;
 }

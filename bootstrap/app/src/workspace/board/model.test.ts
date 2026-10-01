@@ -5,6 +5,8 @@ import {
   clampBox,
   caretEntities,
   layoutFan,
+  linkGroups,
+  linkedDocs,
   windowEntities,
   fitMargin,
   visiblePieces,
@@ -176,6 +178,27 @@ describe('references', () => {
     expect(f.anchor).toBeNull()
     expect(f.more).toBe(0)
     expect(f.slots[0].box.y + f.slots[0].box.h).toBeLessThanOrEqual(800)
+  })
+})
+
+describe('the links bar', () => {
+  it('reads a document’s links against its folder, keeping the ones the project holds', () => {
+    const known = new Set(['docs/main.md', 'docs/sub/inventory.md', 'docs/backend.md'])
+    expect(linkedDocs('docs/backend.md', 'See [inv](sub/inventory.md#ops), [main](./main.md), [x](http://a.md), [gone](nope.md).', known)).toEqual(['docs/sub/inventory.md', 'docs/main.md'])
+    expect(linkedDocs('docs/sub/inventory.md', '[back](../backend.md)', known)).toEqual(['docs/backend.md'])
+  })
+  it('groups a document’s links with documents first, an entity’s with entities first', () => {
+    const doc = linkGroups(G, '/docs/docs/backend.md', ['docs/main.md'])
+    expect(doc.map((x) => x.kind)).toEqual(['doc', 'entity', 'requirement'])
+    expect(doc[0].paths).toContain('/docs/docs/main.md')
+    // backend.md defines Inventory Management, which sub/inventory.md mentions too.
+    expect(doc[0].paths).toContain('/docs/docs/sub/inventory.md')
+    expect(doc[2].paths).toEqual(['/model/requirements/req%3Aholds'])
+    const ent = linkGroups(G, '/model/entities/ent%3Ainventory')
+    expect(ent[0].kind).toBe('entity')
+    // Its parent, then its neighbours.
+    expect(ent[0].paths).toEqual(['/model/entities/ent%3Abackend', '/model/entities/ent%3Aproduct'])
+    expect(ent.find((x) => x.kind === 'requirement')!.paths.length).toBe(2)
   })
 })
 

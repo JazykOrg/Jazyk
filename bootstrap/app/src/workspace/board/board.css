@@ -258,11 +258,14 @@
 }
 
 /* The portals and the linkage, in screen space over the board. */
+/* In the viewport's edge-label layer, beneath the windows; the inline transform
+   undoes the viewport's, so the children sit in screen pixels. */
 .board-links {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
   pointer-events: none;
-  z-index: 5;
   overflow: hidden;
 }
 
@@ -497,14 +500,6 @@
   color: var(--ink);
 }
 
-.bwe-counts {
-  margin-top: auto;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
 
 .bwe-link {
   border: 0;
@@ -781,4 +776,206 @@
 
 .bw-saved {
   font-size: 12px;
+}
+
+/* An expanded card shows every statement whole, wrapping. */
+.lc-reqs.open li {
+  height: auto;
+  min-height: 20px;
+  align-items: flex-start;
+  padding: 2px 0;
+}
+
+.lc-reqs.open .lc-req {
+  white-space: normal;
+  text-overflow: clip;
+  line-height: 1.3;
+  font-size: 11.5px;
+}
+
+.lc-reqs.open {
+  max-height: 340px;
+}
+
+/* A window's kind: its color on the top edge and the glyph. */
+.bw[class*='k-'] {
+  border-top: 3px solid var(--k);
+}
+
+.bw[class*='k-'] .bw-glyph {
+  color: var(--k);
+}
+
+/* The links bar at a window's foot. */
+.bw-links {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  cursor: default;
+}
+
+.bw-link-group {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 1px 9px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.bw-link-group .bw-link-glyph {
+  color: var(--k);
+}
+
+.bw-link-group:hover,
+.bw-link-group.on {
+  border-color: var(--k);
+  background: color-mix(in srgb, var(--k) 10%, var(--panel));
+}
+
+.bw-link-group.pinned {
+  box-shadow: 0 0 0 1px var(--k);
+}
+
+/* The cards a shown group lays out below its window. */
+.board-cards {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  overflow: hidden;
+}
+
+.bl-mini-slot {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.bl-mini {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--k, var(--accent));
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--board-shadow);
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.bl-mini:hover {
+  border-color: var(--k, var(--accent));
+}
+
+.bl-mini-kind {
+  font-size: 11px;
+  color: var(--k, var(--accent));
+}
+
+.bl-mini-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.bl-mini-line {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bl-more {
+  position: absolute;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.bf-list {
+  position: absolute;
+  pointer-events: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 280px;
+  min-width: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--board-shadow);
+}
+
+.bf-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.bf-list button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.bw-close.pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bwe-sect h3 {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.bwe-sect p {
+  margin: 0;
+}
+
+.bwe-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.bwe-reqs {
+  max-height: none;
+  border-top: 0;
+}
+
+.bwe-alone {
+  color: var(--muted);
+  font-size: 11px;
 }

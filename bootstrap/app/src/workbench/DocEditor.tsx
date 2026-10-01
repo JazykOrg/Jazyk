@@ -12,7 +12,8 @@ import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useGraph, useMatrix, useProject } from '../lib/queries'
 import { useInlineBands, useReqMarks } from '../ide/overlays'
 import { useApp } from '../lib/store'
-import DocModeSwitch, { useDocMode, useEmbeddedBar } from '../components/DocModeSwitch'
+import DocModeSwitch, { useDocMode } from '../components/DocModeSwitch'
+import { ArrangeButton } from '../workspace/ItemControls'
 import { useCapabilities } from '../lib/capabilities'
 import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
@@ -66,7 +67,6 @@ export default function DocEditor() {
   // opened read-only reads; everything else writes (docs/frontends/gui.md#editor).
   const mode = useDocMode()
   const reading = mode === 'read'
-  const embedded = useEmbeddedBar()
   const mdRef = useRef<MarkdownViewHandle>(null)
   // Where the reader is, for the outline: the cursor's line in Write, the top of
   // the view in Read, a beat behind the movement.
@@ -574,23 +574,6 @@ export default function DocEditor() {
   const baseline = baselineQ.data ? baselineQ.data.text : baselineQ.data === null ? null : undefined
   const hasBaseline = baseline !== null && baseline !== undefined
 
-  // In a frame that draws the bar (a board window), the bar's state goes to the
-  // store and the bar's save comes back as an event.
-  const setDocStatus = useApp((a) => a.setDocStatus)
-  useEffect(() => {
-    if (!embedded || !docPath) return
-    setDocStatus(docPath, { dirty, autosave, error: saveErr ?? undefined, conflict, canDiff: hasBaseline })
-  }, [embedded, docPath, dirty, autosave, saveErr, conflict, hasBaseline, setDocStatus])
-  useEffect(() => () => setDocStatus(docPath, null), [docPath, setDocStatus])
-  useEffect(() => {
-    if (!embedded) return
-    const onSave = (e: Event) => {
-      if ((e as CustomEvent<string>).detail === docPath) void save()
-    }
-    window.addEventListener('jazyk:save-doc', onSave)
-    return () => window.removeEventListener('jazyk:save-doc', onSave)
-  }, [embedded, docPath, save])
-
   // A requirement's line on the board reveals its quote here: the caret moves to
   // it in Write, the view scrolls to it in Read (docs/frontends/gui.md#the-linkage).
   const pendingReveal = useApp((a) => a.reveal)
@@ -618,7 +601,7 @@ export default function DocEditor() {
 
   return (
     <>
-      {!embedded && (
+      {(
         <div className="ide-topbar">
           <span className="mono">{loaded.path}</span>
           {dirty && (
@@ -639,6 +622,7 @@ export default function DocEditor() {
                 save
               </button>
             )}
+            <ArrangeButton />
           </div>
         </div>
       )}

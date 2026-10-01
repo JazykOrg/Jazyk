@@ -39,6 +39,8 @@ export function nodePagePath(id: string): string | null {
   if (id.startsWith('ent:')) return `/model/entities/${enc}`
   if (id.startsWith('req:')) return `/model/requirements/${enc}`
   if (id.startsWith('view:')) return `/model/diagrams/${enc}`
+  // A state machine's page is its state diagram (one per machine, derived).
+  if (id.startsWith('sm:')) return `/model/diagrams/${encodeURIComponent(`view:state/${id.slice(3)}`)}`
   if (id.startsWith('diag:')) return '/inbox'
   return null
 }

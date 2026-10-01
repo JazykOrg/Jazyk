@@ -12,12 +12,19 @@ interface Runtime {
   setLevel: (level: Level) => void
   setLive: (live: string[]) => void
   toggleLink: (id: string) => void
+  // The links-bar group whose cards show below its window; pinned by a click.
+  shown: { path: string; kind: string; pinned: boolean } | null
+  showGroup: (path: string, kind: string, pinned: boolean) => void
+  hideGroup: () => void
 }
 
 export const useRuntime = create<Runtime>((set, get) => ({
   level: 'live',
   live: [],
   expanded: null,
+  shown: null,
+  showGroup: (path, kind, pinned) => set({ shown: { path, kind, pinned } }),
+  hideGroup: () => set({ shown: null }),
   // One linkage expanded at a time: expanding one folds the one before.
   toggleLink: (id) => set((s) => ({ expanded: s.expanded === id ? null : id })),
   setLevel: (level) => {

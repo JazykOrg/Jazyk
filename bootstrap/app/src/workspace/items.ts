@@ -14,8 +14,37 @@ export interface Item {
   // A preview tab: replaced by the next single-click open, kept by an edit or a pin.
   preview?: boolean
   // The item it was opened from, so the board can place it beside that one and draw
-  // an edge between them.
+  // an edge between them; an unpinned item holds the one it came from.
   from?: string
+  // A transient item (not a file) kept whether or not it is held.
+  pinned?: boolean
+}
+
+const FILE_KINDS = new Set(['doc', 'file', 'test', 'generated'])
+
+// A file stays open until closed; any other item is transient.
+export function isFileItem(path: string): boolean {
+  return FILE_KINDS.has(itemKind(path))
+}
+
+// The items still open after the focus moves (docs/frontends/gui.md#workspace): every
+// file, every pinned item, and the items the focus holds. The focused item holds
+// itself, and an unpinned transient item holds the item it was opened from, on back
+// until a file or a pinned item. With nothing focused, everything stays.
+export function prune(items: Item[], focused: string | null): Item[] {
+  if (!focused) return items
+  const byKey = new Map(items.map((i) => [i.path.split(/[?#]/)[0], i]))
+  const held = new Set<string>()
+  let cur = byKey.get(focused.split(/[?#]/)[0])
+  while (cur) {
+    const key = cur.path.split(/[?#]/)[0]
+    if (held.has(key)) break
+    held.add(key)
+    if (isFileItem(cur.path) || cur.pinned || !cur.from) break
+    cur = byKey.get(cur.from.split(/[?#]/)[0])
+  }
+  const next = items.filter((i) => isFileItem(i.path) || i.pinned || held.has(i.path.split(/[?#]/)[0]))
+  return next.length === items.length ? items : next
 }
 
 const ARRANGEMENT_KEY = 'jazyk.workspace'
@@ -51,6 +80,8 @@ interface WorkspaceState {
   closeItem: (path: string, opts?: { viaBack?: boolean }) => void
   focusItem: (path: string) => void
   pinItem: (path: string) => void
+  // Pin or unpin a transient item; an unpinned one no longer held closes.
+  togglePin: (path: string) => void
   select: (node: string | null) => void
 }
 
@@ -98,7 +129,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         // a corrupt entry reads as none
       }
     }
-    set({ project, items, focused, selected: null })
+    set({ project, items: prune(items, focused), focused, selected: null })
   },
   // Opening an open item focuses it. A preview open replaces the current preview
   // item; any other open adds the item after the focused one. A background open
@@ -120,6 +151,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       next = items.map((i) => (i.path === path ? { ...i, preview: false } : i))
     }
     const nextFocus = opts.background ? focused : path
+    next = prune(next, nextFocus)
     set({ items: next, focused: nextFocus })
     save(project, next, nextFocus)
   },
@@ -135,12 +167,22 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   focusItem: (path) => {
     const { items, project } = get()
     if (!items.some((i) => i.path === path)) return
-    set({ focused: path })
-    save(project, items, path)
+    const next = prune(items, path)
+    set({ items: next, focused: path })
+    save(project, next, path)
   },
   pinItem: (path) => {
     const { items, focused, project } = get()
-    const next = items.map((i) => (i.path === path ? { ...i, preview: false } : i))
+    const next = items.map((i) => (i.path === path ? { ...i, preview: false, pinned: isFileItem(i.path) ? i.pinned : true } : i))
+    set({ items: next })
+    save(project, next, focused)
+  },
+  togglePin: (path) => {
+    const { items, focused, project } = get()
+    const next = prune(
+      items.map((i) => (i.path === path && !isFileItem(i.path) ? { ...i, pinned: !i.pinned } : i)),
+      focused,
+    )
     set({ items: next })
     save(project, next, focused)
   },
@@ -159,11 +201,19 @@ export function itemTitle(path: string): string {
   return last || 'Home'
 }
 
-// The kind an item's path names, for its icon.
-export function itemKind(path: string): 'doc' | 'product' | 'generated' | 'entity' | 'requirement' | 'diagram' | 'inbox' | 'history' | 'other' {
+// The kind an item's path names, for its glyph, its color, and whether it is a file
+// (kinds.ts). A product file under a tests folder, or named `.test` or `.spec`, is a
+// test.
+export type ItemKind = 'doc' | 'file' | 'test' | 'generated' | 'product' | 'entity' | 'requirement' | 'diagram' | 'inbox' | 'history' | 'other'
+
+export function itemKind(path: string): ItemKind {
   const p = path.split('?')[0]
   if (p.startsWith('/docs/')) return 'doc'
   if (p.startsWith('/product/generated/')) return 'generated'
+  if (p.startsWith('/product/files/')) {
+    const f = decodeURIComponent(p.slice('/product/files/'.length))
+    return /(^|\/)(tests?|spec|__tests__)\//.test(f) || /\.(test|spec)\.[a-z0-9]+$/i.test(f) ? 'test' : 'file'
+  }
   if (p.startsWith('/product')) return 'product'
   if (p.startsWith('/model/entities/')) return 'entity'
   if (p.startsWith('/model/requirements/')) return 'requirement'

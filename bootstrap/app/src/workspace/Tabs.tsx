@@ -4,7 +4,7 @@
 // its own path. The layout (groups, splits, sizes) is remembered per project beside
 // the items; a hidden tab stays mounted only while it is among the few most recently
 // shown.
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create } from 'zustand'
 import {
   DockviewReact,
@@ -21,8 +21,10 @@ import {
 import 'dockview-react/dist/styles/dockview.css'
 import AppRoutes from '../routes/AppRoutes'
 import { useNodeName } from '../lib/present'
-import { itemKind, itemTitle, useWorkspace, type Item } from './items'
+import { isFileItem, itemKind, itemTitle, useWorkspace, type Item } from './items'
 import { itemKey, touchRecent } from './paths'
+import { KINDS } from './kinds'
+import { ArrangeContext, CloseOrPin, ItemBar } from './ItemControls'
 import { closePath, pinPath } from './actions'
 
 // At most this many tabs stay mounted; the rest render when shown again.
@@ -54,17 +56,6 @@ function writeLayout(project: string | null, api: DockviewApi) {
   }
 }
 
-const KIND_ICON: Record<ReturnType<typeof itemKind>, string> = {
-  doc: '¶',
-  product: '▤',
-  generated: '▦',
-  entity: '◆',
-  requirement: '≡',
-  diagram: '◇',
-  inbox: '✉',
-  history: '↺',
-  other: '·',
-}
 
 // The title a tab shows: a model node by its name, a page by its last segment.
 export function useItemTitle(path: string): string {
@@ -86,7 +77,7 @@ function ItemTab({ api, params }: IDockviewPanelHeaderProps<{ path: string }>) {
   const kind = itemKind(path)
   return (
     <div
-      className={`wst-tab${item?.preview ? ' preview' : ''}`}
+      className={`wst-tab k-${kind}${item?.preview ? ' preview' : ''}${isFileItem(path) ? '' : ' transient'}${item?.pinned ? ' pinned' : ''}`}
       data-path={itemKey(path)}
       title={itemKey(path)}
       onDoubleClick={() => pinPath(path)}
@@ -99,32 +90,10 @@ function ItemTab({ api, params }: IDockviewPanelHeaderProps<{ path: string }>) {
       }}
     >
       <span className={`wst-icon k-${kind}`} aria-hidden="true">
-        {KIND_ICON[kind]}
+        {KINDS[kind].glyph}
       </span>
       <span className="wst-title">{title}</span>
-      <button
-        className="wst-arrange"
-        aria-label={`show ${title} on the Board`}
-        title="Collapse into the Board"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation()
-          useWorkspace.getState().setArrangement('board', path)
-        }}
-      >
-        ⤡
-      </button>
-      <button
-        className="wst-close"
-        aria-label={`close ${title}`}
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation()
-          api.close()
-        }}
-      >
-        ×
-      </button>
+      <CloseOrPin className="wst-close" path={path} title={title} onClose={() => api.close()} />
     </div>
   )
 }
@@ -139,9 +108,14 @@ function ItemPanel({ api, params }: IDockviewPanelProps<{ path: string }>) {
     return () => d.dispose()
   }, [api])
   const path = item?.path ?? params.path
+  const arrange = useMemo(() => ({ path, to: 'board' as const }), [path])
   return (
-    <div className="wst-item" data-item={key}>
-      {visible || recent ? <AppRoutes location={path} /> : null}
+    <div className={`wst-item k-${itemKind(path)}`} data-item={key}>
+      <ArrangeContext.Provider value={arrange}>
+        {/* A document's second bar is its editor's; any other page gets this one. */}
+        {itemKind(path) !== 'doc' && <ItemBar path={path} />}
+        {visible || recent ? <AppRoutes location={path} /> : null}
+      </ArrangeContext.Provider>
     </div>
   )
 }
@@ -355,7 +329,7 @@ export function NarrowTabs({ show }: { show: (path: string) => void }) {
                   show(i.path)
                 }}
               >
-                <span className={`wst-icon k-${itemKind(i.path)}`}>{KIND_ICON[itemKind(i.path)]}</span>
+                <span className={`wst-icon k-${itemKind(i.path)}`}>{KINDS[itemKind(i.path)].glyph}</span>
                 <NarrowTitle path={i.path} />
                 <span className="muted wst-card-path">{itemKey(i.path)}</span>
               </button>

@@ -33,8 +33,8 @@ export interface Saved {
 export const WIN_W = 760
 export const WIN_H = 620
 // An entity window is a card, not a page.
-export const ENTITY_W = 440
-export const ENTITY_H = 320
+export const ENTITY_W = 480
+export const ENTITY_H = 520
 // The share of the board a focused window fills; the rest is its links' margin.
 export const FOCUS = 0.8
 // The most a focus zooms in: a page reads at 100 percent, a card may grow.
@@ -412,6 +412,87 @@ export function buildLayer(items: Item[], g: Graph | undefined): Layer {
   return { edges, entityNode }
 }
 
+// ---- the links bar: what an item links to, grouped by kind ----
+
+export type LinkKind = 'doc' | 'entity' | 'requirement' | 'diagram'
+
+export interface LinkGroup {
+  kind: LinkKind
+  // The page each linked item opens as.
+  paths: string[]
+}
+
+const LINK_ORDER: LinkKind[] = ['doc', 'entity', 'requirement', 'diagram']
+
+const docPath = (doc: string) => `/docs/${doc}`
+const entityPath = (id: string) => `/model/entities/${encodeURIComponent(id)}`
+const reqPath = (id: string) => `/model/requirements/${encodeURIComponent(id)}`
+const viewPath = (id: string) => `/model/diagrams/${encodeURIComponent(id)}`
+
+// The documents a document's markdown links name, resolved against its folder and
+// kept when the project holds them.
+export function linkedDocs(doc: string, text: string, known: Set<string>): string[] {
+  const dir = doc.includes('/') ? doc.slice(0, doc.lastIndexOf('/')) : ''
+  const out: string[] = []
+  for (const m of text.matchAll(/\]\(([^)\s#]+\.md)(?:#[^)]*)?\)/g)) {
+    const raw = decodeURIComponent(m[1])
+    if (/^[a-z]+:/i.test(raw)) continue
+    const parts = (raw.startsWith('/') ? raw.slice(1) : dir ? `${dir}/${raw}` : raw).split('/')
+    const stack: string[] = []
+    for (const part of parts) {
+      if (part === '..') stack.pop()
+      else if (part !== '.' && part !== '') stack.push(part)
+    }
+    const p = stack.join('/')
+    if (p !== doc && known.has(p) && !out.includes(p)) out.push(p)
+  }
+  return out
+}
+
+// What an item links to (docs/frontends/gui.md#the-board), grouped by kind, the
+// item's own kind first, then documents, entities, requirements, diagrams.
+export function linkGroups(g: Graph, path: string, linked: string[] = []): LinkGroup[] {
+  const kind = itemKind(path)
+  const groups: Record<LinkKind, string[]> = { doc: [], entity: [], requirement: [], diagram: [] }
+  const add = (k: LinkKind, p: string) => {
+    if (p !== path.split('?')[0] && !groups[k].includes(p)) groups[k].push(p)
+  }
+  const viewsOf = (ids: Set<string>) => {
+    for (const [vid, v] of Object.entries(g.views)) if ((v.members ?? []).some((m) => ids.has(canonical(g, m)))) add('diagram', viewPath(vid))
+  }
+  if (kind === 'doc') {
+    const doc = docOf(path)
+    for (const d of linked) add('doc', docPath(d))
+    const defined = new Set<string>()
+    for (const { entity, edge } of windowEntities(g, { path })) {
+      add('entity', entityPath(entity))
+      if (edge === 'def') defined.add(entity)
+    }
+    for (const id of defined) for (const m of g.entities[id]?.mentions ?? []) if (m.doc !== doc) add('doc', docPath(m.doc))
+    for (const id of Object.keys(g.requirements)) if (reqDoc(g, id) === doc) add('requirement', reqPath(id))
+    viewsOf(defined)
+  } else if (kind === 'entity') {
+    const id = canonical(g, nodeOf(path))
+    const e = g.entities[id]
+    if (e?.parent && g.entities[e.parent]) add('entity', entityPath(e.parent))
+    for (const [cid, c] of Object.entries(g.entities)) if (c.parent === id) add('entity', entityPath(cid))
+    for (const { entity } of windowEntities(g, { path })) add('entity', entityPath(entity))
+    for (const m of e?.mentions ?? []) add('doc', docPath(m.doc))
+    for (const [rid, r] of Object.entries(g.requirements)) if ((r.entities ?? []).some((x) => canonical(g, x) === id)) add('requirement', reqPath(rid))
+    viewsOf(new Set([id]))
+  } else if (kind === 'requirement') {
+    const rid = canonical(g, nodeOf(path))
+    for (const x of g.requirements[rid]?.entities ?? []) if (g.entities[canonical(g, x)]) add('entity', entityPath(canonical(g, x)))
+    const d = reqDoc(g, rid)
+    if (d) add('doc', docPath(d))
+  } else if (kind === 'diagram') {
+    for (const m of g.views[nodeOf(path)]?.members ?? []) if (g.entities[canonical(g, m)]) add('entity', entityPath(canonical(g, m)))
+  }
+  const own = kind === 'doc' || kind === 'entity' || kind === 'requirement' || kind === 'diagram' ? (kind as LinkKind) : null
+  const order = own ? [own, ...LINK_ORDER.filter((k) => k !== own)] : LINK_ORDER
+  return order.filter((k) => groups[k].length > 0).map((k) => ({ kind: k, paths: groups[k] }))
+}
+
 // ---- references: the unopened entities the caret's text concerns, below it ----
 
 // The entities a caret concerns, in order: the mention's entity, then the entities
@@ -458,7 +539,9 @@ export interface FanLayout {
 // under the window's bottom center and the next alternating right and left, a `+N`
 // chip at the right end for the rest. With no room below the window, the row sits
 // along the view's bottom edge and draws no lines.
-export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_H): FanLayout {
+// `floor`, when given, is the highest the row's bottom may sit without room below
+// (so it never covers what is there, e.g. the window's links bar).
+export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_H, floor?: number): FanLayout {
   const room = Math.min(view.w - 2 * FAN_GAP, Math.max(win.w, 420))
   const avail = view.y + view.h - 4 - (win.y + win.h) - h
   const below = avail >= FAN_MIN_DROP
@@ -488,7 +571,7 @@ export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_
   const left = first > 0 ? row.slice(0, first).reduce((a, i) => a + w(i) + FAN_GAP, 0) : 0
   const want = first >= 0 ? anchorX - w(row[first]) / 2 - left : anchorX - total / 2
   let x = Math.min(Math.max(want, view.x + FAN_GAP), view.x + view.w - FAN_GAP - total)
-  const y = below ? win.y + win.h + drop : view.y + view.h - h - 8
+  const y = below ? win.y + win.h + drop : Math.min(view.y + view.h - h - 8, floor !== undefined ? floor - h - 6 : Infinity)
   const slots: FanSlot[] = row.map((i) => {
     const box = { x, y, w: w(i), h }
     x += w(i) + FAN_GAP

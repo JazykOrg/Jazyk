@@ -126,7 +126,7 @@ test('a requirement keeps the Requirements list and shows where it comes from', 
 test('a diagram shows its picture in the tab', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/model/diagrams/view%3Acomponent%2Fwarehouse-erp')
-  await expect(page.locator('.ws-center svg').first()).toBeVisible()
+  await expect(page.locator('.ws-center .wst-item:visible .view-svg svg').first()).toBeVisible()
 })
 
 test('a demo saves an edit on its own', async ({ page }) => {

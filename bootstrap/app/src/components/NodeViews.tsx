@@ -184,7 +184,7 @@ export function EntityView({
         <Part title="States">
           <p>
             {machine[1].states.join(' → ')}{' '}
-            <NameLink id={machine[0]}>see the states</NameLink>
+            {g.views[`view:state/${machine[0].replace(/^sm:/, '')}`] && <NameLink id={`view:state/${machine[0].replace(/^sm:/, '')}`}>see the states</NameLink>}
           </p>
         </Part>
       )}

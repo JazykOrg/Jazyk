@@ -7,20 +7,25 @@ import type { ReactNode } from 'react'
 import { useGraph } from '../../lib/queries'
 import { useRuntime } from './runtime'
 
-export const CARD_W = 280
+// A folded card is narrow, each statement cut to one line; an expanded one is wider
+// and shows every statement whole.
+export const CARD_W = 200
+export const CARD_W_OPEN = 340
 export const HEAD_H = 24
 export const LINE_H = 20
 const PAD = 6
 // The lines a folded card shows.
 export const FOLDED = 2
-// The lines an expanded card shows before it scrolls.
-const MOST = 12
+const OPEN_MAX_H = 380
 
-// A card's height for its requirement count, folded or expanded.
-export function cardHeight(n: number, open: boolean): number {
-  if (n === 0) return HEAD_H
-  if (open) return HEAD_H + Math.min(n, MOST) * LINE_H + LINE_H + PAD
-  return HEAD_H + Math.min(n, FOLDED) * LINE_H + (n > FOLDED ? LINE_H : 0) + PAD
+// A card's size for its statements, folded or expanded.
+export function cardBox(texts: string[], open: boolean): { w: number; h: number } {
+  const n = texts.length
+  if (n === 0) return { w: CARD_W, h: HEAD_H }
+  if (!open) return { w: CARD_W, h: HEAD_H + Math.min(n, FOLDED) * LINE_H + (n > FOLDED ? LINE_H : 0) + PAD }
+  const perLine = Math.floor((CARD_W_OPEN - 44) / 6.3)
+  const lines = texts.reduce((a, t) => a + Math.max(1, Math.ceil(t.length / perLine)), 0)
+  return { w: CARD_W_OPEN, h: Math.min(OPEN_MAX_H, HEAD_H + lines * 16 + n * 6 + LINE_H + PAD) }
 }
 
 // The requirements in a card's order: the caret's first.

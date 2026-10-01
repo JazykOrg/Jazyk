@@ -1,6 +1,5 @@
 // Read, Write, or Diff for every document at once (docs/frontends/gui.md#editor): the
 // switch in the editor's bar and in a board window's bar.
-import { createContext, useContext } from 'react'
 import { useApp, type DocMode } from '../lib/store'
 
 // The document mode in effect: the session's choice, else the open folder's default.
@@ -9,11 +8,6 @@ export function useDocMode(): DocMode {
   const folderMode = useApp((a) => a.folder?.mode)
   return chosen ?? (folderMode === 'read' ? 'read' : 'write')
 }
-
-// A page rendered inside a frame that draws the document's bar itself (a board
-// window): the editor leaves its own bar out and reports its state instead.
-export const EmbeddedBarContext = createContext(false)
-export const useEmbeddedBar = () => useContext(EmbeddedBarContext)
 
 export default function DocModeSwitch({ canDiff }: { canDiff: boolean }) {
   const mode = useDocMode()

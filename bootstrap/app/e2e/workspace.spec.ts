@@ -9,10 +9,13 @@ test.beforeEach(async ({ page }) => {
   await offline(page)
 })
 
-// The workspace opens in Tabs; the settings page is the first tab.
+// The workspace opens in Tabs; the settings page is the first tab, pinned so it
+// stays when a document takes the focus (a transient page closes once unheld).
 async function toTabs(page: Page) {
   await page.goto('/#/settings')
   await expect(page.locator('.wst-dock')).toBeVisible()
+  await page.locator('.wst-dock .wst-tab[data-path="/settings"] .wst-close.pin').click()
+  await expect(page.locator('.wst-dock .wst-tab[data-path="/settings"]')).toHaveClass(/pinned/)
 }
 
 const tabs = (page: Page) => page.locator('.wst-dock .dv-tab')
@@ -42,7 +45,7 @@ test('a tab collapses into the Board and a window expands back into Tabs, over t
   await docRow(page, 'main.md').dblclick()
   await docRow(page, 'backend.md').dblclick()
   await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
-  await tab(page, '/docs/docs/backend.md').locator('.wst-arrange').click()
+  await page.locator('.wst-item[data-item="/docs/docs/backend.md"] .ws-arrange-btn').click()
   const win = (path: string) => page.locator(`.react-flow__node-window[data-id="w:${path}"]`)
   await expect(win('/docs/docs/backend.md').locator('.bw')).toHaveClass(/focused/)
   await expect(win('/docs/docs/main.md')).toBeAttached()
@@ -52,12 +55,51 @@ test('a tab collapses into the Board and a window expands back into Tabs, over t
   await expect(page).toHaveURL(/#\/docs\/docs\/main\.md$/)
   await expect(win('/docs/docs/main.md').locator('.bw')).toHaveClass(/focused/)
   // The window expands back into Tabs, with that tab in front, and forward still works.
-  await win('/docs/docs/main.md').locator('.bw-arrange').click()
+  await win('/docs/docs/main.md').locator('.ws-arrange-btn').click()
   await expect(page.locator('.wst-dock')).toBeVisible()
   await expect(page.locator('.wst-dock .dv-active-tab .wst-tab')).toHaveAttribute('data-path', '/docs/docs/main.md')
   await page.goForward()
   await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
   await expect(page.locator('.wst-dock .dv-active-tab .wst-tab')).toHaveAttribute('data-path', '/docs/docs/backend.md')
+})
+
+test('a file stays; an entity is held by the focus, and a pin keeps it', async ({ page }) => {
+  await openDemo(page, 'The ERP')
+  await toTabs(page)
+  await docRow(page, 'backend.md').dblclick()
+  const A = '/docs/docs/backend.md'
+  const B = '/model/entities/ent%3Abackend'
+  const C = '/model/entities/ent%3Ainventory-management'
+  // A file has a close; an entity a pin instead.
+  await expect(tab(page, A).locator('.wst-close')).not.toHaveClass(/pin/)
+  await page.goto(`/#${B}`)
+  await expect(tab(page, B).locator('.wst-close.pin')).toBeVisible()
+  await page.goto(`/#${C}`)
+  // C came from B, so B is held while C has the focus.
+  await expect(tab(page, B)).toBeVisible()
+  await expect(tab(page, C)).toBeVisible()
+  // Back on the file, neither is held.
+  await tab(page, A).click()
+  await expect(tab(page, B)).toHaveCount(0)
+  await expect(tab(page, C)).toHaveCount(0)
+
+  // Again, and pin C this time: C stays, B is let go.
+  await page.goto(`/#${B}`)
+  await page.goto(`/#${C}`)
+  await expect(tab(page, B)).toBeVisible()
+  await tab(page, C).locator('.wst-close.pin').click()
+  await expect(tab(page, C)).toHaveClass(/pinned/)
+  await expect(tab(page, B)).toHaveCount(0)
+  await tab(page, A).click()
+  await expect(tab(page, C)).toBeVisible()
+})
+
+test('an entity’s states link to its state diagram', async ({ page }) => {
+  await openDemo(page, 'The novel')
+  await toTabs(page)
+  await page.goto('/#/model/entities/ent%3Areport')
+  await page.locator('.wst-item:visible').getByRole('link', { name: 'see the states' }).click()
+  await expect(page).toHaveURL(/#\/model\/diagrams\/view%3Astate%2Freport$/)
 })
 
 test('closing the focused tab goes back to the one shown before it', async ({ page }) => {

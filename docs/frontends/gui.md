@@ -1711,8 +1711,9 @@ and back and forward.
   fills 80 percent of the board, centered, never above 100 percent zoom for a page
   or 125 percent for an entity card. The move takes 350 milliseconds, moving and
   zooming at once: on a long move the zoom eases down to 75 percent at most by
-  halfway and back up, never farther out than where it starts or ends. A press on
-  the table top or a wheel stops it where it is. The remaining margin is where its
+  halfway and back up, never farther out than where it starts or ends. What the
+  board draws holds during the move (a live page stays live through the dip). A
+  press on the table top or a wheel stops it where it is. The remaining margin is where its
   links show (below). The view stays free: a pan or a zoom moves away from the focus, and a
   click on a window's bar returns to it.
 - References: when the caret in the focused document window rests on something

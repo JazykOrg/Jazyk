@@ -692,8 +692,10 @@ prominent thing:
 ### The setup wizard
 
 A folder with no `jazyk.toml` at its top, served by `jazyk gui` or opened in a tab,
-lands on Home in the wizard rather than failing: the folder is a project the moment
-its settings are written.
+lands in the wizard rather than failing: on Home when opened from Home, and in the
+workspace's center (in place of the open items) when opened from the project menu
+or reached any other way, until the file is written. The folder is a project the
+moment its settings are written.
 
 - The wizard shows the folder's name and asks where the documents are (the glob, one
   per line, with the folder's markdown files as the suggestion), where the product is

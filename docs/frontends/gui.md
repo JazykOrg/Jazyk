@@ -1432,8 +1432,8 @@ from the graph's mentions, quotes, and section tree.
   rendering; the lens returns under the Developer toggle.
 - Entity mentions are underlined so what is clickable is discoverable; hover shows
   the card. In Write a plain click places the cursor, as on any text, and the caret
-  resting on a mention marks its entity (the [board](#the-board) highlights the link
-  to it); Cmd-click (Ctrl-click off macOS) opens the entity: the inspector in
+  marks what it rests on: the entity of a mention, and every requirement whose quote
+  holds it (the [board](#the-board) shows them); Cmd-click (Ctrl-click off macOS) opens the entity: the inspector in
   Lenses, a tab in Tabs, a window beside the document on the Board. In Read, where
   there is no cursor, a click opens it. A mention is every occurrence of an entity's
   name (or an alias the graph records) in the text, matched case-insensitively on
@@ -1472,16 +1472,17 @@ from the graph's mentions, quotes, and section tree.
   editor" otherwise. Read marks the same blocks. An editor with
   unsaved changes raises the conflict bar instead.
 - The editor diffs against the last-built text (`GET /api/docs/baseline`): changed,
-  added, and deleted lines mark the gutter, updated live. A `diff` toggle swaps the
-  editor for a side-by-side diff; the current side stays editable. A never-built
-  document shows neither.
-- One toggle, `Read` or `Write`, in the editor's bar. Write is the editor. Read is
+  added, and deleted lines mark the gutter, updated live. A never-built document
+  shows none.
+- One switch, `Read`, `Write`, or `Diff`, in the editor's bar, for every document at
+  once: choosing it in one document turns all of them. Write is the editor. Read is
   the [rendered page](#markdown-preview) in the editor's place, carrying the same
-  markers, underlines, bands, and read states, with nothing editable; there is no
-  third state and no pane beside the editor. Read is the default for a product file,
-  for a document in a folder opened read-only, and for a demo's generated pages;
-  Write is the default otherwise; the last choice per document is remembered for
-  the session. In Read every link works: a relative link to another document opens
+  markers, underlines, bands, and read states, with nothing editable. Diff swaps the
+  editor for a side-by-side diff against the last-built text, the current side
+  editable; a never-built document shows Write under Diff. There is no pane beside
+  the editor. Read is the default for a folder opened read-only, Write otherwise;
+  the choice is remembered for the session. A product file and a demo's generated
+  pages open in Read whatever the switch says. In Read every link works: a relative link to another document opens
   it (in Read), a link with an anchor scrolls to the heading, a link into the out
   directory opens the generated page or the diagram, and an external link opens a
   new tab. A link to a document the project does not hold says so in place.
@@ -1593,6 +1594,9 @@ both.
   pans with the wheel, a drag, or Space and a drag, and zooms with a pinch or Ctrl
   and the wheel. Every open item is a window with a title bar to drag, a resize
   corner, and a close; a press in a window focuses its item without moving the board.
+- A document window has one bar: its glyph and path, the unsaved mark, the `Read`,
+  `Write`, `Diff` switch, the save state (or `save`), and the close. The bar drags
+  the window and a double click on it focuses it.
 - A page window (a document, a product page, a requirement, a diagram) opens at 80
   percent of the board's width and height at 100 percent zoom. An entity window is a
   card, not a page: its name, kind, parent, definition, attributes, and counts, with
@@ -1605,56 +1609,43 @@ both.
   or 125 percent for an entity card. The remaining margin is where its links show
   (below). The view stays free: a pan or a zoom moves away from the focus, and a
   double click on a title bar returns to it.
-- The fan: the focused window shows the entities it brings that are not open yet,
-  transient, below it. Lines leave the window's bottom center and fan down to a row
-  of chips, the first straight down, the next to either side. The fan is gone when
-  another window takes the focus. A click on a chip opens its entity as a window
-  beside the focused one, which keeps the focus, and from then on the entity stays
-  on the board until it is closed. What a window brings:
+- References: when the caret in the focused document window rests on something
+  the graph knows, the entities it concerns that are not open show below the
+  window, transient: the entity of the mention under the caret, and the entities of
+  every requirement whose quote holds the caret. Lines leave the window's bottom
+  center and fan down to a row of reference cards, the first straight down, the
+  next to either side, as many as fit; the rest are gone until the caret moves.
+  With the caret on nothing (or in Read), there are none. A card is the
+  [linkage](#the-linkage) between the document and the entity, titled by the
+  entity; a click on the title opens the entity beside the document and focuses it,
+  and from then on it stays on the board until it is closed. Without room below
+  the window, the row sits along the view's bottom edge without lines. The `Graph`
+  toggle hides the references. What a window brings, for its links:
   - a document: the entities it defines (an entity is defined in the document of its
     quote, else of its first mention) and the ones it mentions;
   - an entity: its neighbours; a requirement: its entities; a diagram: its members.
-- The row holds as many chips as fit under the window, in this order: the entity
-  under the caret, then the ones the caret rested on most recently, then the defined
-  ones, then the most mentioned. A last `+N` chip lists the rest; a click on one
-  opens it the same way. Without room below the window (its bottom edge out of
-  view), the row sits along the view's bottom edge without lines. The `Graph`
-  toggle hides the fan.
 - The links between open windows: the relationships between open entities, one per
   pair with the strongest type's verb and an arrowhead for each direction the pair's
   contributions run; a document to an open entity it defines (dashed) or mentions
   (dotted); a requirement or a diagram to its open entities; a window to one opened
   from inside it. A window opened from inside another (a link, a Cmd-click on a
-  mention, a chip in the fan) is placed beside it.
+  mention, a reference) is placed beside it.
 - Every link is a straight line between two borders. Where a link leaves the view,
   a portal sits on it at the view's edge: the node at the far end, by glyph and
   name, with an arrow pointing the way the link goes; a click on the portal focuses
   that node. The name shows only while its node is out of view:
   - both ends in view: no portal, the linkage alone at the link's middle;
   - one end out of view: one portal where the link meets the view's edge, the
-    linkage folded into it (its count beside the name);
+    linkage folded into it under the name;
   - both ends out of view with the link crossing the view: a portal at each side and
     the linkage between them;
   - the link wholly out of view: nothing.
 - A stretch of a link under another window is hidden, as the line is: a portal shows
   only where the stretch reaching the view's edge is uncovered, and a link with no
   uncovered stretch shows nothing. A portal or a linkage keeps to the margin beside
-  the windows, one portal per node on each side; in a thin margin the name wraps to
-  two lines and the linkage keeps only its count, the rest on hover.
-- The linkage rides on the longest uncovered stretch of every link, centered between
-  its portals: the relationship's verb (or `defines`, `mentions`, `names`,
-  `opened from`) and the count of requirements behind the link, collapsed. A click
-  on the count expands the requirements' statements, each opening its requirement
-  beside the link; one linkage is expanded at a time, so expanding one folds the
-  one before:
-  - between two entities, the requirements of the relationship's contributions in
-    both directions;
-  - between a document and an entity, the requirements quoted from that document
-    that name the entity;
-  - between a requirement and an entity, the requirement itself.
-- The caret in a document window resting on a mention highlights that entity: its
-  window and the link to it when it is open, else its chip in the fan, which it
-  brings to the front of the row.
+  the windows where it fits, one portal per node on each side; a portal with no
+  requirements in a thin margin wraps its name to two lines.
+
 - Windows stay where they are dragged and resized, remembered per project with the
   view; `Arrange` lays the windows out in layers, left to right by the links between
   them. A toolbar holds `Arrange`, `Fit`, `Graph`, `Map` (a
@@ -1667,11 +1658,36 @@ both.
     form) a click zooms to;
   - from 15 to 40 percent cards: a title, a kind, a few lines, and a status;
   - under 15 percent titles: each window only its title, sized to read on screen,
-    the links and portals kept, the linkage and the fan hidden.
+    the links and portals kept, the linkage and the references hidden.
 - A double click on a title bar focuses its window. `Escape` zooms out one level,
   `Z` fits everything.
 - Tabs and Board are one set of open items: switching keeps them, and closing a
   window closes its tab.
+
+### The linkage
+
+What a link or a reference carries, as a card on the link's longest uncovered
+stretch (or folded into its lone portal, or as a reference):
+
+- A head: the relationship's verb (or `defines`, `mentions`, `names`, `opened
+  from`), or the portal's or the reference's title.
+- Two lines of the requirements behind the link, one statement per line cut to fit,
+  then a line `N more` that expands the card to all of them. One card is expanded
+  at a time, so expanding one folds the one before. The requirements behind a link:
+  - between two entities, the requirements of the relationship's contributions in
+    both directions;
+  - between a document and an entity, the requirements quoted from that document
+    that name the entity;
+  - between a requirement and an entity, the requirement itself.
+- A click on a requirement's line highlights its quote in its document (in the open
+  window holding that document, opened beside when none does) and moves the caret
+  there; the button at the line's right opens the requirement as a window.
+- What the caret rests on is marked on every card that shows it: the requirements
+  whose quote holds the caret come first and are highlighted, and a mention's entity
+  highlights its title (only the title, when the caret is on a name and in no
+  requirement). Several can be marked at once. In the document, the quotes of the
+  requirements the caret is in carry a light highlight, always there while the
+  caret is.
 
 ## Developer toggle
 

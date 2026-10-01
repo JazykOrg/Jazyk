@@ -174,6 +174,14 @@ window fans its unopened entities out below it, transient, a few at a time (the
 caret's most recent first), and a click opens one for good. One linkage expands at a
 time, and a lone portal carries its link's count instead of a separate linkage.
 
+A fourth pass: the fan was always there, which was still too much. References now
+show only for what the caret rests on (a mention's entity, the entities of the
+requirements whose quote holds the caret), each a linkage card titled by the entity.
+Every linkage card shows two lines of its requirements and expands to all; a
+requirement's line highlights its quote in the document, a button beside it opens
+it. Read, Write, and Diff are one switch for every document, and a document window
+on the board has one bar.
+
 gui.md#the-board states the rules as built.
 
 ## Open questions for the owner

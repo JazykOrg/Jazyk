@@ -1355,8 +1355,9 @@ page ([entity page, requirement page](#model)) under the same
 - An entity: name, definition, scope, stereotype, parent (opens it) and children,
   attributes (each with its provenance), mentions (each opens the editor at the
   quote), the requirements referencing it, its relations by direction and type, the
-  diagrams it belongs to, its derived states, the files implementing it, and its
-  verification rollup. The [neighborhood widget](#explore) sits beside the trail.
+  diagrams it belongs to, its derived states (linking to the state diagram), the
+  files implementing it, and its verification rollup. The [neighborhood
+  widget](#explore) sits beside the trail.
 - A requirement: the statement, its provenance (Quoted opens the editor at the quote;
   Inferred lists the upstream nodes and the reasoning; Your edit names the author and
   the note; both carry the proposal), its entities, its edges with type and
@@ -1568,9 +1569,12 @@ of items and one history ([plans/workspace.md](../../plans/workspace.md)). Both 
 the same workspace seen two ways: switching keeps the open items, the focused one,
 and back and forward.
 
-- The switch is a button left of each item's close: `Board` (collapse) on a tab,
-  `Tabs` (expand) on a board window. It shows the other arrangement with that item
-  focused. The arrangement is remembered per browser.
+- Every item has two bars: its title bar (the tab, or a window's title bar) with the
+  glyph, the title, and the close or the pin, and under it the item's own bar: a
+  document's editor bar (path, unsaved mark, `Read`/`Write`/`Diff`, save state), any
+  other item's path. The second bar ends with the switch: `⤡` (collapse into the
+  Board) in Tabs, `⤢` (expand into Tabs) on the Board. It shows the other
+  arrangement with that item focused. The arrangement is remembered per browser.
 - History: every focus is a step in the browser's history, so back and forward walk
   the items in the order they were shown, in either arrangement. Closing the focused
   item is a back: the item that was shown before it comes to the front (skipping
@@ -1582,7 +1586,20 @@ and back and forward.
 
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab
-  or a board window as it does in the center.
+  or a board window as it does in the center. Each kind has its own glyph and color
+  on its tab, its window's bars, and its cards: a document, a product file, a
+  generated page, an entity, a requirement, a test, a diagram, and the app's pages
+  (Inbox, History, Settings, the Developer pages).
+- Files stay; everything else is held. A file (a document, a product file, a
+  generated page) stays open until its close (`×`). Any other item (an entity, a
+  requirement, a diagram, an app page) is transient: in place of a close it carries
+  a pin, and while unpinned it stays open only while it is held. The focused item
+  holds itself, and an unpinned item holds the unpinned item it was opened from, and
+  so on back; a file or a pinned item holds nothing but itself. When the focus moves,
+  the unpinned items no longer held close. E.g.: on document A, entity B opens from
+  A and entity C from B; with C focused, B stays (C was opened from it). Focusing A
+  closes B and C. Pinning C instead keeps C and lets B go. A pinned item unpins with
+  the same pin.
 - The navigator is one column in both: Documents, Outline (following the cursor),
   Product (`Overview`, the file tree, `Trace`, `Tests`), Diagrams and Generated
   (collapsed). There is no Model head; entities and requirements open from mentions
@@ -1608,18 +1625,34 @@ and back and forward.
 - A table top, white with light dots (dark with dim dots on the dark theme), that
   pans with the wheel, a drag, or Space and a drag, and zooms with a pinch or Ctrl
   and the wheel. Every open item is a window with a title bar to drag, a resize
-  corner, and a close. A press in a window that is not focused, or not wholly in
-  view, focuses it the way a click on its bar does, at any zoom; a press in the
-  focused window wholly in view moves nothing. The browser's own page zoom (Ctrl and
+  corner, and a close or a pin. A press in a window focuses its item without moving
+  the board, so a press and a drag moves the window; a click (a press released
+  where it started) in a window that is not focused, or not wholly in view, then
+  focuses it fully, at any zoom. A click in the focused window wholly in view moves
+  nothing. The browser's own page zoom (Ctrl and
   the wheel or a pinch outside the board's handling, Cmd or Ctrl with `+`, `-`, `0`)
   is off while the Board shows: the keys zoom the board instead.
 - A document window has one bar: its glyph and path, the unsaved mark, the `Read`,
   `Write`, `Diff` switch, the save state (or `save`), and the close. The bar drags
   the window, and a click on it (not a drag) focuses it.
 - A page window (a document, a product page, a requirement, a diagram) opens at 80
-  percent of the board's width and height at 100 percent zoom. An entity window is a
-  card, not a page: its name, kind, parent, definition, attributes, and counts, with
-  its connections drawn on the board around it.
+  percent of the board's width and height at 100 percent zoom. An entity window is
+  more compact than its page and carries what its page does that the board does not
+  draw: its kind and parent chain, definition, attributes, parts, its states, and
+  every requirement that names it, those that concern it alone included, each line
+  revealing its quote, with a button to open it.
+- Every window ends in a links bar: what the item links to, grouped by kind with a
+  count (`2 documents · 6 requirements · 3 entities`), the item's own kind first (a
+  document's other documents first, an entity's other entities first). Hovering a
+  group shows its items as cards below the window (a click keeps them shown, a
+  second click or `Escape` hides them); a click on a card opens that item beside the
+  window and focuses it. What links to what:
+  - a document: the documents it links to and the documents that mention the
+    entities it defines; the entities it defines or mentions; the requirements
+    quoted from it; the diagrams of its entities;
+  - an entity: its parent, parts, and relationship neighbours; the documents that
+    mention it; the requirements that name it; the diagrams that draw it;
+  - a requirement: its entities; its document; a diagram: its members.
 - Only open items are on the board. The links between open windows stay drawn while
   both are open; nothing else is placed on the board by itself.
 - Focus: opening or showing an item from outside its window (the navigator, a
@@ -1689,14 +1722,17 @@ and back and forward.
 ### The linkage
 
 What a link or a reference carries, as a card on the link's longest uncovered
-stretch (or folded into its lone portal, or as a reference):
+stretch (or folded into its lone portal, or as a reference). Link cards and
+portals draw beneath the windows, so they never cover a page; references draw
+over the board while the caret holds them.
 
 - A head: the relationship's verb (or `defines`, `mentions`, `names`, `opened
   from`), or the portal's or the reference's title.
 - Near 100 percent only (from stills outward the card is its head alone): two lines
-  of the requirements behind the link, one statement per line cut to fit,
-  then a line `N more` that expands the card to all of them. One card is expanded
-  at a time, so expanding one folds the one before. The requirements behind a link:
+  of the requirements behind the link, one statement per line cut to fit a narrow
+  card, then a line `N more` that expands the card to all of them, wider, each
+  statement whole and wrapping. One card is expanded at a time, so expanding one
+  folds the one before. The requirements behind a link:
   - between two entities, the requirements of the relationship's contributions in
     both directions;
   - between a document and an entity, the requirements quoted from that document

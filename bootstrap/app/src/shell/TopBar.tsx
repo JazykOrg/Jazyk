@@ -1,11 +1,9 @@
-// The top bar: the project menu, the three lenses, Inbox with its count, History,
-// the command palette, the action button, settings (docs/frontends/gui.md#layout).
-// Until a project is open, the project menu alone. In the workspace
-// (docs/frontends/gui.md#workspace) there are no lenses: Inbox, History,
-// and the arrangement switch stay.
+// The top bar: the project menu, Product, the Developer menu while the toggle is on,
+// the command palette, the action button, and settings
+// (docs/frontends/gui.md#layout). Until a project is open, the project menu alone.
+// The Inbox and History open from the project tree and the status bar.
 import { NavLink, useLocation } from 'react-router'
 import { useProject } from '../lib/queries'
-import { useInbox } from '../lib/product'
 import { useApp } from '../lib/store'
 import { useWords } from '../lib/words'
 import ActionButton from './ActionButton'
@@ -30,12 +28,9 @@ export default function TopBar({
   const { data: proj } = useProject()
   // In the browser the project's own name: a folder's, a demo's, a browser project's.
   const placeName = useApp((a) => a.folder?.name ?? a.stored?.name)
-  const inbox = useInbox()
   const dev = useApp((a) => a.dev)
   const w = useWords()
   const loc = useLocation()
-  const total = inbox.data?.total ?? 0
-  const errors = inbox.data?.problems?.error ?? 0
   const lens = (p: string) => loc.pathname === p || loc.pathname.startsWith(p + '/')
 
   const project = <ProjectMenu open={open} name={placeName ?? projectName(proj?.root)} root={proj?.root} />
@@ -48,12 +43,8 @@ export default function TopBar({
       </button>
       {project}
       <nav className="ws-lenses ws-lenses-bare">
-        <NavLink to="/inbox" className={lens('/inbox') ? 'active' : ''} title="what jazyk needs from you">
-          Inbox
-          <span className={`ws-count${total === 0 ? ' zero' : errors > 0 ? ' err' : ''}`}>{total}</span>
-        </NavLink>
-        <NavLink to="/history" className={lens('/history') ? 'active' : ''}>
-          {w.history}
+        <NavLink to="/product" end className={loc.pathname === '/product' ? 'active' : ''} title="the product overview">
+          {w.product}
         </NavLink>
         {dev && (
           <NavLink to="/dev" className={`dev${lens('/dev') ? ' active' : ''}`} title="the compiler workbench">

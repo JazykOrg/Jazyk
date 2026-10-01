@@ -84,8 +84,68 @@
   border-top: none;
 }
 
-.wsn .outline {
-  border-bottom: 1px solid var(--line);
+/* The project tree takes the room and scrolls; the Outline sits under it and
+   scrolls on its own. */
+.wsn {
+  overflow: hidden;
+}
+
+.wsn-area {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.wsn-tree {
+  flex: 1 1 60%;
+  min-height: 80px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.wsn-outline {
+  flex: 0 1 auto;
+  max-height: 38%;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.wsn-outline:empty {
+  display: none;
+}
+
+/* The project tree's rows: each file its kind's glyph and color, the special
+   folders marked. */
+.project-tree .pf-glyph {
+  color: var(--k);
+  font-size: 11px;
+  width: 12px;
+  margin-right: 4px;
+  display: inline-block;
+  text-align: center;
+}
+
+.project-tree .ft-row.pf-dir .ft-dirname {
+  color: var(--k);
+  font-weight: 600;
+}
+
+.project-tree .pf-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--k);
+  border: 1px solid color-mix(in srgb, var(--k) 45%, transparent);
+}
+
+.project-tree .ft-row.k-project .ft-name {
+  color: var(--muted);
+}
+
+.pf-note {
+  padding: 4px 12px;
+  font-size: 11.5px;
 }
 
 /* The center: the items over the Connections panel. */
@@ -183,6 +243,7 @@
   --k-test: #b8432f;
   --k-generated: #6b7a78;
   --k-product: #3d8a5a;
+  --k-project: #55606b;
   --k-entity: #0e7a6d;
   --k-requirement: #c27417;
   --k-diagram: #1f8f9c;
@@ -196,6 +257,7 @@
 .k-test { --k: var(--k-test); }
 .k-generated { --k: var(--k-generated); }
 .k-product { --k: var(--k-product); }
+.k-project { --k: var(--k-project); }
 .k-entity { --k: var(--k-entity); }
 .k-requirement { --k: var(--k-requirement); }
 .k-diagram { --k: var(--k-diagram); }
@@ -437,4 +499,64 @@
 
 .wst-tab.transient:not(.pinned) .wst-title {
   font-style: italic;
+}
+
+/* Every button on a tab or a bar (a close, a pin, the switch): one size, its glyph
+   centered (docs/frontends/gui.md#workspace). */
+.wst-close,
+.bw-close,
+.ws-arrange-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 0;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.wst-close {
+  width: 20px;
+  height: 20px;
+  font-size: 16px;
+}
+
+.bw-close,
+.ws-arrange-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+}
+
+.wst-close > span,
+.bw-close > span {
+  display: block;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.ws-arrange-btn {
+  font-size: 15px;
+}
+
+.pin-icon {
+  display: block;
+  transform: rotate(35deg);
+}
+
+.wst-close.pin,
+.bw-close.pin {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.wst-close.pin.on,
+.bw-close.pin.on {
+  color: var(--accent);
+}
+
+.wst-close.pin.on .pin-icon,
+.bw-close.pin.on .pin-icon {
+  transform: none;
 }

@@ -15,6 +15,7 @@ mod jobs;
 mod lsp_ws;
 mod outfiles;
 mod product;
+mod projfiles;
 mod server;
 mod state;
 mod views_api;

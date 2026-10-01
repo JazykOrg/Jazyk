@@ -535,10 +535,10 @@ export interface FanLayout {
   more: number
 }
 
-// The fan's row under a window on screen: as many chips as fit, the first straight
-// under the window's bottom center and the next alternating right and left, a `+N`
-// chip at the right end for the rest. With no room below the window, the row sits
-// along the view's bottom edge and draws no lines.
+// The fan's row under a window on screen: as many chips as fit, left to right in
+// order, the row centered under the window's bottom center, a `+N` chip at the right
+// end for the rest. With no room below the window, the row sits along the view's
+// bottom edge (or above `floor`) and draws no lines.
 // `floor`, when given, is the highest the row's bottom may sit without room below
 // (so it never covers what is there, e.g. the window's links bar).
 export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_H, floor?: number): FanLayout {
@@ -556,21 +556,12 @@ export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_
     taken.push(i)
   }
   const more = widths.length - taken.length
-  // Center out: 0 in the middle, then 1 right, 2 left, 3 right, ...
-  const row: number[] = []
-  for (const i of taken) {
-    if (i % 2 === 1) row.push(i)
-    else row.unshift(i)
-  }
+  const row: number[] = [...taken]
   if (more > 0) row.push(-1)
   const w = (i: number) => (i < 0 ? FAN_MORE_W : widths[i])
   const total = row.reduce((a, i) => a + w(i), 0) + FAN_GAP * Math.max(row.length - 1, 0)
   const anchorX = Math.min(Math.max(win.x + win.w / 2, view.x), view.x + view.w)
-  // The first chip sits under the anchor, the row kept inside the view.
-  const first = row.indexOf(taken[0] ?? -1)
-  const left = first > 0 ? row.slice(0, first).reduce((a, i) => a + w(i) + FAN_GAP, 0) : 0
-  const want = first >= 0 ? anchorX - w(row[first]) / 2 - left : anchorX - total / 2
-  let x = Math.min(Math.max(want, view.x + FAN_GAP), view.x + view.w - FAN_GAP - total)
+  let x = Math.min(Math.max(anchorX - total / 2, view.x + FAN_GAP), view.x + view.w - FAN_GAP - total)
   const y = below ? win.y + win.h + drop : Math.min(view.y + view.h - h - 8, floor !== undefined ? floor - h - 6 : Infinity)
   const slots: FanSlot[] = row.map((i) => {
     const box = { x, y, w: w(i), h }

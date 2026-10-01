@@ -103,40 +103,18 @@ function readMap(): boolean {
   }
 }
 
-function Toolbar({
-  graphOn,
-  toggleGraph,
-  mapOn,
-  toggleMap,
-  arrange,
-  fit,
-}: {
-  graphOn: boolean
-  toggleGraph: () => void
-  mapOn: boolean
-  toggleMap: () => void
-  arrange: () => void
-  fit: () => void
-}) {
+function Toolbar({ mapOn, toggleMap, arrange }: { mapOn: boolean; toggleMap: () => void; arrange: () => void }) {
   const zoom = useStore((s) => s.transform[2])
-  const level = levelOf(zoom)
-  const words = { live: 'pages', still: 'stills', card: 'cards', title: 'titles' }
   return (
     <div className="board-tools">
-      <button onClick={arrange} title="Lay the windows and the entities out by the graph">
+      <button onClick={arrange} title="Lay the windows out by the links between them">
         Arrange
-      </button>
-      <button onClick={fit} title="Fit everything (Z)">
-        Fit
-      </button>
-      <button className={graphOn ? 'on' : ''} aria-pressed={graphOn} onClick={toggleGraph} title="The focused window's unopened entities, fanned out below it">
-        Graph
       </button>
       <button className={mapOn ? 'on' : ''} aria-pressed={mapOn} onClick={toggleMap} title="A minimap of the whole board">
         Map
       </button>
-      <span className="board-zoom mono" title="Escape zooms out one level">
-        {Math.round(zoom * 100)}% · {words[level]}
+      <span className="board-zoom mono" data-level={levelOf(zoom)} title="Z fits everything; Escape zooms out one level">
+        {Math.round(zoom * 100)}%
       </span>
     </div>
   )
@@ -307,16 +285,17 @@ function BoardCanvas({ project }: { project: string | null }) {
   // document, each with the requirements between the document and it.
   const focusedItem = items.find((i) => itemKey(i.path) === focusedKey)
   const refs = useMemo<Reference[]>(() => {
-    if (!g || !caret || !focusedItem || !saved.graph || level !== 'live') return []
+    if (!g || !caret || !focusedItem || level !== 'live') return []
     if (itemKind(focusedItem.path) !== 'doc' || docOf(focusedItem.path) !== caret.doc) return []
-    const open = new Set(layer.entityNode.keys())
-    return caretEntities(g, caret.entity, caret.reqs, open).map((entity) => ({
+    // Open or not: the caret's entities always show, so a name clicked on is seen
+    // even when its window is out of view; a click on the card focuses that window.
+    return caretEntities(g, caret.entity, caret.reqs, new Set()).map((entity) => ({
       entity,
       name: g.entities[entity]?.name ?? entity,
       kind: kindWord(g.entities[entity]?.stereotype),
       reqs: linkRequirements(g, { doc: caret.doc }, { entity }),
     }))
-  }, [g, caret, focusedItem, saved.graph, level, layer])
+  }, [g, caret, focusedItem, level, layer])
 
   // Node data objects are kept while they are equal, so a drag re-renders only the
   // node being dragged and never a live page.
@@ -659,7 +638,6 @@ function BoardCanvas({ project }: { project: string | null }) {
     window.setTimeout(() => void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1, minZoom: 0.16 }), 60)
   }, [rf])
 
-  const toggleGraph = useCallback(() => setSaved((s) => ({ ...s, graph: !s.graph })), [])
   const [mapOn, setMapOn] = useState(readMap)
   const toggleMap = useCallback(
     () =>
@@ -721,7 +699,7 @@ function BoardCanvas({ project }: { project: string | null }) {
           />
         )}
         <Panel position="top-left">
-          <Toolbar graphOn={saved.graph} toggleGraph={toggleGraph} mapOn={mapOn} toggleMap={toggleMap} arrange={() => void arrange()} fit={fit} />
+          <Toolbar mapOn={mapOn} toggleMap={toggleMap} arrange={() => void arrange()} />
         </Panel>
         {items.length === 0 && (
           <Panel position="top-center" className="board-empty">

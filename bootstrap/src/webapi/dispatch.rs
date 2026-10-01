@@ -546,6 +546,22 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             Err((code, msg)) => err(code, msg),
         },
 
+        ("GET", "/project/files") => {
+            let p = project();
+            let g = crate::gen::GenSettings::resolve(&p);
+            ok(super::projfiles::project_files(&p.root, &g.deliverable, &p.out, &p.docs_glob))
+        }
+        ("GET", "/project/file") => {
+            let rel = param(&q, "path").unwrap_or_default();
+            match super::projfiles::project_file(&project().root, &rel) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => ok(Value::String(text)),
+                    Err(_) => err(501, format!("the browser backend serves text files only; {} is not text", rel)),
+                },
+                Err((status, msg)) => err(status, msg),
+            }
+        }
+
         ("GET", "/out/list") => answer(super::outfiles::out_list(
             &out(),
             &param(&q, "path").unwrap_or_default(),

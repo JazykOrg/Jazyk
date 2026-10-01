@@ -5,7 +5,7 @@
 // Recent. A stale token surfaces as the token prompt; a port nothing answers on
 // says how to start a server.
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { offline, openDemo, pageErrors } from './helpers'
+import { offline, openDemo, openFolders, pageErrors } from './helpers'
 
 const PORT = 4690
 const TOKEN = 'c0ffee0123'
@@ -104,6 +104,7 @@ test('the connect route reaches the server, stores the token under the port, ope
   expect(calls).toContain('GET /api/ping')
   expect(calls).toContain('GET /api/docs')
   await expect(page.locator('.ws-project')).toContainText('garden')
+  await openFolders(page, ['docs'])
   await expect(page.locator('.ide-doc-name', { hasText: 'plan.md' })).toBeVisible()
   await page.locator('.ide-doc-name', { hasText: 'plan.md' }).click()
   await expect(page.locator('.cm-content')).toContainText('A bed of beans by the fence.')
@@ -157,6 +158,7 @@ test('a token the server refuses surfaces as the token prompt, and the pasted ad
   await page.locator('.token-prompt input').fill(`https://jazyk.dev/#/connect?port=${PORT}&token=${TOKEN}`)
   await page.locator('.token-prompt button[type=submit]').click()
   await expect(page.locator('.token-prompt')).toHaveCount(0)
+  await openFolders(page, ['docs'])
   await expect(page.locator('.ide-doc-name', { hasText: 'plan.md' })).toBeVisible()
   expect(await page.evaluate((k) => localStorage.getItem(k), `jazyk.server.${PORT}`)).toBe(TOKEN)
 })
@@ -177,6 +179,7 @@ test('opening a demo after a connection leaves the server for the backend in the
   await openDemo(page, 'The shop')
   await page.goto(`/#/connect?port=${PORT}&token=${TOKEN}`)
   await page.waitForURL(/#\/docs/)
+  await openFolders(page, ['docs'])
   await expect(page.locator('.ide-doc-name', { hasText: 'plan.md' })).toBeVisible()
   await page.goto('/#/')
   await expect(page.locator('.proj.recent').first()).toContainText('garden')
@@ -184,7 +187,8 @@ test('opening a demo after a connection leaves the server for the backend in the
   await page.waitForURL(/#\/docs/)
   await expect(page.locator('.ws-project')).toContainText('The shop')
   const before = calls.length
-  await page.locator('.ide-doc-name').first().click()
+  await openFolders(page, ['docs'])
+  await page.locator('.ide-doc-name', { hasText: 'catalog.md' }).click()
   await expect(page.locator('.cm-content')).toBeVisible()
   // Nothing more went to the server once the demo was open.
   expect(calls.slice(before).filter((c) => !c.includes('/api/events'))).toEqual([])

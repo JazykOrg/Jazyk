@@ -6,7 +6,7 @@
 // fail, the way a lapsed permission or a moved folder does; `window.__denyWrite`
 // makes the browser refuse a write grant.
 import { expect, test, type Page } from '@playwright/test'
-import { api, chooseMenuItem, closeMenu, createProject, offline, openProjectMenu, projectMenuItems, storedKeys, storedText, toWrite, typeAtEnd, whereChangesGo } from './helpers'
+import { api, chooseMenuItem, closeMenu, createProject, offline, openFolders, openProjectMenu, projectMenuItems, storedKeys, storedText, toWrite, typeAtEnd, whereChangesGo } from './helpers'
 
 // A file mid-write (the writable's close replaces it) reads as absent or unreadable
 // for an instant; that reads as '' so an expect.poll around it retries.
@@ -402,6 +402,7 @@ test('a folder without jazyk.toml opens into the setup wizard, which writes it',
   await page.getByRole('button', { name: 'Write jazyk.toml' }).click()
   await expect(page).toHaveURL(/#\/docs/)
   await expect.poll(() => readProjectFile(page, 'jazyk.toml', 'plain')).toContain('docs/**/*.md')
+  await openFolders(page, ['docs'])
   await expect(page.locator('.ws-nav')).toContainText('a.md')
   expect(await whereChangesGo(page)).toBe('Saved to plain (writing)')
 })

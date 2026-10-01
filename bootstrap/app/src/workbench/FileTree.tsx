@@ -36,6 +36,16 @@ interface Props<T extends { path: string }> {
   nameClass?: string
   actions?: TreeActions
   placeholder?: string
+  // Folders start closed and the opened ones are remembered (the project tree);
+  // otherwise folders start open and the closed ones are remembered.
+  defaultClosed?: boolean
+  // A row's kind: a class on the row and a glyph before the name.
+  fileClass?: (file: TreeFile<T>) => string
+  fileGlyph?: (file: TreeFile<T>) => ReactNode
+  folderClass?: (dir: string) => string
+  folderBadge?: (dir: string) => ReactNode
+  // Which folders and files the actions (create, rename, delete) apply to.
+  actionsFor?: (path: string) => boolean
 }
 
 function InlineInput({
@@ -87,10 +97,14 @@ type Edit = { mode: 'create' | 'folder'; dir: string } | { mode: 'rename'; path:
 const CONFIRM_MS = 4000
 
 export default function FileTree<T extends { path: string }>(props: Props<T>) {
-  const { head, projectKey, items, current, hrefFor, dim, related, badges, onHover, nameClass, actions, placeholder } = props
+  const { head: headProp, projectKey, items, current, hrefFor, dim, related, badges, onHover, nameClass, actions: allActions, placeholder, defaultClosed, fileClass, fileGlyph, folderClass, folderBadge, actionsFor } = props
+  // With folders closed by default, the remembered set is the opened folders.
+  const head = defaultClosed ? `${headProp}#open` : headProp
   const navigate = useNavigate()
   const [closed, setClosed] = useState<Set<string>>(() => readClosedFolders(head, projectKey))
   useEffect(() => setClosed(readClosedFolders(head, projectKey)), [head, projectKey])
+  const actions = allActions
+  const actionsAt = (path: string) => (allActions && (!actionsFor || actionsFor(path)) ? allActions : undefined)
   // Folders typed in place that hold no file yet.
   const [phantoms, setPhantoms] = useState<string[]>([])
   const [focused, setFocused] = useState<string | null>(null)
@@ -108,21 +122,23 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
       return keep.length === ps.length ? ps : keep
     })
   }, [items])
-  const isOpen = useCallback((dir: string) => !closed.has(dir), [closed])
+  const isOpen = useCallback((dir: string) => (defaultClosed ? closed.has(dir) : !closed.has(dir)), [closed, defaultClosed])
   const rows = useMemo(() => visibleRows(nodes, isOpen), [nodes, isOpen])
 
   const setOpen = useCallback(
     (dir: string, open: boolean) => {
       setClosed((c) => {
-        if (open ? !c.has(dir) : c.has(dir)) return c
+        // The set holds the opened folders when they start closed, else the closed.
+        const add = defaultClosed ? open : !open
+        if (add ? c.has(dir) : !c.has(dir)) return c
         const next = new Set(c)
-        if (open) next.delete(dir)
-        else next.add(dir)
+        if (add) next.add(dir)
+        else next.delete(dir)
         writeClosedFolders(head, projectKey, next)
         return next
       })
     },
-    [head, projectKey],
+    [head, projectKey, defaultClosed],
   )
 
   // The open file stays in view: its folders open, its row scrolls into view.
@@ -130,14 +146,18 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
     if (!current) return
     const dirs = ancestors(current)
     setClosed((c) => {
-      if (!dirs.some((d) => c.has(d))) return c
+      const shut = (d: string) => (defaultClosed ? !c.has(d) : c.has(d))
+      if (!dirs.some(shut)) return c
       const next = new Set(c)
-      for (const d of dirs) next.delete(d)
+      for (const d of dirs) {
+        if (defaultClosed) next.add(d)
+        else next.delete(d)
+      }
       writeClosedFolders(head, projectKey, next)
       return next
     })
     setFocused(current)
-  }, [current, head, projectKey])
+  }, [current, head, projectKey, defaultClosed])
   useEffect(() => {
     if (!current) return
     const el = rowRefs.current.get(current)
@@ -347,7 +367,8 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
           aria-level={r.depth + 1}
           aria-expanded={open}
           tabIndex={isFocused ? 0 : -1}
-          className={`ft-row ft-dir${isFocused ? ' focused' : ''}`}
+          className={`ft-row ft-dir${isFocused ? ' focused' : ''}${folderClass ? ` ${folderClass(n.path)}` : ''}`}
+          data-path={n.path}
           style={{ paddingLeft: pad }}
           onFocus={() => setFocused(n.path)}
           onClick={() => {
@@ -359,7 +380,8 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
             {open ? '▾' : '▸'}
           </span>
           <span className="ft-name ft-dirname">{n.name}</span>
-          {actions && (
+          {folderBadge?.(n.path)}
+          {actionsAt(n.path) && (
             <span className="ft-actions" onClick={(e) => e.stopPropagation()}>
               <button className="ft-mini" title="New document" aria-label={`New document in ${n.name}`} onClick={() => startCreate(n.path)}>
                 +
@@ -412,17 +434,19 @@ export default function FileTree<T extends { path: string }>(props: Props<T>) {
         aria-level={r.depth + 1}
         aria-selected={active}
         tabIndex={isFocused ? 0 : -1}
-        className={`ft-row ft-file${active ? ' active' : ''}${related?.has(f.path) ? ' related' : ''}${dim?.(f) ? ' dim' : ''}${isFocused ? ' focused' : ''}`}
+data-path={f.path}
+                className={`ft-row ft-file${active ? ' active' : ''}${related?.has(f.path) ? ' related' : ''}${dim?.(f) ? ' dim' : ''}${isFocused ? ' focused' : ''}${fileClass ? ` ${fileClass(f)}` : ''}`}
         style={{ paddingLeft: pad }}
         onFocus={() => setFocused(f.path)}
         onClick={() => setFocused(f.path)}
       >
         <span className="ft-chev" aria-hidden="true" />
         <Link to={hrefFor(f)} className="ft-link" tabIndex={-1}>
+          {fileGlyph?.(f)}
           <span className={`ft-name${nameClass ? ` ${nameClass}` : ''}`}>{f.name}</span>
           {badges?.(f)}
         </Link>
-        {actions && (
+        {actionsAt(f.path) && (
           <span className="ft-actions">
             <button className="ft-mini" title="Rename" aria-label={`Rename ${f.name}`} onClick={() => startRename(f.path)}>
               ✎

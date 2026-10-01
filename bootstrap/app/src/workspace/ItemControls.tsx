@@ -4,16 +4,12 @@
 import { createContext, useContext } from 'react'
 import { isFileItem, useWorkspace } from './items'
 
+// A thumbtack, filled when pinned.
 function PinIcon({ pinned }: { pinned: boolean }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M10.5 1.5l4 4-2 1-2.5 2.5.5 3.5-1.5 1.5-3-3-4 4-1-1 4-4-3-3 1.5-1.5 3.5.5L9.5 3.5z"
-        fill={pinned ? 'currentColor' : 'none'}
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-      />
+    <svg className="pin-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
     </svg>
   )
 }
@@ -32,7 +28,7 @@ export function CloseOrPin({ path, title, onClose, className }: { path: string; 
           onClose()
         }}
       >
-        ×
+        <span aria-hidden="true">×</span>
       </button>
     )
   }

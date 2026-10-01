@@ -1,6 +1,6 @@
 // The editor as a visitor drives it (docs/frontends/wasm.md#building).
 import { expect, test } from '@playwright/test'
-import { api, offline, openDemo, pageErrors, typeAtEnd } from './helpers'
+import { api, offline, openDemo, openFolders, pageErrors, typeAtEnd } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await offline(page)
@@ -53,6 +53,8 @@ test('the product files list and a file opens with its text', async ({ page }) =
   await openDemo(page, 'The sort utility')
   await page.goto('/#/product/files')
   const nav = page.locator('.ws-nav')
+  // The product folder of the project tree, its files product files and tests.
+  await openFolders(page, ['code', 'code/test'])
   await expect(nav.getByRole('link', { name: /^main\.js( ?\d+)?$/ })).toBeVisible()
   await expect(nav.getByRole('link', { name: /^main\.test\.js( ?\d+)?$/ })).toBeVisible()
   await nav.getByRole('link', { name: /^main\.js( ?\d+)?$/ }).click()
@@ -92,9 +94,9 @@ test('the trace matrix renders a row per requirement and exports from the tab', 
 
 test('the generated pages list and one opens rendered', async ({ page }) => {
   await openDemo(page, 'The sort utility')
-  // The generated pages are the navigator's last fold, closed until opened.
-  await page.locator('.ws-nav [data-fold="generated"] .wsn-head').click()
-  await page.locator('.ws-nav [data-fold="generated"]').getByRole('link', { name: 'index.md', exact: true }).click()
+  // The generated pages sit in the build output folder of the project tree.
+  await openFolders(page, ['.jazyk', '.jazyk/docsgen'])
+  await page.locator('.ws-nav .ft-file[data-path=".jazyk/docsgen/index.md"] a').click()
   await expect(page.locator('.ws-center h1:visible').first()).toHaveText('Index')
 })
 

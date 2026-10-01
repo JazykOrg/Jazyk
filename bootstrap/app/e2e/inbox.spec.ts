@@ -44,7 +44,8 @@ test('the Inbox counts what its sections list, and pending changes render', asyn
   expect(problems).toBe(r.sections.problems.length)
 
   await page.goto('/#/inbox')
-  await expect(page.locator('.ws-lenses .ws-count')).toHaveText(String(r.total))
+  // The status bar carries the count the top bar no longer does.
+  await expect(page.getByRole('link', { name: `waiting on you (${r.total})` })).toBeVisible()
   const sub = (section: string) => page.locator(`.ws-nav-list a[href="#/inbox${section}"] .sub`)
   await expect(sub('')).toHaveText(String(r.total))
   await expect(sub('/questions')).toHaveText(String(r.questions))

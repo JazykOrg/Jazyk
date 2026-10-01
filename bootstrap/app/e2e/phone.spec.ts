@@ -12,6 +12,7 @@ test('the editor takes the width and the navigator is a drawer', async ({ page }
   await expect(page.locator('.wb-chat')).toHaveCount(0)
   await page.locator('.ws-navtoggle').tap()
   await expect(page.locator('.wsw')).toHaveClass(/nav-open/)
+  // The open document's folder opened itself.
   await page.locator('.ws-nav a', { hasText: 'main.test.js.md' }).tap()
   await expect(page.locator('.wsw')).not.toHaveClass(/nav-open/)
   await expect(page).toHaveURL(/main\.test\.js\.md/)

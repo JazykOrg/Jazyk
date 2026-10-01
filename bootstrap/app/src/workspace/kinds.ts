@@ -17,6 +17,7 @@ export const KINDS: Record<ItemKind, KindMeta> = {
   file: { glyph: '▤', label: 'Product file', plural: 'product files', file: true },
   test: { glyph: '✓', label: 'Test', plural: 'tests', file: true },
   generated: { glyph: '▦', label: 'Generated page', plural: 'generated pages', file: true },
+  project: { glyph: '▫', label: 'Project file', plural: 'project files', file: true },
   product: { glyph: '▣', label: 'Product', plural: 'product pages', file: false },
   entity: { glyph: '◆', label: 'Entity', plural: 'entities', file: false },
   requirement: { glyph: '≡', label: 'Requirement', plural: 'requirements', file: false },

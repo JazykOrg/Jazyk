@@ -2,6 +2,7 @@
 // the center today, and a tab or a board card when a page is rendered against its
 // own location (`location`), so a page reads its params from the item it shows
 // rather than the address bar (plans/workspace.md).
+import ProjectFile from './ProjectFile'
 import { lazy, Suspense, useEffect } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router'
 import Home from '../shell/Home'
@@ -110,6 +111,7 @@ export default function AppRoutes({ location }: { location?: string }) {
       <Route path="/product" element={<ProductHome />} />
       <Route path="/product/files" element={<FilesHome />} />
       <Route path="/product/files/*" element={<DelivFile />} />
+      <Route path="/project/*" element={<ProjectFile />} />
       <Route path="/product/trace" element={<Scroll><VerifyMatrix /></Scroll>} />
       <Route path="/product/tests" element={<Tests />} />
       <Route path="/product/not-described" element={<NotDescribed />} />

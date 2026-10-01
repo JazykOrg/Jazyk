@@ -184,6 +184,27 @@ export const useOutList = (dir: string) =>
     ...opts,
   })
 
+// Every file under the project directory, and where the product and the out
+// directory sit in it (docs/frontends/gui.md#api, the project files).
+export interface ProjectFiles {
+  files: { path: string; size: number }[]
+  deliverable: string | null
+  out: string | null
+  docsGlob: string[]
+}
+
+export const useProjectFiles = () =>
+  useQuery({ queryKey: ['project', 'files'], queryFn: () => get<ProjectFiles>('/api/project/files'), ...opts })
+
+// One text file under the project directory.
+export const useProjectFileText = (path: string) =>
+  useQuery({
+    queryKey: ['project', 'file', path],
+    queryFn: () => getText(`/api/project/file?path=${encodeURIComponent(path)}`),
+    enabled: path !== '',
+    staleTime: 5_000,
+  })
+
 // One text file under the out directory.
 export const useOutText = (path: string) =>
   useQuery({

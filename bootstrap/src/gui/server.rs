@@ -3,7 +3,7 @@
 // jazyk.dev (docs/frontends/gui.md#serving).
 use super::state::SharedState;
 use super::{
-    api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, outfiles,
+    api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, outfiles, projfiles,
     product, views_api,
 };
 use axum::extract::{Request, State};
@@ -150,6 +150,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/jobs", get(jobs::list_jobs).post(jobs::post_job))
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
+        .route("/project/files", get(projfiles::list))
+        .route("/project/file", get(projfiles::file))
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))

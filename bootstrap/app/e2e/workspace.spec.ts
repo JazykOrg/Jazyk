@@ -3,7 +3,7 @@
 // the focused item as a back, preview tabs, splits that come back on a reload, and a
 // Cmd-click on a mention opening its entity as a tab.
 import { expect, test, type Page } from '@playwright/test'
-import { offline, openDemo, pageErrors, typeAtEnd } from './helpers'
+import { offline, openDemo, openFolders, pageErrors, typeAtEnd } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await offline(page)
@@ -16,26 +16,31 @@ async function toTabs(page: Page) {
   await expect(page.locator('.wst-dock')).toBeVisible()
   await page.locator('.wst-dock .wst-tab[data-path="/settings"] .wst-close.pin').click()
   await expect(page.locator('.wst-dock .wst-tab[data-path="/settings"]')).toHaveClass(/pinned/)
+  await openFolders(page, ['docs'])
 }
 
 const tabs = (page: Page) => page.locator('.wst-dock .dv-tab')
 const tab = (page: Page, path: string) => page.locator(`.wst-dock .wst-tab[data-path="${path}"]`)
 const docRow = (page: Page, name: string) => page.locator('.wsn .ide-doc-name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) })
 
-test('Tabs is the layout: no lenses, no inspector, one navigator', async ({ page }) => {
+test('Tabs is the layout: no lenses, no inspector, the project tree as the navigator', async ({ page }) => {
   const errors = pageErrors(page)
   await openDemo(page, 'The ERP')
   await toTabs(page)
   const top = page.locator('.ws-top')
-  for (const lens of ['Docs', 'Model', 'Product']) await expect(top.getByRole('link', { name: lens, exact: true })).toHaveCount(0)
-  await expect(top.getByRole('link', { name: /^Inbox/ })).toBeVisible()
-  await expect(top.getByRole('radio')).toHaveCount(0)
+  for (const lens of ['Docs', 'Model', 'Inbox', 'History']) await expect(top.getByRole('link', { name: new RegExp(`^${lens}`) })).toHaveCount(0)
+  await expect(top.getByRole('link', { name: 'Product', exact: true })).toBeVisible()
   await expect(page.locator('.wb-inspector')).toHaveCount(0)
-  // One navigator: Documents and Product, no Model head.
+  // The whole project directory: the documents folder, the product folder, the
+  // build output, and the project file, each marked.
   const nav = page.locator('.wsn')
-  await expect(nav.getByRole('button', { name: /Documents/ })).toBeVisible()
-  await expect(nav.getByRole('button', { name: /Product/ })).toBeVisible()
-  await expect(nav.getByRole('button', { name: /^.?\s*Model/ })).toHaveCount(0)
+  await expect(nav.locator('.ft-dir[data-path="docs"]')).toContainText('documents')
+  await expect(nav.locator('.ft-dir[data-path="project"]')).toContainText('product')
+  await expect(nav.locator('.ft-dir[data-path=".jazyk"]')).toContainText('build output')
+  await expect(nav.locator('.ft-file[data-path="jazyk.toml"]')).toBeVisible()
+  // jazyk.toml opens the settings.
+  await nav.locator('.ft-file[data-path="jazyk.toml"] a').click()
+  await expect(page).toHaveURL(/#\/settings$/)
   expect(errors).toEqual([])
 })
 

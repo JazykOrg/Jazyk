@@ -4,7 +4,7 @@
 // worker is blocked for every other test (playwright.config.ts); this one lets it
 // register.
 import { expect, test } from '@playwright/test'
-import { openDemo, pageErrors } from './helpers'
+import { openDemo, openFolders, pageErrors } from './helpers'
 
 test.use({ serviceWorkers: 'allow' })
 
@@ -34,8 +34,8 @@ test('the page loads and opens a demo it has seen with the network off', async (
   await page.locator('.home .demo', { hasText: 'The shop' }).click()
   await page.waitForURL(/#\/docs/)
   await expect(page.locator('.ws-lenses')).toBeVisible()
-  await expect(page.locator('.ide-doc-name').first()).toBeVisible()
-  await page.locator('.ide-doc-name').first().click()
+  await openFolders(page, ['docs'])
+  await page.locator('.ide-doc-name', { hasText: 'catalog.md' }).click()
   await expect(page.locator('.cm-content')).toBeVisible()
   expect(errors).toEqual([])
 })

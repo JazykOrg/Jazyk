@@ -173,3 +173,14 @@ export function pageErrors(page: Page): string[] {
   page.on('pageerror', (e) => errs.push(String(e)))
   return errs
 }
+
+// Opens the project tree's folders, each a path from the project directory, in
+// order (folders start closed; docs/frontends/gui.md#workspace).
+export async function openFolders(page: Page, dirs: string[]) {
+  for (const d of dirs) {
+    const row = page.locator(`.wsn .ft-dir[data-path="${d}"]`)
+    await expect(row).toBeVisible()
+    if ((await row.getAttribute('aria-expanded')) !== 'true') await row.click()
+    await expect(row).toHaveAttribute('aria-expanded', 'true')
+  }
+}

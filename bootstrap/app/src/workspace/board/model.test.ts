@@ -156,14 +156,16 @@ describe('references', () => {
     expect(caretEntities(G, null, [], new Set())).toEqual([])
   })
   const view: Rect = { x: 0, y: 0, w: 1000, h: 800 }
-  it('puts the first chip under the window, the next right and left, and a +N for the rest', () => {
+  it('lays the row out in order, centered under the window, with a +N for the rest', () => {
     const win: Rect = { x: 250, y: 50, w: 500, h: 600 }
     const f = layoutFan(win, [100, 100, 100, 100, 100, 100], view)
     expect(f.anchor).toEqual({ x: 500, y: 650 })
-    const first = f.slots.find((s) => s.index === 0)!
-    expect(first.box.x + first.box.w / 2).toBe(500)
-    expect(f.slots.find((s) => s.index === 1)!.box.x).toBeGreaterThan(first.box.x)
-    expect(f.slots.find((s) => s.index === 2)!.box.x).toBeLessThan(first.box.x)
+    const xs = f.slots.map((s) => s.box.x)
+    expect(xs).toEqual([...xs].sort((a, b) => a - b))
+    expect(f.slots.map((s) => s.index).slice(0, 3)).toEqual([0, 1, 2])
+    const left = f.slots[0].box.x
+    const last = f.slots[f.slots.length - 1].box
+    expect(Math.round((left + last.x + last.w) / 2)).toBe(500)
     expect(f.more).toBeGreaterThan(0)
     expect(f.slots[f.slots.length - 1].index).toBe(-1)
     for (const s of f.slots) expect(s.box.y).toBe(650 + 52)

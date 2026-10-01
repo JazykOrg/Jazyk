@@ -2,7 +2,7 @@
 // on a table top with the links between them, the focused window's fan, focus and the
 // links' portals, the zoom levels down to titles, the remembered layout.
 import { expect, test, type Page } from '@playwright/test'
-import { offline, pageErrors } from './helpers'
+import { offline, openFolders, pageErrors } from './helpers'
 
 const BACKEND = '/docs/docs/backend.md'
 const FRONTEND = '/docs/docs/frontend.md'
@@ -22,6 +22,7 @@ async function openBoard(page: Page) {
   await page.locator('.home .demo', { hasText: 'The ERP' }).click()
   await page.waitForURL(/#\/docs/)
   await expect(page.locator('.board .react-flow')).toBeVisible()
+  await openFolders(page, ['docs', 'docs/subsystems'])
 }
 
 // Opens a document as a kept item, the way a double click in the navigator does.
@@ -38,8 +39,9 @@ async function position(page: Page, path: string): Promise<{ x: number; y: numbe
   return { x: Number(m[1]), y: Number(m[2]) }
 }
 
+// The zoom level the board draws at (live, still, card, title).
 async function zoomText(page: Page): Promise<string> {
-  return (await page.locator('.board-zoom').textContent()) ?? ''
+  return (await page.locator('.board-zoom').getAttribute('data-level')) ?? ''
 }
 
 // Keys go to the board, not to a focused editor or button.
@@ -64,7 +66,7 @@ async function settle(page: Page) {
 // Zooms to a window: a click on its bar.
 async function zoomTo(page: Page, path: string) {
   await win(page, path).locator('.bw-title .bw-name').click()
-  await expect(page.locator('.board-zoom')).toContainText('pages')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'live')
   await settle(page)
 }
 
@@ -110,14 +112,14 @@ test('a document window has two bars, and a click on the empty table top fits ev
   // A click on the empty table top fits everything: one window fits at 100 percent.
   await blur(page)
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('stills')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'still')
   await settle(page)
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('cards')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'card')
   await settle(page)
   const board = (await page.locator('.board .react-flow').boundingBox())!
   await page.mouse.click(board.x + 30, board.y + board.height - 30)
-  await expect(page.locator('.board-zoom')).toContainText('pages')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'live')
 })
 
 test('the caret on a mention brings its entity below the document as a reference, its title opening and focusing it', async ({ page }) => {
@@ -228,10 +230,10 @@ test('a press and a drag on a zoomed-out window moves it without focusing in', a
   await zoomTo(page, BACKEND)
   await blur(page)
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('stills')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'still')
   await settle(page)
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('cards')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'card')
   await settle(page)
   const before = await position(page, BACKEND)
   const box = (await win(page, BACKEND).boundingBox())!
@@ -241,7 +243,7 @@ test('a press and a drag on a zoomed-out window moves it without focusing in', a
   await page.mouse.up()
   await settle(page)
   // Still zoomed out, the window moved.
-  await expect(page.locator('.board-zoom')).toContainText('cards')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'card')
   expect(await position(page, BACKEND)).not.toEqual(before)
 })
 
@@ -251,17 +253,17 @@ test('zooming out to titles keeps every window where it is and draws only its ti
   await openDoc(page, 'inventory.md', INVENTORY_DOC)
   const before = await position(page, INVENTORY_DOC)
   await blur(page)
-  for (let i = 0; i < 5 && !(await zoomText(page)).includes('titles'); i++) {
+  for (let i = 0; i < 5 && (await zoomText(page)) !== 'title'; i++) {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(450)
   }
-  await expect(page.locator('.board-zoom')).toContainText('titles')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'title')
   await expect(win(page, INVENTORY_DOC).locator('.bw-titleonly')).toContainText('inventory.md')
   await expect(win(page, BACKEND).locator('.bw-titleonly')).toContainText('backend.md')
   expect(await position(page, INVENTORY_DOC)).toEqual(before)
   // A click on a title focuses its window again.
   await win(page, INVENTORY_DOC).locator('.bw-titleonly').click()
-  await expect(page.locator('.board-zoom')).not.toContainText('titles')
+  await expect(page.locator('.board-zoom')).not.toHaveAttribute('data-level', 'title')
 })
 
 test('a window stays where it was dragged across a reload', async ({ page }) => {
@@ -329,13 +331,13 @@ test('Escape steps out one level at a time and Z fits everything', async ({ page
   await zoomTo(page, BACKEND)
   await blur(page)
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('stills')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'still')
   await expect(win(page, BACKEND).locator('.bw-still')).toBeVisible()
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('cards')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'card')
   await expect(win(page, BACKEND).locator('.bw-card-title')).toHaveText('backend.md')
   await page.keyboard.press('Escape')
-  await expect(page.locator('.board-zoom')).toContainText('titles')
+  await expect(page.locator('.board-zoom')).toHaveAttribute('data-level', 'title')
   await page.keyboard.press('z')
-  await expect(page.locator('.board-zoom')).not.toContainText('titles')
+  await expect(page.locator('.board-zoom')).not.toHaveAttribute('data-level', 'title')
 })

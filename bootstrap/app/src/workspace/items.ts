@@ -20,7 +20,7 @@ export interface Item {
   pinned?: boolean
 }
 
-const FILE_KINDS = new Set(['doc', 'file', 'test', 'generated'])
+const FILE_KINDS = new Set(['doc', 'file', 'test', 'generated', 'project'])
 
 // A file stays open until closed; any other item is transient.
 export function isFileItem(path: string): boolean {
@@ -204,7 +204,7 @@ export function itemTitle(path: string): string {
 // The kind an item's path names, for its glyph, its color, and whether it is a file
 // (kinds.ts). A product file under a tests folder, or named `.test` or `.spec`, is a
 // test.
-export type ItemKind = 'doc' | 'file' | 'test' | 'generated' | 'product' | 'entity' | 'requirement' | 'diagram' | 'inbox' | 'history' | 'other'
+export type ItemKind = 'doc' | 'file' | 'test' | 'generated' | 'project' | 'product' | 'entity' | 'requirement' | 'diagram' | 'inbox' | 'history' | 'other'
 
 export function itemKind(path: string): ItemKind {
   const p = path.split('?')[0]
@@ -215,6 +215,7 @@ export function itemKind(path: string): ItemKind {
     return /(^|\/)(tests?|spec|__tests__)\//.test(f) || /\.(test|spec)\.[a-z0-9]+$/i.test(f) ? 'test' : 'file'
   }
   if (p.startsWith('/product')) return 'product'
+  if (p.startsWith('/project/')) return 'project'
   if (p.startsWith('/model/entities/')) return 'entity'
   if (p.startsWith('/model/requirements/')) return 'requirement'
   if (p.startsWith('/model/diagrams/')) return 'diagram'

@@ -14,43 +14,41 @@ test.beforeEach(async ({ page }, info) => {
   await offline(page)
 })
 
-// A folder row in the navigator's Documents (or another fold's) tree.
-const dirRow = (page: import('@playwright/test').Page, name: string, fold = 'documents') =>
-  page.locator(`.ws-nav [data-fold="${fold}"] .ft-dir`, { has: page.locator('.ft-dirname', { hasText: new RegExp(`^${name}$`) }) })
+// A folder row in the project tree, by its path from the project directory.
+const dirRow = (page: import('@playwright/test').Page, path: string) => page.locator(`.ws-nav .ft-dir[data-path="${path}"]`)
 
-test('the tree has collapsible folders, remembered per project, folders first', async ({ page }) => {
+test('the project tree: folders closed until opened, remembered per project, folders first', async ({ page }) => {
   await openDemo(page, 'The ERP')
   const nav = page.locator('.ws-nav')
-  // No button row above the tree: the first row is the docs folder itself.
-  await expect(nav.locator('.wb-explorer-label').first()).toHaveText('documents')
-  await expect(nav.locator('.ft .ft-row').first()).toHaveClass(/ft-dir/)
+  // The whole project directory, folders first, each closed.
+  await expect.poll(() => nav.locator('.ft .ft-row[aria-level="1"] .ft-name').allTextContents()).toEqual(['.jazyk', 'docs', 'project', 'jazyk.toml'])
+  await expect(dirRow(page, 'docs')).toHaveAttribute('aria-expanded', 'false')
+  await dirRow(page, 'docs').click()
   // Under docs/: the folders (pages, subsystems) before the files, each by name.
-  const names = await nav.locator('[data-fold="documents"] .ft .ft-row[aria-level="2"] .ft-name').allTextContents()
+  const names = await nav.locator('.ft .ft-row[aria-level="2"] .ft-name').allTextContents()
   expect(names).toEqual(['pages', 'subsystems', 'backend.md', 'frontend.md', 'main.md'])
 
   const inventory = nav.locator('.ide-doc-name', { hasText: 'inventory.md' })
-  await expect(inventory).toBeVisible()
-  await dirRow(page, 'subsystems').click()
   await expect(inventory).toHaveCount(0)
-  await expect(dirRow(page, 'subsystems')).toHaveAttribute('aria-expanded', 'false')
+  await dirRow(page, 'docs/subsystems').click()
+  await expect(inventory).toBeVisible()
 
   // Remembered across a reload, for this project.
   await page.reload()
-  await expect(nav.locator('.ide-doc-name', { hasText: 'backend.md' })).toBeVisible()
-  await expect(nav.locator('.ide-doc-name', { hasText: 'inventory.md' })).toHaveCount(0)
-  await dirRow(page, 'subsystems').click()
   await expect(nav.locator('.ide-doc-name', { hasText: 'inventory.md' })).toBeVisible()
+  await dirRow(page, 'docs/subsystems').click()
+  await expect(nav.locator('.ide-doc-name', { hasText: 'inventory.md' })).toHaveCount(0)
 
   // Opening a document under a closed folder opens the folder and highlights the row.
-  await dirRow(page, 'pages').click()
   await page.goto('/#/docs/docs/pages/login.md')
   await expect(nav.locator('.ft-row.active .ft-name')).toHaveText('login.md')
-  await expect(dirRow(page, 'pages')).toHaveAttribute('aria-expanded', 'true')
+  await expect(dirRow(page, 'docs/pages')).toHaveAttribute('aria-expanded', 'true')
 })
 
 test('a hover action creates a document in place, F2 renames it, and a delete asks twice', async ({ page }) => {
   await openDemo(page, 'The ERP')
   const nav = page.locator('.ws-nav')
+  await dirRow(page, 'docs').click()
   const docs = dirRow(page, 'docs')
   await docs.hover()
   await docs.getByRole('button', { name: 'New document in docs' }).click()
@@ -217,15 +215,20 @@ test('entity mentions are underlined in Write and in Read; Cmd-click opens the e
   await expect(page).toHaveURL(/#\/model\/entities\/ent%3Abackend$/)
 })
 
-test('the product files and the generated pages are trees of the same kind', async ({ page }) => {
+test('every file in the project tree shows its kind: documents, product files, tests, generated pages', async ({ page }) => {
   await openDemo(page, 'The ERP')
-  await page.goto('/#/product/files')
+  await page.goto('/#/product/files/server.js')
   const nav = page.locator('.ws-nav')
-  await expect(nav.locator('.ft .ft-dir').first()).toBeVisible()
-  await expect(nav.locator('.ft .ft-file', { hasText: 'server.js' })).toBeVisible()
-  // The generated pages are a fold of their own, closed until opened.
-  await nav.locator('[data-fold="generated"] .wsn-head').click()
-  await expect(nav.locator('[data-fold="generated"] .ft .ft-file', { hasText: 'backend.md' }).first()).toBeVisible()
-  await dirRow(page, 'entities', 'generated').click()
-  await expect(dirRow(page, 'entities', 'generated')).toHaveAttribute('aria-expanded', 'false')
+  // The open product file's folders opened themselves.
+  await expect(nav.locator('.ft-file[data-path="project/server.js"]')).toHaveClass(/k-file/)
+  await dirRow(page, 'project/tests').click()
+  await expect(nav.locator('.ft-file[data-path="project/tests/crit_backend_2_75ee373f.test.js"]')).toHaveClass(/k-test/)
+  await dirRow(page, '.jazyk').click()
+  await dirRow(page, '.jazyk/docsgen').click()
+  const page_ = nav.locator('.ft-file[data-path=".jazyk/docsgen/backend.md"]')
+  await expect(page_).toHaveClass(/k-generated/)
+  await page_.locator('a').click()
+  await expect(page).toHaveURL(/#\/product\/generated\/docsgen\/backend\.md$/)
+  await dirRow(page, 'docs').click()
+  await expect(nav.locator('.ft-file[data-path="docs/main.md"]')).toHaveClass(/k-doc/)
 })

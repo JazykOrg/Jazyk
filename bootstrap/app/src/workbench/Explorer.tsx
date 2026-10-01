@@ -8,7 +8,7 @@ import { useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { del, post, put, type DelivFileInfo, type DocInfo, type OutFileInfo } from '../lib/api'
-import { useDeliverable, useDocs, useMatrix, useOutList, useProject } from '../lib/queries'
+import { useDeliverable, useDocs, useMatrix, useOutList, useProject, useProjectFiles } from '../lib/queries'
 import { useDocDelivLinks } from '../lib/links'
 import { useInbox } from '../lib/product'
 import { outHref } from '../lib/nav'
@@ -85,6 +85,40 @@ function BuildMark({ p }: { p: TurnProgress }) {
   )
 }
 
+// The document actions on the tree's rows. Everything goes through the documents
+// API; the tree only types the names.
+function useDocActions(docPath: string): TreeActions {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const editorDirty = useApp((a) => a.editorDirty)
+  return useMemo<TreeActions>(
+    () => ({
+      create: async (path) => {
+        const name = (path.split('/').pop() ?? path).replace(/\.md$/, '').replace(/[-_]+/g, ' ')
+        const title = name ? name.charAt(0).toUpperCase() + name.slice(1) : ''
+        await put(contentPath(path), { text: `# ${title}\n`, baseHash: null })
+        void qc.invalidateQueries({ queryKey: ['docs'] })
+        void qc.invalidateQueries({ queryKey: ['project', 'files'] })
+        navigate(`/docs/${path}`)
+      },
+      rename: async (from, to) => {
+        if (from === docPath && editorDirty) throw new Error('save the open document first')
+        await post('/api/docs/rename', { from, to })
+        void qc.invalidateQueries({ queryKey: ['docs'] })
+        void qc.invalidateQueries({ queryKey: ['project', 'files'] })
+        if (from === docPath) navigate(`/docs/${to}`)
+      },
+      remove: async (path) => {
+        await deleteDoc(path)
+        void qc.invalidateQueries({ queryKey: ['docs'] })
+        void qc.invalidateQueries({ queryKey: ['project', 'files'] })
+        if (path === docPath) navigate('/docs')
+      },
+    }),
+    [qc, navigate, docPath, editorDirty],
+  )
+}
+
 const EMPTY_SET = new Set<string>()
 const NO_GLOB: string[] = []
 
@@ -140,30 +174,7 @@ export default function Explorer({ sections = ['docs', 'deliverable', 'generated
   const relatedFiles = docPath ? (links.docToFiles.get(docPath) ?? EMPTY_SET) : EMPTY_SET
   const relatedDocs = delivPath ? (links.fileToDocs.get(delivPath) ?? EMPTY_SET) : EMPTY_SET
 
-  // Everything goes through the documents API; the tree only types the names.
-  const docActions = useMemo<TreeActions>(
-    () => ({
-      create: async (path) => {
-        const name = (path.split('/').pop() ?? path).replace(/\.md$/, '').replace(/[-_]+/g, ' ')
-        const title = name ? name.charAt(0).toUpperCase() + name.slice(1) : ''
-        await put(contentPath(path), { text: `# ${title}\n`, baseHash: null })
-        void qc.invalidateQueries({ queryKey: ['docs'] })
-        navigate(`/docs/${path}`)
-      },
-      rename: async (from, to) => {
-        if (from === docPath && editorDirty) throw new Error('save the open document first')
-        await post('/api/docs/rename', { from, to })
-        void qc.invalidateQueries({ queryKey: ['docs'] })
-        if (from === docPath) navigate(`/docs/${to}`)
-      },
-      remove: async (path) => {
-        await deleteDoc(path)
-        void qc.invalidateQueries({ queryKey: ['docs'] })
-        if (path === docPath) navigate('/docs')
-      },
-    }),
-    [qc, navigate, docPath, editorDirty],
-  )
+  const docActions = useDocActions(docPath)
 
   const rows = matrix.data?.rows ?? {}
   const staleFor = (f: DelivFileInfo) =>
@@ -272,5 +283,159 @@ export default function Explorer({ sections = ['docs', 'deliverable', 'generated
         </div>
       )}
     </>
+  )
+}
+
+// ---- the project tree (docs/frontends/gui.md#workspace) ----
+
+type ProjectRow = { path: string; size: number }
+
+// The static head of a docs glob pattern: `docs/**/*.md` names `docs`.
+function globRoot(pattern: string): string {
+  const parts = pattern.split('/')
+  const out: string[] = []
+  for (const p of parts) {
+    if (/[*?[{]/.test(p)) break
+    out.push(p)
+  }
+  return out.join('/')
+}
+
+const TEST_FILE = /(^|\/)(tests?|spec|__tests__)\//
+const TEST_NAME = /\.(test|spec)\.[a-z0-9]+$/i
+
+export type FileKind = 'doc' | 'file' | 'test' | 'generated' | 'project'
+
+// What a project file is, and the page it opens as.
+export function classifyFile(path: string, where: { deliverable: string | null; out: string | null; docsGlob: string[] }): { kind: FileKind; href: string } {
+  const { deliverable, out, docsGlob } = where
+  // The files the app has a page for open that page.
+  if (path === 'jazyk.toml') return { kind: 'project', href: '/settings' }
+  if (out && (path === out || path.startsWith(`${out}/`))) {
+    const rel = path.slice(out.length + 1)
+    const gen = /^journal\/g(\d+)\.yaml$/.exec(rel)
+    if (gen) return { kind: 'generated', href: `/history/${gen[1]}` }
+    if (rel === 'status.yaml') return { kind: 'generated', href: '/history' }
+    if (rel === 'graph/diagnostics.yaml') return { kind: 'generated', href: '/inbox' }
+    return { kind: 'generated', href: outHref(rel) }
+  }
+  if (docsGlob.length > 0 && matchesGlob(path, docsGlob)) return { kind: 'doc', href: `/docs/${path}` }
+  const underProduct = deliverable !== null && (deliverable === '' || path.startsWith(`${deliverable}/`))
+  if (underProduct && path !== 'jazyk.toml' && !path.split('/').some((c) => c.startsWith('.'))) {
+    const rel = deliverable ? path.slice(deliverable.length + 1) : path
+    return { kind: TEST_FILE.test(rel) || TEST_NAME.test(rel) ? 'test' : 'file', href: `/product/files/${rel}` }
+  }
+  return { kind: 'project', href: `/project/${path}` }
+}
+
+const GLYPH: Record<FileKind, string> = { doc: '¶', file: '▤', test: '✓', generated: '▦', project: '▫' }
+
+export function ProjectExplorer() {
+  const loc = useLocation()
+  const projectQ = useProject()
+  const filesQ = useProjectFiles()
+  const docsQ = useDocs()
+  const inbox = useInbox()
+  const turns = useApp((a) => a.turns)
+  const projectKey = treeProjectKey(projectQ.data?.root ?? 'project')
+  const docPath = loc.pathname.startsWith('/docs/') ? decodeURIComponent(loc.pathname.slice('/docs/'.length)) : ''
+  const docActions = useDocActions(docPath)
+  const pendingDocs = useMemo(() => new Set(inbox.data?.pending.docs ?? []), [inbox.data])
+  const docInfo = useMemo(() => new Map((docsQ.data?.docs ?? []).map((d) => [d.path, d])), [docsQ.data])
+  const docProgress = useMemo(() => {
+    const m = new Map<string, TurnProgress>()
+    for (const t of Object.values(turns)) if (t.doc) m.set(t.doc, t)
+    return m
+  }, [turns])
+
+  // A backend that does not serve the project files (an older `jazyk gui`): the tree
+  // from what it does list, the documents, the product files, the generated pages.
+  const delivQ = useDeliverable()
+  const outQ = useOutList('docsgen')
+  const data = useMemo(() => {
+    const served = filesQ.data && Array.isArray(filesQ.data.files)
+    if (served) return filesQ.data
+    if ((!filesQ.isError && !filesQ.data) || !projectQ.data) return undefined
+    const root = projectQ.data.root.replace(/\/$/, '')
+    const rel = (abs?: string) => (abs && (abs === root || abs.startsWith(`${root}/`)) ? abs.slice(root.length + 1) : null)
+    const deliverable = rel((projectQ.data as { deliverable?: string }).deliverable)
+    const out = rel(projectQ.data.out)
+    const files: { path: string; size: number }[] = []
+    for (const d of docsQ.data?.docs ?? []) files.push({ path: d.path, size: 0 })
+    if (deliverable !== null) for (const f of delivQ.data?.files ?? []) files.push({ path: deliverable ? `${deliverable}/${f.path}` : f.path, size: 0 })
+    if (out) for (const f of outQ.data?.files ?? []) files.push({ path: `${out}/${f.path}`, size: 0 })
+    return { files, deliverable, out, docsGlob: projectQ.data.docsGlob ?? [] }
+  }, [filesQ.data, filesQ.isError, projectQ.data, docsQ.data, delivQ.data, outQ.data])
+  const where = useMemo(
+    () => ({ deliverable: data?.deliverable ?? null, out: data?.out ?? null, docsGlob: data?.docsGlob ?? projectQ.data?.docsGlob ?? NO_GLOB }),
+    [data, projectQ.data],
+  )
+  const kinds = useMemo(() => new Map((data?.files ?? []).map((f) => [f.path, classifyFile(f.path, where)])), [data, where])
+  const docRoots = useMemo(() => new Set(where.docsGlob.map(globRoot).filter(Boolean)), [where])
+
+  // The open item's file, highlighted in the tree.
+  const current = useMemo(() => {
+    const p = decodeURIComponent(loc.pathname)
+    for (const [path, k] of kinds) if (k.href === p) return path
+    return ''
+  }, [loc.pathname, kinds])
+
+  const isDocPath = (p: string) => kinds.get(p)?.kind === 'doc' || [...docRoots].some((r) => p === r || p.startsWith(`${r}/`))
+
+  return (
+    <div className="wb-explorer-section project-tree">
+      {filesQ.isLoading && <p className="muted ide-pad">reading the project…</p>}
+
+      {data && (
+        <FileTree<ProjectRow>
+          head="project"
+          projectKey={projectKey}
+          items={data.files}
+          current={current}
+          defaultClosed
+          hrefFor={(f) => kinds.get(f.path)?.href ?? `/project/${f.path}`}
+          fileClass={(f) => `pf k-${kinds.get(f.path)?.kind ?? 'project'}`}
+          fileGlyph={(f) => (
+            <span className="pf-glyph" aria-hidden="true">
+              {GLYPH[kinds.get(f.path)?.kind ?? 'project']}
+            </span>
+          )}
+          folderClass={(dir) =>
+            docRoots.has(dir) ? 'pf-dir k-doc' : where.deliverable && dir === where.deliverable ? 'pf-dir k-file' : where.out && dir === where.out ? 'pf-dir k-generated' : ''
+          }
+          folderBadge={(dir) =>
+            docRoots.has(dir) ? (
+              <span className="pf-tag">documents</span>
+            ) : where.deliverable && dir === where.deliverable ? (
+              <span className="pf-tag">product</span>
+            ) : where.out && dir === where.out ? (
+              <span className="pf-tag">build output</span>
+            ) : null
+          }
+          nameClass="ide-doc-name"
+          placeholder="name.md"
+          actions={docActions}
+          actionsFor={isDocPath}
+          badges={(f) => {
+            const d = docInfo.get(f.path)
+            if (!d) return null
+            return (
+              <>
+                <DiagBadge doc={d} />
+                <GoalBadge doc={d} />
+                {d.stale && <span className="dot-stale" title="stale against the model" />}
+                {pendingDocs.has(f.path) && (
+                  <span className="ide-pending" title="edited since the last build">
+                    ●
+                  </span>
+                )}
+                {docProgress.has(f.path) && <BuildMark p={docProgress.get(f.path)!} />}
+              </>
+            )
+          }}
+        />
+      )}
+      {where.deliverable === '' && <p className="muted pf-note">The product is the whole project folder.</p>}
+    </div>
   )
 }

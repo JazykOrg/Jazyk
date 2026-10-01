@@ -11,6 +11,7 @@ pub mod inbox;
 pub mod outfiles;
 pub mod overview;
 pub mod product;
+pub mod projfiles;
 pub mod status;
 pub mod views;
 pub mod workers;

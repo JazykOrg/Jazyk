@@ -1,15 +1,11 @@
-// The workspace's one navigator (docs/frontends/gui.md#workspace):
-// Documents, the open document's Outline, Product (Overview, the file tree, Trace,
-// Tests), and Diagrams and Generated collapsed. There is no Model head. A single
-// click opens a preview item, a double click keeps it.
-import { useState } from 'react'
-import { NavLink, useLocation } from 'react-router'
+// The workspace's one navigator (docs/frontends/gui.md#workspace): the focused
+// item's area sections when it has them, the whole project directory as a tree with
+// every file typed by kind, and under it the open document's Outline, each part
+// scrolling on its own. A single click opens a preview item, a double click keeps it.
+import { useLocation } from 'react-router'
 import { AreaSections, hasAreaSections } from '../shell/Navigator'
-import Explorer from '../workbench/Explorer'
+import { ProjectExplorer } from '../workbench/Explorer'
 import Outline from '../shell/Outline'
-import { useDeliverable, useMatrix, useViews } from '../lib/queries'
-import { useWords } from '../lib/words'
-import { verifyClass } from '../components/Chip'
 import { pinPath } from './actions'
 import { hrefPath } from './paths'
 
@@ -27,104 +23,6 @@ function anchorPath(target: EventTarget | null): string | null {
   return a ? hrefPath(a.getAttribute('href')) : null
 }
 
-function Row({ to, label, sub, end }: { to: string; label: string; sub?: React.ReactNode; end?: boolean }) {
-  return (
-    <NavLink to={to} end={end} className={({ isActive }) => (isActive ? 'active' : '')}>
-      {label}
-      {sub !== undefined && <span className="sub">{sub}</span>}
-    </NavLink>
-  )
-}
-
-// A head that folds its section, remembered per browser.
-function Fold({ id, title, count, children, closed: closedByDefault }: { id: string; title: string; count?: React.ReactNode; children: React.ReactNode; closed?: boolean }) {
-  const key = `jazyk.workspace.nav:${id}`
-  const [open, setOpen] = useState(() => {
-    try {
-      const v = localStorage.getItem(key)
-      return v === null ? !closedByDefault : v === 'open'
-    } catch {
-      return !closedByDefault
-    }
-  })
-  const toggle = () => {
-    setOpen((o) => {
-      try {
-        localStorage.setItem(key, o ? 'closed' : 'open')
-      } catch {
-        // not remembered
-      }
-      return !o
-    })
-  }
-  return (
-    <div className={`wsn-fold${open ? ' open' : ''}`} data-fold={id}>
-      <button className="wsn-head" aria-expanded={open} onClick={toggle}>
-        <span className="wsn-chev" aria-hidden="true">
-          {open ? '▾' : '▸'}
-        </span>
-        {title}
-        {count !== undefined && <span className="wsn-count">{count}</span>}
-      </button>
-      {open && children}
-    </div>
-  )
-}
-
-function Product() {
-  const w = useWords()
-  const matrix = useMatrix()
-  const deliv = useDeliverable()
-  const counts = matrix.data?.counts ?? {}
-  return (
-    <Fold id="product" title={w.product}>
-      <div className="ws-nav-list">
-        <Row to="/product" end label="Overview" />
-      </div>
-      <div className="wsn-files">
-        <Explorer sections={['deliverable']} />
-      </div>
-      <div className="ws-nav-list">
-        <Row
-          to="/product/trace"
-          label={w.trace}
-          sub={
-            <>
-              {Object.entries(counts)
-                .slice(0, 3)
-                .map(([st, n]) => (
-                  <span key={st} className={verifyClass(st)} style={{ marginLeft: 6 }}>
-                    {n} {st}
-                  </span>
-                ))}
-            </>
-          }
-        />
-        <Row to="/product/tests" label="Tests" />
-      </div>
-      {deliv.isError && <p className="muted ide-pad">could not load the product</p>}
-    </Fold>
-  )
-}
-
-function Diagrams() {
-  const w = useWords()
-  const views = useViews()
-  const list = views.data?.views ?? []
-  return (
-    <Fold id="diagrams" title={w.diagrams} count={views.data ? list.length : undefined} closed>
-      <div className="ws-nav-list">
-        {views.data && list.length === 0 && <p className="muted ide-pad">no diagrams yet: a build draws them</p>}
-        {list.map((v) => (
-          <Row key={v.id} to={`/model/diagrams/${encodeURIComponent(v.id)}`} label={v.title} />
-        ))}
-      </div>
-    </Fold>
-  )
-}
-
-// The sections of the focused item's area (the Inbox, History, the Developer pages,
-// the model, Settings), leading the navigator while that item is in front.
 function AreaFold() {
   const loc = useLocation()
   if (!hasAreaSections(loc.pathname)) return null
@@ -150,15 +48,12 @@ export default function WorkspaceNavigator() {
       }}
     >
       <AreaFold />
-      <Fold id="documents" title="Documents">
-        <Explorer sections={['docs']} />
-      </Fold>
-      <Outline />
-      <Product />
-      <Diagrams />
-      <Fold id="generated" title="Generated" closed>
-        <Explorer sections={['generated']} />
-      </Fold>
+      <div className="wsn-tree">
+        <ProjectExplorer />
+      </div>
+      <div className="wsn-outline">
+        <Outline />
+      </div>
     </aside>
   )
 }

@@ -1028,3 +1028,34 @@
 .react-flow.dark .bw.floating {
   box-shadow: 0 22px 48px rgba(0, 0, 0, 0.6), 0 6px 14px rgba(0, 0, 0, 0.45);
 }
+
+/* Zoomed out (cards, titles): each window tinted with its kind's color and bordered
+   thick in it, so the kinds stand out from far away; dashed while unpinned. The
+   border is in board pixels, so it grows as the zoom falls. */
+.bw.lv-card,
+.bw.lv-title {
+  background: color-mix(in srgb, var(--k) 14%, var(--panel));
+  border: 8px solid color-mix(in srgb, var(--k) 75%, var(--panel));
+  box-shadow: none;
+  transform: none;
+}
+
+.bw.lv-title {
+  border-width: 18px;
+}
+
+.bw.floating.lv-card,
+.bw.floating.lv-title {
+  border-style: dashed;
+}
+
+.bw.focused.lv-card,
+.bw.focused.lv-title {
+  border-color: var(--k);
+  background: color-mix(in srgb, var(--k) 22%, var(--panel));
+}
+
+.bw.lv-title .bw-titleonly,
+.bw.lv-card .bw-card-title {
+  color: color-mix(in srgb, var(--k) 70%, var(--ink));
+}

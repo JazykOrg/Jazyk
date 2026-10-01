@@ -345,6 +345,12 @@
   }
 }
 
+/* The quotes of the requirements the caret is in: light, always there while it is. */
+.jz-req-caret {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-radius: 2px;
+}
+
 /* Always-visible entity mentions (LSP document link ranges). */
 .entity-mark {
   color: var(--accent);

@@ -1,15 +1,14 @@
 // The links' portals and linkage (docs/frontends/gui.md#the-board), drawn in screen
 // space over the board so they read at any zoom. Where a link leaves the view, a
 // portal on it names the node at the far end, an arrow pointing the way; a click
-// focuses that node. The linkage (the verb and the requirements behind the link,
-// collapsed) sits centered on the link's visible part, between its portals; with one
-// end out of view it folds into that end's portal.
+// focuses that node. The linkage card (card.tsx) sits centered on the link's visible
+// part, between its portals; with one end out of view it folds into that end's
+// portal. Its requirement lines show only near 100 percent.
 import { memo, useMemo } from 'react'
 import { useStore } from '@xyflow/react'
-import { useGraph } from '../../lib/queries'
-import { shorten } from '../../lib/present'
 import { avoid, clampBox, fitMargin, linkOnScreen, sideOf, visiblePieces, type LayerEdge, type Level, type Point, type Rect } from './model'
 import { useRuntime } from './runtime'
+import LinkCard, { CARD_W, cardHeight } from './card'
 
 export interface NodeName {
   glyph: string
@@ -19,68 +18,32 @@ export interface NodeName {
 // Keeps clear of the view's edges by this much.
 const INSET = 10
 const PORTAL_H = 26
-const LABEL_H = 22
-// A portal narrowed to its margin keeps at least this width; its full name shows
-// on hover.
+// A portal with no requirements narrowed to its margin keeps at least this width;
+// in a thin margin its name wraps to two lines.
 const MIN_W = 72
-// A portal or a linkage narrowed to a thin margin: the name wraps to two lines, the
-// linkage keeps only its count.
 const NARROW_H = 38
-// The width a folded-in count adds to a portal.
-const COUNT_W = 34
-const PANEL_W = 300
 
-function portalWidth(name: string, count: boolean): number {
-  return Math.min(220 + (count ? COUNT_W : 0), 44 + name.length * 7 + (count ? COUNT_W : 0))
+function portalWidth(name: string): number {
+  return Math.min(220, 44 + name.length * 7)
 }
 
-function panelHeight(n: number): number {
-  return Math.min(260, 30 + Math.min(n, 6) * 36)
-}
-
-interface PortalPlaced {
-  kind: 'portal'
-  key: string
-  edge: string
-  node: string
-  box: Rect
-  angle: number
-  name: NodeName
-  narrow: boolean
-  // The link's linkage, folded in when this is the link's only portal.
-  linkage?: LayerEdge
+function verbWidth(label: string): number {
+  return Math.min(200, 24 + label.length * 6.6)
 }
 
 type Placed =
-  | PortalPlaced
-  | { kind: 'label'; key: string; edge: LayerEdge; box: Rect; narrow: boolean }
-  | { kind: 'panel'; key: string; edge: LayerEdge; box: Rect }
+  | { kind: 'portal'; key: string; edge: LayerEdge; node: string; box: Rect; angle: number; name: NodeName; narrow: boolean; card: boolean }
+  | { kind: 'label'; key: string; edge: LayerEdge; box: Rect }
 
-function Count({ edge, open, onToggle }: { edge: LayerEdge; open: boolean; onToggle: () => void }) {
+export function PortalHead({ name, angle, onGo }: { name: NodeName; angle: number; onGo: () => void }) {
   return (
-    <button
-      className="bl-count"
-      onClick={onToggle}
-      aria-expanded={open}
-      title={`${edge.label}: ${edge.reqs.length} ${edge.reqs.length === 1 ? 'requirement' : 'requirements'} behind this link`}
-    >
-      {edge.reqs.length} {open ? '▾' : '▸'}
+    <button className="bl-go" onClick={onGo} title={`Go to ${name.name}`}>
+      <span className="bl-arrow" style={{ transform: `rotate(${angle}rad)` }} aria-hidden>
+        ➜
+      </span>
+      <span className="bl-glyph">{name.glyph}</span>
+      <span className="bl-name">{name.name}</span>
     </button>
-  )
-}
-
-function Requirements({ edge, onOpen }: { edge: LayerEdge; onOpen: (id: string, edge: LayerEdge) => void }) {
-  const { data: g } = useGraph()
-  return (
-    <ul className="bl-reqs">
-      {edge.reqs.map((id) => (
-        <li key={id}>
-          <button onClick={() => onOpen(id, edge)} title="Open the requirement beside the link">
-            {shorten(g?.requirements[id]?.statement ?? id, 140)}
-          </button>
-        </li>
-      ))}
-    </ul>
   )
 }
 
@@ -90,7 +53,9 @@ export const Links = memo(function Links({
   names,
   level,
   hotEdge,
+  hotReqs,
   onGo,
+  onReveal,
   onOpenRequirement,
 }: {
   edges: LayerEdge[]
@@ -98,14 +63,18 @@ export const Links = memo(function Links({
   names: Map<string, NodeName>
   level: Level
   hotEdge: string | null
+  hotReqs: Set<string>
   onGo: (node: string) => void
-  onOpenRequirement: (id: string, edge: LayerEdge) => void
+  onReveal: (rid: string) => void
+  onOpenRequirement: (rid: string, edge: LayerEdge) => void
 }) {
   const [tx, ty, zoom] = useStore((s) => s.transform)
   const width = useStore((s) => s.width)
   const height = useStore((s) => s.height)
   const expanded = useRuntime((s) => s.expanded)
-  const toggle = useRuntime((s) => s.toggleLink)
+  // The requirement lines show only near 100 percent; farther out a link carries
+  // its verb alone.
+  const withReqs = level === 'live'
 
   const placed = useMemo(() => {
     const out: Placed[] = []
@@ -114,14 +83,15 @@ export const Links = memo(function Links({
     const screen = (r: Rect): Rect => ({ x: r.x * zoom + tx, y: r.y * zoom + ty, w: r.w * zoom, h: r.h * zoom })
     const boxes: Rect[] = []
     // The windows on screen: a link under one is hidden there, and a portal or a
-    // linkage keeps to the margin beside them.
+    // linkage keeps to the margin beside them where it fits.
     const covers = [...rects.entries()]
       .map(([id, r]) => [id, screen(r)] as [string, Rect])
       .filter(([, r]) => r.x < view.x + view.w && view.x < r.x + r.w && r.y < view.y + view.h && view.y < r.y + r.h)
     const coverRects = covers.map(([, r]) => r)
     const portalSides = new Set<string>()
     const labels: { edge: LayerEdge; at: Point }[] = []
-    const showLinkage = (e: LayerEdge) => level !== 'title' && (e.reqs.length > 0 || e.kind === 'rel')
+    const reqsOf = (e: LayerEdge) => (withReqs ? e.reqs.length : 0)
+    const showLinkage = (e: LayerEdge) => level !== 'title' && (reqsOf(e) > 0 || e.kind === 'rel')
     for (const e of edges) {
       const a = rects.get(e.source)
       const b = rects.get(e.target)
@@ -138,30 +108,31 @@ export const Links = memo(function Links({
         [link.sourceOut && seen[0][0] < 0.001, e.source, link.from, link.angle + Math.PI],
         [link.targetOut && seen[seen.length - 1][1] > 0.999, e.target, link.to, link.angle],
       ]
-      // One end out of view: its portal carries the linkage (a lone portal).
-      const lone = link.sourceOut !== link.targetOut && showLinkage(e)
+      // One end out of view: its portal carries the linkage.
+      const lone = link.sourceOut !== link.targetOut
       let folded = false
       for (const [show, node, point, angle] of ends) {
         if (!show) continue
         const name = names.get(node) ?? { glyph: '▢', name: node }
-        const withCount = lone && e.reqs.length > 0
-        let box = clampBox(point, portalWidth(name.name, withCount), PORTAL_H, view)
+        const card = lone && reqsOf(e) > 0
+        const side = sideOf(clampBox(point, 10, 10, view), view)
         // One portal per node on each side of the view.
-        const side = `${node}|${sideOf(box, view)}`
-        if (portalSides.has(side)) continue
-        portalSides.add(side)
-        // Narrowed, the name wraps and a folded count stacks under it.
-        const fitted = fitMargin(box, coverRects, view, MIN_W)
-        const narrow = fitted.w < box.w
-        box = narrow ? { ...fitted, ...clampBox({ x: fitted.x + fitted.w / 2, y: point.y }, fitted.w, NARROW_H + (withCount ? 20 : 0), view) } : fitted
+        if (portalSides.has(`${node}|${side}`)) continue
+        portalSides.add(`${node}|${side}`)
+        let box: Rect
+        let narrow = false
+        if (card) {
+          box = clampBox(point, CARD_W, cardHeight(e.reqs.length, expanded === e.id), view)
+        } else {
+          box = clampBox(point, portalWidth(name.name), PORTAL_H, view)
+          const fitted = fitMargin(box, coverRects, view, MIN_W)
+          narrow = fitted.w < box.w
+          box = narrow ? { ...fitted, ...clampBox({ x: fitted.x + fitted.w / 2, y: point.y }, fitted.w, NARROW_H, view) } : fitted
+        }
         box = avoid(box, boxes, view)
         boxes.push(box)
-        const p: PortalPlaced = { kind: 'portal', key: `p:${e.id}:${node}`, edge: e.id, node, box, angle, name, narrow }
-        if (lone) {
-          p.linkage = e
-          folded = true
-        }
-        out.push(p)
+        out.push({ kind: 'portal', key: `p:${e.id}:${node}`, edge: e, node, box, angle, name, narrow, card })
+        if (lone) folded = true
       }
       if (showLinkage(e) && !folded) {
         const [s0, s1] = seen.reduce((m, p) => (p[1] - p[0] > m[1] - m[0] ? p : m))
@@ -169,89 +140,52 @@ export const Links = memo(function Links({
       }
     }
     for (const { edge, at } of labels) {
-      const text = edge.label + (edge.reqs.length ? ` · ${edge.reqs.length}` : '')
-      const open = expanded === edge.id && edge.reqs.length > 0
-      const w = open ? PANEL_W : Math.min(240, 30 + text.length * 6.6)
-      const h = open ? panelHeight(edge.reqs.length) : LABEL_H
-      let box = clampBox(at, w, h, view)
-      let narrow = false
-      if (!open) {
-        const fitted = fitMargin(box, coverRects, view, 40)
-        narrow = fitted.w < box.w
-        const nw = Math.min(fitted.w, 48)
-        box = narrow ? { ...fitted, w: nw, x: sideOf(fitted, view) === 'left' ? fitted.x : fitted.x + fitted.w - nw } : fitted
-      }
+      const n = reqsOf(edge)
+      let box = n > 0 ? clampBox(at, CARD_W, cardHeight(n, expanded === edge.id), view) : clampBox(at, verbWidth(edge.label), 22, view)
+      if (n === 0) box = fitMargin(box, coverRects, view, 40)
       box = avoid(box, boxes, view)
       boxes.push(box)
-      out.push({ kind: 'label', key: `l:${edge.id}`, edge, box, narrow })
-    }
-    // A folded linkage expands as a panel under its portal.
-    for (const p of out) {
-      if (p.kind !== 'portal' || !p.linkage || expanded !== p.linkage.id || p.linkage.reqs.length === 0) continue
-      const h = panelHeight(p.linkage.reqs.length)
-      const box = clampBox({ x: p.box.x + p.box.w / 2, y: p.box.y + p.box.h + 4 + h / 2 }, PANEL_W, h, view)
-      out.push({ kind: 'panel', key: `r:${p.linkage.id}`, edge: p.linkage, box })
-      break
+      out.push({ kind: 'label', key: `l:${edge.id}`, edge, box })
     }
     return out
-  }, [edges, rects, names, level, tx, ty, zoom, width, height, expanded])
+  }, [edges, rects, names, level, withReqs, tx, ty, zoom, width, height, expanded])
 
   return (
     <div className="board-links">
       {placed.map((p) => {
+        const hot = p.edge.id === hotEdge
         if (p.kind === 'portal') {
           const right = p.box.x + p.box.w >= width - INSET - 1
-          return (
-            <div
-              key={p.key}
-              className={`bl-portal${p.edge === hotEdge ? ' hot' : ''}${p.narrow ? ' narrow' : ''}`}
-              style={{ ...(right ? { right: width - p.box.x - p.box.w } : { left: p.box.x }), top: p.box.y, width: p.box.w, height: p.box.h }}
-              data-node={p.node}
-            >
-              <button className="bl-go" onClick={() => onGo(p.node)} title={`Go to ${p.name.name}`}>
-                <span className="bl-arrow" style={{ transform: `rotate(${p.angle}rad)` }} aria-hidden>
-                  ➜
-                </span>
-                <span className="bl-glyph">{p.name.glyph}</span>
-                <span className="bl-name">{p.name.name}</span>
-              </button>
-              {p.linkage && p.linkage.reqs.length > 0 && <Count edge={p.linkage} open={expanded === p.linkage.id} onToggle={() => toggle(p.linkage!.id)} />}
-            </div>
-          )
-        }
-        if (p.kind === 'panel') {
-          return (
-            <div key={p.key} className="bl-label bl-panel open" style={{ left: p.box.x, top: p.box.y, width: p.box.w, maxHeight: p.box.h }} data-edge={p.edge.id}>
-              <div className="bl-head">
-                <span className="bl-verb">{p.edge.label}</span>
+          const pos = { ...(right ? { right: width - p.box.x - p.box.w } : { left: p.box.x }), top: p.box.y, width: p.box.w }
+          const head = <PortalHead name={p.name} angle={p.angle} onGo={() => onGo(p.node)} />
+          if (p.card) {
+            return (
+              <div key={p.key} className={`bl-portal lc${hot ? ' hot' : ''}`} style={{ ...pos, maxHeight: p.box.h }} data-node={p.node} data-edge={p.edge.id}>
+                <LinkCard id={p.edge.id} head={head} reqs={p.edge.reqs} hotReqs={hotReqs} onReveal={onReveal} onOpenRequirement={(rid) => onOpenRequirement(rid, p.edge)} />
               </div>
-              <Requirements edge={p.edge} onOpen={onOpenRequirement} />
+            )
+          }
+          return (
+            <div key={p.key} className={`bl-portal${hot ? ' hot' : ''}${p.narrow ? ' narrow' : ''}`} style={{ ...pos, height: p.box.h }} data-node={p.node}>
+              {head}
             </div>
           )
         }
-        const open = expanded === p.edge.id
+        const n = withReqs ? p.edge.reqs.length : 0
         return (
           <div
             key={p.key}
-            className={`bl-label bl-${p.edge.kind}${p.edge.id === hotEdge ? ' hot' : ''}${open ? ' open' : ''}${p.narrow ? ' narrow' : ''}`}
+            className={`bl-label${n > 0 ? ' lc' : ''} bl-${p.edge.kind}${hot ? ' hot' : ''}`}
             style={{ left: p.box.x, top: p.box.y, width: p.box.w, maxHeight: p.box.h }}
             data-edge={p.edge.id}
           >
-            <button
-              className="bl-head"
-              disabled={p.edge.reqs.length === 0}
-              onClick={() => toggle(p.edge.id)}
-              aria-expanded={p.edge.reqs.length ? open : undefined}
-              title={`${p.edge.label}${p.edge.reqs.length ? `: ${p.edge.reqs.length} ${p.edge.reqs.length === 1 ? 'requirement' : 'requirements'} behind this link` : ''}`}
-            >
-              {!p.narrow && <span className="bl-verb">{p.edge.label}</span>}
-              {p.edge.reqs.length > 0 && (
-                <span className="bl-count">
-                  {p.edge.reqs.length} {open ? '▾' : '▸'}
-                </span>
-              )}
-            </button>
-            {open && p.edge.reqs.length > 0 && <Requirements edge={p.edge} onOpen={onOpenRequirement} />}
+            {n > 0 ? (
+              <LinkCard id={p.edge.id} head={<span className="bl-verb">{p.edge.label}</span>} reqs={p.edge.reqs} hotReqs={hotReqs} onReveal={onReveal} onOpenRequirement={(rid) => onOpenRequirement(rid, p.edge)} />
+            ) : (
+              <span className="bl-verb" title={p.edge.label}>
+                {p.edge.label}
+              </span>
+            )}
           </div>
         )
       })}

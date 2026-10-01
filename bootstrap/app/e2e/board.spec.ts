@@ -8,7 +8,6 @@ const BACKEND = '/docs/docs/backend.md'
 const FRONTEND = '/docs/docs/frontend.md'
 const INVENTORY_DOC = '/docs/docs/subsystems/inventory.md'
 const BACKEND_ENTITY = '/model/entities/ent%3Abackend'
-const INVENTORY = '/model/entities/ent%3Ainventory-management'
 
 const win = (page: Page, path: string) => page.locator(`.react-flow__node-window[data-id="w:${path}"]`)
 const docRow = (page: Page, name: string) => page.locator('.wsn .ide-doc-name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) })
@@ -62,9 +61,9 @@ async function settle(page: Page) {
     .toBe(true)
 }
 
-// Zooms to a window: a double click on its title bar.
+// Zooms to a window: a click on its bar.
 async function zoomTo(page: Page, path: string) {
-  await win(page, path).locator('.bw-title').dblclick()
+  await win(page, path).locator('.bw-title .bw-name').click()
   await expect(page.locator('.board-zoom')).toContainText('pages')
   await settle(page)
 }
@@ -89,32 +88,57 @@ test('opening two documents puts two windows on the board, each its page', async
   expect(errors).toEqual([])
 })
 
-test('the focused document fans its unopened entities out below it, and a click opens one for good', async ({ page }) => {
+test('a document window has one bar, and a click on the empty table top fits everything', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)
   await zoomTo(page, BACKEND)
-  // Nothing but the window is on the board; the entities it brings are the fan.
-  await expect(page.locator('.react-flow__node')).toHaveCount(1)
-  const chip = page.locator('.board-fan .bf-chip[data-entity="ent:inventory-management"]')
-  await expect(chip).toBeVisible()
-  const box = (await win(page, BACKEND).boundingBox())!
-  const c = (await chip.boundingBox())!
-  expect(c.y).toBeGreaterThan(box.y + box.height - 2)
-  await expect(page.locator('.board-fan .bf-lines path').first()).toBeAttached()
-  // A click opens it beside the document, which keeps the focus.
-  await chip.click()
-  await expect(win(page, INVENTORY)).toBeAttached()
-  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
-  await expect(page.locator(`.react-flow__edge[data-id="def:${BACKEND}->ent:inventory-management"]`)).toBeAttached()
-  await expect(chip).toHaveCount(0)
-  // The toggle hides the fan.
-  await page.locator('.board-tools').getByRole('button', { name: 'Graph' }).click()
-  await expect(page.locator('.board-fan')).toHaveCount(0)
-  await page.locator('.board-tools').getByRole('button', { name: 'Graph' }).click()
-  await expect(page.locator('.board-fan')).toBeVisible()
+  const bar = win(page, BACKEND).locator('.bw-title')
+  await expect(bar).toContainText('docs/backend.md')
+  await expect(bar.locator('.ide-mode').getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(bar).toContainText('saved')
+  await expect(win(page, BACKEND).locator('.ide-topbar')).toHaveCount(0)
+  // The switch turns every document.
+  await bar.locator('.ide-mode').getByRole('button', { name: 'Read' }).click()
+  await expect(win(page, BACKEND).locator('.md-read')).toBeVisible()
+  await bar.locator('.ide-mode').getByRole('button', { name: 'Write' }).click()
+  await expect(win(page, BACKEND).locator('.cm-content')).toBeVisible()
+  // Nothing shows below the document until the caret rests on something.
+  await expect(page.locator('.board-refs')).toHaveCount(0)
+  // A click on the empty table top fits everything: one window fits at 100 percent.
+  await blur(page)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.board-zoom')).toContainText('stills')
+  await settle(page)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.board-zoom')).toContainText('cards')
+  await settle(page)
+  const board = (await page.locator('.board .react-flow').boundingBox())!
+  await page.mouse.click(board.x + 30, board.y + board.height - 30)
+  await expect(page.locator('.board-zoom')).toContainText('pages')
 })
 
-test('a link with one end out of view is one portal carrying its count, and one linkage expands at a time', async ({ page }) => {
+test('the caret on a mention brings its entity below the document as a reference, its title opening and focusing it', async ({ page }) => {
+  await openBoard(page)
+  await openDoc(page, 'backend.md', BACKEND)
+  await zoomTo(page, BACKEND)
+  const doc = win(page, BACKEND)
+  // `backend system` in the first paragraph names the Backend, inside a requirement's quote.
+  await doc.locator('.cm-line', { hasText: 'REST API' }).locator('.entity-mark').first().click()
+  const card = page.locator('.board-refs .br-card[data-entity="ent:backend"]')
+  await expect(card).toBeVisible()
+  await expect(card.locator('.lc-head')).toHaveClass(/hot/)
+  await expect(card.locator('.lc-reqs li').first()).toBeVisible()
+  // The caret is in a requirement's quote: it is first on the card, highlighted, and lightly in the text.
+  await expect(card.locator('.lc-reqs li').first()).toHaveClass(/hot/)
+  await expect(doc.locator('.cm-content .jz-req-caret').first()).toBeVisible()
+  // Two lines folded, the rest behind the last line.
+  expect(await card.locator('.lc-reqs li').count()).toBeLessThanOrEqual(2)
+  await card.locator('.br-title').click()
+  await expect(win(page, BACKEND_ENTITY)).toBeAttached()
+  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Abackend$/)
+})
+
+test('a link with one end out of view is one portal carrying its requirements; a line reveals its quote, its button opens it', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)
   await zoomTo(page, BACKEND)
@@ -123,25 +147,27 @@ test('a link with one end out of view is one portal carrying its count, and one 
   const box = (await win(page, BACKEND).boundingBox())!
   expect(box.width / board.width).toBeGreaterThan(0.7)
   expect(box.width / board.width).toBeLessThan(0.9)
-  await page.locator('.board-fan .bf-chip[data-entity="ent:inventory-management"]').click()
-  await expect(win(page, INVENTORY)).toBeAttached()
+  await win(page, BACKEND).locator('.cm-line', { hasText: 'REST API' }).locator('.entity-mark').first().click({ modifiers: ['ControlOrMeta'] })
+  await expect(win(page, BACKEND_ENTITY)).toBeAttached()
   await settle(page)
-  // The entity sits out of view: its portal is in the margin, the count folded in.
-  const portal = page.locator(`.bl-portal[data-node="w:${INVENTORY}"]`)
+  // The document sits out of view: its portal carries the link's requirements.
+  const portal = page.locator(`.bl-portal.lc[data-node="w:${BACKEND}"]`)
   await expect(portal).toBeVisible()
-  const p = (await portal.boundingBox())!
-  expect(p.x).toBeGreaterThan(box.x + box.width - 4)
-  await expect(page.locator(`.bl-label[data-edge="def:${BACKEND}->ent:inventory-management"]:not(.bl-panel)`)).toHaveCount(0)
-  await portal.locator('.bl-count').click()
-  const panel = page.locator(`.bl-panel[data-edge="def:${BACKEND}->ent:inventory-management"]`)
-  await expect(panel.locator('.bl-reqs li').first()).toBeVisible()
-  await portal.locator('.bl-count').click()
-  await expect(panel).toHaveCount(0)
-  // A click on the portal's name goes to the entity.
-  await portal.locator('.bl-go').click()
-  await expect(page).toHaveURL(/#\/model\/entities\/ent%3Ainventory-management$/)
+  await expect(portal.locator('.lc-reqs li')).toHaveCount(2)
+  await expect(page.locator(`.bl-label[data-edge="men:${BACKEND}->ent:backend"]`)).toHaveCount(0)
+  // The last line expands it to all of them.
+  await portal.locator('.lc-more').click()
+  expect(await portal.locator('.lc-reqs li').count()).toBeGreaterThan(2)
+  await portal.locator('.lc-more').click()
+  await expect(portal.locator('.lc-reqs li')).toHaveCount(2)
+  // A line reveals its quote in the document: the caret lands in it, lightly highlighted.
+  await portal.locator('.lc-req').first().click()
+  await expect(page).toHaveURL(/#\/docs\/docs\/backend\.md$/)
   await settle(page)
-  await expect(win(page, INVENTORY)).toBeInViewport()
+  await expect(win(page, BACKEND).locator('.cm-content .jz-req-caret').first()).toBeVisible()
+  // The button at a line's right opens the requirement.
+  await page.locator('.board-links .lc-open, .board-refs .lc-open').first().click()
+  await expect(page).toHaveURL(/#\/model\/requirements\//)
 })
 
 test('zooming out to titles keeps every window where it is and draws only its title', async ({ page }) => {
@@ -186,7 +212,7 @@ test('a window stays where it was dragged across a reload', async ({ page }) => 
   expect(await position(page, BACKEND)).toEqual(moved)
 })
 
-test('a plain click on a mention places the cursor and highlights its link; Cmd-click opens the entity as a card beside, with a portal back', async ({ page }) => {
+test('a plain click on a mention places the cursor and shows its entity below; Cmd-click opens the entity as a card beside, with a portal back', async ({ page }) => {
   await openBoard(page)
   await openDoc(page, 'backend.md', BACKEND)
   await zoomTo(page, BACKEND)
@@ -196,10 +222,9 @@ test('a plain click on a mention places the cursor and highlights its link; Cmd-
   const mention = doc.locator('.cm-content .entity-mark', { hasText: 'backend system' }).first()
   await expect(mention).toBeVisible()
   await mention.click()
-  // Only the cursor moved: nothing opened, and the entity lights up at the front of the fan.
+  // Only the cursor moved: nothing opened, and the entity shows below as a reference.
   await expect(win(page, BACKEND_ENTITY)).toHaveCount(0)
-  const fanChip = page.locator('.board-fan .bf-chip[data-entity="ent:backend"]')
-  await expect(fanChip).toHaveClass(/hot/)
+  await expect(page.locator('.board-refs .br-card[data-entity="ent:backend"] .lc-head')).toHaveClass(/hot/)
 
   await mention.click({ modifiers: ['ControlOrMeta'] })
   const entity = win(page, BACKEND_ENTITY)

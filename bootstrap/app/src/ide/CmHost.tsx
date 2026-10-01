@@ -298,20 +298,52 @@ const mentionField = StateField.define<{ index: MentionIndex | null; decos: Deco
   },
   provide: (f) => EditorView.decorations.from(f, (v) => v.decos),
 })
-// The entity whose underlined mention holds the caret (an empty selection), or null.
-function caretEntity(state: EditorState): string | null {
+// Where each requirement's quote sits in the text, kept through edits, so the caret
+// knows the requirements it is in.
+const setReqRanges = StateEffect.define<{ rid: string; from: number; to: number }[]>()
+const reqRangeField = StateField.define<{ rid: string; from: number; to: number }[]>({
+  create: () => [],
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setReqRanges)) return e.value
+    if (!tr.docChanged) return value
+    return value.map((r) => ({ rid: r.rid, from: tr.changes.mapPos(r.from, 1), to: tr.changes.mapPos(r.to, -1) })).filter((r) => r.to > r.from)
+  },
+})
+
+// What the caret (an empty selection) rests on: the entity of the underlined
+// mention holding it, and the requirements whose quote holds it.
+function caretContext(state: EditorState): { entity: string | null; reqs: string[] } {
   const sel = state.selection.main
-  if (!sel.empty) return null
-  let id: string | null = null
+  if (!sel.empty) return { entity: null, reqs: [] }
+  let entity: string | null = null
   state.field(mentionField).decos.between(sel.head, sel.head, (from, to, value) => {
     if (from <= sel.head && sel.head <= to) {
-      id = (value.spec.attributes as Record<string, string> | undefined)?.['data-entity'] ?? null
+      entity = (value.spec.attributes as Record<string, string> | undefined)?.['data-entity'] ?? null
       return false
     }
     return undefined
   })
-  return id
+  const reqs = [...new Set(state.field(reqRangeField).filter((r) => r.from <= sel.head && sel.head <= r.to).map((r) => r.rid))]
+  return { entity, reqs }
 }
+
+// The quotes of the requirements the caret is in, lightly highlighted while it is.
+const caretReqField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    const ranged = tr.effects.some((e) => e.is(setReqRanges))
+    if (!tr.selection && !tr.docChanged && !ranged) return value
+    const sel = tr.state.selection.main
+    if (!sel.empty) return Decoration.none
+    const hits = tr.state.field(reqRangeField).filter((r) => r.from <= sel.head && sel.head <= r.to)
+    if (hits.length === 0) return Decoration.none
+    return Decoration.set(
+      hits.map((r) => Decoration.mark({ class: 'jz-req-caret' }).range(r.from, r.to)),
+      true,
+    )
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
 
 const [lensField, setLenses] = decoField() // requirement lenses above their quotes
 const [quoteField, setQuote] = decoField() // the ?quote= highlight
@@ -434,6 +466,8 @@ export interface EditorHandle {
   markSaved(): void // current content becomes the baseline
   revealLine(line: number): void
   revealSection(startLine: number, quote?: string): void
+  // Put the caret at the start of a quote and scroll it into view.
+  revealQuote(quote: string): boolean
 }
 
 // What a running build is doing to this document, drawn in the gutter beside the
@@ -485,8 +519,9 @@ interface Props {
   mentions?: MentionIndex
   // The 1-based line holding the cursor, on every move; the outline follows it.
   onCursorLine?: (line: number) => void
-  // The entity whose mention the caret rests on, or null, on every move.
-  onCaretEntity?: (id: string | null) => void
+  // What the caret rests on, on every move: the entity of the mention under it and
+  // the requirements whose quote holds it.
+  onCaretContext?: (entity: string | null, reqs: string[]) => void
   // Changes the editor did not make, marked until they fade.
   flashes?: FlashLines[]
 }
@@ -614,10 +649,12 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
   const applyMarks = (view: EditorView) => {
     const p = propsRef.current
     const open = (rid: string) => p.onOpenNode?.(rid)
+    const quoted: { rid: string; from: number; to: number }[] = []
     const ranges = (p.marks ?? [])
       .map((m) => {
         const hit = findQuote(view.state, m.quote, 0)
         if (!hit) return null
+        quoted.push({ rid: m.rid, from: hit.from, to: hit.to })
         const line = view.state.doc.lineAt(hit.from)
         return new ReqStrip(m.cls, m.tip, m.rid, open).range(line.from)
       })
@@ -627,7 +664,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     // the tooltip's neighbors through the inspector.
     const seen = new Set<number>()
     const unique = ranges.filter((r) => (seen.has(r.from) ? false : (seen.add(r.from), true)))
-    view.dispatch({ effects: setReqs.of(RangeSet.of(unique)) })
+    view.dispatch({ effects: [setReqs.of(RangeSet.of(unique)), setReqRanges.of(quoted)] })
   }
 
   const applyFlashes = (view: EditorView) => {
@@ -841,7 +878,8 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     const listener = EditorView.updateListener.of((u) => {
       if (u.selectionSet || u.docChanged) {
         propsRef.current.onCursorLine?.(u.state.doc.lineAt(u.state.selection.main.head).number)
-        propsRef.current.onCaretEntity?.(caretEntity(u.state))
+        const c = caretContext(u.state)
+        propsRef.current.onCaretContext?.(c.entity, c.reqs)
       }
       if (!u.docChanged) return
       const text = u.state.doc.toString()
@@ -891,6 +929,8 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       bldField,
       linkField,
       mentionField,
+      reqRangeField,
+      caretReqField,
       lensField,
       quoteField,
       flashField,
@@ -1119,6 +1159,15 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
           effects: EditorView.scrollIntoView(l.from, { y: 'center' }),
         })
         view.focus()
+      },
+      revealQuote: (quoteText) => {
+        const view = viewRef.current
+        if (!view) return false
+        const hit = findQuote(view.state, quoteText, 0)
+        if (!hit) return false
+        view.dispatch({ selection: { anchor: hit.from }, effects: EditorView.scrollIntoView(hit.from, { y: 'center' }) })
+        view.focus()
+        return true
       },
       revealSection: (startLine, quoteText) => {
         const view = viewRef.current

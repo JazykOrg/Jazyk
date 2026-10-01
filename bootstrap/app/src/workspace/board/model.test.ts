@@ -3,7 +3,7 @@ import type { Entity, Graph, Relationship } from '../../lib/api'
 import {
   buildLayer,
   clampBox,
-  fanOrder,
+  caretEntities,
   layoutFan,
   windowEntities,
   fitMargin,
@@ -146,10 +146,11 @@ describe('the links between open windows', () => {
   })
 })
 
-describe('the fan', () => {
-  it('orders the caret, the recent, then the window’s own order', () => {
-    expect(fanOrder(['a', 'b', 'c', 'd'], 'c', ['d', 'x', 'c'])).toEqual(['c', 'd', 'a', 'b'])
-    expect(fanOrder(['a', 'b'], null, [])).toEqual(['a', 'b'])
+describe('references', () => {
+  it('brings the mention’s entity, then the entities of the caret’s requirements, never an open one', () => {
+    expect(caretEntities(G, 'ent:backend', ['req:stock'], new Set())).toEqual(['ent:backend', 'ent:product', 'ent:inventory'])
+    expect(caretEntities(G, null, ['req:holds'], new Set(['ent:backend']))).toEqual(['ent:inventory'])
+    expect(caretEntities(G, null, [], new Set())).toEqual([])
   })
   const view: Rect = { x: 0, y: 0, w: 1000, h: 800 }
   it('puts the first chip under the window, the next right and left, and a +N for the rest', () => {

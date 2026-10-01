@@ -122,14 +122,14 @@ test('the outline follows the cursor in Write and a click scrolls the editor', a
   await expect(page.locator('.cm-content').getByText('Database', { exact: true })).toBeInViewport()
 })
 
-test('the one toggle: Write is the editor, Read the page in its place, remembered per document', async ({ page }) => {
+test('the one switch: Write is the editor, Read the page in its place, for every document at once', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/docs/docs/backend.md')
   const toggle = page.locator('.ide-mode')
   await expect(toggle.getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator('.cm-content')).toBeVisible()
   await expect(page.locator('.md-read')).toHaveCount(0)
-  // No third state: no preview beside the editor, no reader button.
+  // No pane beside the editor, no reader button.
   await expect(page.locator('.ide-topbar').getByRole('button', { name: /preview|reader/i })).toHaveCount(0)
 
   await toggle.getByRole('button', { name: 'Read' }).click()
@@ -140,12 +140,14 @@ test('the one toggle: Write is the editor, Read the page in its place, remembere
   await expect(page.locator('.md-read > .md-cov-covered').first()).toBeVisible()
   await expect(page.locator('.md-read .md-req').first()).toBeVisible()
 
-  // Another document opens in its own default; coming back finds Read again.
+  // Every document follows the switch.
   await page.goto('/#/docs/docs/main.md')
-  await expect(toggle.getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
-  await page.goto('/#/docs/docs/backend.md')
   await expect(toggle.getByRole('button', { name: 'Read' })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator('.md-read')).toBeVisible()
+  await toggle.getByRole('button', { name: 'Write' }).click()
+  await page.goto('/#/docs/docs/backend.md')
+  await expect(toggle.getByRole('button', { name: 'Write' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.cm-content')).toBeVisible()
 })
 
 test('links work in Read: a document opens in Read, a missing one says so, an anchor stays', async ({ page }) => {

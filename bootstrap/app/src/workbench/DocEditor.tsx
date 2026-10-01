@@ -11,7 +11,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useGraph, useMatrix, useProject } from '../lib/queries'
 import { useInlineBands, useReqMarks } from '../ide/overlays'
-import { useApp, type DocMode } from '../lib/store'
+import { useApp } from '../lib/store'
+import DocModeSwitch, { useDocMode, useEmbeddedBar } from '../components/DocModeSwitch'
 import { useCapabilities } from '../lib/capabilities'
 import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
@@ -53,7 +54,6 @@ export default function DocEditor() {
   const baselineQ = useDocBaseline(docPath)
   const { openNode } = useInspector()
   const setEditorDirty = useApp((a) => a.setEditorDirty)
-  const [diffMode, setDiffMode] = useState(false)
   const graphQ = useGraph()
   const matrixQ = useMatrix()
   const marks = useReqMarks(graphQ.data, matrixQ.data?.rows ?? {}, docPath)
@@ -64,11 +64,9 @@ export default function DocEditor() {
   const previewTimer = useRef<number | null>(null)
   // Read or Write: the last choice for this document, else the default. A folder
   // opened read-only reads; everything else writes (docs/frontends/gui.md#editor).
-  const folderMode = useApp((a) => a.folder?.mode)
-  const chosenMode = useApp((a) => a.docModes[docPath])
-  const setDocMode = useApp((a) => a.setDocMode)
-  const mode: DocMode = chosenMode ?? (folderMode === 'read' ? 'read' : 'write')
+  const mode = useDocMode()
   const reading = mode === 'read'
+  const embedded = useEmbeddedBar()
   const mdRef = useRef<MarkdownViewHandle>(null)
   // Where the reader is, for the outline: the cursor's line in Write, the top of
   // the view in Read, a beat behind the movement.
@@ -92,9 +90,9 @@ export default function DocEditor() {
   )
   // The entity under the caret, for the board's highlight; cleared when the
   // document closes.
-  const setCaretEntity = useApp((a) => a.setCaretEntity)
-  const reportCaret = useCallback((id: string | null) => setCaretEntity(docPath, id), [docPath, setCaretEntity])
-  useEffect(() => () => setCaretEntity(docPath, null), [docPath, setCaretEntity])
+  const setCaret = useApp((a) => a.setCaret)
+  const reportCaret = useCallback((entity: string | null, reqs: string[]) => setCaret(docPath, entity, reqs), [docPath, setCaret])
+  useEffect(() => () => setCaret(docPath, null, []), [docPath, setCaret])
   // Autosave: in the browser, where a write lands without asking (the demo, and a
   // folder in writing mode), the editor saves a beat after typing stops and when the
   // document is left. A read-only folder saves on request and asks whether to write
@@ -576,6 +574,43 @@ export default function DocEditor() {
   const baseline = baselineQ.data ? baselineQ.data.text : baselineQ.data === null ? null : undefined
   const hasBaseline = baseline !== null && baseline !== undefined
 
+  // In a frame that draws the bar (a board window), the bar's state goes to the
+  // store and the bar's save comes back as an event.
+  const setDocStatus = useApp((a) => a.setDocStatus)
+  useEffect(() => {
+    if (!embedded || !docPath) return
+    setDocStatus(docPath, { dirty, autosave, error: saveErr ?? undefined, conflict, canDiff: hasBaseline })
+  }, [embedded, docPath, dirty, autosave, saveErr, conflict, hasBaseline, setDocStatus])
+  useEffect(() => () => setDocStatus(docPath, null), [docPath, setDocStatus])
+  useEffect(() => {
+    if (!embedded) return
+    const onSave = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === docPath) void save()
+    }
+    window.addEventListener('jazyk:save-doc', onSave)
+    return () => window.removeEventListener('jazyk:save-doc', onSave)
+  }, [embedded, docPath, save])
+
+  // A requirement's line on the board reveals its quote here: the caret moves to
+  // it in Write, the view scrolls to it in Read (docs/frontends/gui.md#the-linkage).
+  const pendingReveal = useApp((a) => a.reveal)
+  const revealState = useRef({ reading, readText })
+  revealState.current = { reading, readText }
+  useEffect(() => {
+    if (!pendingReveal || pendingReveal.doc !== docPath || loaded?.path !== docPath) return
+    const quote = pendingReveal.quote
+    useApp.getState().takeReveal(pendingReveal.n)
+    // A beat for the editor to take the text and its marks; taking the reveal must
+    // not cancel it.
+    window.setTimeout(() => {
+      const { reading: r, readText: t } = revealState.current
+      if (r) {
+        const line = quoteLine(t, quote)
+        if (line) mdRef.current?.revealLine(line)
+      } else hostRef.current?.revealQuote(quote)
+    }, 60)
+  }, [pendingReveal, docPath, loaded])
+
   if (!docPath) return <p className="empty ide-pad">select a document to edit</p>
   if (contentQ.isError && !loaded)
     return <p className="error-inline ide-pad">could not load {docPath}</p>
@@ -583,59 +618,30 @@ export default function DocEditor() {
 
   return (
     <>
-      <div className="ide-topbar">
-        <span className="mono">{loaded.path}</span>
-        {dirty && (
-          <span className="ide-dirty" title="unsaved changes">
-            ●
-          </span>
-        )}
-        {loaded.path !== docPath && <span className="muted">loading…</span>}
-        {saveErr && <span className="error-inline ide-inline">{saveErr}</span>}
-        <div className="ide-topbar-right row">
-          <span className="ide-mode" role="group" aria-label="Read or Write">
-            <button
-              className={reading ? 'btn-on' : ''}
-              aria-pressed={reading}
-              title="the rendered page, with the same marks, nothing editable"
-              onClick={() => setDocMode(docPath, 'read')}
-            >
-              Read
-            </button>
-            <button
-              className={reading ? '' : 'btn-on'}
-              aria-pressed={!reading}
-              title="the editor"
-              onClick={() => setDocMode(docPath, 'write')}
-            >
-              Write
-            </button>
-          </span>
-          {!reading && (
-            <button
-              className={diffMode ? 'btn-on' : ''}
-              disabled={!hasBaseline}
-              title={
-                hasBaseline
-                  ? 'side-by-side diff against the last reconciled text'
-                  : 'no baseline: this document never reconciled'
-              }
-              onClick={() => setDiffMode((v) => !v)}
-            >
-              diff
-            </button>
-          )}
-          {autosave ? (
-            <span className="muted" title="changes save on their own a beat after typing stops">
-              {dirty ? 'saving…' : 'saved'}
+      {!embedded && (
+        <div className="ide-topbar">
+          <span className="mono">{loaded.path}</span>
+          {dirty && (
+            <span className="ide-dirty" title="unsaved changes">
+              ●
             </span>
-          ) : (
-            <button onClick={() => void save()} disabled={!dirty || conflict}>
-              save
-            </button>
           )}
+          {loaded.path !== docPath && <span className="muted">loading…</span>}
+          {saveErr && <span className="error-inline ide-inline">{saveErr}</span>}
+          <div className="ide-topbar-right row">
+            <DocModeSwitch canDiff={hasBaseline} />
+            {autosave ? (
+              <span className="muted" title="changes save on their own a beat after typing stops">
+                {dirty ? 'saving…' : 'saved'}
+              </span>
+            ) : (
+              <button onClick={() => void save()} disabled={!dirty || conflict}>
+                save
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       {askWrite && folder?.mode === 'read' && (
         <div className="ide-conflict ide-askwrite">
           <span>
@@ -671,7 +677,7 @@ export default function DocEditor() {
           build={loaded.path === docPath ? build : undefined}
           onHoverLine={onHoverLine}
           baseline={baseline}
-          diffMode={diffMode && hasBaseline}
+          diffMode={mode === 'diff' && hasBaseline}
           onDirty={onDirty}
           onText={onText}
           onNavigate={onNavigate}
@@ -683,7 +689,7 @@ export default function DocEditor() {
           bands={bands}
           mentions={mentions}
           onCursorLine={reportLine}
-          onCaretEntity={reportCaret}
+          onCaretContext={reportCaret}
           flashes={flashLines}
         />
         {reading && (

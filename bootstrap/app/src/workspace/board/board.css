@@ -396,10 +396,6 @@
   cursor: pointer;
 }
 
-.bl-panel .bl-head {
-  cursor: default;
-}
-
 .bl-head:disabled {
   cursor: default;
 }
@@ -587,8 +583,120 @@
 }
 
 
-/* The fan: the focused window's unopened entities, below it. */
-.board-fan {
+/* The linkage card: a head, two lines of requirements, a line to expand. */
+.lc {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--board-shadow);
+  overflow: hidden;
+}
+
+.bl-portal.lc {
+  align-items: stretch;
+  border-radius: 8px;
+}
+
+.lc-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.lc-head.hot {
+  background: color-mix(in srgb, var(--warn, #d9822b) 16%, var(--panel));
+  color: var(--ink);
+}
+
+.lc-head .bl-go {
+  height: 24px;
+}
+
+.lc-head .bl-verb {
+  padding: 0 6px;
+}
+
+.lc-reqs {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0 0;
+}
+
+.lc-reqs.open {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.lc-reqs li {
+  display: flex;
+  align-items: center;
+  height: 20px;
+}
+
+.lc-reqs li.hot {
+  background: color-mix(in srgb, var(--warn, #d9822b) 18%, transparent);
+}
+
+.lc-req {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.lc-req:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.lc-open {
+  flex: none;
+  width: 24px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lc-open:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.lc-more {
+  align-self: flex-start;
+  margin: 0 0 0 8px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+/* References: the caret's unopened entities, below the focused document. */
+.board-refs {
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -596,95 +704,33 @@
   overflow: hidden;
 }
 
-.bf-lines {
+.br-lines {
   position: absolute;
   inset: 0;
 }
 
-.bf-lines path {
+.br-lines path {
   fill: none;
   stroke: color-mix(in srgb, var(--accent) 55%, var(--xy-edge-stroke));
   stroke-width: 1.3;
   stroke-dasharray: 3 4;
 }
 
-.bf-lines path.hot {
-  stroke: var(--warn, #d9822b);
-  stroke-width: 2.2;
-  stroke-dasharray: none;
-}
-
-.bf-chip {
+.br-card {
   position: absolute;
   pointer-events: auto;
+  border-style: dashed;
+}
+
+.br-title {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 0 10px;
-  border: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--board-chip) 88%, transparent);
-  color: var(--ink);
-  font: inherit;
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  cursor: pointer;
-}
-
-.bf-chip:hover {
-  border-style: solid;
-  border-color: var(--accent);
-  background: var(--board-chip);
-}
-
-.bf-chip.hot {
-  border: 2px solid var(--warn, #d9822b);
-}
-
-.bf-more {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.bf-more.on {
-  border-style: solid;
-}
-
-.bf-glyph {
-  color: var(--accent);
-  font-size: 0.8em;
-}
-
-.bf-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
-}
-
-.bf-list {
-  position: absolute;
-  pointer-events: auto;
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-  max-height: 280px;
-  min-width: 200px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: var(--board-shadow);
-}
-
-.bf-list button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 4px 8px;
+  gap: 6px;
+  height: 24px;
+  padding: 0 4px;
   border: 0;
-  border-radius: 4px;
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -692,11 +738,30 @@
   cursor: pointer;
 }
 
-.bf-list button:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+.br-title:hover .bl-name {
+  text-decoration: underline;
 }
 
-.bf-kind {
+.br-kind {
   color: var(--muted);
-  font-size: 0.9em;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* A document window's bar: the path, the unsaved mark, the mode switch, the save state. */
+.bw-docbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+  font-weight: 400;
+}
+
+.bw-docbar .ide-mode button {
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.bw-saved {
+  font-size: 12px;
 }

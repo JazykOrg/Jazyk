@@ -34,14 +34,14 @@ import {
   buildLayer,
   canonical,
   docOf,
-  fanOrder,
+  caretEntities,
   focusZoom,
   levelOf,
   nearest,
   nodeOf,
   placeBeside,
   placeRight,
-  windowEntities,
+  linkRequirements,
   readSaved,
   windowId,
   windowSize,
@@ -54,7 +54,7 @@ import {
 } from './model'
 import { nodeTypes, type BoardNode, type WindowData } from './nodes'
 import { Links, type NodeName } from './links'
-import { Fan, type FanEntity } from './fan'
+import { References, type Reference } from './references'
 import { useRuntime } from './runtime'
 
 const GLYPH: Record<ReturnType<typeof itemKind>, string> = {
@@ -162,7 +162,7 @@ function BoardCanvas({ project }: { project: string | null }) {
   const { data: g } = useGraph()
   const level = useRuntime((s) => s.level)
   const theme = useApp((a) => a.theme)
-  const caret = useApp((a) => a.caretEntity)
+  const caret = useApp((a) => a.caret)
   const rf = useReactFlow<BoardNode, BoardEdgeType>()
   const storeApi = useStoreApi()
   const [saved, setSaved] = useState<Saved>(() => readSaved(project))
@@ -239,12 +239,11 @@ function BoardCanvas({ project }: { project: string | null }) {
     return m
   }, [items, saved.windows])
 
-  // The caret on a mention in a document window: that entity's window and the link
-  // to it when it is open, else its chip in the fan.
-  const caretEntity = caret && g ? canonical(g, caret.id) : null
-  useEffect(() => {
-    if (caretEntity) useRuntime.getState().touchRecent(caretEntity)
-  }, [caretEntity])
+  // What the caret rests on in a document window: the mention's entity (its window
+  // and the link to it when open) and the requirements whose quote holds it, marked
+  // on every linkage card.
+  const caretEntity = caret?.entity && g ? canonical(g, caret.entity) : null
+  const hotReqs = useMemo(() => new Set((caret?.reqs ?? []).map((r) => (g ? canonical(g, r) : r))), [caret, g])
   const hot = useMemo(() => {
     if (!caret || !g || !caretEntity) return { node: null as string | null, edge: null as string | null }
     const doc = items.find((i) => itemKind(i.path) === 'doc' && docOf(i.path) === caret.doc)
@@ -255,17 +254,20 @@ function BoardCanvas({ project }: { project: string | null }) {
     return { node, edge: edge?.id ?? null }
   }, [caret, caretEntity, g, items, layer])
 
-  // The fan: the focused window's entities that are not open, in the fan's order.
-  const recent = useRuntime((s) => s.recent)
+  // References: the unopened entities the caret's text concerns, under the focused
+  // document, each with the requirements between the document and it.
   const focusedItem = items.find((i) => itemKey(i.path) === focusedKey)
-  const fanEntities = useMemo<FanEntity[]>(() => {
-    if (!g || !focusedItem || !saved.graph) return []
-    const brought = windowEntities(g, focusedItem)
-      .map((b) => b.entity)
-      .filter((e) => !layer.entityNode.has(e))
-    const ownCaret = caret && itemKind(focusedItem.path) === 'doc' && docOf(focusedItem.path) === caret.doc ? caretEntity : null
-    return fanOrder(brought, ownCaret, recent).map((id) => ({ id, name: g.entities[id]?.name ?? id, kind: kindWord(g.entities[id]?.stereotype) }))
-  }, [g, focusedItem, saved.graph, layer, caret, caretEntity, recent])
+  const refs = useMemo<Reference[]>(() => {
+    if (!g || !caret || !focusedItem || !saved.graph || level !== 'live') return []
+    if (itemKind(focusedItem.path) !== 'doc' || docOf(focusedItem.path) !== caret.doc) return []
+    const open = new Set(layer.entityNode.keys())
+    return caretEntities(g, caret.entity, caret.reqs, open).map((entity) => ({
+      entity,
+      name: g.entities[entity]?.name ?? entity,
+      kind: kindWord(g.entities[entity]?.stereotype),
+      reqs: linkRequirements(g, { doc: caret.doc }, { entity }),
+    }))
+  }, [g, caret, focusedItem, saved.graph, level, layer])
 
   // Node data objects are kept while they are equal, so a drag re-renders only the
   // node being dragged and never a live page.
@@ -425,13 +427,37 @@ function BoardCanvas({ project }: { project: string | null }) {
     [actions],
   )
 
-  // A chip in the fan opens its entity beside the focused window, which keeps the
-  // focus; the entity stays on the board until it is closed.
-  const openFromFan = useCallback(
+  // A reference's title opens its entity beside the focused document and focuses
+  // it; the entity stays on the board until it is closed.
+  const openReference = useCallback(
     (entity: string) => {
       const from = useWorkspace.getState().focused
-      actions.open(`/model/entities/${encodeURIComponent(entity)}`, from ? { from, background: true } : {})
+      actions.open(`/model/entities/${encodeURIComponent(entity)}`, from ? { from } : {})
     },
+    [actions],
+  )
+
+  // A requirement's line reveals its quote in its document: in the window holding
+  // that document (focused), else in the document opened beside the focused window.
+  const reveal = useCallback(
+    (rid: string) => {
+      const r = g?.requirements[rid]
+      const doc = r?.source?.doc ?? r?.provenance?.quote?.doc
+      const quote = r?.source?.quote ?? r?.provenance?.quote?.quote
+      if (!doc || !quote) {
+        actions.open(`/model/requirements/${encodeURIComponent(rid)}`, { from: useWorkspace.getState().focused ?? undefined })
+        return
+      }
+      useApp.getState().setReveal(doc, quote)
+      const win = useWorkspace.getState().items.find((i) => itemKind(i.path) === 'doc' && docOf(i.path) === doc)
+      if (win) actions.go(windowId(win.path))
+      else actions.open(`/docs/${doc}`, { from: useWorkspace.getState().focused ?? undefined })
+    },
+    [g, actions],
+  )
+
+  const openRequirementFromRef = useCallback(
+    (rid: string) => actions.open(`/model/requirements/${encodeURIComponent(rid)}`, { from: useWorkspace.getState().focused ?? undefined }),
     [actions],
   )
 
@@ -460,6 +486,24 @@ function BoardCanvas({ project }: { project: string | null }) {
   )
 
   const fit = useCallback(() => void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1 }), [rf])
+
+  // A click on the empty table top fits everything; a pan that ends there does not.
+  const pressAt = useRef<{ x: number; y: number } | null>(null)
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      pressAt.current = { x: e.clientX, y: e.clientY }
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [])
+  const onPaneClick = useCallback(
+    (e: React.MouseEvent) => {
+      const p = pressAt.current
+      if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) return
+      fit()
+    },
+    [fit],
+  )
 
   // `Escape` zooms out one level, `Z` fits everything; neither while typing or
   // inside a live page.
@@ -521,6 +565,7 @@ function BoardCanvas({ project }: { project: string | null }) {
         onNodeClick={onNodeClick}
         onNodeDoubleClick={onNodeDoubleClick}
         onMoveEnd={onMoveEnd}
+        onPaneClick={onPaneClick}
         defaultViewport={initialViewport.current ?? { x: 40, y: 40, zoom: 1 }}
         fitView={!initialViewport.current && items.length > 0}
         fitViewOptions={{ padding: 0.08, maxZoom: 1 }}
@@ -540,9 +585,18 @@ function BoardCanvas({ project }: { project: string | null }) {
         <LevelWatcher />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.6} />
         {mapOn && <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />}
-        <Links edges={drawn} rects={rects} names={names} level={level} hotEdge={hot.edge} onGo={actions.go} onOpenRequirement={openRequirement} />
-        {focusedItem && level !== 'title' && saved.windows[itemKey(focusedItem.path)] && (
-          <Fan key={itemKey(focusedItem.path)} win={saved.windows[itemKey(focusedItem.path)]} entities={fanEntities} hot={caretEntity} onOpen={openFromFan} />
+        <Links edges={drawn} rects={rects} names={names} level={level} hotEdge={hot.edge} hotReqs={hotReqs} onGo={actions.go} onReveal={reveal} onOpenRequirement={openRequirement} />
+        {focusedItem && refs.length > 0 && saved.windows[itemKey(focusedItem.path)] && (
+          <References
+            key={itemKey(focusedItem.path)}
+            win={saved.windows[itemKey(focusedItem.path)]}
+            refs={refs}
+            hotEntity={caretEntity}
+            hotReqs={hotReqs}
+            onOpen={openReference}
+            onReveal={reveal}
+            onOpenRequirement={openRequirementFromRef}
+          />
         )}
         <Panel position="top-left">
           <Toolbar graphOn={saved.graph} toggleGraph={toggleGraph} mapOn={mapOn} toggleMap={toggleMap} arrange={() => void arrange()} fit={fit} />

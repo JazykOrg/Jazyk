@@ -360,7 +360,7 @@ const MarkdownView = forwardRef<
               if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
               e.preventDefault()
               const at = resolver.locate(abs)
-              if (docsOpenIn && at?.tree === 'docs') useApp.getState().setDocMode(at.rel, docsOpenIn)
+              if (docsOpenIn && at?.tree === 'docs') useApp.getState().setDocMode(docsOpenIn)
               navigate(route)
             }}
           >

@@ -9,23 +9,17 @@ interface Runtime {
   live: string[]
   // The one link whose requirements are expanded, by edge id.
   expanded: string | null
-  // The entities the caret rested on, most recent first: the fan's order.
-  recent: string[]
   setLevel: (level: Level) => void
   setLive: (live: string[]) => void
   toggleLink: (id: string) => void
-  touchRecent: (entity: string) => void
 }
 
 export const useRuntime = create<Runtime>((set, get) => ({
   level: 'live',
   live: [],
   expanded: null,
-  recent: [],
   // One linkage expanded at a time: expanding one folds the one before.
   toggleLink: (id) => set((s) => ({ expanded: s.expanded === id ? null : id })),
-  touchRecent: (entity) =>
-    set((s) => (s.recent[0] === entity ? s : { recent: [entity, ...s.recent.filter((e) => e !== entity)].slice(0, 24) })),
   setLevel: (level) => {
     if (level === get().level) return
     if (level !== 'live') captureAll()

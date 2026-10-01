@@ -9,6 +9,8 @@ import AppRoutes from '../../routes/AppRoutes'
 import { get } from '../../lib/api'
 import { useCoverage, useDocs, useGraph, useMatrix } from '../../lib/queries'
 import { kindWord, shorten, statusWord } from '../../lib/present'
+import { useApp } from '../../lib/store'
+import DocModeSwitch, { EmbeddedBarContext } from '../../components/DocModeSwitch'
 import { itemKind, itemTitle, useWorkspace } from '../items'
 import { itemKey, nodePagePath, splitSelection } from '../paths'
 import { showPath } from '../actions'
@@ -91,6 +93,7 @@ const LiveBody = memo(function LiveBody({ path }: { path: string }) {
   )
   return (
     <div className="bw-live" ref={setRef}>
+      <EmbeddedBarContext.Provider value={itemKind(path) === 'doc'}>
       <PageBoundary>
         <ItemNavigation onNavigate={onNavigate}>
           <Suspense fallback={<p className="bw-empty">loading…</p>}>
@@ -98,6 +101,7 @@ const LiveBody = memo(function LiveBody({ path }: { path: string }) {
           </Suspense>
         </ItemNavigation>
       </PageBoundary>
+      </EmbeddedBarContext.Provider>
     </div>
   )
 })
@@ -284,6 +288,38 @@ const CardBody = memo(function CardBody({ path, title }: { path: string; title: 
   )
 })
 
+// A document window's bar beside its path: the unsaved mark, the Read, Write, Diff
+// switch for every document, and the save state, as the editor reports them (the
+// editor draws no bar of its own in a window, docs/frontends/gui.md#the-board).
+function DocBar({ doc }: { doc: string }) {
+  const st = useApp((a) => a.docStatus[doc])
+  return (
+    <span className="bw-docbar nodrag">
+      {st?.dirty && (
+        <span className="ide-dirty" title="unsaved changes">
+          ●
+        </span>
+      )}
+      {st?.error && (
+        <span className="error-inline" title={st.error}>
+          not saved
+        </span>
+      )}
+      <DocModeSwitch canDiff={st?.canDiff ?? false} />
+      {st &&
+        (st.autosave ? (
+          <span className="muted bw-saved" title="changes save on their own a beat after typing stops">
+            {st.dirty ? 'saving…' : 'saved'}
+          </span>
+        ) : (
+          <button onClick={() => window.dispatchEvent(new CustomEvent('jazyk:save-doc', { detail: doc }))} disabled={!st.dirty || st.conflict}>
+            save
+          </button>
+        ))}
+    </span>
+  )
+}
+
 // The farthest level: only the title, sized to read on screen, where the window is.
 function TitleBody({ path, title }: { path: string; title: string }) {
   const zoom = useStore((st) => st.transform[2])
@@ -304,6 +340,7 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   const actions = useBoardActions()
   const title = useItemTitle(path)
   const framed = level === 'live' || level === 'still'
+  const barPress = useRef<{ x: number; y: number } | null>(null)
   let body: ReactNode
   if (level === 'title') body = <TitleBody path={path} title={title} />
   else if (level === 'card') body = <CardBody path={path} title={title} />
@@ -317,9 +354,23 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
     >
       <Handles />
       {framed && (
-        <div className="bw-title" onDoubleClick={() => actions.zoomToNode(id)} title={path}>
+        <div
+          className="bw-title"
+          title={path}
+          onPointerDown={(e) => {
+            barPress.current = { x: e.clientX, y: e.clientY }
+          }}
+          onClick={(e) => {
+            // A click on the bar (not a drag, not one of its buttons) focuses the window.
+            const p = barPress.current
+            if ((e.target as HTMLElement).closest('button, .nodrag')) return
+            if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) return
+            actions.zoomToNode(id)
+          }}
+        >
           <span className="bw-glyph">{GLYPH[kind]}</span>
-          <span className="bw-name">{title}</span>
+          <span className="bw-name">{kind === 'doc' ? docOf(path) : title}</span>
+          {kind === 'doc' && <DocBar doc={docOf(path)} />}
           <button className="bw-close nodrag" aria-label={`Close ${title}`} onClick={() => actions.close(path)}>
             ×
           </button>

@@ -412,19 +412,18 @@ export function buildLayer(items: Item[], g: Graph | undefined): Layer {
   return { edges, entityNode }
 }
 
-// ---- the fan: the focused window's unopened entities, below it ----
+// ---- references: the unopened entities the caret's text concerns, below it ----
 
-// The fan's order: the entity under the caret, then the ones the caret rested on
-// most recently, then the window's own order (defined, then most mentioned).
-export function fanOrder(brought: string[], caret: string | null, recent: string[]): string[] {
-  const has = new Set(brought)
+// The entities a caret concerns, in order: the mention's entity, then the entities
+// of the requirements whose quote holds the caret, each once, the open ones left out.
+export function caretEntities(g: Graph, entity: string | null, reqs: string[], open: Set<string>): string[] {
   const out: string[] = []
   const add = (e: string) => {
-    if (has.has(e) && !out.includes(e)) out.push(e)
+    const c = canonical(g, e)
+    if (g.entities[c] && !open.has(c) && !out.includes(c)) out.push(c)
   }
-  if (caret) add(caret)
-  for (const e of recent) add(e)
-  for (const e of brought) add(e)
+  if (entity) add(entity)
+  for (const r of reqs) for (const e of g.requirements[canonical(g, r)]?.entities ?? []) add(e)
   return out
 }
 
@@ -459,9 +458,9 @@ export interface FanLayout {
 // under the window's bottom center and the next alternating right and left, a `+N`
 // chip at the right end for the rest. With no room below the window, the row sits
 // along the view's bottom edge and draws no lines.
-export function layoutFan(win: Rect, widths: number[], view: Rect): FanLayout {
+export function layoutFan(win: Rect, widths: number[], view: Rect, h = FAN_CHIP_H): FanLayout {
   const room = Math.min(view.w - 2 * FAN_GAP, Math.max(win.w, 420))
-  const avail = view.y + view.h - 4 - (win.y + win.h) - FAN_CHIP_H
+  const avail = view.y + view.h - 4 - (win.y + win.h) - h
   const below = avail >= FAN_MIN_DROP
   const drop = Math.min(FAN_DROP, avail)
   const taken: number[] = []
@@ -489,9 +488,9 @@ export function layoutFan(win: Rect, widths: number[], view: Rect): FanLayout {
   const left = first > 0 ? row.slice(0, first).reduce((a, i) => a + w(i) + FAN_GAP, 0) : 0
   const want = first >= 0 ? anchorX - w(row[first]) / 2 - left : anchorX - total / 2
   let x = Math.min(Math.max(want, view.x + FAN_GAP), view.x + view.w - FAN_GAP - total)
-  const y = below ? win.y + win.h + drop : view.y + view.h - FAN_CHIP_H - 8
+  const y = below ? win.y + win.h + drop : view.y + view.h - h - 8
   const slots: FanSlot[] = row.map((i) => {
-    const box = { x, y, w: w(i), h: FAN_CHIP_H }
+    const box = { x, y, w: w(i), h }
     x += w(i) + FAN_GAP
     return { index: i, box }
   })

@@ -99,7 +99,21 @@ export interface FolderState {
 export type ActionChoice = 'compile' | 'gen' | 'verify'
 
 // The editor's one toggle (docs/frontends/gui.md#editor).
-export type DocMode = 'read' | 'write'
+export type DocMode = 'read' | 'write' | 'diff'
+
+export interface Caret {
+  doc: string
+  entity: string | null
+  reqs: string[]
+}
+
+export interface DocStatus {
+  dirty: boolean
+  autosave: boolean
+  error?: string
+  conflict: boolean
+  canDiff: boolean
+}
 
 // A change the editor did not make, marked in the text until it fades
 // (docs/frontends/gui.md#editor): located by the text that landed (an applied
@@ -159,16 +173,23 @@ interface AppStore {
   activityOpen: boolean
   // The open document's unsaved-edit state, for tree ops that need a save first.
   editorDirty: boolean
-  // Read or Write per document, the last choice remembered for the session
-  // (docs/frontends/gui.md#editor). Absent means the default for the document.
-  docModes: Record<string, DocMode>
+  // Read, Write, or Diff for every document at once, the last choice for the
+  // session; null is the default for the open folder (docs/frontends/gui.md#editor).
+  docMode: DocMode | null
+  // What each open document's editor reports for a bar it does not draw itself (a
+  // board window's): unsaved changes, saving on its own, an error, a conflict, and
+  // whether it has a baseline to diff against.
+  docStatus: Record<string, DocStatus>
   // Where the reader is in the open document: the line holding the cursor in
   // Write, the top of the view in Read. The outline follows it
   // (docs/frontends/gui.md#docs).
   editorLine: { doc: string; line: number } | null
-  // The entity whose mention the caret rests on in Write, for the board's highlight
-  // (docs/frontends/gui.md#editor).
-  caretEntity: { doc: string; id: string } | null
+  // What the caret rests on in Write: the entity of the mention under it and the
+  // requirements whose quote holds it (docs/frontends/gui.md#editor).
+  caret: Caret | null
+  // A quote to reveal in its document's editor, taken by the editor showing that
+  // document (a requirement's line on the board, docs/frontends/gui.md#the-linkage).
+  reveal: { doc: string; quote: string; n: number } | null
   // The folder the browser backend has open, its mode, how many changes it has not
   // taken (held in read-only mode, or kept after a failed write), and why the last
   // write failed (docs/frontends/wasm.md#a-folder-on-disk). Null for a stored
@@ -241,9 +262,12 @@ interface AppStore {
   setLastCommit: (generation: number) => void
   setActivityOpen: (v: boolean) => void
   setEditorDirty: (v: boolean) => void
-  setDocMode: (doc: string, mode: DocMode) => void
+  setDocMode: (mode: DocMode) => void
+  setDocStatus: (doc: string, status: DocStatus | null) => void
   setEditorLine: (doc: string, line: number) => void
-  setCaretEntity: (doc: string, id: string | null) => void
+  setCaret: (doc: string, entity: string | null, reqs: string[]) => void
+  setReveal: (doc: string, quote: string) => void
+  takeReveal: (n: number) => void
   setFolder: (f: FolderState | null) => void
   setStored: (s: StoredState | null) => void
   setModelLoad: (m: { text: string; failed?: boolean } | null) => void
@@ -272,9 +296,11 @@ export const useApp = create<AppStore>((set, get) => ({
   lastCommit: null,
   activityOpen: readPref('jazyk-activity') === 'open',
   editorDirty: false,
-  docModes: {},
+  docMode: null,
+  docStatus: {},
   editorLine: null,
-  caretEntity: null,
+  caret: null,
+  reveal: null,
   folder: null,
   stored: null,
   modelLoad: null,
@@ -362,11 +388,28 @@ export const useApp = create<AppStore>((set, get) => ({
     set({ activityOpen: v })
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
-  setDocMode: (doc, mode) => set((s) => (s.docModes[doc] === mode ? s : { docModes: { ...s.docModes, [doc]: mode } })),
-  setCaretEntity: (doc, id) =>
+  setDocMode: (mode) => set((s) => (s.docMode === mode ? s : { docMode: mode })),
+  setDocStatus: (doc, status) =>
     set((s) => {
-      if (!id) return s.caretEntity && s.caretEntity.doc === doc ? { caretEntity: null } : s
-      return s.caretEntity && s.caretEntity.doc === doc && s.caretEntity.id === id ? s : { caretEntity: { doc, id } }
+      const had = s.docStatus[doc]
+      if (!status) {
+        if (!had) return s
+        const next = { ...s.docStatus }
+        delete next[doc]
+        return { docStatus: next }
+      }
+      if (had && had.dirty === status.dirty && had.autosave === status.autosave && had.error === status.error && had.conflict === status.conflict && had.canDiff === status.canDiff)
+        return s
+      return { docStatus: { ...s.docStatus, [doc]: status } }
+    }),
+  setReveal: (doc, quote) => set((s) => ({ reveal: { doc, quote, n: (s.reveal?.n ?? 0) + 1 } })),
+  takeReveal: (n) => set((s) => (s.reveal?.n === n ? { reveal: null } : s)),
+  setCaret: (doc, entity, reqs) =>
+    set((s) => {
+      const c = s.caret
+      if (!entity && reqs.length === 0) return c && c.doc === doc ? { caret: null } : s
+      if (c && c.doc === doc && c.entity === entity && c.reqs.length === reqs.length && c.reqs.every((r, i) => r === reqs[i])) return s
+      return { caret: { doc, entity, reqs } }
     }),
   setEditorLine: (doc, line) =>
     set((s) => (s.editorLine && s.editorLine.doc === doc && s.editorLine.line === line ? s : { editorLine: { doc, line } })),

@@ -347,6 +347,15 @@ The out directory:
 
 Diagnostics:
 
+- `GET /api/project/files`: every file under the project directory (the folder of
+  `jazyk.toml`), recursively, each `{path, size}` relative to it, dot-folders and the
+  out directory included; `.git`, `node_modules`, and `target` are left out. Beside
+  the list: `deliverable` and `out`, the product and out directories relative to the
+  project directory (absent when outside it), and `docsGlob`. The
+  [navigator](#workspace) draws its tree from it.
+- `GET /api/project/file?path=`: one file under the project directory, as its bytes
+  (in a tab, as text; a file that is not text is 501). A path that leaves the
+  project directory is 400, a path that names nothing 404.
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
   [triage state](../compiler/model/diagnostic.md#lifecycle-and-triage)
   (`acknowledged`, `suppressed`, `wontfix`, or null to clear). The write commits
@@ -763,6 +772,7 @@ One workspace page. Navigation opens and focuses items, never replaces the page.
 regions:
 
 - The top bar: the [project menu](#the-project-menu), Inbox with its count, History,
+  Product (the [product overview](#overview)),
   the Developer menu while the [toggle](#developer-toggle) is on, the command
   palette, the action button, and settings.
 - The navigator: the left column, one for the whole project (see
@@ -1587,9 +1597,11 @@ and back and forward.
 - Items: every page the app serves is an item, one path in the page table, with a
   title and a kind. An item renders against its own path, so any page shows in a tab
   or a board window as it does in the center. Each kind has its own glyph and color
-  on its tab, its window's bars, and its cards: a document, a product file, a
-  generated page, an entity, a requirement, a test, a diagram, and the app's pages
-  (Inbox, History, Settings, the Developer pages).
+  on its tab, its window's bars, its cards, and its row in the project tree: a
+  document, a product file, a test, a generated page, a project file, an entity, a
+  requirement, a diagram, and the app's pages (Inbox, History, Settings, the
+  Developer pages). Every button on a tab or a bar (a close, a pin, the switch) is
+  the same size, its glyph centered.
 - Files stay; everything else is held. A file (a document, a product file, a
   generated page) stays open until its close (`×`). Any other item (an entity, a
   requirement, a diagram, an app page) is transient: in place of a close it carries
@@ -1600,13 +1612,30 @@ and back and forward.
   A and entity C from B; with C focused, B stays (C was opened from it). Focusing A
   closes B and C. Pinning C instead keeps C and lets B go. A pinned item unpins with
   the same pin.
-- The navigator is one column in both: Documents, Outline (following the cursor),
-  Product (`Overview`, the file tree, `Trace`, `Tests`), Diagrams and Generated
-  (collapsed). There is no Model head; entities and requirements open from mentions
-  (Cmd-click), markers, diagram boxes, and search. While the focused item belongs to
-  an area with sections of its own, the navigator leads with them: the Inbox's
-  sections with their counts, the builds under History, the Developer pages, the
-  model's lists under a model page, the settings under Settings.
+- The navigator is one column in both: the project tree, and under it the Outline
+  of the open document (following the cursor), each scrolling on its own. While the
+  focused item belongs to an area with sections of its own, the navigator leads with
+  them: the Inbox's sections with their counts, the builds under History, the
+  Developer pages, the model's lists under a model page, the settings under
+  Settings. Entities, requirements, and diagrams open from mentions (Cmd-click),
+  markers, diagram boxes, links bars, and search; the product overview from
+  `Product` in the top bar.
+- The project tree is the whole project directory (`GET /api/project/files`): every
+  folder and file, `jazyk.toml` and the out directory included, folders first, each
+  folder collapsed until opened (remembered per project). What a folder or a file is
+  shows on its row:
+  - the documents folder (the folder the docs glob reads, e.g. `docs/`) and the
+    product folder (the deliverable) are marked with their kind's color and glyph;
+    the product folder may be the project directory itself, and a documents folder
+    nested in it stays documents;
+  - a file the docs glob matches is a document; a file in the product folder is a
+    product file, or a test when it sits under a tests folder or is named `.test` or
+    `.spec`; a file in the out directory is generated (its pages, its diagrams, its
+    graph shards); anything else (e.g. `jazyk.toml`) is a project file. Each carries
+    its kind's glyph and color, and a document its read state and problem marks.
+  - A click opens the file as its kind opens: a document in the editor, a product
+    file in the product file viewer, a generated page rendered, any other file as
+    text, read only.
 - There is no side panel. A node opened from a page
   (a mention, a marker, a diagram box, a search result) opens as its own item: a tab
   in Tabs, a window on the Board, where the board itself draws its connections.
@@ -1644,7 +1673,8 @@ and back and forward.
 - Every window ends in a links bar: what the item links to, grouped by kind with a
   count (`2 documents · 6 requirements · 3 entities`), the item's own kind first (a
   document's other documents first, an entity's other entities first). Hovering a
-  group shows its items as cards below the window (a click keeps them shown, a
+  group shows its items as cards in a row centered below the window, in order (a
+  click keeps them shown, a
   second click or `Escape` hides them); a click on a card opens that item beside the
   window and focuses it. What links to what:
   - a document: the documents it links to and the documents that mention the
@@ -1668,14 +1698,15 @@ and back and forward.
   the graph knows, the entities it concerns that are not open show below the
   window, transient: the entity of the mention under the caret, and the entities of
   every requirement whose quote holds the caret. Lines leave the window's bottom
-  center and fan down to a row of reference cards, the first straight down, the
-  next to either side, as many as fit; the rest are gone until the caret moves.
+  center and fan down to a row of reference cards, left to right in order, the row
+  centered under the window, as many as fit; the rest are gone until the caret
+  moves.
   With the caret on nothing (or in Read), there are none. A card is the
   [linkage](#the-linkage) between the document and the entity, titled by the
   entity; a click on the title opens the entity beside the document and focuses it,
   and from then on it stays on the board until it is closed. Without room below
-  the window, the row sits along the view's bottom edge without lines. The `Graph`
-  toggle hides the references. What a window brings, for its links:
+  the window, the row sits along the view's bottom edge without lines. What a window
+  brings, for its links:
   - a document: the entities it defines (an entity is defined in the document of its
     quote, else of its first mention) and the ones it mentions;
   - an entity: its neighbours; a requirement: its entities; a diagram: its members.
@@ -1703,9 +1734,8 @@ and back and forward.
 
 - Windows stay where they are dragged and resized, remembered per project with the
   view; `Arrange` lays the windows out in layers, left to right by the links between
-  them. A toolbar holds `Arrange`, `Fit`, `Graph`, `Map` (a
-  minimap in the bottom corner, off by default, remembered per browser), and the
-  zoom.
+  them. A toolbar holds `Arrange`, `Map` (a minimap in the bottom corner, off by
+  default, remembered per browser), and the zoom in percent.
 - The board draws by zoom, every window where it is at every level:
   - near 100 percent the windows are live pages (at most six live at once, the ones
     nearest the view's center among those in view);
@@ -1715,7 +1745,7 @@ and back and forward.
   - under 15 percent titles: each window only its title, sized to read on screen,
     the links and portals kept, the linkage and the references hidden.
 - A click on a window's bar (not a drag) focuses the window. A click on the empty
-  table top fits everything, as `Fit` and `Z` do. `Escape` zooms out one level.
+  table top fits everything, as `Z` does. `Escape` zooms out one level.
 - Tabs and Board are one set of open items: switching keeps them, and closing a
   window closes its tab.
 

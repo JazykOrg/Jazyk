@@ -1603,19 +1603,19 @@ and back and forward.
   requirement, a diagram, and the app's pages (Inbox, History, Settings, the
   Developer pages). Every button on a tab or a bar (a close, a pin, the switch) is
   the same size, its glyph centered.
-- Files stay; everything else is held. A file (a document, a product file, a
-  generated page) stays open until its close (`×`). Any other item (an entity, a
-  requirement, a diagram, an app page) is transient: in place of a close it carries
-  a pin, and while unpinned it stays open only while it is held. The focused item
-  holds itself, and an unpinned item holds the unpinned item it was opened from, and
-  so on back; a file or a pinned item holds nothing but itself. When the focus moves,
-  the unpinned items no longer held close. E.g.: on document A, entity B opens from
-  A and entity C from B; with C focused, B stays (C was opened from it). Focusing A
-  closes B and C. Pinning C instead keeps C and lets B go. A pinned item unpins with
-  the same pin. It shows: on the Board an unpinned window floats off the table (a
-  dashed border in its kind's color, a deep shadow), and pinned it sits on the
-  table (a solid border, a flat shadow, its pin filled and upright); in Tabs an
-  unpinned tab's title is italic and its pin hollow and tilted.
+- Closing and holding. In Tabs every tab has a close (`×`) and nothing closes on
+  its own. On the Board every window has a pin and a close: a file (a document, a
+  product file, a generated page, a project file) opens pinned, any other item (an
+  entity, a requirement, a diagram, an app page) unpinned. The close removes the
+  window (a back, when it was focused). The pin toggles; an unpinned window stays
+  open only while it is held. The focused item holds itself, and an unpinned item
+  holds the unpinned item it was opened from, and so on back; a pinned item holds
+  nothing but itself. When the focus moves on the Board, the unpinned windows no
+  longer held close. E.g.: on document A, entity B opens from A and entity C from
+  B; with C focused, B stays (C was opened from it). Focusing A closes B and C.
+  Pinning C instead keeps C and lets B go. An unpinned window floats off the table
+  (a dashed border in its kind's color, a deep shadow); a pinned one sits on the
+  table (a solid border, a flat shadow, its pin filled and upright).
 - The navigator is one column in both: the project tree, and under it the Outline
   of the open document (following the cursor), each scrolling on its own. While the
   focused item belongs to an area with sections of its own, the navigator leads with
@@ -1636,7 +1636,10 @@ and back and forward.
     product file, or a test when it sits under a tests folder or is named `.test` or
     `.spec`; a file in the out directory is generated (its pages, its diagrams, its
     graph shards); anything else (e.g. `jazyk.toml`) is a project file. Each carries
-    its kind's glyph and color, and a document its read state and problem marks.
+    its kind's glyph and color in the folder chevron's column, so a file's name lines
+    up with a folder's at the same depth, and a document its read state and problem
+    marks. A test's glyph shows its result: green when the requirements it tests
+    pass, red when one fails, grey with no result yet.
   - A click opens the file as its kind opens: a document in the editor, a product
     file in the product file viewer, a generated page rendered, any other file as
     text, read only. A file the app has a page for opens that page: `jazyk.toml`
@@ -1653,7 +1656,9 @@ and back and forward.
   it. An item is open once, so a tab alone in its group does not split. The address
   bar is the focused tab's path, and a navigation anywhere (a link in a page, the
   navigator, search, back and forward) opens or focuses the item for its path. The
-  tabs and splits are remembered per project. A hidden tab keeps its page only while
+  tabs and splits are remembered per project. An item opened while the Board shows
+  joins the active tab group (else the first) when Tabs shows again, never a split
+  of its own. A hidden tab keeps its page only while
   it is among the eight most recently shown. On a narrow screen one tab shows at a
   time with a tab switcher that lays the open items out as a grid.
 

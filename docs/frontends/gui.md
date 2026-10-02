@@ -1795,7 +1795,8 @@ and back and forward.
   - under 15 percent titles: each window only its title, sized to read on screen,
     the links and portals kept, the linkage and the references hidden.
 - A click on a window's bar (not a drag) focuses the window. A click on the empty
-  table top fits everything, as `Z` does. `Escape` zooms out one level.
+  table top fits everything, as `Z` does, never closer than 60 percent, so a click
+  always steps back to the whole board. `Escape` zooms out one level.
 - Tabs and Board are one set of open items: switching keeps them, and closing a
   window closes its tab.
 

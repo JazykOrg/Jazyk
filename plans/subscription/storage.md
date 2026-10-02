@@ -79,9 +79,10 @@ with different agents, settings, and models.
 
 ## Local-remote
 
-Recommended default: the computer owns both source and durable graph state. A small
-native connector provides the workspace and commit endpoints over an outbound,
-authenticated connection. The shared remote server runs the compiler.
+Owner decision: the local folder is authoritative for source, the graph, and human
+decisions. The connector must be online to save results. A small native connector
+provides the workspace and commit endpoints over an outbound, authenticated
+connection. The shared remote server runs the compiler.
 
 1. Select the folder and disclose remote processing. Register its logical project id,
    authorized device, storage binding, and compiler selection with the service.

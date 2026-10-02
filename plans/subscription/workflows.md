@@ -147,6 +147,7 @@ project's source authority.
 | Owner's local Codex test profile | Personal Codex authentication as a hosted customer backend |
 | Provider-neutral managed AI | Customer cloud BYOK, paid browser inference, and signup promotions |
 
-The main remaining UX decision is whether the local graph should stay authoritative
-in local-remote mode. This plan recommends yes, so the folder remains portable and
-accountless local use can resume without reconstructing graph decisions.
+The local folder is authoritative for the graph and human decisions in local-remote
+mode. The connector must be online to save results. The UI reports saved only after
+a local commit acknowledgement. The folder remains portable, and accountless local
+use can resume without reconstructing graph identities or human decisions.

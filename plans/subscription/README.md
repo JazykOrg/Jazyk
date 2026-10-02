@@ -37,6 +37,9 @@ no container. See [execution](./cloud-sessions.md).
 - Local projects can subscribe through local-remote mode. Compilation moves to the
   service while source and durable graph stay local. This replaces the previous
   model-only subscription switch as the main upgrade path.
+- The local folder is authoritative for source, graph, and human decisions in
+  local-remote mode. The connector must be online to save results. A save completes
+  only after its local commit is acknowledged. Moving storage is a separate action.
 - Keep accountless local endpoints and external ACP agents. Do not silently replace
   LocalRouter, CLI/environment settings, or an external agent's provider.
 - One shared server supports many projects. Each project's builds and automated
@@ -122,8 +125,6 @@ implement the server, or modify the production UI.
 
 ## Remaining decisions
 
-- Accept local source and graph as authority in local-remote mode, requiring the
-  connector for commits. Moving source into cloud storage is a separate action.
 - Decide whether GitHub is needed for the first external beta or phase 6.
 - Choose a production inference route after benchmarks. Confirm Sign in with ChatGPT
   integration eligibility before relying on it for hosted access.

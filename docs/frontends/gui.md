@@ -275,7 +275,10 @@ Generation and verification:
 - `GET /api/verify/pending`: pending verification grouped by reason.
 - `GET /api/verify/matrix`: every ledger row with its
   [derived status](../consumers/gen.md#status-is-derived-never-stored), plus rollup
-  counts. `?format=csv` or `?format=md` answers the same rows as a file for
+  counts. A row carries its criteria's tests (`criteria`, by criterion id: the
+  test's name, artifact, and kind, its verdict, and its last run), its implementing
+  `files`, and its anchored `sites` (file and line), as the
+  [ledger](../consumers/gen.md#the-ledger) records them. `?format=csv` or `?format=md` answers the same rows as a file for
   download ([trace matrix](#trace-matrix)).
 
 Settings:
@@ -952,7 +955,13 @@ The center is a page per selection:
   - Acceptance criteria: each criterion's statement, its kind in words, its measure,
     and where the criterion comes from (the quote, or `Inferred`). The statement
     carries the condition; a criterion split into given, when, and then shows the
-    split on hover, not as a second sentence.
+    split on hover, not as a second sentence. Under each, the test that checks it
+    when the ledger has one: its file (opening in the product file viewer), its
+    result in words and color (passing, failing, no result yet), and when it last
+    ran.
+  - Implemented in, only when generation tracks it: the implementing files and the
+    anchored sites the ledger records, each opening the product file (a site at its
+    line).
   - Details, only when present: the relations it states in words ("Backend uses
     Database"), the state change it declares ("Order: placed → paid, on payment"),
     and its code sites (`exact`, `moved`, `lost`).
@@ -1766,15 +1775,16 @@ and back and forward.
   requirements in a thin margin wraps its name to two lines.
 
 - Windows stay where they are dragged and resized, remembered per project with the
-  view; `Arrange` lays the windows out in layers, left to right by the links between
-  them. A toolbar holds `Arrange`, `Map` (a minimap in the bottom corner, off by
-  default, remembered per browser), and the zoom in percent.
+  view.
+- The board has no toolbar; a minimap sits in the bottom corner, always on.
 - The board draws by zoom, every window where it is at every level:
   - near 100 percent the windows are live pages (at most six live at once, the ones
     nearest the view's center among those in view);
   - from 40 to 80 percent stills (the page as it was last drawn live, else its Read
     form) a click zooms to, each link carrying its verb only, no requirement lines;
-  - from 15 to 40 percent cards: a title, a kind, a few lines, and a status;
+  - from 15 to 40 percent cards: a title, a kind, a few lines, and a status, under
+    the window's title bar with its pin and close (the titles level is the only one
+    without them);
     from here outward a window carries its kind as a pattern as well as a color,
     so kinds read apart without telling colors apart: a white ground with a faint
     pattern in the kind's color (a document ruled lines, a product file a grid, a

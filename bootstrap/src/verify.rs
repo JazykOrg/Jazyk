@@ -255,6 +255,17 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
                     "lastRun": row.last_run,
                     "evidence": row.evidence,
                     "verdict": row.verdict,
+                    // Each criterion's test and its last verdict, the implementing
+                    // files, and the anchored sites (docs/frontends/gui.md#api).
+                    "criteria": row.tests.iter().map(|(cid, ct)| (cid.clone(), json!({
+                        "name": ct.test.name,
+                        "artifact": ct.test.artifact,
+                        "kind": ct.test.kind,
+                        "verdict": ct.verdict,
+                        "lastRun": ct.last_run,
+                    }))).collect::<serde_json::Map<String, Value>>(),
+                    "files": row.files,
+                    "sites": row.sites.iter().map(|s| json!({ "file": s.file, "line": s.line })).collect::<Vec<_>>(),
                 })
             }
             None => json!({

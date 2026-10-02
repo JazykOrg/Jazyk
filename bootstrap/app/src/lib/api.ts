@@ -822,4 +822,9 @@ export interface VerifyRow {
   test?: { kind?: string; run?: string; label?: string }
   lastRun?: string
   evidence?: string
+  // Each criterion's test and its last verdict, by criterion id.
+  criteria?: Record<string, { name: string; artifact: string; kind: string; verdict: string; lastRun?: string | null }>
+  // The implementing files and the anchored sites the ledger records.
+  files?: string[]
+  sites?: { file: string; line: number }[]
 }

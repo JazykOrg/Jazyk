@@ -78,7 +78,7 @@ export default function BoardArrangement() {
   const project = useEnsureProject()
   const level = useRuntime((s) => s.level)
   return (
-    <div className={`board lv-${level}`}>
+    <div className={`board lv-${level}`} data-level={level}>
       <ReactFlowProvider key={project ?? ''}>
         <BoardCanvas project={project} />
       </ReactFlowProvider>
@@ -96,37 +96,10 @@ function LevelWatcher() {
   return null
 }
 
-const MAP_KEY = 'jazyk.board.map'
-
-function readMap(): boolean {
-  try {
-    return localStorage.getItem(MAP_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function Toolbar({ mapOn, toggleMap, arrange }: { mapOn: boolean; toggleMap: () => void; arrange: () => void }) {
-  const zoom = useStore((s) => s.transform[2])
-  return (
-    <div className="board-tools">
-      <button onClick={arrange} title="Lay the windows out by the links between them">
-        Arrange
-      </button>
-      <button className={mapOn ? 'on' : ''} aria-pressed={mapOn} onClick={toggleMap} title="A minimap of the whole board">
-        Map
-      </button>
-      <span className="board-zoom mono" data-level={levelOf(zoom)} title="Z fits everything; Escape zooms out one level">
-        {Math.round(zoom * 100)}%
-      </span>
-    </div>
-  )
-}
-
 function editable(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null
   if (!el || !el.closest) return false
-  return !!el.closest('input, textarea, select, [contenteditable="true"], .bw-body.nodrag, .board-tools')
+  return !!el.closest('input, textarea, select, [contenteditable="true"], .bw-body.nodrag')
 }
 
 function BoardCanvas({ project }: { project: string | null }) {
@@ -556,7 +529,8 @@ function BoardCanvas({ project }: { project: string | null }) {
     flight.current++
     flying.current = false
     useRuntime.getState().setFlying(false)
-    void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1 })
+    // Never closer than 60 percent: the fit always steps back to the whole board.
+    void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 0.6 })
   }, [rf])
 
   // A click on the empty table top fits everything; a pan that ends there does not.
@@ -633,32 +607,7 @@ function BoardCanvas({ project }: { project: string | null }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [rf, fit])
 
-  const arrange = useCallback(async () => {
-    const { arrange: layout } = await import('./arrange')
-    const { saved: s, rects: rs, layer: l } = state.current
-    const nodesIn = [...rs.entries()].map(([id, r]) => ({ id, w: r.w, h: r.h }))
-    const edgesIn = l.edges.map((e) => ({ source: e.source, target: e.target }))
-    const pos = layout({ nodes: nodesIn, edges: edgesIn })
-    const windows = { ...s.windows }
-    for (const [id, p] of pos) if (windows[id.slice(2)]) windows[id.slice(2)] = { ...windows[id.slice(2)], x: p.x, y: p.y }
-    setSaved((x) => ({ ...x, windows }))
-    // The arranged board shows as cards at the least, never as titles.
-    window.setTimeout(() => void rf.fitView({ padding: 0.08, duration: 400, maxZoom: 1, minZoom: 0.16 }), 60)
-  }, [rf])
 
-  const [mapOn, setMapOn] = useState(readMap)
-  const toggleMap = useCallback(
-    () =>
-      setMapOn((v) => {
-        try {
-          localStorage.setItem(MAP_KEY, v ? '0' : '1')
-        } catch {
-          // not remembered
-        }
-        return !v
-      }),
-    [],
-  )
 
   const colorMode = theme === 'auto' ? 'system' : theme
   return (
@@ -691,7 +640,7 @@ function BoardCanvas({ project }: { project: string | null }) {
       >
         <LevelWatcher />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.6} />
-        {mapOn && <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />}
+        <MiniMap pannable zoomable position="bottom-right" className="board-minimap" style={{ width: 150, height: 100 }} nodeClassName={(n) => `mm-${n.type}`} />
         <Links edges={drawn} rects={rects} names={names} level={level} hotEdge={hot.edge} hotReqs={hotReqs} onGo={actions.go} onReveal={reveal} onOpenRequirement={openRequirement} />
         {shownGroup && saved.windows[itemKey(shownGroup.path)] && <LinkCards win={saved.windows[itemKey(shownGroup.path)]} onOpen={openFromCards} />}
         {!shownGroup && focusedItem && refs.length > 0 && saved.windows[itemKey(focusedItem.path)] && (
@@ -706,9 +655,6 @@ function BoardCanvas({ project }: { project: string | null }) {
             onOpenRequirement={openRequirementFromRef}
           />
         )}
-        <Panel position="top-left">
-          <Toolbar mapOn={mapOn} toggleMap={toggleMap} arrange={() => void arrange()} />
-        </Panel>
         {items.length === 0 && (
           <Panel position="top-center" className="board-empty">
             Open a document or a page: it opens here as a window.

@@ -331,6 +331,8 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
   const actions = useBoardActions()
   const title = useItemTitle(path)
   const framed = level === 'live' || level === 'still'
+  // The title bar with its pin and close stays through the cards level.
+  const titled = level !== 'title'
   let body: ReactNode
   if (level === 'title') body = <TitleBody path={path} title={title} />
   else if (level === 'card') body = <CardBody path={path} title={title} />
@@ -364,7 +366,7 @@ export const WindowNode = memo(function WindowNode({ id, data, width, height, po
       }}
     >
       <Handles />
-      {framed && (
+      {titled && (
         <div className={`bw-title kp k-${kind}`} title={path}>
           <span className="bw-glyph">{KINDS[kind].glyph}</span>
           <span className="bw-name">{kind === 'doc' ? docOf(path) : title}</span>

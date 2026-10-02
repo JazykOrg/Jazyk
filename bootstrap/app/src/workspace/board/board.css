@@ -541,40 +541,7 @@
   white-space: nowrap;
 }
 
-/* The toolbar and the minimap */
-.board-tools {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: var(--board-shadow);
-  font-size: 13px;
-}
-
-.board-tools button {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
-  border-radius: 6px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font: inherit;
-}
-
-.board-tools button.on {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
-  border-color: var(--accent);
-}
-
-.board-zoom {
-  color: var(--muted);
-  padding: 0 8px;
-  min-width: 96px;
-}
-
+/* The minimap */
 .board-minimap {
   border: 1px solid var(--line);
   border-radius: 8px;

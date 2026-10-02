@@ -239,6 +239,19 @@ test("the browser's built-in model source answers a chat", async ({ page }) => {
 
 // The requirement page under the presentation rules (docs/frontends/gui.md#model):
 // criteria with their kind in words, a status in words, and ids only in Developer mode.
+test('a requirement page shows the test behind each criterion with its result, and where it is implemented', async ({ page }) => {
+  await openDemo(page, 'The ERP')
+  await page.goto('/#/model/requirements/req%3Abackend-1')
+  const item = page.locator('.ws-center .wst-item:visible')
+  const test_ = item.locator('.crit-test').first()
+  await expect(test_.locator('.crit-result')).toHaveText(/^(Passing|Failing|No result yet)$/)
+  await expect(test_.getByRole('link', { name: 'crit_backend_1_b7db3c35.md' })).toBeVisible()
+  // Implemented in: the anchored site opens the product file at its line.
+  await expect(item.getByRole('heading', { name: 'Implemented in' })).toBeVisible()
+  await item.getByRole('link', { name: 'app.js:11' }).click()
+  await expect(page).toHaveURL(/#\/product\/files\/app\.js\?line=11$/)
+})
+
 test('a requirement page lists its criteria in words, and Developer mode shows the ids', async ({ page }) => {
   await openDemo(page, 'The sort utility')
   const graph = await api<{ criteria: Record<string, { requirement: string }> }>(page, 'GET', '/api/graph')

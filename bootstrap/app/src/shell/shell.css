@@ -2114,3 +2114,35 @@ a.trail-step:hover .trail-label {
   opacity: 1;
   visibility: visible;
 }
+
+/* A criterion's test under it, and where a requirement is implemented. */
+.crit-with-test {
+  margin-bottom: 10px;
+}
+
+.crit-test {
+  margin: 2px 0 0 14px;
+  font-size: 12.5px;
+}
+
+.crit-result {
+  font-weight: 600;
+}
+
+.crit-pass {
+  color: #2e8b57;
+}
+
+.crit-fail {
+  color: var(--err);
+}
+
+.crit-none {
+  color: var(--muted);
+}
+
+.impl-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}

@@ -355,9 +355,16 @@ export function RequirementView({
         {criteria.length === 0 ? (
           <p className="muted">None yet. A build writes the examples that show this requirement is met.</p>
         ) : (
-          criteria.map((cid) => <CriterionItem key={cid} id={cid} graph={g} />)
+          criteria.map((cid) => (
+            <div key={cid} className="crit-with-test">
+              <CriterionItem id={cid} graph={g} />
+              <CriterionTest test={row?.criteria?.[cid]} />
+            </div>
+          ))
         )}
       </Part>
+
+      <ImplementedIn row={row} />
 
       {hasDetails && (
         <Part title="What it states">
@@ -389,6 +396,57 @@ export function RequirementView({
         </DevDetails>
       )}
     </div>
+  )
+}
+
+// The test that checks one criterion, when the ledger has one: its file, opening in
+// the product file viewer, its result in words and color, and when it last ran
+// (docs/frontends/gui.md#requirement-page).
+function CriterionTest({ test }: { test?: NonNullable<VerifyRow['criteria']>[string] }) {
+  if (!test) return null
+  const result = test.verdict === 'pass' ? ['Passing', 'crit-pass'] : test.verdict === 'fail' ? ['Failing', 'crit-fail'] : ['No result yet', 'crit-none']
+  const when = test.lastRun ? new Date(test.lastRun) : null
+  return (
+    <p className="crit-test">
+      <span className={`crit-result ${result[1]}`}>{result[0]}</span>
+      {' · '}
+      {test.kind === 'llm' ? 'reviewed by ' : 'tested by '}
+      <Link to={`/product/files/${test.artifact}`} className="mono" title={test.name}>
+        {test.artifact.split('/').pop()}
+      </Link>
+      {when && !Number.isNaN(when.getTime()) && <span className="muted"> · last run {when.toLocaleDateString()}</span>}
+    </p>
+  )
+}
+
+// Where the requirement is implemented, only when generation tracks it: the anchored
+// sites (each opening the file at its line), then the other implementing files.
+function ImplementedIn({ row }: { row?: VerifyRow }) {
+  const tests = new Set(Object.values(row?.criteria ?? {}).map((t) => t.artifact))
+  const sites = row?.sites ?? []
+  // Tests check the requirement; they do not implement it.
+  const isTest = (f: string) => /(^|\/)(tests?|spec|__tests__)\//.test(f) || /\.(test|spec)\.[a-z0-9]+$/i.test(f)
+  const files = (row?.files ?? []).filter((f) => !tests.has(f) && !isTest(f) && !sites.some((s) => s.file === f))
+  if (sites.length === 0 && files.length === 0) return null
+  return (
+    <Part title="Implemented in">
+      <ul className="impl-list">
+        {sites.map((s, i) => (
+          <li key={`s${i}`}>
+            <Link to={`/product/files/${s.file}?line=${s.line}`} className="mono">
+              {s.file}:{s.line}
+            </Link>
+          </li>
+        ))}
+        {files.map((f) => (
+          <li key={f}>
+            <Link to={`/product/files/${f}`} className="mono">
+              {f}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Part>
   )
 }
 

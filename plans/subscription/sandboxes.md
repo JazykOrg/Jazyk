@@ -4,17 +4,22 @@ Reviewed 2026-10-01 from the primary sources linked below. Prices are USD before
 tax. Published features are not measured Jazyk results. There is no EU-only filter
 and no assumption that Canadian billing requires Canadian compute.
 
+Scope update, 2026-10-02: these providers are candidates for optional execution
+jobs. The shared compiler does not need a project container. Prices and vendor facts
+below retain their 2026-10-01 research date and must be refreshed before procurement.
+See [execution lifecycle](./cloud-sessions.md) and [shared server](./server.md).
+
 ## Workload and selection criteria
 
-Jazyk needs a Linux environment with its Rust binary, shell, native toolchains,
-long-lived dev processes, and access to the GUI API, SSE, and LSP WebSocket. A useful
-trial includes Rust/Node builds and the ERP fixture with a database. Test the required
-commands directly; a provider's Python code-interpreter demo is not sufficient.
+Execution jobs need a Linux environment with native toolchains, shell, optional
+agent runtime, and bounded logs/preview access. A trial should materialize a virtual
+workspace, build Rust/Node projects, and run the ERP fixture with a database. The
+shared compiler and its ACP/LSP service stay outside the execution container.
 
 Priorities, in order:
 
 1. Isolation and network policy outside the untrusted runtime.
-2. Durable export and recovery of source, graph, ledger, and product state.
+2. Correct materialization, output/evidence export, and cleanup without losing virtual source state.
 3. Working toolchains, process control, streams, previews, and database behavior.
 4. Total monthly cost at small scale, including idle/wait time and fixed fees.
 5. Regions and measured latency to AWS storage/control and model providers.
@@ -35,7 +40,7 @@ uses Firecracker or that one runtime name alone proves security.
 | Northflank | Managed sandbox runtimes, including Kata microVMs; US, Europe, Asia. BYOC runtime selection is explicit. | Persistent volumes and service lifecycle; verify pause behavior for the selected offering. | Low listed compute cost. More platform/network/storage integration to validate than a simple code sandbox API. |
 | Fly Machines | Firecracker VMs with programmatic machine lifecycle. | Local volumes and suspend/resume; do not use suspend as the only backup. | Useful if owning the runtime lifecycle is acceptable. Compare CPU class and regional capacity, not a shared-CPU headline against dedicated vCPU prices. |
 | AWS ECS/Fargate | Each task has a hardware virtualization boundary; regional AWS service availability. | Design for task restart and restore from durable storage. | Keeps procurement on AWS. More orchestration/preview/egress work; restrictions on privileged execution can limit toolchains. |
-| Blaxel | Per-sandbox microVMs; confirm available region and capacity before selecting. | Standby preserves state; snapshots and persistent volumes have separate charges. | Worth revisiting for rapid suspend/resume. Test whether an active Jazyk worker waiting on a model can actually suspend usefully. |
+| Blaxel | Per-sandbox microVMs; confirm available region and capacity before selecting. | Standby preserves state; snapshots and persistent volumes have separate charges. | Worth revisiting for execution jobs with model waits. Verify suspend behavior and billing for that workload. |
 | Cloudflare Containers | Managed container platform integrated with Workers. | Treat runtime disk/lifecycle as provider-specific; require independent checkpoints. | An alternative if the web stack moves toward Workers. Additional integration and full-toolchain validation make it a later candidate here. |
 
 Primary references for the table:
@@ -111,7 +116,7 @@ These are deliberately compute comparisons, not total invoices:
   concurrency changes fees. Ten accounts carry $15/account of its base fee; 100
   carry $1.50. Peak concurrency is independent of monthly hours.
 - Ignoring fixed fees, Vercel's example becomes cheaper than E2B below about 31.6%
-  CPU utilization. Measure Jazyk's model-wait/build mix before choosing. Regional
+  CPU utilization. Measure execution jobs' model-wait/build mix before choosing. Regional
   rates, storage, and traffic can reverse that result.
 - Daytona disk can accrue while stopped/paused. At the published disk rate, 10 GiB
   reserved for 730 hours is about $0.79 before any free allowance. Do not assume
@@ -126,11 +131,11 @@ These are deliberately compute comparisons, not total invoices:
 
 ## Recommendation
 
-Trial E2B and Vercel against the same acceptance list. E2B is the default integration
+When execution is in scope, trial E2B and Vercel against the same acceptance list. E2B is the default integration
 candidate for a general Linux workspace with memory pause. Vercel is the strongest
 cost/geography challenger here, including a documented Canadian location and low
 active-CPU charges while waiting. Restarting dev processes after filesystem restore
-may be sufficient for Jazyk; memory preservation is useful, not mandatory.
+may suffice for execution workflows. Fresh short-lived jobs need no memory preservation.
 
 Bring Daytona's explicit Linux VM runtime into the trial if fixed fees, capacity,
 or compatibility make the first two unattractive. Modal and Northflank remain
@@ -145,15 +150,16 @@ Use the provider's maintained SDK or supported API client, not custom transports
 
 ## Selection gate
 
-Allocate 3–5 days within phase 2 for the initial comparison, plus bounded provider
+Allocate 3–5 days within the optional execution milestone for comparison, plus bounded provider
 usage once funded. Record provider, plan, region, image, date, and observed cost.
 
-- Boot Jazyk, Rust/Node toolchains, a web server, and the ERP database. Exercise the
-  required build/test/setup commands and any required Docker support.
+- Materialize a pinned virtual workspace, start Rust/Node toolchains, a web server,
+  and the ERP database. Exercise build/test/setup commands and required Docker support.
 - Measure cold start, resume, build throughput, idle CPU, model-wait CPU, streaming
   latency, and SSE/WS reconnects. Compare p50 and p95, not advertised startup alone.
-- Write graph generations and product files, pause, resume, kill the VM, then restore
-  from an independent checkpoint. Verify ids, decrees, proposals, and ledger bindings.
+- Kill a job during output collection, then retry/import from its recorded base.
+  The canonical graph remains outside the container. Verify evidence, conditional
+  commits, duplicate receipts, and conflicts with a newer workspace revision.
 - Enforce egress outside the guest. Test direct-IP/IPv6 bypass, DNS changes, metadata
   access, credential scoping, and cross-project access. Confirm package registries
   still work under the chosen rules.

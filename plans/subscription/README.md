@@ -1,173 +1,138 @@
-# Plan: subscriptions and cloud sessions for jazyk.dev
+# Plan: shared Jazyk servers and subscriptions
 
-Status: revised proposal, 2026-10-01. Owner decisions below are settled. Prices,
-provider selection, and effort are proposals. This revision changes the plan only.
-It does not provision services, run paid benchmarks, or change compiler behavior.
+Revised 2026-10-02 from the owner's direction. This is a plan, not implemented
+behavior. The architecture, delivery order, and meaning of a subscription below
+supersede the 2026-10-01 proposal and its UX prototype.
 
-Start with [project workflows and launch scope](./workflows.md) and its
-[clickable UX prototype](./ux/index.html). The current review is about narrowing
-the product choices. Hosting, model catalogs, and prices remain supporting research.
+## Direction
 
-## Owner decisions
+Build one filesystem-independent Jazyk server that can compile multiple customers'
+projects concurrently. Project files are a versioned storage interface. The server
+needs no checkout, mounted project directory, shell, or project container to compile.
+The existing goal-based compiler and persistent graph remain the foundation.
 
-| Topic | Decision |
-|---|---|
-| Local subscription | Yes. One allowance for local `jazyk` and cloud sessions. Ship local access first. |
-| Own provider | Keep local endpoints, API keys, and external ACP agents usable without a Jazyk subscription. Support mixing access methods by task. |
-| Models | A measured selection, potentially including frontier models. Expensive models consume more allowance. Compilation, coding, and review may use different models. |
-| Merchant | A Canadian sole proprietor using the existing Stripe account. Remove the Slovakia and merchant-of-record assumptions. |
-| Control plane | AWS is acceptable. No EU-only constraint. |
-| Sandboxes | Compare global providers. Select after testing the actual Jazyk workload. |
-| Storage | Keep the first version simple. Evaluate cloud storage and GitHub as alternative project modes, with effort estimates. |
-| Free | Local use only. A social-login promotion, perhaps $20, is a later option. No recurring hosted inference or compute grant at launch. |
-| Documentation | Cloud and web specs belong under `docs/`, separated from the compiler for a possible future open-source split. |
+Separate where source lives, where compilation runs, and which agent supplies model
+reasoning. ACP and LSP continue across local and remote configurations.
 
-Currency is not settled by the merchant's location. This plan uses CAD for proposed
-customer prices and USD for upstream costs. That is a planning choice, not a claim
-that the owner selected CAD or restricted sales to Canadian customers.
+| Mode | Source and durable graph | Compiler | Access |
+|---|---|---|---|
+| Local-local | Computer folder | Local Jazyk server | Accountless, own provider or agent |
+| Local-remote | Computer folder through a local connector | Shared remote Jazyk server | Jazyk account, entitlement, and credits |
+| Remote-remote | Cloud storage or GitHub-backed workspace | Shared remote Jazyk server | Jazyk account, entitlement, and credits |
 
-## Recommendation
+GitHub-backed source is a selected repository/branch with a private draft overlay.
+Graph state is a durable checkpoint by default. An explicit graph-in-Git policy is
+also possible. See [storage](./storage.md).
 
-- Offer two full project homes: `On this computer` and `In Jazyk Cloud`. Show run
-  location, saved location, and AI source together in one project picker. CLI and
-  IDEs use the same computer project. Keep a limited browser playground for discovery.
-- Sell managed model access for local Jazyk first. Keep BYOK available without an
-  account. A subscriber can use their own provider for some work and the subscription
-  for the rest.
-- Publish a credit rate card and a billing-period allowance. Apply weekly and 5-hour
-  pacing limits as well. Reserve cost before each upstream request.
-- Default AI to one source and `Auto`. Put model policies for compilation, judgment,
-  coding, verification, and chat under advanced settings. Start with a small tested
-  catalog. Do not assume cheap extraction is accurate.
-- Use Stripe Checkout, Billing, and Customer Portal in the Canadian account. Use
-  Stripe Tax where applicable. Jazyk remains the merchant.
-- Run the trusted platform on AWS, outside the compiler package and the machines
-  running user code.
-- Compare E2B and Vercel first, then Daytona if either fails the workload or cost
-  gates. Keep Modal and Northflank as credible alternatives. This is a conditional
-  shortlist, not a provider commitment.
-- Start cloud projects with versioned checkpoints in S3 and download/export. Add
-  GitHub-backed projects separately. Every project has one source authority.
-- Price cloud compute separately initially. A local subscriber need not buy unused
-  compute. Start the cloud beta with managed AI. Defer cloud BYOK, paid browser
-  inference, and new WASM-folder onboarding as described in the workflow proposal.
+Containers enter only when a task needs execution: package installation, shell,
+builds, running tests, an agent requiring native file tools, or a deployment build.
+Materialize a pinned virtual workspace into a fresh container, give the agent scoped
+access, and reconcile outputs back. Storing generated source or tests alone needs
+no container. See [execution](./cloud-sessions.md).
 
-## The files
+## Decisions carried forward
 
-- [workflows.md](./workflows.md): proposed in/out scope, project picker, upgrade and
-  IDE journeys, playground limits, and explicit transfers.
-- [ux/index.html](./ux/index.html): interactive prototype with simulated projects.
-- [market.md](./market.md): Kiro review, verified comparisons, and lessons.
-- [tiers.md](./tiers.md): allowance, windows, economics, and spending stops.
-- [models.md](./models.md): task routing, BYOK, frontier models, and measurement.
-- [platform.md](./platform.md): Canadian Stripe billing, accounts, gateway, and AWS.
-- [sandboxes.md](./sandboxes.md): global providers and workload cost math.
-- [storage.md](./storage.md): storage alternatives, recovery, and effort.
-- [cloud-sessions.md](./cloud-sessions.md): execution, lifecycle, and previews.
-- [boundaries.md](./boundaries.md): documentation and package separation.
+- jazyk.dev works without an account against a local server. Browser examples remain
+  a secondary discovery path. Hosted work requires login and available credits.
+- Local projects can subscribe through local-remote mode. Compilation moves to the
+  service while source and durable graph stay local. This replaces the previous
+  model-only subscription switch as the main upgrade path.
+- Keep accountless local endpoints and external ACP agents. Do not silently replace
+  LocalRouter, CLI/environment settings, or an external agent's provider.
+- One shared server supports many projects. Each project's builds and automated
+  sessions remain sequential; different projects progress concurrently.
+- AWS is acceptable. A customer database tracks identity, authorization, projects,
+  subscriptions, credits, job metadata, leases, and cloud state pointers.
+- Use the existing Canadian Stripe account. Currency, province, sales territories,
+  tax setup, final prices, and allowances remain open.
+- Production inference may use OpenRouter, OpenAI, or Anthropic. Keep the supplier
+  outside the compiler and workspace contracts.
+- Use the owner's Codex subscription for private local testing through ACP. Hosted
+  use needs a separately supported integration. See [Codex testing](./codex-testing.md).
+- Keep compiler, frontend, web, and cloud specifications separate under `docs/`.
+- Source/test generation and deployment execution are optional later milestones.
+  They must not delay a useful compilation-only service.
 
-## Terms
+## Read in this order
 
-- Session: one existing Jazyk model session over a goal batch.
-- Usage window: the proposed rolling 5-hour allowance, not a Jazyk session.
-- Billing period: the paid monthly subscription interval.
-- Cloud session: a project's runtime from start or resume to stop or pause.
-- Credit: a published amount of model usage. The example rate is 100 credits per
-  US$1 at Jazyk's versioned rate card, not a promise of cash value.
-- Compute hour: one running hour at the specified sandbox size.
-- Checkpoint: a consistent, durable project version, including its persistent graph.
+- [server.md](./server.md): project contexts, concurrency, persistence, and tenant isolation.
+- [storage.md](./storage.md): virtual workspaces, local connector, commits, cloud, and GitHub.
+- [protocols.md](./protocols.md): ACP, LSP, tool delivery, and remote connections.
+- [workflows.md](./workflows.md): accountless use, subscription upgrade, and project selection.
+- [codex-testing.md](./codex-testing.md): private experiments with the owner's subscription.
+- [cloud-sessions.md](./cloud-sessions.md): optional materialized execution jobs.
+- [models.md](./models.md): agents, model policies, production providers, and measurement.
+- [platform.md](./platform.md): account database, Stripe, credits, and AWS integration.
+- [boundaries.md](./boundaries.md): package and documentation ownership.
+- [tiers.md](./tiers.md): accounting and historical inference-only economics.
+- [sandboxes.md](./sandboxes.md): dated provider research for execution jobs only.
+- [market.md](./market.md): dated Kiro and competitor research.
 
-## Findings that change the previous plan
+The [old prototype](./ux/index.html) remains a historical design artifact. It couples
+compiler location to file location, which this revision explicitly separates. Use
+the new [project panel](./workflows.md#project-panel) for the current UX proposal.
 
-- Kiro illustrates shared local/cloud allowance and model-weighted credits. Arbitrary
-  BYOK in its standard clients was not established from the official pages reviewed.
-  OpenCode and Zed are clearer references for that feature.
-- Rolling weeks do not imply a hard monthly cap of `4.33 × weekly allowance`.
-  Concurrent calls, billing boundaries, annual discounts, and unpaid upgrades need
-  explicit accounting.
-- A quota check followed by an unreserved request can overspend. Counting rounds
-  does not bound dollar cost. The gateway needs atomic reservations.
-- A response header cannot report final streaming cost before completion. Use request
-  receipts and a usage API.
-- Rebuilding from prose loses ids, decrees, proposals, and judgment history. The
-  persistent graph needs durable storage. GitHub can store it when it is explicitly
-  included; the current default ignores `.jazyk/`. Source-only Git is not a full backup.
-- Pause is not a universal free-storage guarantee. Disks, snapshots, retention, and
-  cross-cloud traffic belong in the estimate.
-- `[executors]` selects agents, not embedded model profiles. Per-task model selection
-  and typed budget stops require documented compiler changes.
-- Hiding a key from a command's environment does not protect it from a compromised
-  sandbox. Account-wide credentials stay outside it.
+## Existing implementation and gaps
 
-## Current implementation
-
-These observations come from the repository:
-
-- [GUI](../../docs/frontends/gui.md) and [browser backend](../../docs/frontends/wasm.md)
-  already distinguish local-server and browser capabilities. Cloud execution is new.
-- [LLM settings](../../docs/compiler/project-settings.md) accept an endpoint and
-  credentials. Explicit CLI and environment settings retain their precedence.
-  Login must not silently replace LocalRouter or a project's endpoint.
-- [Executors](../../docs/compiler/project-settings.md#executors) separate batches by
-  agent. Model-policy compatibility becomes another batching constraint.
-- [Journal entries](../../bootstrap/src/model.rs) carry token counts, including
-  external-agent reports. These are diagnostics, not a trusted billing ledger.
-- [The process seam](../../bootstrap/src/sys.rs) runs `sh -c` with `.output()`.
-  Generation and verification call it. Timeout, cancellation, and bounded output
-  need work before cloud release.
-- [TODO](../../docs/TODO.md) records repeated prompt overhead. Existing
-  [validation](../../bootstrap/VALIDATION.md) has mixed model results. Neither
-  establishes a hosted catalog or a reliable cost per successful project.
+- [vfs.rs](../../bootstrap/src/vfs.rs) redirects shared compiler filesystem calls to
+  native disk or browser memory. It uses compile-target selection and thread-local
+  browser trees, not per-project injected storage instances.
+- [llm.rs](../../bootstrap/src/llm.rs) keeps provider fallbacks, token counters, pacing,
+  and overrides in process-wide state. Move these into run/provider contexts before
+  unrelated customers share a process.
+- [store.rs](../../bootstrap/src/store.rs) assumes filesystem locks and commits. Add
+  atomic versioned commits over storage adapters while retaining gates, journals,
+  graph identity, and recovery.
+- Native trace and ACP session files still have direct disk paths. Audit all I/O,
+  not only document reads. Never discover the current tenant from cwd.
+- The [ACP spec](../../docs/frontends/acp.md#protocol-versions) prefers MCP file tools,
+  but [host.rs](../../bootstrap/src/acp/host.rs) also implements v1 file callbacks.
+  Route both through the project context and reconcile this specification gap.
+- [LSP](../../docs/frontends/lsp.md) assumes local file URIs and output directories.
+  Remote graph/artifact reads and client URI mapping need an explicit contract.
+- [sys.rs](../../bootstrap/src/sys.rs) runs a shell natively. Hosted compilation must
+  receive a no-execution capability even in a native binary.
 
 ## Delivery sequence
 
-Estimates are engineering days for one experienced maintainer, including specs and
-focused tests. They are planning ranges, not measured delivery times. Vendor access,
-benchmark runs, and product iteration add elapsed time. Write the named specs before
-implementing behavior. Commit and push each coherent change.
+Estimates are engineering days for one maintainer, including docs-first changes and
+focused tests. They replace the older 19–33 day model-gateway estimate. State isolation
+and distributed commits are the difficult work, not adding an HTTP endpoint.
 
-| Phase | Work and documentation first | Exit condition | Effort |
+| Phase | Work | Exit condition | Estimate |
 |---|---|---|---|
-| 0a. Workflow scope and web foundation | Review [prototype](./ux/index.html). Specify shared projects, location labels, AI selection, playground transition, and IDE upgrade in `docs/web/` and frontend specs before implementing them. | Local use needs no login. The picker explains run location, storage, and AI. Subscription activation does not move files or replace external agents. | Short design review, then 7–13 implementation days overlapping phases 1 and 3 |
-| 0b. Measure and specify | Generic usage records, model policies, stop semantics. Update `docs/compiler/`, `docs/benchmark/`, and relevant schemas. See [measurement](./models.md#measurement-gate). | Quality and cost table for representative tasks, warm/cold cache, failures, and retries. | 4–8 days |
-| 1. Local subscription | `docs/cloud/` account, billing, gateway specs; `docs/web/` usage UI; CLI login and provider selection. AWS service, Stripe test mode, reservations, receipts. | Logged-out BYOK works. Streaming works. Concurrent requests and duplicate webhooks cannot overspend or double-grant. | 15–25 days |
-| 2. Execution and provider trial | Command limits in consumer/tool specs. Cloud session and operations specs. Run [sandbox acceptance checks](./sandboxes.md#selection-gate). | Restore, cancellation, egress, SSE/WS, and usage reconciliation pass on the chosen provider. | 6–10 days |
-| 3. Cloud-only private beta | Storage/session specs and web project flow. Orchestrator, relay, compute wallet, managed AI, checkpoints, private preview, export/import. | VM loss preserves graph ids. One writer survives service failover. Exhaustion stops safely. | 10–18 days orchestration plus 6–10 days storage |
-| 4. GitHub-backed projects | Cloud GitHub/storage specs and web publish/PR flow. | Import, explicit publish, moved branches, revoked installation, and restore preserve work without force-pushing. | 8–15 days, plus 2–4 if both storage modes ship together |
-| 5. Public launch | Reconciliation, deletion/retention, restore drills, support, monitored rollout, pricing publication. | Measured margin and capacity pass. Cancellation and export work. No unresolved billing or data-loss defects. | 5–10 days |
+| 0. Contracts and Codex spike | Project contexts, workspace/state APIs, protocol mapping, private Codex constraints | An existing fixture resolves a goal through Codex; virtual-tool compatibility or the exact execution dependency is established | 3–6 days |
+| 1. Portable compiler contexts | Instance VFS, run-local state, traces, cancellation, no-shell profile; local and memory adapters | Two projects with identical paths/ids compile concurrently without filesystem access or state mixing | 8–14 days |
+| 2. Shared project service | Admission, writer epochs, account/project capabilities, events, quotas, persistence contract | Restart/retry and competing writers preserve one graph history; deterministic isolation tests pass | 8–14 days |
+| 3. Local-remote connector | Pinned revisions, commit receipts, reconnect, ACP/LSP proxy and URI mapping | A local folder compiles remotely; edits are never overwritten; disconnect preserves graph state | 8–15 days |
+| 4. Remote-remote and web | Object-backed source/state, accountless and signed-in project panels, remote protocol access | Cloud compilation needs no project directory or sandbox; exports preserve ids and decisions | 8–12 days |
+| 5. Public paid service | Production provider, measured rates, Stripe, device auth, reservations, retention, operational hardening | Credits, cancellation, authorization, failures, restore, and cross-tenant tests pass | 12–20 days |
+| 6. GitHub adapter | Tree/blob reads, private overlay, explicit publish/PR, conflicts and revocation | GitHub-backed compilation needs no checkout; graph restore and branch movement are explicit | 6–10 days |
+| 7. Optional execution | Fresh containers, materialization, agent tools, evidence, diff import, limits and cleanup | Test jobs cannot access another project; stale output never overwrites newer source | 8–15 days |
+| 8. Optional generation/deployment | Artifact generation, execution/verification, deployment handoff | Generated tests stay visibly unverified until run against the recorded revision | Rescope after phase 7 |
 
-The earlier inference/billing estimate is 19–33 engineering days before contingency.
-The explicit UX work above overlaps it and the cloud flow; rescope the combined
-estimate after reviewing the prototype. A cloud-only private beta adds roughly
-22–38 platform/storage days. Storage alternatives and overlap are detailed in
-[storage.md](./storage.md#effort-and-release-options).
+Phases 0–4 total roughly 35–61 days for the three-mode private foundation. A first
+vertical result should arrive during phases 0–1. Public billing adds roughly 12–20
+days before contingency, independent review, and elapsed provider/account setup.
+GitHub and execution are separate increments. These ranges are not delivery dates.
 
-Top-ups can follow the first local beta. Cloud BYOK, remote cloud IDE attachment,
-teams, annual discounts, automatic product deployment, two-way local/cloud sync,
-and signup incentives are later work.
-
-Measurement uses the configured LocalRouter endpoint unless the owner requests a
-change. Select candidate routes through it where possible. This plan does not pick
-another default model or authorize a paid benchmark campaign.
+Write accepted behavior into [the separated specs](./boundaries.md) before code.
+This task plans the work. It does not run models, change credentials, provision AWS,
+implement the server, or modify the production UI.
 
 ## Remaining decisions
 
-- Accept the [workflow scope](./workflows.md#in-later-and-out): two full project
-  homes, a limited playground, and CLI/IDE as interfaces to the computer project.
-- Accept moving paid browser inference and new WASM-folder onboarding out of the
-  primary flow, with a transition/export path for existing browser projects.
-- Accept deferring cloud BYOK and GitHub publishing until after the first cloud beta.
-  Local BYOK, local Git, ACP, and LSP remain supported.
-- Public CAD prices versus USD pricing from the Canadian account. The
-  [draft economics](./tiers.md#illustrative-local-tiers) use CAD explicitly.
-- Initial sales territories, province, and tax registrations. Resolve during billing
-  setup, not from the repository's timezone.
-- Which measured models meet each task's quality bar, and the frontier-use budget.
-- The sandbox winner after the same workload runs on the finalists.
-- Whether GitHub is needed for the first cloud beta. Default: cloud-only first.
-  [GitHub-first](./storage.md#effort-and-release-options) suits a developer-only beta.
-- The later promotion's currency and meaning: invoice discount or inference credits.
-  Google/GitHub login alone does not establish a unique human.
+- Accept local source and graph as authority in local-remote mode, requiring the
+  connector for commits. Moving source into cloud storage is a separate action.
+- Decide whether GitHub is needed for the first external beta or phase 6.
+- Choose a production inference route after benchmarks. Confirm Sign in with ChatGPT
+  integration eligibility before relying on it for hosted access.
+- Decide whether source/test generation ships before execution. Proposed default:
+  compilation first, artifact-only generation next, isolated execution afterward.
+- Set credit rates, compiler resource limits, storage retention, execution pricing,
+  and currency from measurements.
+- Select a sandbox provider when execution is in scope. No sandbox selection is
+  required for a compilation-only beta.
 
-Keep unresolved commercial choices here. Accepted behavior moves into the separated
-specifications described in [boundaries.md](./boundaries.md).
+The shared server, three storage/compiler modes, ACP/LSP, accountless local access,
+and isolated execution when running code are settled by this direction.

@@ -1,8 +1,10 @@
 # The platform behind jazyk.dev
 
-The trusted service owns accounts, entitlements, usage reservations, project metadata,
-and runtime orchestration. It does not own compiler goals or mutate graph shards.
-See [boundaries](./boundaries.md) and [cloud execution](./cloud-sessions.md).
+Revised 2026-10-02. The trusted platform hosts the shared Jazyk service and owns
+accounts, entitlements, reservations, project bindings, storage transactions, and
+optional execution orchestration. Compiler goals, graph gates, and mutations remain
+inside the portable compiler. See [server](./server.md), [boundaries](./boundaries.md),
+and [optional execution](./cloud-sessions.md).
 
 ## Components and trust
 
@@ -10,18 +12,21 @@ See [boundaries](./boundaries.md) and [cloud execution](./cloud-sessions.md).
 |---|---|---|
 | API and account UI | Identity, devices, access, subscriptions, project list | Postgres |
 | Model gateway | Admission, routing, streaming, settlement, receipts | Usage ledger and reservations |
-| Runtime orchestrator | Start, fence, stop, reconcile provider inventory | Project lease, runtime state, compute ledger |
-| Relay | Authorized project API, events, LSP WebSocket | Short-lived connection state |
-| Storage service | Checkpoint manifests, uploads, recovery, exports | S3 and Postgres pointers |
-| GitHub integration | Installation access, import, explicit branch publish/PR | Installation and repository bindings |
+| Shared compiler service | Concurrent project contexts, admission, per-project scheduling and commit | Jobs, writer epochs, graph-state manifests |
+| Protocol edge and local connector | Authorized project API, ACP/LSP, revision exchange and events | Device/project bindings and resume cursors |
+| Storage service | Virtual workspace revisions, graph commits, recovery, exports | S3 objects and transactional Postgres heads |
+| GitHub adapter | Tree/blob reads, draft overlay, explicit publish/PR | Installation, branch, base commit and publish receipts |
+| Optional execution broker | Materialize, run, import outputs, destroy, reconcile provider inventory | Execution state, evidence and compute receipts |
 | Preview service | Private access to an untrusted app | Expiring access grants |
 
 One service with modules and background jobs is enough initially. Postgres supplies
 transactions, uniqueness, and durable job state. Add Redis or a separate queue only
-when measurements justify it. Gateway traffic and user code never share a runtime.
+when measurements justify it. Hosted compilation runs in the shared service. Customer
+code execution remains outside it. No per-project sandbox is required for compilation.
 
-Use HTTP/streaming, OAuth, Stripe, SQL, AWS, and archive libraries. Start with one
-OpenRouter integration and a small catalog. Jazyk-specific admission/ledger logic
+Use HTTP/streaming, OAuth, Stripe, SQL, AWS, and archive libraries. Production supplier
+selection remains open between OpenRouter, OpenAI, and Anthropic. Start with one
+measured integration and a small catalog. Jazyk-specific admission/ledger logic
 is custom; provider wire protocols and credential proxies are not an excuse to
 hand-roll standard infrastructure. Compare an existing proxy if multiple direct
 provider protocols later justify one.
@@ -33,20 +38,28 @@ provider protocols later justify one.
 - Use stable provider subjects as identities. Explicitly authenticate account linking;
   matching email addresses alone must not merge paid accounts or promotional grants.
 - One account owner initially. Organizations, seats, and pooled team budgets come later.
-- `jazyk login` uses a browser/device authorization flow. Issue revocable device
-  credentials for the managed model service, with short-lived access tokens.
+- The proposed `jazyk login` uses browser/device authorization. Issue revocable
+  credentials for the project service with short-lived, project-scoped access.
 - Store refresh credentials through an OS credential-store library. A documented
   permission-restricted file fallback is for headless systems. Keep secrets out of
   project TOML and browser local storage.
-- Login creates a named provider profile; activation is explicit. Existing CLI/env
-  overrides and LocalRouter remain meaningful. Logout/revocation does not disable
-  local BYOK.
+- Accountless local access uses a local owner principal and the local server.
+  Login adds remote project/credit access, not an automatic upload or route change.
+  Explicitly select remote compilation and authorize a local folder's connector.
+  Existing local CLI/env overrides and LocalRouter remain meaningful. Do not forward
+  executable local configuration or local credentials as trusted hosted settings.
 - Browser sessions use secure, HTTP-only cookies, CSRF protection, and exact origin
-  checks. Authorize project access on every relay connection and operation.
+  checks. Authorize project access on every connection and operation.
 
-Local subscription use uploads model context to the gateway/upstream, even though
-execution and project files stay local. State this at provider selection. Local-only
-model use has a different data path.
+Local-remote use transfers source/graph inputs to the remote compiler and its model
+provider. The computer remains storage authority. Cloud-backed projects have durable
+remote storage. Explain the different retention paths at selection; a local folder
+does not imply local processing. See [local-remote storage](./storage.md#local-remote).
+
+Use the [account/project record groups](./server.md#database-and-durable-state), scoped
+database policies, and project capabilities. Authenticated membership is independent
+of payment: exhausted credits prevent new paid jobs, not an owner's authorized reads
+or exports within retention. Anonymous requests cannot start hosted model work.
 
 ## Canadian billing
 
@@ -57,7 +70,10 @@ USD and other currencies can be evaluated later.
 
 Use hosted Checkout for purchase, Billing for subscription lifecycle, and Customer
 Portal for payment method and cancellation. Jazyk's ledger grants service allowances;
-Stripe is not the source of token usage. Keep compute and model balances distinct.
+Stripe is not the source of token usage. Keep model, managed-service, storage, and
+optional execution usage categories distinct. One prepaid wallet is possible if its
+rate card and reservations explain each debit. Never double-debit a model call inside
+a reserved job budget.
 
 Official fee references read 2026-10-01:
 
@@ -105,8 +121,9 @@ subscription/invoice state. Source: [subscription webhooks](https://docs.stripe.
   proration payment.
 - Downgrades and cancellation take effect at paid period end. Cancellation stops
   renewal, not access to existing project exports.
-- Failed renewal blocks new paid admissions once the paid entitlement ends. Handle
-  in-flight reserved calls and checkpoint an active runtime within a bounded stop grace.
+- Failed renewal blocks new paid admissions once entitlement ends. Handle in-flight
+  reservations, commit valid pending state through its storage authority, and stop
+  optional execution within a bounded grace. Keep read/export policy explicit.
 - Refunds and disputes create compensating entries. Revoke unused associated grants
   and suspend further spending if needed. Do not silently create a postpaid debt.
 - Model top-ups and compute purchases each have their own idempotent grant. Preserve
@@ -118,12 +135,14 @@ billing. Use Stripe test mode until these pass.
 
 ## Gateway
 
-Expose an OpenAI-compatible model endpoint plus a separate account/usage API. The
-exact paths are specified during phase 1. Implement the
+Start with a project/job API and an internal provider adapter used by the embedded
+ACP worker. A public compatible model endpoint is optional later work, not the core
+subscription product. Specify exact paths before implementation. Implement the
 [reservation protocol](./tiers.md#admission-and-settlement), not a preflight-only check.
 
-- Device credentials are account-scoped for model access. Cloud credentials are
-  short-lived and restricted to account, project, runtime lease, and spend envelope.
+- Device credentials authenticate account/project connections. Job/model capabilities
+  bind tenant, project, run, active authority, and spend envelope. Optional execution
+  credentials bind the environment too. No account-wide token enters customer code.
 - Accept supported models and features only. Context/output/reasoning bounds let the
   service reserve a defensible upper cost. Do not accept a client-supplied dollar bill.
 - Pass streams through and settle from provider usage. Record the upstream id and
@@ -135,23 +154,25 @@ exact paths are specified during phase 1. Implement the
 - Rate-card changes are versioned. Polling a supplier catalog detects changes; it does
   not silently rewrite the customer's charge history.
 - Enforce per-account and global spend/concurrency limits. An account may have several
-  local devices. All devices and cloud runtimes share the same atomic ledger.
+  local devices. All remote project jobs and execution environments share one ledger.
 - Quota exhaustion is typed and non-retryable until allowance changes. Ordinary
   provider throttling/outages keep separate retry and backoff semantics.
 
-No arbitrary upstream URL in a subscription request. BYOK is a separate access path.
+No arbitrary upstream URL in a hosted subscription request. Local BYOK is a separate path.
 The [workflow proposal](./workflows.md) defers cloud BYOK from the first beta.
 When added, hold encrypted customer credentials in a broker, initially for OpenRouter
 through the already supported integration. It consumes no Jazyk inference allowance
-but still consumes runtime entitlement. Other providers and generic private/local
-endpoint tunneling can follow. Local BYOK remains available throughout.
+but still consumes managed-service/storage entitlement and any explicit execution
+budget. Other providers and generic private/local endpoint tunneling can follow.
+Local BYOK remains available throughout.
 
 ## AWS deployment
 
 Proposed beta:
 
-- One AWS region, one deployable API/worker service on ECS/Fargate, and managed
-  Postgres with backups. Use S3 for immutable checkpoint objects and artifacts,
+- One AWS region, one deployable shared API/compiler service on ECS/Fargate, and
+  managed Postgres with backups. This deployment container hosts many projects; it
+  is not a project execution environment. Use S3 for immutable workspace/state objects,
   Secrets Manager/KMS for service secrets, and existing deployment OIDC patterns.
 - Prefer `ca-central-1` for account/project data if the selected services and sandbox
   placement fit. `us-east-1` is a valid simpler alternative when co-location wins.
@@ -164,11 +185,12 @@ Proposed beta:
   NAT/VPC networking where used. The small beta service is not cost-free at idle.
 - Planning envelope: roughly US$100–300/month for a modest managed deployment before
   inference, sandboxes, significant traffic, and support. This is an estimate to
-  replace with a concrete regional configuration and calculator result in phase 1.
+  re-estimate for compiler CPU/memory and measured concurrency before hosted release.
 
 The service must support streaming responses and long-lived SSE/WS with explicit
 idle timeouts. Deploys drain connections and resume idempotent background jobs.
-Pin compiler image versions independently of web and service releases.
+Pin the compiler library/binary version per compatible state contract. Drain writers
+on deploy and preserve checkpoints before a version change.
 
 ## Data and operations
 

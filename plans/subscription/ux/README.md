@@ -1,4 +1,9 @@
-# Workflow prototype
+# Historical workflow prototype
+
+Superseded on 2026-10-02 by the [shared-server workflow](../workflows.md). This prototype
+and its screenshots show the earlier model-only upgrade and coupled storage/compiler
+homes. They are retained for reference, not implementation guidance. The new plan
+supports local files with remote compilation and does not start a VM for cloud browsing.
 
 Open [index.html](./index.html) in a browser. The HTML, CSS, and JavaScript are
 self-contained local assets with no package install or build step. All data is
@@ -38,4 +43,4 @@ changed by this prototype. Pricing is illustrative and cloud prices are unresolv
 - [Editor context](./workspace.png).
 - [Mobile layout](./mobile.png).
 
-The [workflow proposal](../workflows.md) defines the scope and transition rules.
+The [current workflow proposal](../workflows.md) replaces these scope and transition rules.

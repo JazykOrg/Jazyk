@@ -1,250 +1,216 @@
-# Project storage options
+# Versioned project storage
 
-Recommendation: ship cloud-only projects first. Add GitHub-backed projects as a
-separate choice when needed. A project has one authority for source files. Do not
-build continuous two-way synchronization in the first release.
+Revised 2026-10-02. Storage is independent of compiler location. The shared compiler
+operates on logical project files and persistent graph state through injected
+interfaces. No cloud compilation step requires a checkout or mounted filesystem.
 
-In the [workflow proposal](./workflows.md), the front door offers computer and cloud
-homes. GitHub is an optional repository connection within a home, not another place
-where Jazyk runs. GitHub publishing is deferred from the first cloud beta. The
-storage alternatives below remain useful when that integration is added.
+## Contracts
 
-This recommendation is still a proposal. GitHub-first is reasonable for a beta
-limited to developers with existing repositories. The owner asked for options and
-work estimates rather than an assumed dual-storage design.
+Evolve the existing [VFS seam](../../bootstrap/src/vfs.rs) into per-project instances.
+Do not select storage using a process-global variable or thread-local tenant. Keep
+logical storage and execution as separate capabilities.
 
-## Source authority and durable state
+| Contract | Required behavior |
+|---|---|
+| Workspace | Enumerate project paths, read bytes/metadata at a pinned revision, stage writes/deletes/renames, publish a batch against an expected revision |
+| State store | Load committed graph/status/ledger, atomically commit a validated generation, retain journal and recovery history |
+| Project commit coordinator | Associate source revision, graph generation, changeset id, and writer epoch; return an idempotent durable receipt |
+| Change feed | Bounded revision events, resume cursor, explicit rescan when history is unavailable |
+| Artifact store | Scoped rendered outputs, exports, traces, execution evidence and retention |
+| Execution environment | Optional materialization and shell/file tools, never inferred from the presence of a path |
 
-A project has several kinds of state:
+Names are illustrative. Exact Rust traits and wire schemas belong in the specs.
+A small in-memory implementation is a first-class test backend on native builds.
 
-| State | Authoritative location | Recovery requirement |
-|---|---|---|
-| Docs, source, project config | Cloud checkpoint or selected GitHub repository/branch | Recover the exact source revision, including unpublished work |
-| Persistent graph, decrees, proposals, diagnostics, journal, generation/verification ledgers | Jazyk project state, normally `.jazyk/` | Preserve ids and human decisions; do not regenerate from prose |
-| Runtime processes and toolchain caches | Sandbox | Recreate or resume; cache loss must not lose project meaning |
-| Generated product databases and user uploads | Declared project data or a separately connected service | Back up explicitly if durable; mark disposable data clearly |
-| Account, usage, payment, runtime leases | Cloud Postgres | Platform recovery, separate from compiler checkpoints |
+Use normalized project-relative paths internally. Reject root escape, absolute host
+paths, encoded traversal, and ambiguous case/Unicode collisions. Resolve local symlinks
+within the selected root using platform libraries and protect against substitution
+between checking and opening. Exclude socket/device files. Virtual paths are not host
+filesystem permissions. Preserve raw bytes where appropriate; source decoding is explicit.
 
-GitHub-backed therefore does not mean that Jazyk stores no data. GitHub owns published
-source; Jazyk retains graph state, unpublished work, and recovery checkpoints. Those
-copies are not a second independently editable source repository. The UI should say
-this plainly when selecting the mode.
+Config discovery and document globs run against the selected workspace. A hosted
+project cannot walk up into a server home directory, import another project's files,
+read host environment variables, or configure an arbitrary executable.
+
+Adapters declare capabilities: atomic batch publish, append, notifications, offline
+availability, binary support, and limits. Use snapshots and overlays when a backend
+cannot provide native rename/append semantics. Do not pretend GitHub implements POSIX.
+
+## Source and graph commits
+
+Maintain a manifest identifying source revision, graph generation, compiler/state
+version, parent manifest, changeset id, dirty source state, and durable artifact refs.
+A source edit can be newer than the graph. Record that fact and reconcile normally;
+never present an older graph as already reflecting the newer source.
+
+For object-backed projects:
+
+1. Read a committed manifest and acquire the project's writer epoch.
+2. Stage source and graph mutations using the existing gates and natural keys.
+3. Upload immutable, tenant-scoped changed objects and validate their hashes.
+4. In a database transaction, compare the expected head and writer epoch, then publish
+   the new manifest/head and commit receipt. The pointer is the visibility boundary.
+5. On failure, leave the old head readable. Collect unreachable staged objects later.
+
+Do not hold a database transaction while waiting for a model or a long upload. A
+retry with the same changeset id returns the original receipt. Readers never see
+half the new shards. In-memory caching does not count as a durable commit.
+
+The local adapter retains `.jazyk/` interoperability and implements the same logical
+commit contract with locking, a recovery journal, and deterministic crash recovery.
+Source plus graph updates need this coordinator too; ordinary writes of several
+files are not an atomic transaction. Uncoordinated editors may change source, which
+must be detected by expected versions/hashes before replacement.
+
+Preserve the compiler's no-migration policy. A remote restore must check compatibility
+before opening state. Keep the original checkpoint and explain an incompatible version;
+never silently archive it and claim that recompilation preserved identities.
+
+## Local-local
+
+A native local Jazyk server opens one or several authorized folders. Source, persistent
+graph, ledgers, and artifacts remain in those folders. Local filesystem events become
+the same revision feed used by other adapters. Existing CLI commands can use an
+in-process local server context or attach to an explicitly selected local server.
+
+No account is required. Existing local agents and provider settings remain effective.
+Logical project contexts still matter: one local server may host several projects
+with different agents, settings, and models.
+
+## Local-remote
+
+Recommended default: the computer owns both source and durable graph state. A small
+native connector provides the workspace and commit endpoints over an outbound,
+authenticated connection. The shared remote server runs the compiler.
+
+1. Select the folder and disclose remote processing. Register its logical project id,
+   authorized device, storage binding, and compiler selection with the service.
+2. The connector acquires the local build lease, reports the committed graph generation,
+   and pins source content at a known revision. Use bounded snapshots or content hashes
+   and immutable local cached blobs so later reads cannot return mixed revisions.
+3. Transfer the required manifest, graph, and requested source bytes. Prefetch small
+   documents in batches. Do not expose an arbitrary filesystem RPC or inbound laptop port.
+4. The remote compiler stages a changeset and asks the connector to commit with an
+   expected revision/generation, changeset id, and active authority epoch.
+5. The connector verifies the lease and actual source state, runs deterministic commit
+   validation, writes through the local coordinator, and returns a durable receipt.
+6. The remote worker advances only after the receipt. On a lost acknowledgement it
+   queries that changeset id instead of blindly writing or charging again.
+
+Remote execution of Jazyk still sends source/graph context off the computer. The UI
+must not say that data never leaves. Proposed initial retention: job/account metadata
+is durable; project bodies and uncommitted changes use bounded session memory only,
+with no durable remote project copy. Document provider-side retention separately.
+
+On connector loss, stop new model calls and commits. Retain bounded in-memory pending
+results for a proposed five-minute reconnect grace, then discard them. A service crash
+can lose uncommitted work. The local committed graph remains recoverable. Usage already
+incurred is still usage; disclose this and avoid automatic charged retries. A durable
+remote recovery spool is a separate later opt-in, not an undisclosed backup.
+
+The connector may outlive the browser tab. Closing jazyk.dev does not itself drop the
+folder connection if the native connector remains running. If the computer sleeps,
+the server cannot promise unattended local-backed work. Cloud-backed source is the
+option for work that must continue without the device.
+
+Local LSP reads the last committed graph while disconnected. Local recompilation is
+available after explicitly releasing the remote lease and selecting the local compiler.
+Use an authority epoch so a late remote result cannot overwrite new local work. Do not
+silently switch compiler location or provider billing during a failed run.
+
+## Remote-remote with cloud storage
+
+Use immutable source/graph objects and versioned manifests in object storage, with
+transactional heads in Postgres. Keep the current YAML graph representation initially.
+The service reconstructs a logical workspace in memory or streams through an adapter;
+it does not untar a project into a shared host directory.
+
+The browser and IDE adapters read and edit this workspace through the project API.
+A job can continue after the client disconnects. Two clients share one project head
+and serialized compiler writer, with optimistic document edits. Collaborative text
+merging is outside the first release. Conflicts must preserve the rejected edit.
+
+A save is durable only after its manifest is published. Display source save status
+and graph revision separately. Keep exports containing source, graph, decrees,
+proposals, diagnostics, journal, and generation/verification ledgers.
+
+Start with bounded per-account/project storage, named checkpoints, disclosed retention,
+and deletion/export. The earlier 5 GB project, 20 GB retained-data, and 30-day export-grace
+figures remain proposals to cost, not new commitments. Retained versions and transfer
+consume resources even when no compilation job is running.
+
+## GitHub as a workspace adapter
+
+GitHub is a remote source backend. Bind one installation, repository, branch, and
+known commit. Read trees/blobs through supported GitHub APIs or libraries, without a
+native checkout on the compiler host. Detect truncated listings, large files, LFS,
+and submodules. Fail explicitly for unsupported content instead of silently omitting it.
+
+Use a private versioned overlay for draft edits. The workspace revision is the base
+commit plus overlay revision; graph checkpoints identify that exact pair. A publish
+creates a commit/tree and updates the intended branch without force. A moved branch
+requires an explicit update/conflict decision or a new branch/PR. The GitHub repository
+owns published source; the overlay owns unpublished work. They are not independently
+editable mirrors of the same revision.
+
+GitHub credentials stay in the trusted integration. Login with GitHub does not grant
+repository access. App installation and minimum Contents/PR permissions are separate.
+Revocation stops remote reads/publish while preserving already durable unpublished work
+for the disclosed retention period. The first adapter supports one branch per workspace.
+
+There is no atomic transaction spanning GitHub and Jazyk's database. Journal publish
+intent, expected base, resulting tree/commit, and graph checkpoint before updating a
+ref. After timeout, read the remote ref/commit and reconcile the receipt. Never make a
+second commit merely because the first acknowledgement was lost. A concurrent change
+that cannot be proven to match the intent becomes a conflict.
+
+Sources: [Git trees](https://docs.github.com/en/rest/git/trees),
+[Git references](https://docs.github.com/en/rest/git/refs), and
+[installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
 
 ### GitHub can store the graph
 
-GitHub can preserve graph identities and decisions. The prior wording, "Git alone
-is insufficient", was too absolute. A source-only repository is insufficient when
-the graph is not committed. `.jazyk/` is ignored by the current defaults, so an
-ordinary source checkout does not include that state.
+Git can preserve identities and decisions. `.jazyk/` is ignored by default, so a
+source-only checkout cannot restore graph state it never stored. Two valid policies:
 
-There are two valid policies:
+- Source in Git, graph and unpublished work in matching Jazyk checkpoints. Recommended
+  initial managed default.
+- Source plus a consistent durable graph checkpoint in Git. Include the required
+  status/journal/ledger state, and exclude credentials, locks, caches, and transient
+  process files. Restore with a compatible compiler.
 
-- Store source in Git and durable graph state in a matching Jazyk checkpoint.
-  This is the proposed cloud default, not a GitHub limitation.
-- Explicitly include a consistent durable graph checkpoint in Git alongside the
-  corresponding source. That preserves ids, decrees, proposals, diagnostics, and
-  journal/ledger history when restored with a compatible compiler. Exclude locks,
-  credentials, caches, and transient process state. Define the export contract
-  before adding an automatic "include graph" publishing option.
+The latter makes graph history portable through Git but adds larger commits and
+sensitive project metadata. Ordinary YAML merges cannot validate divergent semantic
+histories. Start with linear single-writer snapshots; do not promise graph merging.
 
-The second policy trades portable history against larger commits, possible sensitive
-graph/trace content, and divergent graph histories that ordinary text merges cannot
-validate semantically. A linear, single-writer checkpoint history is simpler.
-Neither policy requires rebuilding from prose. Compiling from empty can create new
-ids and loses decisions that existed only in the graph; it is not a faithful restore.
+## Transfers and execution copies
 
-## Options
+Changing the compiler between local and remote does not change source authority.
+Changing storage is an explicit export/import or authority handoff, preserving the
+persistent graph and checking format compatibility. Pause the writer, obtain a
+consistent checkpoint, import and verify, then activate the destination. Keep the
+original as an independent copy until the user chooses to remove it.
 
-| Option | User experience | Advantages | Costs and limitations |
-|---|---|---|---|
-| Cloud-only | Create or upload a project, autosave, restore, download | Simplest onboarding; works for non-software projects; no Git account | Jazyk owns durable history, export, retention, and recovery |
-| GitHub-backed | Connect a repository, work on a branch, explicitly publish/open a PR | Existing source history, collaboration, local checkout, familiar ownership | App installation, permissions, branch conflicts, private repos, webhooks, and GitHub outages |
-| Both modes, one per project | Choose Cloud or GitHub when creating the project | Serves both audiences with clear ownership | Two flows to test; no automatic mirroring between them |
-| Continuous cloud/local/GitHub sync | Edit everywhere with automatic merging | Convenient once correct | Conflict resolution, offline edits, deletions, graph identity, and multiple writers make this substantially harder |
-| Jazyk-hosted remote Git | Jazyk operates a Git server for every project | Standard Git access without requiring GitHub | Another stateful service, keys, permissions, backups, patches, and support; not the simple first option |
+A container materialization is an execution copy pinned to a workspace revision, not
+new source authority. Its accepted changes return through the same conditional commit
+contract. Never synchronize an entire container root back to a project.
 
-Use export/import for transfers initially. A cloud export can be put in GitHub by
-the user; a GitHub archive imported as a cloud-only project has no ongoing link.
-If a later conversion between modes is added, make it an explicit one-time operation
-that preserves a checkpoint and changes the source authority.
-
-## Shared checkpoint design
-
-Start with bounded compressed archives plus a manifest in S3. Avoid building a
-custom distributed filesystem or Git server. Content-addressed/delta storage can
-follow if measured write amplification warrants it.
-
-A manifest records:
-
-- Account/project id and checkpoint id.
-- Source revision or content digest, and Git base/published commit where relevant.
-- Compiler version and graph format version, committed generation, and dirty source
-  state. The checkpoint may include edits that have not yet been reconciled.
-- Durable paths, file hashes/sizes, timestamp, parent checkpoint, and completion state.
-- Optional product database dump/version and retained artifact references.
-
-The runtime checkpoint operation coordinates the build lease, graph commit lock,
-editor writes, and product writers. Freeze a consistent copy at a safe boundary,
-then upload it. Uploading a tar of live-changing shards is not a consistency protocol.
-Do not hold the graph lock through a slow network transfer.
-
-Publish the checkpoint pointer only after upload completion and checksum validation,
-using a transaction tied to the active project lease/fencing generation. The previous
-checkpoint remains usable if the new upload fails. A stale runtime cannot replace
-the current pointer. Failed uploads are collected later without deleting the last
-known good version.
-
-S3 versioning can protect against object overwrite/deletion, but all retained
-versions consume storage. Configure lifecycle expiry as well as project retention;
-versioning alone is neither a consistency protocol nor an infinite free backup.
-Source: [S3 versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html).
-
-### Save and recovery semantics
-
-- Autosave source changes to the runtime and display whether they are durably
-  checkpointed. Reserve `Backed up` for a completed checkpoint. Do not report cloud
-  durability merely because a write reached the sandbox filesystem.
-- Target a durable checkpoint within 60 seconds of changes, coalesced at consistent
-  boundaries, plus explicit Save, completed jobs, and before pause. If a long session
-  delays the boundary, display the actual last durable time; do not claim a fixed
-  recovery point that the implementation cannot meet.
-- Graph-generation events request checkpoints, but do not upload a full multi-GB
-  archive for every small mutation. Coalesce dirty state and cap archive size.
-- A running dev database needs a consistent logical dump or quiesced snapshot. A tar
-  of live database files is not a usable backup guarantee.
-- On VM loss, restore the newest completed manifest into an empty workspace. Verify
-  its hashes and compiler version. Reconcile source changes normally afterward.
-- Clear stale process/lease artifacts through the runtime adapter. Never resurrect
-  old authority tokens from a VM memory snapshot.
-- Test recovery by destroying the sandbox. Resume on the same VM is not a restore test.
-
-Target beta recovery within five minutes for a small project, subject to measured
-archive size and setup time. State the measured recovery point/time in the product.
-Unsaved work since the last durable checkpoint can be lost in a sudden failure.
-
-### Files, secrets, and size
-
-Include docs, source, the deliverable, required `.jazyk/` state, and declared durable
-data. Exclude build caches and dependency trees such as `target/` and `node_modules/`
-by policy, with exceptions when they actually contain declared project data. Do not
-use `.gitignore` as a blanket backup exclusion: it deliberately excludes the graph.
-
-Exclude provider credentials, temporary runtime tokens, secret env files, sockets,
-and process files. Encrypt project state; traces and user-created files can still
-contain sensitive content. Do not claim a filename filter detects every secret.
-
-Use bounded archive libraries and validate paths, symlinks, expanded sizes, and file
-counts. Process untrusted archives/repositories in an isolated helper. Give the
-runtime only short-lived upload/download access to its own object, never bucket-wide
-credentials or permission to delete previous checkpoints.
-
-## Cloud-only mode
-
-The cloud manifest is the authority for source and graph state. Keep one active
-workspace per project. A second browser connects to it; it does not fork a competing
-writer. Collaborative editing/merging is later work.
-
-The first release needs:
-
-- Create from an example, empty project, or bounded upload.
-- Durable checkpoint status, named manual checkpoints, and restore with preview of
-  the revision being restored.
-- Downloadable portable archive containing source and graph, with secrets excluded.
-- Storage/retention display and a working deletion/export path.
-
-No internal remote Git server is required. Use checkpoint history initially. Do not
-introduce `jazyk push` and `jazyk pull` as file-sync commands in this phase.
-
-## GitHub-backed mode
-
-Source of truth: one selected repository and branch. Start with one repository per
-project. Submodules, LFS, and multi-repository work need explicit support later; detect
-and refuse unsupported imports instead of silently omitting files.
-
-1. Install a GitHub App for selected repositories. GitHub login alone grants no
-   repository access. Bind the project to installation id, repository id, branch,
-   and base commit.
-2. Fetch a known commit using a trusted integration, then transfer files into the
-   sandbox without its holding the GitHub App private key or an installation token.
-3. Work locally in that runtime. Checkpoint graph state and unpublished source edits
-   together. Show `Unpublished changes` separately from `Backed up`.
-4. On explicit Publish, validate changed paths and expected base. A trusted publisher
-   creates a commit and updates the intended branch without force. Use GitHub APIs
-   or standard Git libraries, not a handwritten Git wire proxy.
-5. If the branch moved incompatibly, preserve work and ask the user to resolve the
-   conflict or publish a new branch/PR. Do not silently overwrite or merge graph YAML.
-6. A later reopen fetches the source revision and its matching graph checkpoint.
-   Incoming Git changes become normal dirty documents on the existing graph. Do not
-   restore a graph snapshot from an unrelated branch and pretend it is current.
-
-GitHub installation tokens can be restricted to repositories and permissions and
-expire after one hour. They are not inherently scoped to one branch; the publisher
-must enforce the project's branch rule. Sources:
-[installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation),
-[non-forced reference updates](https://docs.github.com/en/rest/git/refs#update-a-reference).
-
-Use minimum Contents/PR permissions; do not request organization administration or
-workflow-writing access for a basic source flow. Surface unsupported workflow-file
-changes rather than granting broad permissions implicitly. Handle revoked apps,
-renamed/deleted repositories, branch protection, GitHub throttling, and outages.
-Uninstall stops GitHub access; it must not erase unpublished work immediately.
-
-Branch-aware graph histories and merging two independently edited `.jazyk/` trees
-are outside the beta. One managed branch/workspace per project avoids that problem.
-A local clone can edit source, then the cloud compiler reconciles those edits on its
-existing graph after an explicit update. It cannot simultaneously write that graph.
-
-## Cost and retention
-
-Bill retained bytes and transfer, not only live workspace size. S3 has storage,
-request, and transfer components. Use the chosen region's rates at implementation.
-Source: [S3 pricing](https://aws.amazon.com/s3/pricing/).
-
-Illustration, not a supplier quote: at US$0.025/GB-month, a 1 GB project with 20 full
-retained archives uses 20 GB and costs $0.50/month in object storage. For 1,000 such
-projects that is $500, before requests and traffic. Small Markdown graphs cost much
-less; large deliverables and database dumps dominate. Coalescing and retention matter
-more than avoiding a few kilobytes of graph state.
-
-Proposed beta bounds, to validate before publication:
-
-- 5 GB logical workspace per project and 20 GB total retained checkpoint/artifact
-  bytes, enforced at upload admission.
-- Retain the latest completed checkpoint, recent automatic checkpoints, and a small
-  number of named checkpoints within that byte budget. Never prune the only recovery
-  copy to make a new upload appear successful.
-- Keep data for a disclosed 30-day export grace after the cloud entitlement ends.
-  Warn before scheduled deletion. A model-only subscription does not fund unlimited
-  inactive projects.
-- Deletion removes provider snapshots, S3 object versions, and artifacts through a
-  retriable job. Backup/accounting retention is documented separately.
-
-Limits are proposals, not compiler `limits.rs` entries. They are cloud product policy.
+Use bounded archive libraries for exports/imports. Exclude credential material and
+validate paths, symlinks, sizes, and file counts. A filename filter is not a guarantee
+that arbitrary user files contain no secrets.
 
 ## Effort and release options
 
-Estimates are engineering days for one maintainer including focused failure tests.
-They exclude shared authentication, billing, sandbox orchestration, and ordinary
-compiler changes. The shared storage work is required even for GitHub-backed mode.
+These ranges are included in the [delivery phases](./README.md#delivery-sequence),
+not additive estimates. Shared contracts precede provider adapters.
 
-| Work | Effort | Includes |
-|---|---:|---|
-| Shared checkpoint and cloud-only flow | 6–10 days | Consistent export, manifests, S3, restore, bounds, deletion, download |
-| GitHub integration on that foundation | +8–15 days | App installation, import/publish/PR, branch conflicts, revocation, matching state |
-| Expose and support both modes together | +2–4 days | Mode selection, clear save labels, creation/export flows, compatibility tests |
-| Continuous two-way sync beyond those modes | +20–40 days, then ongoing work | Local client, offline edits, conflicts, deletions, authority transfer, graph semantics |
-| Operate a hosted Git service instead | +10–20 days initially, then operations | Deployment, identity/keys, integration, backup/restore, upgrades, monitoring |
+| Increment | Planning effort |
+|---|---:|
+| Per-instance local/memory interfaces and compiler context work | 8–14 days |
+| Local-remote snapshots, conditional commit, reconnect and protocol bridge | 8–15 days |
+| Cloud object-backed state and basic project UI | 8–12 days |
+| GitHub read/overlay/publish adapter after the shared contracts | 6–10 days |
+| Two-way live local/cloud sync or divergent graph merge | Deferred; requires a separate design |
 
-Release options:
-
-- Cloud-only first: 6–10 storage days. Lowest integration work and widest audience.
-  Recommended for the first beta.
-- GitHub-first: 14–25 storage/integration days. Better if every early user already
-  has a repository. Still needs graph and unpublished-work checkpoints.
-- Both alternative modes at launch: 16–29 days. More complete, but delays the beta.
-- Automatic mirroring/sync: defer. It is not necessary to offer either storage choice.
-
-When GitHub integration ships, storage setup can offer `Store in Jazyk` or
-`Connect GitHub`. Both cloud options show `Runs on Jazyk Cloud`; source authority
-and graph backup policy appear in storage details. The recovery copy needs an honest
-retention/export explanation, not another independently editable project mode.
+The first useful slice is concurrent local/memory-backed compilation. GitHub and
+container-provider selection are not prerequisites for proving that contract.

@@ -8,6 +8,10 @@ The previous comparison mixed vendor documentation, search snippets, memory, and
 estimates. This revision keeps the evidence that informs the design. It removes
 unverified model prices and claims about competitors' losses.
 
+The [2026-10-02 server plan](./README.md) supersedes Jazyk architecture suggestions
+in this research. Competitors' sandbox workflows do not imply a container is needed
+for Jazyk's compilation-only service. This page remains dated research input.
+
 ## Kiro
 
 ### Product and subscription

@@ -1,96 +1,96 @@
-# Compiler, web, and cloud boundaries
+# Compiler, server, web, and cloud boundaries
 
-The compiler may become a separate open-source project. Cloud consumes its
-interfaces. Local compilation must not need an account, Stripe, AWS, or the cloud
-database. This is the target layout for implementation, not a move of existing specs
-or a claim that proposed behavior already exists.
+Revised 2026-10-02. The compiler may become a separate open-source project. Its
+project/storage/runtime contracts must remain useful without an account, Stripe,
+AWS, or any particular inference provider.
 
-## Documentation
+## Documentation ownership
 
 | Tree | Owns | Excludes |
 |---|---|---|
-| `docs/compiler/` | Graph, goals, scheduling, sessions, generic model profiles, usage observations, resource stops | Tiers, Stripe, accounts, sandbox vendors |
-| `docs/consumers/` | Generation, binding, verification, portable command limits | Hosted packaging |
-| `docs/frontends/` | CLI, ACP, MCP, LSP, viewer, local server API, browser compiler adapter | Hosted account workflows |
-| `docs/web/` | Web application navigation, backend selection, projects, account/usage screens | Goal derivation and monetary enforcement |
-| `docs/cloud/` | Accounts, billing, gateway, catalog, orchestration, storage, GitHub, operations | Compiler graph ownership |
-| `docs/site.md` and `site/` | Marketing site and commercial offer | Compiler constants |
-| `plans/subscription/` | Alternatives, research, estimates, unresolved choices | Normative implemented behavior |
+| `docs/compiler/` | Graph, goals, sessions, project contexts, storage transactions, scheduling, generic provider policies and limits | Account tiers, Stripe, vendor credentials |
+| `docs/consumers/` | Artifact generation, verification evidence, execution requirements | Sandbox vendor billing |
+| `docs/frontends/` | CLI, portable server API, ACP, LSP, MCP, logical paths and capability contracts | Hosted commercial policy |
+| `docs/web/` | Accountless/signed-in navigation, files/compiler/AI selection, save and usage states | Compiler semantics and monetary enforcement |
+| `docs/cloud/` | Tenants, accounts, credits, managed providers, durable cloud adapters, GitHub integration, execution broker, operations | Duplicated compiler goal logic |
+| `plans/subscription/` | Alternatives, proposed architecture, estimates and dated research | Claims of implemented behavior |
 
-Create these pages when their implementation phase starts:
+Specify these additions before code:
 
-- `docs/cloud/cloud.md`: overview and service boundaries.
-- `docs/cloud/accounts.md`: identity, devices, sessions, and access.
-- `docs/cloud/billing.md`: entitlements, renewals, balances, refunds, receipts.
-- `docs/cloud/gateway.md`: reservations, routing, and usage API.
-- `docs/cloud/models.md`: managed catalog and rate-card behavior.
-- `docs/cloud/sessions.md`: runtime lifecycle and orchestration.
-- `docs/cloud/storage.md`: modes, checkpoints, recovery, retention.
-- `docs/cloud/github.md`: installations, import, publish, conflicts.
-- `docs/cloud/operations.md`: deployment, capacity, reconciliation, restore.
-- `docs/web/web.md`: application overview and backend choices.
-- `docs/web/accounts.md`: account and usage screens.
-- `docs/web/projects.md`: storage choice, save, publish, export.
+- `docs/compiler/workspaces.md`: per-instance logical files, source revisions, state
+  commits, authority epochs, change feeds and local/remote consistency.
+- `docs/frontends/server.md`: multi-project service, job/events API, transport binding,
+  no-execution profile, proxy connections and authentication hooks.
+- Existing graph/control/session/settings pages: injected context, per-project writer,
+  per-run state, provider selection, traces and resource stops.
+- Existing ACP/LSP pages: storage-independent tools, URI mapping, virtual artifacts,
+  dirty-buffer semantics and agent compatibility. Reconcile v1 file callbacks with
+  the documented MCP-first direction.
+- `docs/web/web.md`, `projects.md`, `accounts.md`: common entry, three mode transitions,
+  credits and accountless behavior. Move page-only material from the current GUI spec.
+- `docs/cloud/cloud.md`, `accounts.md`, `billing.md`, `storage.md`, `github.md`,
+  `models.md`, `execution.md`, `operations.md`: managed adapters and commercial service.
+- Consumer/tool specs: distinguish artifact-only generation, execution required,
+  executed verification, stale evidence, and optional deployment handoff.
 
-Start web work from the [workflow proposal](./workflows.md) and
-[prototype](./ux/index.html). `docs/web/` owns the unified picker, run/save/AI labels,
-and upgrade journeys. The frontend specs retain native ACP/LSP and browser capability
-contracts. Narrowing browser onboarding must include a transition for existing projects.
+Keep relative links and link new roots from `docs/main.md` when they exist. Preserve
+prompt/skill exclusions. A compiler-only dogfood configuration may test extraction
+boundaries; do not implicitly split or reset the existing persistent dogfood graph.
 
-The [GUI spec](../../docs/frontends/gui.md) mixes server and page behavior. When web
-work starts, move page-only sections into `docs/web/` and leave links from the
-existing page. Keep the local API/capability contract in `docs/frontends/`. Update
-relative links in one coherent change; do not duplicate requirements.
+## Packages and dependencies
 
-Link the new web/cloud roots from [main.md](../../docs/main.md) when they exist.
-Keep the aggregate dogfood project. Add a compiler-only project config when testing
-extraction of the open-source tree, scoped to compiler, consumers, portable frontends,
-and benchmark specs. Keep prompt/skill exclusions. Do not implicitly split the
-persistent dogfood graph.
+- Expose a portable compiler/project-runtime library from `bootstrap/` first. It owns
+  reconciliation and logical state commits through interfaces, not concrete cloud SDKs.
+- Keep the `jazyk` binary and local server/connector entry points around that library.
+  The native local and memory adapters need no cloud identity or payment dependency.
+- A separate `cloud/` host depends on the public compiler/service interfaces and
+  implements authorization, SQL/object storage, credits, provider routing, GitHub,
+  and optional container execution. It hosts many project contexts in one service.
+- Reuse the same project runtime in local and hosted servers. Do not shell out to one
+  full Jazyk process/container per customer merely to avoid fixing global state.
+- Use mature crates for HTTP, streaming, databases, object storage, OAuth, filesystem
+  confinement, archives and standard protocols. Hand-write Jazyk domain logic only.
+- Keep `bootstrap/app/` in place initially. A later move to `web/` can extract the
+  web product without delaying the server contract. Its backend interface targets
+  project capabilities, not a particular sandbox provider.
 
-## Implementation packages
+This reverses the earlier rule that cloud must only launch a project binary inside
+a sandbox. The cloud host may call the compiler's public library interface; it must
+not duplicate internal graph or goal semantics. Exact crate splitting is an
+implementation choice after mapping dependency cycles and current feature gates.
 
-- `bootstrap/` remains the compiler and portable frontends. Add generic interfaces
-  here before cloud integrations.
-- New top-level `cloud/` owns authentication, billing, gateway policy, Postgres, S3,
-  and sandbox adapters. One Rust/axum service with modules is sufficient initially.
-  It does not import compiler internals to derive or prioritize goals.
-- Keep `bootstrap/app/` in place initially. Put cloud page behavior behind the
-  existing backend interface. A later move to `web/` need not delay local billing.
-- Keep Stripe, OAuth, cloud SDKs, SQL clients, and deployment definitions out of the
-  compiler dependency tree. Use libraries for infrastructure as `AGENTS.md` requires.
+## Runtime boundaries
 
-Cloud starts a released binary and uses versioned API, events, and checkpoint
-contracts. One sandbox holds one project's graph and build lease. Platform leases
-fence competing sandboxes; they do not replace compiler leases. Cross-project work
-can run concurrently. Each project's builds remain sequential.
+Compilation has workspace, graph, model-session and artifact capabilities. It has
+no implicit shell or process-launch capability. A separate execution interface can
+materialize a workspace into an isolated container for tasks that require one.
 
-## Portable additions
+The local server may offer native execution under local user policy. The hosted
+server never grants that host privilege to a customer project. Do not use a native
+build target as evidence that shell access is available to a hosted request.
 
-- Named model/provider profiles and per-task selection.
-- Usage observations and optional receipts. Unknown cost is not zero.
-- Typed provider resource stops and resumable run status. Financial exhaustion is
-  not a semantic diagnostic or a failed goal.
-- Timeouts, cancellation, output limits, and a consistent export/checkpoint seam.
+A local Codex adapter is for the owner's private experiments. Do not import personal
+Codex authentication into cloud credential management. Production model/provider
+integration remains outside the compiler. See [Codex testing](./codex-testing.md).
 
-Hosted setup, network rules, storage mode, and secrets belong to the cloud project's
-configuration. A portable environment recipe can be specified later if useful.
-Do not add a provider-specific `[cloud]` table to compiler settings for the beta.
+## Compatibility
 
-Optional CLI login/usage integration resolves a standard credential/profile. Core
-code sees a provider, model, limits, and errors, not an account tier.
+Preserve local YAML graph serialization, immutable ids, provenance, gates, journal,
+and one-writer semantics. Cloud manifests may store those serialized values as blobs.
+A physical project directory is one adapter, not an assumption of every graph tool.
 
-The compiler's no-migration/version-mismatch policy remains. Optional telemetry must
-not casually force graph resets. Restore pins the compiler version and retains the
-pre-upgrade checkpoint. The separate cloud database uses ordinary SQL migrations;
-the compiler graph policy does not prohibit those.
+The compiler's no-migration policy remains. Check compatibility before restore and
+retain the pre-upgrade checkpoint. Cloud account/database schemas use normal SQL
+migrations; that policy does not require discarding customer accounts.
 
 ## Acceptance
 
-- Free local commands and the browser backend build without cloud credentials.
-- Routing and resource stops can be tested without Stripe or a sandbox.
-- Cloud outages do not disable local BYOK or graph inspection.
-- An extracted compiler tree builds with its payloads and tests without `cloud/`
-  or web billing code.
-- Links and anchors resolve after moves. New specs use the existing short declarative
-  style and contain no em dashes.
+- The portable compiler builds and compiles through local or memory storage without
+  cloud credentials, a customer database, or a project shell.
+- Accountless local CLI, GUI, ACP, and LSP remain usable during cloud outages.
+- A shared native server compiles multiple project contexts concurrently with no
+  ambient cwd, filesystem, provider state, or token counter selecting a tenant.
+- Cloud providers and payment systems can be changed without rewriting graph tools.
+- Execution containers are replaceable adapters and never own the canonical graph.
+- Accepted behavior is documented before code. Local links/anchors resolve and docs
+  retain the repository's short declarative style with no em dashes.

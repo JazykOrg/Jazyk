@@ -4,13 +4,20 @@ The subscription supports a tested catalog, potentially including frontier model
 All supported models draw from the same allowance at published rates. Model family
 is not a billing tier. A more expensive model consumes the allowance faster.
 
+Revised 2026-10-02: subscriptions primarily buy managed remote compilation for local
+or remote source. The production inference supplier is undecided. The owner's
+[private Codex test route](./codex-testing.md) is an ACP agent integration, not a
+personal subscription token repurposed as a shared API key.
+
 ## Supported combinations
 
 The implementation has separate execution, agent, and model settings. Do not expose
 their Cartesian product as onboarding. Follow the [workflow scope](./workflows.md):
 
-- Computer project: own provider, managed subscription, or existing external agent.
-- Cloud beta: managed subscription. Add supported-provider BYOK later.
+- Local-local: own provider or existing external ACP agent, accountless.
+- Local-remote and remote-remote: managed service, account and credits required.
+- Local compilation with paid managed models can remain an advanced later route.
+  It is not required for the first shared-server release.
 - Browser playground: optional experimental reading assistance. Browser BYOK and
   paid inference are outside the proposed launch flow.
 
@@ -18,12 +25,13 @@ The table describes underlying distinctions, not four setup questions for every 
 
 | Choice | Options | Owns the bill |
 |---|---|---|
-| Execution | Local machine or cloud sandbox | Local hardware owner or Jazyk compute wallet |
+| Compiler | Local server or shared remote server | Local owner or Jazyk managed-service entitlement |
 | Embedded model access | Local endpoint, user API key, Jazyk subscription | User or Jazyk model wallet |
 | Agent | Embedded worker or external ACP profile | The configured agent's provider, unless explicitly integrated with the Jazyk gateway |
-| Project source | Local folder, cloud-only, GitHub-backed | Separate from model access |
+| Project source | Local connector, cloud objects, GitHub-backed virtual workspace | Separate from compiler location |
+| Optional execution | Materialized isolated environment | Explicit execution budget |
 
-Free local use needs no Jazyk account. Login adds a managed access profile. It must
+Free local use needs no Jazyk account. Login adds managed-service access. It must
 not overwrite explicit CLI flags, environment settings, a project's provider, or
 the global LocalRouter configuration.
 
@@ -53,9 +61,10 @@ overrides live under advanced settings:
 - Presets such as Economy and Quality may follow measurements. Do not publish a
   quality promise before the relevant goal kinds pass.
 
-For example, a user can compile through their local endpoint and generate code on
-the subscription, or compile on the subscription and delegate coding to their own
-ACP agent. There is no automatic transfer of costs between those access methods.
+Keep task routing explicit and capability-checked. A native external agent requiring
+filesystem or shell access is not admitted to the shared compilation process. Use
+the execution broker when that task is supported, or keep it local. Do not silently
+transfer costs or turn a virtual compilation job into a container job.
 
 ## Relationship to executors
 
@@ -82,6 +91,11 @@ A client-supplied purpose is a routing hint, not proof of a cheaper entitlement.
 Task policy never changes the price of a token from the same route.
 
 ## Catalog and fallback
+
+OpenRouter, direct OpenAI, and direct Anthropic are production options. Evaluate tool
+support, usage receipts, data handling, latency, price, and serving eligibility on the
+actual Jazyk workload. Existing OpenAI-compatible code is not proof that a direct
+Anthropic or Responses integration needs no adapter. Use maintained protocol libraries.
 
 Candidate families can include Qwen, DeepSeek, GLM, MiniMax, Kimi, and commercial
 frontier providers. Neither this list nor a public coding leaderboard establishes
@@ -128,9 +142,14 @@ Record at least:
 | Supplier cost and customer debit, including unsuccessful attempts | Sustainable pricing |
 | Cold/warm distributions and cost per successful task | Realistic estimates |
 
-Use the configured LocalRouter endpoint and record its resolved provider where
-available. Unknown upstream cost remains unknown. Do not infer price from an alias
-or count a local `report_spend` value as a provider receipt.
+For the requested private experiments, explicitly select the owner's Codex ACP test
+profile. Otherwise retain the configured LocalRouter route unless the owner chooses
+a change. No default endpoint or credential is changed by this plan. Unknown upstream
+cost stays unknown; neither an alias nor `report_spend` is a settlement receipt.
+
+Exercise the same tasks through memory, local-remote, and cloud-backed workspaces.
+Compare graph identity and result consistency. Concurrent runs must not contaminate
+each other's usage, histories, tool permissions, or provider fallback state.
 
 Cut repeated prompt overhead without changing the agent contract's meaning. Compare
 before/after cost and quality. Record successful and failed sessions in run telemetry;

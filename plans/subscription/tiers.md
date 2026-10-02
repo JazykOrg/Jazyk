@@ -1,23 +1,33 @@
 # Tiers, quotas, and unit economics
 
-Prices and caps below are illustrative, pending [measurement](./models.md#measurement-gate).
+The 2026-10-01 inference-only prices and caps below are historical sizing examples, pending [measurement](./models.md#measurement-gate).
 Customer prices use CAD. Supplier rates use USD. Currency choice is proposed, not
 settled by the owner's Canadian location.
+
+Revision 2026-10-02: the subscription now funds shared remote compilation for local
+and remote storage. The examples do not yet price compiler CPU/memory, transactional
+storage, connection handling, or optional execution. Do not publish them as the new
+managed-service offer. Recompute contribution after those costs are measured.
 
 ## What is free and what is paid
 
 - Free: native local CLI/GUI, own endpoints, own API keys, ACP agents, and the limited
   browser playground in the [workflow proposal](./workflows.md). No Jazyk account
   required and no recurring hosted model/compute allowance.
-- Subscription: managed model access, usable locally and in cloud sessions.
-- Cloud runtime: separately purchased compute/storage entitlement. Managed models
-  in the first beta. A supported BYOK configuration is later work.
+- Subscription: managed Jazyk server access for local-remote and remote-remote
+  projects, with account entitlement and credits. Managed inference is included in
+  the metered work; exact shared-compiler resource allowance remains to be measured.
+- Cloud storage: bounded storage and retention, with no project VM required.
+- Optional execution: explicit metered container jobs, separate from compilation.
+- Local compilation with managed inference and customer cloud BYOK are later options.
 - Later promotion: perhaps C$20 off the first paid invoice, or a separately defined
   inference grant. No promotion is enabled initially. A social identity alone does
   not prevent repeat claims.
 
-This avoids bundling 25–300 compute hours into local model plans before their cost
-and demand are known.
+One prepaid wallet can pay for distinct published model, service, and execution
+items. Display each category separately and reserve budgets without double charging.
+Passive LSP reads and graph navigation do not consume inference credits. Ordinary
+cloud project browsing does not start a billable project container.
 
 ## The usage unit
 
@@ -78,7 +88,7 @@ not a bound on one billing period. This is why the previous sizing rule is repla
 | Rolling weekly credits | 0 | 240 | 720 | 1,920 |
 | Rolling 5-hour credits | 0 | 80 | 240 | 640 |
 | Concurrent managed requests | 0 | 2 | 4 | 8 |
-| Included cloud compute | None | None initially | None initially | None initially |
+| Included isolated execution | None | None | None | None |
 
 The same supported model catalog is available across paid tiers, subject to the
 user's policy. Frontier use is allowed when benchmarked and accounted for at its
@@ -127,25 +137,34 @@ measuring the worst case.
 
 ## Cloud pricing
 
-Start with a separately prepaid runtime balance and a published size/hour rate.
-Compute is charged while the environment is running, including time waiting for an
-LLM and unattended jobs. BYOK does not make the runtime free.
+Price the shared compiler service separately from isolated execution economics.
+A cloud project has no always-running project VM. Proposed default: include bounded
+compiler work and a small storage entitlement with the subscription, meter model
+work at the rate card, and reserve execution credits only when an execution job starts.
+Measure before committing to this packaging or an exact allowance.
 
-For an E2B-sized 2 vCPU / 4 GiB instance, US$0.1656/hour is a current supplier
-compute example. At the planning FX rate that is about C$0.24/hour before the fixed
-provider fee, persistence, egress, retries, and platform overhead. A customer rate
-around C$0.50–0.75/hour is only a test range. Do not sell it before reconciling real
-bills. Other providers need different CPU-activity assumptions.
-See [sandbox costs](./sandboxes.md#cost-comparison).
+Cost per successful build includes inference, retries, compiler CPU and peak memory,
+database/object requests, transfer, retained state, and allocated service overhead.
+The owner's Codex subscription is a development route, not production supplier cost.
+Account concurrency, input bounds, and fair scheduling are necessary even with credits.
 
-Specify storage size, retained checkpoints, export bandwidth, and idle retention as
-separate entitlements. A prepaid C$10 runtime purchase cannot imply perpetual free
-storage. Start with a small paid cloud entitlement or a clearly disclosed retention
-period, and leave its exact price to the provider trial.
+For execution jobs, publish the environment size, rate, hard spending cap, idle policy,
+and retained artifact limit. Provider waits may still consume runtime resources.
+The dated [sandbox comparison](./sandboxes.md#cost-comparison) is a starting point,
+not a price for ordinary shared-server compilation. No sandbox grant is needed to
+open or inspect a cloud workspace.
+
+Storage and export grace remain explicit. Do not imply permanent free retention
+because the project is no longer using a container. Cost the proposed limits in the
+[storage design](./storage.md#remote-remote-with-cloud-storage).
 
 ## Admission and settlement
 
-A quota balance endpoint is advisory. The atomic gateway transaction is authoritative:
+A balance endpoint is advisory. The atomic admission transaction is authoritative.
+Check principal, project membership, active entitlement, available credits, and
+resource caps before opening a paid job. Reserve its spend envelope, then account
+for model calls/execution as children of that reservation. They must not each reserve
+and charge the same funds twice. The per-model request flow remains:
 
 1. Authenticate and resolve an allowed model/rate version. Check account status,
    concurrency, request size, context length, and output/reasoning bounds.

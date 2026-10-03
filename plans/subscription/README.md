@@ -1,5 +1,9 @@
 # Plan: shared Jazyk servers and subscriptions
 
+The unified [Cloud and delivery plan](../cloud/README.md), dated 2026-10-03, is the
+current implementation direction. It retains the local graph authority decided here
+and replaces this plan's deployment topology, execution scope, and delivery sequence.
+
 Revised 2026-10-02 from the owner's direction. This is a plan, not implemented
 behavior. The architecture, delivery order, and meaning of a subscription below
 supersede the 2026-10-01 proposal and its UX prototype.

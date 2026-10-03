@@ -1,5 +1,10 @@
 # Delivery design proposal
 
+The [Cloud and delivery plan](../cloud/README.md), dated 2026-10-03, integrates this
+design with named TOML deliveries, Git publishing, script entrypoints, GitHub Actions,
+and PostgreSQL-backed cloud operation. Use its sequence for implementation. This
+directory retains the destination, checkpoint, preservation, and recovery reasoning.
+
 Status: proposal, recorded 2026-10-03 from the delivery design discussion. The owner
 requested options for a generic delivery concept and asked to retain the reasoning.
 The recommendation below is a proposed direction. Recording it does not make it

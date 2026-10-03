@@ -1,9 +1,11 @@
 # Delivery design proposal
 
-The [Cloud and delivery plan](../cloud/README.md), dated 2026-10-03, integrates this
-design with named TOML deliveries, Git publishing, script entrypoints, GitHub Actions,
-and PostgreSQL-backed cloud operation. Use its sequence for implementation. This
-directory retains the destination, checkpoint, preservation, and recovery reasoning.
+The private [Cloud and delivery plan](https://github.com/JazykOrg/jazyk-cloud/blob/master/plans/cloud/README.md),
+dated 2026-10-03, integrates this design with named TOML deliveries, Git publishing,
+script entrypoints, GitHub Actions, and PostgreSQL-backed cloud operation. It records
+the hosted implementation sequence. This directory retains the portable destination,
+checkpoint, preservation, and recovery reasoning. Shared delivery contracts belong
+in Jazyk; hosted credentials, dispatch, and account policy belong in `jazyk-cloud`.
 The current execution scope is GitHub Actions only; Jazyk-hosted runtimes are deferred.
 
 Status: proposal, recorded 2026-10-03 from the delivery design discussion. The owner

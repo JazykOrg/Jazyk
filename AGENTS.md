@@ -17,6 +17,11 @@ Status: research project; large changes in direction are acceptable and expected
   the current trees took the names `docs2/` and `bootstrap2/`) failed in practice and was
   removed; see git history around "Failed POC". Do not resurrect it.
 - `site/` hosts the jazyk.org static site and its deploy workflow.
+- The private hosted service lives in the separate
+  [JazykOrg/jazyk-cloud repository](https://github.com/JazykOrg/jazyk-cloud), locally
+  `../jazyk-cloud`. Cloud and subscription plans moved there. Shared compiler,
+  workspace, delivery, verification, and ACP/LSP contracts stay here. Jazyk must
+  build and run locally without depending on the private service repository.
 
 ## Architecture (goal-based reconciliation)
 

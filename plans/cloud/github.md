@@ -31,8 +31,9 @@ only use GitHub as its delivery destination.
 
 Resolve tokens in the cloud host, narrowly scoped to the selected installation and
 repository. Refresh installation tokens as needed. Keep the App key and refresh
-material encrypted outside project files. The delivery worker receives only the
-specific run's required credentials, never a broad account token.
+material encrypted outside project files. Hosted workflow jobs use narrowly scoped
+GitHub credentials and explicitly configured repository/environment secrets. They
+receive neither the App private key nor a Jazyk account token.
 
 | Capability | Grant to plan and verify |
 |---|---|
@@ -48,6 +49,18 @@ commit/contents adapter, rather than discovering a missing grant after staging a
 delivery. [Contents API permissions](https://docs.github.com/en/rest/repos/contents).
 Dispatch accepts GitHub App tokens with Actions write.
 [Workflow dispatch API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event).
+
+Starting and inspecting runs from jazyk.dev is supported. A GitHub App user token
+obtained through OAuth, or an installation token, can dispatch with Actions write
+and list/read runs with Actions read. A conventional OAuth App can also use the
+documented `repo` scope, but the narrower GitHub App design remains recommended.
+Login alone without those repository grants is insufficient.
+[Workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs).
+
+The browser calls Jazyk's project API; the server calls GitHub and returns scoped
+run status. Show this delivery's history, source revision, run/attempt id, status,
+test summary, and GitHub link. Webhooks/polling update it while the page is open,
+and reopening the page loads persisted/reconciled state.
 
 Verify webhook signatures over the original request bytes, deduplicate delivery ids,
 and scope events by installation/repository id. Reconcile periodically through the
@@ -92,12 +105,13 @@ published tree. Default source delivery excludes private graph/operational expor
 
 ## Actions delivery lifecycle
 
-An Actions-backed script is one delivery attempt containing publication, dispatch,
+An Actions-backed command is one delivery attempt containing publication, dispatch,
 and verification steps. Reuse the Git publisher internally; do not make users start
-two independent deliveries to run a test script.
+two independent deliveries to run `npm test` or another command.
 
-1. Stage a workflow and entrypoint with the model's normal workspace tools. Use
-   `workflow_dispatch` initially and stable delivery/attempt inputs.
+1. Automatically generate the owned workflow/helper from the delivery definition.
+   Use `workflow_dispatch` initially and stable delivery/attempt inputs. Stage it
+   with the TOML edit; preserve manual changes and reject stale generation.
 2. Publish/install the workflow through an explicit Git change. `workflow_dispatch`
    requires the workflow to exist on the default branch. If branch protection
    prevents this, wait for its merge. Publishing only to a new feature branch does
@@ -123,8 +137,11 @@ attempts distinct. For non-idempotent external actions, retain an unknown result
 instead of automatically redispatching because no recent run was found.
 
 Keep generated workflows small. They checkout exact source, select the declared
-toolchain, invoke the entrypoint, and upload outputs even on test failure where
-possible. Pin action revisions when generating executable workflow content. Use
+toolchain, run setup and the command, and upload outputs even on test failure where
+possible. Preserve the failing exit code; report-upload steps do not turn it green.
+Use a generated helper file for literal command text so GitHub expression evaluation
+or dispatch inputs cannot silently replace the pinned command. Capture its digest.
+Pin action revisions when generating executable workflow content. Use
 repository/environment secrets or provider OIDC for deployment credentials.
 Do not upload an App private key or Jazyk account token. Ordinary `GITHUB_TOKEN`
 events have special trigger rules; verify trigger behavior instead of assuming a
@@ -141,11 +158,11 @@ only completed-job logs are available; link to GitHub for its native live view.
 
 Jazyk can read the exact repository candidate and files explicitly uploaded as
 artifacts. It cannot list arbitrary current files or run a command inside a
-GitHub-hosted runner. File inspection during execution is a container-runner
-capability. A future custom Actions agent bridge is separate work, not required now.
+GitHub-hosted runner. Interactive commands and live runner filesystem access are
+deferred with Jazyk's own runtime. A custom Actions agent bridge is also outside scope.
 
 The workflow uploads a manifest containing attempt id, candidate SHA/digest,
-entrypoint/config identity, report paths, output digests, and test command status.
+command/config identity, report paths, output digests, and test command status.
 Match this with the authenticated repository/run receipt. The checked-out candidate
 can differ from the workflow's own head SHA, so verify both roles explicitly.
 
@@ -157,4 +174,6 @@ and external XML entities. [Actions artifact API](https://docs.github.com/en/res
 An artifact manifest is evidence from a particular run, not a trust upgrade for
 arbitrary output. Compare bytes, expected report names, and configured checks.
 Tests with known criterion bindings update verification only for the matching
-candidate. Unmapped test results remain visible as run evidence.
+candidate. Unmapped test results remain visible as run evidence. Use the
+[test ingestion contract](./testing.md#ingest-and-validate); LLM-run tests remain
+separate Jazyk verification sessions and are not sent to CI.

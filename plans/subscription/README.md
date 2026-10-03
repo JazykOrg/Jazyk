@@ -3,6 +3,8 @@
 The unified [Cloud and delivery plan](../cloud/README.md), dated 2026-10-03, is the
 current implementation direction. It retains the local graph authority decided here
 and replaces this plan's deployment topology, execution scope, and delivery sequence.
+Delivery commands now use generated GitHub Actions workflows; Jazyk-hosted containers
+are deferred. LLM verification remains in Jazyk.
 
 Revised 2026-10-02 from the owner's direction. This is a plan, not implemented
 behavior. The architecture, delivery order, and meaning of a subscription below

@@ -4,17 +4,16 @@ Status: proposed, 2026-10-03. This makes the [delivery design](../delivery/READM
 concrete for Jazyk Cloud. Destinations and preservation rules remain ordinary prose
 requirements. Configuration selects operational mechanisms.
 
-## Two kinds, three execution paths
+## Two kinds, GitHub-hosted execution
 
 - `git`: publish a selected file set to a Git remote. GitHub uses its API adapter.
   No project container and no code execution are necessary.
-- `script`: execute one project entrypoint. Select either a fresh container or
-  GitHub Actions as the runner. Both can invoke the same script.
+- `script`: run a project command such as `npm test`, `python -m pytest`, or
+  `bash scripts/deliver.sh`. Jazyk generates a GitHub Actions workflow for it.
 
-Use these two kinds rather than a separate product model for CI. The UI can present
-three templates: Publish to Git, Run on GitHub Actions, Run in a container.
-The host controls which container provider implements `container`; the project
-does not choose an EC2 instance or database credential.
+The UI offers Publish to Git and Run a command on GitHub. There is no backend
+selector in the first version. Jazyk-hosted runtimes and containers are deferred.
+LLM-run tests remain in Jazyk verification sessions; see [testing](./testing.md).
 
 ## Proposed TOML
 
@@ -33,40 +32,34 @@ include = ["src/**", "tests/**", "docs/**", "jazyk.toml", "scripts/**", ".github
 
 [deliveries.verify]
 id = "d-verify"
-name = "Build and test on GitHub"
+name = "Run code tests on GitHub"
 kind = "script"
 destination = "ci-evidence"
-runner = "github-actions"
 environment = "node-build"
 repository = "origin"
 workflow = ".github/workflows/jazyk-verify.yml"
-entrypoint = ["bash", "scripts/deliver.sh"]
+command = "npm test"
+shell = "bash"
+cwd = "."
+setup = ["npm ci"]
 include = ["src/**", "tests/**", "scripts/**", "package.json", "package-lock.json"]
 timeout_seconds = 900
 reports = ["reports/junit.xml"]
-artifacts = ["dist/**", "reports/**"]
-
-[deliveries.preview]
-id = "d-preview"
-name = "Build and test in a container"
-kind = "script"
-destination = "preview-artifact"
-runner = "container"
-environment = "node-build"
-entrypoint = ["bash", "scripts/deliver.sh"]
-include = ["src/**", "tests/**", "scripts/**", "package.json", "package-lock.json"]
-timeout_seconds = 900
-reports = ["reports/junit.xml"]
-artifacts = ["dist/**", "reports/**"]
+artifacts = ["reports/**"]
 ```
 
-An entrypoint is an argv array, resolved inside the pinned workspace. Inline shell
-interpolation is not the configuration language. Shell scripts are ordinary versioned
-files when needed. `environment` selects an approved image/toolchain profile. Resolve
-container images to a digest and record Actions runner/tool versions when preparing
-and running the attempt. `reports` and `artifacts` declare outputs. The full source
-candidate also retains config, workflow, script, and dependency files
-needed for reproducibility. Validate that include rules do not omit required files.
+`command` is executed by the declared shell on a GitHub-hosted runner, in `cwd`
+relative to the pinned project. `setup` contains versioned prerequisite commands.
+Neither is executed by jazyk.dev or the API host. Generate workflow YAML using a
+library; never interpolate arbitrary user input into a server shell or accept an
+unreviewed command as a workflow-dispatch input. The immutable definition selects it.
+
+`environment` supplies the runner/toolchain setup. Record its resolved configuration
+and actual versions. `reports` and `artifacts` declare outputs. The test runner must
+be configured to emit the named report; adding `reports/junit.xml` does not make
+`npm test` emit JUnit automatically. The model can propose the necessary reporter
+configuration with the workflow diff. Freeze config, generated workflow/helper,
+command, and dependency files with the candidate. Validate required input paths.
 
 `destination` resolves a stable binding with actual repository/ref, publication,
 artifact scope, and optional graph entities. `remote`/`repository` can use a local
@@ -88,10 +81,13 @@ Updates carry the expected workspace/config revision. Validate the entire edited
 definition, apply a normal workspace changeset, and refresh the indexed configuration.
 Local-remote edits require the connector's durable commit acknowledgement.
 
-Creating a GitHub Actions delivery can stage both the TOML definition and generated
-workflow/script files in one workspace edit. Show their diff. Saving those files
-does not publish or dispatch them. Templates must not guess deployment credentials
-or add unintended push-triggered publication.
+Creating or editing a command delivery automatically generates or updates its owned
+workflow and any helper files in the same workspace changeset. Show the combined
+diff. Stamp stable delivery identity, generator version, and definition digest in
+the generated files. Detect manual edits before regeneration; preserve unrelated
+workflows and surface conflicts instead of overwriting custom work. Saving these
+files does not publish or dispatch them. Preparation refuses stale generated workflows.
+Templates must not guess credentials or add unintended push-triggered publication.
 
 Deleting a definition prevents new attempts. It does not erase checkpoint history,
 cancel a running attempt, delete a repository workflow, or undo a publication.
@@ -109,10 +105,10 @@ Illustrative tools, available through scoped MCP and ACP sessions:
 | `delivery.prepare` | Freeze candidate, inspect destination, derive transition and required evidence |
 | `delivery.run` | Admit a prepared plan and return an attempt id |
 | `delivery.status/watch` | Read state, logs, progress cursor, costs, and evidence availability |
+| `delivery.runs` | List this delivery's attempts with GitHub run/attempt ids, source revisions, and results |
 | `delivery.cancel` | Request cancellation; reconcile already completed external effects |
-| `delivery.files.list/read` | Read the attempt's materialized or retained files with ranges and limits |
-| `delivery.exec` | Run a bounded follow-up command in a live container under that attempt's policy |
-| `delivery.diff/import` | Preview and import selected run-file changes against expected workspace versions |
+| `delivery.files.list/read` | Read the exact repository candidate and uploaded artifacts with ranges and limits |
+| `delivery.diff/import` | Preview and import selected uploaded file changes against expected workspace versions |
 
 Tools cannot choose another tenant, arbitrary host paths, a different remote binding,
 or stronger credentials. Existing project editing authority covers configuration
@@ -130,7 +126,7 @@ does not create or prioritize compiler board goals.
 
 1. Select a delivery and saved workspace revision. Unsaved IDE buffers must be saved
    or explicitly included first.
-2. Freeze exact source/artifact bytes, config, scripts, workflow, toolchain identity,
+2. Freeze exact source/artifact bytes, config, commands, scripts, workflow, toolchain identity,
    graph snapshot, and verification evidence. Start with a full relevant project
    graph snapshot; optimize to dependency closures later.
 3. Load the destination's last confirmed checkpoint and current observations. A
@@ -175,19 +171,13 @@ generation number. Local and cloud storage follow [the separate lifetime](./stor
 
 ## Run files and test evidence
 
-Virtual project files and execution files are distinct views. Every run-file request
-names an attempt id and base revision. A running container can expose bounded reads;
-the response identifies that the file may still be changing. Retained output files
-have immutable digests after capture. Generated changes never silently overwrite the
-project; import checks its current revision.
-
-Container follow-up commands stay inside the delivery attempt. Mutating the candidate
-or procedure invalidates affected evidence and creates a new candidate/attempt before
-claiming it is verified. Do not turn this into an untracked permanent shell session.
-
-Actions exposes the pinned repository candidate plus uploaded outputs. It has no
-general interactive file or command tools on its hosted runner. Show unsupported
-capabilities explicitly. See [GitHub evidence](./github.md#actions-evidence-and-file-access).
+Project files and CI output files are distinct views. Every run-file request names
+an attempt id and base revision. Actions exposes the pinned repository candidate
+plus uploaded outputs. It has no general interactive file or command tools on its
+hosted runner. `delivery.exec` and live runner filesystem access are deferred with
+our own runtime. Retained outputs have immutable digests. Importing selected changed
+files checks the project's current revision and never silently overwrites it.
+See [GitHub evidence](./github.md#actions-evidence-and-file-access).
 
 Collect structured reports, initially JUnit XML with optional Jazyk criterion-id
 mapping, plus raw logs. Record run/attempt id, candidate digest, commit, toolchain,
@@ -198,4 +188,6 @@ become passes. Parse untrusted reports with size limits and external entities di
 Import matching evidence into the existing generation verification ledger through
 its normal writer/gates. A newer project revision can retain historical evidence
 without treating it as current. Provider success and arbitrary text in a log never
-prove every criterion or external preservation obligation.
+prove every criterion or external preservation obligation. The detailed
+[test contract](./testing.md) keeps CI verdicts separate from LLM judgments and
+defines aggregate-command versus per-criterion evidence.

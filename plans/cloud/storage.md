@@ -14,8 +14,8 @@ a blob-store interface so larger artifacts can move to object storage later.
 This is the recommended simplicity tradeoff. It gives the first implementation
 one transactional backup and restore boundary. It increases database size, WAL,
 and backup cost. Set project, artifact, log, and upload limits before accepting work;
-do not stream unbounded container images or dependency caches into PostgreSQL.
-Container scratch files and image layers live on disposable EC2/EBS storage.
+do not stream unbounded CI artifacts or dependency caches into PostgreSQL. Execution
+scratch and build environments belong to GitHub-hosted runners, not the EC2 instance.
 
 An alternative is PostgreSQL manifests plus immutable EBS files from day one. That
 reduces database bulk but adds ordering between file durability, SQL references,
@@ -44,6 +44,7 @@ foreign keys include tenant identity; project-owned records also include project
 | Destinations, bindings, definition revisions | Stable delivery identity, config digest, remote identity and managed scope |
 | Candidates, observations, plans, attempts, checkpoints | Frozen inputs, prepared effects, partial/unknown outcomes, last confirmed delivery |
 | Execution files, reports, artifacts, retention roots | Attempt-scoped outputs and evidence, expiry, recovery references |
+| Verification observations and imports | LLM or CI origin, criterion/test identity, input hashes, provider attempt, idempotent ledger receipt |
 
 `jazyk.toml` is the source of delivery definitions. SQL keeps a validated index and
 immutable revisions used by attempts. It is not a separately editable configuration.
@@ -75,7 +76,7 @@ owner epoch, and attempt identity independently of the claim transaction.
 [PostgreSQL SELECT documentation](https://www.postgresql.org/docs/current/sql-select.html).
 
 The outbox does not make external effects exactly once. Persist intent before Git
-updates, workflow dispatch, and script execution. On restart inspect uncertain
+updates and workflow dispatch. On restart inspect uncertain
 outcomes before retry. Use provider receipts and action-specific deduplication.
 
 ## Local-backed projects
@@ -92,8 +93,9 @@ cannot commit after a new local writer epoch. Returning to local compilation is
 explicit and preserves the graph rather than rebuilding it from prose.
 
 Delivery is a separate, disclosed transfer of a frozen candidate. Git/Actions sends
-the selected files to the selected repository. A container delivery sends them to
-the execution environment. Neither transfer changes the project's storage authority.
+the selected files to the selected repository. It does not change the project's
+storage authority. Source publication for CI requires the repository grant even
+when source and graph normally remain local.
 
 Before starting external work, save the local candidate, prepared plan, and delivery
 intent in a separate local operational store. After dispatch, the cloud service
@@ -102,12 +104,12 @@ evidence when online. Losing the connector need not kill an already admitted del
 whose complete candidate is staged. Its UI can say `Executed remotely; local receipt
 pending`, never that the local project was saved.
 
-Stage candidate bodies for a local-backed container only for the admitted attempt
-and its bounded result-retention window. Durable recovery content remains in the
-local delivery store or the explicitly chosen Git destination. Longer cloud retention
-is an explicit storage policy, not implied by remote compilation. Retain sufficient
-remote attempt metadata to inspect effects after a disconnect; do not invent a second
-graph authority. If required evidence is unavailable, confirmation remains pending.
+Durable candidate recovery content remains in the local delivery store or the
+explicitly chosen Git destination. Retained CI artifacts/reports use the disclosed
+delivery evidence policy; they do not become a second graph authority. Mirror verified
+results through the connector before reporting them saved to the local ledger. Longer
+cloud source retention is not implied by remote compilation. If required evidence is
+unavailable, confirmation remains pending.
 
 ## Delivery memory has a separate lifetime
 
@@ -163,6 +165,7 @@ and constraint checks require care when returning errors.
 
 Keep Stripe event deduplication, paid grants, atomic reservations, settlement, and
 reconciliation from the subscription plan. One account's concurrent projects share
-the same balance. Model usage, Jazyk delivery compute, and GitHub-billed Actions
-usage are distinct. Test grants are explicitly nonmonetary. Reading/exporting saved
+the same balance. Model usage, any declared orchestration charge, and GitHub-billed
+Actions usage are distinct. There are no Jazyk container-minute charges in this scope.
+Test grants are explicitly nonmonetary. Reading/exporting saved
 work and delivery receipts must not require a new model purchase.

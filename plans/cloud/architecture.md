@@ -16,7 +16,7 @@ remains a library with explicit project contexts and no required project filesys
 sit in front of it. There is no Node.js business-logic wrapper. The existing static
 jazyk.dev app talks to the local or cloud project API.
 
-## One host, separate privileges
+## One API host, execution on GitHub
 
 ```mermaid
 flowchart TB
@@ -27,23 +27,20 @@ flowchart TB
         API --> Delivery["Delivery coordinator / GitHub adapter"]
         Runtime --> DB["Local PostgreSQL"]
         Delivery --> DB
-        Delivery --> Worker["Delivery worker / separate OS user"]
-        Worker --> Box["Fresh container / pinned candidate"]
     end
     Runtime --> Models["Approved model provider"]
-    Delivery --> GitHub["GitHub commits / Actions / artifacts"]
+    Delivery --> GitHub["GitHub commits / hosted Actions runners / artifacts"]
     DB --> Backup["Off-instance backup"]
 ```
 
-One API process serves many projects. The delivery worker can be another subcommand
-of the same cloud executable, run by systemd as a separate OS user. It has narrow
-job capabilities and container access, no account database password or GitHub App
-private key. PostgreSQL and the container daemon are separate existing services.
-One cloud binary does not mean one OS process for all infrastructure.
+One API process serves many projects and owns background GitHub dispatch/result
+jobs backed by PostgreSQL. PostgreSQL and an optional TLS proxy are separate existing
+services. There is no delivery worker, container daemon, or self-hosted Actions runner
+on this EC2 instance. Customer commands execute on GitHub-hosted runners.
 
-The API holds durable intent and receives worker events over an authenticated local
-socket or loopback connection. The runner contract must also work over an outbound
-authenticated remote connection. Changing runner placement is a deployment choice.
+The API persists intent, calls GitHub, receives authenticated webhooks, polls status,
+and imports evidence. Keep the external-run contract small; defer a general runtime
+broker and interactive filesystem/command interface until another backend is needed.
 
 ## Library and package split
 
@@ -69,11 +66,11 @@ jazyk CLI / local bridge / WASM    jazyk-cloud API + adapters
 - Keep protocol/service contracts transport-neutral. Reuse the value computations
   in [webapi](../../bootstrap/src/webapi/mod.rs) after making context explicit.
 - Keep generic delivery configuration, preparation, evidence, and checkpoint rules
-  in a consumer library. Cloud GitHub credentials and worker placement stay outside.
+  in a consumer library. Cloud GitHub credentials and provider integration stay outside.
 - Keep native CLI, local filesystem adapters, ACP/LSP stdio, and the small loopback
   GUI connection in the customer package. Existing `jazyk gui` remains compatible.
   A lightweight local HTTP bridge is still necessary for jazyk.dev to use a folder.
-- Put the cloud binary and SQL, OAuth, Stripe, GitHub, and runner adapters under
+- Put the cloud binary and SQL, OAuth, Stripe, and GitHub adapters under
   `cloud/`. They depend inward on the public libraries. Core never depends on cloud.
 - Keep `bootstrap/app/` initially. Avoid a cosmetic web-directory move in this work.
 
@@ -82,9 +79,14 @@ Extract core/consumer crates as the interfaces settle. Compile a customer artifa
 without cloud dependencies and a WASM artifact without native host dependencies as
 acceptance gates. This avoids requiring an all-at-once source-tree relocation.
 
-Use maintained crates for TOML, HTTP, OAuth, Git, SQL, archives, and runtime clients.
+Use maintained crates for TOML, HTTP, OAuth, Git, SQL, and archives.
 The current handwritten TOML reader must not grow into a new general parser to
 support editable deliveries. Use a lossless TOML editing library and schema validation.
+
+The cloud specification is a separate Jazyk project under `docs/cloud/`, with its
+own graph output. The Rust host links the local compiler library through Cargo;
+it does not launch the installed `jazyk` CLI to serve requests. See the concrete
+[documentation and build layout](./projects.md).
 
 ## Shared compiler
 
@@ -105,10 +107,13 @@ customers. Thread-local tenant selection is not sufficient for async work.
 - No ambient cwd, customer environment variables, arbitrary provider URL, host shell,
   customer plugin, or executable setup hook in hosted compilation.
 - An agent that requires native project tools is not admitted to hosted compilation.
-  Do not start a hidden container to work around this. Runtime exists for delivery.
-- Compile and artifact-only generation can operate on virtual files. Any test run
-  is an explicit delivery operation. Generation needing execution pauses for that
-  operation and resumes from its evidence.
+  Do not start a hidden container to work around this. Jazyk-hosted execution is deferred.
+- Compile, artifact-only generation, and LLM verification operate on virtual files.
+  LLM tests stay in Jazyk's verification sessions and appear in jazyk.dev.
+- Programmatic tests and builds run through explicit GitHub Actions deliveries.
+  Generation or verification needing those artifacts/evidence waits for CI. It does
+  not run project commands on the API host. Specify the changed scheduling boundary
+  before implementation; the current native runner runs commands directly.
 
 Tenant/project identity scopes tools, handles, caches, conversations, artifacts,
 events, and secret references. The host resolves authorization before constructing
@@ -147,5 +152,5 @@ tools/progress and MCP tools; LSP links their evidence without becoming a job ru
 Before implementation, put accepted contracts into `docs/compiler/` (contexts and
 storage), `docs/consumers/delivery.md` (delivery semantics), `docs/frontends/`
 (protocols and commands), `docs/web/` (project/delivery UI), and `docs/cloud/`
-(accounts, PostgreSQL, GitHub, billing, runtime, operations). Link them from
+(accounts, PostgreSQL, GitHub, billing, operations). Link them from
 `docs/main.md`. Compiler extraction must not require extracting the commercial host.

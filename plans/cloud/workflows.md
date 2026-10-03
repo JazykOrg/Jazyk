@@ -35,7 +35,7 @@ Graph       This folder                   Saved, generation 42
 Connection  Connector online
 Repository  owner/erp                     Manage repository access
 
-Compile     Deliver…
+Compile     Test…     Deliver…
 ```
 
 The repository row is a link/destination unless the user explicitly selected
@@ -82,14 +82,15 @@ Publish source       Git → owner/erp, main              Prepare  Edit
 Build and test       GitHub Actions                     Prepare  Edit
   Last attempt       28 passed, 1 failed · source d4e5f6
 
-Build artifact       Container                         Prepare  Edit
+Build artifact       GitHub Actions                     Prepare  Edit
   Last attempt       Not run
 ```
 
-`Add delivery` offers Git publish, GitHub Actions, and container script templates.
-Editing produces a `jazyk.toml` diff and any workflow/script changes. The model can
-perform the same edits in chat. Removing a definition retains past receipts.
-Changing configuration does not start a run.
+`Add delivery` offers Git publish and Run a command on GitHub. For a command such
+as `npm test`, editing produces a `jazyk.toml` diff and automatically generated
+workflow/helper changes. The model can perform the same edits in chat. There is no
+runtime selector. Removing a definition retains past receipts. Changing configuration
+does not start a run.
 
 Preparation shows the selected files/revision, destination, script/workflow, expected
 effects, last checkpoint, current observations, required checks, and execution/AI
@@ -116,10 +117,9 @@ Status     Logs     Files     Tests     Changes
 Files: candidate source and uploaded artifacts
 ```
 
-The container variant shows `Running in delivery container`, live run files, and
-authorized command tools. The Actions variant shows step status, available logs,
-and a link for GitHub's live view. It does not offer an interactive terminal or
-claim to browse files that have not been uploaded.
+The run view shows step status, available logs, and a link for GitHub's live view.
+It does not offer an interactive terminal or claim to browse files that have not
+been uploaded. A Runs list shows previous attempts and their matching source revisions.
 
 After completion, show independent facts:
 
@@ -132,8 +132,36 @@ After completion, show independent facts:
 
 Run files are visibly separate from project files. Importing changes uses the
 current workspace revision; an old execution cannot overwrite a newer edit. Logs
-and retained reports remain available after a container is destroyed. Expired files
+and retained reports remain available after GitHub releases the runner. Expired files
 show their expiry and do not become empty successful output.
+
+## LLM tests and code tests
+
+```text
+Tests                                           Run LLM tests   Run code tests
+
+Criterion                    Kind           Result / source
+Valid order accepted         Programmatic   PASS · GitHub run 81/1 · abc123
+Invalid order rejected       Programmatic   FAIL · GitHub run 81/1 · abc123
+Error message is clear       LLM            PASS · Jazyk session 19 · abc123
+```
+
+`Run LLM tests` starts Jazyk verification with the selected backend/model. It works
+without GitHub access when the project and required artifacts are available.
+`Run code tests` selects/prepares the command delivery and starts GitHub CI under
+existing authority. First-time setup can require connecting a repository and publishing
+the generated workflow. The UI names those steps rather than silently running locally.
+
+Clicking a CI result opens its assertion/report, source revision, and provider run.
+Clicking an LLM result opens its criterion, inspected artifact, and judgment evidence.
+Display pending, stale, skipped, and runner-failed results distinctly. Valid CI reports
+automatically update mapped programmatic criteria after revision checks and the normal
+commit; no manual pass checkbox or LLM interpretation is required to copy a result.
+
+A requirement passes only when all required current criterion tests pass. CI cannot
+overwrite an LLM verdict, and an LLM cannot claim programmatic tests ran. Local-backed
+imports show `CI complete; waiting for connector to save` until acknowledged. See
+[testing](./testing.md) for exact evidence rules.
 
 ## CLI and IDE
 
@@ -147,9 +175,10 @@ the matching criterion evidence. The local connector maps URIs and saves graph o
 TOML edits; LSP is not used as a substitute for file transfer or billing authority.
 
 A browser closing does not stop a cloud job. Local-backed compilation depends on
-the native connector, which can outlive the browser. Local-native delivery can
-remain accountless where the local adapter and credentials support it. Hosted
-container execution always uses cloud admission and the runner boundary.
+the native connector, which can outlive the browser. Existing local Git publishing
+and LLM verification remain accountless with local credentials/provider settings.
+Command deliveries execute on GitHub; this plan adds no local shell delivery path.
+Cloud-orchestrated Actions runs require the signed-in account and repository grant.
 
 ## Common failures
 

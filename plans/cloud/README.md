@@ -10,9 +10,8 @@ It does not claim that these features exist or authorize infrastructure deployme
 
 Build a separate Rust `jazyk-cloud` API server that links the portable Jazyk compiler
 and delivery libraries. Run it on one AWS EC2 instance with PostgreSQL installed
-locally and a container runtime used only for delivery. A worker on the same host
-owns container access. Move that worker to an isolated provider before opening
-Jazyk-hosted script execution to real customers.
+locally. GitHub Actions is the only execution backend for delivery commands in the
+current scope. Jazyk-hosted runtimes, containers, and their workers are deferred.
 
 The customer `jazyk` executable keeps CLI, ACP, LSP, and its local connection to
 jazyk.dev. It does not acquire the cloud account server, PostgreSQL, Stripe, or
@@ -45,13 +44,17 @@ Each `jazyk.toml` can define named deliveries with two kinds:
 | Delivery kind | Execution choice | Result |
 |---|---|---|
 | `git` | GitHub API or Git remote adapter, no project container | Publish a pinned file set to a repository/ref |
-| `script` | Fresh container, initially on the EC2 host | Run the configured entrypoint, collect files, logs, and evidence |
-| `script` | GitHub Actions | Publish the workflow and candidate, dispatch it, collect run evidence |
+| `script` | GitHub Actions only | Generate a workflow for a command such as `npm test`, publish and dispatch it, collect run evidence |
 
 A script can build, test, package, publish, or deploy. A Git delivery can publish
 workflow files without running them. Publishing a commit, passing tests, and
 confirming an external deployment are separate results. No automatic delivery on
 document save or compilation completion.
+
+LLM-run tests remain in Jazyk, launched and inspected from jazyk.dev with the selected
+backend/model. Programmatic Python, JavaScript, and other executable tests run through
+an Actions delivery. Import matching pass/fail evidence into the criterion ledger;
+an LLM judgment is not proof that code tests ran. See [testing](./testing.md).
 
 ## What this retains from the delivery design
 
@@ -70,10 +73,12 @@ prove preservation of a live database or outside editorial changes.
 ## Read in this order
 
 - [Architecture](./architecture.md): Rust host decision, package boundaries, shared compiler, API.
+- [Project layout](./projects.md): separate cloud specification, graph output, application, and local library build.
 - [Storage](./storage.md): PostgreSQL records, virtual workspaces, local commits, delivery memory.
 - [Deliveries](./deliveries.md): TOML, model tools, candidates, attempts, verification.
 - [GitHub](./github.md): OAuth, repository grants, Git publishing, Actions, test reports.
-- [Execution](./execution.md): one EC2, containers, file access, operations, later relocation.
+- [Testing](./testing.md): LLM judgments in Jazyk, code tests in CI, criterion results and freshness.
+- [Execution](./execution.md): one EC2 for the API/database, GitHub-hosted execution, deferred runtime.
 - [Workflows](./workflows.md): project panel, delivery panel, subscription path, IDE behavior.
 - [Implementation](./implementation.md): milestones, estimates, acceptance gates, open choices.
 
@@ -88,10 +93,11 @@ tool, package, and table names are illustrative until adopted into `docs/`.
 | Concurrent projects, one compiler writer per project | One container or process per compiling customer |
 | Three storage/compiler modes, ACP/LSP | Automatic local/cloud storage mirroring |
 | GitHub login, repository linking, Git delivery, Actions | Google login, teams, general cloud BYOK |
-| Script delivery and run inspection | General interactive development environments or application hosting |
+| Command delivery through generated Actions workflows | Jazyk-hosted runtimes, containers, interactive shells, application hosting |
 | Delivery CRUD and execution through model tools and UI | Automatic publication merely because the model edited TOML |
 | Checkpoints and recovery records | A mandatory release catalog or universal migration engine |
-| Fresh run files and retained declared outputs | Persistent containers and build caches |
+| Repository snapshots and uploaded CI outputs | Live runner filesystem access and build-cache management |
+| LLM tests in Jazyk and programmatic results from CI | Treating an LLM judgment or green workflow as every criterion passing |
 | Existing private local Codex experiment | Personal Codex credentials serving hosted customers |
 
 Keep the previous [private Codex testing boundary](../subscription/codex-testing.md).
@@ -103,10 +109,10 @@ does not eliminate free local use. Promotion credits remain later work.
 ## First useful result
 
 One project can compile through a scoped server context, edit a named delivery in
-`jazyk.toml`, publish an exact candidate to GitHub, run its entrypoint in Actions,
+`jazyk.toml`, publish an exact candidate to GitHub, run its command in Actions,
 and show the matching test report. A second project can do the same concurrently
 without mixing files, graph state, events, credentials, or accounting.
 
-Then demonstrate the same entrypoint in a fresh container on the single EC2 host.
-This exercises the replaceable runner without making container hosting a prerequisite
-for the GitHub delivery path.
+The same jazyk.dev test view shows LLM verdicts and imported code-test results with
+their separate evidence sources. No Jazyk container implementation or provider
+selection is required for this release.

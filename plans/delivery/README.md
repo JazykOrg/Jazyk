@@ -4,6 +4,7 @@ The [Cloud and delivery plan](../cloud/README.md), dated 2026-10-03, integrates 
 design with named TOML deliveries, Git publishing, script entrypoints, GitHub Actions,
 and PostgreSQL-backed cloud operation. Use its sequence for implementation. This
 directory retains the destination, checkpoint, preservation, and recovery reasoning.
+The current execution scope is GitHub Actions only; Jazyk-hosted runtimes are deferred.
 
 Status: proposal, recorded 2026-10-03 from the delivery design discussion. The owner
 requested options for a generic delivery concept and asked to retain the reasoning.

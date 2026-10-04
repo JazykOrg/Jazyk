@@ -201,7 +201,15 @@ Every check run journals a `checks` entry under its own generation.
 - Document quality, prose problems a human can fix, surfaced where the human writes
   ([LSP](../frontends/lsp.md) shows them inline): `section-too-large` (a body over 6000
   chars), `doc-too-large` (over 40 sections), `empty-file` (a matched file with no
-  content), `broken-link` (a relative link to a `.md` file whose target does not exist).
+  content), `broken-link` (a relative Markdown document link whose target file does
+  not exist). Link checks read current matched documents through the filesystem
+  abstraction, including documents never compiled. A stored document record does
+  not make a deleted file exist. Each missing source-target pair has one sticky
+  warning. Its message names the source location and target and asks the author to
+  create the target or fix the link. Repeated links share the warning. A check
+  resolves it once the target exists or the link disappears. Source reads and LSP
+  also expose current link findings without a build or model call, using the same
+  [parser and target resolution](./parsing.md#references).
   The thresholds are [registry constants](./graph.md#limits). The docs absorb detail by
   dividing, not bloating: these two size diagnostics tell the human where to split, and
   incoming links keep the parts bound to the whole.

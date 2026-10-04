@@ -336,30 +336,99 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
     sections
 }
 
-// Relative markdown links to other .md files inside `text`, resolved against the linking
-// document's directory. Feeds the reconciler's level scheduling (the document link graph).
-pub fn doc_links(text: &str, from_doc: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b']' && bytes[i + 1] == b'(' {
-            if let Some(close) = text[i + 2..].find(')') {
-                let target = &text[i + 2..i + 2 + close];
-                let target = target.split('#').next().unwrap_or("");
-                if target.ends_with(".md") && !target.starts_with("http") {
-                    if let Some(resolved) = resolve_rel(from_doc, target) {
-                        out.push(resolved);
-                    }
-                }
-                i += 2 + close;
-            }
-        }
-        i += 1;
+// Link positions are read-time projections, not persistent graph identities.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct LinkPosition {
+    pub line: usize,
+    pub character: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct LinkRange {
+    pub start: LinkPosition,
+    pub end: LinkPosition,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DocumentLink {
+    pub target: String,
+    pub href: String,
+    pub range: LinkRange,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct LinkDiagnostic {
+    pub rule: &'static str,
+    pub severity: &'static str,
+    pub target: String,
+    pub href: String,
+    pub message: String,
+    pub range: LinkRange,
+}
+
+fn link_position(text: &str, byte: usize) -> LinkPosition {
+    let before = &text[..byte];
+    LinkPosition {
+        line: before.bytes().filter(|b| *b == b'\n').count(),
+        character: before.rsplit('\n').next().unwrap_or("").encode_utf16().count(),
     }
+}
+
+// Resolve only a project-contained relative Markdown URL. The query and fragment
+// do not name a file; percent-encoded separators are normalized after decoding.
+pub fn resolve_document_link(from_doc: &str, href: &str) -> Option<String> {
+    let path = href.split(['?', '#']).next()?;
+    let bytes = path.as_bytes();
+    if bytes.iter().enumerate().any(|(i, b)| *b == b'%' &&
+        !(bytes.get(i + 1).is_some_and(u8::is_ascii_hexdigit) && bytes.get(i + 2).is_some_and(u8::is_ascii_hexdigit))) {
+        return None;
+    }
+    let path = percent_encoding::percent_decode_str(path).decode_utf8().ok()?;
+    if path.is_empty() || path.starts_with('/') || path.contains('\\')
+        || path.chars().any(char::is_control)
+        || path.split('/').next()?.contains(':')
+        || !supported_format(std::path::Path::new(path.as_ref())) {
+        return None;
+    }
+    resolve_rel(from_doc, &path)
+}
+
+// The CommonMark parser excludes images, code and raw HTML and resolves reference
+// link definitions. Offsets cover the occurrence, including reference-link labels.
+pub fn document_links(text: &str, from_doc: &str) -> Vec<DocumentLink> {
+    pulldown_cmark::Parser::new(text).into_offset_iter().filter_map(|(event, bytes)| {
+        let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) = event else { return None };
+        Some(DocumentLink {
+            target: resolve_document_link(from_doc, &dest_url)?,
+            href: dest_url.into_string(),
+            range: LinkRange { start: link_position(text, bytes.start), end: link_position(text, bytes.end) },
+        })
+    }).collect()
+}
+
+// The same document link graph feeds scheduling and missing-target diagnostics.
+pub fn doc_links(text: &str, from_doc: &str) -> Vec<String> {
+    let mut out: Vec<_> = document_links(text, from_doc).into_iter().map(|link| link.target).collect();
     out.sort();
     out.dedup();
     out
+}
+
+// Current files decide existence, never stale graph records. VFS keeps this check
+// identical for local folders, WASM workspaces and isolated hosted snapshots.
+pub fn missing_document_links(root: &std::path::Path, doc: &str, text: &str) -> Vec<LinkDiagnostic> {
+    use crate::vfs::VPathExt;
+    document_links(text, doc).into_iter().filter(|link| !root.join(&link.target).vis_file()).map(|link| {
+        LinkDiagnostic {
+            rule: "broken-link",
+            severity: "warning",
+            message: format!("{}:{}:{} links to {} which does not exist. Create the document or fix the link.",
+                doc, link.range.start.line + 1, link.range.start.character + 1, link.target),
+            target: link.target,
+            href: link.href,
+            range: link.range,
+        }
+    }).collect()
 }
 
 // Resolve a relative link target against the directory of `from_doc` (both '/'-separated,
@@ -509,6 +578,32 @@ mod tests {
         let text = "see [a](./sub/a.md) and [b](../b.md#anchor) and [x](http://x.md)";
         let links = doc_links(text, "docs/main.md");
         assert_eq!(links, vec!["b.md".to_string(), "docs/sub/a.md".to_string()]);
+    }
+
+    #[test]
+    fn document_links_follow_markdown_syntax_and_preserve_utf16_occurrence_ranges() {
+        let text = "# Slides\n😀 See [Intro](slide-intro.md?mode=read#top \"Title\") and [More][more].\n\n[more]: <../More%20Info.MARKDOWN> \"More\"\n\n`[code](inline.md)`\n\n```md\n[fenced](code.md)\n```\n\n![asset](image.md) [site](https://host/a.md) [mail](mailto:a.md) [anchor](#here) [pdf](notes.pdf)\n";
+        let links = document_links(text, "slides/main.md");
+        assert_eq!(links.len(), 2, "{:?}", links);
+        assert_eq!(links[0].target, "slides/slide-intro.md");
+        assert_eq!(links[0].href, "slide-intro.md?mode=read#top");
+        assert_eq!(links[0].range.start, LinkPosition { line: 1, character: 7 });
+        assert_eq!(links[1].target, "More Info.MARKDOWN");
+        let start = text.find("[More][more]").unwrap();
+        assert_eq!(links[1].range.start, link_position(text, start));
+        assert_eq!(links[1].range.end, link_position(text, start + "[More][more]".len()));
+    }
+
+    #[test]
+    fn document_link_resolution_rejects_external_and_escaping_targets() {
+        for href in ["#intro", "?query=notes.md", "//host/a.md", "/root.md", "file:a.md",
+            "https://host/a.md", "../outside.md", "%2e%2e/outside.md", "C:/file.md",
+            "dir\\file.md", "bad%00.md", "bad%0A.md", "bad%FF.md", "bad%xy.md", "%2Foutside.md",
+            "https%3Aother.md", "image.svg"] {
+            assert!(resolve_document_link("main.md", href).is_none(), "{}", href);
+        }
+        assert_eq!(resolve_document_link("slides/main.md", "../notes%20one.md?x=1#top").as_deref(), Some("notes one.md"));
+        assert_eq!(resolve_document_link("slides/main.md", "./sub/../intro.md").as_deref(), Some("slides/intro.md"));
     }
 
     #[test]

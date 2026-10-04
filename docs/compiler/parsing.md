@@ -86,6 +86,15 @@ Each section carries:
   E.g. `docs/cli.md#/cli/commands/compile`.
 - Links between documents in the source (relative markdown links) are recorded and feed
   the [reconciler's scheduling](./reconciler.md#scheduling) as the document link graph.
+- Document links use the CommonMark parser, including reference links and optional
+  titles. Images, code spans, code blocks, and raw HTML are not document links.
+  Only relative `.md` and `.markdown` targets are checked, case-insensitively.
+  External URLs, anchor-only links, assets, absolute paths, and paths escaping the
+  project are ignored. Strip the query and fragment before decoding URL escapes.
+  Invalid UTF-8, control characters, backslashes, and URI schemes are rejected.
+- Link locations are computed from the current source text. They are not graph
+  identities or stored byte offsets. Read APIs expose zero-based line numbers and
+  UTF-16 character columns over the whole Markdown link occurrence.
 
 ## Section diffing
 

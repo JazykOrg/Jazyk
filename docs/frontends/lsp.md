@@ -4,7 +4,8 @@
 
 The server is thin and read-only. It reads the [graph store](../compiler/graph.md) and
 the rendered [diagrams](../compiler/diagrams.md#output-layout) and maps graph nodes to
-editor positions. It runs no analysis of its own and never calls the LLM. The one write
+editor positions. It shares the deterministic document-link check with the compiler
+and never calls the LLM. The one write
 path is explicit and human-initiated: answering a
 [diagnostic prompt](../compiler/model/diagnostic.md#prompts) through a
 [code action](#capabilities), which applies a suggested edit deterministically or
@@ -19,6 +20,11 @@ hands the reply to an [answer session](./acp.md#answer-sessions).
   [checks](../compiler/compilation.md#checks) publish the same way when their subject
   carries a quote: a `quality-unmeasured` warning sits on the sentence that states the
   quality, an `unplaced-behavior` warning on the behavior statement.
+- Missing document links are checked against the current editor text and project
+  files, even before compilation. The shared `broken-link` check highlights each
+  link with UTF-16 ranges and names the missing target. Saved targets and file
+  watcher notifications refresh open documents without requiring a graph change.
+  A stored suppression for that source-target pair remains respected.
 - Go to definition: entity → its defining mention.
 - References: entity → all mentions across documents.
 - Hover on an entity: the [card](../consumers/docsgen.md#entity-cards) in short,

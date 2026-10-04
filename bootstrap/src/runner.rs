@@ -198,6 +198,7 @@ impl<'a> LoopTrace<'a> {
             }
             AgentEvent::ToolCallStart { id, name, args } => {
                 self.trace.event(TraceEvent::ToolCall {
+                    activity: crate::live_preview::activity(&name, &args, None),
                     label: self.label.clone(),
                     name: name.clone(),
                     summary: crate::session::condense(&args, 160),
@@ -222,6 +223,7 @@ impl<'a> LoopTrace<'a> {
                 let out: serde_json::Value = serde_json::from_str(&result)
                     .unwrap_or_else(|_| serde_json::Value::String(result.clone()));
                 self.trace.event(TraceEvent::ToolResult {
+                    activity: crate::live_preview::activity(&name, &args, Some(&out)),
                     label: self.label.clone(),
                     name: name.clone(),
                     summary: crate::session::condense(&out, 160),

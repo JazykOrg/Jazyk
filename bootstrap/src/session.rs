@@ -90,11 +90,17 @@ pub enum TraceEvent {
         kinds: Vec<(String, usize)>,
         blocked: usize,
     },
+    #[serde(rename = "graphPreview")]
+    GraphPreview {
+        #[serde(flatten)]
+        preview: crate::live_preview::Preview,
+    },
     // `summary` is the condensed line the CLI prints; `full` carries the payload
     // behind it (capped) when condensing cut something, so the GUI expands in place.
     #[serde(rename = "toolCall")]
     ToolCall {
         label: String,
+        activity: String,
         name: String,
         summary: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +109,7 @@ pub enum TraceEvent {
     #[serde(rename = "toolResult")]
     ToolResult {
         label: String,
+        activity: String,
         name: String,
         summary: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -366,7 +373,7 @@ fn render_stderr(ev: &TraceEvent) {
         TraceEvent::Note { label, text, .. } => eprintln!("[{}] {}", label, text),
         // The section path is implicit in the tool rows the default level already
         // prints; naming it again would double every line.
-        TraceEvent::Section { .. } => {}
+        TraceEvent::Section { .. } | TraceEvent::GraphPreview { .. } => {}
         // Model calls print their arithmetic, never their payload: the verbose context
         // pack note already carries the prompt.
         TraceEvent::LlmRequest {

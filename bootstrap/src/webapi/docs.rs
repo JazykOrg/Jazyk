@@ -62,9 +62,9 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
         .root
         .vcanonicalize()
         .map_err(|e| format!("the project root does not resolve: {}", e))?;
-    let mut anc: &Path = abs
-        .parent()
-        .ok_or_else(|| "the path has no parent".to_string())?;
+    let mut anc: &Path = if abs.vexists() { &abs } else {
+        abs.parent().ok_or_else(|| "the path has no parent".to_string())?
+    };
     while !anc.vexists() {
         anc = anc
             .parent()
@@ -97,7 +97,8 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
     match crate::vfs::read_to_string(&abs) {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);
-            DocRead::Found(json!({ "path": rel, "text": text, "hash": hash }))
+            let links = crate::md::missing_document_links(&proj.root, rel, &text);
+            DocRead::Found(json!({ "path": rel, "text": text, "hash": hash, "linkDiagnostics": links }))
         }
         Err(e) => DocRead::Missing(format!("cannot read {}: {}", rel, e)),
     }
@@ -142,7 +143,7 @@ pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>)
     let on_disk = crate::vfs::read_to_string(&abs)
         .ok()
         .map(|t| crate::model::hash_hex(&t));
-    if on_disk.as_deref() != base_hash {
+    if base_hash.is_some() && on_disk.as_deref() != base_hash {
         return DocWrite::Conflict(json!({
             "error": "the document changed on disk since it was read",
             "diskHash": on_disk,
@@ -155,7 +156,20 @@ pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>)
             }
         }
     }
-    if let Err(e) = crate::vfs::write(&abs, text) {
+    let written = if base_hash.is_none() {
+        // An exclusive create closes the missing-read/create race and refuses
+        // unreadable existing files and symlinks without replacing their bytes.
+        crate::vfs::create_new(&abs, text)
+    } else {
+        crate::vfs::write(&abs, text)
+    };
+    if let Err(e) = written {
+        if base_hash.is_none() && e.kind() == std::io::ErrorKind::AlreadyExists {
+            return DocWrite::Conflict(json!({
+                "error": "the document already exists; read it before editing",
+                "diskHash": crate::vfs::read_to_string(&abs).ok().map(|t| crate::model::hash_hex(&t)),
+            }));
+        }
         return DocWrite::Failed(format!("cannot write {}: {}", rel, e));
     }
     DocWrite::Written(json!({ "path": rel, "hash": crate::model::hash_hex(text) }))
@@ -173,6 +187,23 @@ mod tests {
         p.out = dir.join(".jazyk");
         p.docs_glob = vec!["**/*.md".to_string(), "!fixtures/**".to_string()];
         p
+    }
+
+    #[test]
+    fn missing_link_read_and_exclusive_create_share_current_workspace() {
+        let dir = std::env::temp_dir().join(format!("jazyk-doc-link-read-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(dir.join("docs/main.md"), "[Intro](intro.md)").unwrap();
+        let p = proj(&dir);
+        let DocRead::Found(read) = doc_content(&p, "docs/main.md") else { panic!("read") };
+        assert_eq!(read["linkDiagnostics"][0]["target"], "docs/intro.md");
+        assert!(matches!(doc_write(&p, "docs/intro.md", "original", None), DocWrite::Written(_)));
+        assert!(matches!(doc_write(&p, "docs/intro.md", "overwrite", None), DocWrite::Conflict(_)));
+        assert_eq!(crate::vfs::read_to_string(dir.join("docs/intro.md")).unwrap(), "original");
+        let DocRead::Found(read) = doc_content(&p, "docs/main.md") else { panic!("read") };
+        assert_eq!(read["linkDiagnostics"], json!([]));
+        crate::vfs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

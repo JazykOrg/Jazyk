@@ -591,3 +591,6 @@ makes no LLM call, and it writes nothing.
 The transcript records the same rendering per round, so post-hoc review sees what the
 model saw, verbatim. `ratify` and `answer` goals have no session; for those, preview
 prints what the human owes instead of a prompt.
+
+Accepted graph writes can publish a [live compilation preview](./live-preview.md).
+The preview is provisional until the session commits.

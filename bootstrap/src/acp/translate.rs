@@ -20,7 +20,7 @@ pub struct UpdateTranslator {
     thought: String,
     message: String,
     // Tool call titles by id, so an update row can name what finished.
-    calls: HashMap<String, String>,
+    calls: HashMap<String, (String, serde_json::Value)>,
     // The tokens the agent reported billed (the embedded agent's usage meta), and the
     // input tokens among them its endpoint served from its prompt cache.
     pub tokens: u64,
@@ -101,9 +101,10 @@ impl UpdateTranslator {
             SessionUpdate::ToolCall(call) => {
                 self.flush_into(trace);
                 let id: &str = call.tool_call_id.0.as_ref();
-                self.calls.insert(id.to_string(), call.title.clone());
                 let args = call.raw_input.clone().unwrap_or(serde_json::Value::Null);
+                self.calls.insert(id.to_string(), (call.title.clone(), args.clone()));
                 trace.event(TraceEvent::ToolCall {
+                    activity: crate::live_preview::activity(&call.title, &args, None),
                     label: self.label.clone(),
                     name: call.title.clone(),
                     summary: crate::session::condense(&args, 160),
@@ -131,7 +132,7 @@ impl UpdateTranslator {
                     .fields
                     .title
                     .clone()
-                    .or_else(|| self.calls.get(id).cloned())
+                    .or_else(|| self.calls.get(id).map(|(name, _)| name.clone()))
                     .unwrap_or_else(|| id.to_string());
                 let out = u
                     .fields
@@ -140,6 +141,7 @@ impl UpdateTranslator {
                     .unwrap_or(serde_json::Value::Null);
                 match u.fields.status {
                     Some(ToolCallStatus::Completed) => trace.event(TraceEvent::ToolResult {
+                        activity: crate::live_preview::activity(&name, &self.calls.get(id).map(|(_, args)| args.clone()).unwrap_or_default(), Some(&crate::live_preview::result_value(&out))),
                         label: self.label.clone(),
                         name,
                         summary: crate::session::condense(&out, 160),

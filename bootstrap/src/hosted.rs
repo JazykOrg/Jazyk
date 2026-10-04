@@ -908,7 +908,10 @@ mod tests {
             b"# Alpha\n\nAlpha stores records.\n".to_vec(),
         );
         let called = AtomicUsize::new(0);
+        let previews = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let captured = previews.clone();
         let e = Execution {
+            trace: Some(Arc::new(move |event| captured.lock().unwrap().push(serde_json::to_value(event).unwrap()))),
             model: "extract-fixture".into(),
             transport: Some(Arc::new(move |_| {
                 if called.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -947,6 +950,12 @@ mod tests {
             ..Default::default()
         };
         let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
+        let events = previews.lock().unwrap();
+        let first_preview = events.iter().position(|v| v["kind"] == "graphPreview" && v["phase"] == "staged" && v["graph"]["entities"]["ent:alpha"]["name"] == "Alpha").expect("accepted entity is streamed before commit");
+        let finished = events.iter().position(|v| v["kind"] == "sessionDone").unwrap();
+        assert!(first_preview < finished);
+        assert!(events.iter().any(|v| v["kind"] == "toolResult" && v["activity"] == "Alpha created"));
+        drop(events);
         let graph = value(&mut w, "GET", "/api/graph", Value::Null, &e);
         assert_eq!(
             graph["entities"]["ent:alpha"]["name"], "Alpha",
@@ -954,6 +963,7 @@ mod tests {
         );
         assert_eq!(graph["requirements"].as_object().unwrap().len(), 1);
         let snapshot = w.snapshot();
+        assert!(!snapshot.keys().any(|p|p.starts_with(".jazyk/preview/")));
         assert!(snapshot.keys().any(|p| p.starts_with(".jazyk/journal/")));
         assert!(
             snapshot.keys().any(|p| p.ends_with(".svg")),

@@ -230,7 +230,12 @@ Documents:
   counts toward a document when a subject anchors there: a requirement whose source is
   the document, an entity with a mention in it, or a section reference into it.
   Suppressed diagnostics never count.
-- `GET /api/docs/content?path=`: the raw document text and its hash.
+- `GET /api/docs/content?path=`: the raw document text, its hash, and
+  `linkDiagnostics` from the current text and project files. Each finding contains
+  `rule: "broken-link"`, `severity: "warning"`, `target`, `href`, `message`, and
+  `range` with zero-based `{line, character}` start and end positions in UTF-16.
+  Every missing link occurrence has a range. These read-only findings need no
+  compiled graph or model call and disappear when the target file exists.
 - `GET /api/docs/baseline?path=`: the last reconciled text, reconstructed from the
   stored [section tree](../compiler/parsing.md) (sections in order, raw bodies
   joined). This is the diff baseline the editor marks changes against: the difference
@@ -241,7 +246,10 @@ Documents:
   on-disk hash differs from `baseHash`, the write is rejected with `409` and the
   client re-reads. Paths are validated: inside the project root, matching the docs
   glob, never inside the out directory, no traversal, no symlink escape. A path that
-  matches the glob but does not exist yet creates a new document. A save that changes
+  matches the glob but does not exist yet creates a new document. A null or omitted
+  `baseHash` is create-only: an exclusive filesystem create refuses an existing
+  file with `409`, including a file created after the caller's read or one whose
+  bytes cannot be read as UTF-8. It never replaces that file. A save that changes
   sections is the root of a ripple: the next build journals it as an `edit` entry
   ([journal](../compiler/graph.md#journal)) and derives goals from it.
 - `POST /api/docs/rename` with `{from, to}`: move a document. Both paths pass the

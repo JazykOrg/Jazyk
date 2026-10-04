@@ -152,10 +152,21 @@ impl SessionRunner for InProcessRunner {
         // that cannot be claimed never opened a session.
         trace.event(crate::runner::session_start(batch));
         let mut lt = LoopTrace::new(trace, batch);
+        let mut preview_revision = 0;
+        if let Some(preview) = server.live_preview() {
+            preview_revision = preview.revision;
+            trace.event(TraceEvent::GraphPreview { preview });
+        }
 
         let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
             match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
                 Ok(v) => {
+                    if let Some(preview) = server.live_preview() {
+                        if preview.revision > preview_revision {
+                            preview_revision = preview.revision;
+                            trace.event(TraceEvent::GraphPreview { preview });
+                        }
+                    }
                     let text = v["content"][0]["text"]
                         .as_str()
                         .map(|s| s.to_string())
@@ -199,6 +210,14 @@ impl SessionRunner for InProcessRunner {
                 &json!({"name": "abandon_goals", "arguments": {"reason": "the session ended without committing"}}),
             );
         }
+
+        // Discard any abandoned staged display and publish the actual session base.
+        let store = crate::store::Store::load(&self.out);
+        trace.event(TraceEvent::GraphPreview { preview: crate::live_preview::Preview {
+            label: label.clone(), attempt: server.live_preview().map(|p|p.attempt).unwrap_or_default(),
+            revision: preview_revision + 1, phase: "committed".into(),
+            generation: store.status.generation, graph: Some(crate::live_preview::authored(&store.graph)), reason: None,
+        }.bounded() });
 
         // Why the session stopped short of a plain end of turn, for a caller judging
         // its own ledger; a batch that did not land fails with the stop in words

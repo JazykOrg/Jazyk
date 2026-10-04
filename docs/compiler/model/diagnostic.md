@@ -244,7 +244,7 @@ answer:
 | checks | `section-too-large` | warning | a section body over 6000 chars; split it |
 | checks | `doc-too-large` | warning | a document over 40 sections; split it |
 | checks | `empty-file` | warning | a matched file with no content |
-| checks | `broken-link` | warning | a relative link to a `.md` file whose target does not exist; links that escape the project root are ignored |
+| checks | `broken-link` | warning | a relative `.md` or `.markdown` link whose target file does not exist; subjects are the source document and normalized target, with current source locations in the message; links that escape the project root are ignored |
 | checks | `pinned-fact-drift` | warning | a literal the docs pin (a path, id, or value in a code span) that the requirement's bound files never mention |
 | checks | `unjustified-fact` | error | a fact or rendered element whose provenance walk ends in neither a verbatim quote in a live section nor a `derived` or `decree` fact with live upstream nodes and an open ratification proposal |
 | checks | `unplaced-behavior` | info | a `behavior` requirement in no flow view and excluded from none |

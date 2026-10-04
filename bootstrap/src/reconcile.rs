@@ -471,6 +471,19 @@ fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, S
 // The deterministic checks over the whole graph. Mirrors docs/compiler/compilation.md#checks.
 pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     let mut f: Vec<Finding> = format_checks(proj);
+    // Link diagnostics describe the current source, including uncompiled docs.
+    // One stable source-target pair keeps its identity when the link moves.
+    for path in proj.doc_files() {
+        if !md::supported_format(&path) { continue; }
+        let Ok(text) = md::read_doc(&path) else { continue };
+        let doc = doc_path(proj, &path);
+        let mut reported = BTreeSet::new();
+        for link in md::missing_document_links(&proj.root, &doc, &text) {
+            if reported.insert(link.target.clone()) {
+                f.push((link.rule.into(), vec![doc.clone(), link.target], link.severity.into(), link.message, None));
+            }
+        }
+    }
     // File-level document quality: an empty file schedules no session and a link only
     // feeds levels, so neither problem ever reaches a model.
     for (doc, rec) in &store.docs {
@@ -485,23 +498,6 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                 "warning",
                 format!("{} is matched by the docs glob but has no content", doc),
             ));
-        }
-        let mut reported: BTreeSet<String> = BTreeSet::new();
-        for sec in rec.sections.values() {
-            for target in md::doc_links(&sec.raw, doc) {
-                if store.docs.contains_key(&target)
-                    || proj.root.join(&target).vexists()
-                    || !reported.insert(target.clone())
-                {
-                    continue;
-                }
-                f.push(finding(
-                    "broken-link",
-                    doc,
-                    "warning",
-                    format!("{} links to {} which does not exist", doc, target),
-                ));
-            }
         }
     }
     // Coverage: sections with a body of their own that stayed unprocessed, and
@@ -3623,19 +3619,36 @@ mod tests {
     }
 
     #[test]
-    fn broken_link_flagged_only_for_missing_md_targets() {
-        let mut s = Store::default();
-        seed_doc(
-            &mut s,
-            "a.md",
-            "# A\nSee [b](./b.md) and [gone](./no-such-doc-xyz.md).\n",
-        );
-        seed_doc(&mut s, "b.md", "# B\ncontent\n");
-        let f = checks(&s, &Project::default());
-        let hits = rules_for(&f, "broken-link");
-        assert_eq!(hits.len(), 1, "{:?}", hits);
-        assert_eq!(hits[0].1, ["a.md"]);
-        assert!(hits[0].3.contains("no-such-doc-xyz.md"));
+    fn broken_links_use_current_files_and_resolve_without_model_calls() {
+        let dir = std::env::temp_dir().join(format!("jazyk-broken-links-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("slides")).unwrap();
+        let source = "# Slides\nSee [Intro](slide-intro.md) and [again](slide-intro.md).\nSee [other](other.md).\n";
+        crate::vfs::write(dir.join("slides/main.md"), source).unwrap();
+        let proj = Project { root: dir.clone(), out: dir.join(".jazyk"), docs_glob: vec!["**/*.md".into()], ..Default::default() };
+        let mut store = Store { out: proj.out.clone(), ..Default::default() };
+        // The source was never compiled. A stale target record does not count
+        // as an existing file, and two missing targets need different identities.
+        seed_doc(&mut store, "slides/slide-intro.md", "# Deleted\n");
+        let findings = checks(&store, &proj);
+        let links = rules_for(&findings, "broken-link");
+        assert_eq!(links.len(), 2, "{:?}", links);
+        assert_eq!(links[0].1, ["slides/main.md", "slides/slide-intro.md"]);
+        assert!(links[0].3.contains("slides/main.md:2:5"));
+        assert!(links[0].3.contains("Create the document or fix the link"));
+        store.reconcile_check_diags(findings);
+        let id = store.graph.diagnostics.iter().find(|(_, d)| d.rule == "broken-link" && d.subjects[1] == "slides/slide-intro.md").unwrap().0.clone();
+        let generation = store.status.generation;
+        store.reconcile_check_diags(checks(&store, &proj));
+        assert_eq!(store.status.generation, generation, "no-op check must not journal again");
+        crate::vfs::write(dir.join("slides/slide-intro.md"), "# Intro\n").unwrap();
+        store.reconcile_check_diags(checks(&store, &proj));
+        assert_eq!(store.graph.diagnostics[&id].lifecycle, "resolved");
+        assert_eq!(store.graph.diagnostics.values().filter(|d| d.rule == "broken-link" && d.lifecycle == "open").count(), 1);
+        crate::vfs::write(dir.join("slides/main.md"), "# Slides\nNo links.\n").unwrap();
+        store.reconcile_check_diags(checks(&store, &proj));
+        assert!(store.graph.diagnostics.values().filter(|d| d.rule == "broken-link").all(|d| d.lifecycle == "resolved"));
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]

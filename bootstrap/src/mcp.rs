@@ -29,6 +29,7 @@ pub struct McpServer {
     // The session transcript: one event per call under <out>/trace, reviewable beside
     // a build. Mirrors docs/frontends/mcp.md#transcripts.
     trace: crate::session::Trace,
+    preview: std::sync::Mutex<Option<crate::live_preview::Preview>>,
     // The agent-run benchmark: the open case's sandbox and the run's accumulated
     // scores. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
     bench: std::sync::Mutex<BenchRun>,
@@ -257,6 +258,30 @@ pub fn reader_instructions() -> String {
 }
 
 impl McpServer {
+    pub fn live_preview(&self) -> Option<crate::live_preview::Preview> {
+        self.preview.lock().unwrap().clone()
+    }
+
+    fn update_preview(&self, name: &str, label: &str, accepted: bool) {
+        if !accepted { return; }
+        let open = self.open.lock().unwrap();
+        let (phase, label, generation, graph) = if let Some(batch) = open.as_ref() {
+            if name != "begin_goals" && crate::tools::READ_TOOLS.contains(&name) { return; }
+            (if name == "begin_goals" { "base" } else { "staged" }, batch.id.as_str(), batch.session.snapshot.status.generation,
+                crate::live_preview::staged(&batch.session.snapshot.graph, &batch.session.staged))
+        } else if name == "done" || name == "abandon_goals" {
+            let store = Store::load(&self.out);
+            (if name == "done" { "committed" } else { "base" }, label, store.status.generation, Some(crate::live_preview::authored(&store.graph)))
+        } else { return; };
+        let mut prior = self.preview.lock().unwrap();
+        if name != "begin_goals" && prior.as_ref().is_some_and(|p| p.phase == phase && p.graph == graph) { return; }
+        let attempt = if name == "begin_goals" { format!("{}-{}", crate::sys::process_id(), crate::sys::now_millis()) }
+            else { prior.as_ref().map(|p| p.attempt.clone()).unwrap_or_default() };
+        let preview = crate::live_preview::Preview { label:label.into(), attempt, revision:prior.as_ref().map_or(1, |p|p.revision+1), phase:phase.into(), generation, reason:graph.is_none().then(||"Live preview waits for this compound change to commit.".into()), graph }.bounded();
+        crate::live_preview::write(&self.out, &preview);
+        *prior = Some(preview);
+    }
+
     // Whether this serving stands in a project or in a bare directory. Decides which
     // project tools exist. Mirrors docs/frontends/acp.md#project-tools.
     fn initialized(&self) -> bool {
@@ -291,6 +316,7 @@ impl McpServer {
             open: std::sync::Mutex::new(None),
             bench: std::sync::Mutex::new(BenchRun::default()),
             worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            preview: Default::default(),
             trace: crate::session::Trace::stderr(crate::session::TraceLevel::Quiet)
                 .with_transcript(&out_for_trace, "mcp"),
             bridge,
@@ -1763,6 +1789,7 @@ impl McpServer {
                     None => format!("mcp {}", self.modes.join(",")),
                 };
                 self.trace.event(crate::session::TraceEvent::ToolCall {
+                    activity: crate::live_preview::activity(&name, &params["arguments"], None),
                     label: label.clone(),
                     name: name.clone(),
                     summary: crate::session::condense(&params["arguments"], 160),
@@ -1776,19 +1803,21 @@ impl McpServer {
                     if is_err {
                         let (rule, message) = crate::session::refusal(text, "error");
                         self.trace.event(crate::session::TraceEvent::ToolError {
-                            label,
+                            label: label.clone(),
                             rule,
                             message,
                         });
                     } else {
                         self.trace.event(crate::session::TraceEvent::ToolResult {
-                            label,
+                            activity: crate::live_preview::activity(&name, &params["arguments"], Some(&parsed)),
+                            label: label.clone(),
                             name: name.clone(),
                             summary: crate::session::condense(&parsed, 160),
                             full: crate::session::full_payload(&parsed),
                         });
                     }
                 }
+                self.update_preview(&name, &label, reply.as_ref().is_ok_and(|v| v["isError"] != true));
                 reply
             }
             // Not part of MCP (clients end a serving by closing stdin), but agents

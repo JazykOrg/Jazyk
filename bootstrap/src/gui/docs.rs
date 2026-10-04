@@ -30,40 +30,12 @@ pub async fn doc_write(
     Query(p): Query<DocPathQ>,
     Json(body): Json<DocWrite>,
 ) -> Response {
-    let Some(abs) = safe_doc_path(&st.proj(), &p.path) else {
-        return err(
-            StatusCode::BAD_REQUEST,
-            format!("invalid document path {}", p.path),
-        );
-    };
-    let on_disk = crate::vfs::read_to_string(&abs)
-        .ok()
-        .map(|t| crate::model::hash_hex(&t));
-    if on_disk != body.base_hash {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({
-                "error": "the document changed on disk since it was read",
-                "diskHash": on_disk,
-            })),
-        )
-            .into_response();
+    match crate::webapi::docs::doc_write(&st.proj(), &p.path, &body.text, body.base_hash.as_deref()) {
+        crate::webapi::docs::DocWrite::Written(value) => Json(value).into_response(),
+        crate::webapi::docs::DocWrite::Conflict(value) => (StatusCode::CONFLICT, Json(value)).into_response(),
+        crate::webapi::docs::DocWrite::Invalid(message) => err(StatusCode::BAD_REQUEST, message),
+        crate::webapi::docs::DocWrite::Failed(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
     }
-    if let Some(parent) = abs.parent() {
-        if let Err(e) = crate::vfs::create_dir_all(parent) {
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("cannot create {}: {}", parent.display(), e),
-            );
-        }
-    }
-    if let Err(e) = crate::vfs::write(&abs, &body.text) {
-        return err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("cannot write {}: {}", p.path, e),
-        );
-    }
-    Json(json!({ "path": p.path, "hash": crate::model::hash_hex(&body.text) })).into_response()
 }
 
 #[derive(Deserialize)]

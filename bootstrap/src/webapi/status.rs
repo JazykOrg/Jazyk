@@ -66,6 +66,14 @@ pub fn diag_counts_by_doc(store: &Store) -> BTreeMap<String, BTreeMap<&'static s
             _ => "none",
         };
         let mut docs_hit: std::collections::BTreeSet<String> = Default::default();
+        if d.rule == "broken-link" {
+            // The second subject identifies the missing target, not another
+            // source document to charge for this finding.
+            if let Some(doc) = d.subjects.first() {
+                *out.entry(doc.clone()).or_default().entry(sev).or_default() += 1;
+            }
+            continue;
+        }
         for subject in &d.subjects {
             let resolved = store.resolve_id(subject).to_string();
             if let Some(r) = store.graph.requirements.get(&resolved) {

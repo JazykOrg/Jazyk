@@ -1129,6 +1129,7 @@ fn narrated_trace(
                 name,
                 summary,
                 full,
+                ..
             } => {
                 let input = full.clone().unwrap_or_else(|| summary.clone());
                 if LIFECYCLE_TOOLS.contains(&name.as_str()) {
@@ -1164,6 +1165,7 @@ fn narrated_trace(
                 name,
                 summary,
                 full,
+                ..
             } => {
                 if LIFECYCLE_TOOLS.contains(&name.as_str()) {
                     return;

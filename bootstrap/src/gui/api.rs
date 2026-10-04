@@ -472,21 +472,10 @@ pub struct DocQ {
 }
 
 pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
-    let Some(abs) = super::docs::safe_doc_path(&st.proj(), &p.path) else {
-        return err(
-            StatusCode::BAD_REQUEST,
-            format!("invalid document path {}", p.path),
-        );
-    };
-    match crate::vfs::read_to_string(&abs) {
-        Ok(text) => {
-            let hash = crate::model::hash_hex(&text);
-            Json(json!({ "path": p.path, "text": text, "hash": hash })).into_response()
-        }
-        Err(e) => err(
-            StatusCode::NOT_FOUND,
-            format!("cannot read {}: {}", p.path, e),
-        ),
+    match crate::webapi::docs::doc_content(&st.proj(), &p.path) {
+        crate::webapi::docs::DocRead::Found(value) => Json(value).into_response(),
+        crate::webapi::docs::DocRead::Missing(message) => err(StatusCode::NOT_FOUND, message),
+        crate::webapi::docs::DocRead::Invalid(message) => err(StatusCode::BAD_REQUEST, message),
     }
 }
 

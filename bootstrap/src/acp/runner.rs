@@ -458,7 +458,15 @@ impl AcpRunner {
             },
             attempt_no,
         );
+        let _preview_guard = crate::live_preview::SidecarGuard::start(&self.out, &label);
         let report = self.run_attempt(batch, trace, attempt, &failed_report);
+        let prior = crate::live_preview::read(&self.out, &label);
+        let store = crate::store::Store::load(&self.out);
+        trace.event(TraceEvent::GraphPreview { preview: crate::live_preview::Preview {
+            label: label.clone(), attempt: prior.as_ref().map(|p|p.attempt.clone()).unwrap_or_default(),
+            revision: prior.map_or(1, |p|p.revision + 1), phase: "committed".into(),
+            generation: store.status.generation, graph: Some(crate::live_preview::authored(&store.graph)), reason: None,
+        }.bounded() });
         // A goal that resolved starts its count over; anything else spent an attempt.
         let mut attempts = self.attempts.lock().unwrap();
         if report.resolved.contains(&first_goal) {
@@ -521,6 +529,9 @@ impl AcpRunner {
         let cb_trace = trace.clone();
         let cb_calls = calls.clone();
         let cb_error = agent_error.clone();
+        let preview_out = self.out.clone();
+        let preview_label = label.clone();
+        let preview_revision = Mutex::new(0u64);
         let on_update: super::host::OnUpdate = Arc::new(move |ev| {
             if let super::host::HostEvent::Update(u) = ev {
                 if matches!(
@@ -537,6 +548,13 @@ impl AcpRunner {
                     }
                 }
                 cb_translator.lock().unwrap().on_update(u, &cb_trace);
+                if let Some(preview) = crate::live_preview::read(&preview_out, &preview_label) {
+                    let mut revision = preview_revision.lock().unwrap();
+                    if preview.revision > *revision {
+                        *revision = preview.revision;
+                        cb_trace.event(TraceEvent::GraphPreview { preview });
+                    }
+                }
             }
         });
         let mut outcome = session.prompt(&self.prompt_for(batch), on_update.clone());

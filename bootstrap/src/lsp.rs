@@ -110,9 +110,9 @@ impl Lsp {
                 }
             }
             "textDocument/didSave" => self.publish_all(out),
-            // The client's native file watcher saw the store move; the refresh
-            // before dispatch already reloaded and republished. Nothing more.
-            "workspace/didChangeWatchedFiles" => {}
+            // A new or removed link target changes source diagnostics even when
+            // no build has changed the graph generation.
+            "workspace/didChangeWatchedFiles" => self.publish_all(out),
             "textDocument/didClose" => {
                 if let Some(doc) = self.param_doc(&params) {
                     self.overlay.remove(&doc);
@@ -292,8 +292,26 @@ impl Lsp {
     // out of the editor; resolved findings are never shown.
     fn publish<W: Write>(&self, out: &mut W, doc: &str) {
         let mut items: Vec<Value> = Vec::new();
+        if md::supported_format(Path::new(doc)) {
+            for link in md::missing_document_links(&self.root, doc, &self.doc_text(doc)) {
+                let stored = self.store.graph.diagnostics.iter().find(|(_, d)| {
+                    d.rule == "broken-link" && d.subjects.first().is_some_and(|s| s == doc)
+                        && (d.subjects.len() == 1 || d.subjects.get(1) == Some(&link.target))
+                        && d.lifecycle == "open"
+                });
+                if stored.is_some_and(|(_, d)| d.triage.as_deref() == Some("suppressed")) {
+                    continue;
+                }
+                let mut data = json!({ "target": link.target });
+                if let Some((id, _)) = stored { data["jazykDiag"] = json!(id); }
+                items.push(json!({
+                    "range": link.range, "severity": 2, "source": "jazyk",
+                    "code": link.rule, "message": link.message, "data": data,
+                }));
+            }
+        }
         for (did, d) in &self.store.graph.diagnostics {
-            if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+            if d.rule == "broken-link" || d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
                 continue;
             }
             let severity = match d.severity.as_str() {

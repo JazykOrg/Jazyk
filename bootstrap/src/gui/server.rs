@@ -1,5 +1,5 @@
-// Router assembly, session-token check, CORS for the page's origin, bind with port
-// fallback, graceful shutdown. The server serves the API alone; the page is at
+// Router assembly, session-token check, CORS for the page's origin, bind within the
+// discovery range, graceful shutdown. The server serves the API alone; the page is at
 // jazyk.dev (docs/frontends/gui.md#serving).
 use super::state::SharedState;
 use super::{
@@ -186,18 +186,40 @@ pub fn router(st: SharedState) -> Router {
 }
 
 pub const DEFAULT_PORT: u16 = 4680;
+pub const DISCOVERY_PORT_END: u16 = 4711;
 
-// Bind: an explicit busy port is an error; the busy default falls back to ephemeral.
+// Default launches stay discoverable even when earlier ports are busy. An
+// explicit port is exact, including port zero's OS-assigned ephemeral behavior.
 pub async fn bind(port: Option<u16>) -> Result<tokio::net::TcpListener, String> {
-    let want = port.unwrap_or(DEFAULT_PORT);
-    let addr = SocketAddr::from(([127, 0, 0, 1], want));
-    match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => Ok(l),
-        Err(e) if port.is_some() => Err(format!("cannot bind 127.0.0.1:{}: {}", want, e)),
-        Err(_) => tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-            .await
-            .map_err(|e| format!("cannot bind 127.0.0.1: {}", e)),
+    bind_with(port, DEFAULT_PORT..=DISCOVERY_PORT_END, |addr| {
+        tokio::net::TcpListener::bind(addr)
+    })
+    .await
+}
+
+// The binder seam keeps range and failure tests independent of machine ports.
+async fn bind_with<T, F, Fut>(
+    port: Option<u16>,
+    default_ports: std::ops::RangeInclusive<u16>,
+    mut binder: F,
+) -> Result<T, String>
+where
+    F: FnMut(SocketAddr) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<T>>,
+{
+    let ports = port.map_or_else(|| default_ports.clone(), |p| p..=p);
+    for want in ports {
+        let addr = SocketAddr::from(([127, 0, 0, 1], want));
+        match binder(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) if port.is_none() && e.kind() == std::io::ErrorKind::AddrInUse => {}
+            Err(e) => return Err(format!("cannot bind {}: {}", addr, e)),
+        }
     }
+    Err(format!(
+        "all local discovery ports 127.0.0.1:{}-{} are busy; stop an existing jazyk gui or choose --port N",
+        default_ports.start(), default_ports.end()
+    ))
 }
 
 // Serve until ctrl-c or /api/shutdown. No graceful drain: the event stream and the
@@ -219,6 +241,91 @@ mod tests {
     use axum::body::Body;
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn default_binding_skips_occupied_prefix_and_stops_at_first_available_port() {
+        let mut attempted = Vec::new();
+        let selected = bind_with(None, 12000..=12003, |addr| {
+            attempted.push(addr);
+            std::future::ready(if addr.port() < 12002 {
+                Err(std::io::Error::from(std::io::ErrorKind::AddrInUse))
+            } else {
+                Ok(addr)
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(selected, SocketAddr::from(([127, 0, 0, 1], 12002)));
+        assert_eq!(
+            attempted,
+            (12000..=12002)
+                .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn default_binding_stops_on_errors_other_than_address_in_use() {
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::AddrNotAvailable,
+        ] {
+            let mut attempted = Vec::new();
+            let error = bind_with(None, 12000..=12003, |addr| {
+                attempted.push(addr.port());
+                std::future::ready(Err::<(), _>(std::io::Error::new(kind, "bind refused")))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(attempted, vec![12000]);
+            assert_eq!(error, "cannot bind 127.0.0.1:12000: bind refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn default_binding_exhaustion_is_bounded_and_never_uses_an_ephemeral_port() {
+        let mut attempted = Vec::new();
+        let error = bind_with(None, DEFAULT_PORT..=DISCOVERY_PORT_END, |addr| {
+            attempted.push(addr.port());
+            std::future::ready(Err::<(), _>(std::io::Error::from(
+                std::io::ErrorKind::AddrInUse,
+            )))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(attempted, (4680..=4711).collect::<Vec<_>>());
+        assert!(error.contains("127.0.0.1:4680-4711"));
+        assert!(error.contains("--port N"));
+    }
+
+    #[tokio::test]
+    async fn explicit_binding_never_retries_even_within_the_discovery_range() {
+        let mut attempted = Vec::new();
+        let error = bind_with(Some(12001), 12000..=12003, |addr| {
+            attempted.push(addr.port());
+            std::future::ready(Err::<(), _>(std::io::Error::from(
+                std::io::ErrorKind::AddrInUse,
+            )))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(attempted, vec![12001]);
+        assert!(error.starts_with("cannot bind 127.0.0.1:12001:"));
+    }
+
+    #[tokio::test]
+    async fn explicit_zero_binds_loopback_and_the_actual_busy_port_is_an_error() {
+        let listener = bind(Some(0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert_eq!(addr.ip(), std::net::Ipv4Addr::LOCALHOST);
+        assert_ne!(addr.port(), 0);
+        let error = bind(Some(addr.port())).await.unwrap_err();
+        assert!(
+            error.starts_with(&format!("cannot bind {}:", addr)),
+            "{}",
+            error
+        );
+    }
 
     fn state(token: Option<&str>, gui_origin: &str) -> SharedState {
         let root = std::env::temp_dir().join(format!(

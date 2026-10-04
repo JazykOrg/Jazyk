@@ -19,8 +19,14 @@ independently. The client checks compatibility before adopting a connection.
 ## Serving
 
 - The server binds `127.0.0.1` only. It is never exposed beyond the local machine.
-- Default port `4680`. When the default port is busy, the server binds an ephemeral port
-  and prints the actual URL. An explicit `--port` that is busy is an error.
+- Without `--port`, the server tries ports `4680` through `4711`, inclusive, in
+  ascending order. It takes the first available port and prints the actual URL.
+  Only an address-in-use error advances to the next port. Other bind errors stop
+  startup. When all 32 ports are busy, startup asks the user to stop an existing
+  server or choose an explicit `--port N`. There is no ephemeral fallback.
+- An explicit `--port` binds only that port. A busy port is an error.
+  Explicit `--port 0` asks the operating system for an ephemeral port. The opened
+  connection link carries the actual port.
 - `GET /api/ping` answers without a token: the app name, version, and the served
   project root. A server per project is normal, so when the default port is busy the
   startup line probes the occupant and names which project it serves. A stale tab is
@@ -86,6 +92,11 @@ opens:
   project's folder, and the page opens itself; a port field (default `4680`) and a
   `Connect` button reach a server already running, and ask for its token when the
   ping answers but the API refuses.
+- Automatic discovery checks all 32 ports in the default range and remembered
+  custom ports through `/api/ping`. It does not stop after consecutive misses.
+  Servers can stop in any order, leaving unused ports before a running project.
+  The bounded range makes discovery complete for default launches without scanning
+  arbitrary ports. Discovering a project never grants its session token.
 - A server that stops surfaces as the lost-connection banner, as before; a server
   that restarted surfaces as the token prompt.
 - The page works without a server: the demos, browser projects, and folders need

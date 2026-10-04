@@ -2,8 +2,8 @@
 use crate::session::{Trace, TraceEvent, TraceLevel};
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -13,6 +13,15 @@ pub type Snapshot = BTreeMap<String, Vec<u8>>;
 pub type ModelTransport = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 pub type TraceSink = Arc<dyn Fn(&TraceEvent) + Send + Sync>;
 pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
+
+/// Text projections for authored revisions and delivery, not a verification verdict.
+#[derive(Debug, serde::Serialize)]
+pub struct Projection {
+    pub source: BTreeMap<String, String>,
+    pub files: BTreeMap<String, String>,
+    pub criteria: BTreeMap<String, Value>,
+    pub graph_generation: u64,
+}
 
 /// The host must enforce a deadline and cancellation within its model callback.
 #[derive(Clone, Default)]
@@ -70,6 +79,16 @@ impl Workspace {
         self.files.clone()
     }
 
+    /// Preserve authored membership explicitly. Merely writing a generated file
+    /// does not make it source or a delivery candidate.
+    pub fn projection(&self, authored_paths: &[String]) -> Result<Projection, String> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _fs = crate::vfs::Scope::enter(&self.files);
+            project_projection(&self.files, authored_paths)
+        }))
+        .unwrap_or_else(|_| Err("hosted projection panicked; workspace was unchanged".into()))
+    }
+
     /// Synchronous. The caller owns the project lease and atomic persistence.
     /// Ordinary compiler failures retain committed state. Unwinding rolls back.
     pub fn request(
@@ -99,6 +118,114 @@ impl Workspace {
             Err(_) => Err("hosted compiler panicked; request snapshot was rolled back".into()),
         }
     }
+}
+
+fn project_projection(files: &Snapshot, authored: &[String]) -> Result<Projection, String> {
+    use crate::vfs::VPathExt;
+    let p = crate::project::Project::load(&root());
+    let store = crate::store::Store::load(&p.out);
+    let gs = crate::gen::GenSettings::resolve(&p);
+    let ledger = crate::gen::Ledger::load(&p.out);
+    // Resolve through the VFS so redirected projects and dot components use the
+    // same paths as compilation. No absent or out-of-workspace file can enter.
+    let relative = |path: &Path| -> Option<String> {
+        if !path.vis_file() {
+            return None;
+        }
+        let path = crate::vfs::canonicalize(path).ok()?;
+        Some(path.strip_prefix(root()).ok()?.to_str()?.to_owned())
+    };
+    let internal = |name: &str| {
+        name.split('/')
+            .any(|c| c == ".git" || c.starts_with(".jazyk") || c.starts_with("jazyk-out"))
+            || root().join(name).starts_with(&p.out)
+    };
+    let mut owned = BTreeSet::new();
+    let mut accepted = BTreeSet::new();
+    for path in ledger
+        .support
+        .iter()
+        .chain(ledger.entities.values().flat_map(|e| e.files.iter()))
+        .chain(ledger.requirements.values().flat_map(|r| r.files.iter()))
+    {
+        if let Some(name) = relative(&gs.deliverable.join(path)) {
+            owned.insert(name.clone());
+            accepted.insert(name);
+        }
+    }
+    for row in ledger.requirements.values() {
+        for test in std::iter::once(&row.test).chain(row.tests.values().map(|t| &t.test)) {
+            if let Some(name) = relative(&crate::gen::artifact_path(&p.out, &gs, test)) {
+                owned.insert(name.clone());
+                if test.kind == "programmatic" {
+                    accepted.insert(name);
+                }
+            }
+        }
+    }
+    for path in crate::gen::build_outputs(&ledger) {
+        if let Some(name) = relative(&gs.deliverable.join(path)) {
+            owned.insert(name.clone());
+            accepted.remove(&name);
+        }
+    }
+    let mut source_paths = BTreeSet::new();
+    for name in authored {
+        if name.is_empty()
+            || name.contains(['\\', '\0', ':'])
+            || name
+                .split('/')
+                .any(|c| c.is_empty() || c == "." || c == "..")
+        {
+            return Err(format!("invalid authored path: {name}"));
+        }
+        if files.contains_key(name) {
+            source_paths.insert(name.clone());
+        }
+    }
+    for path in p
+        .doc_files()
+        .into_iter()
+        .chain([root().join("jazyk.toml"), p.root.join("jazyk.toml")])
+    {
+        if let Some(name) = relative(&path) {
+            source_paths.insert(name);
+        }
+    }
+    source_paths.retain(|name| !internal(name) && !owned.contains(name));
+    let read_text = |names: BTreeSet<String>| -> Result<BTreeMap<String, String>, String> {
+        names
+            .into_iter()
+            .filter(|name| !internal(name))
+            .map(|name| {
+                let bytes = files
+                    .get(&name)
+                    .ok_or_else(|| format!("missing projected file: {name}"))?;
+                let content = std::str::from_utf8(bytes)
+                    .map_err(|_| format!("projected file is not UTF-8 text: {name}"))?;
+                Ok((name, content.to_owned()))
+            })
+            .collect()
+    };
+    let source = read_text(source_paths)?;
+    let mut candidate = source.clone();
+    candidate.extend(read_text(accepted)?);
+    let criteria = store
+        .graph
+        .criteria
+        .iter()
+        .map(|(id, criterion)| {
+            serde_json::to_value(criterion)
+                .map(|value| (id.clone(), value))
+                .map_err(|e| e.to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(Projection {
+        source,
+        files: candidate,
+        criteria,
+        graph_generation: store.status.generation,
+    })
 }
 
 thread_local! { static EXECUTION: RefCell<Option<Execution>> = const { RefCell::new(None) }; }
@@ -335,6 +462,134 @@ mod tests {
         ]))
         .unwrap()
     }
+
+    #[test]
+    fn projection_preserves_authored_membership_and_records_only_ledger_output() {
+        let mut w = workspace("Alpha");
+        for (path, text) in [
+            ("jazyk.toml", "redirect = \"spec\"\n"),
+            (
+                "spec/jazyk.toml",
+                "[docs]\nglob = [\"docs/**/*.md\"]\n[gen]\ndeliverable = \"product\"\n",
+            ),
+            ("spec/docs/main.md", "# Main\nAuthored prose.\n"),
+            ("spec/docs/new.md", "# New\nNewly authored prose.\n"),
+            ("notes.txt", "An existing human file, edited."),
+            (".github/workflows/test.yml", "name: tests"),
+            (".git/config", "private git metadata"),
+            ("spec/.jazyk.bak/status.yaml", "private backup"),
+            ("spec/product/main.py", "print('accepted')"),
+            ("spec/product/package.json", "{}"),
+            ("spec/product/test.py", "assert True"),
+            ("spec/product/test_extra.py", "assert 1 == 1"),
+            ("spec/product/draft.py", "unrecorded output"),
+            ("spec/product/build.zip", "built output"),
+            ("spec/.jazyk/gen/judge.md", "LLM judgment criteria"),
+        ] {
+            w.files.insert(path.into(), text.as_bytes().to_vec());
+        }
+        {
+            let fs = crate::vfs::Scope::enter(&w.files);
+            let project = crate::project::Project::load(&root());
+            let mut store = crate::store::Store::load(&project.out);
+            store.status.generation = 42;
+            store.graph.criteria.insert(
+                "crit:stable".into(),
+                crate::model::Criterion {
+                    requirement: "req:stable".into(),
+                    statement: "One returns one.".into(),
+                    ..Default::default()
+                },
+            );
+            store.save();
+            let programmatic = |artifact| json!({"kind":"programmatic", "label":"test", "artifact":artifact, "name":"test", "run":"python test.py"});
+            let ledger: crate::gen::Ledger = serde_json::from_value(json!({
+                "support":["package.json"],
+                "entities":{"alpha":{"factHash":"recorded", "requirements":[], "files":["main.py","build.zip","missing.py"]}},
+                "build":{"run":"python build.py","produces":["build.zip"]},
+                "requirements":{"req:stable":{
+                    "entity":"ent:alpha","files":["main.py"],
+                    "test": programmatic("test.py"),
+                    "tests": {
+                        "crit:extra":{"test":programmatic("test_extra.py"),"criterion_hash":"hash"},
+                        "crit:llm":{"test":{"kind":"llm","label":"judge","artifact":"judge.md","name":"judge","run":""},"criterion_hash":"hash"}
+                    },
+                    "hashes":{"requirement":"","test":"","files":""}
+                }}
+            })).unwrap();
+            ledger.save(&project.out);
+            w.files = fs.snapshot();
+        }
+        let before = w.snapshot();
+        let authored = [
+            "notes.txt",
+            "deleted.txt",
+            ".github/workflows/test.yml",
+            ".git/config",
+            "spec/.jazyk/status.yaml",
+            "spec/.jazyk.bak/status.yaml",
+            "spec/product/main.py",
+            "spec/product/build.zip",
+        ]
+        .map(String::from);
+        let projection = w.projection(&authored).unwrap();
+        assert_eq!(projection.graph_generation, 42);
+        assert_eq!(
+            projection.criteria["crit:stable"]["statement"],
+            "One returns one."
+        );
+        assert_eq!(
+            projection
+                .source
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                ".github/workflows/test.yml",
+                "jazyk.toml",
+                "notes.txt",
+                "spec/docs/main.md",
+                "spec/docs/new.md",
+                "spec/jazyk.toml",
+            ]
+        );
+        for path in ["main.py", "package.json", "test.py", "test_extra.py"] {
+            assert!(projection
+                .files
+                .contains_key(&format!("spec/product/{path}")));
+        }
+        assert_eq!(projection.files.len(), projection.source.len() + 4);
+        assert_eq!(
+            projection.source["notes.txt"],
+            "An existing human file, edited."
+        );
+        assert_eq!(w.snapshot(), before);
+        assert!(!crate::vfs::is_scoped());
+        let other = workspace("Beta").projection(&[]).unwrap();
+        assert_eq!(other.graph_generation, 0);
+        assert!(other.criteria.is_empty());
+    }
+
+    #[test]
+    fn projection_rejects_invalid_membership_and_selected_binary_without_mutation() {
+        let mut w = workspace("Alpha");
+        w.files.insert("photo.png".into(), vec![0, 255]);
+        let before = w.snapshot();
+        assert!(w
+            .projection(&["photo.png".into()])
+            .unwrap_err()
+            .contains("not UTF-8"));
+        for path in ["../escape", "/absolute", "docs//main.md", "a\\b", "a:b"] {
+            assert!(w
+                .projection(&[path.into()])
+                .unwrap_err()
+                .contains("invalid authored"));
+        }
+        assert!(!w.projection(&[]).unwrap().files.contains_key("photo.png"));
+        assert_eq!(w.snapshot(), before);
+        assert!(!crate::vfs::is_scoped());
+    }
+
     fn value(w: &mut Workspace, method: &str, path: &str, body: Value, e: &Execution) -> Value {
         let reply = w.request(method, path, &body.to_string(), e).unwrap();
         assert!(

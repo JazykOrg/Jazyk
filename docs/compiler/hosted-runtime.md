@@ -28,6 +28,29 @@ changes. The host saves that snapshot and reports the compiler verdict. A panic
 rolls back the entire request snapshot and returns a distinct failure. Staged
 changes still pass the existing commit gates before they enter a snapshot.
 
+## Source and delivery projections
+
+`Workspace::projection` takes the previous authored file paths. It returns `source`,
+`files`, `criteria`, and `graph_generation`. Paths are workspace-relative. The
+operation is read-only and uses the same project, graph, and generation ledger
+loaders as compilation.
+
+`source` keeps authored files that still exist, plus the resolved `jazyk.toml`
+files and documentation inputs. Deleted files disappear. Graph state, conversations,
+compiler backups, Git internals, and ledger-owned generated files are excluded.
+The host records new authored membership when a person imports or creates a file.
+
+`files` adds existing ledger-recorded implementation files, support files, and
+programmatic test artifacts to `source`. Built artifacts and LLM judgment criteria
+under the compiler output directory stay in the full snapshot. Unrecorded output
+does not enter a delivery merely because it exists. A ledger record identifies
+ownership, not a current verification verdict. Delivery still requires its own
+approval and CI evidence against `criteria` and `graph_generation`.
+
+These two maps contain UTF-8 text. A selected binary file returns an explicit
+error. The full snapshot retains binary files and all internal state. Projection
+never deletes a file from the workspace.
+
 ## Models and events
 
 Each request receives an `Execution`. It names the model and supplies a transport

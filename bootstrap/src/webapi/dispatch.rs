@@ -87,6 +87,7 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         ("GET", "/ping") => ok(json!({
             "app": "jazyk-wasm",
             "version": env!("CARGO_PKG_VERSION"),
+            "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
             "root": crate::wasm::root().to_string_lossy(),
         })),
 

@@ -40,6 +40,7 @@ pub async fn ping(State(st): State<SharedState>) -> Json<Value> {
     Json(json!({
         "app": "jazyk-gui",
         "version": env!("CARGO_PKG_VERSION"),
+        "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
         "root": st.proj().root.to_string_lossy(),
     }))
 }

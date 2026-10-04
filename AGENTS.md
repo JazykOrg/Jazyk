@@ -19,9 +19,12 @@ Status: research project; large changes in direction are acceptable and expected
 - `site/` hosts the jazyk.org static site and its deploy workflow.
 - The private hosted service lives in the separate
   [JazykOrg/jazyk-cloud repository](https://github.com/JazykOrg/jazyk-cloud), locally
-  `../jazyk-cloud`. Cloud and subscription plans moved there. Shared compiler,
-  workspace, delivery, verification, and ACP/LSP contracts stay here. Jazyk must
-  build and run locally without depending on the private service repository.
+  `../jazyk-cloud`. It owns the complete jazyk.dev editor in `web/`, including
+  its branding, Board, Tabs, PWA, browser tests, and deployment. Shared compiler,
+  native/WASM engine, workspace, delivery, verification, local HTTP/SSE/WebSocket,
+  and ACP/LSP contracts stay here. Jazyk must build and run locally without
+  depending on the private repository. `jazyk gui` starts the local API and opens
+  jazyk.dev. Local and browser use require no Cloud account.
 
 ## Architecture (goal-based reconciliation)
 
@@ -135,7 +138,10 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   Both directories are excluded from the docs glob (they are instructions to a model,
   not prose about jazyk). Placeholders: `{target}` (worker-protocol and serving-protocol: the batch id;
   pointers), `{GROUP}` (generate-contract).
-- `docs/frontends/`: cli.md, acp.md, mcp.md, lsp.md, gui.md, viewer.md.
+- `docs/frontends/`: cli.md, acp.md, mcp.md, lsp.md, gui.md (local API and
+  launcher), wasm.md (portable browser engine), protocol.md (editor/engine
+  compatibility), viewer.md. UI presentation specifications live in the private
+  `../jazyk-cloud/docs/editor/` tree.
   `docs/consumers/`: gen.md (generation + verification ledger), bind.md, decompile.md,
   docsgen.md, pm.md. `docs/benchmark/`: benchmark.md, cases.md, case.schema.yaml,
   `cases/` (the case files are embedded into the binary at compile time; they are
@@ -189,9 +195,12 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   ANY change to the binary, finish with `cargo build --release`; a running `jazyk gui`
   needs a restart to pick up a new binary. The binary carries no page: `jazyk gui`
   serves the API and opens jazyk.dev (or `--gui-url`, e.g. a `vite` dev server), which
-  connects to it (`docs/frontends/gui.md#connecting-to-a-local-jazyk`). The page is
-  `cd bootstrap/app && npm run build` (`dist/`, never committed), deployed by
-  `.github/workflows/editor.yml`.
+  connects to it (`docs/frontends/gui.md#connecting-to-a-local-jazyk`). The page
+  lives in the private sibling repo: `cd ../jazyk-cloud/web && npm run build`
+  (`dist/`, never committed). Its compiler input is pinned by
+  `compiler.lock.json`; `JAZYK_SOURCE` permits a local override outside CI.
+  Editor tests and jazyk.dev publication belong to that repository. Engine builds
+  never require the editor checkout. The independent `site/` workflow owns jazyk.org.
 - `jazyk compile [path...]` (live trace; `--verbose` the cascade and full prompts,
   `--quiet` summary), `check`, `watch`, `status`, `preview [goal|target]`,
   `explain [goal|target]`, `ripple <target|generation|doc> [--back]`,

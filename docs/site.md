@@ -73,31 +73,16 @@ One page.
 
 ## The editor
 
-[jazyk.dev](https://jazyk.dev) is the [GUI](./frontends/gui.md), the one page the
-app has: `bootstrap/app` built with the compiler as wasm, every example as a
-fixture, a new project kept in the browser's own storage
-([a project in the browser](./frontends/wasm.md#a-project-in-the-browser)), a
-folder on the computer openable through the File System Access API, and a
-connection to a `jazyk gui` server running on the computer
-([connecting to a local jazyk](./frontends/gui.md#connecting-to-a-local-jazyk)),
-which is how the binary shows its GUI: it opens this page. Once loaded, the page
-works without a network: a service worker keeps the app and its assets, so the
-demos, browser projects, folders, and a local server all work offline
-([offline](./frontends/wasm.md#offline)); only the first visit and a model download
-need the network.
+[jazyk.dev](https://jazyk.dev) is the Jazyk Cloud application. Its complete editor,
+PWA, browser storage, and deployment live in the separate private
+[Jazyk Cloud repository](https://github.com/JazykOrg/jazyk-cloud).
+The application preserves accountless local and browser use alongside future
+hosted projects. It uses this repository's native or WASM compiler engine.
 
-- Hosted like [jazyk.org](#hosting): a private bucket `jazyk.dev`, a distribution
-  for `jazyk.dev` and `www.jazyk.dev` with its own certificate, origin access
-  control, and viewer function, DNS at Porkbun, the same deploy role.
-- A response headers policy on the distribution sets
-  `Cross-Origin-Opener-Policy: same-origin` and
-  `Cross-Origin-Embedder-Policy: require-corp`, so the page is cross-origin isolated
-  and a build can run ([serving](./frontends/wasm.md#serving)).
-- The page's routes live in the fragment, so a missing object serves `index.html`
-  with status 200 rather than a 404 page.
-- Deploying is `bootstrap/app/deploy.sh`: the hashed assets with a week of cache,
-  `index.html` and the fixtures with none, then an invalidation. The GitHub Actions
-  workflow builds the wasm and the page, redraws the demo diagrams, and runs the
-  browser tests on every push to `master` and every pull request that touches
-  `bootstrap/`; only a push to `master` then runs the script. `bootstrap/app/hosting.sh`
-  creates every piece above and skips the ones that exist.
+[`jazyk gui`](./frontends/gui.md#serving) starts a local API and opens jazyk.dev.
+The API and IDE interfaces remain independent engine features. The website move
+does not change the local project's storage authority or require a Cloud account.
+
+The private repository owns [editor deployment](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/deployment.md).
+Its local extraction is reviewed before a live-site handoff. This repository's
+`site/deploy.sh` and site workflow own jazyk.org only.

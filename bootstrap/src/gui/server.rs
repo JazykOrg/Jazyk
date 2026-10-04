@@ -337,6 +337,46 @@ mod tests {
         }
     }
 
+    // Discovery precedes the authenticated project reads. An independently
+    // released editor can reject an incompatible engine without touching its
+    // graph, and knowing the protocol does not bypass the session token.
+    #[tokio::test]
+    async fn protocol_discovery_is_read_only_and_capabilities_stay_guarded() {
+        let st = state(Some("protocol-secret"), "https://protocol.test");
+        assert!(!st.out.exists());
+
+        let r = send(st.clone(), get_from("/api/ping", "https://protocol.test")).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(hdr(&r, "access-control-allow-origin"), Some("https://protocol.test"));
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+        let ping: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(ping["app"], "jazyk-gui");
+        assert_eq!(ping["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(ping["protocol"], 1);
+        assert_eq!(ping["root"], st.root.to_string_lossy().as_ref());
+
+        let r = send(st.clone(), get_from("/api/capabilities", "https://protocol.test")).await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        let req = Request::builder()
+            .uri("/api/capabilities")
+            .header("origin", "https://protocol.test")
+            .header("authorization", "Bearer protocol-secret")
+            .body(Body::empty())
+            .unwrap();
+        let r = send(st.clone(), req).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+        let caps: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(caps["protocol"], ping["protocol"]);
+        assert_eq!(caps["backend"], "server");
+        assert_eq!(caps["docs"], "write");
+        assert_eq!(caps["lsp"], true);
+        assert_eq!(caps["persistence"], "disk");
+        assert!(caps["jobs"].as_array().unwrap().contains(&serde_json::json!("compile")));
+        assert!(!st.out.exists(), "discovery must not create or migrate a graph");
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
     // A built artifact is served as its bytes with its content type, a download link
     // authorized by the token in the query (docs/frontends/gui.md#api, deliverable).
     #[tokio::test]

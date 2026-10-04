@@ -52,9 +52,12 @@ Specified in [`../docs/site.md`](../docs/site.md#hosting).
 
 The bucket is reachable only through CloudFront.
 
-[jazyk.dev](https://jazyk.dev), the editor in the browser, is hosted the same way from
-`bootstrap/app`: `hosting.sh` there creates its pieces and `deploy.sh` publishes
-`dist/`, specified in [`../docs/site.md`](../docs/site.md#the-editor).
+[jazyk.dev](https://jazyk.dev), the complete browser editor and Cloud application,
+lives in the private [Jazyk Cloud repository](https://github.com/JazykOrg/jazyk-cloud)
+under `web/`. That repository owns its build, PWA, browser tests, and eventual
+publication. Its [deployment specification](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/deployment.md)
+defines the separate ownership handoff. This repository and `site/deploy.sh` own
+jazyk.org only. Moving the editor source changes neither live domain.
 
 ## DNS
 

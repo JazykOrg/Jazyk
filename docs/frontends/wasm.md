@@ -1,12 +1,15 @@
 # Browser Backend
 
-The compiler compiles to WebAssembly. The same store, reconciler, board, goal
-registry, tools, and [MCP serving](./mcp.md) the native binary runs also build for
-`wasm32-unknown-unknown`, where they answer the [GUI](./gui.md)'s API from inside the
-browser tab instead of from a process on a machine. The frontend talks to either.
+The compiler library builds for `wasm32-unknown-unknown`. It uses the same graph,
+reconciler, board, goals, tools, and [MCP serving](./mcp.md) as the native engine.
+The portable engine and its JavaScript bridge source remain in this repository.
+The complete jazyk.dev application, persistence adapters, model-source chooser,
+fixtures, and PWA build live in the separate
+[Jazyk Cloud browser application](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md).
 
-The point is a jazyk that needs no install: a page that carries a project, a graph,
-and a model, and reconciles one against the other while a person edits the prose.
+The engine has no dependency on that private application. A compatible host supplies
+files, persistence, events, and model responses. The [protocol version](./protocol.md)
+is independent of compiler and application releases.
 
 ## One API, two transports
 
@@ -29,10 +32,9 @@ The [GUI](./gui.md) API is one implementation with two ways in.
   body)` that routes the same method and the same path to the same functions and
   answers the same JSON.
 
-The frontend asks `lib/backend.ts` for a backend rather than calling `fetch`, so no
-endpoint in `lib/api.ts` knows which one it has. A backend answers
-`{ status, body }`; the server backend builds that from a `Response`, and the wasm
-backend gets it from the module.
+The browser request envelope is `{ status, body }`. Hosts translate a native HTTP
+response or a WASM module response into that shape. Engine endpoints do not depend
+on the application transport adapter.
 
 A route the browser backend does not serve answers `501` naming what it is, so the
 app degrades one panel at a time instead of failing whole.
@@ -80,179 +82,6 @@ The tree lives as long as the tab. The page keeps the project beyond it: every
 mutation is posted to the page, which writes it to
 [a folder on disk](#a-folder-on-disk) or to [browser storage](#browser-storage),
 depending on where the project came from.
-
-### A folder on disk
-
-Where the browser has the File System Access API (Chromium browsers), the page can
-open a directory on the computer as the project instead of the bundled demo.
-
-- The page reads the whole folder once (`.git`, `node_modules`, and `target`
-  skipped) and seeds the tree with it, bytes as they are. A folder with no
-  `jazyk.toml` at its top opens too, into the
-  [setup wizard](./gui.md#the-setup-wizard), which writes the file the way any
-  change lands (applied in writing mode, held in read-only mode).
-- `enable_fs_sink()` turns on the write-through. From then on every `write`,
-  `remove_file`, `remove_dir`, and `remove_dir_all` the backend makes is also posted
-  to the page with the path and the bytes, and the page applies it to the folder
-  through the directory handle. Seeding does not post: those bytes came from the
-  folder.
-- The page applies mutations one after another in the order they arrived, so a
-  write and the remove that follows it never race. A mutation that fails to land
-  is kept in browser storage, never dropped. See
-  [when a folder cannot be written](#when-a-folder-cannot-be-written).
-- Reads never touch the disk again. An edit made outside the tab is not seen until
-  the folder is opened again. Nothing watches the folder.
-
-A folder opens in one of two modes, writing unless `read-only` is chosen on
-[Home](./gui.md#home), switchable from the [project menu](./gui.md#the-project-menu)
-at any time. The mode is the page's: the worker posts every mutation either way.
-
-- Writing: every mutation is applied to the folder as it arrives, and the
-  [editor](./gui.md#editor) saves on its own.
-- Read-only: the page asks the browser for read access only, and holds mutations
-  instead of applying them: the latest one per path, in the order the paths were last
-  touched, so a remove and a later write under the same directory replay in the
-  order they happened. Documents, a build's shards, and the journal all stay in the
-  tab. The top bar shows how many paths are held and offers to write them; a save in
-  the editor asks the same. Writing asks the browser for write access, applies the
-  held mutations in order, and switches to writing mode. A grant the browser
-  refuses leaves the folder read-only, and the top bar says so. The held mutations
-  are also kept in [browser storage](#browser-storage), so a reload or a closed tab
-  does not lose them. Closing the tab with mutations held still asks first.
-
-The recent list on [Home](./gui.md#home) remembers each folder's mode, so a folder
-reopens the way it was left.
-
-### Browser storage
-
-A project that is not a folder on disk lives in the browser's own storage, so it
-survives a reload and a closed tab. Three things use it:
-
-- A browser project: a project started from scratch on [Home](./gui.md#home), not tied
-  to any folder. See [a project in the browser](#a-project-in-the-browser).
-- A demo with edits. See [an edited demo](#an-edited-demo).
-- The changes a folder has not taken yet: the ones read-only mode holds, and the
-  ones a failed write left. See
-  [when a folder cannot be written](#when-a-folder-cannot-be-written).
-
-What is stored where:
-
-- File contents go to IndexedDB, database `jazyk-projects`, object store `files`,
-  one record per file, so a write stores one file and never the whole project.
-  - `file:<project>:<path>`: the bytes of one file of a stored project. `<project>`
-    is `browser:<uuid>` for a browser project and `demo:<id>` for an edited demo.
-  - `kept:<folder>:<path>`: one change a folder has not taken yet, `{ seq, op,
-    bytes, dir }`, where `op` is `write` or `remove` and `seq` orders the changes.
-    `<folder>` is the folder's recent entry, `folder:<uuid>`.
-- The small metadata stays in local storage under `jazyk.recent`, as before: each
-  entry's id, kind, name, a folder's mode, whether a demo carries edits, and how many
-  changes a folder has kept. A folder's directory handle stays in IndexedDB's
-  default database under its entry id.
-
-Writes are coalesced. The page collects the posted mutations and stores them a
-moment after the last one (a third of a second, and at most two seconds after the
-first), the latest per path, in the order the paths were last touched, in one
-transaction. A build's burst of shard and journal writes is one transaction, not
-hundreds. Leaving the page (hiding it or closing it) stores what is pending at once.
-
-Size and quota:
-
-- A browser sets the quota per site, usually a share of the free disk. A browser
-  project is a few kilobytes of documents plus its `.jazyk`. An edited demo is
-  about the size of its fixture, up to about 1.3MB.
-- The page asks the browser to keep the site's storage persistent
-  (`navigator.storage.persist()`) when it first stores a project, so the browser
-  does not evict it under storage pressure. A browser may refuse; the project is
-  still stored.
-- A write the browser refuses (the quota is full, or storage is unavailable) is
-  not swallowed. The top bar says the project could not be saved in this browser and
-  how many changes are in this tab only, and offers to retry and to download the
-  project. The changes stay queued: every later store tries them again, in order.
-- Browser storage is not a backup. Clearing the site's data deletes every browser
-  project and every demo's edits. Save a project to a folder, or download it, to keep
-  a copy.
-- A browser with no IndexedDB (some private windows) stores nothing: a demo's edits
-  stay in the tab, as the descriptor's `persistence: memory` says, and a new project
-  is not offered.
-
-### A project in the browser
-
-`New project` on [Home](./gui.md#home) asks for a name and creates a minimal project
-in browser storage, then opens it:
-
-- `jazyk.toml`: the docs glob `docs/**/*.md` and the root `docs/README.md`.
-- `docs/README.md`: a heading with the project's name and one line saying what to
-  write.
-
-E.g.:
-
-```markdown
-# Garden planner
-
-Describe what this project is in plain sentences: what it is for, who uses it, and what it must do.
-```
-
-The recent list shows it as a browser project that lives in this browser only.
-Reopening it from `Recent` reads its files from storage and seeds the tree with them.
-It works in every browser, since it needs no folder API. Removing its entry from the
-list deletes it, after asking.
-
-A browser project leaves the browser two ways, both offered in the
-[project menu](./gui.md#the-project-menu):
-
-- `Save to a folder…` (where the File System Access API exists): the page asks for a
-  folder, asks again if the folder is not empty, and writes every file of the tree
-  into it. From then on the project is that folder in writing mode: the recent entry
-  becomes the folder's, and the copy in browser storage is deleted once every file
-  landed. A write that fails stops the save and says why: the project stays in the
-  browser, and nothing kept there is deleted. Edits made while the files are written
-  follow them into the folder.
-- `Download`: the whole tree as one `.zip` named after the project, the same layout a
-  folder would hold. It works in every browser.
-
-A demo offers the same two.
-
-### An edited demo
-
-An unedited demo is fetched fresh every time it opens. The first mutation the backend
-posts for a demo (a save in the editor, a chat edit, a build) turns it into a stored
-copy under `demo:<id>`: the fixture's files as they were seeded, then every mutation
-since. Its recent entry says it carries your edits.
-
-- Reopening it from `Recent`, or picking the same demo again, opens the edited copy,
-  not the fixture.
-- `Reset to the original`, on its recent row and in the
-  [project menu](./gui.md#the-project-menu), deletes the copy after asking. A demo
-  that is open reopens from the fixture.
-- Removing its entry from the list deletes the copy too, after asking.
-
-The stored copy is a snapshot of the fixture it started from. A newer fixture in a
-later release does not reach it until it is reset.
-
-### When a folder cannot be written
-
-A folder write can fail: the permission lapsed, the folder was moved or deleted, the
-disk refused. The change is not lost:
-
-- The failed mutation is kept in browser storage under the folder, and so is every
-  mutation after it, so the folder never takes a later change before an earlier one.
-  The tab keeps working on the tree as before.
-- The top bar says it plainly: `Could not write to <folder>: N changes kept in this
-  browser`, with `Retry`. Retry asks the browser for write access if it needs to,
-  writes the kept changes in order, and stops at the first that fails again; the rest
-  stay kept. While it writes, the top bar says `Writing N changes to <folder>…`.
-- The recent row says how many changes the folder has kept.
-
-Read-only mode's held changes are the same kept changes. Reopening a folder that has
-kept changes, after a reload or on another day, reads the folder, lays the kept
-changes over it in order, and opens that, so the tab shows the work as it was left.
-The top bar offers to write them (`Write to folder`) or to discard them (`Discard`,
-after asking, reopens the folder as it is on disk). In writing mode, while changes are
-kept, new mutations queue behind them rather than landing first.
-
-So a build in a tab lands in the same `.jazyk/` the native binary would write,
-with the same shards and the same journal, and the two can be used on the same
-project in turn.
 
 ## The product
 
@@ -403,7 +232,7 @@ promise cannot be awaited from synchronous Rust. The two are joined the only way
 composes without turning the reconciler inside out:
 
 - The backend runs in a Web Worker.
-- The page owns the model and stays on the main thread.
+- The JavaScript host owns the model and stays on the main thread.
 - A call writes the request out and blocks the worker on `Atomics.wait`.
 - The page runs the model, writes the reply into a `SharedArrayBuffer`, and wakes the
   worker with `Atomics.notify`.
@@ -434,70 +263,6 @@ model this size is well under what the [benchmark](../benchmark/benchmark.md) as
 for: the harness holds (gates bounce bad calls, junk never lands), but the judgment
 the sessions produce is poor, and a turn takes a minute or more. The demo shows the
 machinery, not the quality.
-
-### Model sources
-
-The page's model comes from one of three sources, chosen in the
-[action button](./gui.md#the-action-button)'s popover, in Settings, and in the chat
-pane while no model is ready. Builds and [chat](#chat) use
-the same one. The choice, and an endpoint's URL, model name, and key, are kept in this
-browser's local storage under `jazyk.modelSource`. Nothing is saved on a jazyk server;
-an endpoint's key goes only to that endpoint.
-
-- Downloaded (the default): an instruct model from Hugging Face run on WebGPU by WebLLM,
-  loaded on request and cached by the browser (above). The model is a choice: the
-  chooser lists WebLLM's prebuilt instruct models (Llama 3.1 and 3.2, Qwen 2.5 and 3,
-  Hermes 2 and 3, Mistral, Phi, Gemma, SmolLM, in their 16-bit-activation builds)
-  with the memory each needs, from a few hundred megabytes to about six gigabytes,
-  and the default is Hermes-3-Llama-3.2-3B (2.2 GB). A bigger model is a better
-  build and a longer download; the 7B and 8B tier needs a machine with several
-  gigabytes to spare beside the weights, since the 32k window's KV cache comes on
-  top. The choice is kept with the source under `jazyk.modelSource`, and a model
-  chosen after another was loaded loads on request like the first one.
-  - Each model carries a tier, from its parameter count, so the list says what a
-    model is for. The rule is the count, not a name, so a model the table gains
-    later sorts itself.
-    - `build`: 7B and up. Builds well, and chats.
-    - `chat`: 3B. Chats and answers questions, and builds with rough results.
-    - `reader`: under 3B. Answers questions over the graph's read tools only, and
-      does not build.
-  - Qwen 3 thinks before it answers, inside `<think>` tags in its text; the page
-    splits that block out as the reply's reasoning, so the chat shows it as
-    reasoning and the text codec parses only the answer.
-  - The list marks the models already in the browser's cache (`downloaded`, from
-    WebLLM's `hasModelInCache`), so what is one click away is visible, and it is
-    sorted strongest first.
-  - On arrival the page picks the strongest downloaded model and loads it, with no
-    source chosen yet or with the downloaded source chosen; a page with nothing
-    downloaded offers the default and waits to be asked. A remembered choice
-    ([the demo](#the-demo)) is kept when it is still downloaded.
-  - A build runs on a `build` or a `chat` model. A `chat` model carries an info
-    tooltip in the chooser: the model is small, a build runs, and its results are
-    rough; a 7B or larger model, or an endpoint, builds better.
-  - With no model or a `reader` model loaded, the Build button opens the chooser
-    instead of running, and the tooltip says a build needs a model of 3B or more,
-    or an endpoint, since a session's prompt and the judgment it asks for are
-    beyond a model that size and the build would only park. Chat runs on any tier.
-- Built into the browser: the browser's on-device model through the Prompt API
-  (`LanguageModel`), Gemini Nano in Chrome and Phi-4-mini in Edge. Offered only where
-  the browser has it. The browser ships this one model and the API offers no choice
-  among others, nor says which model it runs, so the chooser names it from the
-  browser and has nothing to pick within it. "Built in" means the
-  browser owns and runs it, not that it is already on the disk: Chrome fetches the
-  weights, a few gigabytes, the first time any page asks, and the page says so
-  (`Chrome is downloading its built-in model for the first time`) with the progress
-  the browser reports; later loads are instant. Its context window is small, so it
-  counts as a `reader` model (the tiers above): chat and questions over the read
-  tools, and a build asks for a downloaded model of 3B or more, or an endpoint. A prompt it
-  still cannot hold fails with the model's own words ("The input is too large.") and
-  the remedy beside them (a downloaded model or an endpoint).
-- Your endpoint: any OpenAI-compatible chat completions URL (a local server, LocalRouter,
-  a provider), with a model name and an optional key. The page calls it directly, so
-  the endpoint must allow this page's origin (CORS). Ready at once, nothing to load.
-
-Switching sources drops the loaded model; a session in flight finishes on the old one.
-A source that cannot run in this browser is shown with the reason instead of being
-offered.
 
 ## The trace
 
@@ -616,229 +381,6 @@ render serves the `.svg` on disk when the view's emission equals the `.puml` bes
 it, so the picture is exactly the view's. A view that changed since the seed, or one
 drawn at another level of detail, has no picture in a tab, and its page says why.
 
-## The demo
-
-The page mounts at once against a backend with no project open, which answers the
-[capability descriptor](./gui.md#backends-and-capabilities) itself (`backend:
-demo`, `projects: bundled`, `events: pushed`, `lsp: false`, `agent: embedded`,
-`rendering: none`, `persistence: browser`) and
-refuses every other route with `501` until a project is open. Home renders the
-picker from that descriptor and dispatches `jazyk:open-demo`, `jazyk:pick-folder`,
-`jazyk:new-project`, `jazyk:connect`, or `jazyk:open-recent`; the entry listens,
-seeds the backend with the bundled project, the [folder](#a-folder-on-disk) picked,
-or the [stored project](#browser-storage), or connects to the
-[local server](./gui.md#connecting-to-a-local-jazyk), and moves to the documents.
-Opening a folder flips the descriptor to `backend: wasm`, `persistence: folder`;
-opening a [browser project](#a-project-in-the-browser) flips it to `backend: wasm`,
-`persistence: browser`; connecting swaps the backend for the server's own
-descriptor. The open project is remembered and reopened on a reload
-([the open project](./gui.md#the-open-project)).
-
-Jobs in a tab: a build runs inside the worker, synchronously, so the worker itself
-can emit no lifecycle. The page keeps the job list and emits the lifecycle around
-the call: `POST /api/jobs` mints the job id and posts `job.queued` and
-`job.started`, every trace event the worker posts while the call runs carries that
-id as `job.trace`, and the return posts `job.finished` with the verdict.
-`GET /api/jobs` answers the page's list, newest first, kept for the life of the tab;
-opening another project empties it, since its threads belong to the project that ran
-them. So the [action button](./gui.md#the-action-button) shows the run's progress and the
-[chat column](./gui.md#chat) opens its build thread in a tab exactly as on a server.
-
-The model loads only when asked, because every read works without one and only a
-build or a [chat](#chat) needs it, and a first visit would otherwise download
-gigabytes to read a document. The descriptor says `model: loadable` while the chosen
-[source](#model-sources) still has to load, and the action button's popover and the
-chat pane offer `Load the model` with its download size; the load shows its
-progress there, and the weights cache in the browser, so a later visit loads from
-the cache. A source loaded once in this browser loads again on the next visit
-without asking (`jazyk.modelLoaded` in local storage remembers which), so a reload
-lands in a project with its model ready; choosing another source in the chooser
-stops that until the new one is loaded once. `jobs` lists `compile` once the model
-is ready and its tier is `build` or `chat`. The model's code (WebLLM) is fetched
-with the model, not with the page.
-
-Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
-its product folder when it has one, and its whole `.jazyk` as last built (the
-shards, the journal, the coverage, the rendered diagrams, the ledger), packed by
-`app/scripts/pack-demo.mjs` into one JSON per example under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
-for replays, leases, worker registrations, sockets, dotfiles (`.jazyk` itself is the
-one dotfolder carried, since it is the out directory), `__pycache__`,
-`node_modules`, `.git`, and an archived out directory are left out: a stale worker
-registration would be reaped on the first read, and that removal would count as an
-edit. A skipped directory stays out whatever it holds, so a compiled module under
-`__pycache__` never reaches a fixture.
-
-A fixture maps each file's path to its content. A UTF-8 text file is a JSON string.
-Any other file (a built deck, an image) is an object holding its bytes in standard
-base64, so a built artifact reaches the tab:
-
-```json
-{
-  "docs/README.md": "# The deck\n",
-  "deliverable/dist/jazyk-slides.pptx": { "base64": "UEsDBBQAAAAIA..." }
-}
-```
-
-The page decodes a `{ "base64" }` value into the file's bytes as it seeds the tab's
-tree, and a text value into its UTF-8 bytes. A packed file unpacks byte for byte,
-text and binary alike (a byte order mark stays). The fixtures are committed, since the
-examples' out directories are not, and `npm run pack-demos` repacks all of them
-after an example is rebuilt. The page fetches a fixture when its demo is picked
-rather than carrying them all.
-
-So a visitor lands on a populated graph rather than an empty one: the entities, the
-requirements, the views, the diagrams, and the verdict the last build left. Editing
-a document dirties its sections, which opens goals, and a build runs them through
-the model in the page. The first edit keeps the demo in
-[browser storage](#an-edited-demo), so it survives a reload until it is reset.
-
-### Keeping the demos current
-
-The demos show the work as it stands, so they are rebuilt as the compiler changes: the
-graph, the criteria, the diagrams, and the product each example generates (its code or
-output and its tests), with the tests run and their results in the ledger.
-
-- `app/scripts/refresh-demos.sh` rebuilds every example in its own directory and
-  repacks the fixtures: `jazyk compile` until the graph converges, `jazyk gen` (bind,
-  generate, and verify the product), `jazyk test` (run every test), every diagram
-  redrawn by the current renderer, then `npm run pack-demos` and the browser tests. It
-  ends with a table per example: the verdict, the open and blocked goals, the tests
-  passing out of the ledger's rows, and the tokens the refresh billed. The model steps
-  cost money, so the script runs only when a person runs it, with the model named
-  (`--model gpt-5.5`); `--only <id>` rebuilds one example; `--free` skips every model
-  step and only redraws and repacks. An example whose model steps hit a rate limit (an
-  `HTTP 429`, or a rate, usage, or quota limit named in a trace the run wrote) is not
-  packed: its fixture stays as committed,
-  the table says `rate limited`, and the script exits non-zero, so a half-finished
-  graph never reaches the demos.
-- The deploy redraws the committed fixtures' diagrams with the renderer it just built
-  (`app/scripts/rerender-fixtures.sh`), so a renderer change reaches jazyk.dev without a
-  rebuild. Nothing else of a fixture changes at deploy.
-- CI reports a demo that fell behind as a warning on the run, never a failure, so a
-  compiler change is never held up by a demo. `app/scripts/check-demos.sh` unpacks
-  every fixture into a temporary directory and warns about:
-  - a fixture whose store version is not the binary's. `jazyk status` reads such a
-    store as empty and only a build archives it, so the script compares the packed
-    `version` with the one `status` reports.
-  - a fixture with open goals the current compiler would derive.
-  - a fixture whose ledger has failing, stale, or missing tests
-    (`app/scripts/ledger-count.py`).
-  - a fixture whose diagrams are not the current renderer's output. `jazyk docsgen`
-    on the unpacked fixture draws every view whose committed `.puml` is not what the
-    emitter writes or whose `.svg` is missing, and its summary line counts them; one
-    drawn is drift. This warning names `rerender-fixtures.sh`, since a redraw is free.
-    The others name `refresh-demos.sh`.
-  A second CI step proves the check sees a stale demo: it runs the script on a copy of
-  one fixture with its store version set back and on a copy with a diagram's source
-  changed, and fails unless each warns.
-
-## Building
-
-`cd bootstrap/app && npm run build` runs the whole pipeline:
-
-- `scripts/build-wasm.sh`: `cargo build --target wasm32-unknown-unknown --lib
-  --release`, then `wasm-bindgen --target web`, then a stable re-export for the model
-  bridge (wasm-bindgen names its snippet directory after a content hash).
-- `vite build`, which builds the one page into `dist/` beside the fixtures from
-  `public/demos/`, the web manifest, and the service worker with its precache
-  manifest ([offline](#offline)). `npm run preview` serves it with the isolation
-  headers. `dist/` is build output, never committed: the binary embeds nothing.
-
-`npm run test:e2e` runs the editor's browser tests (`app/e2e/`, Playwright) against
-the built `dist/` served with the isolation headers (`PW_PORT` picks the port, so
-two checkouts run them side by side; `PW_CHANNEL=chrome` runs them in the installed
-Chrome). They drive the page the way a visitor does: every route but Home redirects until a project is open, each
-demo opens with only its own documents, the Model pages read by name with no ids,
-a requirement keeps the Requirements list, a diagram shows its picture, the
-Product pages list a demo's product files and open one with its text, the trace
-matrix renders its rows, a demo autosaves, a read-only folder holds its writes
-until asked and a writing one autosaves (a folder in the browser's private file
-system stands in for a picked one), the recent list remembers and forgets, a new project and an edited demo
-reopen with their edits after a reload and the demo resets to its original, a
-folder whose writes fail keeps them and Retry lands them, a read-only folder's held
-changes survive a reload, a phone-width screen gives the editor
-the width, nothing downloads the model on arrival, the chat pane offers the model
-chooser while no model is ready, a chat on an endpoint source (a mocked one)
-calls a read tool and streams its answer into the pane, the endpoint call carries
-the key only when one is set, a second prompt during a turn is refused, switching
-demos empties the conversations, a stubbed built-in model answers a chat, a
-download is a `.zip` of the project, a refused write grant is said in the top bar,
-a requirement page reads its criteria in words and its ids only in Developer mode,
-every diagram of every demo has its picture, a phone-width screen shows the
-chat again once it is wide, a reload lands in the open project at the same route,
-a build in a tab shows its progress on the action button and opens its build thread
-in the chat, the chat's prompt box takes a first question with no conversation
-open, the action list offers only what the backend runs, the project menu says
-where changes go and downloads the project, the page loads and opens a demo it has
-seen with the network off, the connect route reaches a mocked local server and
-lists it in Recent, and the Product overview reads the novel as one document with
-its print action, renders the deck's slides from its `.pptx` and downloads the file
-whole, and shows the sort utility's README and test summary. The deploy workflow runs them after the build and
-publishes only when they pass.
-
-- `npm run test:unit` runs the unit tests of the pure logic under `app/src/lib/`
-  (Vitest, one `<module>.test.ts` beside each module, jsdom with a fake IndexedDB):
-  the recent list, the coalescing store writer, the folder mirror, the model
-  sources, and the presentation words. The same run covers the demo fixture scripts
-  under `app/scripts/` (one `<script>.test.mjs` beside each, in node): `pack-demo.mjs`
-  and `unpack-demo.mjs` round-trip a project tree minus the skipped entries, its
-  text and binary files byte for byte; `ledger-count.py` counts a ledger with a quoted
-  verdict, a criterion's verdict beside its row's, a verdict line inside a block
-  scalar `evidence`, a failing row, and an unverified row. They need no build and no
-  browser, so CI runs them on every change to `bootstrap/`.
-
-The page's first script carries the app alone. What only some visits use loads when
-it is first used: the model's code when the model loads, the graph layout
-library when the Developer [map](./gui.md#map) opens, and the PowerPoint renderer
-when the Product [overview](./gui.md#overview) shows a deck.
-
-The wasm target lives in the rustup toolchain. A `cargo` earlier on `PATH` from
-another installation (a Homebrew rustc has no wasm std) is the usual failure;
-`build-wasm.sh` asks rustup which cargo owns the target and puts its `bin` first so
-`cargo` and `rustc` stay matched.
-
-Requirements: the `wasm32-unknown-unknown` target (`rustup target add
-wasm32-unknown-unknown`) and `wasm-bindgen-cli` at the version of the `wasm-bindgen`
-crate (`cargo install wasm-bindgen-cli --locked`).
-
-## Serving
-
-The demo page must be cross-origin isolated, or `SharedArrayBuffer` is not available
-and no build can run. That means two headers on the document:
-
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-
-The Vite dev server and `vite preview` set both. [jazyk.dev](../site.md#the-editor)
-serves the page from S3 through CloudFront, which sets them with a response headers
-policy; nothing client-side is needed. A response the service worker serves from
-its cache keeps the headers it was cached with, so an offline load is isolated too.
-
-## Offline
-
-The page is installable and works without a network once it has loaded once:
-
-- A service worker (Workbox through `vite-plugin-pwa`) precaches the app shell:
-  `index.html`, the scripts and styles, the wasm module and its bindings, the
-  fonts, the icons, and the web manifest, the scripts loaded on first use included
-  (the PowerPoint renderer, the graph layout library), so a deck renders offline.
-  The model's code is the one script left out. It serves them cache-first, and updates
-  the cache in the background when a new build is deployed; the next load runs the
-  new version.
-- A demo's fixture (`demos/<id>.json`) is cached when it is first fetched and
-  served from the cache after, refreshed in the background when the network is
-  there, so a demo opened once opens offline. The model's weights are the model
-  library's own cache, filled on the first load.
-- Browser projects, folders, and the edits kept for a demo are in the browser's
-  storage and never needed the network. A connection to a local server is on the
-  loopback address and needs no network either.
-- What needs the network: the first visit, a demo never opened, a model never
-  loaded, and the endpoint model source.
-- A build a person is offline for is not the deploy's concern: `index.html` and the
-  fixtures are served with no cache at the edge, the hashed assets with a week, and
-  the worker's precache manifest names each asset by its hash, so an update is one
-  new manifest and the assets it names.
-
 ## What a tab does not do
 
 - No [generation](../consumers/gen.md), [binding](../consumers/bind.md),
@@ -857,3 +399,44 @@ The page is installable and works without a network once it has loaded once:
 - No file watching. The only way onto the machine is a folder the person opened or
   saved to, or a download.
 - No [benchmark](../benchmark/benchmark.md).
+
+## Building
+
+Build the engine library from `bootstrap/`:
+
+```sh
+cargo build --target wasm32-unknown-unknown --lib --release --locked
+```
+
+The toolchain needs the `wasm32-unknown-unknown` target. A host generates JavaScript
+bindings with a `wasm-bindgen-cli` version matching the crate's locked `wasm-bindgen`
+version. The engine checkout includes embedded compiler payloads under `docs/`.
+The application consumes a pinned engine revision and owns its bundling and output.
+See the [application build](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#building).
+
+## Serving
+
+The synchronous model bridge requires `SharedArrayBuffer`. Its host document must
+be cross-origin isolated with these response headers:
+
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Cross-Origin-Embedder-Policy: require-corp`
+
+Without isolation the engine's reads remain usable; model calls report the missing
+capability. Offline caching and deployment belong to the
+[browser application](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#serving).
+
+## Browser application specification
+
+These host and presentation sections moved to Jazyk Cloud. Existing anchors link
+to their canonical application specifications.
+
+- <a id="a-folder-on-disk"></a>[A folder on disk](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#a-folder-on-disk).
+- <a id="browser-storage"></a>[Browser storage](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#browser-storage).
+- <a id="a-project-in-the-browser"></a>[A project in the browser](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#a-project-in-the-browser).
+- <a id="an-edited-demo"></a>[An edited demo](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#an-edited-demo).
+- <a id="when-a-folder-cannot-be-written"></a>[When a folder cannot be written](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#when-a-folder-cannot-be-written).
+- <a id="model-sources"></a>[Model sources](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#model-sources).
+- <a id="the-demo"></a>[The demo](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#the-demo).
+- <a id="keeping-the-demos-current"></a>[Keeping the demos current](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#keeping-the-demos-current).
+- <a id="offline"></a>[Offline](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#offline).

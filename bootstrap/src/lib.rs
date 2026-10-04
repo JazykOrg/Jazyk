@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod md;
 pub mod model;
 pub mod project;
+pub mod protocol;
 pub mod reconcile;
 pub mod render;
 pub mod runner;

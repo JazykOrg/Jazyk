@@ -16,14 +16,11 @@ This scratch space is a live document to outline the work for this documentation
 
 ## LATER
 
-- The GUI beyond one machine: sign-in, per-project access, and read-only share links
-  over the [GUI](./frontends/gui.md); today the [viewer](./frontends/viewer.md)
-  snapshot is the share. The home screen and the capability descriptor are the only
-  cloud-facing pieces in the spec.
-- The demo and browser backends (the `wasm-backend` branch) mount into
-  `bootstrap/app` through its transport seam and the
-  [capability descriptor](./frontends/gui.md#backends-and-capabilities); the
-  Home screen already carries their entries.
+- Multi-project runtime and portable workspace contracts for hosted compilation.
+  Accounts, project selection, and the complete editor are owned by the private
+  [Jazyk Cloud plan](https://github.com/JazykOrg/jazyk-cloud/blob/master/plans/cloud/README.md).
+  The native [API](./frontends/gui.md), [browser engine](./frontends/wasm.md), and
+  [capability descriptor](./frontends/gui.md#backends-and-capabilities) stay here.
 - Per-entity file sharding for the [graph store](./compiler/graph.md#storage-layout), when
   `entities.yaml` grows too large.
 - [Journal](./compiler/graph.md#journal) rotation: cap `journal/` growth, compact old

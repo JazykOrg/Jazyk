@@ -3417,7 +3417,7 @@ impl ToolSession {
             .client
             .clone()
             .filter(|c| !c.trim().is_empty())
-            .or_else(|| std::env::var("USER").ok().filter(|u| !u.is_empty()))
+            .or_else(|| crate::sys::env_var("USER").ok().filter(|u| !u.is_empty()))
             .unwrap_or_else(|| "human".to_string())
     }
 
@@ -4321,11 +4321,7 @@ impl ToolSession {
                 } else {
                     self.deliverable_path(&cwd_rel)?
                 };
-                let out = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&command)
-                    .current_dir(&cwd)
-                    .output()
+                let out = crate::sys::run_shell(&command, &cwd)
                     .map_err(|e| {
                         ToolError::new(
                             "io-error",
@@ -4340,7 +4336,7 @@ impl ToolSession {
                     lines[start..].join("\n")
                 };
                 Ok(json!({
-                    "exitCode": out.status.code().unwrap_or(-1),
+                    "exitCode": out.code,
                     "output": crate::llm::truncate(&tail, 6000),
                 }))
             }

@@ -2147,16 +2147,14 @@ pub fn compile_with(
     // session; in a browser tab the loop in this same module
     // (docs/frontends/wasm.md#sessions).
     #[cfg(not(target_arch = "wasm32"))]
-    let runner = match crate::acp::runner::AcpRunner::start(proj, llm, out) {
-        Ok(r) => r,
-        Err(e) => return refused(e),
+    let runner: Box<dyn crate::runner::SessionRunner> = if crate::vfs::is_scoped() {
+        match crate::inprocess::InProcessRunner::start(proj, llm, out) { Ok(r) => Box::new(r), Err(e) => return refused(e) }
+    } else {
+        match crate::acp::runner::AcpRunner::start(proj, llm, out) { Ok(r) => Box::new(r), Err(e) => return refused(e) }
     };
     #[cfg(target_arch = "wasm32")]
-    let runner = match crate::wasm::runner::InPageRunner::start(proj, llm, out) {
-        Ok(r) => r,
-        Err(e) => return refused(e),
-    };
-    let runner: &dyn crate::runner::SessionRunner = &runner;
+    let runner: Box<dyn crate::runner::SessionRunner> = match crate::inprocess::InProcessRunner::start(proj,llm,out) { Ok(r) => Box::new(r), Err(e) => return refused(e) };
+    let runner = runner.as_ref();
     runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
     trace.line("build", &format!("agent: {}", runner.agent_name()));
 

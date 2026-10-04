@@ -20,5 +20,4 @@ pub mod workers;
 // transport answers in its own envelope.
 pub type Refusal = (u16, String);
 
-#[cfg(target_arch = "wasm32")]
 pub mod dispatch;

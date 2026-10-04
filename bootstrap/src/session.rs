@@ -546,6 +546,7 @@ impl Trace {
         kind: &str,
         goals: &[String],
     ) -> Trace {
+        if crate::vfs::is_scoped() { return self; }
         use std::io::Write;
         let dir = out.join("trace");
         crate::vfs::create_dir_all(&dir).ok();

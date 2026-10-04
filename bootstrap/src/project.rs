@@ -88,7 +88,7 @@ fn parse_acp(t: &Toml) -> AcpSettings {
 
 // Read the global [acp] config if present (same file as the global LLM config).
 pub fn load_global_acp() -> AcpSettings {
-    let home = match std::env::var("HOME") {
+    let home = match crate::sys::env_var("HOME") {
         Ok(h) => h,
         Err(_) => return AcpSettings::default(),
     };
@@ -169,7 +169,7 @@ fn parse_executors(t: &Toml) -> Executors {
 
 // Read the global [executors] table if present (same file as the global LLM config).
 pub fn load_global_executors() -> Executors {
-    let home = match std::env::var("HOME") {
+    let home = match crate::sys::env_var("HOME") {
         Ok(h) => h,
         Err(_) => return Executors::default(),
     };
@@ -266,7 +266,7 @@ pub struct GlobalLlm {
 
 // Read the global LLM config if present.
 pub fn load_global_llm() -> GlobalLlm {
-    let home = match std::env::var("HOME") {
+    let home = match crate::sys::env_var("HOME") {
         Ok(h) => h,
         Err(_) => return GlobalLlm::default(),
     };

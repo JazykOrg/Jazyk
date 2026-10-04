@@ -310,7 +310,7 @@ impl McpServer {
             .unwrap_or(300);
         let gs = crate::gen::GenSettings::resolve(&self.project);
         let fingerprint = |path: &std::path::Path| -> String {
-            std::fs::metadata(path)
+            crate::vfs::entry_metadata(path)
                 .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
                 .unwrap_or_default()
         };
@@ -1550,7 +1550,7 @@ impl McpServer {
                 // heartbeat while the process lives. An ephemeral serving is part of a
                 // run that already answers for itself, so it never registers. Mirrors
                 // docs/frontends/mcp.md#the-control-plane-over-mcp.
-                if !self.bridge.ephemeral
+                if !self.bridge.ephemeral && !crate::vfs::is_scoped()
                     && self.modes.iter().any(|m| {
                         m == "compile" || m == "generate" || m == "verify" || m == "decompile"
                     })
@@ -2832,6 +2832,7 @@ fn sink_write(
     new_text: &str,
     full: &str,
 ) -> Result<(), String> {
+    if crate::vfs::is_scoped() { return Err("hosted workspaces do not connect to editor sockets".into()); }
     use std::io::{BufRead, BufReader, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(sink).map_err(|e| e.to_string())?;
     stream

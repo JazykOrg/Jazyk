@@ -7,6 +7,9 @@ agent over MCP, `jazyk monitor`) reads the same intent the same way the board is
 same everywhere. Without it, each frontend invents its own policy in process memory and
 workers fight.
 
+A service can run projects through the isolated [hosted runtime](./hosted-runtime.md).
+The service owns project scheduling and snapshot persistence.
+
 ## Modes and releases
 
 `control.yaml` holds the workflow policy and the standing approvals:

@@ -198,6 +198,7 @@ impl AcpRunner {
     // Resolve the default agent (config ladder; JAZYK_ACP_AGENT carries the --agent
     // flag). Hosts spawn lazily per profile on the first session.
     pub fn start(project: &Project, llm: &Llm, out: &Path) -> Result<AcpRunner, String> {
+        if crate::vfs::is_scoped() { return Err("hosted workspaces use the in-process runner".into()); }
         let default_agent = config::resolve_acp(
             None,
             &project.acp,
@@ -401,15 +402,7 @@ impl AcpRunner {
     // prompt is the same assembly for every kind.
     // Mirrors docs/compiler/sessions.md#the-prompt.
     fn prompt_for(&self, batch: &BatchRun) -> String {
-        let mut store = crate::store::Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
-        store.sync_docs(&parsed);
-        let control = crate::control::Control::load(&self.project, &self.out);
-        let (loaded, skills) = crate::session::initial_loaded(&store, &batch.goals);
-        let mut pb = crate::session::ProjectBlock::compute(&store, &batch.goals, &control.compile)
-            .with_lint(&self.project.linting);
-        pb.batch = batch.id.clone();
-        crate::session::session_prompt(&store, &batch.goals, &loaded, &skills, &pb)
+        crate::runner::batch_prompt(&self.project, &self.out, batch)
     }
 
     // Run one goal batch as one session. The commit happens inside the injected

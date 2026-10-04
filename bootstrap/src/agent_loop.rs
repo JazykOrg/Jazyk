@@ -357,7 +357,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     // forced by JAZYK_CODEC.
     let mut mode = llm::tools_mode();
     if mode == 0 {
-        if let Ok(env) = std::env::var("JAZYK_CODEC") {
+        if let Ok(env) = crate::sys::env_var("JAZYK_CODEC") {
             mode = match env.as_str() {
                 "text" => 2,
                 "native" => 1,

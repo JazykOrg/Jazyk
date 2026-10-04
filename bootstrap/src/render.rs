@@ -34,7 +34,7 @@ impl std::error::Error for RenderError {}
 // with. See docs/frontends/wasm.md#diagrams.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_svg(puml: &str) -> Result<String, RenderError> {
-    match std::env::var("JAZYK_PLANTUML") {
+    match crate::sys::env_var("JAZYK_PLANTUML") {
         Ok(bin) if !bin.trim().is_empty() => native_svg(bin.trim(), puml),
         _ => in_process_svg(puml),
     }
@@ -49,7 +49,9 @@ pub fn render_svg(puml: &str) -> Result<String, RenderError> {
 fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
     let plain = adapt_component_for_crate(&plain);
-    match std::panic::catch_unwind(|| plantuml_little::convert(&plain)) {
+    match std::panic::catch_unwind(|| {
+        if crate::vfs::is_scoped() { hosted_svg(&plain) } else { plantuml_little::convert(&plain) }
+    }) {
         Ok(Ok(svg)) => Ok(anchor_entities(&svg, &links)),
         Ok(Err(e)) => Err(RenderError(e.to_string())),
         Err(panic) => {
@@ -61,6 +63,25 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
             Err(RenderError(format!("renderer panicked: {}", message)))
         }
     }
+}
+
+// The dependency's convenience converter runs a filesystem preprocessor. Hosted
+// diagrams use its public pure parser/layout/render stages instead. Inline image
+// markup is refused before any layout can invoke the dependency's image loader.
+#[cfg(not(target_arch = "wasm32"))]
+fn hosted_svg(source: &str) -> plantuml_little::Result<String> {
+    if source.to_ascii_lowercase().contains("<img") || source.lines().any(|line| line.trim_start().starts_with('!')) {
+        return Err(plantuml_little::Error::Render("hosted diagrams do not load external images or preprocessor directives".into()));
+    }
+    struct Sprites;
+    impl Drop for Sprites { fn drop(&mut self) { plantuml_little::render::svg_richtext::clear_sprites(); } }
+    plantuml_little::render::svg_richtext::clear_sprites();
+    let _sprites = Sprites;
+    let diagram = plantuml_little::parser::parse(source)?;
+    let skin = plantuml_little::style::parse_skinparams(source);
+    let layout = plantuml_little::layout::layout(&diagram,&skin)?;
+    let meta = plantuml_little::parser::common::parse_meta(source);
+    plantuml_little::render::svg::render(&diagram,&layout,&skin,&meta)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -126,6 +147,7 @@ fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
 // SVG to PNG bytes through resvg.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
+    if crate::vfs::is_scoped() { return Err(RenderError("hosted PNG export is unavailable; use SVG".into())); }
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = fonts();
     let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| RenderError(e.to_string()))?;

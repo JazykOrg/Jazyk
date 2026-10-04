@@ -587,6 +587,9 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
 // Mirrors docs/compiler/tools.md#verification-tools.
 pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
     let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
+    if crate::vfs::is_scoped() {
+        return Ok(json!({"passed":0,"failed":0,"rows":[],"pendingCi":true,"pending":select_rows(store,gs,targets,Some("programmatic"),true),"reason":"programmatic tests run through delivery CI"}));
+    }
     crate::gen::run_build(&store.out, gs, &quiet, "run_tests")
         .map_err(|e| format!("{}; nothing was verified", e))?;
     let ledger = Ledger::load(&store.out);
@@ -1090,6 +1093,28 @@ mod tests {
         (s, gs)
     }
 
+    #[test]
+    fn hosted_programmatic_tests_remain_pending_ci_without_false_verdicts() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = fixture(out);
+        let before = Ledger::load(out);
+        let result = run_selected(&store,&gs,&[]).unwrap();
+        assert_eq!(result["pendingCi"],true);
+        assert_eq!(result["passed"],0);
+        assert_eq!(result["failed"],0);
+        assert_eq!(serde_json::to_value(Ledger::load(out)).unwrap(),serde_json::to_value(before).unwrap());
+        let project = crate::project::Project::load(std::path::Path::new("/project"));
+        let llm = crate::llm::Llm {base_url:"must-not-connect".into(),model:"unused".into(),api_key:String::new(),temperature:None,trace:None};
+        let runner = crate::inprocess::InProcessRunner::start(&project,&llm,out).unwrap();
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
+        let report = run_all(&store,&runner,&gs,&[],None,false,&trace).unwrap();
+        assert_eq!(report["verified"],0);
+        assert_eq!(report["failing"],0);
+        assert_eq!(report["pendingCi"].as_array().unwrap().len(),1);
+        assert_eq!(Ledger::load(out).requirements["req:shop-1"].verdict,"none");
+    }
+
     // A row whose requirement left the graph is not actionable work: the queue
     // excludes it, and the next record buries it.
     // Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
@@ -1509,8 +1534,10 @@ pub fn run_all(
     // artifact that was never produced, so a broken build stops the run instead of
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
-    crate::gen::run_build(&store.out, gs, trace, "verify")
-        .map_err(|e| format!("{}; nothing was verified", e))?;
+    if !crate::vfs::is_scoped() {
+        crate::gen::run_build(&store.out, gs, trace, "verify")
+            .map_err(|e| format!("{}; nothing was verified", e))?;
+    }
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     // Failed programmatic runs, judged together at the end of the run.
     let mut held: Vec<(String, ProgRun, String)> = Vec::new();
@@ -1531,6 +1558,10 @@ pub fn run_all(
             continue;
         }
         let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
+        if crate::vfs::is_scoped() && row_kind != "llm" {
+            skipped += 1;
+            continue;
+        }
         trace.event(TraceEvent::VerifyRowStart {
             requirement: rid.clone(),
             test: row_kind.to_string(),
@@ -1694,6 +1725,7 @@ pub fn run_all(
         .count();
     Ok(json!({
         "rows": selected.len(),
+        "pendingCi": if crate::vfs::is_scoped() { selected.iter().filter(|r| r["test"]["kind"] != "llm").cloned().collect::<Vec<_>>() } else { Vec::new() },
         "verified": verified,
         "failing": failing,
         "runnerFailed": runner_failed,

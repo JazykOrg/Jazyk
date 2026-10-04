@@ -561,6 +561,7 @@ impl Ledger {
         let Ok(text) = crate::vfs::read_to_string(&path) else {
             return Ledger::default();
         };
+        if crate::vfs::is_scoped() { return serde_norway::from_str(&text).unwrap_or_default(); }
         let mut h = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut h);
         let key = h.finish();
@@ -3992,7 +3993,9 @@ pub fn run_all(
     // A built deliverable is not generated until the artifact exists, so the run ends
     // by producing it. The failure is recorded either way, which is what the next run
     // reads (docs/consumers/gen.md#the-build).
-    let build = match run_build(&store.out, gs, trace, "gen") {
+    let build = if crate::vfs::is_scoped() {
+        json!({"state":"pending-ci", "pendingCi":Ledger::load(&store.out).build.is_some(),"reason":"build commands run through delivery CI"})
+    } else { match run_build(&store.out, gs, trace, "gen") {
         Ok(()) => {
             let produced = Ledger::load(&store.out)
                 .build
@@ -4007,7 +4010,7 @@ pub fn run_all(
             trace.line("gen", &e);
             json!({ "ok": false, "error": e })
         }
-    };
+    }};
     Ok(
         json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "stopped": stopped, "build": build }),
     )

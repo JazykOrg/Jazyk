@@ -25,6 +25,12 @@ pub mod gen;
 pub mod goals;
 pub mod limits;
 pub mod llm;
+mod scoped_state;
+pub mod inprocess;
+pub mod portable;
+pub mod conversation;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod hosted;
 pub mod mcp;
 pub mod md;
 pub mod model;

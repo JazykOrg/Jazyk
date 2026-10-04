@@ -31,6 +31,7 @@ mod imp {
     use super::{Duration, Path, ShellOutput};
 
     pub fn run_shell(script: &str, cwd: &Path) -> std::io::Result<ShellOutput> {
+        if crate::vfs::is_scoped() { return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "hosted workspaces run commands through delivery CI")); }
         let out = std::process::Command::new("sh")
             .arg("-c")
             .arg(script)
@@ -45,7 +46,7 @@ mod imp {
     }
 
     pub fn process_id() -> u32 {
-        std::process::id()
+        if crate::vfs::is_scoped() { 1 } else { std::process::id() }
     }
 
     // Seconds since the epoch.
@@ -65,6 +66,13 @@ mod imp {
     }
 
     pub fn sleep(d: Duration) {
+        if crate::vfs::is_scoped() {
+            let started = std::time::Instant::now();
+            while started.elapsed() < d && !crate::hosted::cancelled() {
+                std::thread::sleep((d-started.elapsed().min(d)).min(Duration::from_millis(100)));
+            }
+            return;
+        }
         std::thread::sleep(d);
     }
 }
@@ -149,3 +157,8 @@ impl std::ops::Add<Duration> for Instant {
 }
 
 pub use imp::*;
+
+/// Hosted requests never inherit owner or service environment configuration.
+pub fn env_var(key: &str) -> Result<String, std::env::VarError> {
+    if crate::vfs::is_scoped() { Err(std::env::VarError::NotPresent) } else { std::env::var(key) }
+}

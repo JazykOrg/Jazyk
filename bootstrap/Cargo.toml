@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 serde_norway = "0.9"
 regex = "1.12.4"
 # The per-session bearer token of the MCP-over-HTTP serving (docs/frontends/mcp.md).
@@ -26,6 +27,7 @@ getrandom = "0.3"
 # Infrastructure comes from crates; only domain logic is hand-rolled (owner decision).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2"
+url = "2"
 notify = "6"
 # ACP bridge (docs/frontends/acp.md): the official protocol SDK. Executor-agnostic
 # (futures + async-io), driven by a block_on on a dedicated thread; no tokio outside gui/.
@@ -56,8 +58,7 @@ js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.3", features = ["wasm_js"] }
-# A product file's bytes in the tab's JSON envelope (docs/frontends/wasm.md#the-product).
-base64 = "0.22"
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
 version = "0.3"

@@ -751,6 +751,7 @@ pub fn record_outcome(out: &Path, id: &str, outcome: &Result<(), String>) {
 // every frontend shows the same progress from the store.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_handler(project: Project, out: PathBuf, id: String) {
+    if crate::vfs::is_scoped() { return; }
     std::thread::spawn(move || {
         let _ = run_handler(&project, &out, &id);
     });
@@ -775,7 +776,7 @@ fn handle(project: &Project, out: &Path, id: &str) -> Result<(), String> {
         &crate::cli::Options::default(),
         &project.llm,
         &crate::project::load_global_llm(),
-        |n| std::env::var(n).ok(),
+        |n| crate::sys::env_var(n).ok(),
     );
     let runner = crate::acp::runner::AcpRunner::start(project, &llm, out)?;
     let prompt = handling_prompt(out, id)?;

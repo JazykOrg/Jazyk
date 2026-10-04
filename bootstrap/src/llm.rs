@@ -4,30 +4,31 @@
 // temperature and streaming fallbacks, pacing, and retry policy.
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::Ordering;
+use crate::scoped_state::{AtomicBool, AtomicU64, AtomicU8};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 // Codec capability, learned once per run. 0 = unknown, 1 = native tools, 2 = text fallback.
-static TOOLS_MODE: AtomicU8 = AtomicU8::new(0);
+static TOOLS_MODE: AtomicU8 = AtomicU8::new("TOOLS_MODE", 0);
 
 // Set once a model rejects the temperature parameter (some only allow their default);
 // the rest of the run omits it. Providers often wrap the rejection as a bare 400, so the
 // first hard 400 with a temperature set triggers the drop-and-retry.
-static TEMP_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+static TEMP_UNSUPPORTED: AtomicBool = AtomicBool::new("TEMP_UNSUPPORTED", false);
 
 // Set once an endpoint answers "stream must be set to true"; the rest of the run uses
 // streaming requests and assembles the message from SSE deltas.
-static STREAM_REQUIRED: AtomicBool = AtomicBool::new(false);
+static STREAM_REQUIRED: AtomicBool = AtomicBool::new("STREAM_REQUIRED", false);
 
 // Set once a provider rejects reasoning fields echoed back in the message history
 // (some 400 when `reasoning_content` appears in an input message). The rest of the run
 // strips them from outgoing messages; the turn's own transcript keeps them.
-static REASONING_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+static REASONING_UNSUPPORTED: AtomicBool = AtomicBool::new("REASONING_UNSUPPORTED", false);
 
 // Set once a provider rejects the `max_tokens` completion cap; the rest of the run
 // omits it and relies on the stream reader's own cap.
-static MAX_TOKENS_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+static MAX_TOKENS_UNSUPPORTED: AtomicBool = AtomicBool::new("MAX_TOKENS_UNSUPPORTED", false);
 
 pub fn tools_mode() -> u8 {
     TOOLS_MODE.load(Ordering::Relaxed)
@@ -71,7 +72,7 @@ fn usage_cached(u: &Value) -> u64 {
 }
 
 // Token meter: completion tokens across all calls this run, for status.yaml reporting.
-static SPENT_TOKENS: AtomicU64 = AtomicU64::new(0);
+static SPENT_TOKENS: AtomicU64 = AtomicU64::new("SPENT_TOKENS", 0);
 
 pub fn tokens_spent() -> u64 {
     SPENT_TOKENS.load(Ordering::Relaxed)
@@ -86,7 +87,7 @@ pub fn add_tokens(n: u64) {
 // Tokens already folded into a persisted status. The meter is process-lifetime, but
 // status.yaml is cumulative across builds and processes: a build takes only the delta
 // since the last take, so it never clobbers earlier builds' spend.
-static FOLDED_TOKENS: AtomicU64 = AtomicU64::new(0);
+static FOLDED_TOKENS: AtomicU64 = AtomicU64::new("FOLDED_TOKENS", 0);
 
 pub fn take_tokens_delta() -> u64 {
     let spent = SPENT_TOKENS.load(Ordering::Relaxed);
@@ -95,15 +96,15 @@ pub fn take_tokens_delta() -> u64 {
 }
 
 // Verbose request logging, enabled by the CLI or the JAZYK_VERBOSE env var.
-static VERBOSE: AtomicBool = AtomicBool::new(false);
-static VERBOSE_INIT: AtomicBool = AtomicBool::new(false);
+static VERBOSE: AtomicBool = AtomicBool::new("VERBOSE", false);
+static VERBOSE_INIT: AtomicBool = AtomicBool::new("VERBOSE_INIT", false);
 pub fn set_verbose(on: bool) {
     VERBOSE.store(on, Ordering::Relaxed);
     VERBOSE_INIT.store(true, Ordering::Relaxed);
 }
 fn verbose() -> bool {
     if !VERBOSE_INIT.load(Ordering::Relaxed) {
-        let on = std::env::var("JAZYK_VERBOSE")
+        let on = crate::sys::env_var("JAZYK_VERBOSE")
             .map(|v| !v.is_empty() && v != "0")
             .unwrap_or(false);
         set_verbose(on);
@@ -121,7 +122,7 @@ struct Semaphore {
 static SEM: OnceLock<Semaphore> = OnceLock::new();
 fn semaphore() -> &'static Semaphore {
     SEM.get_or_init(|| {
-        let n = std::env::var("JAZYK_MAX_CONCURRENCY")
+        let n = crate::sys::env_var("JAZYK_MAX_CONCURRENCY")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(6)
@@ -136,7 +137,7 @@ fn semaphore() -> &'static Semaphore {
 // Tunable with JAZYK_MIN_INTERVAL_MS; default 500.
 static LAST_REQUEST: Mutex<Option<crate::sys::Instant>> = Mutex::new(None);
 fn pace() {
-    let min_ms = std::env::var("JAZYK_MIN_INTERVAL_MS")
+    let min_ms = crate::sys::env_var("JAZYK_MIN_INTERVAL_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(500);
@@ -180,7 +181,7 @@ impl Drop for Permit {
 // Number of retries (in addition to the first attempt) for failed LLM calls. Tunable with
 // JAZYK_MAX_RETRIES; default 2.
 fn max_retries() -> usize {
-    std::env::var("JAZYK_MAX_RETRIES")
+    crate::sys::env_var("JAZYK_MAX_RETRIES")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(2)
@@ -193,7 +194,7 @@ fn max_retries() -> usize {
 // A cap set by the host, taking the place of the environment where there is none
 // (the browser backend sets it at boot: docs/frontends/wasm.md#the-model). Zero
 // means unset.
-static MAX_COMPLETION_OVERRIDE: AtomicU64 = AtomicU64::new(0);
+static MAX_COMPLETION_OVERRIDE: AtomicU64 = AtomicU64::new("MAX_COMPLETION_OVERRIDE", 0);
 
 pub fn set_max_completion_tokens(n: u64) {
     MAX_COMPLETION_OVERRIDE.store(n, Ordering::Relaxed);
@@ -202,7 +203,7 @@ pub fn set_max_completion_tokens(n: u64) {
 // Set by the agent loop after a reply the cap cut in its reasoning with no call made:
 // the next request alone carries twice the cap. Mirrors
 // docs/compiler/project-settings.md#environment-tuning.
-static BOOST_NEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BOOST_NEXT: AtomicBool = AtomicBool::new("BOOST_NEXT", false);
 
 pub fn boost_next_completion() {
     BOOST_NEXT.store(true, Ordering::Relaxed);
@@ -213,7 +214,7 @@ fn base_completion_tokens() -> u64 {
     if over > 0 {
         return over.max(256);
     }
-    std::env::var("JAZYK_MAX_COMPLETION_TOKENS")
+    crate::sys::env_var("JAZYK_MAX_COMPLETION_TOKENS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(4096)
@@ -232,7 +233,7 @@ fn max_completion_tokens() -> u64 {
 // Wall clock for one whole LLM call. JAZYK_READ_TIMEOUT waits for the next byte; this
 // bounds a call whose bytes keep arriving. Tunable with JAZYK_CALL_TIMEOUT; default 600.
 fn call_timeout() -> Duration {
-    let secs = std::env::var("JAZYK_CALL_TIMEOUT")
+    let secs = crate::sys::env_var("JAZYK_CALL_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(600)
@@ -346,6 +347,7 @@ impl Llm {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn list_models(&self) -> Vec<String> {
+        if crate::vfs::is_scoped() { return vec![self.model.clone()]; }
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(5))
             .timeout_read(Duration::from_secs(10))
@@ -425,6 +427,7 @@ impl Llm {
         });
         let mut try_stream = false;
         for attempt in 0..=max {
+            if self.trace.as_ref().is_some_and(|t|t.is_cancelled()) { return Err("execution cancelled".into()); }
             let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream;
             match self.chat_once(messages, tools, streaming) {
                 Ok((msg, tokens)) => {
@@ -649,12 +652,13 @@ impl Llm {
     // The HTTP transport. Everything above it is protocol, shared by both targets.
     #[cfg(not(target_arch = "wasm32"))]
     fn transport(&self, body: &str, streaming: bool) -> Result<Transported, String> {
+        if crate::vfs::is_scoped() { return crate::hosted::transport(body).map(Transported::Body); }
         // Bound concurrent requests across all worker threads, and pace request starts.
         let _permit = acquire();
         pace();
 
         // Bounded reads keep a stalled endpoint from holding a turn open indefinitely.
-        let read_timeout = std::env::var("JAZYK_READ_TIMEOUT")
+        let read_timeout = crate::sys::env_var("JAZYK_READ_TIMEOUT")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(300)

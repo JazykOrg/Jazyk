@@ -1,0 +1,730 @@
+//! Filesystem-free native compiler embedding. See docs/compiler/hosted-runtime.md.
+use crate::session::{Trace, TraceEvent, TraceLevel};
+use serde_json::{json, Value};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
+pub type Snapshot = BTreeMap<String, Vec<u8>>;
+pub type ModelTransport = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
+pub type TraceSink = Arc<dyn Fn(&TraceEvent) + Send + Sync>;
+pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
+
+/// The host must enforce a deadline and cancellation within its model callback.
+#[derive(Clone, Default)]
+pub struct Execution {
+    pub model: String,
+    pub transport: Option<ModelTransport>,
+    pub trace: Option<TraceSink>,
+    pub events: Option<EventSink>,
+    pub cancel: Arc<AtomicBool>,
+}
+
+#[derive(Debug)]
+pub struct Reply {
+    pub status: u16,
+    pub content_type: String,
+    pub body: Vec<u8>,
+}
+impl Reply {
+    fn json(status: u16, body: Value) -> Self {
+        Self {
+            status,
+            content_type: "application/json".into(),
+            body: body.to_string().into_bytes(),
+        }
+    }
+}
+
+pub struct Workspace {
+    files: Snapshot,
+}
+impl Workspace {
+    pub fn new(files: Snapshot) -> Result<Self, String> {
+        for name in files.keys() {
+            if name.is_empty()
+                || name.contains(['\\', '\0', ':'])
+                || name
+                    .split('/')
+                    .any(|c| c.is_empty() || c == "." || c == "..")
+            {
+                return Err(format!("invalid workspace path: {name}"));
+            }
+            // A flat snapshot cannot represent a file and a directory at one path.
+            let mut parent = std::path::Path::new(name).parent();
+            while let Some(p) = parent {
+                if p.to_str().is_some_and(|s| files.contains_key(s)) {
+                    return Err(format!("file conflicts with directory: {}", p.display()));
+                }
+                parent = p.parent();
+            }
+        }
+        Ok(Self { files })
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        self.files.clone()
+    }
+
+    /// Synchronous. The caller owns the project lease and atomic persistence.
+    /// Ordinary compiler failures retain committed state. Unwinding rolls back.
+    pub fn request(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: &str,
+        execution: &Execution,
+    ) -> Result<Reply, String> {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let fs = crate::vfs::Scope::enter(&self.files);
+            let _state = crate::scoped_state::Scope::enter();
+            let _execution = ExecutionScope::enter(execution.clone());
+            let conversations = crate::conversation::Scope::enter()?;
+            let reply = dispatch(method, path, body)?;
+            if path.contains("/chat/") && method != "GET" {
+                conversations.save()?;
+            }
+            Ok::<_, String>((reply, fs.snapshot()))
+        }));
+        match result {
+            Ok(Ok((reply, files))) => {
+                self.files = files;
+                Ok(reply)
+            }
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err("hosted compiler panicked; request snapshot was rolled back".into()),
+        }
+    }
+}
+
+thread_local! { static EXECUTION: RefCell<Option<Execution>> = const { RefCell::new(None) }; }
+struct ExecutionScope(Option<Execution>);
+impl ExecutionScope {
+    fn enter(execution: Execution) -> Self {
+        Self(EXECUTION.with(|e| e.replace(Some(execution))))
+    }
+}
+impl Drop for ExecutionScope {
+    fn drop(&mut self) {
+        EXECUTION.with(|e| e.replace(self.0.take()));
+    }
+}
+fn execution() -> Execution {
+    EXECUTION.with(|e| e.borrow().clone().expect("hosted execution context"))
+}
+
+pub fn root() -> PathBuf {
+    PathBuf::from("/project")
+}
+pub fn model_name() -> String {
+    execution().model
+}
+pub fn cancelled() -> bool {
+    EXECUTION.with(|e| {
+        e.borrow()
+            .as_ref()
+            .is_some_and(|e| e.cancel.load(Ordering::Relaxed))
+    })
+}
+pub fn trace() -> Trace {
+    let e = execution();
+    Trace::to_sink(
+        TraceLevel::Normal,
+        e.trace.unwrap_or_else(|| Arc::new(|_| {})),
+        e.cancel,
+    )
+}
+pub fn llm() -> crate::llm::Llm {
+    crate::llm::Llm {
+        base_url: "host-injected".into(),
+        model: model_name(),
+        api_key: String::new(),
+        temperature: Some(0.0),
+        trace: Some(trace()),
+    }
+}
+pub fn emit_event(kind: &str, mut body: Value) {
+    body["type"] = json!(kind);
+    if let Some(sink) = execution().events {
+        sink(&body);
+    }
+}
+pub(crate) fn transport(body: &str) -> Result<String, String> {
+    let e = execution();
+    if e.cancel.load(Ordering::Relaxed) {
+        return Err("execution cancelled".into());
+    }
+    let transport = e
+        .transport
+        .ok_or("no model transport supplied for this workspace")?;
+    let reply = transport(body)?;
+    if e.cancel.load(Ordering::Relaxed) {
+        return Err("execution cancelled".into());
+    }
+    Ok(reply)
+}
+
+fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let route = route.strip_prefix("/api").unwrap_or(route);
+    if method == "GET" && matches!(route, "/out/file" | "/project/file" | "/deliverable/raw") {
+        let rel = url::form_urlencoded::parse(query.as_bytes())
+            .find(|(k, _)| k == "path")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+        let p = crate::project::Project::load(&root());
+        let result = match route {
+            "/out/file" => crate::webapi::outfiles::out_file(&p.out, &rel),
+            "/project/file" => crate::webapi::projfiles::project_file(&p.root, &rel),
+            _ => crate::webapi::deliverable::deliverable_raw(
+                &crate::gen::GenSettings::resolve(&p),
+                &rel,
+            ),
+        };
+        return Ok(match result {
+            Ok(body) => Reply {
+                status: 200,
+                content_type: crate::webapi::outfiles::content_type(&rel).into(),
+                body,
+            },
+            Err((code, msg)) => Reply::json(code, json!({"error":msg})),
+        });
+    }
+    if method == "POST" && route == "/jobs" {
+        let request: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        let kind = request["kind"].as_str().unwrap_or("compile");
+        if matches!(kind, "verify" | "audit" | "gen") {
+            let p = crate::project::Project::load(&root());
+            let store = crate::store::Store::load(&p.out);
+            let gs = crate::gen::GenSettings::resolve(&p);
+            let result = if kind == "gen" {
+                use crate::runner::SessionRunner;
+                let _build = crate::control::begin_internal_build(&p, &p.out, "generate")?;
+                let runner = crate::inprocess::InProcessRunner::start(&p, &llm(), &p.out)?;
+                runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+                let entities = request["entities"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let _ = crate::bind::run_all(&store, &runner, &gs, &entities, &trace());
+                crate::gen::run_all(
+                    &store,
+                    &runner,
+                    &gs,
+                    &entities,
+                    request["force"].as_bool().unwrap_or(false),
+                    &trace(),
+                )
+            } else if kind == "audit" {
+                Ok(crate::verify::audit(&store, &gs))
+            } else {
+                let runner = crate::inprocess::InProcessRunner::start(&p, &llm(), &p.out)?;
+                let targets = request["targets"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                crate::verify::run_all(
+                    &store,
+                    &runner,
+                    &gs,
+                    &targets,
+                    request["testKind"].as_str(),
+                    request["force"].as_bool().unwrap_or(false),
+                    &trace(),
+                )
+            };
+            return Ok(match result {
+                Ok(report) => Reply::json(
+                    200,
+                    json!({"id":1,"kind":kind,"state":"finished","report":report}),
+                ),
+                Err(error) => Reply::json(422, json!({"error":error})),
+            });
+        }
+    }
+    if method == "GET" && route == "/capabilities" {
+        return Ok(Reply::json(
+            200,
+            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["compile","gen","verify","audit"],"agent":"embedded","model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
+        ));
+    }
+    let envelope: Value =
+        serde_json::from_str(&crate::webapi::dispatch::request(method, path, body))
+            .map_err(|e| e.to_string())?;
+    Ok(Reply::json(
+        envelope["status"].as_u64().unwrap_or(500) as u16,
+        envelope["body"].clone(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn hosted_ledger_runner_sends_the_shared_batch_contract() {
+        use crate::runner::SessionRunner;
+        let w = workspace("Alpha");
+        let _fs = crate::vfs::Scope::enter(&w.snapshot());
+        let _state = crate::scoped_state::Scope::enter();
+        let observed = Arc::new(AtomicBool::new(false));
+        let saw = observed.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancelled = cancel.clone();
+        let e = Execution {
+            model: "ledger-fixture".into(),
+            cancel,
+            transport: Some(Arc::new(move |body| {
+                let request: Value = serde_json::from_str(body).unwrap();
+                let user = request["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|m| m["role"] == "user")
+                    .map(|m| m["content"].as_str().unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(user.contains("g:generate:ent:alpha"));
+                assert!(user.contains("begin_generation"));
+                assert!(user.contains("record_generation"));
+                saw.store(true, Ordering::SeqCst);
+                cancelled.store(true, Ordering::SeqCst);
+                Ok(model_reply("Stopped after inspecting the prompt."))
+            })),
+            ..Default::default()
+        };
+        let _execution = ExecutionScope::enter(e);
+        let p = crate::project::Project::load(&root());
+        let runner = crate::inprocess::InProcessRunner::start(&p, &llm(), &p.out).unwrap();
+        runner.run_item(
+            &crate::runner::BatchRun::single(crate::model::Goal {
+                id: "g:generate:ent:alpha".into(),
+                kind: "generate".into(),
+                target: "ent:alpha".into(),
+                ..Default::default()
+            }),
+            &trace(),
+        );
+        assert!(observed.load(Ordering::SeqCst));
+    }
+
+    fn workspace(name: &str) -> Workspace {
+        Workspace::new(BTreeMap::from([
+            (
+                "jazyk.toml".into(),
+                b"[docs]\nglob = [\"docs/**/*.md\"]\n[roots]\nfiles = [\"docs/main.md\"]\n"
+                    .to_vec(),
+            ),
+            (
+                "docs/main.md".into(),
+                format!("# {name}\n\nNavigation index.\n").into_bytes(),
+            ),
+        ]))
+        .unwrap()
+    }
+    fn value(w: &mut Workspace, method: &str, path: &str, body: Value, e: &Execution) -> Value {
+        let reply = w.request(method, path, &body.to_string(), e).unwrap();
+        assert!(
+            reply.status < 400,
+            "{}",
+            String::from_utf8_lossy(&reply.body)
+        );
+        serde_json::from_slice(&reply.body).unwrap()
+    }
+    fn model_reply(content: &str) -> String {
+        json!({"choices":[{"message":{"role":"assistant","content":content}}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string()
+    }
+    fn navigation_model(
+        name: &'static str,
+        calls: Arc<AtomicUsize>,
+        barrier: Option<Arc<std::sync::Barrier>>,
+    ) -> Execution {
+        Execution {
+            model: name.into(),
+            transport: Some(Arc::new(move |body| {
+                let request: Value = serde_json::from_str(body).unwrap();
+                assert_eq!(request["model"], name);
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    if let Some(b) = &barrier {
+                        b.wait();
+                    }
+                }
+                if request["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["role"] == "tool")
+                {
+                    return Ok(model_reply("Done."));
+                }
+                let section = format!("docs/main.md#/{}", name.to_lowercase());
+                let goal = format!("g:reconcile-section:{section}");
+                let actions = [
+                    (
+                        "set_coverage",
+                        json!({"section":section,"state":"non-normative","note":"This navigation index contains no product obligations."}),
+                    ),
+                    (
+                        "mark_goal_done",
+                        json!({"goal":goal,"justification":"The section is a navigation index with no normative sentences."}),
+                    ),
+                    (
+                        "done",
+                        json!({"summary":"Classified the navigation index."}),
+                    ),
+                ];
+                Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(i,(name,args))|json!({"id":format!("call-{i}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()}}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string())
+            })),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn concurrent_real_builds_keep_projects_models_and_noop_isolated() {
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = ["Alpha", "Beta"]
+            .into_iter()
+            .map(|name| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut w = workspace(name);
+                    let calls = Arc::new(AtomicUsize::new(0));
+                    let e = navigation_model(name, calls.clone(), Some(barrier));
+                    let first = value(&mut w, "POST", "/api/jobs", json!({"kind":"compile"}), &e);
+                    assert_eq!(
+                        first["report"]["failed"].as_u64().unwrap_or(0),
+                        0,
+                        "{first}"
+                    );
+                    let before = calls.load(Ordering::SeqCst);
+                    assert!(before > 0);
+                    let graph = value(&mut w, "GET", "/api/graph", Value::Null, &e);
+                    assert!(graph["generation"].as_u64().unwrap() > 0, "{first}");
+                    let next = value(&mut w, "POST", "/api/compile", json!({}), &e);
+                    assert_eq!(
+                        calls.load(Ordering::SeqCst),
+                        before,
+                        "no-op called model: {next}"
+                    );
+                    let restored = w.snapshot();
+                    assert!(String::from_utf8_lossy(&restored["docs/main.md"]).contains(name));
+                    assert!(!restored.keys().any(|k| k.starts_with('/')));
+                    assert!(!crate::vfs::is_scoped());
+                    restored
+                })
+            })
+            .collect();
+        let trees: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_ne!(trees[0]["docs/main.md"], trees[1]["docs/main.md"]);
+    }
+
+    #[test]
+    fn hosted_files_shell_config_and_binary_routes_are_confined() {
+        let mut w = workspace("Alpha");
+        w.files.insert("picture.png".into(), vec![0, 255, 13, 10]);
+        let before = w.snapshot();
+        {
+            let scope = crate::vfs::Scope::enter(&before);
+            for path in [
+                "/etc/hosts",
+                "/project/../../etc/hosts",
+                "../outside",
+                "/project-other/a",
+            ] {
+                assert_eq!(
+                    crate::vfs::read(path).unwrap_err().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                );
+                assert!(crate::vfs::write(path, b"forbidden").is_err());
+            }
+            assert!(crate::sys::run_shell("exit 0", &root()).is_err());
+            assert!(crate::sys::env_var("HOME").is_err());
+            assert!(crate::project::load_global_llm().model.is_none());
+            assert_eq!(scope.snapshot(), before);
+        }
+        let reply = w
+            .request(
+                "GET",
+                "/api/project/file?path=picture.png",
+                "",
+                &Execution::default(),
+            )
+            .unwrap();
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.content_type, "image/png");
+        assert_eq!(reply.body, vec![0, 255, 13, 10]);
+        for path in ["../a", "/abs", "a//b", "a/./b", "a\\b", "a\0b"] {
+            assert!(Workspace::new(BTreeMap::from([(path.into(), vec![])])).is_err());
+        }
+    }
+
+    #[test]
+    fn chat_histories_roundtrip_and_panics_restore_all_context() {
+        let mut a = workspace("Alpha");
+        let mut b = workspace("Beta");
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let e = Execution {
+            model: "fixture".into(),
+            transport: Some(Arc::new(|_| Ok(model_reply("Hello from the fixture.")))),
+            events: Some(Arc::new(move |v| sink.lock().unwrap().push(v.clone()))),
+            ..Default::default()
+        };
+        let chat = value(&mut a, "POST", "/api/chat/sessions", json!({}), &e);
+        value(
+            &mut a,
+            "POST",
+            &format!("/api/chat/sessions/{}/prompt", chat["id"].as_str().unwrap()),
+            json!({"text":"hello alpha"}),
+            &e,
+        );
+        let mut restored = Workspace::new(a.snapshot()).unwrap();
+        let list = value(&mut restored, "GET", "/api/chat/sessions", Value::Null, &e);
+        assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+        assert!(list.to_string().contains("hello alpha"));
+        assert_eq!(
+            value(&mut b, "GET", "/api/chat/sessions", Value::Null, &e)["sessions"],
+            json!([])
+        );
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["type"] == "chat.update"));
+        let before = restored.snapshot();
+        let panic = Execution {
+            transport: Some(Arc::new(|_| {
+                crate::llm::add_tokens(999);
+                crate::llm::set_tools_mode(2);
+                panic!("test callback panic")
+            })),
+            ..Default::default()
+        };
+        assert!(restored
+            .request(
+                "POST",
+                "/api/chat/sessions/chat-1/prompt",
+                "{\"text\":\"panic\"}",
+                &panic
+            )
+            .unwrap_err()
+            .contains("rolled back"));
+        assert_eq!(restored.snapshot(), before);
+        assert!(!crate::vfs::is_scoped());
+        let recovery_calls = AtomicUsize::new(0);
+        let fresh = Execution {
+            transport: Some(Arc::new(move |_| {
+                if recovery_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    assert_eq!(crate::llm::tokens_spent(), 0);
+                    assert_ne!(crate::llm::tools_mode(), 2);
+                }
+                Ok(model_reply("Recovered."))
+            })),
+            ..Default::default()
+        };
+        value(
+            &mut restored,
+            "POST",
+            "/api/chat/sessions/chat-1/prompt",
+            json!({"text":"recover"}),
+            &fresh,
+        );
+    }
+
+    #[test]
+    fn incomplete_model_writes_cannot_bypass_commit_gates() {
+        let mut w = workspace("Alpha");
+        w.files.insert(
+            "docs/main.md".into(),
+            b"# Alpha\n\nAlpha stores records.\n".to_vec(),
+        );
+        let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = errors.clone();
+        let e = Execution {
+            model: "bad-fixture".into(),
+            transport: Some(Arc::new(move |body| {
+                let request: Value = serde_json::from_str(body).unwrap();
+                let tool_messages: Vec<_> = request["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|m| m["role"] == "tool")
+                    .collect();
+                if !tool_messages.is_empty() {
+                    seen.lock()
+                        .unwrap()
+                        .extend(tool_messages.iter().map(|m| m.to_string()));
+                    return Ok(model_reply(
+                        "Finished without repairing the missing coverage.",
+                    ));
+                }
+                let actions = [
+                    (
+                        "upsert_entity",
+                        json!({"name":"Alpha","mention":{"section":"docs/main.md#/alpha","quote":"Alpha stores records."}}),
+                    ),
+                    (
+                        "mark_goal_done",
+                        json!({"goal":"g:reconcile-section:docs/main.md#/alpha","justification":"This is supposedly complete, without extracting its required statement."}),
+                    ),
+                    (
+                        "done",
+                        json!({"summary":"Skip all extraction and coverage checks."}),
+                    ),
+                ];
+                Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(i,(name,args))|json!({"id":format!("bad-{i}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()}}]}).to_string())
+            })),
+            ..Default::default()
+        };
+        let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
+        assert!(
+            result["report"]["failed"].as_u64().unwrap()
+                + result["report"]["parked"].as_u64().unwrap()
+                > 0,
+            "{result}"
+        );
+        let graph = value(&mut w, "GET", "/api/graph", Value::Null, &e);
+        assert!(
+            graph["entities"].as_object().unwrap().is_empty(),
+            "ungated staged entity leaked: {graph}"
+        );
+        assert!(errors
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| e.contains("coverage")));
+        assert!(
+            w.snapshot().contains_key(".jazyk/status.yaml"),
+            "valid failure state should remain persistable"
+        );
+    }
+
+    #[test]
+    fn cancelled_execution_never_calls_model_or_shell_and_svg_is_self_contained() {
+        let mut w = workspace("Alpha");
+        let e = Execution {
+            transport: Some(Arc::new(|_| panic!("cancelled model called"))),
+            cancel: Arc::new(AtomicBool::new(true)),
+            ..Default::default()
+        };
+        value(&mut w, "POST", "/api/chat/sessions", json!({}), &e);
+        value(
+            &mut w,
+            "POST",
+            "/api/chat/sessions/chat-1/prompt",
+            json!({"text":"cancelled"}),
+            &e,
+        );
+        let chat = value(&mut w, "GET", "/api/chat/sessions/chat-1", Value::Null, &e);
+        assert!(chat.to_string().contains("cancelled"));
+        let _scope = crate::vfs::Scope::enter(&w.snapshot());
+        assert!(crate::render::render_svg("@startuml\nclass Alpha\n@enduml")
+            .unwrap()
+            .contains("Alpha"));
+        assert!(
+            crate::render::render_svg("@startuml\n!include /etc/hosts\nclass Alpha\n@enduml")
+                .is_err()
+        );
+        assert!(
+            crate::render::render_svg("@startuml\nclass \"<img:/etc/hosts>\"\n@enduml").is_err()
+        );
+        assert!(crate::render::render_png("<svg />").is_err());
+    }
+
+    #[test]
+    fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
+        let mut w = workspace("Alpha");
+        w.files.insert(
+            "docs/main.md".into(),
+            b"# Alpha\n\nAlpha stores records.\n".to_vec(),
+        );
+        let called = AtomicUsize::new(0);
+        let e = Execution {
+            model: "extract-fixture".into(),
+            transport: Some(Arc::new(move |_| {
+                if called.fetch_add(1, Ordering::SeqCst) > 0 {
+                    return Ok(model_reply(
+                        "The remaining judgment is deliberately left incomplete.",
+                    ));
+                }
+                let actions = [
+                    (
+                        "upsert_entity",
+                        json!({"name":"Alpha","mention":{"section":"docs/main.md#/alpha","quote":"Alpha stores records."}}),
+                    ),
+                    (
+                        "upsert_entity",
+                        json!({"name":"Records","mention":{"section":"docs/main.md#/alpha","quote":"Alpha stores records."}}),
+                    ),
+                    (
+                        "upsert_requirement",
+                        json!({"statement":"Alpha stores records.","facets":[{"facet":"behavior","reasoning":"Alpha performs the storage action."}],"entities":["ent:alpha","ent:records"],"edges":[{"a":"ent:alpha","b":"ent:records","type":"association"}],"section":"docs/main.md#/alpha","quote":"Alpha stores records."}),
+                    ),
+                    (
+                        "set_coverage",
+                        json!({"section":"docs/main.md#/alpha","state":"covered","note":"Alpha stores records is recorded as a requirement."}),
+                    ),
+                    (
+                        "mark_goal_done",
+                        json!({"goal":"g:reconcile-section:docs/main.md#/alpha","justification":"The statement Alpha stores records is extracted with its entity and verbatim source."}),
+                    ),
+                    (
+                        "done",
+                        json!({"summary":"Extracted Alpha stores records with quote provenance."}),
+                    ),
+                ];
+                Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(i,(name,args))|json!({"id":format!("extract-{i}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()}}]}).to_string())
+            })),
+            ..Default::default()
+        };
+        let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
+        let graph = value(&mut w, "GET", "/api/graph", Value::Null, &e);
+        assert_eq!(
+            graph["entities"]["ent:alpha"]["name"], "Alpha",
+            "{result}: {graph}"
+        );
+        assert_eq!(graph["requirements"].as_object().unwrap().len(), 1);
+        let snapshot = w.snapshot();
+        assert!(snapshot.keys().any(|p| p.starts_with(".jazyk/journal/")));
+        assert!(
+            snapshot.keys().any(|p| p.ends_with(".svg")),
+            "hosted compilation should retain diagram output"
+        );
+        let mut restored = Workspace::new(snapshot).unwrap();
+        assert_eq!(
+            value(
+                &mut restored,
+                "GET",
+                "/api/graph",
+                Value::Null,
+                &Execution::default()
+            ),
+            graph
+        );
+        let mut other = workspace("Beta");
+        assert!(value(
+            &mut other,
+            "GET",
+            "/api/graph",
+            Value::Null,
+            &Execution::default()
+        )["entities"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+    }
+}

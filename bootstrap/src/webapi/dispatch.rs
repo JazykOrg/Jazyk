@@ -31,7 +31,7 @@ fn answer(r: Result<Value, super::Refusal>) -> String {
 }
 
 fn project() -> Project {
-    Project::load(&crate::wasm::root())
+    Project::load(&crate::portable::root())
 }
 
 fn out() -> PathBuf {
@@ -85,10 +85,10 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
 
     match (method, path) {
         ("GET", "/ping") => ok(json!({
-            "app": "jazyk-wasm",
+            "app": if crate::vfs::is_scoped() { "jazyk-hosted" } else { "jazyk-wasm" },
             "version": env!("CARGO_PKG_VERSION"),
             "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
-            "root": crate::wasm::root().to_string_lossy(),
+            "root": crate::portable::root().to_string_lossy(),
         })),
 
         ("GET", "/project") => {
@@ -106,10 +106,10 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                     "buildSessionFactor": crate::limits::BUILD_SESSION_FACTOR,
                 },
                 "executors": p.executors.by_kind,
-                "llm": { "model": crate::wasm::model_name(), "baseUrl": "in-page" },
+                "llm": { "model": crate::portable::model_name(), "baseUrl": "in-page" },
                 "version": env!("CARGO_PKG_VERSION"),
                 // What this transport is, so the app can hide what it cannot serve.
-                "backend": "wasm",
+                "backend": if crate::vfs::is_scoped() { "hosted" } else { "wasm" },
             }))
         }
 
@@ -268,11 +268,11 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 );
             }
             let p = project();
-            let llm = crate::wasm::llm();
-            let trace = crate::wasm::trace();
+            let llm = crate::portable::llm();
+            let trace = crate::portable::trace();
             // The answers recorded since the last build run first: a tab runs no
             // answer session in the background (docs/frontends/wasm.md#the-inbox).
-            let answers = crate::wasm::runner::run_answers(&p, &llm, &p.out, &trace);
+            let answers = crate::inprocess::run_answers(&p, &llm, &p.out, &trace);
             let report = crate::reconcile::compile(&p, &llm, &p.out, &trace);
             ok(json!({
                 "id": 1,
@@ -539,10 +539,10 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 v
             }))
         }
-        ("GET", "/settings") => ok(crate::project::settings_read(&crate::wasm::root())),
+        ("GET", "/settings") => ok(crate::project::settings_read(&crate::portable::root())),
         // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
         // file lands in the tree, and the page mirrors it the way any change goes.
-        ("PUT", "/settings") => match crate::project::settings_write(&crate::wasm::root(), &body) {
+        ("PUT", "/settings") => match crate::project::settings_write(&crate::portable::root(), &body) {
             Ok(v) => ok(v),
             Err((code, msg)) => err(code, msg),
         },
@@ -587,18 +587,18 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         // The chat pane: conversations run in the worker on the page's model, and
         // their progress is posted to the page as events while the prompt request
         // is still running. See docs/frontends/wasm.md#chat.
-        ("POST", "/chat/sessions") => ok(crate::wasm::chat::create(&body)),
-        ("GET", "/chat/sessions") => ok(crate::wasm::chat::list()),
+        ("POST", "/chat/sessions") => ok(crate::conversation::create(&body)),
+        ("GET", "/chat/sessions") => ok(crate::conversation::list()),
         ("GET", p) if p.starts_with("/chat/sessions/") => {
             let id = decode(p.trim_start_matches("/chat/sessions/"));
-            match crate::wasm::chat::get(&id) {
+            match crate::conversation::get(&id) {
                 Some(v) => ok(v),
                 None => err(404, format!("no chat session {}", id)),
             }
         }
         ("DELETE", p) if p.starts_with("/chat/sessions/") => {
             let id = decode(p.trim_start_matches("/chat/sessions/"));
-            if crate::wasm::chat::remove(&id) {
+            if crate::conversation::remove(&id) {
                 ok(json!({ "ok": true }))
             } else {
                 err(404, format!("no chat session {}", id))
@@ -609,7 +609,7 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 p.trim_start_matches("/chat/sessions/")
                     .trim_end_matches("/prompt"),
             );
-            let (status, v) = crate::wasm::chat::prompt(&id, &body);
+            let (status, v) = crate::conversation::prompt(&id, &body);
             reply(status, v)
         }
         // The page answers a cancel while a turn runs; one that reaches the worker

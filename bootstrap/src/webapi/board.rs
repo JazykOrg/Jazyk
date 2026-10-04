@@ -124,6 +124,7 @@ fn find_batch<'a>(board: &'a crate::board::Board, target: &str) -> Option<&'a cr
 // The browser backend has exactly one executor, itself.
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_executor_name(proj: &Project, goals: &[crate::model::Goal]) -> Result<String, String> {
+    if crate::vfs::is_scoped() { return Ok("host-injected".into()); }
     let Some(g) = goals.first() else {
         return Err("empty batch".into());
     };
@@ -137,7 +138,7 @@ fn resolve_executor_name(proj: &Project, goals: &[crate::model::Goal]) -> Result
         &proj.executors,
         &global_acp,
         &global_execs,
-        |n| std::env::var(n).ok(),
+        |n| crate::sys::env_var(n).ok(),
     )
     .map(|a| a.name)
 }

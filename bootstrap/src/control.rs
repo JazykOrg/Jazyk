@@ -427,7 +427,7 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
     #[cfg(target_arch = "wasm32")]
     let _ = (&out2, &stop2);
     #[cfg(not(target_arch = "wasm32"))]
-    std::thread::spawn(move || {
+    if !crate::vfs::is_scoped() { std::thread::spawn(move || {
         while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_secs(30));
             if stop2.load(std::sync::atomic::Ordering::Relaxed) {
@@ -435,7 +435,7 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
             }
             refresh_lease(&out2, BUILD_LEASE);
         }
-    });
+    }); }
     Ok(BuildGuard {
         out: out.to_path_buf(),
         stop,

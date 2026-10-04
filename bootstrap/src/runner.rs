@@ -104,6 +104,20 @@ pub trait SessionRunner {
     ) -> Result<String, String>;
 }
 
+// The same prompt travels through ACP and the in-process ledger runner. Ledger
+// begin_goals returns an acknowledgement; its caller carries the full contract.
+pub(crate) fn batch_prompt(project: &crate::project::Project, out: &std::path::Path, batch: &BatchRun) -> String {
+    let mut store = crate::store::Store::load(out);
+    let (parsed, _) = crate::reconcile::parse_all(project);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(project, out);
+    let (loaded, skills) = crate::session::initial_loaded(&store, &batch.goals);
+    let mut pb = crate::session::ProjectBlock::compute(&store, &batch.goals, &control.compile)
+        .with_lint(&project.linting);
+    pb.batch = batch.id.clone();
+    crate::session::session_prompt(&store, &batch.goals, &loaded, &skills, &pb)
+}
+
 // What the journal says one session landed between two generations: the mutations
 // its entries applied, and the goals they resolved. A runner never reports its own
 // success; it reads it here (docs/compiler/graph.md#journal).

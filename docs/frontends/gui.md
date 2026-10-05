@@ -3,7 +3,7 @@
 `jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]`
 starts a loopback HTTP API over the [graph store](../compiler/graph.md), a live event
 stream, and the [language server](./lsp.md) over WebSocket. It opens `https://jazyk.dev`
-with connection details. `--dev` asks the application to open its Developer mode.
+with connection details. `--dev` asks the application to open its Debug mode.
 The binary contains no page, frontend assets, or cloud account service.
 
 The application source and its presentation contract live in the separate private
@@ -595,7 +595,7 @@ for existing links. They are application behavior, not a compiler build dependen
 - <a id="workspace"></a>[Workspace](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#workspace).
 - <a id="the-board"></a>[The Board](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#the-board).
 - <a id="the-linkage"></a>[The linkage](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#the-linkage).
-- <a id="developer-toggle"></a>[Developer toggle](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#developer-toggle).
+- <a id="developer-toggle"></a><a id="debug-toggle"></a>[Debug toggle](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#debug-toggle).
 - <a id="board"></a>[Board](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#board).
 - <a id="runs"></a>[Runs](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#runs).
 - <a id="preview"></a>[Preview](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#preview).

@@ -111,13 +111,15 @@ affected bindings and checks. They never silently preserve a clean verdict.
   sessions/                    project-wide user conversations
   runs/                        grouped job records
   removed-sets/                 retained definitions for local recovery
-  sets/<set-id>/
+  <set-id>/
     graph/ docs/ journal/ diagrams/ docsgen/ gen/ trace/ sessions/
     status.yaml control.yaml workers/ leases/ .lock
 ```
 
-- Each set owns the existing store shape and its worker session history. The
-  project owns conversations that discuss several sets and records grouping jobs.
+- Each set lives directly at `.jazyk/<set-id>/` and owns the existing store shape
+  and its worker session history. Set IDs require the `ds_` prefix, keeping them
+  distinct from project directories such as `sessions`, `runs`, and `removed-sets`.
+  The project owns conversations that discuss several sets and records grouping jobs.
 - A set rename changes only `name`. It preserves IDs, paths, graph, history, and
   bindings. Copying a set definition mints an ID and starts an empty graph.
 - Project-level references are `{setId, localId}`. Node, goal, generation, trace,

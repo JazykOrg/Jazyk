@@ -44,7 +44,7 @@ assumed one graph. Do not duplicate UI specifications into engine `docs/`.
   the current compiler machinery. No graph store merger or new linker.
 - Replace subset TOML parsing/editing with crate-backed handling. Add schema
   validation, atomic revision-checked management, discovery, and memberships.
-- Allocate `.jazyk/sets/<id>` stores. Split project sessions/grouped runs from
+- Allocate `.jazyk/<id>` stores. Split project sessions/grouped runs from
   worker sessions. Fix reset/archive/delete boundaries before any cleanup runs.
 - Convert owned fixtures and project configs. Preserve legacy stores until a
   deliberate reset or compatible relocation. No graph migration code.

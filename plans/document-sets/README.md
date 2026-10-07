@@ -55,9 +55,8 @@ shop/
   .jazyk/
     jazyk.toml                 shared configuration, committed
     .gitignore                 generated state exclusions, committed
-    sets/
-      ds_checkout/             checkout graph and runtime state
-      ds_search/               search graph and runtime state
+    ds_checkout/               checkout graph and runtime state
+    ds_search/                 search graph and runtime state
   docs/
     checkout.md
     checkout-errors.md

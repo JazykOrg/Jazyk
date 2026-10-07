@@ -172,7 +172,8 @@ impl Workspace {
             let docs_dirty = hashes.len() != store.docs.len() || hashes.iter().any(|(name, hash)| store.docs.get(name).map(|r| &r.content_hash) != Some(hash));
             let board = crate::board::Board::compute(&p, &p.out);
             let counts = board.counts();
-            let dirty = docs_dirty || counts.open > 0 || counts.failed > 0;
+            let pending_answers = store.graph.diagnostics.values().any(|d| d.lifecycle == "open" && d.answer.as_ref().is_some_and(|a| a.status == "handling"));
+            let dirty = docs_dirty || pending_answers || counts.open > 0 || counts.failed > 0;
             let warnings: Vec<_> = set.docs.iter().chain(&set.source).chain(&set.roots)
                 .filter(|pattern| !pattern.starts_with('!') && !files.iter().any(|f| crate::project::glob_match(pattern, f)))
                 .map(|pattern| format!("No files match {}", pattern)).collect();

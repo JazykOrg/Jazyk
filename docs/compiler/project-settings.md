@@ -1,5 +1,9 @@
 # Project settings
 
+A document set with an open diagnostic answer in `handling` state needs compile.
+It remains dirty even when its documents match the graph and no compile goal is
+ready. All-dirty compilation includes it so the build can process the answer.
+
 A project is a folder with `.jazyk/jazyk.toml`. Paths resolve from that folder,
 not from `.jazyk`. The CLI discovers the nearest config while walking upward.
 The schema is [`project-settings.schema.yaml`](./project-settings.schema.yaml).

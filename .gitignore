@@ -17,6 +17,9 @@ Thumbs.db
 /bootstrap/target/
 
 # Each .jazyk/.gitignore excludes state while keeping configuration tracked.
+**/.jazyk/*
+!**/.jazyk/jazyk.toml
+!**/.jazyk/.gitignore
 .jazyk.*
 project2/
 .loop-logs/

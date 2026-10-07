@@ -1666,7 +1666,7 @@ impl McpServer {
             return Ok(
                 json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
-                "instructions":format!("This project has independent document sets. Start with list_document_sets. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",instructions_for(&self.modes,self.write,w.exists))}),
+                "instructions":format!("This project has independent document sets. Start with list_document_sets. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)})}),
             );
         }
         let writable =
@@ -3213,6 +3213,29 @@ mod tests {
         assert!(r.is_err() || r.unwrap()["isError"].as_bool().unwrap_or(false));
     }
 
+    #[test]
+    fn project_reader_keeps_read_only_instructions_and_set_discovery() {
+        let dir = bare_dir("project-reader");
+        let project = crate::document_sets::Workspace::load(&dir)
+            .unwrap()
+            .files_project();
+        let s = McpServer::with_bridge(
+            project.clone(),
+            project.out,
+            vec!["graph".into()],
+            false,
+            BridgeFlags { ephemeral: true, reader: true, ..Default::default() },
+        );
+        let init = s.handle("initialize", &json!({})).unwrap();
+        let instructions = init["instructions"].as_str().unwrap();
+        assert!(instructions.contains("can only read it"));
+        assert!(instructions.contains("list_document_sets"));
+        assert!(!instructions.contains("The write tools are"));
+        let names = tool_names(&s);
+        assert!(names.iter().any(|name| name == "list_document_sets"));
+        assert!(names.iter().all(|name| name == "list_document_sets" || crate::tools::READ_TOOLS.contains(&name.as_str())));
+    }
+
     fn bare_dir(tag: &str) -> std::path::PathBuf {
         let dir =
             std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, crate::sys::process_id()));
@@ -3824,7 +3847,8 @@ mod tests {
         // can start one (docs/frontends/wasm.md#chat); a native chat has its own path.
         let note = "You cannot start a build: the Build button at the top of the page builds \
                     the documents into the graph. When asked to build, say so.";
-        assert!(instructions_in(&["chat".to_string()], false, true, true).contains("compile_document_sets"));
+        assert!(instructions_in(&["chat".to_string()], false, true, true)
+            .contains("compile_document_sets"));
         assert!(reader_instructions().contains(note));
         assert!(!instructions_in(&["chat".to_string()], false, true, false).contains(note));
         assert!(

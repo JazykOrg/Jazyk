@@ -158,7 +158,9 @@ pub fn connect_url(gui_url: &str, port: u16, token: Option<&str>) -> String {
     }
 }
 
-pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
+pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
+    let proj = crate::document_sets::Workspace::load(&proj.root).map(|w|w.files_project()).unwrap_or(proj);
+    let out = proj.root.join(".jazyk");
     let gs = GenSettings::resolve(&proj);
     let page = gui_url(
         gopts.gui_url.as_deref(),
@@ -179,18 +181,18 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         token,
         gui_origin: origin_of(&page),
         dev: gopts.dev,
-        shutdown: tokio::sync::Notify::new(),
+        shutdown: Arc::new(tokio::sync::Notify::new()),
         events: events::EventHub::new(),
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
-        jobs: jobs::JobManager::new(),
-        chat: chat::ChatManager::default(),
+        jobs: Arc::new(jobs::JobManager::new()),
+        chat: Arc::new(chat::ChatManager::default()),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
     // --watch is a mode change, recorded where every worker reads it.
     if gopts.watch {
-        let mut c = st.control();
-        c.compile = "auto".into();
-        c.save(&st.out);
+        if let Ok(w)=crate::document_sets::Workspace::load(&st.root) {
+            for set in w.sets {if let Ok(scope)=st.scoped(Some(&set.id)) {let mut c=scope.control();c.compile="auto".into();c.save(&scope.out);}}
+        }
     }
     jobs::sweep_traces(&st.out);
     product::record_opened(&st.root);

@@ -188,7 +188,7 @@ mod tests {
             std::env::temp_dir().join(format!("jazyk-webapi-inbox-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
-        crate::vfs::write(root.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        crate::vfs::write({ let path = root.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n").unwrap();
         crate::vfs::write(
             root.join("docs/arc.md"),
             "# Arc\n\nTheo is a rival at the midpoint.\n",

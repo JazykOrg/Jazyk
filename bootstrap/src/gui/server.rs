@@ -3,8 +3,8 @@
 // jazyk.dev (docs/frontends/gui.md#serving).
 use super::state::SharedState;
 use super::{
-    api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, outfiles, projfiles,
-    product, views_api,
+    api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, outfiles,
+    product, projfiles, views_api,
 };
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
@@ -57,7 +57,10 @@ async fn not_found() -> Response {
 // port name the same server, and a browser may reach it by either).
 pub fn admitted_origins(gui_origin: &str) -> Vec<String> {
     let mut list = vec![gui_origin.to_string()];
-    for (a, b) in [("://localhost", "://127.0.0.1"), ("://127.0.0.1", "://localhost")] {
+    for (a, b) in [
+        ("://localhost", "://127.0.0.1"),
+        ("://127.0.0.1", "://localhost"),
+    ] {
         if gui_origin.contains(a) {
             list.push(gui_origin.replacen(a, b, 1));
         }
@@ -89,7 +92,7 @@ fn cors(gui_origin: &str) -> CorsLayer {
         .max_age(std::time::Duration::from_secs(600))
 }
 
-pub fn router(st: SharedState) -> Router {
+fn api_router(st: SharedState) -> Router {
     let api = Router::new()
         .route("/ping", get(api::ping))
         .route("/project", get(api::project))
@@ -168,12 +171,161 @@ pub fn router(st: SharedState) -> Router {
         .route("/release", post(api::release))
         .route("/events", get(events::sse))
         .route("/shutdown", post(api::shutdown));
+    Router::new().nest("/api", api).with_state(st)
+}
+
+// Resolve the context once per request. The existing native handlers retain their
+// streaming and binary transports; shared value functions serve aggregate reads.
+async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+    let (mut parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(e) => return api::err(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
+    };
+    let body = if bytes.is_empty() {
+        Value::Null
+    } else {
+        match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(e) => return api::err(StatusCode::BAD_REQUEST, e.to_string()),
+        }
+    };
+    let uri = parts.uri.to_string();
+    let routed = match crate::webapi::sets::route(&uri, body) {
+        Ok(r) => r,
+        Err((code, e)) => return api::err(StatusCode::from_u16(code).unwrap(), e),
+    };
+    let route = routed.path.split('?').next().unwrap_or_default();
+    let workspace = crate::document_sets::Workspace::load(&st.root);
+    let project_route = matches!(
+        route,
+        "/ping"
+            | "/project"
+            | "/project/files"
+            | "/project/file"
+            | "/docs/content"
+            | "/docs/rename"
+            | "/settings"
+            | "/events"
+            | "/shutdown"
+            | "/capabilities"
+            | "/projects"
+            | "/benchmarks"
+            | "/benchmarks/models"
+            | "/jobs"
+            | "/trace"
+    ) || route.starts_with("/chat/")
+        || route.starts_with("/jobs/")
+        || route.starts_with("/trace/");
+    if route == "/sets"
+        || route == "/sets/preview"
+        || (parts.method == Method::GET
+            && routed.selector.is_none()
+            && crate::webapi::sets::aggregate_route(route))
+    {
+        let root = st.root.clone();
+        let method = parts.method.to_string();
+        let path = uri.clone();
+        let body = routed.body.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            crate::webapi::dispatch::request_at(&root, &method, &path, &body)
+        })
+        .await;
+        return match result {
+            Ok(text) => {
+                let v: Value = serde_json::from_str(&text).unwrap();
+                if parts.method != Method::GET && v["status"].as_u64().unwrap_or(500) < 300 {
+                    st.events.emit("sets.changed", json!({}));
+                }
+                (
+                    StatusCode::from_u16(v["status"].as_u64().unwrap_or(500) as u16).unwrap(),
+                    axum::Json(v["body"].clone()),
+                )
+                    .into_response()
+            }
+            Err(e) => api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        };
+    }
+    let selector = if routed.selector.is_some() {
+        routed.selector.as_deref()
+    } else if project_route {
+        None
+    } else if let Ok(w) = &workspace {
+        if w.sets.len() == 1 {
+            Some(w.sets[0].id.as_str())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if !project_route && selector.is_none() {
+        return api::err(
+            StatusCode::BAD_REQUEST,
+            "this operation requires setId or a qualified graph reference",
+        );
+    }
+    let context = match st.scoped(selector) {
+        Ok(s) => s,
+        Err((code, e))
+            if !matches!(
+                route,
+                "/ping" | "/settings" | "/project/files" | "/project/file"
+            ) =>
+        {
+            return api::err(StatusCode::from_u16(code).unwrap(), e)
+        }
+        Err(_) => st.clone(),
+    };
+    // The outer wildcard capture must not be appended to the inner route's captures.
+    parts.extensions.clear();
+    parts.uri = format!("/api{}", routed.path).parse().unwrap();
+    parts.headers.remove(header::CONTENT_LENGTH);
+    let body = if routed.body.is_null() {
+        axum::body::Body::empty()
+    } else {
+        axum::body::Body::from(routed.body.to_string())
+    };
+    let response = api_router(context.clone())
+        .oneshot(Request::from_parts(parts, body))
+        .await
+        .unwrap();
+    let is_json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.starts_with("application/json"));
+    if !is_json {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => return api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let mut value: Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return Response::from_parts(parts, axum::body::Body::from(bytes)),
+    };
+    if route == "/project" {
+        if let Ok(w) = &workspace {
+            value["sets"] = w.summary()["sets"].clone();
+            value["configHash"] = json!(w.hash);
+        }
+    }
+    if let Some(id) = selector {
+        value = crate::webapi::sets::qualify_value(value, id);
+    }
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, axum::body::Body::from(value.to_string()))
+}
+
+pub fn router(st: SharedState) -> Router {
     let cors = cors(&st.gui_origin);
-    // Layers wrap outward in the order added: the token check sits inside the
-    // header layers, so a 401 and a 404 carry the CORS headers too and the page can
-    // read them.
     Router::new()
-        .nest("/api", api)
+        .route("/api/{*path}", axum::routing::any(gateway))
         .route("/lsp", get(lsp_ws::ws))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(st.clone(), auth))
@@ -353,11 +505,11 @@ mod tests {
             token: token.map(str::to_string),
             gui_origin: gui_origin.to_string(),
             dev: false,
-            shutdown: tokio::sync::Notify::new(),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
             events: events::EventHub::new(),
             last_pending: std::sync::Mutex::new(serde_json::Value::Null),
-            jobs: jobs::JobManager::new(),
-            chat: chat::ChatManager::default(),
+            jobs: Arc::new(jobs::JobManager::new()),
+            chat: Arc::new(chat::ChatManager::default()),
             backoff: std::sync::atomic::AtomicU64::new(30),
         })
     }
@@ -380,15 +532,29 @@ mod tests {
 
     #[tokio::test]
     async fn the_page_origin_gets_the_allow_header_and_the_resource_policy() {
-        let r = send(state(None, "https://jazyk.dev"), get_from("/api/ping", "https://jazyk.dev")).await;
+        let r = send(
+            state(None, "https://jazyk.dev"),
+            get_from("/api/ping", "https://jazyk.dev"),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::OK);
-        assert_eq!(hdr(&r, "access-control-allow-origin"), Some("https://jazyk.dev"));
-        assert_eq!(hdr(&r, "cross-origin-resource-policy"), Some("cross-origin"));
+        assert_eq!(
+            hdr(&r, "access-control-allow-origin"),
+            Some("https://jazyk.dev")
+        );
+        assert_eq!(
+            hdr(&r, "cross-origin-resource-policy"),
+            Some("cross-origin")
+        );
     }
 
     #[tokio::test]
     async fn a_foreign_origin_gets_no_allow_header() {
-        let r = send(state(None, "https://jazyk.dev"), get_from("/api/ping", "https://other.example")).await;
+        let r = send(
+            state(None, "https://jazyk.dev"),
+            get_from("/api/ping", "https://other.example"),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(hdr(&r, "access-control-allow-origin"), None);
     }
@@ -397,12 +563,29 @@ mod tests {
     async fn a_dev_server_is_admitted_under_both_loopback_names() {
         assert_eq!(
             admitted_origins("http://localhost:5173"),
-            vec!["http://localhost:5173".to_string(), "http://127.0.0.1:5173".to_string()]
+            vec![
+                "http://localhost:5173".to_string(),
+                "http://127.0.0.1:5173".to_string()
+            ]
         );
-        assert_eq!(admitted_origins("https://jazyk.dev"), vec!["https://jazyk.dev".to_string()]);
-        let r = send(state(None, "http://localhost:5173"), get_from("/api/ping", "http://127.0.0.1:5173")).await;
-        assert_eq!(hdr(&r, "access-control-allow-origin"), Some("http://127.0.0.1:5173"));
-        let r = send(state(None, "http://localhost:5173"), get_from("/api/ping", "https://jazyk.dev")).await;
+        assert_eq!(
+            admitted_origins("https://jazyk.dev"),
+            vec!["https://jazyk.dev".to_string()]
+        );
+        let r = send(
+            state(None, "http://localhost:5173"),
+            get_from("/api/ping", "http://127.0.0.1:5173"),
+        )
+        .await;
+        assert_eq!(
+            hdr(&r, "access-control-allow-origin"),
+            Some("http://127.0.0.1:5173")
+        );
+        let r = send(
+            state(None, "http://localhost:5173"),
+            get_from("/api/ping", "https://jazyk.dev"),
+        )
+        .await;
         assert_eq!(hdr(&r, "access-control-allow-origin"), None);
     }
 
@@ -413,20 +596,37 @@ mod tests {
             .uri("/api/status")
             .header("origin", "https://jazyk.dev")
             .header("access-control-request-method", "PUT")
-            .header("access-control-request-headers", "authorization, content-type")
+            .header(
+                "access-control-request-headers",
+                "authorization, content-type",
+            )
             .header("access-control-request-private-network", "true")
             .body(Body::empty())
             .unwrap();
         let r = send(state(Some("secret"), "https://jazyk.dev"), req).await;
         assert!(r.status().is_success(), "{}", r.status());
-        assert_eq!(hdr(&r, "access-control-allow-origin"), Some("https://jazyk.dev"));
-        let methods = hdr(&r, "access-control-allow-methods").unwrap_or("").to_ascii_uppercase();
+        assert_eq!(
+            hdr(&r, "access-control-allow-origin"),
+            Some("https://jazyk.dev")
+        );
+        let methods = hdr(&r, "access-control-allow-methods")
+            .unwrap_or("")
+            .to_ascii_uppercase();
         for m in ["GET", "POST", "PUT", "DELETE", "OPTIONS"] {
             assert!(methods.contains(m), "{} not in {}", m, methods);
         }
-        let headers = hdr(&r, "access-control-allow-headers").unwrap_or("").to_ascii_lowercase();
-        assert!(headers.contains("authorization") && headers.contains("content-type"), "{}", headers);
-        assert_eq!(hdr(&r, "access-control-allow-private-network"), Some("true"));
+        let headers = hdr(&r, "access-control-allow-headers")
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        assert!(
+            headers.contains("authorization") && headers.contains("content-type"),
+            "{}",
+            headers
+        );
+        assert_eq!(
+            hdr(&r, "access-control-allow-private-network"),
+            Some("true")
+        );
     }
 
     #[tokio::test]
@@ -435,11 +635,18 @@ mod tests {
         let r = send(st.clone(), get_from("/api/status", "https://jazyk.dev")).await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         // The refusal is readable by the page: it carries the allow header too.
-        assert_eq!(hdr(&r, "access-control-allow-origin"), Some("https://jazyk.dev"));
+        assert_eq!(
+            hdr(&r, "access-control-allow-origin"),
+            Some("https://jazyk.dev")
+        );
         let r = send(st.clone(), get_from("/api/ping", "https://jazyk.dev")).await;
         assert_eq!(r.status(), StatusCode::OK);
         for path in ["/", "/index.html", "/assets/app.js", "/docs/a.md"] {
-            let r = send(st.clone(), Request::builder().uri(path).body(Body::empty()).unwrap()).await;
+            let r = send(
+                st.clone(),
+                Request::builder().uri(path).body(Body::empty()).unwrap(),
+            )
+            .await;
             assert_eq!(r.status(), StatusCode::NOT_FOUND, "{}", path);
         }
     }
@@ -454,15 +661,24 @@ mod tests {
 
         let r = send(st.clone(), get_from("/api/ping", "https://protocol.test")).await;
         assert_eq!(r.status(), StatusCode::OK);
-        assert_eq!(hdr(&r, "access-control-allow-origin"), Some("https://protocol.test"));
-        let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            hdr(&r, "access-control-allow-origin"),
+            Some("https://protocol.test")
+        );
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let ping: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(ping["app"], "jazyk-gui");
         assert_eq!(ping["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(ping["protocol"], 1);
+        assert_eq!(ping["protocol"], crate::protocol::EDITOR_PROTOCOL_VERSION);
         assert_eq!(ping["root"], st.root.to_string_lossy().as_ref());
 
-        let r = send(st.clone(), get_from("/api/capabilities", "https://protocol.test")).await;
+        let r = send(
+            st.clone(),
+            get_from("/api/capabilities", "https://protocol.test"),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         let req = Request::builder()
             .uri("/api/capabilities")
@@ -472,15 +688,23 @@ mod tests {
             .unwrap();
         let r = send(st.clone(), req).await;
         assert_eq!(r.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let caps: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(caps["protocol"], ping["protocol"]);
         assert_eq!(caps["backend"], "server");
         assert_eq!(caps["docs"], "write");
         assert_eq!(caps["lsp"], true);
         assert_eq!(caps["persistence"], "disk");
-        assert!(caps["jobs"].as_array().unwrap().contains(&serde_json::json!("compile")));
-        assert!(!st.out.exists(), "discovery must not create or migrate a graph");
+        assert!(caps["jobs"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("compile")));
+        assert!(
+            !st.out.exists(),
+            "discovery must not create or migrate a graph"
+        );
         std::fs::remove_dir_all(&st.root).ok();
     }
 
@@ -489,13 +713,17 @@ mod tests {
     #[tokio::test]
     async fn a_product_file_is_served_raw_with_its_content_type() {
         let st = state(Some("secret"), "https://raw.test");
-        let deck = st.gs().deliverable.join("dist/deck.pptx");
+        crate::document_sets::edit(&st.root,&serde_json::json!({"baseHash":crate::document_sets::Workspace::load(&st.root).unwrap().hash,"set":{"name":"Deck","docs":["docs/**"],"source":["dist/**"]}}),false).unwrap();
+        let deck = st.root.join("dist/deck.pptx");
         std::fs::create_dir_all(deck.parent().unwrap()).unwrap();
         let bytes: Vec<u8> = (0..=255u8).chain([0x50, 0x4b]).collect();
         std::fs::write(&deck, &bytes).unwrap();
         let r = send(
             st.clone(),
-            get_from("/api/deliverable/raw?path=dist/deck.pptx&token=secret", "https://raw.test"),
+            get_from(
+                "/api/deliverable/raw?path=dist/deck.pptx&token=secret",
+                "https://raw.test",
+            ),
         )
         .await;
         assert_eq!(r.status(), StatusCode::OK);
@@ -503,11 +731,16 @@ mod tests {
             hdr(&r, "content-type"),
             Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
         );
-        let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(body.as_ref(), bytes.as_slice());
         let r = send(
             st.clone(),
-            get_from("/api/deliverable/raw?path=../x&token=secret", "https://raw.test"),
+            get_from(
+                "/api/deliverable/raw?path=../x&token=secret",
+                "https://raw.test",
+            ),
         )
         .await;
         assert_eq!(r.status(), StatusCode::BAD_REQUEST);
@@ -518,5 +751,70 @@ mod tests {
         .await;
         assert_eq!(r.status(), StatusCode::OK);
         std::fs::remove_dir_all(&st.root).ok();
+    }
+    #[tokio::test]
+    async fn all_sets_are_visible_and_colliding_ids_route_to_their_own_store() {
+        use serde_json::{json, Value};
+        let st = state(None, "https://sets.test");
+        for (id, name) in [("ds_one", "Orders"), ("ds_two", "Billing")] {
+            let w = crate::document_sets::Workspace::load(&st.root).unwrap();
+            crate::document_sets::edit(&st.root,&json!({"baseHash":w.hash,"set":{"id":id,"name":name,"docs":[format!("{}.md",id)]}}),false).unwrap();
+            let mut store = crate::store::Store::load(&st.root.join(".jazyk").join(id));
+            store.graph.entities.insert(
+                "ent:shared".into(),
+                crate::model::Entity {
+                    name: name.into(),
+                    ..Default::default()
+                },
+            );
+            store.graph.diagnostics.insert("diag:shared".into(),serde_json::from_value(json!({"rule":"example","severity":"warning","lifecycle":"open","subjects":[],"message":"Example finding"})).unwrap());
+            store.save();
+        }
+        let response = send(st.clone(), get_from("/api/graph", "https://sets.test")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let v: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["entities"]["ent:ds_one::shared"]["name"], "Orders");
+        assert_eq!(v["entities"]["ent:ds_two::shared"]["name"], "Billing");
+        let response = send(
+            st.clone(),
+            get_from(
+                "/api/entities/ent%3Ads_two%3A%3Ashared",
+                "https://sets.test",
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/diagnostics/diag%3Ads_two%3A%3Ashared/triage")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"triage":"suppressed"}).to_string()))
+            .unwrap();
+        assert_eq!(send(st.clone(), request).await.status(), StatusCode::OK);
+        let one = crate::store::Store::load(&st.root.join(".jazyk/ds_one"));
+        let two = crate::store::Store::load(&st.root.join(".jazyk/ds_two"));
+        assert!(one.graph.diagnostics["diag:shared"].triage.is_none());
+        assert_eq!(
+            two.graph.diagnostics["diag:shared"].triage.as_deref(),
+            Some("suppressed")
+        );
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/diagnostics/diag%3Ads_two%3A%3Ashared/triage")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"setId":"ds_one","triage":"suppressed"}).to_string(),
+            ))
+            .unwrap();
+        assert_eq!(
+            send(st.clone(), request).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        std::fs::remove_dir_all(&st.root).unwrap();
     }
 }

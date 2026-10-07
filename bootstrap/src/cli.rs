@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct Options {
+    pub set: Option<String>,
+    pub dirty: bool,
+    pub docs: Vec<String>,
+    pub source: Vec<String>,
+    pub roots: Vec<String>,
+    pub name: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
@@ -65,6 +71,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
+            set: None, dirty: false, docs: vec![], source: vec![], roots: vec![], name: None,
             base_url: None,
             model: None,
             api_key: None,
@@ -118,7 +125,7 @@ pub fn run_init(opts: &Options) -> i32 {
         return 2;
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let path = cwd.join("jazyk.toml");
+    let path = cwd.join(crate::document_sets::CONFIG);
     let mut wrote_something = false;
     if path.vexists() {
         eprintln!(
@@ -127,7 +134,7 @@ pub fn run_init(opts: &Options) -> i32 {
         );
     } else {
         let previous = project::find_root(&cwd);
-        if let Err(e) = crate::vfs::write(&path, INIT_TOML) {
+        if let Err((_, e)) = crate::document_sets::atomic_config(&cwd, INIT_TOML, &crate::model::hash_hex("")) {
             eprintln!("jazyk: cannot write {}: {}", path.display(), e);
             return 1;
         }
@@ -212,11 +219,7 @@ fn init_flags_known(opts: &Options) -> Result<(), String> {
 }
 
 // The starter jazyk.toml `jazyk init` (and the init_project chat tool) writes.
-pub(crate) const INIT_TOML: &str =
-    "# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.\n\n\
-[docs]\nglob = [\"docs/**/*.md\"]\n\n\
-[roots]\nfiles = [\"docs/README.md\"]\n\n\
-[gen]\ndeliverable = \"deliverable\"\n";
+pub(crate) const INIT_TOML: &str = crate::document_sets::EMPTY_CONFIG;
 
 // Scaffold the layout the fresh jazyk.toml names: docs/ with a placeholder root
 // document, and the deliverable directory. Existing directories and files stay
@@ -224,26 +227,10 @@ pub(crate) const INIT_TOML: &str =
 // inside the MCP serving and the ACP proxy, where stdout carries the protocol and a
 // stray line of prose corrupts the stream.
 pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String> {
-    let mut made = Vec::new();
-    for dir in ["docs", "deliverable"] {
-        let path = cwd.join(dir);
-        if !path.vexists() {
-            crate::vfs::create_dir(&path)
-                .map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
-            made.push(format!("{}/", dir));
-        }
-    }
-    let readme = cwd.join("docs/README.md");
-    if !readme.vexists() {
-        let content = "# TODO: name the project\n\n\
-                       TODO: describe what this project is and what the deliverable should be. This\n\
-                       file is the root document: the compiler reads it first, and every other\n\
-                       document under `docs/` should be reachable from it.\n";
-        crate::vfs::write(&readme, content)
-            .map_err(|e| format!("cannot write {}: {}", readme.display(), e))?;
-        made.push("docs/README.md".to_string());
-    }
-    Ok(made)
+    crate::vfs::create_dir_all(cwd.join(".jazyk")).map_err(|e| e.to_string())?;
+    let path = cwd.join(".jazyk/.gitignore");
+    if !path.vexists() { crate::vfs::write(path, crate::document_sets::IGNORE).map_err(|e| e.to_string())?; }
+    Ok(vec![])
 }
 
 // The agents init knows how to wire: display name, config path, and the JSON key that
@@ -363,28 +350,12 @@ pub fn run_gui(paths: &[String], opts: &Options) -> i32 {
 // (flag → env → project → global config → default), and the out directory.
 pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut proj = match project::find_root(&cwd) {
-        Some(root) => Project::load(&root),
-        None => {
-            let mut p = Project::default();
-            p.root = cwd.clone();
-            p
-        }
-    };
-    if !paths.is_empty() {
-        let files: Vec<PathBuf> = paths
-            .iter()
-            .map(|p| {
-                let pb = PathBuf::from(p);
-                if pb.is_absolute() {
-                    pb
-                } else {
-                    cwd.join(pb)
-                }
-            })
-            .collect();
-        proj.explicit_files = Some(files);
-    }
+    let root = project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let mut proj = if let Some(set) = opts.set.as_deref() {
+        Project::load_set(&root, set).unwrap_or_else(|(_, error)| Project { root: root.clone(),
+            config_error: Some(error), docs_glob: vec![], ..Project::default() })
+    } else { Project::load(&root) };
+    let _ = paths; // Path filters choose sets in run_compile; never truncate a graph's input.
 
     let global = project::load_global_llm();
     let llm = resolve_llm(opts, &proj.llm, &global, |name| std::env::var(name).ok());
@@ -400,7 +371,10 @@ pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
                 cwd.join(pb)
             }
         })
-        .unwrap_or_else(|| proj.root.join(".jazyk"));
+        .unwrap_or_else(|| proj.out.clone());
+    if opts.out.is_some() && (opts.set.is_none() || (out.starts_with(root.join(".jazyk")) && out!=proj.out)) {
+        proj.config_error=Some("--out requires --set and cannot target project metadata or another set's store".into());
+    }
     // The out directory is never doc input; doc_files skips it by path.
     proj.out = out.clone();
     (proj, llm, out)
@@ -489,7 +463,7 @@ pub const ACP_AGENTS: &[(&str, &str, &str, &[&str])] = &[
 // stdin skips the step. Mirrors docs/frontends/cli.md#jazyk-init.
 fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
     use std::io::IsTerminal;
-    let path = cwd.join("jazyk.toml");
+    let path = cwd.join(crate::document_sets::CONFIG);
     let interactive = flag.is_none() && std::io::stdin().is_terminal();
     let name = match flag {
         Some("none") => return false,
@@ -865,19 +839,62 @@ fn verdict_line(r: &reconcile::BuildReport) -> String {
 }
 
 pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
-    let (proj, llm, out) = resolve(paths, opts);
-    if opts.verbose {
-        llm::set_verbose(true);
+    use crate::document_sets::{Workspace, included};
+    let cwd=std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root=project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let workspace=match Workspace::load(&root) { Ok(w)=>w, Err((_,e))=>{eprintln!("jazyk: {}",e);return 2;} };
+    if workspace.sets.is_empty() { eprintln!("jazyk: no document sets; use `jazyk sets add NAME --docs PATH`"); return 2; }
+    let summary=workspace.summary();
+    let mut code=0;
+    let mut selected=0;
+    for set in &workspace.sets {
+        if let Some(selector)=opts.set.as_deref() {
+            match workspace.select(selector) { Ok(s) if s.id == set.id => {}, Ok(_) => continue,
+                Err((_,e)) => {eprintln!("jazyk: {}",e);return 2;} }
+        } else if !paths.is_empty() {
+            if !paths.iter().any(|path| cwd.join(path).strip_prefix(&root).ok()
+                .is_some_and(|rel| included(&set.docs, &rel.to_string_lossy()) || workspace.files().iter()
+                    .any(|f| f.starts_with(&format!("{}/",rel.display())) && included(&set.docs,f)))) {continue;}
+        } else if !summary["sets"].as_array().unwrap().iter().any(|s| s["id"]==set.id && s["dirty"]==true && s["state"]!="empty") {continue;}
+        selected+=1;
+        let mut options=opts.clone(); options.set=Some(set.id.clone());
+        let (proj,llm,out)=resolve(&[],&options);
+        if let Some(error)=proj.config_error.as_deref() { eprintln!("jazyk: {}",error);return 2; }
+        println!("{}",set.name);
+        if opts.verbose {llm::set_verbose(true);}
+        let trace=trace_for(opts).with_transcript(&out,"compile");
+        let report=reconcile::compile_with(&proj,&llm,&out,&trace,opts.sessions);
+        trace.finish_transcript("done",&serde_json::json!(report));
+        println!("{}: {}",set.name,verdict_line(&report));
+        if !report.converged() {code=1;}
     }
-    let trace = trace_for(opts).with_transcript(&out, "compile");
-    let report = reconcile::compile_with(&proj, &llm, &out, &trace, opts.sessions);
-    trace.finish_transcript("done", &serde_json::json!(report));
-    println!("{}", verdict_line(&report));
-    if report.converged() {
-        0
-    } else {
-        1
-    }
+    if selected==0 { println!("No dirty document sets."); }
+    code
+}
+
+pub fn run_sets(args: &[String], opts: &Options) -> i32 {
+    let cwd=std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root=project::find_root(&cwd).unwrap_or(cwd);
+    let result=(|| -> crate::document_sets::Result<serde_json::Value> {
+        let workspace=crate::document_sets::Workspace::load(&root)?;
+        let action=args.first().map(String::as_str).unwrap_or("list");
+        if action=="list" { return Ok(workspace.summary()); }
+        let name=args.get(1).ok_or_else(|| (400,"a set name or ID is required".into()))?;
+        let mut set=serde_json::json!({});
+        if action=="add" { set=serde_json::json!({"name":name,"docs":opts.docs,"roots":opts.roots,"source":opts.source}); }
+        else {
+            set["id"]=serde_json::json!(workspace.select(name)?.id);
+            if let Some(name)=&opts.name {set["name"]=serde_json::json!(name);}
+            if !opts.docs.is_empty() {set["docs"]=serde_json::json!(opts.docs);}
+            if !opts.source.is_empty() {set["source"]=serde_json::json!(opts.source);}
+            if !opts.roots.is_empty() {set["roots"]=serde_json::json!(opts.roots);}
+        }
+        if !["add","update","remove","preview"].contains(&action) {return Err((400,"use sets list|add|update|remove|preview".into()));}
+        let body=if action=="remove" {serde_json::json!({"baseHash":workspace.hash,"remove":set["id"]})}
+            else {serde_json::json!({"baseHash":workspace.hash,"set":set})};
+        crate::document_sets::edit(&root,&body,action=="preview")
+    })();
+    match result {Ok(v)=>{println!("{}",serde_json::to_string_pretty(&v).unwrap());0},Err((_,e))=>{eprintln!("jazyk: {}",e);2}}
 }
 
 pub fn run_check(paths: &[String], opts: &Options) -> i32 {
@@ -1251,6 +1268,7 @@ fn watch_build(paths: &[String], opts: &Options) -> i32 {
     if opts.verbose {
         return run_compile(paths, opts);
     }
+    if opts.set.is_none() {return run_compile(paths,opts);}
     let (proj, llm, out) = resolve(paths, opts);
     let level = if opts.quiet {
         TraceLevel::Quiet
@@ -1331,8 +1349,9 @@ fn goal_line(ev: &crate::session::TraceEvent) {
 pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(paths, opts);
     let fingerprint = |proj: &Project| -> String {
-        let mut s = String::new();
-        for f in proj.doc_files() {
+        let Ok(w)=crate::document_sets::Workspace::load(&proj.root) else {return String::new();};
+        let mut s = w.hash.clone();
+        for f in w.files().iter().filter(|f|!w.memberships(f).is_empty()).map(|f|w.root.join(f)) {
             if let Ok(md) = std::fs::metadata(&f) {
                 s.push_str(&format!(
                     "{}:{}:{:?};",
@@ -1479,6 +1498,8 @@ fn spend_at(out: &Path, generation: u64, tokens: u64, cached: Option<u64>) -> Re
 }
 
 pub fn run_status(opts: &Options) -> i32 {
+    if opts.set.is_none() { return run_sets(&["list".into()], opts); }
+
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (proj, _llm, out) = resolve(&[], opts);
     // Outside a project the store is the ad hoc one at the working directory: say
@@ -2529,6 +2550,16 @@ pub fn run_viewer(opts: &Options) -> i32 {
 // The search tool from the terminal: one `id (name): definition` line per match, or
 // one JSON object per line under --json. Mirrors docs/frontends/cli.md#jazyk-query.
 pub fn run_query(opts: &Options, query: &str) -> i32 {
+    if opts.set.is_none() {
+        let (project,_,_)=resolve(&[],opts);
+        if let Ok(w)=crate::document_sets::Workspace::load(&project.root) {
+            if w.sets.len()!=1 {
+                let mut code=0;
+                for set in w.sets {let mut local=opts.clone();local.set=Some(set.id);println!("{}",set.name);code=code.max(run_query(&local,query));}
+                return code;
+            }
+        }
+    }
     let (_proj, _llm, out) = resolve(&[], opts);
     let store = Store::load(&out);
     let hits = store.search(query);
@@ -2676,8 +2707,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();

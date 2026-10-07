@@ -3246,8 +3246,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("product")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n\n[gen]\ndeliverable = \"./product\"\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\ngen = {}\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = [\"product/**\"]\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -3283,12 +3283,12 @@ mod tests {
         let row = |_: ()| ReqRow {
             tests: std::collections::BTreeMap::new(),
             entity: "ent:gw".into(),
-            files: vec!["gw.rs".into()],
+            files: vec!["product/gw.rs".into()],
             sites: Vec::new(),
             test: TestRef {
                 kind: "programmatic".into(),
                 label: "unit".into(),
-                artifact: "gw.rs".into(),
+                artifact: "product/gw.rs".into(),
                 name: "t".into(),
                 run: "true".into(),
                 cwd: ".".into(),

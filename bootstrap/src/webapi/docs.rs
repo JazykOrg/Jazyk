@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 // Does the relative path match the docs glob? Last matching pattern wins, `!` negates.
 // Mirrors Project::doc_files.
 fn glob_included(proj: &Project, rel: &str) -> bool {
+    if proj.set_id.is_none() && proj.root.join(crate::document_sets::CONFIG).vexists() {
+        return crate::document_sets::Workspace::load(&proj.root).is_ok_and(|w| w.sets.iter().any(|s| crate::document_sets::included(&s.docs, rel)));
+    }
+
     let mut included = false;
     for pat in &proj.docs_glob {
         let (neg, p) = match pat.strip_prefix('!') {
@@ -53,6 +57,7 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
     if !glob_included(proj, rel) {
         return Err(format!("outside the docs glob {:?}", proj.docs_glob));
     }
+    if !crate::document_sets::safe_relative(&proj.root,rel) {return Err("path crosses a nested project or a symlink boundary".into());}
     let abs = proj.root.join(rel);
     if abs.starts_with(&proj.out) {
         return Err("inside the out directory".to_string());

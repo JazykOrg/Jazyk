@@ -400,11 +400,16 @@ pub fn build_lease(out: &Path) -> Option<Lease> {
 // or a clicked button is an approval). A background thread heartbeats the lease so a
 // long build never loses it; drop frees it. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub struct BuildGuard {
+    _project_lock: Option<crate::document_sets::ProjectLock>,
     out: PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
+    if let Some(error) = &proj.config_error { return Err(error.clone()); }
+    let project_lock = if proj.set_id.is_some() {
+        Some(crate::document_sets::ProjectLock::acquire(&proj.root, "project.lock").map_err(|e| e.1)?)
+    } else { None };
     let held = task_leases(out);
     if let Some((task, l)) = held.iter().next() {
         return Err(format!(
@@ -437,6 +442,7 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
         }
     }); }
     Ok(BuildGuard {
+        _project_lock: project_lock,
         out: out.to_path_buf(),
         stop,
     })

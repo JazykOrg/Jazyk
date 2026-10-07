@@ -1,5 +1,0 @@
-[docs]
-glob = ["docs/**/*.md"]
-
-[gen]
-deliverable = "code"

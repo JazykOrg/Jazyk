@@ -1282,7 +1282,7 @@ impl Status {
 }
 
 // The in-memory graph: the contents of the graph/ shard files.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Graph {
     pub entities: BTreeMap<String, Entity>,
     pub requirements: BTreeMap<String, Requirement>,

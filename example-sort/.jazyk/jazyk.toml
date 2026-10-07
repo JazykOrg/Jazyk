@@ -1,0 +1,8 @@
+version = 1
+
+[[sets]]
+id = "ds_main"
+name = "Main"
+docs = ["docs/**/*.md"]
+roots = []
+source = ["code/**"]

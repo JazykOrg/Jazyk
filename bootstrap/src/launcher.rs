@@ -35,6 +35,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
         ("launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]", "verify a tool's setup, then start it"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
+        ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--json] [--costs]", "the store version, the last verdict, the board counts, what to do next"),
         ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
@@ -114,6 +115,7 @@ fn usage_error(cmd: &str, msg: &str) -> ! {
 
 // The options every command accepts: the common options and the trace levels.
 const COMMON_OPTIONS: &[&str] = &[
+    "--set",
     "--help",
     "-h",
     "--out",
@@ -129,6 +131,7 @@ const COMMON_OPTIONS: &[&str] = &[
 
 // Options that take a value; a bare one at the end of the line is a usage error.
 const VALUE_OPTIONS: &[&str] = &[
+    "--set", "--docs", "--source", "--roots", "--name",
     "--llm-base-url",
     "--model",
     "--api-key",
@@ -160,7 +163,8 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
     Some(match cmd {
         "init" => (Some(0), &["--mcp", "--acp"]),
         "launch" => (Some(1), &[]),
-        "compile" => (None, &["--sessions"]),
+        "compile" => (None, &["--sessions", "--dirty"]),
+        "sets" => (Some(2), &["--docs", "--source", "--roots", "--name", "--json"]),
         "check" | "watch" | "decompile" => (None, &[]),
         "status" => (Some(0), &["--json", "--costs"]),
         "preview" | "explain" => (Some(1), &[]),
@@ -206,6 +210,7 @@ const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/
 
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
+        "sets" => "usage: jazyk sets list|add|update|remove|preview [NAME] [--docs GLOB] [--source GLOB] [--roots GLOB] [--name NAME]\n\nSelections are repeatable. Paths are relative to the project folder. Output is JSON (--json).".to_string(),
         "launch" => "usage: jazyk launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]\n\n\
              The launcher, what bare `jazyk` runs inside a project: print the status, then\n\
              verify the chosen tool's setup (the MCP server entry, the ACP registration,\n\
@@ -227,7 +232,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...] [--sessions N]\n\n\
+            "usage: jazyk compile [path...] [--dirty] [--set ID] [--sessions N]\n\n\
              Run one build. The reconciler derives the goal board from the documents\n\
              and the graph; sessions resolve ready goals batch by batch until the\n\
              board converges. Prints the board summary first, a `gc burst:` line as\n\
@@ -582,6 +587,11 @@ pub fn run() {
                 "--model" => opts.model = Some(v),
                 "--api-key" => opts.api_key = Some(v),
                 "--out" => opts.out = Some(v),
+                "--set" => opts.set = Some(v),
+                "--docs" => opts.docs.push(v),
+                "--source" => opts.source.push(v),
+                "--roots" => opts.roots.push(v),
+                "--name" => opts.name = Some(v),
                 "--depth" => opts.depth = number(arg, &v, &mut errors),
                 "--expand" => opts.expand.push(v),
                 "--kind" => opts.kind = Some(v),
@@ -610,6 +620,7 @@ pub fn run() {
             "--help" | "-h" => want_help = true,
             "help" if cmd.is_empty() => want_help = true,
             "--back" => opts.back = true,
+            "--dirty" => opts.dirty = true,
             "--ephemeral" => opts.ephemeral = true,
             "--packaged" => opts.packaged = true,
             "--serve-files" => opts.serve_files = true,
@@ -707,7 +718,13 @@ pub fn run() {
         }
     }
 
+    if !["watch","query","init","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","launch","replay"].contains(&cmd.as_str()) {
+        let (proj,_,_)=cli::resolve(&[],&opts);
+        if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
+        if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
+    }
     let code = match cmd.as_str() {
+        "sets" => cli::run_sets(&positional, &opts),
         "init" => cli::run_init(&opts),
         "launch" => cli::run_launch(&opts, positional.first().map(|s| s.as_str())),
         "compile" => cli::run_compile(&positional, &opts),
@@ -775,7 +792,10 @@ pub fn run() {
                         "--write applies to the graph toolset only; compile gates writes behind begin_goals",
                     );
                 } else {
-                    let (proj, _llm, out) = cli::resolve(&[], &opts);
+                    let (mut proj, _llm, mut out) = cli::resolve(&[], &opts);
+                    if opts.set.is_none() && opts.only.is_none() && opts.build_token.is_none() {
+                        if let Ok(w)=crate::document_sets::Workspace::load(&proj.root) {proj=w.files_project();out=proj.root.join(".jazyk");}
+                    }
                     let bridge = mcp::BridgeFlags {
                         ephemeral: opts.ephemeral,
                         only: opts.only.clone(),
@@ -828,7 +848,7 @@ pub fn run() {
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);
             let gs = gen::GenSettings::resolve(&proj);
-            lsp::Lsp::new(proj.root.clone(), out, gs).run();
+            lsp::Lsp::new(proj.root.clone(), if opts.set.is_some() {out} else {proj.root.join(".jazyk")}, gs).run();
             0
         }
         // Replays: scripted sessions against the harness, no model

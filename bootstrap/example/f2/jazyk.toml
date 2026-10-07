@@ -1,8 +1,0 @@
-[docs]
-glob = ["docs/**/*.md"]
-
-[roots]
-files = ["docs/system.md"]
-
-[gen]
-deliverable = "./product"

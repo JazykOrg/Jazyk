@@ -653,7 +653,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jazyk-reader-prompt-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
-        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n").unwrap();
         let project = crate::project::Project::load(&dir);
         let out = project.out.clone();
         let server = crate::mcp::McpServer::with_bridge(

@@ -4226,6 +4226,7 @@ impl ToolSession {
                 let raw = Self::str_arg(args, "path")?;
                 let (rel, note) = self.unroot_rel(raw.trim().trim_start_matches("./"));
                 let content = Self::str_arg(args, "content")?;
+                if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents",rel)));}
                 let path = self.deliverable_path(&rel)?;
                 // File ownership: a path recorded for an entity outside this session's
                 // component group is off limits; the group shares its files.

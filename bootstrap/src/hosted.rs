@@ -121,8 +121,22 @@ impl Workspace {
 }
 
 fn project_projection(files: &Snapshot, authored: &[String]) -> Result<Projection, String> {
+    let w=crate::document_sets::Workspace::load(&root()).map_err(|e|e.1)?;
+    let mut combined=Projection{source:Default::default(),files:Default::default(),criteria:Default::default(),graph_generation:0};
+    let contexts:Vec<_>=if w.sets.is_empty(){vec![w.files_project()]}else{w.sets.iter().map(|s|w.resolve(Some(&s.id)).unwrap()).collect()};
+    for p in contexts {
+        let projected=set_projection(files,authored,&p)?;
+        combined.source.extend(projected.source);combined.files.extend(projected.files);
+        for (id,v) in projected.criteria {
+            let id=p.set_id.as_deref().map(|set|crate::webapi::sets::qualify(&id,set)).unwrap_or(id);
+            combined.criteria.insert(id,v);
+        }
+        combined.graph_generation+=projected.graph_generation;
+    }
+    Ok(combined)
+}
+fn set_projection(files: &Snapshot, authored: &[String], p: &crate::project::Project) -> Result<Projection,String> {
     use crate::vfs::VPathExt;
-    let p = crate::project::Project::load(&root());
     let store = crate::store::Store::load(&p.out);
     let gs = crate::gen::GenSettings::resolve(&p);
     let ledger = crate::gen::Ledger::load(&p.out);
@@ -136,7 +150,7 @@ fn project_projection(files: &Snapshot, authored: &[String]) -> Result<Projectio
         Some(path.strip_prefix(root()).ok()?.to_str()?.to_owned())
     };
     let internal = |name: &str| {
-        name.split('/')
+        name != crate::document_sets::CONFIG && name.split('/')
             .any(|c| c == ".git" || c.starts_with(".jazyk") || c.starts_with("jazyk-out"))
             || root().join(name).starts_with(&p.out)
     };
@@ -186,7 +200,7 @@ fn project_projection(files: &Snapshot, authored: &[String]) -> Result<Projectio
     for path in p
         .doc_files()
         .into_iter()
-        .chain([root().join("jazyk.toml"), p.root.join("jazyk.toml")])
+        .chain([root().join(crate::document_sets::CONFIG), p.root.join(crate::document_sets::CONFIG)])
     {
         if let Some(name) = relative(&path) {
             source_paths.insert(name);
@@ -296,14 +310,19 @@ pub(crate) fn transport(body: &str) -> Result<String, String> {
 }
 
 fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
-    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let routed=match crate::webapi::sets::route(path,serde_json::from_str(body).unwrap_or(Value::Null)) {
+        Ok(r)=>r,Err((code,e))=>return Ok(Reply::json(code,json!({"error":e}))),
+    };
+    let (route, query) = routed.path.split_once('?').unwrap_or((&routed.path, ""));
+    let workspace=crate::document_sets::Workspace::load(&root()).map_err(|e|e.1)?;
+    let selected=||workspace.resolve(routed.selector.as_deref()).map_err(|e|e.1);
     let route = route.strip_prefix("/api").unwrap_or(route);
     if method == "GET" && matches!(route, "/out/file" | "/project/file" | "/deliverable/raw") {
         let rel = url::form_urlencoded::parse(query.as_bytes())
             .find(|(k, _)| k == "path")
             .map(|(_, v)| v.into_owned())
             .unwrap_or_default();
-        let p = crate::project::Project::load(&root());
+        let p = if route=="/project/file" {workspace.files_project()} else {selected()?};
         let result = match route {
             "/out/file" => crate::webapi::outfiles::out_file(&p.out, &rel),
             "/project/file" => crate::webapi::projfiles::project_file(&p.root, &rel),
@@ -322,10 +341,10 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
         });
     }
     if method == "POST" && route == "/jobs" {
-        let request: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        let request = routed.body.clone();
         let kind = request["kind"].as_str().unwrap_or("compile");
         if matches!(kind, "verify" | "audit" | "gen") {
-            let p = crate::project::Project::load(&root());
+            let p = selected()?;
             let store = crate::store::Store::load(&p.out);
             let gs = crate::gen::GenSettings::resolve(&p);
             let result = if kind == "gen" {
@@ -451,8 +470,8 @@ mod tests {
     fn workspace(name: &str) -> Workspace {
         Workspace::new(BTreeMap::from([
             (
-                "jazyk.toml".into(),
-                b"[docs]\nglob = [\"docs/**/*.md\"]\n[roots]\nfiles = [\"docs/main.md\"]\n"
+                ".jazyk/jazyk.toml".into(),
+                b"version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = [\"docs/main.md\"]\nsource = []\n"
                     .to_vec(),
             ),
             (
@@ -467,10 +486,10 @@ mod tests {
     fn projection_preserves_authored_membership_and_records_only_ledger_output() {
         let mut w = workspace("Alpha");
         for (path, text) in [
-            ("jazyk.toml", "redirect = \"spec\"\n"),
+
             (
-                "spec/jazyk.toml",
-                "[docs]\nglob = [\"docs/**/*.md\"]\n[gen]\ndeliverable = \"product\"\n",
+                ".jazyk/jazyk.toml",
+                "version = 1\ngen = {}\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"spec/docs/**/*.md\"]\nroots = []\nsource = [\"spec/product/**\"]\n",
             ),
             ("spec/docs/main.md", "# Main\nAuthored prose.\n"),
             ("spec/docs/new.md", "# New\nNewly authored prose.\n"),
@@ -484,7 +503,7 @@ mod tests {
             ("spec/product/test_extra.py", "assert 1 == 1"),
             ("spec/product/draft.py", "unrecorded output"),
             ("spec/product/build.zip", "built output"),
-            ("spec/.jazyk/gen/judge.md", "LLM judgment criteria"),
+            (".jazyk/ds_main/gen/judge.md", "LLM judgment criteria"),
         ] {
             w.files.insert(path.into(), text.as_bytes().to_vec());
         }
@@ -504,14 +523,14 @@ mod tests {
             store.save();
             let programmatic = |artifact| json!({"kind":"programmatic", "label":"test", "artifact":artifact, "name":"test", "run":"python test.py"});
             let ledger: crate::gen::Ledger = serde_json::from_value(json!({
-                "support":["package.json"],
-                "entities":{"alpha":{"factHash":"recorded", "requirements":[], "files":["main.py","build.zip","missing.py"]}},
-                "build":{"run":"python build.py","produces":["build.zip"]},
+                "support":["spec/product/package.json"],
+                "entities":{"alpha":{"factHash":"recorded", "requirements":[], "files":["spec/product/main.py","spec/product/build.zip","spec/product/missing.py"]}},
+                "build":{"run":"python build.py","produces":["spec/product/build.zip"]},
                 "requirements":{"req:stable":{
-                    "entity":"ent:alpha","files":["main.py"],
-                    "test": programmatic("test.py"),
+                    "entity":"ent:alpha","files":["spec/product/main.py"],
+                    "test": programmatic("spec/product/test.py"),
                     "tests": {
-                        "crit:extra":{"test":programmatic("test_extra.py"),"criterion_hash":"hash"},
+                        "crit:extra":{"test":programmatic("spec/product/test_extra.py"),"criterion_hash":"hash"},
                         "crit:llm":{"test":{"kind":"llm","label":"judge","artifact":"judge.md","name":"judge","run":""},"criterion_hash":"hash"}
                     },
                     "hashes":{"requirement":"","test":"","files":""}
@@ -535,7 +554,7 @@ mod tests {
         let projection = w.projection(&authored).unwrap();
         assert_eq!(projection.graph_generation, 42);
         assert_eq!(
-            projection.criteria["crit:stable"]["statement"],
+            projection.criteria["crit:ds_main::stable"]["statement"],
             "One returns one."
         );
         assert_eq!(
@@ -546,11 +565,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 ".github/workflows/test.yml",
-                "jazyk.toml",
+                ".jazyk/jazyk.toml",
                 "notes.txt",
                 "spec/docs/main.md",
                 "spec/docs/new.md",
-                "spec/jazyk.toml",
             ]
         );
         for path in ["main.py", "package.json", "test.py", "test_extra.py"] {
@@ -847,8 +865,8 @@ mod tests {
         };
         let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
         assert!(
-            result["report"]["failed"].as_u64().unwrap()
-                + result["report"]["parked"].as_u64().unwrap()
+            result["results"][0]["body"]["report"]["failed"].as_u64().unwrap()
+                + result["results"][0]["body"]["report"]["parked"].as_u64().unwrap()
                 > 0,
             "{result}"
         );
@@ -863,7 +881,7 @@ mod tests {
             .iter()
             .any(|e| e.contains("coverage")));
         assert!(
-            w.snapshot().contains_key(".jazyk/status.yaml"),
+            w.snapshot().contains_key(".jazyk/ds_main/status.yaml"),
             "valid failure state should remain persistable"
         );
     }
@@ -958,13 +976,13 @@ mod tests {
         drop(events);
         let graph = value(&mut w, "GET", "/api/graph", Value::Null, &e);
         assert_eq!(
-            graph["entities"]["ent:alpha"]["name"], "Alpha",
+            graph["entities"]["ent:ds_main::alpha"]["name"], "Alpha",
             "{result}: {graph}"
         );
         assert_eq!(graph["requirements"].as_object().unwrap().len(), 1);
         let snapshot = w.snapshot();
-        assert!(!snapshot.keys().any(|p|p.starts_with(".jazyk/preview/")));
-        assert!(snapshot.keys().any(|p| p.starts_with(".jazyk/journal/")));
+        assert!(!snapshot.keys().any(|p|p.starts_with(".jazyk/ds_main/preview/")));
+        assert!(snapshot.keys().any(|p| p.starts_with(".jazyk/ds_main/journal/")));
         assert!(
             snapshot.keys().any(|p| p.ends_with(".svg")),
             "hosted compilation should retain diagram output"

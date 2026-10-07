@@ -124,7 +124,7 @@ fn reading_order(prose: &[String]) -> (Vec<String>, Option<String>) {
     let index = prose
         .iter()
         .find(|p| {
-            !p.contains('/') && matches!(p.to_ascii_lowercase().as_str(), "readme.md" | "index.md")
+            matches!(p.rsplit('/').next().unwrap_or(p).to_ascii_lowercase().as_str(), "readme.md" | "index.md")
         })
         .cloned();
     let mut rest: Vec<String> = prose
@@ -142,6 +142,7 @@ pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
     let ledger = Ledger::load(&p.out);
     let mut files: Vec<(String, u64)> = Vec::new();
     walk(&gs.deliverable, &gs.deliverable, &mut files);
+    files.retain(|(f,_)|gs.allows_source(f));
     let sizes: std::collections::HashMap<String, u64> = files.iter().cloned().collect();
     let artifacts: HashSet<&str> = tests_of(&ledger)
         .map(|t| t.artifact.as_str())
@@ -155,7 +156,7 @@ pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
         .filter_map(|f| f.strip_prefix(&gs.deliverable).ok())
         .map(|r| r.to_string_lossy().replace('\\', "/"))
         .collect();
-    let settings = p.root.join("jazyk.toml");
+    let settings = p.root.join(crate::document_sets::CONFIG);
     let mut product: Vec<String> = files
         .iter()
         .map(|(f, _)| f.clone())
@@ -205,6 +206,7 @@ pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
                 order.push(ix.clone());
                 let text = read_text(&gs.deliverable.join(ix)).unwrap_or_default();
                 for l in index_links(&text) {
+                    let l=Path::new(ix).parent().unwrap_or_else(||Path::new("")).join(l).to_string_lossy().replace('\\',"/");
                     if rest.contains(&l) && !order.contains(&l) {
                         order.push(l);
                     }
@@ -274,10 +276,7 @@ pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
 // its first document.
 fn readme(p: &Project, gs: &GenSettings, product: &[String]) -> Value {
     let own = product.iter().find(|f| {
-        if f.contains('/') {
-            return false;
-        }
-        let lower = f.to_ascii_lowercase();
+        let lower = f.rsplit('/').next().unwrap_or(f).to_ascii_lowercase();
         matches!(
             lower.as_str(),
             "readme" | "readme.md" | "readme.markdown" | "readme.txt"
@@ -347,7 +346,7 @@ mod tests {
         ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
-        crate::vfs::write(dir.join("jazyk.toml"), toml).unwrap();
+        crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, toml).unwrap();
         for (rel, bytes) in files {
             let p = dir.join(rel);
             crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -356,7 +355,7 @@ mod tests {
         Project::load(&dir)
     }
 
-    const TOML: &str = "[docs]\nglob = [\"docs/**/*.md\"]\n\n[gen]\ndeliverable = \"product\"\n";
+    const TOML: &str = "version = 1\ngen = {}\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = [\"product/**\"]\n";
 
     #[test]
     fn a_written_product_reads_in_index_order_then_by_name() {
@@ -386,7 +385,7 @@ mod tests {
             .collect();
         assert_eq!(
             paths,
-            vec!["README.md", "b-two.md", "a-one.md", "c-three.md"]
+            vec!["product/README.md", "product/b-two.md", "product/a-one.md", "product/c-three.md"]
         );
         crate::vfs::remove_dir_all(&p.root).ok();
     }
@@ -410,7 +409,7 @@ mod tests {
         crate::vfs::write(p.root.join("product/Readme.md"), "# Sort\n").unwrap();
         let v = overview_value(&p, &GenSettings::resolve(&p));
         assert_eq!(v["readme"]["tree"], "deliverable");
-        assert_eq!(v["readme"]["path"], "Readme.md");
+        assert_eq!(v["readme"]["path"], "product/Readme.md");
         crate::vfs::remove_dir_all(&p.root).ok();
     }
 
@@ -428,12 +427,12 @@ mod tests {
         crate::vfs::create_dir_all(p.out.join("gen")).unwrap();
         crate::vfs::write(
             p.out.join("gen/ledger.yaml"),
-            "medium:\n  form: deck\n  produced: built\n  toolchain: python\n  artifact: dist/deck.pptx\n",
+            "medium:\n  form: deck\n  produced: built\n  toolchain: python\n  artifact: product/dist/deck.pptx\n",
         )
         .unwrap();
         let v = overview_value(&p, &GenSettings::resolve(&p));
         assert_eq!(v["kind"], "built");
-        assert_eq!(v["artifacts"][0]["path"], "dist/deck.pptx");
+        assert_eq!(v["artifacts"][0]["path"], "product/dist/deck.pptx");
         assert_eq!(v["artifacts"][0]["exists"], true);
         assert_eq!(v["artifacts"][0]["size"], 5);
         assert_eq!(
@@ -452,7 +451,7 @@ mod tests {
         // A deliverable at the root holds the documents and the settings: not a product.
         let p = project_at(
             "root",
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
             &[("docs/main.md", b"# Shop\n"), ("docs/cart.md", b"# Cart\n")],
         );
         assert_eq!(

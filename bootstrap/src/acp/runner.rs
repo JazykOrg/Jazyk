@@ -38,6 +38,9 @@ impl ServingPlan {
             "--out".to_string(),
             out.to_string_lossy().into_owned(),
         ];
+        if let Some(id)=out.file_name().and_then(|s|s.to_str()).filter(|id|crate::document_sets::valid_id(id)) {
+            args.extend(["--set".into(),id.to_string()]);
+        }
         if self.flags.ephemeral {
             args.push("--ephemeral".to_string());
         }

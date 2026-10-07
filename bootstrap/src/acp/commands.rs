@@ -177,7 +177,7 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
         .map(|a| a.name)
         .unwrap_or_else(|e| format!("unresolved ({})", e));
     let gs = crate::gen::GenSettings::resolve(proj);
-    let toml = crate::vfs::read_to_string(proj.root.join("jazyk.toml")).unwrap_or_default();
+    let toml = crate::vfs::read_to_string(proj.root.join(crate::document_sets::CONFIG)).unwrap_or_default();
     let states = |key: &str| toml.contains(key);
     let rows: Vec<(&str, String, &str)> = vec![
         (
@@ -296,13 +296,13 @@ pub fn config_set(proj: &Project, args: &str) -> String {
     if value.is_empty() {
         return format!("`/config {} <value>` needs a value", key);
     }
-    let path = proj.root.join("jazyk.toml");
+    let path = proj.root.join(crate::document_sets::CONFIG);
     let old = crate::vfs::read_to_string(&path).unwrap_or_default();
     let (section, k) = key.split_once('.').unwrap_or(("", key));
     let full = crate::mcp::toml_set(&old, section, k, value);
-    match crate::vfs::write(&path, full) {
-        Ok(()) => format!("{} = {}\n\njazyk.toml updated.", key, value),
-        Err(e) => format!("cannot write {}: {}", path.display(), e),
+    match crate::document_sets::atomic_config(&proj.root,&full,&crate::model::hash_hex(&old)) {
+        Ok(()) => format!("{} = {}\n\n.jazyk/jazyk.toml updated.", key, value),
+        Err((_,e)) => format!("cannot write {}: {}", path.display(), e),
     }
 }
 
@@ -517,7 +517,7 @@ pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
         crate::acp::config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
             std::env::var(n).ok()
         });
-    let toml = crate::vfs::read_to_string(proj.root.join("jazyk.toml")).unwrap_or_default();
+    let toml = crate::vfs::read_to_string(proj.root.join(crate::document_sets::CONFIG)).unwrap_or_default();
     let states_agent = toml.contains("[acp]");
     match &agent {
         Ok(a) if a.name == crate::acp::config::EMBEDDED && !states_agent => {
@@ -605,18 +605,18 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         let proj = Project::load(&dir);
 
         let out = config_set(&proj, "llm.model qwen3.8:27b-mlx");
         assert!(out.contains("updated"), "{}", out);
-        let toml = crate::vfs::read_to_string(dir.join("jazyk.toml")).unwrap();
+        let toml = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
         assert!(toml.contains("model = \"qwen3.8:27b-mlx\""), "{}", toml);
         assert!(
-            toml.contains("glob"),
+            toml.contains("docs ="),
             "the existing settings survive: {}",
             toml
         );
@@ -627,7 +627,7 @@ mod tests {
             "{}",
             refused
         );
-        let toml = crate::vfs::read_to_string(dir.join("jazyk.toml")).unwrap();
+        let toml = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
         assert!(!toml.contains("sk-secret"), "a refused key writes nothing");
         crate::vfs::remove_dir_all(&dir).ok();
     }

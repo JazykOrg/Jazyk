@@ -27,7 +27,7 @@ pub struct Lsp {
 
 impl Lsp {
     pub fn new(root: PathBuf, out: PathBuf, gen: crate::gen::GenSettings) -> Lsp {
-        let store = Store::load(&out);
+        let store = read_project_store(&root, &out);
         let generation = store.status.generation;
         Lsp {
             root,
@@ -57,7 +57,7 @@ impl Lsp {
             }
             tx_in.send(Event::Eof).ok();
         });
-        spawn_store_watcher(self.out.clone(), tx);
+        spawn_store_watcher(self.root.clone(), self.out.clone(), tx);
         let stdout = io::stdout();
         loop {
             let msg = match rx.recv() {
@@ -175,7 +175,7 @@ impl Lsp {
                 "documentLinkProvider": { "resolveProvider": false },
                 "codeLensProvider": { "resolveProvider": false },
                 "codeActionProvider": true,
-                "executeCommandProvider": { "commands": ["jazyk.openRequirement", "jazyk.answerDiagnostic"] }
+                "executeCommandProvider": { "commands": ["jazyk.openRequirement", "jazyk.answerDiagnostic", "jazyk.documentSets", "jazyk.previewDocumentSet", "jazyk.saveDocumentSet", "jazyk.compile"] }
             },
             "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
         })
@@ -184,7 +184,7 @@ impl Lsp {
     // Reload the store when the generation counter moved, and republish every open
     // document so the editor reflects the new build.
     pub(crate) fn refresh<W: Write>(&mut self, out: &mut W) {
-        let current = Store::load(&self.out);
+        let current = read_project_store(&self.root, &self.out);
         if current.status.generation != self.generation {
             eprintln!(
                 "[jazyk-lsp] store generation {} -> {}; reloading",
@@ -340,10 +340,10 @@ impl Lsp {
                 items.push(json!({
                     "range": self.range(range),
                     "severity": severity,
-                    "source": "jazyk",
+                    "source": diagnostic_source(&self.root,did),
                     "code": d.rule,
                     "message": message,
-                    "data": { "jazykDiag": did }
+                    "data": { "jazykDiag": did, "setId": crate::webapi::sets::unqualify(did).0 }
                 }));
             }
             // A prompted proposal whose subject sits nowhere in the documents (a
@@ -354,10 +354,10 @@ impl Lsp {
                     items.push(json!({
                         "range": self.range(range),
                         "severity": severity,
-                        "source": "jazyk",
+                        "source": diagnostic_source(&self.root,did),
                         "code": d.rule,
                         "message": message,
-                        "data": { "jazykDiag": did }
+                        "data": { "jazykDiag": did, "setId": crate::webapi::sets::unqualify(did).0 }
                     }));
                 }
             }
@@ -753,6 +753,12 @@ impl Lsp {
     // as `?req=` for clients that route to the node itself.
     // Mirrors docs/frontends/lsp.md#capabilities.
     fn requirement_card(&self, rid: &str, r: &crate::model::Requirement) -> String {
+        if let (Some(id),local)=crate::webapi::sets::unqualify(rid) {
+            if let Ok(p)=crate::project::Project::load_set(&self.root,&id) {
+                let scoped=Self::new(p.root.clone(),p.out.clone(),crate::gen::GenSettings::resolve(&p));
+                if let Some(r)=scoped.store.graph.requirements.get(&local) {return format!("**{}**\n\n{}",p.set_name.unwrap_or(id),scoped.requirement_card(&local,r));}
+            }
+        }
         let ledger = crate::gen::Ledger::load(&self.out);
         let row = ledger.requirements.get(rid);
         let (status, reason) = match row {
@@ -1115,7 +1121,7 @@ impl Lsp {
         } else {
             return json!({"error": "pass option (an index into the prompt's options) or text (a freeform reply)"});
         };
-        let mut project = crate::project::Project::load(&self.root);
+        let mut project = self.out.file_name().and_then(|s|s.to_str()).and_then(|id|crate::project::Project::load_set(&self.root,id).ok()).unwrap_or_else(||crate::project::Project::load(&self.root));
         project.out = self.out.clone();
         match crate::answer::answer(&project, &self.out, did, reply, None) {
             Ok(v) => {
@@ -1132,6 +1138,39 @@ impl Lsp {
 
     fn on_execute_command<W: Write>(&mut self, params: &Value, out: &mut W) -> Value {
         let cmd = params.get("command").and_then(|c| c.as_str()).unwrap_or("");
+        if cmd=="jazyk.documentSets" {
+            return crate::document_sets::Workspace::load(&self.root).map(|w|w.summary()).unwrap_or_else(|e|json!({"error":e.1}));
+        }
+        if matches!(cmd,"jazyk.previewDocumentSet"|"jazyk.saveDocumentSet") {
+            return crate::document_sets::edit(&self.root,&params["arguments"][0],cmd=="jazyk.previewDocumentSet").unwrap_or_else(|e|json!({"error":e.1}));
+        }
+        if cmd=="jazyk.compile" {
+            let arg=&params["arguments"][0];
+            let Ok(w)=crate::document_sets::Workspace::load(&self.root) else {return json!({"error":"invalid project configuration"});};
+            let ids=if let Some(id)=arg["setId"].as_str() {match w.select(id) {Ok(s)=>vec![s.id.clone()],Err(e)=>return json!({"error":e.1})}}
+                else {w.summary()["sets"].as_array().unwrap().iter().filter(|s|s["dirty"]==true && s["state"]!="empty").filter_map(|s|s["id"].as_str().map(str::to_string)).collect()};
+            let targets=ids.clone();
+            std::thread::spawn(move || {
+                for id in ids {if let Ok(p)=w.resolve(Some(&id)) {
+                    if crate::document_sets::Workspace::load(&p.root).is_ok_and(|current|current.hash==w.hash) {
+                        let llm=crate::cli::resolve_llm(&Default::default(),&p.llm,&crate::project::load_global_llm(),|n|std::env::var(n).ok());
+                        crate::reconcile::compile(&p,&llm,&p.out,&crate::session::Trace::stderr(crate::session::TraceLevel::Normal));
+                    }
+                }}
+            });
+            return json!({"started":targets});
+        }
+        if !self.out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {
+            let routed=match crate::webapi::sets::route("/",params.clone()) {Ok(r)=>r,Err(e)=>return json!({"error":e.1})};
+            if let Some(id)=routed.selector {
+                let p=match crate::project::Project::load_set(&self.root,&id) {Ok(p)=>p,Err(e)=>return json!({"error":e.1})};
+                let mut local=Self::new(p.root.clone(),p.out.clone(),crate::gen::GenSettings::resolve(&p));
+                local.overlay=self.overlay.clone();local.next_srv_id=self.next_srv_id;
+                let value=local.on_execute_command(&routed.body,out);self.next_srv_id=local.next_srv_id;
+                return crate::webapi::sets::qualify_value(value,&id);
+            }
+            if cmd=="jazyk.answerDiagnostic" {return json!({"error":"use the qualified diagnostic ID from diagnostics"});}
+        }
         if cmd == "jazyk.answerDiagnostic" {
             return self.on_answer_diagnostic(params, out);
         }
@@ -1300,19 +1339,9 @@ enum Event {
 // generation bump: the store lock marks builds starting and ending, and each bump
 // replays the new journal entries, one line per committed mutation.
 // Mirrors docs/frontends/lsp.md#build-activity-in-the-log.
-fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
+fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
     std::thread::spawn(move || {
-        let read_generation = |out: &Path| -> u64 {
-            crate::vfs::read_to_string(out.join("status.yaml"))
-                .ok()
-                .and_then(|t| {
-                    t.lines()
-                        .find(|l| l.starts_with("generation:"))
-                        .and_then(|l| l.split(':').nth(1))
-                        .and_then(|v| v.trim().parse::<u64>().ok())
-                })
-                .unwrap_or(0)
-        };
+        let read_generation = |out: &Path| read_project_store(&root,out).status.generation;
         let mut last_gen = read_generation(&out);
         let mut lock_seen = out.join(".lock").vexists();
         loop {
@@ -1330,70 +1359,10 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
                 );
             }
             let gen_now = read_generation(&out);
-            if gen_now <= last_gen {
-                continue;
+            if gen_now != last_gen {
+                last_gen=gen_now;
+                if tx.send(Event::StoreChanged).is_err() {return;}
             }
-            if tx.send(Event::StoreChanged).is_err() {
-                return;
-            }
-            for g in (last_gen + 1)..=gen_now {
-                let path = out.join("journal").join(format!("g{}.yaml", g));
-                let Ok(text) = crate::vfs::read_to_string(&path) else {
-                    continue;
-                };
-                let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
-                    continue;
-                };
-                let kind = entry["kind"].as_str().unwrap_or("?");
-                let batch: Vec<&str> = entry["batch"]
-                    .as_array()
-                    .map(|b| b.iter().filter_map(|g| g.as_str()).collect())
-                    .unwrap_or_default();
-                let muts = entry["mutations"].as_array().cloned().unwrap_or_default();
-                eprintln!(
-                    "[jazyk-build] g{} {} {} ({} mutation(s))",
-                    g,
-                    kind,
-                    batch.join(" "),
-                    muts.len()
-                );
-                for m in &muts {
-                    eprintln!(
-                        "[jazyk-build]   {} {}",
-                        m["op"].as_str().unwrap_or("?"),
-                        m["id"].as_str().unwrap_or("")
-                    );
-                }
-                // One line per goal the entry resolved (with its justification) or
-                // opened (with its cause), so the log mirrors the journal's goal
-                // movements. Mirrors docs/frontends/lsp.md#build-activity-in-the-log.
-                let resolved = entry["resolved_goals"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default();
-                for r in &resolved {
-                    eprintln!(
-                        "[jazyk-build]   resolved {} ({})",
-                        r["goal"].as_str().unwrap_or("?"),
-                        r["justification"].as_str().unwrap_or("")
-                    );
-                }
-                let opened = entry["opened_goals"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default();
-                for o in &opened {
-                    let c = &o["cause"];
-                    eprintln!(
-                        "[jazyk-build]   opened {} (cause c{}-{} via {})",
-                        o["goal"].as_str().unwrap_or("?"),
-                        c["generation"].as_u64().unwrap_or(0),
-                        c["mutation"].as_u64().unwrap_or(0),
-                        c["via"].as_str().unwrap_or("")
-                    );
-                }
-            }
-            last_gen = gen_now;
         }
     });
 }
@@ -1582,8 +1551,8 @@ mod tests {
         let root = tmp.join("proj");
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
         crate::vfs::write(
-            root.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = root.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -2009,4 +1978,28 @@ mod tests {
         assert!(card.contains("diagrams/sequence/one.svg"), "{}", card);
         crate::vfs::remove_dir_all(&tmp).ok();
     }
+}
+
+// An in-memory projection only. It is never saved or passed to a graph mutator.
+fn read_project_store(root: &Path, out: &Path) -> Store {
+    if out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {return Store::load(out);}
+    let Ok(w)=crate::document_sets::Workspace::load(root) else {return Store::load(out);};
+    if !w.exists {return Store::load(out);}
+    let mut combined=Store::default();combined.out=out.into();
+    let mut graph=serde_json::to_value(&combined.graph).unwrap();let mut version=w.hash.clone();
+    for set in &w.sets {
+        let p=w.resolve(Some(&set.id)).unwrap();let store=Store::load(&p.out);
+        version.push_str(&format!("{}:{};",set.id,store.status.generation));
+        let value=crate::webapi::sets::qualify_value(serde_json::to_value(&store.graph).unwrap(),&set.id);
+        for (kind,map) in value.as_object().unwrap() {
+            if let (Some(to),Some(from))=(graph[kind].as_object_mut(),map.as_object()) {to.extend(from.clone());}
+        }
+        for (path,doc) in store.docs {combined.docs.entry(path).or_insert(doc);}
+    }
+    combined.graph=serde_json::from_value(graph).unwrap_or_default();
+    combined.status.generation=u64::from_str_radix(&crate::model::hash_hex(&version)[..16],16).unwrap_or(0);
+    combined
+}
+fn diagnostic_source(root: &Path, id: &str) -> String {
+    crate::webapi::sets::unqualify(id).0.and_then(|id|crate::document_sets::Workspace::load(root).ok()?.select(&id).ok().map(|s|format!("jazyk · {}",s.name))).unwrap_or_else(||"jazyk".into())
 }

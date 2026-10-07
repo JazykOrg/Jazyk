@@ -124,7 +124,11 @@ affected bindings and checks. They never silently preserve a clean verdict.
   The project owns conversations that discuss several sets and records grouping jobs.
 - A set rename changes only `name`. It preserves IDs, paths, graph, history, and
   bindings. Copying a set definition mints an ID and starts an empty graph.
-- Project-level references are `{setId, localId}`. Node, goal, generation, trace,
+- Project-level references carry `setId` and `localId`. JSON graph identifiers use
+  `<kind>:<setId>::<local-tail>` on the wire. The kind prefix stays unchanged.
+  The API decodes these identifiers before accessing a store. Local identifiers
+  on disk stay unchanged. Explicit `setId` and qualified identifiers must agree.
+  Node, goal, generation, trace,
   diagnostic, and diagram IDs are only unique inside their store. Search results,
   caches, deep links, and events must carry the set ID. Existing graph IDs stay as-is.
 - Remove set saves its definition in `removed-sets/<id>.toml`, detaches it from
@@ -267,3 +271,12 @@ shows setup until the user defines document sets.
 
 A graph reset archives only the selected set's store. Configuration and other
 sets remain in place.
+
+## Native request contexts
+
+Each request resolves its document set from the current configuration. Graph
+responses qualify identifiers, including references and map keys. Project file
+paths remain physical paths. Jobs record their set and configuration revision
+when queued. A changed configuration cancels a queued job before it writes.
+A group compile visits the selected sets in configuration order. Cancellation
+stops the current build at its next boundary and skips the remaining sets.

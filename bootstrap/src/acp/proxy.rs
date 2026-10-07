@@ -82,10 +82,10 @@ impl ProxyState {
     // next session. Mirrors docs/frontends/acp.md#the-ide-proxy.
     fn init_here(self: &Arc<Self>) -> String {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        if cwd.join("jazyk.toml").vexists() {
+        if cwd.join(crate::document_sets::CONFIG).vexists() {
             return format!("{} already holds a jazyk.toml.", cwd.display());
         }
-        if let Err(e) = crate::vfs::write(cwd.join("jazyk.toml"), crate::cli::INIT_TOML) {
+        if let Err(e) = crate::vfs::write({ let path = cwd.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, crate::cli::INIT_TOML) {
             return format!("jazyk: cannot write jazyk.toml: {}", e);
         }
         let made = match crate::cli::init_scaffold(&cwd) {

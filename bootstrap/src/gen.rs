@@ -49,6 +49,13 @@ impl GenSettings {
 
     // Placeholder for sessions with no project (benchmark cases). Gen tools are absent
     // from those toolsets, so the path is never read.
+    pub fn allows_source(&self, relative: &str) -> bool {
+        let Ok(w)=crate::document_sets::Workspace::load(&self.deliverable) else {return false;};
+        if !w.exists {return true;}
+        self.configured && crate::document_sets::safe_relative(&self.deliverable,relative)
+            && crate::document_sets::included(&self.code,relative)
+            && !w.sets.iter().any(|s|crate::document_sets::included(&s.docs,relative))
+    }
     pub fn from_out(out: &Path) -> GenSettings {
         GenSettings {
             configured: false,
@@ -744,16 +751,16 @@ pub fn unroot_note(from: &str, to: &str) -> String {
 // stripped and noted.
 pub fn confine_in(gs: &GenSettings, path: &str, notes: &mut Vec<String>) -> Result<String, String> {
     let rel = confine_rel(path)?;
-    match unroot(&gs.deliverable, &rel) {
+    let relative=match unroot(&gs.deliverable, &rel) {
         Some(under) if !under.is_empty() => {
             let note = unroot_note(&rel, &under);
-            if !notes.contains(&note) {
-                notes.push(note);
-            }
-            Ok(under)
+            if !notes.contains(&note) {notes.push(note);}
+            under
         }
-        _ => Ok(rel),
-    }
+        _ => rel,
+    };
+    if !gs.allows_source(&relative) {return Err(format!("{} is outside this document set's source selection or belongs to documents",relative));}
+    Ok(relative)
 }
 
 // A working directory the same way; the restated root alone is the deliverable.

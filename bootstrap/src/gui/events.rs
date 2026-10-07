@@ -20,7 +20,12 @@ use tokio::sync::broadcast;
 
 const RING: usize = 512;
 
+#[derive(Clone)]
 pub struct EventHub {
+    inner: Arc<EventInner>,
+    set_id: Option<String>,
+}
+struct EventInner {
     tx: broadcast::Sender<Arc<Value>>,
     seq: AtomicU64,
     ring: Mutex<VecDeque<Arc<Value>>>,
@@ -30,35 +35,48 @@ impl EventHub {
     pub fn new() -> EventHub {
         let (tx, _) = broadcast::channel(256);
         EventHub {
-            tx,
-            seq: AtomicU64::new(0),
-            ring: Mutex::new(VecDeque::new()),
+            inner: Arc::new(EventInner {
+                tx,
+                seq: AtomicU64::new(0),
+                ring: Mutex::new(VecDeque::new()),
+            }),
+            set_id: None,
+        }
+    }
+    pub fn scoped(&self, set_id: Option<String>) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            set_id,
         }
     }
 
     // Callable from any thread: broadcast send and the ring are both sync.
     pub fn emit(&self, kind: &str, mut payload: Value) {
-        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let seq = self.inner.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(id) = &self.set_id {
+            payload = crate::webapi::sets::qualify_value(payload, id);
+            payload["setId"] = json!(id);
+        }
         payload["type"] = json!(kind);
         payload["seq"] = json!(seq);
         let ev = Arc::new(payload);
         {
-            let mut ring = self.ring.lock().unwrap();
+            let mut ring = self.inner.ring.lock().unwrap();
             ring.push_back(ev.clone());
             while ring.len() > RING {
                 ring.pop_front();
             }
         }
-        let _ = self.tx.send(ev);
+        let _ = self.inner.tx.send(ev);
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<Value>> {
-        self.tx.subscribe()
+        self.inner.tx.subscribe()
     }
 
     // Events after `last`, or None when the gap exceeds the ring (client must resync).
     fn replay_after(&self, last: u64) -> Option<Vec<Arc<Value>>> {
-        let ring = self.ring.lock().unwrap();
+        let ring = self.inner.ring.lock().unwrap();
         let oldest = ring
             .front()
             .map(|e| e["seq"].as_u64().unwrap_or(0))
@@ -212,43 +230,48 @@ pub fn recompute_pending(st: &SharedState) {
 // The LSP watcher is the reference; this one emits events instead of stderr lines.
 pub fn spawn_store_watcher(st: SharedState) {
     tokio::spawn(async move {
-        let mut last_gen = read_generation(&st.out);
-        let mut lock_seen = st.out.join(".lock").vexists();
+        let mut previous = std::collections::BTreeMap::new();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            let lock_now = st.out.join(".lock").vexists();
-            if lock_now != lock_seen {
-                lock_seen = lock_now;
-                st.events.emit("store.lock", json!({ "held": lock_now }));
-            }
-            let gen_now = read_generation(&st.out);
-            if gen_now == last_gen {
+            let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
                 continue;
-            }
-            let mut entries: Vec<Value> = Vec::new();
-            if gen_now > last_gen {
-                for g in (last_gen + 1)..=gen_now {
-                    let path = st.out.join("journal").join(format!("g{}.yaml", g));
-                    let Ok(text) = crate::vfs::read_to_string(&path) else {
-                        continue;
-                    };
-                    let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
-                        continue;
-                    };
-                    entries.push(entry_summary(g, &entry));
+            };
+            previous.retain(|id, _| w.sets.iter().any(|s| &s.id == id));
+            for set in w.sets {
+                let Ok(scope) = st.scoped(Some(&set.id)) else {
+                    continue;
+                };
+                let now = read_generation(&scope.out);
+                let locked = scope.out.join(".lock").vexists();
+                let (last, lock_seen) = previous
+                    .insert(set.id, (now, locked))
+                    .unwrap_or((now, locked));
+                if locked != lock_seen {
+                    scope.events.emit("store.lock", json!({"held":locked}));
                 }
+                if now == last {
+                    continue;
+                }
+                let mut entries = Vec::new();
+                for g in (last + 1)..=now {
+                    if let Ok(text) = crate::vfs::read_to_string(
+                        scope.out.join("journal").join(format!("g{}.yaml", g)),
+                    ) {
+                        if let Ok(entry) = serde_norway::from_str::<Value>(&text) {
+                            entries.push(entry_summary(g, &entry));
+                        }
+                    }
+                }
+                scope.events.emit(
+                    "store.generation",
+                    json!({"generation":now,"entries":entries}),
+                );
+                emit_goal_events(&scope, &entries);
+                emit_board_changed(&scope);
+                tokio::task::spawn_blocking(move || recompute_pending(&scope));
             }
-            last_gen = gen_now;
-            st.events.emit(
-                "store.generation",
-                json!({ "generation": gen_now, "entries": entries }),
-            );
-            emit_goal_events(&st, &entries);
-            emit_board_changed(&st);
-            let st2 = st.clone();
-            tokio::task::spawn_blocking(move || recompute_pending(&st2));
         }
     });
 }
@@ -281,14 +304,25 @@ pub fn spawn_control_watcher(st: SharedState) {
             }
             s
         };
-        let mut last = fingerprint(&st);
+        let all = || {
+            crate::document_sets::Workspace::load(&st.root)
+                .map(|w| {
+                    w.sets
+                        .iter()
+                        .filter_map(|s| st.scoped(Some(&s.id)).ok())
+                        .map(|s| fingerprint(&s))
+                        .collect::<Vec<_>>()
+                        .join(";")
+                })
+                .unwrap_or_default()
+        };
+        let mut last = all();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let now = fingerprint(&st);
+            let now = all();
             if now != last {
                 last = now;
-                st.events
-                    .emit("control.changed", super::api::workers_snapshot(&st));
+                st.events.emit("control.changed", json!({}));
                 emit_board_changed(&st);
             }
         }
@@ -299,73 +333,80 @@ pub fn spawn_control_watcher(st: SharedState) {
 pub fn spawn_docs_watcher(st: SharedState) {
     std::thread::spawn(move || {
         use notify::Watcher;
-        let fingerprints = |st: &SharedState| -> std::collections::BTreeMap<String, String> {
-            st.proj()
-                .doc_files()
-                .iter()
-                .map(|f| {
-                    let rel = super::api::rel_doc(&st.proj().root, f);
-                    let fp = std::fs::metadata(f)
-                        .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
-                        .unwrap_or_default();
-                    (rel, fp)
-                })
-                .collect()
+        let fingerprints = || -> std::collections::BTreeMap<String, String> {
+            let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
+                return Default::default();
+            };
+            let mut values = std::collections::BTreeMap::from([(
+                crate::document_sets::CONFIG.into(),
+                w.hash.clone(),
+            )]);
+            for f in w
+                .files()
+                .into_iter()
+                .filter(|f| !w.memberships(f).is_empty())
+            {
+                let fp = std::fs::metadata(st.root.join(&f))
+                    .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
+                    .unwrap_or_default();
+                values.insert(f, fp);
+            }
+            values
         };
-        let mut last = fingerprints(&st);
-        let (tx, rx) = std::sync::mpsc::channel::<()>();
-        let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, _>| {
+        let mut last = fingerprints();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let Ok(mut watcher) = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
             if res.is_ok() {
                 let _ = tx.send(());
             }
-        }) {
-            Ok(w) => w,
-            Err(_) => return, // no watcher available: docs.changed simply never fires
+        }) else {
+            return;
         };
         if watcher
-            .watch(&st.proj().root, notify::RecursiveMode::Recursive)
+            .watch(&st.root, notify::RecursiveMode::Recursive)
             .is_err()
         {
             return;
         }
-        loop {
-            if rx.recv().is_err() {
-                return;
-            }
+        while rx.recv().is_ok() {
             std::thread::sleep(std::time::Duration::from_millis(300));
             while rx.try_recv().is_ok() {}
-            let now = fingerprints(&st);
+            let now = fingerprints();
             if now == last {
                 continue;
             }
-            let mut changed: Vec<String> = Vec::new();
-            for (rel, fp) in &now {
-                if last.get(rel) != Some(fp) {
-                    changed.push(rel.clone());
-                }
-            }
-            for rel in last.keys() {
-                if !now.contains_key(rel) {
-                    changed.push(rel.clone());
-                }
-            }
+            let changed: std::collections::BTreeSet<_> = now
+                .keys()
+                .chain(last.keys())
+                .filter(|k| now.get(*k) != last.get(*k))
+                .cloned()
+                .collect();
             last = now;
-            let store = crate::store::Store::load(&st.out);
-            let graph_stale = st.proj().doc_files().iter().any(|f| {
-                let rel = super::api::rel_doc(&st.proj().root, f);
-                match (crate::vfs::read_to_string(f), store.docs.get(&rel)) {
-                    (Ok(text), Some(rec)) => crate::model::hash_hex(&text) != rec.content_hash,
-                    (Ok(_), None) => true,
-                    _ => false,
+            let config = changed.contains(crate::document_sets::CONFIG);
+            if config {
+                st.events.emit("sets.changed", json!({}));
+                super::reload_project(&st);
+            }
+            let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
+                continue;
+            };
+            for set in w.sets {
+                if config
+                    || changed.iter().any(|f| {
+                        crate::document_sets::included(&set.docs, f)
+                            || crate::document_sets::included(&set.source, f)
+                    })
+                {
+                    let Ok(scope) = st.scoped(Some(&set.id)) else {
+                        continue;
+                    };
+                    scope
+                        .events
+                        .emit("docs.changed", json!({"docs":changed,"graphStale":true}));
+                    emit_board_changed(&scope);
+                    super::jobs_hook_on_docs_changed(&scope);
                 }
-            });
-            st.events.emit(
-                "docs.changed",
-                json!({ "docs": changed, "graphStale": graph_stale }),
-            );
-            // A save opens goals before any build: the board derives from disk.
-            emit_board_changed(&st);
-            super::jobs_hook_on_docs_changed(&st);
+            }
         }
     });
 }

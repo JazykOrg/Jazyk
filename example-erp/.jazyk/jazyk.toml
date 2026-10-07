@@ -1,0 +1,11 @@
+version = 1
+
+[llm]
+model = "gpt-5.5"
+
+[[sets]]
+id = "ds_main"
+name = "Main"
+docs = ["docs/**/*.md"]
+roots = ["docs/main.md"]
+source = ["project/**"]

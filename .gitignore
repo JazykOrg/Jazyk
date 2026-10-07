@@ -15,9 +15,8 @@ Thumbs.db
 
 # Rust
 /bootstrap/target/
-/bootstrap/.jazyk/
 
-.jazyk
+# Each .jazyk/.gitignore excludes state while keeping configuration tracked.
 .jazyk.*
 project2/
 .loop-logs/

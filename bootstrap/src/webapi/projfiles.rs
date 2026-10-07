@@ -15,7 +15,9 @@ const SKIP: &[&str] = &[".git", "node_modules", "target"];
 // The most files the tree lists; a bigger project lists its first ones.
 const MOST: usize = 20_000;
 
-fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>) {
+fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::collections::BTreeSet<PathBuf>) {
+    let Ok(canonical)=dir.vcanonicalize() else {return;};
+    if !canonical.starts_with(base.vcanonicalize().unwrap_or_else(|_|base.into())) || !seen.insert(canonical) {return;}
     let Ok(rd) = crate::vfs::read_dir(dir) else {
         return;
     };
@@ -31,8 +33,9 @@ fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>) {
             continue;
         }
         if p.vis_dir() {
-            walk(&p, base, acc);
+            walk(&p, base, acc, seen);
         } else if let Ok(rel) = p.strip_prefix(base) {
+            if !p.vcanonicalize().is_ok_and(|p|p.starts_with(base.vcanonicalize().unwrap_or_else(|_|base.into()))) {continue;}
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
             acc.push((rel.to_string_lossy().replace('\\', "/"), size));
         }
@@ -50,8 +53,12 @@ fn rel_dir(root: &Path, dir: &Path) -> Option<String> {
 // and where the product and the out directory sit in it.
 pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[String]) -> Value {
     let mut acc = Vec::new();
-    walk(root, root, &mut acc);
-    let files: Vec<Value> = acc.into_iter().map(|(path, size)| json!({ "path": path, "size": size })).collect();
+    walk(root, root, &mut acc, &mut Default::default());
+    let workspace=crate::document_sets::Workspace::load(root).ok();
+    let files: Vec<Value> = acc.into_iter().map(|(path, size)| {
+        let memberships=workspace.as_ref().map(|w|w.memberships(&path)).unwrap_or_default();
+        json!({ "path": path, "size": size, "memberships":memberships })
+    }).collect();
     json!({
         "files": files,
         "deliverable": rel_dir(root, deliverable),

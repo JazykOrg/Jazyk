@@ -25,13 +25,13 @@ pub struct AppState {
     // --dev: the app starts with the Developer toggle on (docs/frontends/gui.md#developer-toggle).
     pub dev: bool,
     // Signals the server to stop (ctrl-c or POST /api/shutdown).
-    pub shutdown: tokio::sync::Notify,
+    pub shutdown: Arc<tokio::sync::Notify>,
     pub events: super::events::EventHub,
     // Last emitted pending.changed payload, to emit only on movement.
     pub last_pending: std::sync::Mutex<serde_json::Value>,
-    pub jobs: super::jobs::JobManager,
+    pub jobs: Arc<super::jobs::JobManager>,
     // The chat pane's sessions and their shared agent host (docs/frontends/gui.md#chat).
-    pub chat: super::chat::ChatManager,
+    pub chat: Arc<super::chat::ChatManager>,
     // Watch-mode retry backoff in seconds (30 doubling to 300, reset on success).
     pub backoff: std::sync::atomic::AtomicU64,
 }
@@ -41,6 +41,41 @@ pub type SharedState = Arc<AppState>;
 // Cheap snapshots: settings are small, and a clone per request keeps every reader
 // consistent without holding a lock across IO.
 impl AppState {
+    pub fn scoped(&self, id: Option<&str>) -> Result<SharedState, (u16, String)> {
+        let workspace = crate::document_sets::Workspace::load(&self.root)?;
+        let proj = match id {
+            Some(id) => workspace.resolve(Some(id))?,
+            None => workspace.files_project(),
+        };
+        let llm = crate::cli::resolve_llm(
+            &self.cli_opts,
+            &proj.llm,
+            &crate::project::load_global_llm(),
+            |n| std::env::var(n).ok(),
+        );
+        Ok(Arc::new(Self {
+            root: self.root.clone(),
+            out: if id.is_some() {
+                proj.out.clone()
+            } else {
+                self.root.join(".jazyk")
+            },
+            gs: std::sync::RwLock::new(GenSettings::resolve(&proj)),
+            events: self.events.scoped(proj.set_id.clone()),
+            proj: std::sync::RwLock::new(proj),
+            llm: std::sync::RwLock::new(llm),
+            cli_opts: self.cli_opts.clone(),
+            token: self.token.clone(),
+            gui_origin: self.gui_origin.clone(),
+            dev: self.dev,
+            shutdown: self.shutdown.clone(),
+            jobs: self.jobs.clone(),
+            chat: self.chat.clone(),
+            last_pending: std::sync::Mutex::new(serde_json::Value::Null),
+            backoff: std::sync::atomic::AtomicU64::new(30),
+        }))
+    }
+
     pub fn proj(&self) -> Project {
         self.proj.read().unwrap().clone()
     }

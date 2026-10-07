@@ -28,7 +28,7 @@ Status: research project; large changes in direction are acceptable and expected
 
 ## Architecture (goal-based reconciliation)
 
-One persistent graph per project, edited in place, never regenerated. Ids are minted once
+One persistent graph per document set, edited in place, never regenerated. Ids are minted once
 and immutable; natural keys make retries harmless; merges leave redirects; nothing enters
 without provenance. The runtime (see `docs/compiler/compiler.md`):
 
@@ -146,8 +146,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   docsgen.md, pm.md. `docs/benchmark/`: benchmark.md, cases.md, case.schema.yaml,
   `cases/` (the case files are embedded into the binary at compile time; they are
   fixtures, excluded from the docs glob), known-results.yaml (embedded too).
-- `docs/jazyk.toml`: the live project file (docs glob, roots, lint rules); the repo-root
-  `jazyk.toml` redirects discovery to it. The graph lands in `docs/.jazyk/`
+- `.jazyk/jazyk.toml`: the live project file with named document sets.
+  The dogfood graph lands in `.jazyk/ds_main/`
   (gitignored): `graph/*.yaml` shards (entities, requirements, views, diagnostics,
   redirects; derived relationships and state-machines rewritten every commit), `docs/`
   section trees + coverage, `journal/g<N>.yaml`, `diagrams/<kind>/<slug>.puml` and
@@ -179,7 +179,7 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   CORS layer). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
   crates; hand-roll only domain logic. Do not reimplement transports, parsers for
   standard formats, or platform APIs.
-- Examples, each a project with its own `jazyk.toml`: `bootstrap/example/f1` (small)
+- Examples, each a project with its own `.jazyk/jazyk.toml`: `bootstrap/example/f1` (small)
   and `f2` (planted traps, see its EXPECTED.md); at the repo root `example-sort` (a
   sort utility stated near pseudo-code, with its code), `example-erp` (a multi-document
   software system), `example-slides` (a slide deck, non-software), `example-org` (an
@@ -206,8 +206,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `explain [goal|target]`, `ripple <target|generation|doc> [--back]`,
   `context <target>`, `query <text>`, `gen [entity...]`, `test [--audit]`, `docsgen`,
   `viewer`, `mcp graph [--write]`, `lsp`, `benchmark`.
-- A project is a directory with `jazyk.toml` (walk-up discovery). Run the dogfood from
-  `docs/`.
+- A project is a directory with `.jazyk/jazyk.toml` (walk-up discovery). Run the
+  dogfood from the repository root. Each set stores state directly in `.jazyk/<id>/`.
 - Always run `jazyk benchmark` before trusting a new model: it grades session capability
   per codec with deterministic checks (cases per goal kind are deferred, see
   `docs/benchmark/benchmark.md`). Local 4B-class models fail it; the harness still holds
@@ -252,7 +252,7 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 - Always commit and push changes as you make them, one commit per coherent change, so
   the history is a ledger of the work and nothing is lost between sessions. Never leave
   the tree dirty at the end of a step.
-- Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and `.jazyk` anywhere
-  are gitignored.
+- Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and generated state inside `.jazyk`
+  are gitignored. Commit `.jazyk/jazyk.toml` and `.jazyk/.gitignore`.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys
   `site/` to jazyk.org via GitHub Actions.

@@ -7,7 +7,6 @@
 use crate::project::Project;
 use crate::store::Store;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 
 // The reply envelope, so the frontend's fetch shim can rebuild a Response.
 fn reply(status: u16, body: Value) -> String {
@@ -28,14 +27,6 @@ fn answer(r: Result<Value, super::Refusal>) -> String {
         Ok(v) => ok(v),
         Err((status, msg)) => err(status, msg),
     }
-}
-
-fn project() -> Project {
-    Project::load(&crate::portable::root())
-}
-
-fn out() -> PathBuf {
-    project().out
 }
 
 // `/api/views/v:class:x?detail=2` splits into the path and its query pairs.
@@ -79,16 +70,154 @@ fn param(q: &[(String, String)], key: &str) -> Option<String> {
 }
 
 pub fn request(method: &str, path: &str, body: &str) -> String {
+    request_at(&crate::portable::root(), method, path, body)
+}
+
+pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) -> String {
+    let body: Value = match serde_json::from_str(if body.is_empty() { "null" } else { body }) {
+        Ok(v) => v,
+        Err(e) => return err(400, e.to_string()),
+    };
+    let routed = match super::sets::route(path, body) {
+        Ok(r) => r,
+        Err((s, e)) => return err(s, e),
+    };
+    let path = &routed.path;
+    let route = path.split('?').next().unwrap_or(path);
+    let workspace = match crate::document_sets::Workspace::load(root) {
+        Ok(w) => w,
+        Err((status, error)) => {
+            if matches!(
+                route,
+                "/settings" | "/project/files" | "/project/file" | "/ping"
+            ) && method == "GET"
+            {
+                return request_scoped(root, method, path, &routed.body, &Project::load(root));
+            }
+            return err(status, error);
+        }
+    };
+    if route == "/sets" || route == "/sets/preview" {
+        return match method {
+            "GET" => ok(workspace.summary()),
+            "POST" | "PUT" | "DELETE" => answer(crate::document_sets::edit(
+                root,
+                &routed.body,
+                route.ends_with("/preview"),
+            )),
+            _ => err(405, "unsupported document-set operation"),
+        };
+    }
+    if method == "POST"
+        && matches!(route, "/jobs" | "/compile")
+        && routed.selector.is_none()
+        && routed.body["kind"].as_str().unwrap_or("compile") == "compile"
+    {
+        let summary = workspace.summary();
+        let ids: Vec<String> = if let Some(ids) = routed.body["setIds"].as_array() {
+            let mut selected = Vec::new();
+            for value in ids {
+                let Some(id) = value.as_str() else {
+                    return err(400, "setIds must contain strings");
+                };
+                match workspace.select(id) {
+                    Ok(s) => selected.push(s.id.clone()),
+                    Err((s, e)) => return err(s, e),
+                }
+            }
+            workspace
+                .sets
+                .iter()
+                .filter(|s| selected.contains(&s.id))
+                .map(|s| s.id.clone())
+                .collect()
+        } else {
+            summary["sets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|s| s["dirty"] == true && s["state"] != "empty")
+                .filter_map(|s| s["id"].as_str().map(str::to_string))
+                .collect()
+        };
+        let mut results = Vec::new();
+        for id in ids {
+            if crate::portable::cancel_requested() {
+                break;
+            }
+            let p = workspace.resolve(Some(&id)).unwrap();
+            let mut result: Value =
+                serde_json::from_str(&request_scoped(root, method, path, &routed.body, &p))
+                    .unwrap();
+            result["setId"] = json!(id);
+            results.push(result);
+        }
+        return ok(json!({"id":1,"kind":"compile","state":"finished","results":results}));
+    }
+    if method == "GET"
+        && routed.selector.is_none()
+        && super::sets::aggregate_route(route)
+        && !workspace.sets.is_empty()
+    {
+        return ok(super::sets::aggregate(root, &workspace, path));
+    }
+    let context = if let Some(id) = routed.selector.as_deref() {
+        match workspace.resolve(Some(id)) {
+            Ok(p) => p,
+            Err((s, e)) => return err(s, e),
+        }
+    } else if matches!(
+        route,
+        "/project"
+            | "/project/files"
+            | "/project/file"
+            | "/docs/content"
+            | "/settings"
+            | "/ping"
+            | "/capabilities"
+    ) || route.starts_with("/chat/")
+    {
+        workspace.files_project()
+    } else if workspace.sets.len() == 1 {
+        workspace.resolve(None).unwrap()
+    } else if method == "GET" && workspace.sets.is_empty() {
+        workspace.files_project()
+    } else {
+        return err(
+            400,
+            "this operation requires setId or a qualified graph reference",
+        );
+    };
+    let response = request_scoped(root, method, path, &routed.body, &context);
+    let mut envelope: Value = serde_json::from_str(&response).unwrap();
+    if route == "/project" {
+        envelope["body"]["sets"] = workspace.summary()["sets"].clone();
+        envelope["body"]["configHash"] = json!(workspace.hash);
+    }
+    if let Some(id) = &context.set_id {
+        envelope["body"] = super::sets::qualify_value(envelope["body"].take(), id);
+    }
+    envelope.to_string()
+}
+
+pub(crate) fn request_scoped(
+    root: &std::path::Path,
+    method: &str,
+    path: &str,
+    body: &Value,
+    context: &Project,
+) -> String {
     let (path, q) = split_query(path);
     let path = path.strip_prefix("/api").unwrap_or(path);
-    let body: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let project = || context.clone();
+    let out = || context.out.clone();
 
     match (method, path) {
         ("GET", "/ping") => ok(json!({
             "app": if crate::vfs::is_scoped() { "jazyk-hosted" } else { "jazyk-wasm" },
             "version": env!("CARGO_PKG_VERSION"),
             "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
-            "root": crate::portable::root().to_string_lossy(),
+            "root": root.to_string_lossy(),
         })),
 
         ("GET", "/project") => {
@@ -137,7 +266,10 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             let target = param(&q, "target").unwrap_or_default();
             match super::board::explain_value(&p, &p.out, &target) {
                 Some(v) => ok(v),
-                None => err(404, format!("`{}` names no goal and no known target", target)),
+                None => err(
+                    404,
+                    format!("`{}` names no goal and no known target", target),
+                ),
             }
         }
 
@@ -273,7 +405,13 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             // The answers recorded since the last build run first: a tab runs no
             // answer session in the background (docs/frontends/wasm.md#the-inbox).
             let answers = crate::inprocess::run_answers(&p, &llm, &p.out, &trace);
-            let report = crate::reconcile::compile(&p, &llm, &p.out, &trace);
+            let report = crate::reconcile::compile_with(
+                &p,
+                &llm,
+                &p.out,
+                &trace,
+                body["sessions"].as_u64().map(|n| n as usize),
+            );
             ok(json!({
                 "id": 1,
                 "kind": "compile",
@@ -403,7 +541,10 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         ("GET", "/gen/pending") => {
             let p = project();
             let store = Store::load(&p.out);
-            ok(super::product::gen_pending_value(&store, &crate::gen::GenSettings::resolve(&p)))
+            ok(super::product::gen_pending_value(
+                &store,
+                &crate::gen::GenSettings::resolve(&p),
+            ))
         }
         ("GET", path) if path.starts_with("/gen/package/") => {
             let id = decode(path.trim_start_matches("/gen/package/"));
@@ -464,21 +605,23 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             let p = project();
             let rel = param(&q, "path").unwrap_or_default();
             answer(
-                super::deliverable::deliverable_raw(&crate::gen::GenSettings::resolve(&p), &rel).map(
-                    |bytes| {
+                super::deliverable::deliverable_raw(&crate::gen::GenSettings::resolve(&p), &rel)
+                    .map(|bytes| {
                         json!({
                             "path": rel,
                             "size": bytes.len(),
                             "contentType": super::outfiles::content_type(&rel),
                             "base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
                         })
-                    },
-                ),
+                    }),
             )
         }
         ("GET", "/product/overview") => {
             let p = project();
-            ok(super::overview::overview_value(&p, &crate::gen::GenSettings::resolve(&p)))
+            ok(super::overview::overview_value(
+                &p,
+                &crate::gen::GenSettings::resolve(&p),
+            ))
         }
         ("GET", "/deliverable/baseline") => answer(super::deliverable::deliverable_baseline(
             &out(),
@@ -493,7 +636,9 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         // (docs/frontends/wasm.md#workflow-modes-in-a-tab).
         ("GET", "/watch") => {
             let p = project();
-            ok(super::workers::watch_value(&crate::control::Control::load(&p, &p.out)))
+            ok(super::workers::watch_value(&crate::control::Control::load(
+                &p, &p.out,
+            )))
         }
         ("PUT", "/watch") => {
             let p = project();
@@ -532,17 +677,19 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                     .trim_end_matches("/answer"),
             );
             let p = project();
-            answer(super::inbox::answer_value(&p, &p.out, &id, &body).map(|mut v| {
-                if v["status"] == "handling" {
-                    v["note"] = json!("recorded; the next build acts on the answer");
-                }
-                v
-            }))
+            answer(
+                super::inbox::answer_value(&p, &p.out, &id, &body).map(|mut v| {
+                    if v["status"] == "handling" {
+                        v["note"] = json!("recorded; the next build acts on the answer");
+                    }
+                    v
+                }),
+            )
         }
-        ("GET", "/settings") => ok(crate::project::settings_read(&crate::portable::root())),
+        ("GET", "/settings") => ok(crate::project::settings_read(root)),
         // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
         // file lands in the tree, and the page mirrors it the way any change goes.
-        ("PUT", "/settings") => match crate::project::settings_write(&crate::portable::root(), &body) {
+        ("PUT", "/settings") => match crate::project::settings_write(root, &body) {
             Ok(v) => ok(v),
             Err((code, msg)) => err(code, msg),
         },
@@ -550,14 +697,25 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         ("GET", "/project/files") => {
             let p = project();
             let g = crate::gen::GenSettings::resolve(&p);
-            ok(super::projfiles::project_files(&p.root, &g.deliverable, &p.out, &p.docs_glob))
+            ok(super::projfiles::project_files(
+                &p.root,
+                &g.deliverable,
+                &p.out,
+                &p.docs_glob,
+            ))
         }
         ("GET", "/project/file") => {
             let rel = param(&q, "path").unwrap_or_default();
             match super::projfiles::project_file(&project().root, &rel) {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(text) => ok(Value::String(text)),
-                    Err(_) => err(501, format!("the browser backend serves text files only; {} is not text", rel)),
+                    Err(_) => err(
+                        501,
+                        format!(
+                            "the browser backend serves text files only; {} is not text",
+                            rel
+                        ),
+                    ),
                 },
                 Err((status, msg)) => err(status, msg),
             }
@@ -577,7 +735,10 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                     Ok(text) => ok(Value::String(text)),
                     Err(_) => err(
                         501,
-                        format!("the browser backend serves text files only; {} is not text", rel),
+                        format!(
+                            "the browser backend serves text files only; {} is not text",
+                            rel
+                        ),
                     ),
                 },
                 Err((status, msg)) => err(status, msg),

@@ -1,0 +1,13 @@
+version = 1
+
+[linting]
+
+[linting.rules]
+warnings = ["An em dash appears in prose. This documentation uses commas, periods, parentheses, or colons instead."]
+
+[[sets]]
+id = "ds_main"
+name = "Main"
+docs = ["docs/**/*.md", "!docs/benchmark/cases/**", "!docs/compiler/goals/prompts/**", "!docs/compiler/skills/**"]
+roots = ["docs/main.md"]
+source = ["project2/**"]

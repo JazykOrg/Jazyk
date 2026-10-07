@@ -1,5 +1,5 @@
 use crate::vfs::VPathExt;
-// Project discovery and settings. A Jazyk project is a directory holding a jazyk.toml,
+// Project discovery and settings. A project holds .jazyk/jazyk.toml,
 // found by walking up from the working directory. Mirrors docs/compiler/project-settings.md.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -210,6 +210,10 @@ impl Default for Workflow {
 #[derive(Clone)]
 pub struct Project {
     pub root: PathBuf,
+    pub set_id: Option<String>,
+    pub set_name: Option<String>,
+    pub config_hash: String,
+    pub config_error: Option<String>,
     // Resolved output directory. Never doc input, even when moved with --out.
     pub out: PathBuf,
     pub docs_glob: Vec<String>,
@@ -237,6 +241,10 @@ impl Default for Project {
     fn default() -> Self {
         Project {
             root: PathBuf::from("."),
+            set_id: None,
+            set_name: None,
+            config_hash: String::new(),
+            config_error: None,
             out: PathBuf::from("./.jazyk"),
             gen_deliverable: None,
             gen_worker: None,
@@ -300,32 +308,50 @@ mod tests {
     fn recorded_criteria_files_are_never_doc_input() {
         // An llm row's criteria file under the deliverable is generation metadata,
         // even under a glob that matches it. Mirrors docs/compiler/project-settings.md#docs.
-        let dir = std::env::temp_dir().join(format!("jazyk-critdoc-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-critdoc-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
-        for d in ["docs", "project/tests", ".jazyk/gen"] {
+        for d in ["docs", "project/tests", ".jazyk/ds_main/gen"] {
             crate::vfs::create_dir_all(dir.join(d)).unwrap();
         }
-        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n\n[gen]\ndeliverable = \"project\"\n").unwrap();
+        crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\ngen = {}\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"**/*.md\"]\nroots = []\nsource = [\"project/**\"]\n").unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
-        crate::vfs::write(dir.join("project/tests/crit_a.md"), "---\nrequirement: req:a-1\n---\n").unwrap();
+        crate::vfs::write(
+            dir.join("project/tests/crit_a.md"),
+            "---\nrequirement: req:a-1\n---\n",
+        )
+        .unwrap();
         crate::vfs::write(dir.join("project/README.md"), "# Readme\n").unwrap();
         crate::vfs::write(
-            dir.join(".jazyk/gen/ledger.yaml"),
-            "requirements:\n  req:a-1:\n    entity: ent:a\n    test: {kind: llm, label: judged, artifact: tests/crit_a.md, name: crit_a, run: \"\"}\n    hashes: {requirement: x, test: y, files: z}\n",
+            dir.join(".jazyk/ds_main/gen/ledger.yaml"),
+            "requirements:\n  req:a-1:\n    entity: ent:a\n    test: {kind: llm, label: judged, artifact: project/tests/crit_a.md, name: crit_a, run: \"\"}\n    hashes: {requirement: x, test: y, files: z}\n",
         )
         .unwrap();
         let p = Project::load(&dir);
-        assert_eq!(crate::gen::Ledger::load(&p.out).requirements.len(), 1, "the fixture ledger parses");
+        assert_eq!(
+            crate::gen::Ledger::load(&p.out).requirements.len(),
+            1,
+            "the fixture ledger parses"
+        );
         let docs = p.doc_files();
         assert!(docs.contains(&dir.join("docs/a.md")), "{:?}", docs);
-        assert!(docs.contains(&dir.join("project/README.md")), "an unrecorded deliverable file follows the glob: {:?}", docs);
-        assert!(!docs.contains(&dir.join("project/tests/crit_a.md")), "{:?}", docs);
+        assert!(
+            docs.contains(&dir.join("project/README.md")),
+            "an unrecorded deliverable file follows the glob: {:?}",
+            docs
+        );
+        assert!(
+            !docs.contains(&dir.join("project/tests/crit_a.md")),
+            "{:?}",
+            docs
+        );
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn generated_dirs_are_never_doc_input() {
-        let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-outdir-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         for d in [
             "docs",
@@ -336,7 +362,7 @@ mod tests {
         ] {
             crate::vfs::create_dir_all(dir.join(d)).unwrap();
         }
-        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
+        crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"**/*.md\"]\nroots = []\nsource = []\n").unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
         crate::vfs::write(dir.join(".jazyk/docsgen/x.md"), "# X\n").unwrap();
         crate::vfs::write(dir.join(".jazyk-backup-local/docsgen/y.md"), "# Y\n").unwrap();
@@ -355,107 +381,55 @@ mod tests {
     }
 
     #[test]
-    fn default_deliverable_is_root_and_docs_glob_whitelists() {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", crate::sys::process_id()));
+    fn opening_an_unconfigured_folder_has_no_implicit_documents() {
+        let dir = std::env::temp_dir().join(format!("jazyk-bare-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
-        crate::vfs::create_dir_all(dir.join("src")).unwrap();
-        // No [gen] and no [docs] glob: deliverable defaults to the root, docs to docs/.
-        crate::vfs::write(dir.join("jazyk.toml"), "").unwrap();
-        crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
-        crate::vfs::write(dir.join("README.md"), "# generated\n").unwrap();
-        crate::vfs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        crate::vfs::write(dir.join("docs/main.md"), "# Main").unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"docs\"").unwrap();
         let p = Project::load(&dir);
-        assert_eq!(p.deliverable_rel(), Some(String::new()));
-        assert_eq!(crate::gen::GenSettings::resolve(&p).deliverable, dir);
-        assert_eq!(p.doc_files(), vec![dir.join("docs/a.md")]);
-        // A deliverable outside the root needs no implicit exclusion.
-        crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[gen]\ndeliverable = \"../elsewhere\"\n",
-        )
-        .unwrap();
-        assert_eq!(Project::load(&dir).deliverable_rel(), None);
+        assert!(p.doc_files().is_empty());
+        assert!(!crate::gen::GenSettings::resolve(&p).configured);
+        assert!(!dir.join(".jazyk").vexists());
+        assert!(find_root(&dir).is_none());
         crate::vfs::remove_dir_all(&dir).ok();
     }
-
-    #[test]
-    fn redirect_delegates_to_nested_project() {
-        let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", crate::sys::process_id()));
-        crate::vfs::remove_dir_all(&dir).ok();
-        crate::vfs::create_dir_all(dir.join("inner")).unwrap();
-        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
-        crate::vfs::write(
-            dir.join("inner/jazyk.toml"),
-            "[docs]\nglob = [\"**/*.md\"]\n\n[roots]\nfiles = [\"main.md\"]\n",
-        )
-        .unwrap();
-        let p = Project::load(&dir);
-        assert_eq!(p.root, dir.join("inner"));
-        assert_eq!(p.docs_glob, vec!["**/*.md".to_string()]);
-        // A redirect to a directory without jazyk.toml stays at the original root.
-        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"missing\"\n").unwrap();
-        let p2 = Project::load(&dir);
-        assert_eq!(p2.root, dir);
-    }
-}
-
-// Does this jazyk.toml delegate elsewhere? Used by discovery: a redirect found above
-// the starting directory is a boundary, not a capture.
-fn redirects(toml_path: &Path) -> bool {
-    crate::vfs::read_to_string(toml_path)
-        .map(|t| Toml::parse(&t).string("redirect").is_some())
-        .unwrap_or(false)
 }
 
 pub fn find_root(start: &Path) -> Option<PathBuf> {
-    let mut dir = Some(start.to_path_buf());
-    let mut walked_up = false;
-    while let Some(d) = dir {
-        let toml = d.join("jazyk.toml");
-        if toml.vexists() {
-            // A redirect applies where it stands: followed when discovery starts in
-            // its directory, a boundary when reached from a subdirectory. The
-            // subdirectory then stands alone as an ad hoc project.
-            // Mirrors docs/compiler/project-settings.md#redirect.
-            if walked_up && redirects(&toml) {
-                return None;
-            }
-            return Some(d);
-        }
-        walked_up = true;
-        dir = d.parent().map(|p| p.to_path_buf());
-    }
-    None
+    start
+        .ancestors()
+        .find(|p| p.join(crate::document_sets::CONFIG).vis_file())
+        .map(Path::to_path_buf)
 }
 
 impl Project {
-    // Load from a jazyk.toml at `root`. Missing keys keep their defaults. A file holding
-    // a `redirect` delegates to a nested project directory; redirects do not chain.
-    // Mirrors docs/compiler/project-settings.md#redirect.
     pub fn load(root: &Path) -> Project {
-        Self::load_inner(root, true)
+        match crate::document_sets::Workspace::load(root) {
+            Ok(workspace) => workspace
+                .resolve(None)
+                .unwrap_or_else(|_| workspace.files_project()),
+            Err((_, error)) => Project {
+                root: root.to_path_buf(),
+                out: root.join(".jazyk/project"),
+                docs_glob: vec![],
+                config_error: Some(error),
+                ..Project::default()
+            },
+        }
     }
 
-    fn load_inner(root: &Path, follow_redirect: bool) -> Project {
-        let mut p = Project::default();
-        p.root = root.to_path_buf();
-        p.out = root.join(".jazyk");
-        let toml_path = root.join("jazyk.toml");
-        let text = match crate::vfs::read_to_string(&toml_path) {
-            Ok(t) => t,
-            Err(_) => return p,
+    pub fn load_set(root: &Path, selector: &str) -> Result<Project, (u16, String)> {
+        crate::document_sets::Workspace::load(root)?.resolve(Some(selector))
+    }
+
+    pub(crate) fn from_settings(root: &Path, settings: &toml::Value) -> Project {
+        let mut p = Project {
+            root: root.to_path_buf(),
+            out: root.join(".jazyk/project"),
+            ..Project::default()
         };
-        let t = Toml::parse(&text);
-        if follow_redirect {
-            if let Some(dir) = t.string("redirect") {
-                let target = root.join(dir);
-                if target.join("jazyk.toml").vexists() {
-                    return Self::load_inner(&target, false);
-                }
-            }
-        }
+        let t = Toml::from_value(settings);
         if let Some(g) = t.array("docs.glob") {
             p.docs_glob = g;
         }
@@ -489,10 +463,10 @@ impl Project {
             .and_then(|s| s.parse::<f64>().ok());
         p.acp = parse_acp(&t);
         p.executors = parse_executors(&t);
-        if let Some(v) = t.array("docs.linting.rules.warnings") {
+        if let Some(v) = t.array("linting.rules.warnings") {
             p.linting.warnings = v;
         }
-        if let Some(v) = t.array("docs.linting.rules.errors") {
+        if let Some(v) = t.array("linting.rules.errors") {
             p.linting.errors = v;
         }
         p
@@ -575,7 +549,11 @@ impl Project {
         let mut add = |t: &crate::gen::TestRef| {
             if t.kind == "llm" && !t.artifact.is_empty() {
                 let a = t.artifact.trim_start_matches("./");
-                out.insert(if rel.is_empty() { a.to_string() } else { format!("{}/{}", rel, a) });
+                out.insert(if rel.is_empty() {
+                    a.to_string()
+                } else {
+                    format!("{}/{}", rel, a)
+                });
             }
         };
         for row in ledger.requirements.values() {
@@ -604,119 +582,33 @@ impl Project {
 }
 
 fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
-    if let Ok(rd) = crate::vfs::read_dir(dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            let name = e.file_name().to_string_lossy().to_string();
-            // Generated output is never doc input: the resolved out directory (wherever
-            // --out put it) and anything named like it (e.g. a .jazyk backup copy).
-            if name.starts_with('.')
-                || name == "target"
-                || name == "node_modules"
-                || name.starts_with(".jazyk") || name.starts_with("jazyk-out")
-                || p == out_dir
-            {
-                continue;
-            }
-            if p.vis_dir() {
-                collect_files(&p, out_dir, out);
-            } else {
-                out.push(p);
-            }
-        }
-    }
+    let Ok(workspace) = crate::document_sets::Workspace::load(dir) else {
+        return;
+    };
+    out.extend(
+        workspace
+            .files()
+            .into_iter()
+            .map(|p| dir.join(p))
+            .filter(|p| !p.starts_with(out_dir)),
+    );
 }
 
 // Glob matcher supporting `**` (any number of path segments), `*` (within a segment),
 // and `?` (one non-slash char). Patterns and paths use `/` separators.
 pub fn glob_match(pattern: &str, path: &str) -> bool {
-    let pat: Vec<&str> = pattern.split('/').collect();
-    let txt: Vec<&str> = path.split('/').collect();
-    seg_match(&pat, &txt)
+    globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .map(|g| g.compile_matcher().is_match(path))
+        .unwrap_or(false)
 }
 
-fn seg_match(pat: &[&str], txt: &[&str]) -> bool {
-    if pat.is_empty() {
-        return txt.is_empty();
-    }
-    if pat[0] == "**" {
-        // ** matches zero or more segments.
-        for i in 0..=txt.len() {
-            if seg_match(&pat[1..], &txt[i..]) {
-                return true;
-            }
-        }
-        return false;
-    }
-    if txt.is_empty() {
-        return false;
-    }
-    if star_match(pat[0], txt[0]) {
-        return seg_match(&pat[1..], &txt[1..]);
-    }
-    false
-}
-
-// Match a single path segment against a pattern segment with `*` and `?`.
-fn star_match(pat: &str, txt: &str) -> bool {
-    let p: Vec<char> = pat.chars().collect();
-    let t: Vec<char> = txt.chars().collect();
-    let (mut pi, mut ti) = (0usize, 0usize);
-    let (mut star, mut mark) = (None, 0usize);
-    while ti < t.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < p.len() && p[pi] == '*' {
-            star = Some(pi);
-            mark = ti;
-            pi += 1;
-        } else if let Some(s) = star {
-            pi = s + 1;
-            mark += 1;
-            ti = mark;
-        } else {
-            return false;
-        }
-    }
-    while pi < p.len() && p[pi] == '*' {
-        pi += 1;
-    }
-    pi == p.len()
-}
-
-// Minimal TOML reader for the subset jazyk.toml uses: dotted section headers,
-// `key = "string"`, `key = 42`, and `key = [ "a", "b" ]` (possibly spanning multiple lines).
+// Flatten crate-parsed settings for the existing per-field resolution helpers.
 struct Toml {
     strings: BTreeMap<String, String>,
     arrays: BTreeMap<String, Vec<String>>,
 }
-
-// Split a TOML array body on commas outside quotes, so a quoted item may contain
-// commas (lint rules are plain English sentences).
-fn split_array_items(inner: &str) -> Vec<String> {
-    let mut items: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut in_str = false;
-    let mut quote = '"';
-    for c in inner.chars() {
-        match c {
-            '"' | '\'' if !in_str => {
-                in_str = true;
-                quote = c;
-            }
-            c if in_str && c == quote => in_str = false,
-            ',' if !in_str => {
-                items.push(cur.trim().to_string());
-                cur.clear();
-            }
-            c => cur.push(c),
-        }
-    }
-    items.push(cur.trim().to_string());
-    items.into_iter().filter(|s| !s.is_empty()).collect()
-}
-
 impl Toml {
     fn string(&self, key: &str) -> Option<String> {
         self.strings.get(key).cloned()
@@ -724,67 +616,52 @@ impl Toml {
     fn array(&self, key: &str) -> Option<Vec<String>> {
         self.arrays.get(key).cloned()
     }
-
-    fn parse(text: &str) -> Toml {
-        let mut strings = BTreeMap::new();
-        let mut arrays = BTreeMap::new();
-        let mut prefix = String::new();
-        let lines: Vec<&str> = text.lines().collect();
-        let mut i = 0;
-        while i < lines.len() {
-            let raw = lines[i];
-            let line = strip_comment(raw).trim().to_string();
-            i += 1;
-            if line.is_empty() {
-                continue;
-            }
-            if line.starts_with('[') && line.ends_with(']') {
-                prefix = line[1..line.len() - 1].trim().to_string();
-                continue;
-            }
-            let (key, val) = match line.split_once('=') {
-                Some((k, v)) => (k.trim().to_string(), v.trim().to_string()),
-                None => continue,
-            };
-            let full = if prefix.is_empty() {
-                key.clone()
-            } else {
-                format!("{}.{}", prefix, key)
-            };
-            if val.starts_with('[') {
-                // Gather until the closing ']'.
-                let mut buf = val.clone();
-                while !buf.contains(']') && i < lines.len() {
-                    buf.push(' ');
-                    buf.push_str(strip_comment(lines[i]).trim());
-                    i += 1;
+    fn parse(text: &str) -> Self {
+        Self::from_value(
+            &text
+                .parse::<toml::Value>()
+                .unwrap_or_else(|_| toml::Value::Table(Default::default())),
+        )
+    }
+    fn from_value(value: &toml::Value) -> Self {
+        fn flatten(value: &toml::Value, prefix: &str, out: &mut Toml) {
+            match value {
+                toml::Value::Table(table) => {
+                    for (k, v) in table {
+                        flatten(
+                            v,
+                            &if prefix.is_empty() {
+                                k.clone()
+                            } else {
+                                format!("{}.{}", prefix, k)
+                            },
+                            out,
+                        );
+                    }
                 }
-                let inner = buf.trim_start_matches('[');
-                let inner = inner.rsplit_once(']').map(|(a, _)| a).unwrap_or(inner);
-                arrays.insert(full, split_array_items(inner));
-            } else {
-                let v = val.trim_matches('"').trim_matches('\'').to_string();
-                strings.insert(full, v);
+                toml::Value::Array(a) => {
+                    out.arrays.insert(
+                        prefix.into(),
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect(),
+                    );
+                }
+                toml::Value::String(s) => {
+                    out.strings.insert(prefix.into(), s.clone());
+                }
+                v => {
+                    out.strings.insert(prefix.into(), v.to_string());
+                }
             }
         }
-        Toml { strings, arrays }
+        let mut out = Self {
+            strings: BTreeMap::new(),
+            arrays: BTreeMap::new(),
+        };
+        flatten(value, "", &mut out);
+        out
     }
-}
-
-fn strip_comment(line: &str) -> String {
-    // Drop a `#` comment that is not inside a string literal.
-    let mut in_str = false;
-    let mut out = String::new();
-    for c in line.chars() {
-        if c == '"' {
-            in_str = !in_str;
-        }
-        if c == '#' && !in_str {
-            break;
-        }
-        out.push(c);
-    }
-    out
 }
 
 #[cfg(test)]
@@ -792,17 +669,27 @@ mod discovery_tests {
     use super::*;
 
     #[test]
-    fn redirect_above_is_a_boundary_not_a_capture() {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", crate::sys::process_id()));
+    fn closest_project_configuration_wins() {
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-redirect-boundary-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("inner")).unwrap();
         crate::vfs::create_dir_all(dir.join("inner/deep")).unwrap();
         crate::vfs::create_dir_all(dir.join("side")).unwrap();
-        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
         crate::vfs::write(
-            dir.join("inner/jazyk.toml"),
-            "[docs]\nglob = [\"**/*.md\"]\n",
+            {
+                let path = dir.join(".jazyk/jazyk.toml");
+                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            },
+            crate::document_sets::EMPTY_CONFIG,
+        )
+        .unwrap();
+        crate::vfs::write(
+            { let path = dir.join("inner/.jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
 
@@ -811,7 +698,7 @@ mod discovery_tests {
         // Starting inside the target finds the target's own file.
         assert_eq!(find_root(&dir.join("inner/deep")), Some(dir.join("inner")));
         // A sibling subdirectory is its own place: the redirect above is a boundary.
-        assert_eq!(find_root(&dir.join("side")), None);
+        assert_eq!(find_root(&dir.join("side")), Some(dir.clone()));
 
         crate::vfs::remove_dir_all(&dir).ok();
     }
@@ -821,247 +708,84 @@ mod discovery_tests {
 // Read jazyk.toml into a form-friendly shape, and write it back in canonical form.
 // Mirrors docs/frontends/gui.md#api (settings) and docs/compiler/project-settings.md.
 
-const KNOWN_STRINGS: &[&str] = &[
-    "redirect",
-    "gen.deliverable",
-    "llm.base_url",
-    "llm.model",
-    "llm.api_key",
-    "llm.api_key_env",
-    "llm.temperature",
-];
-const KNOWN_ARRAYS: &[&str] = &[
-    "docs.glob",
-    "roots.files",
-    "docs.linting.rules.warnings",
-    "docs.linting.rules.errors",
-];
-
-// The parsed file for the settings form: set keys, effective defaults, unknown keys
-// (which make the form refuse to write), and the file hash for the conditional write.
-// The api key is reported as set or unset, never its value.
 pub fn settings_read(root: &Path) -> serde_json::Value {
     use serde_json::json;
-    let path = root.join("jazyk.toml");
-    let text = crate::vfs::read_to_string(&path).unwrap_or_default();
+    let text =
+        crate::vfs::read_to_string(root.join(crate::document_sets::CONFIG)).unwrap_or_default();
     let t = Toml::parse(&text);
-    // [acp] keys are known but not form-edited: the writer carries them over verbatim,
-    // like the redirect and the api key. [executors] keys are the form's own table.
-    let unknown: Vec<String> = t
-        .strings
-        .keys()
-        .filter(|k| {
-            !KNOWN_STRINGS.contains(&k.as_str())
-                && !k.starts_with("acp.")
-                && !k.starts_with("executors.")
-        })
-        .chain(
-            t.arrays
-                .keys()
-                .filter(|k| !KNOWN_ARRAYS.contains(&k.as_str()) && !k.starts_with("acp.")),
-        )
-        .cloned()
-        .collect();
-    let executors = parse_executors(&t);
+    let workspace = crate::document_sets::Workspace::load(root);
     json!({
-        "exists": path.vexists(),
-        "hash": crate::model::hash_hex(&text),
-        "redirect": t.string("redirect"),
-        "unknown": unknown,
+        "exists": root.join(crate::document_sets::CONFIG).vexists(),
+        "hash": crate::model::hash_hex(&text), "unknown": [],
+        "error": workspace.as_ref().err().map(|e| &e.1),
+        "sets": workspace.as_ref().map(|w| &w.sets).ok(),
         "settings": {
-            "docsGlob": t.array("docs.glob"),
-            "roots": t.array("roots.files"),
-            "deliverable": t.string("gen.deliverable"),
-            "llm": {
-                "baseUrl": t.string("llm.base_url"),
-                "model": t.string("llm.model"),
-                "apiKeyEnv": t.string("llm.api_key_env"),
-                "temperature": t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok()),
-                "apiKeySet": t.string("llm.api_key").is_some(),
-            },
-            "linting": {
-                "warnings": t.array("docs.linting.rules.warnings").unwrap_or_default(),
-                "errors": t.array("docs.linting.rules.errors").unwrap_or_default(),
-            },
-            "executors": executors.by_kind,
+            "llm": { "baseUrl": t.string("llm.base_url"), "model": t.string("llm.model"),
+                "apiKeyEnv": t.string("llm.api_key_env"), "apiKeySet": t.string("llm.api_key").is_some(),
+                "temperature": t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok()) },
+            "linting": { "warnings": t.array("linting.rules.warnings").unwrap_or_default(),
+                "errors": t.array("linting.rules.errors").unwrap_or_default() },
+            "executors": parse_executors(&t).by_kind,
         },
-        "executorKeys": EXECUTOR_KEYS,
-        "unknownExecutors": executors.unknown_keys(),
-        "defaults": {
-            "docsGlob": Project::default().docs_glob,
-            "deliverable": ".",
-        },
+        "executorKeys": EXECUTOR_KEYS, "unknownExecutors": parse_executors(&t).unknown_keys(),
+        "defaults": { "docsGlob": [], "deliverable": "." }
     })
 }
 
-fn toml_str(v: &str) -> String {
-    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn toml_list(items: &[String]) -> String {
-    let inner: Vec<String> = items.iter().map(|s| toml_str(s)).collect();
-    format!("[{}]", inner.join(", "))
-}
-
-// Regenerate jazyk.toml from form values, in canonical section order. Comments do
-// not survive; a redirect or an api_key already in the file is carried over
-// untouched. Returns the new file text.
-// The settings form's write, shared by the server and the tab: the file must not have
-// moved since it was read, must hold no key the form does not know, and is rewritten
-// from the form's values. The error is a status and a message
-// (docs/frontends/gui.md#settings, docs/frontends/gui.md#the-setup-wizard).
-pub fn settings_write(root: &Path, body: &serde_json::Value) -> Result<serde_json::Value, (u16, String)> {
-    let current = settings_read(root);
-    if current["hash"] != body["baseHash"] {
-        return Err((409, "jazyk.toml changed on disk since it was read".to_string()));
-    }
-    let unknown = current["unknown"].as_array().cloned().unwrap_or_default();
-    if !unknown.is_empty() {
-        return Err((
-            409,
-            format!(
-                "jazyk.toml holds keys the settings form does not know ({}); edit the file directly",
-                unknown.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
-            ),
-        ));
-    }
+pub fn settings_write(
+    root: &Path,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, (u16, String)> {
+    let base = body["baseHash"]
+        .as_str()
+        .ok_or_else(|| (400, "baseHash is required".into()))?;
     let text = settings_render(root, &body["settings"]).map_err(|e| (400, e))?;
-    crate::vfs::write(root.join("jazyk.toml"), &text).map_err(|e| (500, format!("cannot write jazyk.toml: {}", e)))?;
+    crate::document_sets::atomic_config(root, &text, base)?;
     Ok(settings_read(root))
 }
 
-pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, String> {
-    let old = Toml::parse(&crate::vfs::read_to_string(root.join("jazyk.toml")).unwrap_or_default());
-    let list = |v: &serde_json::Value| -> Option<Vec<String>> {
-        v.as_array().map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-    };
-    let mut out = String::new();
-    if let Some(r) = old.string("redirect") {
-        out.push_str(&format!("redirect = {}\n\n", toml_str(&r)));
-    }
-    // Carry the [acp] tables over untouched: the form does not edit them, and a save
-    // must never drop the agent configuration.
-    {
-        let mut sections: Vec<(String, Vec<String>)> = Vec::new();
-        let mut line_for = |key: &str, rendered: String| {
-            let (section, k) = key.rsplit_once('.').unwrap_or(("", key));
-            match sections.iter_mut().find(|(s, _)| s == section) {
-                Some((_, lines)) => lines.push(format!("{} = {}", k, rendered)),
-                None => sections.push((section.to_string(), vec![format!("{} = {}", k, rendered)])),
-            }
-        };
-        for (k, v) in &old.strings {
-            if k.starts_with("acp.") {
-                // Booleans and numbers stay unquoted; strings are quoted.
-                let rendered = if v == "true" || v == "false" || v.parse::<f64>().is_ok() {
-                    v.clone()
-                } else {
-                    toml_str(v)
-                };
-                line_for(k, rendered);
-            }
-        }
-        for (k, v) in &old.arrays {
-            if k.starts_with("acp.") {
-                line_for(k, toml_list(v));
-            }
-        }
-        for (section, lines) in sections {
-            if section == "acp" || section.is_empty() {
-                out.push_str("[acp]\n");
-            } else {
-                out.push_str(&format!("[{}]\n", section));
-            }
-            out.push_str(&lines.join("\n"));
-            out.push_str("\n\n");
-        }
-    }
-    let glob = list(&s["docsGlob"]).unwrap_or_default();
-    if !glob.is_empty() {
-        out.push_str(&format!("[docs]\nglob = {}\n\n", toml_list(&glob)));
-    }
-    let warnings = list(&s["linting"]["warnings"]).unwrap_or_default();
-    let errors = list(&s["linting"]["errors"]).unwrap_or_default();
-    if !warnings.is_empty() || !errors.is_empty() {
-        out.push_str("[docs.linting.rules]\n");
-        if !warnings.is_empty() {
-            out.push_str(&format!("warnings = {}\n", toml_list(&warnings)));
-        }
-        if !errors.is_empty() {
-            out.push_str(&format!("errors = {}\n", toml_list(&errors)));
-        }
-        out.push('\n');
-    }
-    let roots = list(&s["roots"]).unwrap_or_default();
-    if !roots.is_empty() {
-        out.push_str(&format!("[roots]\nfiles = {}\n\n", toml_list(&roots)));
-    }
-    if let Some(d) = s["deliverable"]
-        .as_str()
-        .map(str::trim)
-        .filter(|d| !d.is_empty())
-    {
-        out.push_str(&format!("[gen]\ndeliverable = {}\n\n", toml_str(d)));
-    }
-    let llm = &s["llm"];
-    let mut llm_lines: Vec<String> = Vec::new();
+pub fn settings_render(root: &Path, settings: &serde_json::Value) -> Result<String, String> {
+    let text = crate::vfs::read_to_string(root.join(crate::document_sets::CONFIG))
+        .unwrap_or_else(|_| crate::document_sets::EMPTY_CONFIG.into());
+    let mut document: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{}", e))?;
     for (key, field) in [
         ("base_url", "baseUrl"),
         ("model", "model"),
         ("api_key_env", "apiKeyEnv"),
+        ("temperature", "temperature"),
     ] {
-        if let Some(v) = llm[field].as_str().map(str::trim).filter(|v| !v.is_empty()) {
-            llm_lines.push(format!("{} = {}", key, toml_str(v)));
+        if let Some(value) = settings["llm"].get(field) {
+            if value.is_null() || value.as_str() == Some("") {
+                if let Some(table) = document.get_mut("llm").and_then(|i| i.as_table_mut()) {
+                    table.remove(key);
+                }
+            } else {
+                document["llm"][key] = if key == "temperature" {
+                    toml_edit::value(value.as_f64().ok_or("temperature must be a number")?)
+                } else {
+                    toml_edit::value(value.as_str().ok_or("LLM setting must be text")?)
+                };
+            }
         }
     }
-    if let Some(k) = old.string("llm.api_key") {
-        llm_lines.push(format!("api_key = {}", toml_str(&k)));
+    for field in ["warnings", "errors"] {
+        if let Some(value) = settings["linting"].get(field) {
+            let items: Vec<String> =
+                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            document["linting"]["rules"][field] =
+                toml_edit::value(items.into_iter().collect::<toml_edit::Array>());
+        }
     }
-    if !llm["temperature"].is_null() {
-        let t = llm["temperature"]
-            .as_f64()
-            .ok_or("temperature must be a number")?;
-        llm_lines.push(format!("temperature = {}", t));
+    if let Some(executors) = settings["executors"].as_object() {
+        for (key, value) in executors {
+            if !EXECUTOR_KEYS.contains(&key.as_str()) {
+                return Err(format!("unknown executor: {}", key));
+            }
+            document["executors"][key] =
+                toml_edit::value(value.as_str().ok_or("executor must be text")?);
+        }
     }
-    if !llm_lines.is_empty() {
-        out.push_str(&format!("[llm]\n{}\n\n", llm_lines.join("\n")));
-    }
-    // The [executors] table: the form's own when given, the old file's otherwise.
-    let executors: BTreeMap<String, String> = match s["executors"].as_object() {
-        Some(m) => m
-            .iter()
-            .filter_map(|(k, v)| {
-                v.as_str()
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(|v| (k.clone(), v.to_string()))
-            })
-            .collect(),
-        None => parse_executors(&old).by_kind,
-    };
-    if let Some(bad) = executors
-        .keys()
-        .find(|k| !EXECUTOR_KEYS.contains(&k.as_str()))
-    {
-        return Err(format!(
-            "executors.{} is not a goal kind or class; one of: {}",
-            bad,
-            EXECUTOR_KEYS.join(", ")
-        ));
-    }
-    if !executors.is_empty() {
-        let lines: Vec<String> = executors
-            .iter()
-            .map(|(k, v)| format!("{} = {}", k, toml_str(v)))
-            .collect();
-        out.push_str(&format!("[executors]\n{}\n\n", lines.join("\n")));
-    }
-    Ok(out.trim_end().to_string() + "\n")
+    Ok(document.to_string())
 }
 
 #[cfg(test)]
@@ -1070,7 +794,8 @@ mod settings_tests {
 
     #[test]
     fn settings_write_creates_the_file_and_refuses_a_stale_hash() {
-        let dir = std::env::temp_dir().join(format!("jazyk-settings-write-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-settings-write-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
         // A folder with no jazyk.toml: the wizard's case.
@@ -1084,7 +809,11 @@ mod settings_tests {
         });
         let after = settings_write(&dir, &body).expect("written");
         assert_eq!(after["exists"], true);
-        assert!(crate::vfs::read_to_string(dir.join("jazyk.toml")).unwrap().contains("docs/**/*.md"));
+        assert!(
+            crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG))
+                .unwrap()
+                .contains("version = 1")
+        );
         // The file moved since the read: the write is refused with a conflict.
         let (code, msg) = settings_write(&dir, &body).unwrap_err();
         assert_eq!(code, 409);
@@ -1093,13 +822,14 @@ mod settings_tests {
     }
 
     #[test]
-    fn settings_roundtrip_preserves_secret_and_redirect() {
-        let dir = std::env::temp_dir().join(format!("jazyk-settings-test-{}", crate::sys::process_id()));
+    fn settings_roundtrip_preserves_secret_and_unknown_fields() {
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-settings-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"**/*.md\"]\n\n[llm]\nmodel = \"m1\"\napi_key = \"sekret\"\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\nllm = {\"model\" = \"m1\", \"api_key\" = \"sekret\"}\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         let read = settings_read(&dir);
@@ -1115,11 +845,25 @@ mod settings_tests {
             }),
         )
         .unwrap();
-        assert!(text.contains("glob = [\"**/*.md\", \"!drafts/**\"]"));
-        assert!(text.contains("api_key = \"sekret\""));
-        assert!(text.contains("model = \"m2\""));
-        assert!(text.contains("[executors]\ngc = \"claude\""), "{}", text);
-        crate::vfs::write(dir.join("jazyk.toml"), &text).unwrap();
+        assert!(text.contains("docs = [\"**/*.md\"]"));
+        assert_eq!(
+            text.parse::<toml::Value>().unwrap()["llm"]["api_key"].as_str(),
+            Some("sekret")
+        );
+        assert_eq!(
+            text.parse::<toml::Value>().unwrap()["llm"]["model"].as_str(),
+            Some("m2")
+        );
+        assert!(text.contains("gc = \"claude\""), "{}", text);
+        crate::vfs::write(
+            {
+                let path = dir.join(".jazyk/jazyk.toml");
+                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            },
+            &text,
+        )
+        .unwrap();
         let p = Project::load(&dir);
         assert_eq!(p.llm.model.as_deref(), Some("m2"));
         assert_eq!(
@@ -1134,11 +878,22 @@ mod settings_tests {
         // A key outside the goal kinds and classes is a settings error.
         let err = settings_render(&dir, &serde_json::json!({"executors": {"chat": "claude"}}))
             .unwrap_err();
-        assert!(err.contains("executors.chat"), "{}", err);
+        assert!(err.contains("chat"), "{}", err);
         // Unknown keys are surfaced so the form refuses instead of dropping them.
-        crate::vfs::write(dir.join("jazyk.toml"), "[custom]\nthing = \"x\"\n").unwrap();
+        crate::vfs::write(
+            {
+                let path = dir.join(".jazyk/jazyk.toml");
+                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            },
+            "[custom]\nthing = \"x\"\n",
+        )
+        .unwrap();
         let read2 = settings_read(&dir);
-        assert_eq!(read2["unknown"].as_array().unwrap().len(), 1);
+        assert!(read2["error"].is_string());
+        assert!(settings_render(&dir, &serde_json::json!({}))
+            .unwrap()
+            .contains("[custom]"));
         crate::vfs::remove_dir_all(&dir).ok();
     }
 }
@@ -1150,9 +905,9 @@ mod toml_array_tests {
     #[test]
     fn quoted_array_items_keep_their_commas() {
         let t = Toml::parse(
-            "[docs.linting.rules]\nwarnings = [\"An em dash appears in prose. Use commas, periods, or colons instead.\", \"Second rule\"]\n",
+            "[linting.rules]\nwarnings = [\"An em dash appears in prose. Use commas, periods, or colons instead.\", \"Second rule\"]\n",
         );
-        let rules = t.array("docs.linting.rules.warnings").unwrap();
+        let rules = t.array("linting.rules.warnings").unwrap();
         assert_eq!(rules.len(), 2);
         assert!(rules[0].contains("commas, periods, or colons"));
         assert_eq!(rules[1], "Second rule");

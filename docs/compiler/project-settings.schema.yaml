@@ -1,73 +1,16 @@
-$schema: http://json-schema.org/draft-07/schema#
-$id: https://jazyk.org/schemas/project-settings.json
+---
+"$schema": http://json-schema.org/draft-07/schema#
+"$id": https://jazyk.org/schemas/project-settings.json
 title: Jazyk Project Settings
-description: >-
-  Schema for the jazyk.toml project configuration file. Limits and budgets are not
-  settings: they are built into the binary as the limits registry
+description: Project configuration at .jazyk/jazyk.toml. All paths resolve from the
+  project folder. Each set owns an independent graph.
 type: object
 properties:
-  redirect:
-    type: string
-    description: >-
-      Delegate discovery to a nested project directory holding the real jazyk.toml.
-      A redirecting file contains only this key. Redirects do not chain
-  docs:
-    type: object
-    description: Configuration for documentation processing
-    properties:
-      glob:
-        type: array
-        description: >-
-          Ordered glob patterns matching documentation files, relative to the project root.
-          Patterns starting with '!' are exclusions. The last pattern to match a file wins
-        items:
-          type: string
-      handlers:
-        type: object
-        description: Custom format handlers, keyed by handler name. Tried before built-in handlers
-        additionalProperties:
-          type: object
-          description: One handler configuration
-          required:
-            - matcher
-            - path
-          properties:
-            matcher:
-              type: string
-              description: Glob pattern matching the files this handler claims
-            path:
-              type: string
-              description: Path to the handler implementation
-          additionalProperties: false
-      linting:
-        type: object
-        description: Linting rules for documentation
-        properties:
-          rules:
-            type: object
-            description: >-
-              Plain-English rules grouped by the severity they produce. Evaluated by
-              review-entity sessions and by the checks; findings are lint diagnostics
-            properties:
-              warnings:
-                type: array
-                description: Rules that produce a warning
-                items:
-                  type: string
-              errors:
-                type: array
-                description: Rules that produce an error
-                items:
-                  type: string
-            additionalProperties: false
-        additionalProperties: false
-    additionalProperties: false
   llm:
     type: object
-    description: >-
-      LLM backend for the embedded agent, an OpenAI-compatible chat completions
+    description: 'LLM backend for the embedded agent, an OpenAI-compatible chat completions
       endpoint. Resolved per field: CLI flag, then environment variable, then this
-      table, then global config, then built-in default
+      table, then global config, then built-in default'
     properties:
       base_url:
         type: string
@@ -88,15 +31,14 @@ properties:
     additionalProperties: false
   acp:
     type: object
-    description: >-
-      Downstream ACP agent selection. Resolved per field: CLI flag, then environment
-      variable, then this table, then global config, then the built-in default
+    description: 'Downstream ACP agent selection. Resolved per field: CLI flag, then
+      environment variable, then this table, then global config, then the built-in
+      default'
     properties:
       agent:
         type: string
-        description: >-
-          Name of the agent profile to use for every session an executor override does
-          not claim. 'embedded' is built in and runs 'jazyk agent'
+        description: Name of the agent profile to use for every session an executor
+          override does not claim. 'embedded' is built in and runs 'jazyk agent'
         default: embedded
       agents:
         type: object
@@ -105,7 +47,7 @@ properties:
           type: object
           description: One agent profile
           required:
-            - command
+          - command
           properties:
             command:
               type: string
@@ -122,108 +64,329 @@ properties:
                 type: string
             serve_files:
               type: boolean
-              description: >-
-                Serve file and command tools into the agent's generation sessions, for
-                agents that bring no editor of their own
+              description: Serve file and command tools into the agent's generation
+                sessions, for agents that bring no editor of their own
               default: false
           additionalProperties: false
     additionalProperties: false
   executors:
     type: object
-    description: >-
-      Executor overrides per goal kind or goal class. A key is a session-running goal
-      kind or a class (compile, gc); a value is an ACP profile name. Resolved per
-      batch: the --agent flag, then JAZYK_ACP_AGENT, then the kind's key, then the
-      class's key (project table over global config for each), then the acp agent
+    description: 'Executor overrides per goal kind or goal class. A key is a session-running
+      goal kind or a class (compile, gc); a value is an ACP profile name. Resolved
+      per batch: the --agent flag, then JAZYK_ACP_AGENT, then the kind''s key, then
+      the class''s key (project table over global config for each), then the acp agent'
     propertyNames:
       type: string
       enum:
-        - compile
-        - gc
-        - place-anchors
-        - reconcile-section
-        - rejudge-pair
-        - review-entity
-        - retrace
-        - conform-instance
-        - bind
-        - generate
-        - verify
-        - declare-edges
-        - dedupe-candidates
-        - curate-view
-        - split-view
-        - abstract-entity
+      - compile
+      - gc
+      - place-anchors
+      - reconcile-section
+      - rejudge-pair
+      - review-entity
+      - retrace
+      - conform-instance
+      - bind
+      - generate
+      - verify
+      - declare-edges
+      - dedupe-candidates
+      - curate-view
+      - split-view
+      - abstract-entity
     additionalProperties:
       type: string
       description: A profile name, 'embedded' or one of acp.agents
-  roots:
-    type: object
-    description: Root documents. They seed readiness (link levels, roots first) and anchor the reachability check
-    properties:
-      files:
-        type: array
-        description: Glob patterns matching the root documents, matched like docs.glob
-        items:
-          type: string
-    additionalProperties: false
   gen:
     type: object
     description: Generation workflow settings
     properties:
-      deliverable:
-        type: string
-        description: >-
-          Directory the end product is generated into, resolved relative to the project
-          root. Defaults to '.', the project root itself. Excluded from doc input except
-          where the docs glob whitelists it. The project file never states what
-          the deliverable is; the medium is a fact the documents state
-        default: '.'
       worker:
         type: string
-        description: >-
-          The built-in generation worker. 'agentic' runs each generate goal as a session
-          with file and command tools; 'pipeline' keeps the fixed file-reply sequence
+        description: The built-in generation worker. 'agentic' runs each generate
+          goal as a session with file and command tools; 'pipeline' keeps the fixed
+          file-reply sequence
         enum:
-          - agentic
-          - pipeline
+        - agentic
+        - pipeline
         default: agentic
-      code:
-        type: array
-        description: >-
-          Glob patterns, relative to the deliverable, scoping which files count as
-          implementation for the unclaimed report and decompilation. Default: every
-          file under the deliverable minus the standard exclusions
-        items:
-          type: string
     additionalProperties: false
   workflow:
     type: object
-    description: >-
-      Defaults for the control plane. The live values sit in control.yaml in the out
-      directory
+    description: Defaults for the control plane. The live values sit in control.yaml
+      in the out directory
     properties:
       compile:
         type: string
-        description: manual gates compilation behind a release; auto lets a watcher act as changes land
+        description: manual gates compilation behind a release; auto lets a watcher
+          act as changes land
         enum:
-          - manual
-          - auto
+        - manual
+        - auto
         default: manual
       generate:
         type: string
-        description: manual gates generation behind a release; auto lets a watcher act as changes land
+        description: manual gates generation behind a release; auto lets a watcher
+          act as changes land
         enum:
-          - manual
-          - auto
+        - manual
+        - auto
         default: manual
       worker:
         type: string
         description: Who acts on a GUI release
         enum:
-          - internal
-          - agent
-          - any
+        - internal
+        - agent
+        - any
         default: any
     additionalProperties: false
+  linting:
+    type: object
+    description: Linting rules for documentation
+    properties:
+      rules:
+        type: object
+        description: Plain-English rules grouped by the severity they produce. Evaluated
+          by review-entity sessions and by the checks; findings are lint diagnostics
+        properties:
+          warnings:
+            type: array
+            description: Rules that produce a warning
+            items:
+              type: string
+          errors:
+            type: array
+            description: Rules that produce an error
+            items:
+              type: string
+        additionalProperties: false
+    additionalProperties: false
+  handlers:
+    type: object
+    description: Custom format handlers, keyed by handler name. Tried before built-in
+      handlers
+    additionalProperties:
+      type: object
+      description: One handler configuration
+      required:
+      - matcher
+      - path
+      properties:
+        matcher:
+          type: string
+          description: Glob pattern matching the files this handler claims
+        path:
+          type: string
+          description: Path to the handler implementation
+      additionalProperties: false
+  version:
+    const: 1
+  sets:
+    type: array
+    items:
+      type: object
+      required:
+      - id
+      - name
+      - docs
+      properties:
+        id:
+          type: string
+          pattern: "^ds_[A-Za-z0-9_-]+$"
+        name:
+          type: string
+          minLength: 1
+        docs:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        roots:
+          type: array
+          items:
+            type: string
+        source:
+          type: array
+          items:
+            type: string
+        llm:
+          type: object
+          description: 'LLM backend for the embedded agent, an OpenAI-compatible chat
+            completions endpoint. Resolved per field: CLI flag, then environment variable,
+            then this table, then global config, then built-in default'
+          properties:
+            base_url:
+              type: string
+              description: Base URL of the OpenAI-compatible endpoint
+            model:
+              type: string
+              description: Model id
+            api_key_env:
+              type: string
+              description: Name of the environment variable holding the API key
+            api_key:
+              type: string
+              description: Literal API key. Prefer api_key_env in tracked files
+            temperature:
+              type: number
+              description: Sampling temperature
+              default: 0
+          additionalProperties: false
+        acp:
+          type: object
+          description: 'Downstream ACP agent selection. Resolved per field: CLI flag,
+            then environment variable, then this table, then global config, then the
+            built-in default'
+          properties:
+            agent:
+              type: string
+              description: Name of the agent profile to use for every session an executor
+                override does not claim. 'embedded' is built in and runs 'jazyk agent'
+              default: embedded
+            agents:
+              type: object
+              description: Agent profiles, keyed by profile name
+              additionalProperties:
+                type: object
+                description: One agent profile
+                required:
+                - command
+                properties:
+                  command:
+                    type: string
+                    description: Executable that starts the agent
+                  args:
+                    type: array
+                    description: Arguments passed to the command
+                    items:
+                      type: string
+                  env:
+                    type: object
+                    description: Extra environment variables for the agent process
+                    additionalProperties:
+                      type: string
+                  serve_files:
+                    type: boolean
+                    description: Serve file and command tools into the agent's generation
+                      sessions, for agents that bring no editor of their own
+                    default: false
+                additionalProperties: false
+          additionalProperties: false
+        executors:
+          type: object
+          description: 'Executor overrides per goal kind or goal class. A key is a
+            session-running goal kind or a class (compile, gc); a value is an ACP
+            profile name. Resolved per batch: the --agent flag, then JAZYK_ACP_AGENT,
+            then the kind''s key, then the class''s key (project table over global
+            config for each), then the acp agent'
+          propertyNames:
+            type: string
+            enum:
+            - compile
+            - gc
+            - place-anchors
+            - reconcile-section
+            - rejudge-pair
+            - review-entity
+            - retrace
+            - conform-instance
+            - bind
+            - generate
+            - verify
+            - declare-edges
+            - dedupe-candidates
+            - curate-view
+            - split-view
+            - abstract-entity
+          additionalProperties:
+            type: string
+            description: A profile name, 'embedded' or one of acp.agents
+        gen:
+          type: object
+          description: Generation workflow settings
+          properties:
+            worker:
+              type: string
+              description: The built-in generation worker. 'agentic' runs each generate
+                goal as a session with file and command tools; 'pipeline' keeps the
+                fixed file-reply sequence
+              enum:
+              - agentic
+              - pipeline
+              default: agentic
+          additionalProperties: false
+        workflow:
+          type: object
+          description: Defaults for the control plane. The live values sit in control.yaml
+            in the out directory
+          properties:
+            compile:
+              type: string
+              description: manual gates compilation behind a release; auto lets a
+                watcher act as changes land
+              enum:
+              - manual
+              - auto
+              default: manual
+            generate:
+              type: string
+              description: manual gates generation behind a release; auto lets a watcher
+                act as changes land
+              enum:
+              - manual
+              - auto
+              default: manual
+            worker:
+              type: string
+              description: Who acts on a GUI release
+              enum:
+              - internal
+              - agent
+              - any
+              default: any
+          additionalProperties: false
+        linting:
+          type: object
+          description: Linting rules for documentation
+          properties:
+            rules:
+              type: object
+              description: Plain-English rules grouped by the severity they produce.
+                Evaluated by review-entity sessions and by the checks; findings are
+                lint diagnostics
+              properties:
+                warnings:
+                  type: array
+                  description: Rules that produce a warning
+                  items:
+                    type: string
+                errors:
+                  type: array
+                  description: Rules that produce an error
+                  items:
+                    type: string
+              additionalProperties: false
+          additionalProperties: false
+        handlers:
+          type: object
+          description: Custom format handlers, keyed by handler name. Tried before
+            built-in handlers
+          additionalProperties:
+            type: object
+            description: One handler configuration
+            required:
+            - matcher
+            - path
+            properties:
+              matcher:
+                type: string
+                description: Glob pattern matching the files this handler claims
+              path:
+                type: string
+                description: Path to the handler implementation
+            additionalProperties: false
+      additionalProperties: false
 additionalProperties: false
+required:
+- version

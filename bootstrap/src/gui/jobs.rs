@@ -58,6 +58,15 @@ pub(crate) fn elide(v: &Value) -> Value {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobKind {
+    Scoped {
+        set_id: String,
+        config_hash: String,
+        kind: Box<JobKind>,
+    },
+    CompileSets {
+        set_ids: Vec<String>,
+        config_hash: String,
+    },
     Compile,
     Gen {
         entities: Vec<String>,
@@ -83,6 +92,8 @@ pub enum JobKind {
 impl JobKind {
     fn name(&self) -> &'static str {
         match self {
+            JobKind::Scoped { kind, .. } => kind.name(),
+            JobKind::CompileSets { .. } => "compile",
             JobKind::Compile => "compile",
             JobKind::Gen { .. } => "gen",
             JobKind::Verify { .. } => "verify",
@@ -93,6 +104,12 @@ impl JobKind {
     }
     fn as_value(&self) -> Value {
         match self {
+            JobKind::Scoped { set_id, kind, .. } => {
+                let mut v = kind.as_value();
+                v["setId"] = json!(set_id);
+                v
+            }
+            JobKind::CompileSets { set_ids, .. } => json!({"kind":"compile", "setIds":set_ids}),
             JobKind::Compile => json!({ "kind": "compile" }),
             JobKind::Gen { entities, force } => {
                 json!({ "kind": "gen", "entities": entities, "force": force })
@@ -172,6 +189,22 @@ impl JobManager {
 
     // Queue a job. A kind already waiting in the queue dedupes to the queued job's id.
     pub fn submit(&self, st: &SharedState, kind: JobKind) -> u64 {
+        let kind = if !matches!(
+            kind,
+            JobKind::Scoped { .. } | JobKind::CompileSets { .. } | JobKind::Benchmark { .. }
+        ) {
+            if let Some(id) = st.proj().set_id {
+                JobKind::Scoped {
+                    set_id: id,
+                    config_hash: st.proj().config_hash,
+                    kind: Box::new(kind),
+                }
+            } else {
+                kind
+            }
+        } else {
+            kind
+        };
         let mut inner = self.inner.lock().unwrap();
         for qid in &inner.queue {
             if inner.jobs.get(qid).map(|j| j.kind == kind).unwrap_or(false) {
@@ -379,6 +412,48 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
 
 fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, String> {
     match kind {
+        JobKind::Scoped {
+            set_id,
+            config_hash,
+            kind,
+        } => {
+            let scope = st.scoped(Some(set_id)).map_err(|e| e.1)?;
+            if scope.proj().config_hash != *config_hash {
+                return Err(
+                    "document-set configuration changed while this job was queued; compile again"
+                        .into(),
+                );
+            }
+            let result = execute(&scope, kind, trace);
+            super::jobs_hook_on_job_finished(&scope, kind);
+            result
+        }
+        JobKind::CompileSets {
+            set_ids,
+            config_hash,
+        } => {
+            let mut results = Vec::new();
+            for id in set_ids {
+                if trace.is_cancelled() {
+                    break;
+                }
+                let kind = JobKind::Scoped {
+                    set_id: id.clone(),
+                    config_hash: config_hash.clone(),
+                    kind: Box::new(JobKind::Compile),
+                };
+                st.events.emit("compile.set.started", json!({"setId":id}));
+                trace.line("compile", &format!("document set {}", id));
+                let result = match execute(st, &kind, trace) {
+                    Ok(v) => v,
+                    Err(e) => json!({"error":e}),
+                };
+                st.events
+                    .emit("compile.set.finished", json!({"setId":id,"result":result}));
+                results.push(json!({"setId":id,"result":result}));
+            }
+            Ok(json!({"sets":results}))
+        }
         JobKind::Compile => {
             let report = crate::reconcile::compile(&st.proj(), &st.llm(), &st.out, trace);
             Ok(json!(report))
@@ -440,6 +515,50 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
 // ---- handlers ----
 
 pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
+    if body["kind"] == "compile" && st.proj().set_id.is_none() {
+        let w = match crate::document_sets::Workspace::load(&st.root) {
+            Ok(w) => w,
+            Err((code, e)) => return super::api::err(StatusCode::from_u16(code).unwrap(), e),
+        };
+        let ids = if let Some(ids) = body["setIds"].as_array() {
+            let mut selected = Vec::new();
+            for id in ids {
+                match id.as_str().and_then(|id| w.select(id).ok()) {
+                    Some(s) => selected.push(s.id.clone()),
+                    None => {
+                        return super::api::err(StatusCode::BAD_REQUEST, "unknown document set")
+                    }
+                }
+            }
+            w.sets
+                .iter()
+                .filter(|s| selected.contains(&s.id))
+                .map(|s| s.id.clone())
+                .collect()
+        } else {
+            w.summary()["sets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|s| s["dirty"] == true && s["state"] != "empty")
+                .filter_map(|s| s["id"].as_str().map(str::to_string))
+                .collect()
+        };
+        let id = st.jobs.submit(
+            &st,
+            JobKind::CompileSets {
+                set_ids: ids,
+                config_hash: w.hash,
+            },
+        );
+        return (StatusCode::ACCEPTED, Json(json!({"jobId":id}))).into_response();
+    }
+    if st.proj().set_id.is_none() && body["kind"] != "benchmark" {
+        return super::api::err(
+            StatusCode::BAD_REQUEST,
+            "select a document set for this job",
+        );
+    }
     // Dispatch by worker preference: with an agent attached and preferred, the click
     // records the release and the agent does the work. Mirrors
     // docs/compiler/control-plane.md#dispatch.

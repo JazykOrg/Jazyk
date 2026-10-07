@@ -800,8 +800,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -1003,8 +1003,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -1096,8 +1096,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -1217,8 +1217,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -1299,8 +1299,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         let quotes = [
@@ -1500,7 +1500,7 @@ mod tests {
         ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
-        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n").unwrap();
         let quote = "When Ines confronts Theo about the survey, Theo moves from acquaintance to ally.";
         crate::vfs::write(
             dir.join("docs/arcs.md"),

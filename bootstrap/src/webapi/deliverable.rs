@@ -77,6 +77,7 @@ fn no_owners() -> Value {
 pub fn deliverable_value(out_dir: &Path, gs: &GenSettings) -> Value {
     let mut files: Vec<(String, u64)> = Vec::new();
     walk(&gs.deliverable, &gs.deliverable, &mut files);
+    files.retain(|(f,_)|gs.allows_source(f));
     files.sort();
     let ledger = Ledger::load(out_dir);
     let own = ownership(&ledger);

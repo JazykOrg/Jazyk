@@ -12,6 +12,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 pub struct McpServer {
+    children: std::sync::Mutex<BTreeMap<String, McpServer>>,
     project: crate::project::Project,
     out: PathBuf,
     // The toolsets served: any of "compile", "generate", "verify", "graph".
@@ -285,7 +286,7 @@ impl McpServer {
     // Whether this serving stands in a project or in a bare directory. Decides which
     // project tools exist. Mirrors docs/frontends/acp.md#project-tools.
     fn initialized(&self) -> bool {
-        self.project.root.join("jazyk.toml").vexists()
+        self.project.root.join(crate::document_sets::CONFIG).vexists()
     }
 
     pub fn new(
@@ -306,6 +307,7 @@ impl McpServer {
     ) -> McpServer {
         let out_for_trace = out.clone();
         McpServer {
+            children: Default::default(),
             mutation_limit: crate::limits::SESSION_MUTATIONS,
             context_budget: crate::limits::CONTEXT_BUDGET,
             project,
@@ -570,6 +572,7 @@ impl McpServer {
     // The serving's end, on any transport: an ephemeral serving with an open batch
     // runs the implicit finish, and the transcript closes.
     pub fn finish(&self) {
+        for child in self.children.lock().unwrap().values() {child.finish();}
         if self.bridge.ephemeral {
             self.eof_finish();
         }
@@ -1566,7 +1569,77 @@ impl McpServer {
         json!({"error": "the browser backend does not serve the benchmark"})
     }
 
-    pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+    // A user conversation multiplexes set-local sessions. There is no ambient selection.
+    pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64,String)> {
+        if self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
+            if params["arguments"]["setId"].as_str().is_some_and(|id|Some(id)!=self.project.set_id.as_deref()) {
+                return Err((-32602,"this worker is scoped to another document set".into()));
+            }
+            return self.handle_local(method,params);
+        }
+        let w=crate::document_sets::Workspace::load(&self.project.root).map_err(|e|(-32602,e.1))?;
+        if method=="initialize" {
+            // Registration belongs to each set-local child, created lazily.
+            if let Some(name)=params["clientInfo"]["name"].as_str() {*self.client.lock().unwrap()=Some(name.into());}
+            return Ok(json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
+                "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                "instructions":format!("This project has independent document sets. Start with list_document_sets. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",instructions_for(&self.modes,self.write,w.exists))}));
+        }
+        let writable=!self.bridge.reader && (self.write || self.modes.iter().any(|m|m!="graph"));
+        if method=="tools/list" {
+            let mut result=self.handle_local(method,params)?;
+            let tools=result["tools"].as_array_mut().unwrap();
+            for t in tools.iter_mut() {t["inputSchema"]["properties"]["setId"]=json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});}
+            tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
+            if writable {
+                for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
+                    tools.push(json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":{
+                        "baseHash":{"type":"string"},"remove":{"type":"string"},"set":{"type":"object","properties":{
+                            "id":{"type":"string"},"name":{"type":"string"},"docs":{"type":"array","items":{"type":"string"}},
+                            "roots":{"type":"array","items":{"type":"string"}},"source":{"type":"array","items":{"type":"string"}}}}},"required":["baseHash"]}}));
+                }
+            }
+            return Ok(result);
+        }
+        if method!="tools/call" {return self.handle_local(method,params);}
+        let name=params["name"].as_str().unwrap_or_default();
+        if name=="list_document_sets" {return Ok(result_value(w.summary()));}
+        if matches!(name,"preview_document_set"|"save_document_set"|"remove_document_set") {
+            if !writable {return Err((-32602,"this serving is read-only".into()));}
+            return crate::document_sets::edit(&w.root,&params["arguments"],name=="preview_document_set").map(result_value).map_err(|e|(-32602,e.1));
+        }
+        if matches!(name,"init_project"|"update_project_settings") {return self.handle_local(method,params);}
+        let routed=crate::webapi::sets::route("/",params["arguments"].clone()).map_err(|e|(-32602,e.1))?;
+        let ids=if let Some(id)=routed.selector.as_deref() {vec![w.select(id).map_err(|e|(-32602,e.1))?.id.clone()]}
+            else if w.sets.len()==1 {vec![w.sets[0].id.clone()]}
+            else if matches!(name,"search"|"goals"|"graph_status"|"diagnostics"|"binding_tasks"|"generation_tasks"|"verification_tasks"|"decompile_tasks") {w.sets.iter().map(|s|s.id.clone()).collect()}
+            else {return Err((-32602,"pass setId from list_document_sets for this operation".into()));};
+        let mut replies=Vec::new();
+        let mut children=self.children.lock().unwrap();
+        for id in ids {
+            if children.get(&id).is_some_and(|s|s.project.config_hash!=w.hash) {
+                if children[&id].open.lock().unwrap().is_some() {return Err((-32602,"configuration changed during the open batch; abandon it before continuing".into()));}
+                children.remove(&id);
+            }
+            if !children.contains_key(&id) {
+                let p=w.resolve(Some(&id)).map_err(|e|(-32602,e.1))?;
+                let child=Self::with_bridge(p.clone(),p.out.clone(),self.modes.clone(),self.write,self.bridge.clone());
+                child.handle_local("initialize",&json!({"clientInfo":{"name":self.client.lock().unwrap().clone().unwrap_or_else(||"agent".into())}}))?;
+                children.insert(id.clone(),child);
+            }
+            let mut local=params.clone();local["arguments"]=routed.body.clone();
+            if let Some(o)=local["arguments"].as_object_mut(){o.remove("setId");}
+            let reply=children[&id].handle_local(method,&local)?;
+            let text=reply["content"][0]["text"].as_str().unwrap_or_default();
+            let result=serde_json::from_str(text).unwrap_or_else(|_|json!(text));
+            replies.push(json!({"setId":id,"name":w.select(&id).unwrap().name,"result":crate::webapi::sets::qualify_value(result,&id),"isError":reply["isError"]}));
+        }
+        if replies.len()==1 {
+            let mut reply=result_value(replies[0]["result"].clone());reply["isError"]=replies[0]["isError"].clone();Ok(reply)
+        } else {Ok(result_value(json!({"sets":replies})))}
+    }
+
+    fn handle_local(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         match method {
             "initialize" => {
                 if let Some(name) = params["clientInfo"]["name"].as_str() {
@@ -2747,10 +2820,10 @@ impl McpServer {
     #[cfg(not(target_arch = "wasm32"))]
     fn init_project(&self) -> Value {
         let root = &self.project.root;
-        if root.join("jazyk.toml").vexists() {
+        if root.join(crate::document_sets::CONFIG).vexists() {
             return json!({"error": {"rule": "already-a-project", "message": "jazyk.toml already exists here"}});
         }
-        if let Err(e) = crate::vfs::write(root.join("jazyk.toml"), crate::cli::INIT_TOML) {
+        if let Err(e) = crate::vfs::write({ let path = root.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, crate::cli::INIT_TOML) {
             return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
         }
         let made = match crate::cli::init_scaffold(root) {
@@ -2784,7 +2857,7 @@ impl McpServer {
             return json!({"error": {"rule": "not-a-project", "message":
                 "no jazyk.toml here to edit; call init_project first"}});
         }
-        let path = self.project.root.join("jazyk.toml");
+        let path = self.project.root.join(crate::document_sets::CONFIG);
         let old_full = crate::vfs::read_to_string(&path).unwrap_or_default();
         let mut full = old_full.clone();
         for (key, value) in settings {
@@ -2798,7 +2871,7 @@ impl McpServer {
             let (section, k) = key.split_once('.').unwrap();
             full = toml_set(&full, section, k, value);
         }
-        if let Err(e) = self.write_edit("jazyk.toml", &old_full, &full, &full) {
+        if let Err(e) = self.write_edit(crate::document_sets::CONFIG, &old_full, &full, &full) {
             return json!({"error": {"rule": "write-failed", "message": e}});
         }
         json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
@@ -2809,46 +2882,13 @@ impl McpServer {
 // Minimal line edit on a TOML text: set `key = "value"` inside `[section]`, appending
 // the section or the key when missing, touching nothing else.
 pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
-    let header = format!("[{}]", section);
-    let rendered = format!(
-        "{} = \"{}\"",
-        key,
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    );
-    let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-    let mut in_section = false;
-    let mut section_start: Option<usize> = None;
-    for i in 0..lines.len() {
-        let t = lines[i].trim();
-        if t.starts_with('[') {
-            in_section = t == header;
-            if in_section {
-                section_start = Some(i);
-            }
-            continue;
-        }
-        if in_section {
-            if let Some((k, _)) = t.split_once('=') {
-                if k.trim() == key {
-                    lines[i] = rendered;
-                    return lines.join("\n") + "\n";
-                }
-            }
-        }
+    let Ok(mut document)=text.parse::<toml_edit::DocumentMut>() else {return text.to_string();};
+    if section.is_empty() {document[key]=toml_edit::value(value);}
+    else {let mut item=&mut document[section.split('.').next().unwrap()];
+        for part in section.split('.').skip(1) {item=&mut item[part];}
+        item[key]=toml_edit::value(value);
     }
-    match section_start {
-        Some(i) => {
-            lines.insert(i + 1, rendered);
-        }
-        None => {
-            if !lines.is_empty() && !lines.last().unwrap().is_empty() {
-                lines.push(String::new());
-            }
-            lines.push(header);
-            lines.push(rendered);
-        }
-    }
-    lines.join("\n") + "\n"
+    document.to_string()
 }
 
 // One edit over the delegation socket: a JSON line out, an acknowledgement line back.
@@ -2973,8 +3013,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         dir
@@ -3108,8 +3148,8 @@ mod tests {
         use crate::model::Entity;
         let dir = bare_dir("ledger-group-write");
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n\n[gen]\ndeliverable = \"handbook\"\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\ngen = {}\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = [\"handbook/**\"]\n",
         )
         .unwrap();
         crate::vfs::create_dir_all(dir.join("handbook")).unwrap();
@@ -3132,7 +3172,7 @@ mod tests {
             crate::gen::EntityGen {
                 fact_hash: String::new(),
                 requirements: Vec::new(),
-                files: vec!["claim.md".into()],
+                files: vec!["handbook/claim.md".into()],
                 unattached: None,
                 recorded_at: None,
             },
@@ -3150,7 +3190,7 @@ mod tests {
         let write = |srv: &McpServer| -> Value {
             srv.handle(
                 "tools/call",
-                &json!({"name": "write_text_file", "arguments": {"path": "claim.md", "content": "# Claim\n"}}),
+                &json!({"name": "write_text_file", "arguments": {"path": "handbook/claim.md", "content": "# Claim\n"}}),
             )
             .unwrap()
         };
@@ -3233,8 +3273,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(
@@ -3334,8 +3374,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
@@ -3418,8 +3458,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
-            dir.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
         let project = crate::project::Project::load(&dir);
@@ -3487,8 +3527,8 @@ mod tests {
         crate::vfs::create_dir_all(&bare).unwrap();
         crate::vfs::create_dir_all(&proj).unwrap();
         crate::vfs::write(
-            proj.join("jazyk.toml"),
-            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+            { let path = proj.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
         )
         .unwrap();
 
@@ -3535,3 +3575,5 @@ mod tests {
         crate::vfs::remove_dir_all(&base).ok();
     }
 }
+
+fn result_value(value: Value) -> Value { json!({"content":[{"type":"text","text":value.to_string()}],"isError":false}) }

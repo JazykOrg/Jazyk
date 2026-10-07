@@ -117,7 +117,7 @@ pub fn shape(proj: &crate::project::Project, gs: &crate::gen::GenSettings, store
 }
 
 fn project_summary(root: &Path) -> Value {
-    if !root.join("jazyk.toml").is_file() {
+    if !root.join(crate::document_sets::CONFIG).is_file() {
         return json!({ "root": root.to_string_lossy(), "missing": true });
     }
     let proj = crate::project::Project::load(root);

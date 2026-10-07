@@ -119,7 +119,17 @@ impl Workspace {
     /// File operations use a union, but graph operations require resolve().
     pub fn files_project(&self) -> Project {
         let mut p = Project::from_settings(&self.root, &toml::Value::Table(self.settings.clone()));
-        p.out = self.root.join(".jazyk").join("project");
+        p.out = self.root.join(".jazyk");
+        p.gen_deliverable = self
+            .sets
+            .iter()
+            .any(|s| !s.source.is_empty())
+            .then(|| ".".into());
+        p.gen_code = self
+            .sets
+            .iter()
+            .flat_map(|s| s.source.iter().cloned())
+            .collect();
         p.docs_glob.clear();
         p.explicit_files = Some(
             self.files()
@@ -171,7 +181,17 @@ impl Workspace {
                 "state": if docs.is_empty() { "empty" } else if dirty { "dirty" } else { "clean" },
                 "generation": store.status.generation, "verdict": store.status.verdict, "counts": counts, "warnings": warnings})
         }).collect();
-        json!({"sets": sets, "hash": self.hash, "exists": self.exists, "root": self.root.to_string_lossy()})
+        let removed: Vec<Value> = crate::vfs::read_dir(self.root.join(".jazyk/removed-sets"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| crate::vfs::read_to_string(entry.path()).ok())
+            .filter_map(|text| toml::from_str::<DocumentSet>(&text).ok())
+            .filter(|set| !self.sets.iter().any(|s| s.id == set.id))
+            .map(|set| json!(set))
+            .collect();
+        json!({"sets": sets, "removed": removed, "hash": self.hash, "exists": self.exists, "root": self.root.to_string_lossy()})
     }
 }
 
@@ -360,10 +380,37 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
     if body["baseHash"].as_str() != Some(before.hash.as_str()) {
         return Err((409, "configuration changed; reload before saving".into()));
     }
+    if let Some(id) = body["purge"].as_str() {
+        if !valid_id(id) || before.sets.iter().any(|s| s.id == id) {
+            return Err((400, "only a removed set can be purged".into()));
+        }
+        let saved = root
+            .join(".jazyk/removed-sets")
+            .join(format!("{}.toml", id));
+        if !saved.vexists() {
+            return Err((404, "unknown removed set".into()));
+        }
+        if !preview {
+            let _lock = ProjectLock::acquire(root, "project.lock")?;
+            if Workspace::load(root)?.hash != before.hash {
+                return Err((409, "configuration changed; reload before saving".into()));
+            }
+            let out = root.join(".jazyk").join(id);
+            if out.vexists() {
+                crate::vfs::remove_dir_all(out).map_err(|e| (500, e.to_string()))?;
+            }
+            crate::vfs::remove_file(saved).map_err(|e| (500, e.to_string()))?;
+        }
+        return Ok(Workspace::load(root)?.summary());
+    }
     let text =
         crate::vfs::read_to_string(root.join(CONFIG)).unwrap_or_else(|_| EMPTY_CONFIG.into());
     let mut document: toml_edit::DocumentMut = text.parse().map_err(|e| (400, format!("{}", e)))?;
-    if document["sets"].is_array() && document["sets"].as_array().is_some_and(|a| a.is_empty()) {
+    if document
+        .get("sets")
+        .and_then(|s| s.as_array())
+        .is_some_and(|a| a.is_empty())
+    {
         document.remove("sets");
     }
     if document.get("sets").is_none() {
@@ -373,7 +420,26 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
         .as_array_of_tables_mut()
         .ok_or_else(|| (400, "sets must be an array of tables".into()))?;
     let removal = body["remove"].as_str();
+    let restore = body["restore"].as_str();
+    let mut restored = None;
     let mut data = body["set"].clone();
+    if let Some(id) = restore {
+        if !valid_id(id) || before.sets.iter().any(|s| s.id == id) {
+            return Err((400, "invalid removed set".into()));
+        }
+        let saved = crate::vfs::read_to_string(
+            root.join(".jazyk/removed-sets")
+                .join(format!("{}.toml", id)),
+        )
+        .map_err(|e| (404, e.to_string()))?;
+        let set: DocumentSet = toml::from_str(&saved).map_err(|e| (400, e.to_string()))?;
+        data = json!(set);
+        restored = Some(
+            saved
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|e| (400, e.to_string()))?,
+        );
+    }
     let id = removal
         .map(str::to_string)
         .or_else(|| data["id"].as_str().map(str::to_string))
@@ -384,6 +450,20 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
     let position = tables
         .iter()
         .position(|t| t.get("id").and_then(|i| i.as_str()) == Some(&id));
+    if removal.is_none()
+        && restore.is_none()
+        && position.is_none()
+        && (root
+            .join(".jazyk/removed-sets")
+            .join(format!("{}.toml", id))
+            .vexists()
+            || root.join(".jazyk").join(&id).vexists())
+    {
+        return Err((
+            409,
+            "this ID belongs to retained state; restore that set or use a new ID".into(),
+        ));
+    }
     if removal.is_some() {
         let Some(index) = position else {
             return Err((404, "unknown document set".into()));
@@ -401,6 +481,9 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
                 tables.iter_mut().last().unwrap()
             }
         };
+        if let Some(saved) = restored {
+            *table = saved.as_table().clone();
+        }
         table["id"] = toml_edit::value(id.clone());
         for field in ["name", "docs", "roots", "source"] {
             if let Some(value) = data.get(field) {
@@ -452,6 +535,12 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
             .map_err(|e| (500, e.to_string()))?;
         }
         atomic_config(root, &next, &before.hash)?;
+        if restore.is_some() {
+            let _ = crate::vfs::remove_file(
+                root.join(".jazyk/removed-sets")
+                    .join(format!("{}.toml", id)),
+            );
+        }
     }
     Ok(value)
 }
@@ -529,6 +618,34 @@ mod tests {
         assert_eq!(a.out, next.out);
         assert!(next.out.join("journal/keep.yaml").vexists());
         assert_eq!(b.doc_files(), vec![f.0.join("docs/b.md")]);
+    }
+
+    #[test]
+    fn removed_sets_restore_their_identity_and_purge_only_retained_state() {
+        let f = Fixture::new();
+        f.add("ds_a", "A", &["docs/a.md"]);
+        let out = f.0.join(".jazyk/ds_a");
+        crate::vfs::create_dir_all(&out).unwrap();
+        crate::vfs::write(out.join("retained.txt"), "history").unwrap();
+        let apply = |body: Value| {
+            let mut body = body;
+            body["baseHash"] = json!(Workspace::load(&f.0).unwrap().hash);
+            edit(&f.0, &body, false)
+        };
+        apply(json!({"remove":"ds_a"})).unwrap();
+        assert_eq!(
+            Workspace::load(&f.0).unwrap().summary()["removed"][0]["id"],
+            "ds_a"
+        );
+        assert!(apply(json!({"set":{"id":"ds_a","name":"Other","docs":["docs/b.md"]}})).is_err());
+        apply(json!({"restore":"ds_a"})).unwrap();
+        assert_eq!(Workspace::load(&f.0).unwrap().sets[0].name, "A");
+        assert!(out.join("retained.txt").vexists());
+        assert!(apply(json!({"purge":"ds_a"})).is_err());
+        apply(json!({"remove":"ds_a"})).unwrap();
+        apply(json!({"purge":"ds_a"})).unwrap();
+        assert!(!out.vexists());
+        assert!(f.0.join("docs/a.md").vexists());
     }
 
     #[test]

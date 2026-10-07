@@ -1,6 +1,5 @@
 // VS Code extension: launches `jazyk lsp` and forwards LSP traffic. The extension does no
-// analysis itself. The server is read-only: it maps the graph store to editor positions
-// and never compiles; run `jazyk compile` or `jazyk watch` beside the editor to rebuild.
+// analysis itself. Explicit commands manage document sets and request compilation.
 // Mirrors docs/frontends/lsp.md.
 import * as fs from 'fs';
 import * as path from 'path';
@@ -16,6 +15,11 @@ let client: LanguageClient | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   await startClient();
+  context.subscriptions.push(
+    vscode.commands.registerCommand('jazyk.markDocuments', (uri: vscode.Uri) => markSelection(uri, 'docs')),
+    vscode.commands.registerCommand('jazyk.markSource', (uri: vscode.Uri) => markSelection(uri, 'source')),
+    vscode.commands.registerCommand('jazyk.compileSets', compileSets)
+  );
 
   // The server launch path comes from settings at start time, so restart the server
   // whenever a jazyk.* setting changes.
@@ -90,7 +94,8 @@ async function startClient(): Promise<void> {
       // instantly without server-side polling.
       fileEvents: [
         vscode.workspace.createFileSystemWatcher('**/*.md'),
-        vscode.workspace.createFileSystemWatcher('**/.jazyk/status.yaml'),
+        vscode.workspace.createFileSystemWatcher('**/.jazyk/*/status.yaml'),
+        vscode.workspace.createFileSystemWatcher('**/.jazyk/jazyk.toml'),
       ],
     },
     middleware: {
@@ -178,4 +183,50 @@ function resolveBinary(configured: string | undefined): string {
     }
   }
   return 'jazyk';
+}
+
+
+type DocumentSet = { id: string; name: string; docs: string[]; roots: string[]; source: string[] };
+type DocumentSets = { hash: string; sets: DocumentSet[] };
+async function execute<T>(command: string, arg: unknown = {}): Promise<T> {
+  if (!client) throw new Error('Jazyk language server is not running.');
+  const result = await client.sendRequest<T & { error?: string }>('workspace/executeCommand', { command, arguments: [arg] });
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+async function compileSets(): Promise<void> {
+  try {
+    const snapshot = await execute<DocumentSets>('jazyk.documentSets');
+    const choice = await vscode.window.showQuickPick([{ label: 'All dirty document sets', id: '' }, ...snapshot.sets.map(s => ({ label: s.name, id: s.id }))]);
+    if (choice) await execute('jazyk.compile', choice.id ? { setId: choice.id } : {});
+  } catch (e) { void vscode.window.showErrorMessage(String(e)); }
+}
+async function markSelection(uri: vscode.Uri, role: 'docs' | 'source'): Promise<void> {
+  try {
+    if (!uri) return;
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (!folder) return;
+    let relative = path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/');
+    if (!relative || relative.startsWith('../')) return;
+    if ((await vscode.workspace.fs.stat(uri)).type & vscode.FileType.Directory) relative += '/**';
+    const snapshot = await execute<DocumentSets>('jazyk.documentSets');
+    const choice = await vscode.window.showQuickPick([{ label: 'New document set…', id: '' }, ...snapshot.sets.map(s => ({ label: s.name, id: s.id }))]);
+    if (!choice) return;
+    const existing = snapshot.sets.find(s => s.id === choice.id);
+    const name = existing?.name ?? await vscode.window.showInputBox({ prompt: 'Document set name' });
+    if (!name) return;
+    let docs = existing?.docs ?? [];
+    if (role === 'source' && !existing) {
+      const selection = await vscode.window.showInputBox({ prompt: 'Documents for this set, one pattern per comma', placeHolder: 'docs/feature.md, docs/feature/**' });
+      if (!selection) return;
+      docs = selection.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    const set = { ...existing, name, docs, roots: existing?.roots ?? [], source: existing?.source ?? [] };
+    set[role] = [...new Set([...set[role], relative])];
+    const edit = { baseHash: snapshot.hash, set };
+    const preview = await execute<DocumentSets>('jazyk.previewDocumentSet', edit);
+    const affected = preview.sets.find(s => s.name === name) as DocumentSet & { documents?: string[]; sourceFiles?: string[] };
+    const apply = await vscode.window.showInformationMessage(`${name}: ${affected?.documents?.length ?? 0} documents, ${affected?.sourceFiles?.length ?? 0} source files.`, 'Save selections');
+    if (apply) await execute('jazyk.saveDocumentSet', edit);
+  } catch (e) { void vscode.window.showErrorMessage(String(e)); }
 }

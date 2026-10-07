@@ -108,11 +108,15 @@ impl ProxyState {
 }
 
 pub fn run(opts: &crate::cli::Options) -> i32 {
-    // Project discovery from the working directory the IDE launched us in. Outside a
-    // project the proxy is a transparent passthrough.
+    // An arbitrary folder can acquire its first document set through project tools.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let in_project = crate::project::find_root(&cwd).is_some();
-    let (proj, llm, out) = crate::cli::resolve(&[], opts);
+    let in_project = true;
+    let (mut proj, llm, mut out) = crate::cli::resolve(&[], opts);
+    if opts.set.is_none() {
+        if let Ok(workspace) = crate::document_sets::Workspace::load(&proj.root) {
+            proj = workspace.files_project(); out = proj.out.clone();
+        }
+    }
     let agent = match crate::acp::config::resolve_acp(
         None,
         &proj.acp,
@@ -529,8 +533,6 @@ fn with_jazyk_serving(
         "mcp".to_string(),
         "chat".to_string(),
         "--ephemeral".to_string(),
-        "--out".to_string(),
-        st.out.to_string_lossy().into_owned(),
     ];
     if let Some(sink) = st.sink_path.lock().unwrap().as_ref() {
         args.push("--edit-sink".to_string());

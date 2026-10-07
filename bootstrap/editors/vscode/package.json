@@ -13,7 +13,7 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "workspaceContains:**/jazyk.toml"
+    "workspaceContains:**/.jazyk/jazyk.toml"
   ],
   "contributes": {
     "commands": [
@@ -24,6 +24,18 @@
       {
         "command": "jazyk.answer",
         "title": "Jazyk: Answer a Question"
+      },
+      {
+        "command": "jazyk.markDocuments",
+        "title": "Jazyk: Mark as Documents\u2026"
+      },
+      {
+        "command": "jazyk.markSource",
+        "title": "Jazyk: Mark as Source\u2026"
+      },
+      {
+        "command": "jazyk.compileSets",
+        "title": "Jazyk: Compile Document Sets\u2026"
       }
     ],
     "configuration": {
@@ -35,6 +47,20 @@
           "description": "Path to the jazyk binary. When empty, the extension looks for bootstrap/target/release/jazyk, then bootstrap/target/debug/jazyk in the workspace, then falls back to `jazyk` on PATH."
         }
       }
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "jazyk.markDocuments",
+          "when": "resourceScheme == file",
+          "group": "jazyk@1"
+        },
+        {
+          "command": "jazyk.markSource",
+          "when": "resourceScheme == file",
+          "group": "jazyk@2"
+        }
+      ]
     }
   },
   "scripts": {

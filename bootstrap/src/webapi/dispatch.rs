@@ -171,7 +171,9 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
         "/project"
             | "/project/files"
             | "/project/file"
+            | "/deliverable/raw"
             | "/docs/content"
+            | "/docs/rename"
             | "/settings"
             | "/ping"
             | "/capabilities"
@@ -379,6 +381,16 @@ pub(crate) fn request_scoped(
                 super::docs::DocWrite::Failed(m) => err(500, m),
             }
         }
+
+        ("DELETE", "/docs/content") => answer(super::docs::doc_delete(
+            &project(),
+            &param(&q, "path").unwrap_or_default(),
+        )),
+        ("POST", "/docs/rename") => answer(super::docs::doc_rename(
+            &project(),
+            body["from"].as_str().unwrap_or_default(),
+            body["to"].as_str().unwrap_or_default(),
+        )),
 
         ("GET", "/docs/baseline") => {
             let rel = param(&q, "path").unwrap_or_default();

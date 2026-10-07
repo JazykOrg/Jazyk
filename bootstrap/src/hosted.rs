@@ -121,21 +121,48 @@ impl Workspace {
 }
 
 fn project_projection(files: &Snapshot, authored: &[String]) -> Result<Projection, String> {
-    let w=crate::document_sets::Workspace::load(&root()).map_err(|e|e.1)?;
-    let mut combined=Projection{source:Default::default(),files:Default::default(),criteria:Default::default(),graph_generation:0};
-    let contexts:Vec<_>=if w.sets.is_empty(){vec![w.files_project()]}else{w.sets.iter().map(|s|w.resolve(Some(&s.id)).unwrap()).collect()};
+    let w = crate::document_sets::Workspace::load(&root()).map_err(|e| e.1)?;
+    let mut combined = Projection {
+        source: Default::default(),
+        files: Default::default(),
+        criteria: Default::default(),
+        graph_generation: 0,
+    };
+    let contexts: Vec<_> = if w.sets.is_empty() {
+        vec![w.files_project()]
+    } else {
+        w.sets
+            .iter()
+            .map(|s| w.resolve(Some(&s.id)).unwrap())
+            .collect()
+    };
     for p in contexts {
-        let projected=set_projection(files,authored,&p)?;
-        combined.source.extend(projected.source);combined.files.extend(projected.files);
-        for (id,v) in projected.criteria {
-            let id=p.set_id.as_deref().map(|set|crate::webapi::sets::qualify(&id,set)).unwrap_or(id);
-            combined.criteria.insert(id,v);
+        let projected = set_projection(files, authored, &p)?;
+        combined.source.extend(projected.source);
+        combined.files.extend(projected.files);
+        for (id, v) in projected.criteria {
+            let id = p
+                .set_id
+                .as_deref()
+                .map(|set| crate::webapi::sets::qualify(&id, set))
+                .unwrap_or(id);
+            combined.criteria.insert(
+                id,
+                p.set_id
+                    .as_deref()
+                    .map(|set| crate::webapi::sets::qualify_value(v.clone(), set))
+                    .unwrap_or(v),
+            );
         }
-        combined.graph_generation+=projected.graph_generation;
+        combined.graph_generation += projected.graph_generation;
     }
     Ok(combined)
 }
-fn set_projection(files: &Snapshot, authored: &[String], p: &crate::project::Project) -> Result<Projection,String> {
+fn set_projection(
+    files: &Snapshot,
+    authored: &[String],
+    p: &crate::project::Project,
+) -> Result<Projection, String> {
     use crate::vfs::VPathExt;
     let store = crate::store::Store::load(&p.out);
     let gs = crate::gen::GenSettings::resolve(&p);
@@ -150,9 +177,11 @@ fn set_projection(files: &Snapshot, authored: &[String], p: &crate::project::Pro
         Some(path.strip_prefix(root()).ok()?.to_str()?.to_owned())
     };
     let internal = |name: &str| {
-        name != crate::document_sets::CONFIG && name.split('/')
-            .any(|c| c == ".git" || c.starts_with(".jazyk") || c.starts_with("jazyk-out"))
-            || root().join(name).starts_with(&p.out)
+        !matches!(name, crate::document_sets::CONFIG | ".jazyk/.gitignore")
+            && (name
+                .split('/')
+                .any(|c| c == ".git" || c.starts_with(".jazyk") || c.starts_with("jazyk-out"))
+                || root().join(name).starts_with(&p.out))
     };
     let mut owned = BTreeSet::new();
     let mut accepted = BTreeSet::new();
@@ -197,11 +226,10 @@ fn set_projection(files: &Snapshot, authored: &[String], p: &crate::project::Pro
             source_paths.insert(name.clone());
         }
     }
-    for path in p
-        .doc_files()
-        .into_iter()
-        .chain([root().join(crate::document_sets::CONFIG), p.root.join(crate::document_sets::CONFIG)])
-    {
+    for path in p.doc_files().into_iter().chain([
+        root().join(crate::document_sets::CONFIG),
+        p.root.join(crate::document_sets::CONFIG),
+    ]) {
         if let Some(name) = relative(&path) {
             source_paths.insert(name);
         }
@@ -310,19 +338,30 @@ pub(crate) fn transport(body: &str) -> Result<String, String> {
 }
 
 fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
-    let routed=match crate::webapi::sets::route(path,serde_json::from_str(body).unwrap_or(Value::Null)) {
-        Ok(r)=>r,Err((code,e))=>return Ok(Reply::json(code,json!({"error":e}))),
-    };
+    let routed =
+        match crate::webapi::sets::route(path, serde_json::from_str(body).unwrap_or(Value::Null)) {
+            Ok(r) => r,
+            Err((code, e)) => return Ok(Reply::json(code, json!({"error":e}))),
+        };
     let (route, query) = routed.path.split_once('?').unwrap_or((&routed.path, ""));
-    let workspace=crate::document_sets::Workspace::load(&root()).map_err(|e|e.1)?;
-    let selected=||workspace.resolve(routed.selector.as_deref()).map_err(|e|e.1);
+    let workspace = crate::document_sets::Workspace::load(&root()).map_err(|e| e.1)?;
+    let selected = || {
+        workspace
+            .resolve(routed.selector.as_deref())
+            .map_err(|e| e.1)
+    };
     let route = route.strip_prefix("/api").unwrap_or(route);
     if method == "GET" && matches!(route, "/out/file" | "/project/file" | "/deliverable/raw") {
         let rel = url::form_urlencoded::parse(query.as_bytes())
             .find(|(k, _)| k == "path")
             .map(|(_, v)| v.into_owned())
             .unwrap_or_default();
-        let p = if route=="/project/file" {workspace.files_project()} else {selected()?};
+        let p =
+            if matches!(route, "/project/file" | "/deliverable/raw") && routed.selector.is_none() {
+                workspace.files_project()
+            } else {
+                selected()?
+            };
         let result = match route {
             "/out/file" => crate::webapi::outfiles::out_file(&p.out, &rel),
             "/project/file" => crate::webapi::projfiles::project_file(&p.root, &rel),
@@ -865,8 +904,12 @@ mod tests {
         };
         let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
         assert!(
-            result["results"][0]["body"]["report"]["failed"].as_u64().unwrap()
-                + result["results"][0]["body"]["report"]["parked"].as_u64().unwrap()
+            result["results"][0]["body"]["report"]["failed"]
+                .as_u64()
+                .unwrap()
+                + result["results"][0]["body"]["report"]["parked"]
+                    .as_u64()
+                    .unwrap()
                 > 0,
             "{result}"
         );
@@ -929,7 +972,12 @@ mod tests {
         let previews = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let captured = previews.clone();
         let e = Execution {
-            trace: Some(Arc::new(move |event| captured.lock().unwrap().push(serde_json::to_value(event).unwrap()))),
+            trace: Some(Arc::new(move |event| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::to_value(event).unwrap())
+            })),
             model: "extract-fixture".into(),
             transport: Some(Arc::new(move |_| {
                 if called.fetch_add(1, Ordering::SeqCst) > 0 {
@@ -969,10 +1017,22 @@ mod tests {
         };
         let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
         let events = previews.lock().unwrap();
-        let first_preview = events.iter().position(|v| v["kind"] == "graphPreview" && v["phase"] == "staged" && v["graph"]["entities"]["ent:alpha"]["name"] == "Alpha").expect("accepted entity is streamed before commit");
-        let finished = events.iter().position(|v| v["kind"] == "sessionDone").unwrap();
+        let first_preview = events
+            .iter()
+            .position(|v| {
+                v["kind"] == "graphPreview"
+                    && v["phase"] == "staged"
+                    && v["graph"]["entities"]["ent:alpha"]["name"] == "Alpha"
+            })
+            .expect("accepted entity is streamed before commit");
+        let finished = events
+            .iter()
+            .position(|v| v["kind"] == "sessionDone")
+            .unwrap();
         assert!(first_preview < finished);
-        assert!(events.iter().any(|v| v["kind"] == "toolResult" && v["activity"] == "Alpha created"));
+        assert!(events
+            .iter()
+            .any(|v| v["kind"] == "toolResult" && v["activity"] == "Alpha created"));
         drop(events);
         let graph = value(&mut w, "GET", "/api/graph", Value::Null, &e);
         assert_eq!(
@@ -981,8 +1041,12 @@ mod tests {
         );
         assert_eq!(graph["requirements"].as_object().unwrap().len(), 1);
         let snapshot = w.snapshot();
-        assert!(!snapshot.keys().any(|p|p.starts_with(".jazyk/ds_main/preview/")));
-        assert!(snapshot.keys().any(|p| p.starts_with(".jazyk/ds_main/journal/")));
+        assert!(!snapshot
+            .keys()
+            .any(|p| p.starts_with(".jazyk/ds_main/preview/")));
+        assert!(snapshot
+            .keys()
+            .any(|p| p.starts_with(".jazyk/ds_main/journal/")));
         assert!(
             snapshot.keys().any(|p| p.ends_with(".svg")),
             "hosted compilation should retain diagram output"

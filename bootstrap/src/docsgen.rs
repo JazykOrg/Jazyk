@@ -857,9 +857,15 @@ fn github_anchor(title: &str) -> String {
 // A quote's relative links resolve from the source document; on the page they must
 // resolve from `docsgen/`, two levels under the project root when the out directory
 // sits where the default puts it. Mirrors docs/consumers/docsgen.md#the-requirements-document.
+fn source_prefix(store: &Store) -> Option<&'static str> {
+    if store.out.file_name().and_then(|f|f.to_str()) == Some(".jazyk") { Some("../../") }
+    else if store.out.parent().and_then(|p|p.file_name()).and_then(|f|f.to_str()) == Some(".jazyk") { Some("../../../") }
+    else { None }
+}
+
 fn relink_quote(quote: &str, doc: &str, store: &Store) -> String {
-    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some(".jazyk");
-    if !default_out || !quote.contains("](") {
+    let prefix = source_prefix(store);
+    if prefix.is_none() || !quote.contains("](") {
         return quote.to_string();
     }
     let mut out = String::new();
@@ -879,11 +885,11 @@ fn relink_quote(quote: &str, doc: &str, store: &Store) -> String {
             && !path.starts_with("mailto:");
         if path.is_empty() && !anchor.is_empty() {
             // An anchor-only link points into the source document.
-            out.push_str(&format!("../../{}{}", doc, anchor));
+            out.push_str(&format!("{}{}{}", prefix.unwrap(), doc, anchor));
         } else {
             match (relative, crate::md::resolve_rel(doc, path)) {
                 (true, Some(resolved)) => {
-                    out.push_str(&format!("../../{}{}", resolved, anchor));
+                    out.push_str(&format!("{}{}{}", prefix.unwrap(), resolved, anchor));
                 }
                 _ => out.push_str(target),
             }
@@ -1995,10 +2001,10 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
 fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     // A link into a source document: relative from docsgen when the out directory
     // sits where the default puts it, the bare reference otherwise.
-    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some(".jazyk");
+    let prefix = source_prefix(store);
     let section_link = |doc: &str, section: &str| -> String {
         let text = format!("{}#{}", doc, section);
-        if default_out {
+        if let Some(prefix) = prefix {
             // A GitHub anchor is the heading text alone, never the path.
             let title = store
                 .docs
@@ -2006,7 +2012,7 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
                 .and_then(|d| d.sections.get(section))
                 .map(|s| s.title.clone())
                 .unwrap_or_else(|| section.rsplit('/').next().unwrap_or(section).to_string());
-            format!("[{}](../../{}#{})", text, doc, github_anchor(&title))
+            format!("[{}]({}{}#{})", text, prefix, doc, github_anchor(&title))
         } else {
             format!("`{}`", text)
         }

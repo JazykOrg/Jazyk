@@ -205,6 +205,7 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             | "/project"
             | "/project/files"
             | "/project/file"
+            | "/deliverable/raw"
             | "/docs/content"
             | "/docs/rename"
             | "/settings"

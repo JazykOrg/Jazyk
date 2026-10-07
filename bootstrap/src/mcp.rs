@@ -102,6 +102,7 @@ struct OpenCase {
 }
 
 struct OpenBatch {
+    _project_lock: Option<crate::document_sets::ProjectLock>,
     id: String,
     goals: Vec<Goal>,
     // Change record ids each goal stood on when claimed; a resolution clears them.
@@ -123,8 +124,8 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
 // A chat in a tab has no build path of its own: the page's Build button runs builds,
 // so a model asked to build says so instead of asking for prose
 // (docs/frontends/wasm.md#chat).
-const TAB_BUILD_NOTE: &str = "You cannot start a build: the Build button at the top of the \
-     page builds the documents into the graph. When asked to build, say so. ";
+const TAB_BUILD_NOTE: &str = "You cannot start a build: the Build button at the top of the page builds the documents into the graph. When asked to build, say so. ";
+const WRITER_BUILD_NOTE: &str = "Use compile_document_sets to compile named set IDs, or omit setIds to compile all dirty sets. ";
 
 // The instructions for a serving, `tab` saying it runs in a browser tab.
 fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) -> String {
@@ -210,7 +211,7 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
                     "This serving runs in a browser tab, which has no shell: binding, \
                      generation, and verification are not served here. ",
                 );
-                s.push_str(TAB_BUILD_NOTE);
+                s.push_str(WRITER_BUILD_NOTE);
             } else {
                 s.push_str(
                     "The compilation, binding, generation, and verification lifecycles are \
@@ -264,21 +265,63 @@ impl McpServer {
     }
 
     fn update_preview(&self, name: &str, label: &str, accepted: bool) {
-        if !accepted { return; }
+        if !accepted {
+            return;
+        }
         let open = self.open.lock().unwrap();
         let (phase, label, generation, graph) = if let Some(batch) = open.as_ref() {
-            if name != "begin_goals" && crate::tools::READ_TOOLS.contains(&name) { return; }
-            (if name == "begin_goals" { "base" } else { "staged" }, batch.id.as_str(), batch.session.snapshot.status.generation,
-                crate::live_preview::staged(&batch.session.snapshot.graph, &batch.session.staged))
+            if name != "begin_goals" && crate::tools::READ_TOOLS.contains(&name) {
+                return;
+            }
+            (
+                if name == "begin_goals" {
+                    "base"
+                } else {
+                    "staged"
+                },
+                batch.id.as_str(),
+                batch.session.snapshot.status.generation,
+                crate::live_preview::staged(&batch.session.snapshot.graph, &batch.session.staged),
+            )
         } else if name == "done" || name == "abandon_goals" {
             let store = Store::load(&self.out);
-            (if name == "done" { "committed" } else { "base" }, label, store.status.generation, Some(crate::live_preview::authored(&store.graph)))
-        } else { return; };
+            (
+                if name == "done" { "committed" } else { "base" },
+                label,
+                store.status.generation,
+                Some(crate::live_preview::authored(&store.graph)),
+            )
+        } else {
+            return;
+        };
         let mut prior = self.preview.lock().unwrap();
-        if name != "begin_goals" && prior.as_ref().is_some_and(|p| p.phase == phase && p.graph == graph) { return; }
-        let attempt = if name == "begin_goals" { format!("{}-{}", crate::sys::process_id(), crate::sys::now_millis()) }
-            else { prior.as_ref().map(|p| p.attempt.clone()).unwrap_or_default() };
-        let preview = crate::live_preview::Preview { label:label.into(), attempt, revision:prior.as_ref().map_or(1, |p|p.revision+1), phase:phase.into(), generation, reason:graph.is_none().then(||"Live preview waits for this compound change to commit.".into()), graph }.bounded();
+        if name != "begin_goals"
+            && prior
+                .as_ref()
+                .is_some_and(|p| p.phase == phase && p.graph == graph)
+        {
+            return;
+        }
+        let attempt = if name == "begin_goals" {
+            format!("{}-{}", crate::sys::process_id(), crate::sys::now_millis())
+        } else {
+            prior
+                .as_ref()
+                .map(|p| p.attempt.clone())
+                .unwrap_or_default()
+        };
+        let preview = crate::live_preview::Preview {
+            label: label.into(),
+            attempt,
+            revision: prior.as_ref().map_or(1, |p| p.revision + 1),
+            phase: phase.into(),
+            generation,
+            reason: graph
+                .is_none()
+                .then(|| "Live preview waits for this compound change to commit.".into()),
+            graph,
+        }
+        .bounded();
         crate::live_preview::write(&self.out, &preview);
         *prior = Some(preview);
     }
@@ -286,7 +329,10 @@ impl McpServer {
     // Whether this serving stands in a project or in a bare directory. Decides which
     // project tools exist. Mirrors docs/frontends/acp.md#project-tools.
     fn initialized(&self) -> bool {
-        self.project.root.join(crate::document_sets::CONFIG).vexists()
+        self.project
+            .root
+            .join(crate::document_sets::CONFIG)
+            .vexists()
     }
 
     pub fn new(
@@ -572,7 +618,9 @@ impl McpServer {
     // The serving's end, on any transport: an ephemeral serving with an open batch
     // runs the implicit finish, and the transcript closes.
     pub fn finish(&self) {
-        for child in self.children.lock().unwrap().values() {child.finish();}
+        for child in self.children.lock().unwrap().values() {
+            child.finish();
+        }
         if self.bridge.ephemeral {
             self.eof_finish();
         }
@@ -641,7 +689,11 @@ impl McpServer {
             board = crate::board::Board::compute(&self.project, &self.out);
         }
         board.mark_own(&self.worker_id());
-        let mut v = if full { board.answer() } else { board.answer_compact() };
+        let mut v = if full {
+            board.answer()
+        } else {
+            board.answer_compact()
+        };
         if self.bridge.only.is_some() {
             if let Some(fin) = self.finished.lock().unwrap().as_ref() {
                 v["note"] = json!(format!(
@@ -679,6 +731,16 @@ impl McpServer {
                     "this session is complete: batch `{}` committed. Goals reopened since belong to the next session; finish without claiming more", fin)}});
             }
         }
+        let project_lock = if self.bridge.build_token.is_none() && self.project.set_id.is_some() {
+            match crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock") {
+                Ok(lock) => Some(lock),
+                Err((_, message)) => {
+                    return json!({"error":{"rule":"project-busy","message":message}})
+                }
+            }
+        } else {
+            None
+        };
         // The snapshot and the board derive from the same synced store.
         let mut store = Store::load(&self.out);
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
@@ -880,6 +942,7 @@ impl McpServer {
             })
         };
         *self.open.lock().unwrap() = Some(OpenBatch {
+            _project_lock: project_lock,
             id: batch.id,
             goals,
             records,
@@ -1010,7 +1073,9 @@ impl McpServer {
                     v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
                     v
                 }
-                None => json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"}),
+                None => {
+                    json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"})
+                }
             };
             return reply;
         }
@@ -1037,7 +1102,9 @@ impl McpServer {
                 v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
                 v
             }
-            None => json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"}),
+            None => {
+                json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"})
+            }
         };
         reply
     }
@@ -1129,7 +1196,10 @@ impl McpServer {
                     .graph
                     .diagnostics
                     .values()
-                    .filter(|d| d.rule == "ratification-pending" && d.created.as_deref() == Some(build.as_str()))
+                    .filter(|d| {
+                        d.rule == "ratification-pending"
+                            && d.created.as_deref() == Some(build.as_str())
+                    })
                     .count()
             })
             .unwrap_or(0);
@@ -1214,7 +1284,13 @@ impl McpServer {
                 } else {
                     json!("pending")
                 };
-                json!(format!("{} ({}, {}): {}", c.name, c.tier, c.task_type, state.as_str().unwrap_or("")))
+                json!(format!(
+                    "{} ({}, {}): {}",
+                    c.name,
+                    c.tier,
+                    c.task_type,
+                    state.as_str().unwrap_or("")
+                ))
             })
             .collect();
         let done = b.scored.len();
@@ -1325,13 +1401,7 @@ impl McpServer {
             mut session,
             prompt,
             ..
-        } = crate::benchmark::case_session(
-            store.clone(),
-            &item,
-            &case.lint,
-            &gs,
-            derived.as_ref(),
-        );
+        } = crate::benchmark::case_session(store.clone(), &item, &case.lint, &gs, derived.as_ref());
         if case.task_type != "verify-requirement" {
             reply["instructions"] = json!(prompt);
             reply["package"] = json!(session.render_status_full());
@@ -1570,73 +1640,170 @@ impl McpServer {
     }
 
     // A user conversation multiplexes set-local sessions. There is no ambient selection.
-    pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64,String)> {
-        if self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
-            if params["arguments"]["setId"].as_str().is_some_and(|id|Some(id)!=self.project.set_id.as_deref()) {
-                return Err((-32602,"this worker is scoped to another document set".into()));
+    pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        if self.project.set_id.is_some()
+            || self.bridge.only.is_some()
+            || self.bridge.build_token.is_some()
+        {
+            if params["arguments"]["setId"]
+                .as_str()
+                .is_some_and(|id| Some(id) != self.project.set_id.as_deref())
+            {
+                return Err((
+                    -32602,
+                    "this worker is scoped to another document set".into(),
+                ));
             }
-            return self.handle_local(method,params);
+            return self.handle_local(method, params);
         }
-        let w=crate::document_sets::Workspace::load(&self.project.root).map_err(|e|(-32602,e.1))?;
-        if method=="initialize" {
+        let w =
+            crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
+        if method == "initialize" {
             // Registration belongs to each set-local child, created lazily.
-            if let Some(name)=params["clientInfo"]["name"].as_str() {*self.client.lock().unwrap()=Some(name.into());}
-            return Ok(json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
+            if let Some(name) = params["clientInfo"]["name"].as_str() {
+                *self.client.lock().unwrap() = Some(name.into());
+            }
+            return Ok(
+                json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
-                "instructions":format!("This project has independent document sets. Start with list_document_sets. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",instructions_for(&self.modes,self.write,w.exists))}));
+                "instructions":format!("This project has independent document sets. Start with list_document_sets. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",instructions_for(&self.modes,self.write,w.exists))}),
+            );
         }
-        let writable=!self.bridge.reader && (self.write || self.modes.iter().any(|m|m!="graph"));
-        if method=="tools/list" {
-            let mut result=self.handle_local(method,params)?;
-            let tools=result["tools"].as_array_mut().unwrap();
-            for t in tools.iter_mut() {t["inputSchema"]["properties"]["setId"]=json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});}
+        let writable =
+            !self.bridge.reader && (self.write || self.modes.iter().any(|m| m != "graph"));
+        if method == "tools/list" {
+            let mut result = self.handle_local(method, params)?;
+            let tools = result["tools"].as_array_mut().unwrap();
+            for t in tools.iter_mut() {
+                t["inputSchema"]["properties"]["setId"] = json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});
+            }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
             if writable {
-                for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
+                for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("create_document_set","Create a named document set."),("update_document_set","Update a document set while preserving its identity."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
                     tools.push(json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":{
                         "baseHash":{"type":"string"},"remove":{"type":"string"},"set":{"type":"object","properties":{
                             "id":{"type":"string"},"name":{"type":"string"},"docs":{"type":"array","items":{"type":"string"}},
                             "roots":{"type":"array","items":{"type":"string"}},"source":{"type":"array","items":{"type":"string"}}}}},"required":["baseHash"]}}));
                 }
             }
+            if writable {
+                tools.push(json!({"name":"compile_document_sets","description":"Compile selected set IDs sequentially, or all dirty sets when setIds is absent.","inputSchema":{"type":"object","properties":{"setIds":{"type":"array","items":{"type":"string"}}}}}));
+            }
             return Ok(result);
         }
-        if method!="tools/call" {return self.handle_local(method,params);}
-        let name=params["name"].as_str().unwrap_or_default();
-        if name=="list_document_sets" {return Ok(result_value(w.summary()));}
-        if matches!(name,"preview_document_set"|"save_document_set"|"remove_document_set") {
-            if !writable {return Err((-32602,"this serving is read-only".into()));}
-            return crate::document_sets::edit(&w.root,&params["arguments"],name=="preview_document_set").map(result_value).map_err(|e|(-32602,e.1));
+        if method != "tools/call" {
+            return self.handle_local(method, params);
         }
-        if matches!(name,"init_project"|"update_project_settings") {return self.handle_local(method,params);}
-        let routed=crate::webapi::sets::route("/",params["arguments"].clone()).map_err(|e|(-32602,e.1))?;
-        let ids=if let Some(id)=routed.selector.as_deref() {vec![w.select(id).map_err(|e|(-32602,e.1))?.id.clone()]}
-            else if w.sets.len()==1 {vec![w.sets[0].id.clone()]}
-            else if matches!(name,"search"|"goals"|"graph_status"|"diagnostics"|"binding_tasks"|"generation_tasks"|"verification_tasks"|"decompile_tasks") {w.sets.iter().map(|s|s.id.clone()).collect()}
-            else {return Err((-32602,"pass setId from list_document_sets for this operation".into()));};
-        let mut replies=Vec::new();
-        let mut children=self.children.lock().unwrap();
+        let name = params["name"].as_str().unwrap_or_default();
+        if name == "list_document_sets" {
+            return Ok(result_value(w.summary()));
+        }
+        if name == "compile_document_sets" {
+            if !writable {
+                return Err((-32602, "this serving is read-only".into()));
+            }
+            let response = crate::webapi::dispatch::request_at(
+                &w.root,
+                "POST",
+                "/api/compile",
+                &params["arguments"].to_string(),
+            );
+            let response: Value =
+                serde_json::from_str(&response).map_err(|e| (-32603, e.to_string()))?;
+            return Ok(result_value(response));
+        }
+        if matches!(
+            name,
+            "preview_document_set"
+                | "save_document_set"
+                | "create_document_set"
+                | "update_document_set"
+                | "remove_document_set"
+        ) {
+            if !writable {
+                return Err((-32602, "this serving is read-only".into()));
+            }
+            return crate::document_sets::edit(
+                &w.root,
+                &params["arguments"],
+                name == "preview_document_set",
+            )
+            .map(result_value)
+            .map_err(|e| (-32602, e.1));
+        }
+        if matches!(name, "init_project" | "update_project_settings") {
+            return self.handle_local(method, params);
+        }
+        let routed = crate::webapi::sets::route("/", params["arguments"].clone())
+            .map_err(|e| (-32602, e.1))?;
+        let ids = if let Some(id) = routed.selector.as_deref() {
+            vec![w.select(id).map_err(|e| (-32602, e.1))?.id.clone()]
+        } else if w.sets.len() == 1 {
+            vec![w.sets[0].id.clone()]
+        } else if matches!(
+            name,
+            "search"
+                | "goals"
+                | "graph_status"
+                | "diagnostics"
+                | "binding_tasks"
+                | "generation_tasks"
+                | "verification_tasks"
+                | "decompile_tasks"
+        ) {
+            w.sets.iter().map(|s| s.id.clone()).collect()
+        } else {
+            return Err((
+                -32602,
+                "pass setId from list_document_sets for this operation".into(),
+            ));
+        };
+        let mut replies = Vec::new();
+        let mut children = self.children.lock().unwrap();
         for id in ids {
-            if children.get(&id).is_some_and(|s|s.project.config_hash!=w.hash) {
-                if children[&id].open.lock().unwrap().is_some() {return Err((-32602,"configuration changed during the open batch; abandon it before continuing".into()));}
+            if name != "abandon_goals"
+                && children
+                    .get(&id)
+                    .is_some_and(|s| s.project.config_hash != w.hash)
+            {
+                if children[&id].open.lock().unwrap().is_some() {
+                    return Err((
+                        -32602,
+                        "configuration changed during the open batch; abandon it before continuing"
+                            .into(),
+                    ));
+                }
                 children.remove(&id);
             }
             if !children.contains_key(&id) {
-                let p=w.resolve(Some(&id)).map_err(|e|(-32602,e.1))?;
-                let child=Self::with_bridge(p.clone(),p.out.clone(),self.modes.clone(),self.write,self.bridge.clone());
+                let p = w.resolve(Some(&id)).map_err(|e| (-32602, e.1))?;
+                let child = Self::with_bridge(
+                    p.clone(),
+                    p.out.clone(),
+                    self.modes.clone(),
+                    self.write,
+                    self.bridge.clone(),
+                );
                 child.handle_local("initialize",&json!({"clientInfo":{"name":self.client.lock().unwrap().clone().unwrap_or_else(||"agent".into())}}))?;
-                children.insert(id.clone(),child);
+                children.insert(id.clone(), child);
             }
-            let mut local=params.clone();local["arguments"]=routed.body.clone();
-            if let Some(o)=local["arguments"].as_object_mut(){o.remove("setId");}
-            let reply=children[&id].handle_local(method,&local)?;
-            let text=reply["content"][0]["text"].as_str().unwrap_or_default();
-            let result=serde_json::from_str(text).unwrap_or_else(|_|json!(text));
+            let mut local = params.clone();
+            local["arguments"] = routed.body.clone();
+            if let Some(o) = local["arguments"].as_object_mut() {
+                o.remove("setId");
+            }
+            let reply = children[&id].handle_local(method, &local)?;
+            let text = reply["content"][0]["text"].as_str().unwrap_or_default();
+            let result = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
             replies.push(json!({"setId":id,"name":w.select(&id).unwrap().name,"result":crate::webapi::sets::qualify_value(result,&id),"isError":reply["isError"]}));
         }
-        if replies.len()==1 {
-            let mut reply=result_value(replies[0]["result"].clone());reply["isError"]=replies[0]["isError"].clone();Ok(reply)
-        } else {Ok(result_value(json!({"sets":replies})))}
+        if replies.len() == 1 {
+            let mut reply = result_value(replies[0]["result"].clone());
+            reply["isError"] = replies[0]["isError"].clone();
+            Ok(reply)
+        } else {
+            Ok(result_value(json!({"sets":replies})))
+        }
     }
 
     fn handle_local(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
@@ -1649,7 +1816,8 @@ impl McpServer {
                 // heartbeat while the process lives. An ephemeral serving is part of a
                 // run that already answers for itself, so it never registers. Mirrors
                 // docs/frontends/mcp.md#the-control-plane-over-mcp.
-                if !self.bridge.ephemeral && !crate::vfs::is_scoped()
+                if !self.bridge.ephemeral
+                    && !crate::vfs::is_scoped()
                     && self.modes.iter().any(|m| {
                         m == "compile" || m == "generate" || m == "verify" || m == "decompile"
                     })
@@ -1882,7 +2050,11 @@ impl McpServer {
                         });
                     } else {
                         self.trace.event(crate::session::TraceEvent::ToolResult {
-                            activity: crate::live_preview::activity(&name, &params["arguments"], Some(&parsed)),
+                            activity: crate::live_preview::activity(
+                                &name,
+                                &params["arguments"],
+                                Some(&parsed),
+                            ),
                             label: label.clone(),
                             name: name.clone(),
                             summary: crate::session::condense(&parsed, 160),
@@ -1890,7 +2062,11 @@ impl McpServer {
                         });
                     }
                 }
-                self.update_preview(&name, &label, reply.as_ref().is_ok_and(|v| v["isError"] != true));
+                self.update_preview(
+                    &name,
+                    &label,
+                    reply.as_ref().is_ok_and(|v| v["isError"] != true),
+                );
                 reply
             }
             // Not part of MCP (clients end a serving by closing stdin), but agents
@@ -2299,7 +2475,8 @@ impl McpServer {
                         // never refuses it, only real readiness does, since the run's own
                         // commits advance the generation past the release it stamped
                         // (docs/compiler/control-plane.md#modes-and-releases).
-                        let only_gated = self.bridge.build_token.is_some() && board.gated.contains(&gid);
+                        let only_gated =
+                            self.bridge.build_token.is_some() && board.gated.contains(&gid);
                         if board.goals.iter().any(|g| g.id == gid)
                             && !board.is_ready(&gid)
                             && !board.claimed.contains_key(&gid)
@@ -2383,14 +2560,16 @@ impl McpServer {
                         true,
                     ));
                 }
-                let mut scope =
-                    WorkScope::serving(if is_write { "mcp-write" } else { "mcp-read" });
+                let mut scope = WorkScope::serving(if is_write { "mcp-write" } else { "mcp-read" });
                 // A ledger session's serving holds its batch by id: the batch target is
                 // whose component group the file tools write for, so a group session
                 // extends its members' files and a regeneration rewrites its own.
                 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-                if let Some((_, target)) =
-                    self.bridge.only.as_deref().and_then(crate::goals::parse_goal_id)
+                if let Some((_, target)) = self
+                    .bridge
+                    .only
+                    .as_deref()
+                    .and_then(crate::goals::parse_goal_id)
                 {
                     scope.target = target.to_string();
                 }
@@ -2823,7 +3002,14 @@ impl McpServer {
         if root.join(crate::document_sets::CONFIG).vexists() {
             return json!({"error": {"rule": "already-a-project", "message": "jazyk.toml already exists here"}});
         }
-        if let Err(e) = crate::vfs::write({ let path = root.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, crate::cli::INIT_TOML) {
+        if let Err(e) = crate::vfs::write(
+            {
+                let path = root.join(".jazyk/jazyk.toml");
+                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            },
+            crate::cli::INIT_TOML,
+        ) {
             return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
         }
         let made = match crate::cli::init_scaffold(root) {
@@ -2882,11 +3068,17 @@ impl McpServer {
 // Minimal line edit on a TOML text: set `key = "value"` inside `[section]`, appending
 // the section or the key when missing, touching nothing else.
 pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
-    let Ok(mut document)=text.parse::<toml_edit::DocumentMut>() else {return text.to_string();};
-    if section.is_empty() {document[key]=toml_edit::value(value);}
-    else {let mut item=&mut document[section.split('.').next().unwrap()];
-        for part in section.split('.').skip(1) {item=&mut item[part];}
-        item[key]=toml_edit::value(value);
+    let Ok(mut document) = text.parse::<toml_edit::DocumentMut>() else {
+        return text.to_string();
+    };
+    if section.is_empty() {
+        document[key] = toml_edit::value(value);
+    } else {
+        let mut item = &mut document[section.split('.').next().unwrap()];
+        for part in section.split('.').skip(1) {
+            item = &mut item[part];
+        }
+        item[key] = toml_edit::value(value);
     }
     document.to_string()
 }
@@ -2901,7 +3093,9 @@ fn sink_write(
     new_text: &str,
     full: &str,
 ) -> Result<(), String> {
-    if crate::vfs::is_scoped() { return Err("hosted workspaces do not connect to editor sockets".into()); }
+    if crate::vfs::is_scoped() {
+        return Err("hosted workspaces do not connect to editor sockets".into());
+    }
     use std::io::{BufRead, BufReader, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(sink).map_err(|e| e.to_string())?;
     stream
@@ -2995,11 +3189,22 @@ mod tests {
             .handle("initialize", &json!({"protocolVersion": "2024-11-05"}))
             .unwrap();
         let instructions = init["instructions"].as_str().unwrap();
-        assert!(instructions.contains("can only read it"), "{}", instructions);
-        assert!(!instructions.contains("The write tools are"), "{}", instructions);
+        assert!(
+            instructions.contains("can only read it"),
+            "{}",
+            instructions
+        );
+        assert!(
+            !instructions.contains("The write tools are"),
+            "{}",
+            instructions
+        );
         assert_eq!(
             tool_names(&s),
-            crate::tools::READ_TOOLS.iter().map(|t| t.to_string()).collect::<Vec<_>>()
+            crate::tools::READ_TOOLS
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
         );
         let r = s.handle(
             "tools/call",
@@ -3009,7 +3214,8 @@ mod tests {
     }
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -3047,12 +3253,18 @@ mod tests {
         let begun = call("begin_case", json!({"case": "criteria-density"}));
         assert_eq!(begun["case"]["name"], "criteria-density", "{}", begun);
         assert!(
-            begun["instructions"].as_str().unwrap_or_default().contains("derive-criteria"),
+            begun["instructions"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("derive-criteria"),
             "the prompt names the goal: {}",
             begun["instructions"]
         );
         assert!(
-            begun["package"].as_str().unwrap_or_default().contains("req:company-1"),
+            begun["package"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("req:company-1"),
             "the session opens holding its prompt's loaded set: {}",
             begun["package"]
         );
@@ -3105,9 +3317,17 @@ mod tests {
         let list = call("benchmark_cases", json!({}));
         let rows = list["cases"].as_array().unwrap();
         assert!(rows.iter().all(|r| r.is_string()), "{}", list);
-        assert!(rows.iter().any(|r| r == "criteria-density (review, derive-criteria): scored 1.0"), "{}", list);
+        assert!(
+            rows.iter()
+                .any(|r| r == "criteria-density (review, derive-criteria): scored 1.0"),
+            "{}",
+            list
+        );
         // Feedback answers with no graph in the serving's out directory.
-        let fed = call("report_feedback", json!({"kind": "wrong", "subject": "begin_case", "message": "a test note"}));
+        let fed = call(
+            "report_feedback",
+            json!({"kind": "wrong", "subject": "begin_case", "message": "a test note"}),
+        );
         assert!(fed.get("error").is_none(), "{}", fed);
     }
 
@@ -3136,7 +3356,11 @@ mod tests {
         }
         assert!(!with.iter().any(|n| n == "write_text_file"), "{:?}", with);
         let without = tool_names(&serve(false));
-        assert!(!without.iter().any(|n| n == "read_text_file"), "{:?}", without);
+        assert!(
+            !without.iter().any(|n| n == "read_text_file"),
+            "{:?}",
+            without
+        );
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -3161,10 +3385,18 @@ mod tests {
             parent: parent.map(String::from),
             ..Default::default()
         };
-        s.graph.entities.insert("ent:area".into(), ent("Area", None));
-        s.graph.entities.insert("ent:claim".into(), ent("Claim", Some("ent:area")));
-        s.graph.entities.insert("ent:receipt".into(), ent("Receipt", Some("ent:claim")));
-        s.graph.entities.insert("ent:tool".into(), ent("Tool", Some("ent:area")));
+        s.graph
+            .entities
+            .insert("ent:area".into(), ent("Area", None));
+        s.graph
+            .entities
+            .insert("ent:claim".into(), ent("Claim", Some("ent:area")));
+        s.graph
+            .entities
+            .insert("ent:receipt".into(), ent("Receipt", Some("ent:claim")));
+        s.graph
+            .entities
+            .insert("ent:tool".into(), ent("Tool", Some("ent:area")));
         s.save();
         let mut ledger = crate::gen::Ledger::load(&out);
         ledger.entities.insert(
@@ -3184,7 +3416,11 @@ mod tests {
                 out.clone(),
                 vec!["generate".to_string()],
                 true,
-                BridgeFlags { serve_files: true, only: Some(only.into()), ..Default::default() },
+                BridgeFlags {
+                    serve_files: true,
+                    only: Some(only.into()),
+                    ..Default::default()
+                },
             )
         };
         let write = |srv: &McpServer| -> Value {
@@ -3255,7 +3491,12 @@ mod tests {
             "begin_generation",
             "begin_verification",
         ] {
-            assert!(names.iter().any(|n| n == t), "{} missing from {:?}", t, names);
+            assert!(
+                names.iter().any(|n| n == t),
+                "{} missing from {:?}",
+                t,
+                names
+            );
         }
         assert!(!names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
         crate::vfs::remove_dir_all(&dir).ok();
@@ -3269,7 +3510,8 @@ mod tests {
     fn revise_requirement_commits_prose_and_graph_without_redirtying() {
         use crate::model::{Entity, Provenance, Requirement, SourceRef};
         use crate::store::{Commit, Op};
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-revise-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-mcp-revise-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -3370,7 +3612,8 @@ mod tests {
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     #[test]
     fn begin_goals_claims_the_next_batch_and_done_wants_marks() {
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-goals-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-mcp-goals-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -3431,21 +3674,39 @@ mod tests {
         let dir = bare_dir("spend-tool");
         let project = crate::project::Project::load(&dir);
         let out = project.out.clone();
-        let graph = McpServer::new(crate::project::Project::load(&dir), out.clone(), vec!["graph".into()], false);
+        let graph = McpServer::new(
+            crate::project::Project::load(&dir),
+            out.clone(),
+            vec!["graph".into()],
+            false,
+        );
         assert!(tool_names(&graph).iter().any(|n| n == "report_spend"));
         let r = graph
-            .handle("tools/call", &json!({"name": "report_spend", "arguments": {"tokens": 500}}))
+            .handle(
+                "tools/call",
+                &json!({"name": "report_spend", "arguments": {"tokens": 500}}),
+            )
             .unwrap();
         assert_eq!(r["isError"], true);
         let text = r["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("no-open-batch") && text.contains("jazyk spend"), "{}", text);
+        assert!(
+            text.contains("no-open-batch") && text.contains("jazyk spend"),
+            "{}",
+            text
+        );
         let compile = McpServer::new(project, out, vec!["compile".into()], false);
         assert!(tool_names(&compile).iter().any(|n| n == "report_spend"));
         let r = compile
-            .handle("tools/call", &json!({"name": "report_spend", "arguments": {"tokens": 500}}))
+            .handle(
+                "tools/call",
+                &json!({"name": "report_spend", "arguments": {"tokens": 500}}),
+            )
             .unwrap();
         assert_eq!(r["isError"], true);
-        assert!(r["content"][0]["text"].as_str().unwrap().contains("no-open-batch"));
+        assert!(r["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no-open-batch"));
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -3454,7 +3715,8 @@ mod tests {
     // Mirrors docs/compiler/tools.md#toolsets.
     #[test]
     fn compile_serving_lists_goal_and_view_tools_and_gates_writes() {
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-toolset-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-mcp-toolset-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -3520,7 +3782,8 @@ mod tests {
     // Mirrors docs/frontends/acp.md#project-tools.
     #[test]
     fn project_tools_follow_the_project_state() {
-        let base = std::env::temp_dir().join(format!("jazyk-mcp-init-{}", crate::sys::process_id()));
+        let base =
+            std::env::temp_dir().join(format!("jazyk-mcp-init-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&base).ok();
         let bare = base.join("bare");
         let proj = base.join("proj");
@@ -3561,7 +3824,7 @@ mod tests {
         // can start one (docs/frontends/wasm.md#chat); a native chat has its own path.
         let note = "You cannot start a build: the Build button at the top of the page builds \
                     the documents into the graph. When asked to build, say so.";
-        assert!(instructions_in(&["chat".to_string()], false, true, true).contains(note));
+        assert!(instructions_in(&["chat".to_string()], false, true, true).contains("compile_document_sets"));
         assert!(reader_instructions().contains(note));
         assert!(!instructions_in(&["chat".to_string()], false, true, false).contains(note));
         assert!(
@@ -3576,4 +3839,6 @@ mod tests {
     }
 }
 
-fn result_value(value: Value) -> Value { json!({"content":[{"type":"text","text":value.to_string()}],"isError":false}) }
+fn result_value(value: Value) -> Value {
+    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
+}

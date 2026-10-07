@@ -12,6 +12,23 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
+    walk_seen(dir, base, out, &mut Default::default());
+}
+
+fn walk_seen(
+    dir: &Path,
+    base: &Path,
+    out: &mut Vec<(String, u64)>,
+    seen: &mut std::collections::BTreeSet<PathBuf>,
+) {
+    let Ok(canonical) = dir.vcanonicalize() else {
+        return;
+    };
+    if !canonical.starts_with(base.vcanonicalize().unwrap_or_else(|_| base.into()))
+        || !seen.insert(canonical)
+    {
+        return;
+    }
     let Ok(rd) = crate::vfs::read_dir(dir) else {
         return;
     };
@@ -23,13 +40,20 @@ pub(crate) fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
         if name.starts_with('.')
             || name == "node_modules"
             || name == "target"
-            || name.starts_with(".jazyk") || name.starts_with("jazyk-out")
+            || name.starts_with(".jazyk")
+            || name.starts_with("jazyk-out")
         {
             continue;
         }
         if p.vis_dir() {
-            walk(&p, base, out);
+            walk_seen(&p, base, out, seen);
         } else if let Ok(rel) = p.strip_prefix(base) {
+            if !p
+                .vcanonicalize()
+                .is_ok_and(|p| p.starts_with(base.vcanonicalize().unwrap_or_else(|_| base.into())))
+            {
+                continue;
+            }
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
             out.push((rel.to_string_lossy().replace('\\', "/"), size));
         }
@@ -77,7 +101,7 @@ fn no_owners() -> Value {
 pub fn deliverable_value(out_dir: &Path, gs: &GenSettings) -> Value {
     let mut files: Vec<(String, u64)> = Vec::new();
     walk(&gs.deliverable, &gs.deliverable, &mut files);
-    files.retain(|(f,_)|gs.allows_source(f));
+    files.retain(|(f, _)| gs.allows_source(f));
     files.sort();
     let ledger = Ledger::load(out_dir);
     let own = ownership(&ledger);
@@ -181,7 +205,8 @@ pub fn deliverable_file(out_dir: &Path, gs: &GenSettings, path: &str) -> Result<
     if abs.vis_dir() {
         return Err((404, format!("{} is a directory", path)));
     }
-    let bytes = crate::vfs::read(&abs).map_err(|e| (404, format!("cannot read {}: {}", path, e)))?;
+    let bytes =
+        crate::vfs::read(&abs).map_err(|e| (404, format!("cannot read {}: {}", path, e)))?;
     let ledger = Ledger::load(out_dir);
     let owners = ownership(&ledger).remove(path).unwrap_or_else(no_owners);
     match String::from_utf8(bytes) {

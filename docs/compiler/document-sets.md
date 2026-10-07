@@ -280,3 +280,9 @@ paths remain physical paths. Jobs record their set and configuration revision
 when queued. A changed configuration cancels a queued job before it writes.
 A group compile visits the selected sets in configuration order. Cancellation
 stops the current build at its next boundary and skips the remaining sets.
+
+## Generated file navigation
+
+Project output listings prefix each relative path with its set ID. Output reads
+resolve that prefix before entering the set's store. Rendered diagram links carry
+the same identity. Shared source-file reads combine ownership across claiming sets.

@@ -11,7 +11,11 @@ use std::path::{Path, PathBuf};
 // Mirrors Project::doc_files.
 fn glob_included(proj: &Project, rel: &str) -> bool {
     if proj.set_id.is_none() && proj.root.join(crate::document_sets::CONFIG).vexists() {
-        return crate::document_sets::Workspace::load(&proj.root).is_ok_and(|w| w.sets.iter().any(|s| crate::document_sets::included(&s.docs, rel)));
+        return crate::document_sets::Workspace::load(&proj.root).is_ok_and(|w| {
+            w.sets
+                .iter()
+                .any(|s| crate::document_sets::included(&s.docs, rel))
+        });
     }
 
     let mut included = false;
@@ -49,7 +53,8 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
             || c == "target"
             || c == "node_modules"
             || c.starts_with('.')
-            || c.starts_with(".jazyk") || c.starts_with("jazyk-out")
+            || c.starts_with(".jazyk")
+            || c.starts_with("jazyk-out")
         {
             return Err(format!("`{}` is a path component the doc walk skips", c));
         }
@@ -57,7 +62,9 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
     if !glob_included(proj, rel) {
         return Err(format!("outside the docs glob {:?}", proj.docs_glob));
     }
-    if !crate::document_sets::safe_relative(&proj.root,rel) {return Err("path crosses a nested project or a symlink boundary".into());}
+    if !crate::document_sets::safe_relative(&proj.root, rel) {
+        return Err("path crosses a nested project or a symlink boundary".into());
+    }
     let abs = proj.root.join(rel);
     if abs.starts_with(&proj.out) {
         return Err("inside the out directory".to_string());
@@ -67,8 +74,11 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
         .root
         .vcanonicalize()
         .map_err(|e| format!("the project root does not resolve: {}", e))?;
-    let mut anc: &Path = if abs.vexists() { &abs } else {
-        abs.parent().ok_or_else(|| "the path has no parent".to_string())?
+    let mut anc: &Path = if abs.vexists() {
+        &abs
+    } else {
+        abs.parent()
+            .ok_or_else(|| "the path has no parent".to_string())?
     };
     while !anc.vexists() {
         anc = anc
@@ -103,7 +113,9 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);
             let links = crate::md::missing_document_links(&proj.root, rel, &text);
-            DocRead::Found(json!({ "path": rel, "text": text, "hash": hash, "linkDiagnostics": links }))
+            DocRead::Found(
+                json!({ "path": rel, "text": text, "hash": hash, "linkDiagnostics": links }),
+            )
         }
         Err(e) => DocRead::Missing(format!("cannot read {}: {}", rel, e)),
     }
@@ -180,6 +192,31 @@ pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>)
     DocWrite::Written(json!({ "path": rel, "hash": crate::model::hash_hex(text) }))
 }
 
+pub fn doc_delete(proj: &Project, rel: &str) -> Result<Value, super::Refusal> {
+    let abs = safe_doc_path_why(proj, rel).map_err(|e| (400, e))?;
+    if !abs.vexists() {
+        return Err((404, format!("no document {}", rel)));
+    }
+    crate::vfs::remove_file(abs).map_err(|e| (500, e.to_string()))?;
+    Ok(json!({"deleted": rel}))
+}
+
+pub fn doc_rename(proj: &Project, from: &str, to: &str) -> Result<Value, super::Refusal> {
+    let old = safe_doc_path_why(proj, from).map_err(|e| (400, e))?;
+    let new = safe_doc_path_why(proj, to).map_err(|e| (400, e))?;
+    if !old.vexists() {
+        return Err((404, format!("no document {}", from)));
+    }
+    if new.vexists() {
+        return Err((409, format!("{} already exists", to)));
+    }
+    if let Some(parent) = new.parent() {
+        crate::vfs::create_dir_all(parent).map_err(|e| (500, e.to_string()))?;
+    }
+    crate::vfs::rename(old, new).map_err(|e| (500, e.to_string()))?;
+    Ok(json!({"from": from, "to": to}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,24 +233,39 @@ mod tests {
 
     #[test]
     fn missing_link_read_and_exclusive_create_share_current_workspace() {
-        let dir = std::env::temp_dir().join(format!("jazyk-doc-link-read-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-doc-link-read-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(dir.join("docs/main.md"), "[Intro](intro.md)").unwrap();
         let p = proj(&dir);
-        let DocRead::Found(read) = doc_content(&p, "docs/main.md") else { panic!("read") };
+        let DocRead::Found(read) = doc_content(&p, "docs/main.md") else {
+            panic!("read")
+        };
         assert_eq!(read["linkDiagnostics"][0]["target"], "docs/intro.md");
-        assert!(matches!(doc_write(&p, "docs/intro.md", "original", None), DocWrite::Written(_)));
-        assert!(matches!(doc_write(&p, "docs/intro.md", "overwrite", None), DocWrite::Conflict(_)));
-        assert_eq!(crate::vfs::read_to_string(dir.join("docs/intro.md")).unwrap(), "original");
-        let DocRead::Found(read) = doc_content(&p, "docs/main.md") else { panic!("read") };
+        assert!(matches!(
+            doc_write(&p, "docs/intro.md", "original", None),
+            DocWrite::Written(_)
+        ));
+        assert!(matches!(
+            doc_write(&p, "docs/intro.md", "overwrite", None),
+            DocWrite::Conflict(_)
+        ));
+        assert_eq!(
+            crate::vfs::read_to_string(dir.join("docs/intro.md")).unwrap(),
+            "original"
+        );
+        let DocRead::Found(read) = doc_content(&p, "docs/main.md") else {
+            panic!("read")
+        };
         assert_eq!(read["linkDiagnostics"], json!([]));
         crate::vfs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn doc_path_safety_matrix() {
-        let dir = std::env::temp_dir().join(format!("jazyk-gui-docs-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-gui-docs-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
@@ -243,8 +295,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlinked_parent_never_escapes() {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-gui-symlink-test-{}", crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-gui-symlink-test-{}",
+            crate::sys::process_id()
+        ));
         let outside =
             std::env::temp_dir().join(format!("jazyk-gui-outside-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();

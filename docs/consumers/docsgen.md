@@ -386,3 +386,7 @@ The rules ride along in `review-entity` sessions
 diagnostics under the
 `lint` rule (e.g. `diag:lint-1`), so each carries a `quote` and `reasoning`, lands in the
 same triage queue, and is resolved like any other diagnostic.
+
+Generated source links account for the document set directory. A page directly
+under `.jazyk/<set-id>/docsgen/` reaches project files with `../../../`. Links
+within the same graph output remain relative to that set's store.

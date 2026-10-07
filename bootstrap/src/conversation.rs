@@ -159,7 +159,9 @@ pub fn remove(id: &str) -> bool {
 // fits a small model's window. Answers the serving, its tools in the shape the loop
 // hands the model, and its instructions.
 fn open_serving(reader: bool) -> Result<(McpServer, Vec<GenericTool>, String), String> {
-    let project = crate::project::Project::load(&crate::portable::root());
+    let project = crate::document_sets::Workspace::load(&crate::portable::root())
+        .map_err(|e| e.1)?
+        .files_project();
     let out = project.out.clone();
     let server = McpServer::with_bridge(
         project,
@@ -309,8 +311,22 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
     }
     push_user(&mut history, text);
 
-    let out = crate::project::Project::load(&crate::portable::root()).out;
-    let mut generation = crate::store::read_generation(&out);
+    let generations = || {
+        crate::document_sets::Workspace::load(&crate::portable::root())
+            .map(|w| {
+                w.sets
+                    .iter()
+                    .map(|s| {
+                        (
+                            s.id.clone(),
+                            crate::store::read_generation(&w.root.join(".jazyk").join(&s.id)),
+                        )
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            })
+            .unwrap_or_default()
+    };
+    let mut generation = generations();
     let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
         match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
             Ok(v) => {
@@ -350,11 +366,17 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
                        "status": if ok { "completed" } else { "failed" }, "rawOutput": result}),
             );
             // A dual write committed: the graph views refresh on it, mid-turn.
-            let now = crate::store::read_generation(&out);
-            if now != generation {
-                generation = now;
-                crate::portable::emit_event("store.generation", json!({"generation": now}));
+            let now = generations();
+            for (set_id, value) in &now {
+                if generation.get(set_id) != Some(value) {
+                    crate::portable::emit_event(
+                        "store.generation",
+                        json!({"setId":set_id,"generation":value}),
+                    );
+                }
             }
+            generation = now;
+            crate::portable::emit_event("sets.changed", json!({}));
         }
         AgentEvent::Usage { .. } => {}
     };

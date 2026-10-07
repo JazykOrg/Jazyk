@@ -445,3 +445,9 @@ to their canonical application specifications.
 - <a id="the-demo"></a>[The demo](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#the-demo).
 - <a id="keeping-the-demos-current"></a>[Keeping the demos current](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#keeping-the-demos-current).
 - <a id="offline"></a>[Offline](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#offline).
+
+## Document-set chat actions
+
+A project chat lists all document sets. A writer can preview and save their
+selections and call `compile_document_sets`. Reader sessions keep read-only tools.
+The compile action accepts explicit set IDs or all dirty sets.

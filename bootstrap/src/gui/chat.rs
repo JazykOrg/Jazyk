@@ -96,8 +96,6 @@ impl ChatManager {
                 "mcp".to_string(),
                 "chat".to_string(),
                 "--ephemeral".to_string(),
-                "--out".to_string(),
-                st.out.to_string_lossy().into_owned(),
             ],
             env: Vec::new(),
         };
@@ -274,7 +272,10 @@ pub async fn post_prompt(
     };
     let text = body["text"].as_str().unwrap_or("").trim().to_string();
     if text.is_empty() {
-        return super::api::err(StatusCode::BAD_REQUEST, "text is required: the prompt to send");
+        return super::api::err(
+            StatusCode::BAD_REQUEST,
+            "text is required: the prompt to send",
+        );
     }
     if sess.lock().unwrap().state == "running" {
         return super::api::err(

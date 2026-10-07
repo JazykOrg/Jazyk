@@ -1,6 +1,6 @@
 # Document sets: implementation sequence
 
-Status: proposed. No runtime changes are included in this planning branch.
+Status: implemented in the engine and editor worktrees. Integration verification and release are in progress.
 
 ## Baseline and ownership
 

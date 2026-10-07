@@ -1,44 +1,59 @@
 # Project settings
 
-A directory containing `jazyk.toml` is a Jazyk project. The file marks the project root,
-and all globs resolve relative to it. The CLI walks up from the current directory to find
-it. The schema is [`project-settings.schema.yaml`](./project-settings.schema.yaml).
+A project is a folder with `.jazyk/jazyk.toml`. Paths resolve from that folder,
+not from `.jazyk`. The CLI discovers the nearest config while walking upward.
+The schema is [`project-settings.schema.yaml`](./project-settings.schema.yaml).
 
-Limits and budgets are not settings: they are built into the binary as the
-[limits registry](./graph.md#limits), and the project file carries none.
+The [document-set contract](./document-sets.md) defines discovery, independent
+stores, matching, management, and execution. The runtime has no legacy config
+conversion. A folder without config remains browsable without creating files.
+
+Limits and budgets stay in the binary's [limits registry](./graph.md#limits).
+
+## Document sets
+
+```toml
+version = 1
+
+[[sets]]
+id = "ds_checkout"
+name = "checkout"
+docs = ["docs/checkout.md", "docs-checkout/**/*.md"]
+roots = ["docs/checkout.md"]
+source = ["src/checkout/**", "src/shared/**"]
+
+[[sets]]
+id = "ds_search"
+name = "search"
+docs = ["docs/search.md"]
+source = ["src/search/**", "src/shared/**"]
+```
+
+Each set has an immutable `ds_` ID and an editable name. Its store is
+`.jazyk/<id>/`. The project may contain zero sets. `docs`, `roots`, and `source`
+are ordered pattern lists. `source` is optional. Empty means no source mapping.
+Project settings are defaults; `[sets.llm]`, `[sets.acp]`, `[sets.executors]`,
+`[sets.workflow]`, and `[sets.gen]` override them for one set.
 
 ## Redirect
 
-A `jazyk.toml` may contain only a redirect, pointing discovery at a nested directory:
-
-```toml
-redirect = "docs"
-```
-
-Discovery that lands on a redirecting file continues into the named directory and loads
-the project there. This lets a repository root delegate to the directory that holds the
-real project, so tools launched from the root (editors, MCP clients) resolve the same
-project as tools launched inside it. Redirects do not chain: the target must hold a real
-`jazyk.toml`.
-
-A redirect applies where it stands. Discovery starting in the redirecting directory
-follows it. Discovery walking up from a subdirectory stops at the redirecting file
-instead of following it: the redirect declares that the tree's project lives in the
-target, so a subdirectory outside the target is its own place, and commands run there
-fall back to an ad hoc project at the working directory.
+Root `jazyk.toml` redirects are no longer read. Define the document paths relative
+to the containing project in `.jazyk/jazyk.toml`.
 
 ## Docs
 
 ### Glob
 
-`docs.glob` is an ordered list of glob patterns selecting the documentation files. A
+a set's `docs` is an ordered list of glob patterns selecting the documentation files. A
 pattern starting with `!` excludes. Later patterns override earlier ones: a file is
 included when the last pattern to match it is an inclusion. A matched file with no
 [format handler](./parsing.md#format-handlers) yields an `unsupported-format` diagnostic.
 
 ```toml
-[docs]
-glob = ["docs/**/*.md", "!docs/LICENSE.md"]
+[[sets]]
+id = "ds_main"
+name = "Main"
+docs = ["docs/**/*.md", "!docs/LICENSE.md"]
 ```
 
 Some paths are never doc input, regardless of the glob:
@@ -72,7 +87,7 @@ handler has a `matcher` (which files it claims) and a `path` (the implementation
 handlers are tried before built-in ones; the first handler to claim a file wins.
 
 ```toml
-[docs.handlers.drawio]
+[handlers.drawio]
 matcher = "docs/**/*.drawio"
 path = "./handlers/drawio.wasm"
 ```
@@ -86,7 +101,7 @@ evaluated by [`review-entity`](./goals/review-entity.md) sessions and by the
 pass, `errors` fail it.
 
 ```toml
-[docs.linting.rules]
+[linting.rules]
 warnings = ["Grammatical errors and spelling mistakes"]
 errors = ["Unimplemented or TODO sections"]
 ```
@@ -133,7 +148,7 @@ field, highest priority first:
 
 1. CLI flag: `--llm-base-url`, `--model`, `--api-key`.
 2. Environment variable: `JAZYK_LLM_BASE_URL`, `JAZYK_MODEL`, `JAZYK_API_KEY`.
-3. Project `[llm]` in `jazyk.toml`.
+3. Set `[sets.llm]`, then project `[llm]` in `.jazyk/jazyk.toml`.
 4. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
 5. Built-in default.
 
@@ -228,15 +243,14 @@ informed ([storage layout](./graph.md#storage-layout)). Editing the table is a
 
 ## Roots
 
-`roots.files` is a glob list (matched like [`docs.glob`](#glob)) naming the root
+A set's `roots` is a glob list (matched like [a set's `docs`](#glob)) naming the root
 documents. Roots seed [readiness](./reconciler.md#readiness): `reconcile-section` goals
 order by document link level from the roots, so the core vocabulary exists before other
 documents need it. Roots also anchor the reachability [check](./compilation.md#checks):
 an entity unreachable from a root is flagged `unreachable-entity`.
 
 ```toml
-[roots]
-files = ["docs/main.md"]
+roots = ["docs/main.md"]
 ```
 
 ## Generation
@@ -244,8 +258,7 @@ files = ["docs/main.md"]
 Settings for the [generation workflow](../consumers/gen.md). All optional.
 
 ```toml
-[gen]
-deliverable = "../project2"
+source = ["project2/**"]
 worker = "agentic"
 code = ["src/**", "tests/**"]
 ```
@@ -262,7 +275,7 @@ code = ["src/**", "tests/**"]
   [`generate`](./goals/generate.md) goal as a session with file and command tools;
   `pipeline` keeps the fixed file-reply sequence, for models too weak to drive tools.
 
-- `code`: a glob list (matched like [`docs.glob`](#glob), relative to the
+- `code`: a glob list (matched like [a set's `docs`](#glob), relative to the
   deliverable) scoping which deliverable files count as implementation for the
   [unclaimed report](../consumers/bind.md#the-unclaimed-report) and for
   [decompilation](../consumers/decompile.md). Default: every file under the

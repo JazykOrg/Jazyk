@@ -1,5 +1,10 @@
 # Local editor API
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 `jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]`
 starts a loopback HTTP API over the [graph store](../compiler/graph.md), a live event
 stream, and the [language server](./lsp.md) over WebSocket. It opens `https://jazyk.dev`

@@ -265,14 +265,6 @@ Remove the root redirect. The repo-root `.jazyk/jazyk.toml` selects `docs/**/*.m
 Examples each receive their own `.jazyk/jazyk.toml`. Update schemas, CLI help,
 registrations, docs, tests, ignore rules, and `AGENTS.md` together.
 
-For external legacy projects, detect root `jazyk.toml` and explain the new path and
-shape. Provide a documented manual conversion example, not a second permanent
-configuration dialect. If both locations exist, report a config conflict rather
-than silently choosing one. Never rewrite existing config on folder opening.
-
-There is no graph-schema migration. A compatible store can be explicitly relocated
-when its document path base remains unchanged. A changed path base, including the
-dogfood's move from `docs/` to the repo root, requires archiving the old graph and
-compiling the new set. Preserve the archive, including decrees and pending human
-decisions; rebuilding from prose cannot reproduce those. This reset must be
-visible and deliberate, never an editor-upgrade side effect.
+The owner authorized implementation without existing-project backfilling. The
+runtime reads only the new config. Convert repository examples and demos manually.
+Do not add config or graph migration code. Preserve existing unselected files.

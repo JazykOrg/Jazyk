@@ -6,7 +6,7 @@ engine package version and the graph storage version.
 
 ## Discovery
 
-`GET /api/ping` includes an integer `protocol` field. The current version is `1`.
+`GET /api/ping` includes an integer `protocol` field. The current version is `2`.
 The response retains `app`, `version`, and `root`. `app` is `jazyk-gui` for the
 local HTTP API and `jazyk-wasm` for WebAssembly. `version` is the engine package
 version. It does not decide editor compatibility.
@@ -17,7 +17,7 @@ E.g.:
 {
   "app": "jazyk-gui",
   "version": "0.2.0",
-  "protocol": 1,
+  "protocol": 2,
   "root": "/home/user/project"
 }
 ```
@@ -40,8 +40,8 @@ the engine protocol from the WebAssembly ping before activating the backend.
 
 ## Compatibility
 
-The editor supports protocol `1`. An absent `protocol` field means the legacy
-version `1`, so existing local engines remain usable. An explicit unsupported
+The editor supports protocol `2`. It requires explicit document-set addressing.
+An absent `protocol` field denotes legacy version `1`, which is incompatible. An explicit unsupported
 integer or a malformed field is incompatible. It never falls back to the legacy
 version. A legacy native API that has no capability route keeps the existing
 capability fallback on HTTP `404`.
@@ -52,7 +52,7 @@ engine and retains the current project. It does not reset, migrate, regenerate,
 or delete graph data. Reconnecting to a compatible engine resumes the existing
 workflow. A new editor installation does not require an engine upgrade.
 
-Additive optional fields preserve protocol `1`. Removing an endpoint, changing a
+Additive optional fields preserve protocol `2`. Removing an endpoint, changing a
 required field's type, or changing an existing operation incompatibly requires a
 new protocol version. Release checks exercise the current descriptor, the legacy
 response without a version, and an explicitly incompatible response.

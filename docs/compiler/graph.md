@@ -1,5 +1,10 @@
 # Graph store
 
+A project opens all [document sets](./document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 The graph store is the persistent home of the [semantic graph](./model.md). It owns
 identifiers, enforces invariants, recomputes derived data, records every change, and
 writes the typed dirtiness each commit causes. The store is deterministic code. No LLM

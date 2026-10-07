@@ -1,5 +1,10 @@
 # Binding
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 A binding ties one requirement to the deliverable: the files that carry it (possibly
 none), the test that judges it, and the last verdict. The binding is the requirement's
 row in the [ledger](./gen.md#the-ledger); this page defines how rows are born.

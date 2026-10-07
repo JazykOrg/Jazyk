@@ -1,5 +1,10 @@
 # Generation
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 Generation makes the semantic graph into the end product and the tests that hold it to
 its spec, in one workflow. It reads the graph through the
 [loaded set](../compiler/context.md#the-loaded-set) and the

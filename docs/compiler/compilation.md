@@ -1,5 +1,10 @@
 # Compilation
 
+A project opens all [document sets](./document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 A build brings the [graph](./model.md) in line with the documents and the rest of the
 system in line with the graph: docs, graph, diagrams, deliverable, and tests as one fixed
 point. The [reconciler](./reconciler.md) computes what is stale and orders the work;

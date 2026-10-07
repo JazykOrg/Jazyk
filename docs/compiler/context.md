@@ -1,5 +1,10 @@
 # Context
 
+A project opens all [document sets](./document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 The context engine maintains the loaded set: an explicit working set of graph nodes,
 bounded by a budget, with a rendered status the model reads on every round. It is the
 single answer to the question every consumer asks: give me just enough of the

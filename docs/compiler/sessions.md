@@ -1,5 +1,10 @@
 # Sessions
 
+A project opens all [document sets](./document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 A session is one focused agent run over one goal batch. It is the only place a model
 touches the compilation process. The [scheduler](./compiler.md#the-scheduler) forms the
 batch from the [board](./reconciler.md#goal-derivation); the session executes as an

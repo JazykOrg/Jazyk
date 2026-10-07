@@ -1,5 +1,10 @@
 # CLI
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 The CLI is the command line frontend over the [compiler](../compiler/compiler.md). It runs the
 build, inspects the [graph store](../compiler/graph.md) and the
 [goal board](../compiler/reconciler.md#goal-derivation), and hosts the other frontends.

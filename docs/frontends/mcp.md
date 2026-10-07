@@ -1,5 +1,10 @@
 # MCP
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 `jazyk mcp <toolsets>` serves the [tool registry](../compiler/tools.md) over stdio as an
 MCP server: line-delimited JSON-RPC per the Model Context Protocol. It dispatches the
 same tool implementations the compiler's own [sessions](../compiler/sessions.md) use.

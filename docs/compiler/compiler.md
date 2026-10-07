@@ -1,5 +1,10 @@
 # Compiler
 
+A project opens all [document sets](./document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 The compiler maintains a persistent [semantic graph](./model.md) that mirrors the
 project's documentation. Compiling means reconciling: bring the graph in line with the
 documents, surface ambiguity and contradictions as [diagnostics](./model/diagnostic.md),

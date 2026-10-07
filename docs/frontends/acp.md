@@ -1,5 +1,10 @@
 # ACP
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 Jazyk speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) and
 sits between ACP clients and ACP agents. An ACP client is an editor or IDE (Zed,
 JetBrains, or jazyk's own [GUI](./gui.md)). An ACP agent is a coding agent (OpenCode,

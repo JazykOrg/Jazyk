@@ -1,5 +1,10 @@
 # LSP
 
+A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 `jazyk lsp` starts the language server over stdio, with Content-Length framed JSON-RPC.
 
 The server is thin and read-only. It reads the [graph store](../compiler/graph.md) and

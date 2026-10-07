@@ -1,5 +1,10 @@
 # Control plane
 
+A project opens all [document sets](./document-sets.md). Graph operations address one set
+explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
+physical files and report every membership. The document-set contract defines
+configuration, aggregate reads, management commands, and grouped compilation.
+
 The [goal board](./reconciler.md#goal-derivation) says what work exists. The control
 plane says whether anyone may act on it and who is acting. It is one file plus two
 directories in the out directory, so every consumer (the internal loop, the GUI, an

@@ -1,6 +1,19 @@
 # Document sets: implementation sequence
 
-Status: implemented in the engine and editor worktrees. Integration verification and release are in progress.
+Status: implemented, verified, merged to both repositories' `master` branches,
+and published on 2026-10-07. Work was completed in separate engine and editor
+worktrees. Owned projects and demos were converted manually. No runtime migration
+or backfill was added.
+
+The released compiler is `852c05e79a2a445e94b6f4dab8e8b39352e21534`. Engine CI
+passed 581 Rust tests, native release, and standalone WASM builds. The owner's
+local release binary was rebuilt. The final editor passed 366 unit tests, 132
+desktop and mobile browser tests, and 42 hosted-editor browser tests. Live
+acceptance verified a second document set, immediate reload, offline reopening,
+and switching between projects without stale set data. The API is healthy.
+Release provenance and rollback evidence are recorded in the private repository's
+`docs/operations/document-sets.md`. Word and PDF import remains the later milestone
+below.
 
 ## Baseline and ownership
 

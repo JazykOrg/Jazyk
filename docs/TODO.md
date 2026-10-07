@@ -42,6 +42,10 @@ This scratch space is a live document to outline the work for this documentation
 
 ## NEXT
 
+- [Document sets in one project](../plans/document-sets/README.md): move project
+  configuration to `.jazyk/jazyk.toml`, support named independent document/source
+  selections, and expose all sets together in the GUI, ACP, and LSP. The plan
+  includes setup, file markings, and per-set or all-dirty compilation. Not implemented.
 - Benchmark cases per goal kind
   ([deferred cases](./benchmark/benchmark.md#deferred-cases)): the kinds without a case
   (`place-anchors`, `rejudge-pair`, `retrace`, `conform-instance`, the GC kinds), plus

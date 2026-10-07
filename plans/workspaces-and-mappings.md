@@ -1,8 +1,11 @@
 # Plan: workspaces, specs, and mappings
 
-Status: proposal, not scheduled. Written 2026-09-25. Nothing here is implemented or
-documented under `docs/`. The docs-first rule applies: every step below names the
-pages that change before the code does.
+Status: historical proposal. Written 2026-09-25. Superseded on 2026-10-07 by
+[document sets in one project](./document-sets/README.md) for configuration,
+independent compilation, and frontend scope. In particular, use
+`.jazyk/jazyk.toml`, stable set IDs, and simultaneous project-wide visibility from
+that plan. The root config, implicit specs, and frontend switching proposed below
+are not the implementation direction. Retain the remaining cases as background.
 
 Read with [project settings](../docs/compiler/project-settings.md), the
 [storage layout](../docs/compiler/graph.md#storage-layout),

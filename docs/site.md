@@ -64,7 +64,8 @@ One page.
     requirements.
   - Code: the generated program, condensed.
 - A link to [the editor](#the-editor) to open the demos, start a project, or open a
-  folder.
+  folder. A folder needs no existing configuration. Choose named document sets
+  and the source files each describes in the editor.
 - No link to the repository.
 
 ### 404

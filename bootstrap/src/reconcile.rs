@@ -2176,7 +2176,19 @@ pub fn compile_with(
     };
     #[cfg(target_arch = "wasm32")]
     let runner: Box<dyn crate::runner::SessionRunner> = match crate::inprocess::InProcessRunner::start(proj,llm,out) { Ok(r) => Box::new(r), Err(e) => return refused(e) };
-    let runner = runner.as_ref();
+    compile_under(proj, out, trace, max_sessions, runner.as_ref(), _build)
+}
+
+// A build with its lease held and its runner chosen: the rest of `compile_with`, and
+// what a test drives with a scripted runner (docs/compiler/sessions.md#execution).
+pub(crate) fn compile_under(
+    proj: &Project,
+    out: &Path,
+    trace: &Trace,
+    max_sessions: Option<usize>,
+    runner: &dyn crate::runner::SessionRunner,
+    _build: crate::control::BuildGuard,
+) -> BuildReport {
     runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
     trace.line("build", &format!("agent: {}", runner.agent_name()));
 
@@ -3289,6 +3301,9 @@ pub(crate) fn rate_limited(error: &str) -> bool {
         || e.contains("hit your limit")
         || e.contains("quota")
 }
+
+#[cfg(test)]
+mod e2e;
 
 #[cfg(test)]
 mod tests {

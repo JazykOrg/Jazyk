@@ -291,7 +291,10 @@ The message loop, the tool codecs (`native` and `text`), the first-round probe, 
 endpoint fallbacks belong to the
 [embedded agent](../frontends/acp.md#the-embedded-agent): they are how a generic loop
 speaks to a raw endpoint, not part of session semantics. An external agent brings its
-own loop. Chat, answer, and follow sessions are the other session kinds
+own loop. A build can also be driven by a scripted executor: a runner that resolves
+each goal through the same serving with fixed tool calls and no model, which is how
+the end-to-end tests compile `bootstrap/example/f1` to `converged`. Chat, answer, and
+follow sessions are the other session kinds
 ([sessions](../frontends/acp.md#sessions)); they run on the `[acp]` agent, not on the
 executor overrides. The [benchmark](../benchmark/benchmark.md) grades an agent profile
 by running sessions through it; cases per goal kind are

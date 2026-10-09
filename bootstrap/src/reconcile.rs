@@ -6,6 +6,7 @@
 // docs/compiler/compilation.md.
 use crate::board::Board;
 use crate::control::Control;
+use crate::derive::Indices;
 use crate::goals;
 use crate::llm::Llm;
 use crate::md;
@@ -348,7 +349,7 @@ fn justified(store: &Store, subject: &str, p: &Provenance) -> Result<(), String>
 // The flow view a requirement fits best: its own cluster's view, else the flow view
 // sharing the most entities (same document first, then the first member's order,
 // then id). Returns the ranking, best first. Mirrors docs/compiler/goals/curate-view.md.
-fn flow_placement_ranking(store: &Store, rid: &str) -> Vec<String> {
+fn flow_placement_ranking(store: &Store, ix: &Indices, rid: &str) -> Vec<String> {
     let Some(r) = store.graph.requirements.get(rid) else {
         return Vec::new();
     };
@@ -358,8 +359,12 @@ fn flow_placement_ranking(store: &Store, rid: &str) -> Vec<String> {
         .map(|e| store.resolve_id(e).to_string())
         .collect();
     let doc = r.source.as_ref().map(|s| s.doc.clone()).unwrap_or_default();
-    let order = crate::derive::document_order(store);
-    let position = |id: &str| order.iter().position(|x| x == id).unwrap_or(usize::MAX);
+    let position = |id: &str| {
+        ix.requirement_position
+            .get(id)
+            .copied()
+            .unwrap_or(usize::MAX)
+    };
     let kind_rank = |k: &str| goals::FLOW_KINDS.iter().position(|x| *x == k).unwrap_or(9);
     let mut ranked: Vec<(std::cmp::Reverse<usize>, bool, usize, usize, String)> = store
         .graph
@@ -411,7 +416,10 @@ fn flow_placement_ranking(store: &Store, rid: &str) -> Vec<String> {
 
 // The flow placement findings, each with the view the record lands on and the
 // alternatives. Runs only where flow views exist.
-fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, String)> {
+fn flow_placement(
+    store: &Store,
+    ix: &Indices,
+) -> Vec<(Finding, Option<String>, Vec<String>, String)> {
     if !store
         .graph
         .views
@@ -447,7 +455,7 @@ fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, S
         if placed.contains(rid.as_str()) || excluded.contains(rid.as_str()) {
             continue;
         }
-        let ranking = flow_placement_ranking(store, rid);
+        let ranking = flow_placement_ranking(store, ix, rid);
         let (rule, message) = if facet == "behavior" {
             (
                 "unplaced-behavior",
@@ -477,6 +485,9 @@ fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, S
 
 // The deterministic checks over the whole graph. Mirrors docs/compiler/compilation.md#checks.
 pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
+    // The indices every check below reads, built once.
+    // Mirrors docs/compiler/graph.md#derived-data.
+    let ix = Indices::build(store);
     let mut f: Vec<Finding> = format_checks(proj);
     // Link diagnostics describe the current source, including uncompiled docs.
     // One stable source-target pair keeps its identity when the link moves.
@@ -539,12 +550,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     // Entities no requirement references and no child hangs under: a grouping is
     // used as its children's container. Mirrors docs/compiler/compilation.md#checks.
     for id in store.graph.entities.keys() {
-        let has_children = store
-            .graph
-            .entities
-            .values()
-            .any(|e| e.parent.as_deref() == Some(id.as_str()));
-        if !has_children && store.requirements_referencing(id).is_empty() {
+        if !ix.has_children(id) && ix.requirements_referencing(id).is_empty() {
             f.push(finding(
                 "unused-entity",
                 id,
@@ -689,25 +695,26 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         .map(|(id, _)| id.clone())
         .collect();
     if !root_entities.is_empty() {
+        // The neighbors of every id, once: the members of each relationship it is in
+        // and the entities of each requirement listing it (as written, redirects not
+        // followed, as the walk has always read them).
+        let mut neighbors: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+        for rel in store.graph.relationships.values() {
+            for m in &rel.members {
+                neighbors.entry(m.as_str()).or_default().extend(rel.members.iter());
+            }
+        }
+        for r in store.graph.requirements.values() {
+            for m in &r.entities {
+                neighbors.entry(m.as_str()).or_default().extend(r.entities.iter());
+            }
+        }
         let mut reach = root_entities.clone();
         let mut frontier: Vec<String> = root_entities.into_iter().collect();
         while let Some(id) = frontier.pop() {
-            for rel in store.graph.relationships.values() {
-                if rel.members.contains(&id) {
-                    for m in &rel.members {
-                        if reach.insert(m.clone()) {
-                            frontier.push(m.clone());
-                        }
-                    }
-                }
-            }
-            for r in store.graph.requirements.values() {
-                if r.entities.contains(&id) {
-                    for m in &r.entities {
-                        if reach.insert(m.clone()) {
-                            frontier.push(m.clone());
-                        }
-                    }
+            for m in neighbors.get(id.as_str()).into_iter().flatten() {
+                if reach.insert((*m).clone()) {
+                    frontier.push((*m).clone());
                 }
             }
             // Containment counts both ways: a level under a grouping is as
@@ -717,8 +724,8 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     frontier.push(p);
                 }
             }
-            for (cid, e) in &store.graph.entities {
-                if e.parent.as_deref() == Some(id.as_str()) && reach.insert(cid.clone()) {
+            for cid in ix.children_of(&id) {
+                if reach.insert(cid.clone()) {
                     frontier.push(cid.clone());
                 }
             }
@@ -1005,7 +1012,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         }
     }
     // Flow placement, wherever flow views exist.
-    for (finding, _, _, _) in flow_placement(store) {
+    for (finding, _, _, _) in flow_placement(store, &ix) {
         f.push(finding);
     }
     // Containment consistency: a composition never crosses the tree sideways.
@@ -1041,7 +1048,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     }
     // Level shape: every level has its view, no level is over the hard fan-out, no
     // derived grouping is under-membered.
-    f.extend(level_shape_checks(store));
+    f.extend(level_shape_checks(store, &ix));
     // Conformance, the mechanical part: an instance's attribute names against its type.
     for (inst, ty) in crate::derive::instance_types(store) {
         let Some(e) = store.graph.entities.get(&inst) else {
@@ -1078,14 +1085,20 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     // Provider check, wherever interface-like entities exist. Interface-like keys on
     // structure, not the label: something realizes the entity, or the `interface`
     // stereotype marks it before anything does. Mirrors docs/compiler/model/entity.md#fields.
+    let mut contributions_to: BTreeMap<&str, Vec<&Contribution>> = BTreeMap::new();
+    for c in store
+        .graph
+        .relationships
+        .values()
+        .flat_map(|r| r.contributions.iter())
+    {
+        contributions_to.entry(c.b.as_str()).or_default().push(c);
+    }
     for (iface, e) in &store.graph.entities {
-        let contributions: Vec<&Contribution> = store
-            .graph
-            .relationships
-            .values()
-            .flat_map(|r| r.contributions.iter())
-            .filter(|c| &c.b == iface)
-            .collect();
+        let contributions: &[&Contribution] = contributions_to
+            .get(iface.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let realizers: Vec<&str> = contributions
             .iter()
             .filter(|c| c.r#type == "realization")
@@ -1363,17 +1376,21 @@ pub fn fan_out_thresholds(store: &Store, target: &str) -> (u64, u64) {
 // (a sub-entity the caps variant minted holds statements; a grouping holds a level).
 // Mirrors docs/compiler/concepts/levels.md#groupings.
 pub fn is_derived_grouping(store: &Store, id: &str) -> bool {
+    is_derived_grouping_with(store, &Indices::build(store), id)
+}
+
+fn is_derived_grouping_with(store: &Store, ix: &Indices, id: &str) -> bool {
     store.graph.entities.get(id).is_some_and(|e| {
         matches!(e.provenance, Some(Provenance::Derived { .. }))
             && e.mentions.is_empty()
-            && store.requirements_referencing(id).is_empty()
+            && ix.requirements_referencing(id).is_empty()
     })
 }
 
 // The level-shape check: a level of two or more without its structural view, a level
 // over the hard fan-out threshold, a derived grouping with fewer than two children.
 // Mirrors docs/compiler/compilation.md#checks.
-fn level_shape_checks(store: &Store) -> Vec<Finding> {
+fn level_shape_checks(store: &Store, ix: &Indices) -> Vec<Finding> {
     let mut f = Vec::new();
     for (target, children) in levels(store) {
         if children.len() >= 2 && level_view_of(store, &target).is_none() {
@@ -1405,7 +1422,7 @@ fn level_shape_checks(store: &Store) -> Vec<Finding> {
                 ),
             ));
         }
-        if children.len() < 2 && is_derived_grouping(store, &target) {
+        if children.len() < 2 && is_derived_grouping_with(store, ix, &target) {
             f.push(finding(
                 "level-shape",
                 &target,
@@ -1420,12 +1437,7 @@ fn level_shape_checks(store: &Store) -> Vec<Finding> {
     }
     // A grouping with no child at all is not a level and never reaches the loop above.
     for id in store.graph.entities.keys() {
-        let childless = !store
-            .graph
-            .entities
-            .values()
-            .any(|e| e.parent.as_deref() == Some(id));
-        if childless && is_derived_grouping(store, id) {
+        if !ix.has_children(id) && is_derived_grouping_with(store, ix, id) {
             f.push(finding(
                 "level-shape",
                 id,
@@ -2633,7 +2645,7 @@ pub fn finalize(
         .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.id));
     let mut findings = checks(s, proj);
     findings.extend(flips);
-    let placement = flow_placement(s);
+    let placement = flow_placement(s, &Indices::build(s));
     s.reconcile_check_diags(findings);
     // Flow placement feeds curate-view: one record per finding on the best-fit view.
     let generation = s.status.generation;
@@ -4108,7 +4120,7 @@ mod tests {
         let hits = rules_for(&f, "unplaced-behavior");
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].1, ["req:returns-1"]);
-        let placement = flow_placement(&s);
+        let placement = flow_placement(&s, &Indices::build(&s));
         let (_, best, _, facet) = &placement[0];
         assert_eq!(facet, "behavior");
         assert!(

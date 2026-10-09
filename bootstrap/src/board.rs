@@ -46,7 +46,7 @@ pub struct Counts {
 // The cone of a target: every node reachable through stored references, upward
 // (referents) and downward (referrers), never sideways; plus the sections that anchor
 // those nodes and the documents holding them. Mirrors docs/compiler/reconciler.md#cones.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Cone {
     pub nodes: BTreeSet<String>,
     pub sections: BTreeSet<String>,
@@ -167,8 +167,154 @@ fn referents(store: &Store, id: &str) -> Vec<String> {
     out
 }
 
-// One hop downward: what references the node.
-fn referrers(store: &Store, id: &str) -> Vec<String> {
+// The referrer index of the cone walk, built once per derivation from the stored
+// references and read for every node a downward walk visits: what one scan over the
+// entities, requirements, views, and sections finds for a node, keyed by the node.
+// Never stored. Mirrors docs/compiler/reconciler.md#cones and
+// docs/compiler/graph.md#derived-data.
+#[derive(Default)]
+pub struct Refs {
+    // Parent entity to its children.
+    children: BTreeMap<String, Vec<String>>,
+    // Upstream node to the entities whose derived provenance names it.
+    entity_from: BTreeMap<String, Vec<String>>,
+    // Upstream node to the entities with an attribute derived from it.
+    attribute_from: BTreeMap<String, Vec<String>>,
+    // Entity (redirects followed) to the requirements naming it in `entities`, an
+    // edge end, or the transition subject.
+    requirements_naming: BTreeMap<String, Vec<String>>,
+    // Upstream node to the requirements whose derived provenance names it.
+    requirement_from: BTreeMap<String, Vec<String>>,
+    // Section reference to the requirements anchored in it.
+    section_requirements: BTreeMap<String, Vec<String>>,
+    // Section reference to the entities mentioned in it.
+    section_entities: BTreeMap<String, Vec<String>>,
+    // Section reference to its child sections.
+    section_children: BTreeMap<String, Vec<String>>,
+    // Node (redirects followed) to the views listing it in `members`, `collapse`,
+    // or `excluded`.
+    view_listing: BTreeMap<String, Vec<String>>,
+    // Upstream node to the views whose derived provenance names it.
+    view_from: BTreeMap<String, Vec<String>>,
+}
+
+fn push_ref(map: &mut BTreeMap<String, Vec<String>>, key: &str, id: &str) {
+    map.entry(key.to_string()).or_default().push(id.to_string());
+}
+
+impl Refs {
+    pub fn build(store: &Store) -> Refs {
+        let mut refs = Refs::default();
+        for (cid, c) in &store.graph.entities {
+            if let Some(p) = c.parent.as_deref() {
+                push_ref(&mut refs.children, p, cid);
+            }
+            for f in from_of(&c.provenance) {
+                push_ref(&mut refs.entity_from, &f, cid);
+            }
+            for a in &c.attributes {
+                if let Provenance::Derived { from, .. } = &a.provenance {
+                    for f in from {
+                        push_ref(&mut refs.attribute_from, f, cid);
+                    }
+                }
+            }
+            for m in &c.mentions {
+                push_ref(
+                    &mut refs.section_entities,
+                    &format!("{}#{}", m.doc, m.section),
+                    cid,
+                );
+            }
+        }
+        for (rid, r) in &store.graph.requirements {
+            for e in &r.entities {
+                push_ref(&mut refs.requirements_naming, store.resolve_id(e), rid);
+            }
+            for e in &r.edges {
+                push_ref(&mut refs.requirements_naming, store.resolve_id(&e.a), rid);
+                push_ref(&mut refs.requirements_naming, store.resolve_id(&e.b), rid);
+            }
+            if let Some(t) = &r.transition {
+                push_ref(&mut refs.requirements_naming, store.resolve_id(&t.subject), rid);
+            }
+            for f in from_of(&r.provenance) {
+                push_ref(&mut refs.requirement_from, &f, rid);
+            }
+            if let Some(s) = &r.source {
+                push_ref(
+                    &mut refs.section_requirements,
+                    &format!("{}#{}", s.doc, s.section),
+                    rid,
+                );
+            }
+        }
+        for (vid, v) in &store.graph.views {
+            for m in v.members.iter().chain(v.collapse.iter()) {
+                push_ref(&mut refs.view_listing, store.resolve_id(m), vid);
+            }
+            for x in &v.excluded {
+                push_ref(&mut refs.view_listing, store.resolve_id(&x.id), vid);
+            }
+            for f in from_of(&v.provenance) {
+                push_ref(&mut refs.view_from, &f, vid);
+            }
+        }
+        for (doc, rec) in &store.docs {
+            for (r, s) in &rec.sections {
+                if let Some(p) = s.parent.as_deref() {
+                    push_ref(
+                        &mut refs.section_children,
+                        &format!("{}#{}", doc, p),
+                        &format!("{}#{}", doc, r),
+                    );
+                }
+            }
+        }
+        refs
+    }
+
+    fn get<'a>(map: &'a BTreeMap<String, Vec<String>>, key: &str) -> &'a [String] {
+        map.get(key).map(Vec::as_slice).unwrap_or(&[])
+    }
+}
+
+// One hop downward: what references the node, read off the index.
+fn referrers(store: &Store, refs: &Refs, id: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut take = |map: &BTreeMap<String, Vec<String>>| out.extend_from_slice(Refs::get(map, id));
+    if store.graph.entities.contains_key(id) {
+        take(&refs.children);
+        take(&refs.entity_from);
+        take(&refs.attribute_from);
+        take(&refs.requirements_naming);
+        take(&refs.requirement_from);
+    } else if store.graph.requirements.contains_key(id) {
+        take(&refs.entity_from);
+        take(&refs.requirement_from);
+    } else if id.contains('#') {
+        take(&refs.section_requirements);
+        take(&refs.section_entities);
+        take(&refs.section_children);
+        return out;
+    } else if let Some(rec) = store.docs.get(id) {
+        out.extend(rec.sections.keys().map(|r| format!("{}#{}", id, r)));
+        return out;
+    }
+    if store.graph.entities.contains_key(id)
+        || store.graph.requirements.contains_key(id)
+        || store.graph.views.contains_key(id)
+    {
+        take(&refs.view_listing);
+        take(&refs.view_from);
+    }
+    out
+}
+
+// One hop downward by one scan over the store: the reference the index is checked
+// against.
+#[cfg(test)]
+fn referrers_scan(store: &Store, id: &str) -> Vec<String> {
     let mut out = Vec::new();
     let names = |from: &Option<Provenance>| from_of(from).iter().any(|f| f == id);
     if store.graph.entities.contains_key(id) {
@@ -254,6 +400,12 @@ fn referrers(store: &Store, id: &str) -> Vec<String> {
 }
 
 pub fn cone(store: &Store, target: &str) -> Cone {
+    cone_with(store, &Refs::build(store), target)
+}
+
+// The cone over a prebuilt referrer index: one index serves every GC goal of a
+// derivation. Mirrors docs/compiler/reconciler.md#cones.
+pub fn cone_with(store: &Store, refs: &Refs, target: &str) -> Cone {
     let mut nodes: BTreeSet<String> = BTreeSet::new();
     // The scope root's cone is the downward walk from every parentless entity of the
     // scope: the whole scope, so the top level is regrouped only once everything in
@@ -278,7 +430,7 @@ pub fn cone(store: &Store, target: &str) -> Cone {
         }
         let mut frontier = vec![seed.clone()];
         while let Some(id) = frontier.pop() {
-            for r in referrers(store, &id) {
+            for r in referrers(store, refs, &id) {
                 if nodes.insert(r.clone()) {
                     frontier.push(r);
                 }
@@ -523,28 +675,6 @@ pub struct Board {
     pub waiting: BTreeMap<String, goals::WaitingPair>,
 }
 
-// The level a view belongs to: a lifted flow view's level, or the target whose
-// structural level view it is (an entity, or `scope:<scope>` for a top level).
-// None for a curated, object, or state view.
-fn view_level_of(store: &Store, view_id: &str) -> Option<String> {
-    if let Some(l) = crate::derive::flow_view_level(store, view_id) {
-        return Some(l);
-    }
-    let mut targets: Vec<String> = store.graph.entities.keys().cloned().collect();
-    let mut scopes: Vec<String> = store
-        .graph
-        .entities
-        .values()
-        .map(|e| format!("{}{}", SCOPE_TARGET_PREFIX, e.scope))
-        .collect();
-    scopes.sort();
-    scopes.dedup();
-    targets.extend(scopes);
-    targets
-        .into_iter()
-        .find(|t| crate::derive::level_view_id(store, t).as_deref() == Some(view_id))
-}
-
 impl Board {
     // Derive the board from a store synced against the documents. Every process
     // computes the same board from the same disk state.
@@ -713,9 +843,12 @@ impl Board {
             .filter(|c| c.kind == crate::store::CHANGE_ALIGNMENT_PENDING)
             .map(|c| c.subject.clone())
             .collect();
+        // The indices of this derivation: the referrer index every cone reads and the
+        // level of every view. Mirrors docs/compiler/graph.md#derived-data.
+        let refs = Refs::build(store);
         let mut cone_blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for g in goals.iter().filter(|g| g.class == "gc") {
-            let cone = cone(store, &g.target);
+            let cone = cone_with(store, &refs, &g.target);
             let blockers: Vec<String> = goals
                 .iter()
                 .filter(|o| o.class == "compile" && is_open(o) && cone.holds_target(&o.target))
@@ -724,9 +857,13 @@ impl Board {
             cone_blockers.insert(g.id.clone(), blockers);
         }
         let mut view_levels: BTreeMap<String, String> = BTreeMap::new();
-        for g in goals.iter().filter(|g| g.kind == "split-view") {
-            if let Some(l) = view_level_of(store, &g.target) {
-                view_levels.insert(g.target.clone(), l);
+        if goals.iter().any(|g| g.kind == "split-view") {
+            let ix = crate::derive::Indices::build(store);
+            let levels = crate::derive::view_levels(store, &ix);
+            for g in goals.iter().filter(|g| g.kind == "split-view") {
+                if let Some(l) = levels.get(&g.target) {
+                    view_levels.insert(g.target.clone(), l.clone());
+                }
             }
         }
 
@@ -3213,5 +3350,67 @@ pub(crate) mod tests {
             text
         );
         assert!(b.explain(&s, "ent:nope").is_none());
+    }
+
+    // The referrer index answers every node as the scan over the store does, so the
+    // cone over the index is the cone over the scan.
+    // Mirrors docs/compiler/graph.md#derived-data and docs/compiler/reconciler.md#cones.
+    #[test]
+    fn the_referrer_index_matches_the_scan() {
+        let mut synthetic = crate::derive::tests::synthetic_store(300, 700);
+        let mut batch = RecordBatch::new(1);
+        crate::derive::recompute(&mut synthetic, "g1", &mut batch);
+        for s in [settled_store(), synthetic] {
+            let refs = Refs::build(&s);
+            let mut ids: Vec<String> = s.graph.entities.keys().cloned().collect();
+            ids.extend(s.graph.requirements.keys().cloned());
+            ids.extend(s.graph.views.keys().cloned());
+            for (doc, rec) in &s.docs {
+                ids.push(doc.clone());
+                ids.extend(rec.sections.keys().map(|r| format!("{}#{}", doc, r)));
+            }
+            ids.push("ent:nope".into());
+            ids.push("nope.md#/nope".into());
+            for id in &ids {
+                let indexed: BTreeSet<String> = referrers(&s, &refs, id).into_iter().collect();
+                let scanned: BTreeSet<String> = referrers_scan(&s, id).into_iter().collect();
+                assert_eq!(indexed, scanned, "{}", id);
+            }
+            for id in &ids {
+                assert_eq!(cone_with(&s, &refs, id), cone(&s, id), "{}", id);
+            }
+        }
+    }
+
+    // A store of two thousand entities and five thousand requirements recomputes its
+    // derived data, derives its board, and runs the checks in bounded time: the
+    // indices keep each linear in the graph where a scan per node would not be.
+    // Ignored in the normal run (the ledger goals over five thousand requirements
+    // alone take seconds in debug); `cargo test -- --ignored a_large_store` runs it.
+    // Mirrors docs/compiler/graph.md#derived-data.
+    #[test]
+    #[ignore]
+    fn a_large_store_derives_and_checks_in_bounded_time() {
+        let mut s = crate::derive::tests::synthetic_store(2000, 5000);
+        let mut batch = RecordBatch::new(1);
+        let started = std::time::Instant::now();
+        crate::derive::recompute(&mut s, "g1", &mut batch);
+        for r in batch.records() {
+            s.status.record_change(r.clone());
+        }
+        let recomputed = started.elapsed();
+        let b = derive(&s);
+        let derived = started.elapsed() - recomputed;
+        let f = crate::reconcile::checks(&s, &project_for(&s));
+        let checked = started.elapsed() - recomputed - derived;
+        assert!(b.goals.iter().any(|g| g.class == "gc"), "a GC goal walks a cone");
+        assert!(!f.is_empty());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "recompute {:?}, derive {:?}, checks {:?}",
+            recomputed,
+            derived,
+            checked
+        );
     }
 }

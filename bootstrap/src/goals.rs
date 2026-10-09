@@ -3470,6 +3470,7 @@ pub const LOOKALIKE_TOKEN_WEIGHT: f64 = 0.75;
 pub const LOOKALIKE_DOCUMENT_WEIGHT: f64 = 0.25;
 pub const LOOKALIKE_THRESHOLD: f64 = 0.5;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Lookalike {
     pub a: String,
     pub b: String,
@@ -3481,10 +3482,9 @@ pub struct Lookalike {
     pub docs_b: BTreeSet<String>,
 }
 
-// The lookalike score over every candidate pair: two entities of one scope, neither
-// an ancestor of the other, no structural contribution between them, spanning at
-// least two mention documents. Mirrors docs/compiler/goals/dedupe-candidates.md.
-pub fn lookalike_scores(store: &Store) -> Vec<Lookalike> {
+// The pairs the structural contributions tie: a composition, aggregation,
+// generalization, or instantiation between two entities, both ways round.
+fn tied_pairs(store: &Store) -> BTreeSet<(String, String)> {
     let mut tied: BTreeSet<(String, String)> = BTreeSet::new();
     for rel in store.graph.relationships.values() {
         for c in &rel.contributions {
@@ -3497,48 +3497,123 @@ pub fn lookalike_scores(store: &Store) -> Vec<Lookalike> {
             }
         }
     }
+    tied
+}
+
+// One candidate pair's score, None when the pair fails a candidate rule or the
+// threshold. The pair rules and the formula of
+// docs/compiler/goals/dedupe-candidates.md#the-lookalike-score.
+#[allow(clippy::too_many_arguments)]
+fn lookalike_of(
+    store: &Store,
+    tied: &BTreeSet<(String, String)>,
+    a: &str,
+    ta: &BTreeSet<String>,
+    docs_a: &BTreeSet<String>,
+    b: &str,
+    tb: &BTreeSet<String>,
+    docs_b: &BTreeSet<String>,
+) -> Option<Lookalike> {
+    let (ea, eb) = (&store.graph.entities[a], &store.graph.entities[b]);
+    if ea.scope != eb.scope
+        || store.is_ancestor(a, b)
+        || store.is_ancestor(b, a)
+        || tied.contains(&(a.to_string(), b.to_string()))
+    {
+        return None;
+    }
+    if docs_a.union(docs_b).count() < 2 {
+        return None;
+    }
+    if ta.is_empty() || tb.is_empty() {
+        return None;
+    }
+    let shared: Vec<String> = ta.intersection(tb).cloned().collect();
+    if shared.is_empty() {
+        return None;
+    }
+    let tokens = 2.0 * shared.len() as f64 / (ta.len() + tb.len()) as f64;
+    let union = docs_a.union(docs_b).count();
+    let documents = docs_a.intersection(docs_b).count() as f64 / union as f64;
+    let score = LOOKALIKE_TOKEN_WEIGHT * tokens + LOOKALIKE_DOCUMENT_WEIGHT * documents;
+    if score + 1e-9 < LOOKALIKE_THRESHOLD {
+        return None;
+    }
+    Some(Lookalike {
+        a: a.to_string(),
+        b: b.to_string(),
+        score: (score * 100.0).round() / 100.0,
+        tokens: (tokens * 100.0).round() / 100.0,
+        documents: (documents * 100.0).round() / 100.0,
+        shared,
+        docs_a: docs_a.clone(),
+        docs_b: docs_b.clone(),
+    })
+}
+
+// The lookalike score over every candidate pair: two entities of one scope, neither
+// an ancestor of the other, no structural contribution between them, spanning at
+// least two mention documents. The name tokens and mention documents of every entity
+// are computed once, and an inverted token index names the pairs that share a token:
+// a pair sharing none scores nothing, so only those pairs are scored, in id order.
+// Mirrors docs/compiler/goals/dedupe-candidates.md and
+// docs/compiler/graph.md#derived-data.
+pub fn lookalike_scores(store: &Store) -> Vec<Lookalike> {
+    let tied = tied_pairs(store);
+    let ids: Vec<&String> = store.graph.entities.keys().collect();
+    let tokens: Vec<BTreeSet<String>> = ids
+        .iter()
+        .map(|id| name_tokens(&store.graph.entities[*id]))
+        .collect();
+    let docs: Vec<BTreeSet<String>> = ids
+        .iter()
+        .map(|id| {
+            store.graph.entities[*id]
+                .mentions
+                .iter()
+                .map(|m| m.doc.clone())
+                .collect()
+        })
+        .collect();
+    let mut by_token: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, ts) in tokens.iter().enumerate() {
+        for t in ts {
+            by_token.entry(t.as_str()).or_default().push(i);
+        }
+    }
+    let mut pairs: BTreeSet<(usize, usize)> = BTreeSet::new();
+    for holders in by_token.values() {
+        for (k, i) in holders.iter().enumerate() {
+            for j in &holders[k + 1..] {
+                pairs.insert((*i, *j));
+            }
+        }
+    }
+    pairs
+        .into_iter()
+        .filter_map(|(i, j)| {
+            lookalike_of(
+                store, &tied, ids[i], &tokens[i], &docs[i], ids[j], &tokens[j], &docs[j],
+            )
+        })
+        .collect()
+}
+
+// The lookalike scores by the plain pairwise scan over every entity pair: the
+// reference the token index is checked against.
+#[cfg(test)]
+pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
+    let tied = tied_pairs(store);
     let ids: Vec<&String> = store.graph.entities.keys().collect();
     let mut out = Vec::new();
     for i in 0..ids.len() {
         for j in i + 1..ids.len() {
             let (a, b) = (ids[i], ids[j]);
             let (ea, eb) = (&store.graph.entities[a], &store.graph.entities[b]);
-            if ea.scope != eb.scope
-                || store.is_ancestor(a, b)
-                || store.is_ancestor(b, a)
-                || tied.contains(&(a.clone(), b.clone()))
-            {
-                continue;
-            }
             let docs_a: BTreeSet<String> = ea.mentions.iter().map(|m| m.doc.clone()).collect();
             let docs_b: BTreeSet<String> = eb.mentions.iter().map(|m| m.doc.clone()).collect();
-            if docs_a.union(&docs_b).count() < 2 {
-                continue;
-            }
             let (ta, tb) = (name_tokens(ea), name_tokens(eb));
-            if ta.is_empty() || tb.is_empty() {
-                continue;
-            }
-            let shared: Vec<String> = ta.intersection(&tb).cloned().collect();
-            if shared.is_empty() {
-                continue;
-            }
-            let tokens = 2.0 * shared.len() as f64 / (ta.len() + tb.len()) as f64;
-            let union = docs_a.union(&docs_b).count();
-            let documents = docs_a.intersection(&docs_b).count() as f64 / union as f64;
-            let score = LOOKALIKE_TOKEN_WEIGHT * tokens + LOOKALIKE_DOCUMENT_WEIGHT * documents;
-            if score + 1e-9 >= LOOKALIKE_THRESHOLD {
-                out.push(Lookalike {
-                    a: a.clone(),
-                    b: b.clone(),
-                    score: (score * 100.0).round() / 100.0,
-                    tokens: (tokens * 100.0).round() / 100.0,
-                    documents: (documents * 100.0).round() / 100.0,
-                    shared,
-                    docs_a,
-                    docs_b,
-                });
-            }
+            out.extend(lookalike_of(store, &tied, a, &ta, &docs_a, b, &tb, &docs_b));
         }
     }
     out
@@ -3996,12 +4071,24 @@ fn threshold_change(crossed: &[Crossed]) -> Value {
     })
 }
 
-fn descendants(store: &Store, id: &str) -> Vec<String> {
+// Parent id to its direct children, by id: one scan for every descendant walk of a
+// derivation. Mirrors docs/compiler/graph.md#derived-data.
+fn children_index(store: &Store) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (cid, c) in &store.graph.entities {
+        if let Some(p) = c.parent.as_ref() {
+            out.entry(p.clone()).or_default().push(cid.clone());
+        }
+    }
+    out
+}
+
+fn descendants(children: &BTreeMap<String, Vec<String>>, id: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut frontier = vec![id.to_string()];
     while let Some(p) = frontier.pop() {
-        for (cid, c) in &store.graph.entities {
-            if c.parent.as_deref() == Some(p.as_str()) && !out.contains(cid) {
+        for cid in children.get(&p).into_iter().flatten() {
+            if !out.contains(cid) {
                 out.push(cid.clone());
                 frontier.push(cid.clone());
             }
@@ -4028,6 +4115,7 @@ impl GoalKind for SplitView {
             }
         }
         let mut out = Vec::new();
+        let children = children_index(store);
         for (vid, recs) in by_view {
             let v = &store.graph.views[&vid];
             let crossed = crossings_for(&recs);
@@ -4068,7 +4156,7 @@ impl GoalKind for SplitView {
                     .members
                     .iter()
                     .filter(|m| !v.collapse.contains(m))
-                    .map(|m| (descendants(store, m).len(), m.clone()))
+                    .map(|m| (descendants(&children, m).len(), m.clone()))
                     .filter(|(n, _)| *n > 0)
                     .collect();
                 subtree.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -4461,10 +4549,11 @@ pub struct Candidate {
 // Every descendant of the level's members lifted to its member, the members to
 // themselves.
 fn lift_map(store: &Store, members: &[String]) -> BTreeMap<String, String> {
+    let children = children_index(store);
     let mut lift = BTreeMap::new();
     for m in members {
         lift.insert(m.clone(), m.clone());
-        for d in descendants(store, m) {
+        for d in descendants(&children, m) {
             lift.insert(d, m.clone());
         }
     }
@@ -6690,5 +6779,36 @@ pub(crate) mod tests {
         assert_eq!(revised.len(), 1);
         assert_eq!(revised[0].generation, 7);
         assert!(revised[0].judged().is_empty());
+    }
+
+    // The token index names every pair the pairwise scan scores, in the scan's order,
+    // with the scan's scores. Mirrors docs/compiler/graph.md#derived-data.
+    #[test]
+    fn the_lookalike_token_index_matches_the_pairwise_scan() {
+        let mut synthetic = crate::derive::tests::synthetic_store(300, 700);
+        let mut batch = store::RecordBatch::new(1);
+        crate::derive::recompute(&mut synthetic, "g1", &mut batch);
+        let mut s = Store::default();
+        let ent = |name: &str, docs: &[&str]| Entity {
+            name: name.into(),
+            mentions: docs
+                .iter()
+                .map(|d| SourceRef {
+                    doc: d.to_string(),
+                    section: "/x".into(),
+                    quote: name.into(),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:backend".into(), ent("backend", &["api.md"]));
+        s.graph.entities.insert("ent:backend-system".into(), ent("backend system", &["deploy.md"]));
+        s.graph.entities.insert("ent:backend-host".into(), ent("backend host", &["api.md", "deploy.md"]));
+        s.graph.entities.insert("ent:order".into(), ent("Order", &["api.md"]));
+        s.graph.entities.insert("ent:reorder-point".into(), ent("Reorder point", &["deploy.md"]));
+        for s in [crate::board::tests::settled_store(), synthetic, s] {
+            let indexed = lookalike_scores(&s);
+            assert_eq!(indexed, lookalike_scores_scan(&s));
+        }
     }
 }

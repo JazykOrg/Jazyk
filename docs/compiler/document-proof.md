@@ -8,6 +8,11 @@ reader through the existing parsing and alignment pipeline. A zero-session build
 proves parsing, dirtiness, and deterministic diagnostics. It does not prove model
 extraction or convergence.
 
+`jazyk document-read FILE` prints the native projection as JSON in this build.
+`JAZYK_PROOF_PDFIUM` names the native PDFium library. Packaging or statically linking
+that library is separate release work. The proof does not require an installed
+office suite, JavaScript runtime, or .NET runtime for reading or compilation.
+
 ## Source and projection
 
 - Original DOCX and PDF files are authoritative. No editable Markdown copy is created.
@@ -21,6 +26,10 @@ extraction or convergence.
   does not advertise full Word feature coverage or production PDF interpretation.
 - Reopening saved bytes recomputes the projection. Quote matching locates diagnostics.
   An ambiguous or stale quote is unavailable rather than attached to arbitrary text.
+- Compile dirtiness and release gates hash the reader's text projection. A DOCX-only
+  set must be selected for compilation without needing a companion Markdown file.
+  The editor's byte revision detects formatting-only changes and save conflicts.
+- DOCX and PDF paths become supported document-link targets in this build.
 
 ## Evaluation surface
 
@@ -56,3 +65,33 @@ findings are view decorations and are not saved as Word comments or PDF annotati
 - Report results separately for deterministic checks, model sessions, save-back,
   layout fidelity, and IDE integration. A browser proof does not claim a shipped
   VS Code custom editor.
+
+## Recorded result
+
+The macOS arm64 proof passed native extraction and deterministic compilation for
+the authored fixtures. Both browser editors changed `missing.md` to `contract.md`,
+saved the original DOCX, and preserved the fixture's Unicode and table-cell text.
+Native reading and a zero-session compile observed the edits with the browser
+closed. A DOCX-only set is dirty before its first compile.
+
+The LSP publication test locates the real `broken-link` warning in the DOCX text
+projection. The fixture contains literal Markdown link syntax inside Word and PDF
+text. This does not prove native Word hyperlink or PDF link-annotation extraction.
+
+PDF warnings aligned at 100% and 150% zoom. Repeated native PDF reads passed.
+A page without text failed with an OCR-required message. DOCX stale saves and
+malformed replacements failed without changing the file. PDF writes failed.
+
+One model session reached `reconcile-section` for a DOCX-only project. The configured
+LocalRouter endpoint timed out. Model extraction and convergence are unverified.
+
+The proof uses `docx-rs` 0.4.22 and `pdfium-render` 0.9.4. The tested native PDFium
+library is 157.0.8086.0. Browser versions and reproduction steps live in the private
+editor repository at `web/proofs/documents/README.md`.
+
+Full Word layout fidelity, complex PDF reading order, OCR, binary ratification
+edits, arbitrary uploads, PDFium distribution, and IDE custom editors remain
+outside this proof. The loopback example accepts only its named fixtures. Its
+revision check serializes saves through that process, not concurrent external
+Word saves. Production file watching and external-write coordination need a
+separate design.

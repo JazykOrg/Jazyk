@@ -34,6 +34,8 @@ pub mod conversation;
 pub mod hosted;
 pub mod mcp;
 pub mod md;
+#[cfg(all(feature = "document-proof", not(target_arch = "wasm32")))]
+pub mod documents;
 pub mod model;
 pub mod project;
 pub mod document_sets;

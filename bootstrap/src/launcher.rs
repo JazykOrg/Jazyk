@@ -553,6 +553,16 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
 pub fn run() {
     load_dotenv();
     let args: Vec<String> = std::env::args().collect();
+    #[cfg(feature = "document-proof")]
+    if args.get(1).is_some_and(|s| s == "document-read") {
+        let result = args.get(2).ok_or_else(|| "usage: jazyk document-read FILE".to_string())
+            .and_then(|p| crate::documents::read(std::path::Path::new(p)));
+        match result {
+            Ok(p) => println!("{}", serde_json::to_string_pretty(&p).unwrap()),
+            Err(e) => { eprintln!("jazyk: {e}"); std::process::exit(1); }
+        }
+        return;
+    }
     let mut opts = cli::Options::default();
     let mut positional: Vec<String> = Vec::new();
     let mut cmd = String::new();

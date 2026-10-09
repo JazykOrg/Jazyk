@@ -547,8 +547,11 @@ The event kinds:
   reader says why a batch did not land.
 - `goal`: a goal changed state. `opened` carries the `cause` (generation, mutation,
   `via`); `resolved` carries the `justification`; `failed` the `reason`; `parked` the
-  session that left it. Resolved and failed events fire when the claim is accepted at
-  staging; opened events fire at commit, one per entry in `opened_goals`.
+  session that left it, or the reopen cycle that parked it; `reopened` the cycle count
+  of a goal re-derived with the same `change` after its resolution
+  ([parked and failed](./reconciler.md#parked-and-failed)). Resolved and failed events
+  fire when the claim is accepted at staging; opened events fire at commit, one per
+  entry in `opened_goals`.
 - `gcBurst`: a GC burst starts on a settled cone. Carries the kind, the target, and the
   count against the limit (`gc burst: abstract-entity ent:order (54 > 50)` on the
   terminal).

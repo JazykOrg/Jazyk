@@ -129,6 +129,11 @@ pub const BUILD_SESSION_FLOOR: usize = 8;
 // Consecutive zero-token session failures that stop a build early: an endpoint
 // answering only errors must not grind the session cap into futile attempts.
 pub const ENDPOINT_BREAKER: usize = 5;
+// The times one goal may be resolved and re-opened with the same change in one build
+// before it parks: a record the commit recomputes while its condition holds would
+// otherwise re-open the identical goal after every session until the build cap.
+// Mirrors docs/compiler/reconciler.md#parked-and-failed.
+pub const REOPEN_CYCLES: u32 = 2;
 
 // Document quality thresholds.
 pub const MAX_SECTION_CHARS: usize = 6_000;

@@ -52,7 +52,10 @@ makes zero LLM calls.
   runs ([garbage collection](./graph.md#garbage-collection)), and every view whose
   `.puml` changed renders again ([diagrams](./diagrams.md#rendering)). The board
   re-derives; the live trace and the [GUI board](../frontends/gui.md#board) show counts
-  ticking down.
+  ticking down. A goal the board re-derives with the same `change` it was just resolved
+  under is a cycle (the commit recomputed the record behind it); the second cycle in one
+  build parks the goal ([parked and failed](./reconciler.md#parked-and-failed)), so one
+  goal never spends the build cap.
 - The tail. When no goal is ready or a budget is spent, the [checks](#checks) run, the
   [requirements documents](../consumers/docsgen.md) regenerate, and the
   [verdict](#convergence) lands in `status.yaml`. The tail needs no model.

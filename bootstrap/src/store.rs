@@ -322,6 +322,18 @@ pub fn scope_root_target(scope: &str) -> String {
     format!("{}{}", SCOPE_ROOT_PREFIX, scope)
 }
 
+// The pair scorer's inputs over one graph state, computed once per pass: the hub,
+// each entity's statement and token counts, and the requirements naming each entity
+// (resolved), so a requirement's candidates are the union over its entities rather
+// than a walk of every requirement. Mirrors docs/compiler/reconciler.md#pairs.
+pub struct PairScoring {
+    hub: Option<String>,
+    counts: BTreeMap<String, (usize, BTreeMap<String, usize>)>,
+    by_entity: BTreeMap<String, Vec<String>>,
+    // Each requirement's content tokens, stemmed once.
+    tokens: BTreeMap<String, BTreeSet<String>>,
+}
+
 // One entity's parent move as the journal records it. `None` is the scope root.
 // Mirrors docs/compiler/graph.md#journal.
 #[derive(Clone, Debug, PartialEq)]
@@ -829,7 +841,7 @@ fn provenance_is_pending(p: &Provenance) -> bool {
 // The parent moves the journal entries record, oldest first. A mutation carrying both
 // `parent` and `prior.parent` (null for parentless) moved its `id`; a `dissolve_entity`
 // moved each of its `children` to its `parent`. Mirrors docs/compiler/graph.md#journal.
-fn parent_moves_in(entries: &[JournalEntry]) -> Vec<ParentMove> {
+pub fn parent_moves_in(entries: &[JournalEntry]) -> Vec<ParentMove> {
     let id_or_none = |v: &serde_json::Value| v.as_str().map(String::from);
     let mut out = Vec::new();
     for entry in entries {
@@ -984,14 +996,15 @@ impl Store {
                 .map(|s| s.generation)
                 .unwrap_or(0)
         };
-        let mut store = Self::load_once(out);
-        for _ in 0..4 {
+        let mut attempts = 0;
+        let store = loop {
             let before = counter();
-            store = Self::load_once(out);
-            if counter() == before {
-                break;
+            let store = Self::load_once(out);
+            attempts += 1;
+            if counter() == before || attempts == 4 {
+                break store;
             }
-        }
+        };
         for e in &store.load_errors {
             eprintln!("[jazyk] error: {} did not load: {}", out.display(), e);
         }
@@ -1311,11 +1324,11 @@ impl Store {
     }
 
     // The latest journal mutation that decreed over the given fact and recorded the
-    // prior value it replaced. Mirrors docs/compiler/graph.md#journal: a decree
-    // entry carries, on a mutation written over a quoted value, the prior value and
-    // source.
+    // prior value it replaced. Reads newest first and stops at the first hit.
+    // Mirrors docs/compiler/graph.md#journal: a decree entry carries, on a mutation
+    // written over a quoted value, the prior value and source.
     fn decree_prior(&self, id: &str, op: &str) -> Option<serde_json::Value> {
-        for entry in self.journal_entries().iter().rev() {
+        for entry in self.journal_newest_first() {
             for mv in entry.mutations.iter().rev() {
                 // Every parent move carries a prior; only a decree's prior restores.
                 if mv["op"] == op
@@ -1330,8 +1343,8 @@ impl Store {
         None
     }
 
-    // Every journal entry on disk, oldest first.
-    fn journal_entries(&self) -> Vec<JournalEntry> {
+    // The generations the journal holds on disk, newest first.
+    fn journal_generations(&self) -> Vec<u64> {
         let dir = self.out.join("journal");
         let Ok(read) = crate::vfs::read_dir(&dir) else {
             return Vec::new();
@@ -1346,10 +1359,26 @@ impl Store {
                     .ok()
             })
             .collect();
-        gens.sort_unstable();
+        gens.sort_unstable_by(|a, b| b.cmp(a));
+        gens
+    }
+
+    // Every journal entry on disk, oldest first.
+    fn journal_entries(&self) -> Vec<JournalEntry> {
+        let mut gens = self.journal_generations();
+        gens.reverse();
         gens.into_iter()
-            .filter_map(|g| yaml_to::<JournalEntry>(&self.journal_path(g)))
+            .filter_map(|g| crate::goals::read_journal_entry(&self.journal_path(g), g))
             .collect()
+    }
+
+    // The journal entries newest first, each parsed when the scan reaches it, so a
+    // lookup that stops at its first hit parses no more than it needs.
+    // Mirrors docs/compiler/graph.md#journal.
+    fn journal_newest_first(&self) -> impl Iterator<Item = JournalEntry> + '_ {
+        self.journal_generations()
+            .into_iter()
+            .filter_map(move |g| crate::goals::read_journal_entry(&self.journal_path(g), g))
     }
 
     // Every journaled parent move, oldest first: an `update_entity` or `retract_decree`
@@ -1358,6 +1387,55 @@ impl Store {
     // Mirrors docs/compiler/graph.md#journal.
     pub fn journaled_parent_moves(&self) -> Vec<ParentMove> {
         parent_moves_in(&self.journal_entries())
+    }
+
+    // The last journaled parent move of each child in `moves`, and the name and scope
+    // the journal created for every parent those moves and the last ones name that
+    // the graph no longer holds. The scan reads newest first and stops once every
+    // child has its last move and every dead parent its create (an id is minted once,
+    // so the first create found is the only one); a child never moved before and a
+    // parent the journal never created run the scan to its end.
+    // Mirrors docs/compiler/graph.md#journal.
+    pub fn parent_history(
+        &self,
+        moves: &[(String, Option<String>, Option<String>, usize)],
+    ) -> (BTreeMap<String, ParentMove>, BTreeMap<String, (String, String)>) {
+        let mut pending: BTreeSet<String> = moves.iter().map(|(c, _, _, _)| c.clone()).collect();
+        let mut last: BTreeMap<String, ParentMove> = BTreeMap::new();
+        let mut names: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut dead: BTreeSet<String> = BTreeSet::new();
+        let want_name = |p: &Option<String>, dead: &mut BTreeSet<String>| {
+            if let Some(p) = p {
+                if !self.graph.entities.contains_key(p) {
+                    dead.insert(p.clone());
+                }
+            }
+        };
+        for (_, from, to, _) in moves {
+            want_name(from, &mut dead);
+            want_name(to, &mut dead);
+        }
+        for entry in self.journal_newest_first() {
+            if pending.is_empty() && dead.is_empty() {
+                break;
+            }
+            let one = std::slice::from_ref(&entry);
+            // The last move within the entry is the latest, so the reversed walk's
+            // first hit per child stands.
+            for mv in parent_moves_in(one).into_iter().rev() {
+                if pending.remove(&mv.child) {
+                    want_name(&mv.from, &mut dead);
+                    want_name(&mv.to, &mut dead);
+                    last.insert(mv.child.clone(), mv);
+                }
+            }
+            for (id, name) in created_names_in(one) {
+                if dead.remove(&id) {
+                    names.insert(id, name);
+                }
+            }
+        }
+        (last, names)
     }
 
     // The natural key a parent matches on across generations: the live entity's name
@@ -1398,16 +1476,14 @@ impl Store {
         if moves.is_empty() {
             return;
         }
-        let entries = self.journal_entries();
-        let names = created_names_in(&entries);
-        let history = parent_moves_in(&entries);
+        let (history, names) = self.parent_history(moves);
         for (child, from, to, m) in moves {
             let Some(e) = self.graph.entities.get(child) else {
                 continue;
             };
             let scope = e.scope.clone();
             let key = |p: Option<&str>| self.parent_key(p, &scope, &names);
-            let Some(last) = history.iter().rev().find(|h| h.child == *child) else {
+            let Some(last) = history.get(child) else {
                 continue;
             };
             if key(last.from.as_deref()) != key(to.as_deref())
@@ -1820,11 +1896,16 @@ impl Store {
             .collect()
     }
 
-    // Per entity (resolved id): how many requirements name it, and how many of those
-    // carry each content token. The pair scorer's boilerplate source.
-    fn entity_token_counts(&self) -> BTreeMap<String, (usize, BTreeMap<String, usize>)> {
+    // The scorer's inputs over the whole graph, one walk of the requirements: the
+    // hub; per entity (resolved id) how many requirements name it and how many of
+    // those carry each content token (the boilerplate source) and which they are;
+    // and each requirement's content tokens. Computed once per pass and shared by
+    // every requirement the pass scores. Mirrors docs/compiler/reconciler.md#pairs.
+    pub fn pair_scoring(&self) -> PairScoring {
         let mut counts: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
-        for r in self.graph.requirements.values() {
+        let mut by_entity: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut tokens: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (rid, r) in &self.graph.requirements {
             let toks = self.content_tokens(&r.statement, &r.entities);
             let ids: BTreeSet<&str> = r.entities.iter().map(|e| self.resolve_id(e)).collect();
             for id in ids {
@@ -1833,9 +1914,16 @@ impl Store {
                 for t in &toks {
                     *e.1.entry(t.clone()).or_default() += 1;
                 }
+                by_entity.entry(id.to_string()).or_default().push(rid.clone());
             }
+            tokens.insert(rid.clone(), toks);
         }
-        counts
+        PairScoring {
+            hub: self.hub_entity(),
+            counts,
+            by_entity,
+            tokens,
+        }
     }
 
     // An entity's boilerplate: the content tokens carried by at least four of the
@@ -1861,6 +1949,16 @@ impl Store {
     // The boilerplate of the entities two requirements share, as content stems
     // (`content_stem`), for a hint that drops the same words the scorer drops.
     pub fn pair_boilerplate(&self, a: &Requirement, b: &Requirement) -> BTreeSet<String> {
+        self.pair_boilerplate_with(a, b, &self.pair_scoring())
+    }
+
+    // `pair_boilerplate` over scorer inputs computed once for a pass.
+    pub fn pair_boilerplate_with(
+        &self,
+        a: &Requirement,
+        b: &Requirement,
+        scoring: &PairScoring,
+    ) -> BTreeSet<String> {
         let bs: BTreeSet<&str> = b.entities.iter().map(|e| self.resolve_id(e)).collect();
         let shared: Vec<&str> = a
             .entities
@@ -1871,7 +1969,7 @@ impl Store {
         if shared.is_empty() {
             return BTreeSet::new();
         }
-        Self::boilerplate_of(&self.entity_token_counts(), shared)
+        Self::boilerplate_of(&scoring.counts, shared)
     }
 
     // The graph's hub: the entity co-referenced with the most other entities across
@@ -1926,14 +2024,33 @@ impl Store {
     // read the same from either side), so a pair scores the same whichever side
     // derived it. Mirrors docs/compiler/reconciler.md#pairs.
     pub fn requirement_neighbors_scored(&self, rid: &str) -> Vec<(usize, String)> {
+        self.requirement_neighbors_scored_with(rid, &self.pair_scoring())
+    }
+
+    // `requirement_neighbors_scored` over scorer inputs computed once for a pass:
+    // the sweep and the goal derivation score every changed requirement against
+    // the same graph, so the hub and the token counts are computed once, not per
+    // record. Mirrors docs/compiler/reconciler.md#pairs.
+    pub fn requirement_neighbors_scored_with(
+        &self,
+        rid: &str,
+        scoring: &PairScoring,
+    ) -> Vec<(usize, String)> {
         let Some(req) = self.graph.requirements.get(rid) else {
             return Vec::new();
         };
         let subject_entities: BTreeSet<&str> =
             req.entities.iter().map(|e| self.resolve_id(e)).collect();
-        let toks = self.content_tokens(&req.statement, &req.entities);
-        let hub = self.hub_entity();
-        let counts = self.entity_token_counts();
+        let PairScoring {
+            hub,
+            counts,
+            by_entity,
+            tokens,
+        } = scoring;
+        let toks: BTreeSet<String> = tokens
+            .get(rid)
+            .cloned()
+            .unwrap_or_else(|| self.content_tokens(&req.statement, &req.entities));
         let norm = crate::derive::normalize_state;
         // The transition the subject carries, its subject resolved and its states
         // normalized, so a restated transition meets its original.
@@ -1947,11 +2064,22 @@ impl Store {
             let order = self.docs.get(&s.doc)?.sections.get(&s.section)?.order;
             Some((s.doc.as_str(), s.section == opening, order))
         });
+        // The candidates: every requirement naming one of the subject's entities. The
+        // final sort is total (score, then id), so the walk's order does not matter.
+        let mut candidates: BTreeSet<&String> = BTreeSet::new();
+        for e in &subject_entities {
+            if let Some(list) = by_entity.get(*e) {
+                candidates.extend(list.iter());
+            }
+        }
         let mut scored: Vec<(usize, &String)> = Vec::new();
-        for (oid, other) in &self.graph.requirements {
+        for oid in candidates {
             if oid == rid {
                 continue;
             }
+            let Some(other) = self.graph.requirements.get(oid) else {
+                continue;
+            };
             let other_entities: BTreeSet<&str> =
                 other.entities.iter().map(|e| self.resolve_id(e)).collect();
             let shared_entities = other_entities.intersection(&subject_entities).count();
@@ -1962,9 +2090,16 @@ impl Store {
             // "operation" on every operation bullet of one page say nothing about
             // any two of them.
             let boilerplate =
-                Self::boilerplate_of(&counts, other_entities.intersection(&subject_entities));
-            let shared = self
-                .content_tokens(&other.statement, &other.entities)
+                Self::boilerplate_of(counts, other_entities.intersection(&subject_entities));
+            let computed;
+            let other_toks: &BTreeSet<String> = match tokens.get(oid) {
+                Some(t) => t,
+                None => {
+                    computed = self.content_tokens(&other.statement, &other.entities);
+                    &computed
+                }
+            };
+            let shared = other_toks
                 .intersection(&toks)
                 .filter(|t| !boilerplate.contains(*t))
                 .count();
@@ -2054,13 +2189,22 @@ impl Store {
     // (a sticky partner outside the neighbor set scores zero; it is pinned anyway).
     // Mirrors docs/compiler/reconciler.md#pairs.
     pub fn pair_review_candidates(&self, rec: &ChangeRecord) -> Vec<(String, usize)> {
+        self.pair_review_candidates_with(rec, &self.pair_scoring())
+    }
+
+    // `pair_review_candidates` over scorer inputs computed once for a pass.
+    pub fn pair_review_candidates_with(
+        &self,
+        rec: &ChangeRecord,
+        scoring: &PairScoring,
+    ) -> Vec<(String, usize)> {
         let judged = rec.judged();
         let mut out: Vec<(String, usize)> = self
-            .requirement_neighbors_scored(&rec.subject)
+            .requirement_neighbors_scored_with(&rec.subject, scoring)
             .into_iter()
             .map(|(score, id)| (id, score))
             .collect();
-        for partner in self.pair_review_neighbors(&rec.subject) {
+        for partner in self.sticky_partners(&rec.subject) {
             if !out.iter().any(|(id, _)| *id == partner) {
                 out.push((partner, 0));
             }
@@ -2074,6 +2218,18 @@ impl Store {
     // always re-judges the other.
     pub fn pair_review_neighbors(&self, rid: &str) -> Vec<String> {
         let mut nbrs = self.requirement_neighbors(rid);
+        for partner in self.sticky_partners(rid) {
+            if !nbrs.contains(&partner) {
+                nbrs.push(partner);
+            }
+        }
+        nbrs
+    }
+
+    // The sticky partners of a requirement: the other living subjects of every open
+    // contradiction or duplicate-requirement diagnostic naming it, in diagnostic order.
+    fn sticky_partners(&self, rid: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
         for d in self.graph.diagnostics.values() {
             if d.lifecycle != "open"
                 || !(d.rule == "contradiction" || d.rule == "duplicate-requirement")
@@ -2084,12 +2240,12 @@ impl Store {
                 continue;
             }
             for sub in &d.subjects {
-                if sub != rid && self.graph.requirements.contains_key(sub) && !nbrs.contains(sub) {
-                    nbrs.push(sub.clone());
+                if sub != rid && self.graph.requirements.contains_key(sub) && !out.contains(sub) {
+                    out.push(sub.clone());
                 }
             }
         }
-        nbrs
+        out
     }
 
     // Open diagnostic counts by severity, suppressed excluded: the health line that
@@ -2341,11 +2497,14 @@ impl Store {
     // Drop records whose evidence lapsed or whose subject no longer exists (the trail
     // kinds excepted). Mirrors docs/compiler/reconciler.md#change-records.
     fn prune_records(&mut self) {
+        // The scorer's inputs, computed once for the whole pass and only when a
+        // created or revised record needs them (docs/compiler/reconciler.md#pairs).
+        let scoring: std::cell::OnceCell<PairScoring> = std::cell::OnceCell::new();
         let alive: Vec<bool> = self
             .status
             .changes
             .iter()
-            .map(|c| self.record_stands(c))
+            .map(|c| self.record_stands(c, &scoring))
             .collect();
         let mut i = 0;
         self.status.changes.retain(|_| {
@@ -2355,7 +2514,7 @@ impl Store {
         });
     }
 
-    fn record_stands(&self, c: &ChangeRecord) -> bool {
+    fn record_stands(&self, c: &ChangeRecord, scoring: &std::cell::OnceCell<PairScoring>) -> bool {
         if TRAIL_KINDS.contains(&c.kind.as_str()) {
             return true;
         }
@@ -2375,7 +2534,9 @@ impl Store {
             // waiting under the cap. Mirrors docs/compiler/reconciler.md#pairs.
             CHANGE_REQ_CREATED | CHANGE_REQ_REVISED => {
                 self.graph.requirements.contains_key(&c.subject)
-                    && !self.pair_review_candidates(c).is_empty()
+                    && !self
+                        .pair_review_candidates_with(c, scoring.get_or_init(|| self.pair_scoring()))
+                        .is_empty()
             }
             CHANGE_ANCHOR_STALE => c.detail["anchors"]
                 .as_array()
@@ -10373,6 +10534,243 @@ mod tests {
             .iter()
             .find(|c| c.subject == "req:p02")
             .is_some_and(|c| c.judged().is_empty()));
+        crate::vfs::remove_dir_all(&s.out).ok();
+    }
+
+    // The bounded journal readers answer as a full scan does: the newest-first stop
+    // for a decree's prior and for a child's last move, the range reader for a
+    // session's entries. Mirrors docs/compiler/graph.md#journal.
+    #[test]
+    fn bounded_journal_lookups_agree_with_a_full_scan() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        for (id, name, parent) in [
+            ("ent:a", "A", Some("ent:p1")),
+            ("ent:b", "B", Some("ent:p2")),
+            ("ent:p1", "P1", None),
+            ("ent:p2", "P2", None),
+        ] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    parent: parent.map(String::from),
+                    ..entity(name)
+                },
+            );
+        }
+        let decree = serde_json::json!({"decree": {"author": "me", "at": ""}});
+        let entries: Vec<(u64, &str, Vec<serde_json::Value>)> = vec![
+            (
+                1,
+                "session",
+                vec![
+                    serde_json::json!({"op": "create_entity", "id": "ent:dead", "entity": {"name": "Dead", "scope": "private"}}),
+                    serde_json::json!({"op": "create_entity", "id": "ent:p1", "entity": {"name": "P1", "scope": "public"}}),
+                ],
+            ),
+            (
+                2,
+                "decree",
+                vec![serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p1", "prior": {"parent": "ent:dead"}, "provenance": decree})],
+            ),
+            (
+                3,
+                "decree",
+                vec![serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "new", "prior": {"statement": "old1", "source": {"doc": "d.md", "section": "s", "quote": "old1"}}, "provenance": decree})],
+            ),
+            (
+                5,
+                "decree",
+                vec![serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "newer", "prior": {"statement": "old2", "source": {"doc": "d.md", "section": "s", "quote": "old2"}}, "provenance": decree})],
+            ),
+            (
+                6,
+                "session",
+                vec![serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "newest", "prior": {"statement": "old3"}})],
+            ),
+            (
+                7,
+                "gc",
+                vec![serde_json::json!({"op": "dissolve_entity", "id": "ent:grp", "parent": "ent:p2", "children": ["ent:b", "ent:c"]})],
+            ),
+            (
+                8,
+                "decree",
+                vec![serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p2", "prior": {"parent": "ent:p1"}, "provenance": decree})],
+            ),
+            (
+                9,
+                "session",
+                vec![
+                    serde_json::json!({"op": "update_entity", "id": "ent:b", "parent": "ent:p1", "prior": {"parent": "ent:p2"}}),
+                    serde_json::json!({"op": "update_entity", "id": "ent:b", "parent": "ent:gone", "prior": {"parent": "ent:p1"}}),
+                ],
+            ),
+            (
+                11,
+                "session",
+                vec![serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p1", "prior": {"parent": "ent:p2"}})],
+            ),
+        ];
+        crate::vfs::create_dir_all(s.out.join("journal")).unwrap();
+        for (g, kind, mutations) in &entries {
+            let entry = JournalEntry {
+                build: format!("g{}", g),
+                generation: *g,
+                kind: kind.to_string(),
+                mutations: mutations.clone(),
+                ..Default::default()
+            };
+            crate::vfs::write(s.journal_path(*g), serde_norway::to_string(&entry).unwrap()).unwrap();
+        }
+        // A torn entry is skipped, never fatal.
+        crate::vfs::write(s.journal_path(10), "build: g10\nmutations: [unterminated\n").unwrap();
+
+        let full = s.journal_entries();
+        assert_eq!(full.len(), entries.len());
+        let naive_prior = |id: &str, op: &str| -> Option<serde_json::Value> {
+            full.iter().rev().find_map(|e| {
+                e.mutations.iter().rev().find_map(|mv| {
+                    (mv["op"] == op
+                        && mv["id"] == id
+                        && mv["prior"].is_object()
+                        && mv["provenance"]["decree"].is_object())
+                    .then(|| mv["prior"].clone())
+                })
+            })
+        };
+        for (id, op) in [
+            ("req:x", "update_requirement"),
+            ("ent:a", "update_entity"),
+            ("ent:b", "update_entity"),
+            ("ent:none", "update_entity"),
+        ] {
+            assert_eq!(s.decree_prior(id, op), naive_prior(id, op), "{} {}", id, op);
+        }
+        assert_eq!(s.decree_prior("req:x", "update_requirement").unwrap()["statement"], "old2");
+        assert_eq!(s.decree_prior("ent:a", "update_entity").unwrap()["parent"], "ent:p1");
+        assert_eq!(s.decree_prior("ent:b", "update_entity"), None);
+
+        let moves = vec![
+            ("ent:a".to_string(), Some("ent:p1".to_string()), Some("ent:p2".to_string()), 1),
+            ("ent:b".to_string(), Some("ent:gone".to_string()), Some("ent:dead".to_string()), 2),
+            ("ent:c".to_string(), None, Some("ent:p2".to_string()), 3),
+            ("ent:never".to_string(), None, None, 4),
+        ];
+        let (last, names) = s.parent_history(&moves);
+        let all_moves = parent_moves_in(&full);
+        assert_eq!(all_moves, s.journaled_parent_moves());
+        let mut naive_last: BTreeMap<String, ParentMove> = BTreeMap::new();
+        for mv in &all_moves {
+            if moves.iter().any(|(c, _, _, _)| *c == mv.child) {
+                naive_last.insert(mv.child.clone(), mv.clone());
+            }
+        }
+        assert_eq!(last, naive_last);
+        assert_eq!(last["ent:a"].generation, 11);
+        assert_eq!(last["ent:b"].to.as_deref(), Some("ent:gone"));
+        assert_eq!(last["ent:c"].from.as_deref(), Some("ent:grp"));
+        assert!(!last.contains_key("ent:never"));
+        let all_names = created_names_in(&full);
+        let mut dead: BTreeSet<String> = BTreeSet::new();
+        for (_, from, to, _) in &moves {
+            dead.extend(from.iter().chain(to.iter()).cloned());
+        }
+        for mv in last.values() {
+            dead.extend(mv.from.iter().chain(mv.to.iter()).cloned());
+        }
+        let naive_names: BTreeMap<String, (String, String)> = all_names
+            .into_iter()
+            .filter(|(id, _)| dead.contains(id) && !s.graph.entities.contains_key(id))
+            .collect();
+        assert_eq!(names, naive_names);
+        assert_eq!(names["ent:dead"], ("Dead".to_string(), "private".to_string()));
+        assert!(!names.contains_key("ent:p1"), "a live parent needs no journal name");
+
+        let all = crate::goals::read_journal(&s.out);
+        assert_eq!(all.len(), entries.len());
+        for (from, to) in [(0, 20), (2, 8), (5, 6), (9, 9), (10, 11)] {
+            let ranged = crate::goals::read_journal_range(&s.out, from, to);
+            let naive: Vec<&JournalEntry> = all
+                .iter()
+                .filter(|e| e.generation > from && e.generation <= to)
+                .collect();
+            assert_eq!(
+                ranged.iter().map(|e| e.generation).collect::<Vec<_>>(),
+                naive.iter().map(|e| e.generation).collect::<Vec<_>>(),
+                "({}, {}]",
+                from,
+                to
+            );
+        }
+        crate::vfs::remove_dir_all(&s.out).ok();
+    }
+
+    // The sweep over a large store: the scorer's inputs are computed once per pass,
+    // so a pass over thousands of created records costs one walk of the requirements
+    // per record. Mirrors docs/compiler/reconciler.md#pairs.
+    #[test]
+    fn prune_records_scores_thousands_of_records_in_one_pass() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        let verbs = ["accepts", "rejects", "stores", "renders", "schedules", "archives"];
+        let nouns = ["order", "invoice", "ticket", "report", "session", "token"];
+        for e in 0..300 {
+            s.graph
+                .entities
+                .insert(format!("ent:e{}", e), entity(&format!("Entity {}", e)));
+        }
+        for r in 0..3000 {
+            let a = r % 300;
+            let b = (r * 7 + 1) % 300;
+            s.graph.requirements.insert(
+                format!("req:r{}", r),
+                Requirement {
+                    statement: format!(
+                        "Entity {} {} the {} of entity {} within {} days.",
+                        a,
+                        verbs[r % verbs.len()],
+                        nouns[(r / 3) % nouns.len()],
+                        b,
+                        r % 30
+                    ),
+                    entities: vec![format!("ent:e{}", a), format!("ent:e{}", b)],
+                    ..Default::default()
+                },
+            );
+            s.status.changes.push(ChangeRecord::new(
+                1,
+                r + 1,
+                1,
+                CHANGE_REQ_CREATED,
+                &format!("req:r{}", r),
+                "statement",
+            ));
+        }
+        let before = s.status.changes.len();
+        let started = std::time::Instant::now();
+        s.prune_records();
+        let took = started.elapsed();
+        assert!(
+            took < std::time::Duration::from_secs(5),
+            "prune_records over {} records took {:?}",
+            before,
+            took
+        );
+        // Every record stands or clears exactly as the per-record scorer says.
+        let scoring = s.pair_scoring();
+        for r in 0..10 {
+            let rid = format!("req:r{}", r);
+            let stands = s.status.changes.iter().any(|c| c.subject == rid);
+            let rec = ChangeRecord::new(1, r + 1, 1, CHANGE_REQ_CREATED, &rid, "statement");
+            let candidates = s.pair_review_candidates_with(&rec, &scoring);
+            assert_eq!(stands, !candidates.is_empty(), "{}", rid);
+            assert_eq!(candidates, s.pair_review_candidates(&rec), "{}", rid);
+        }
         crate::vfs::remove_dir_all(&s.out).ok();
     }
 }

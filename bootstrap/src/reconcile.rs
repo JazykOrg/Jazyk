@@ -1522,13 +1522,18 @@ fn journal_op(m: &serde_json::Value) -> Option<(String, &serde_json::Value)> {
 // `unstable-derivation` diagnostic carrying both justifications.
 // Mirrors docs/compiler/reconciler.md#flip-detection.
 pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
+    flip_detection_over(store, &goals::read_journal(&store.out))
+}
+
+// Flip detection over journal entries read once: the cross-class replay and the
+// reparent replay share them (docs/compiler/graph.md#journal).
+fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec<Goal>) {
     struct Event {
         generation: u64,
         class: goals::Class,
         goal: String,
         justification: String,
     }
-    let entries = goals::read_journal(&store.out);
     let key_of_entity =
         |name: &str, scope: &str| format!("{}|{}", crate::store::normalize_statement(name), scope);
     let mut id_key: BTreeMap<String, String> = store
@@ -1538,7 +1543,7 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
         .map(|(id, e)| (id.clone(), key_of_entity(&e.name, &e.scope)))
         .collect();
     let mut history: BTreeMap<String, Vec<Event>> = BTreeMap::new();
-    for entry in &entries {
+    for entry in entries {
         if entry.kind != "session" {
             continue;
         }
@@ -1727,7 +1732,7 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
             });
         }
     }
-    let (reparent_findings, reparent_parked) = reparent_flips(store, &entries);
+    let (reparent_findings, reparent_parked) = reparent_flips(store, entries);
     findings.extend(reparent_findings);
     parked.extend(reparent_parked);
     (findings, parked)
@@ -1796,7 +1801,7 @@ fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec
             .unwrap_or_else(|| Entity::default().scope)
     };
     let mut history: BTreeMap<String, Vec<Move>> = BTreeMap::new();
-    for mv in store.journaled_parent_moves() {
+    for mv in crate::store::parent_moves_in(entries) {
         let scope = scope_of(&mv.child);
         let parent_key = |p: Option<&str>| -> String {
             match p {
@@ -2359,9 +2364,10 @@ pub fn compile_with(
         board = Board::derive(&store, proj, &control);
         absorb_derivation(&mut store, &board);
         let gen_after = crate::store::read_generation(out);
-        let resolved_in_journal: BTreeMap<String, String> = goals::read_journal(out)
+        // Only the entries this session wrote (docs/compiler/graph.md#journal).
+        let written = goals::read_journal_range(out, gen_before, gen_after);
+        let resolved_in_journal: BTreeMap<String, String> = written
             .iter()
-            .filter(|e| e.generation > gen_before && e.generation <= gen_after)
             .flat_map(|e| {
                 e.resolved_goals
                     .iter()
@@ -2456,11 +2462,9 @@ pub fn compile_with(
             })
             .collect();
         if !opened.is_empty() {
-            let last_session = goals::read_journal(out)
+            let last_session = written
                 .iter()
-                .filter(|e| {
-                    e.kind == "session" && e.generation > gen_before && e.generation <= gen_after
-                })
+                .filter(|e| e.kind == "session")
                 .map(|e| e.generation)
                 .max()
                 .unwrap_or(gen_after);

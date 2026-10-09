@@ -114,12 +114,12 @@ This scratch space is a live document to outline the work for this documentation
 Validation of the landing, in order. Every run uses a capable model routed through
 LocalRouter; the default local model fails judgment-heavy goals.
 
-- [ ] `cargo test` green, including the unit tests for goal derivation and identity
-  across re-derivations, cone readiness, escalation, per-direction relationship
-  recompute, state machine derivation and its checks, default views, lifting (a
-  multi-type pair collapsing under it), the render emitters against the showcase,
-  justification closure, flow placement, cross-class flip parking, change records,
-  and gate rejections.
+- [x] `cargo test` green (611 on 2026-10-09), including the unit tests for goal
+  derivation and identity across re-derivations, cone readiness, escalation,
+  per-direction relationship recompute, state machine derivation and its checks,
+  default views, lifting (a multi-type pair collapsing under it), the render emitters
+  against the showcase, justification closure, flow placement, cross-class flip
+  parking, change records, and gate rejections.
 - [ ] `bootstrap/example/f1` converges.
 - [ ] `bootstrap/example/f2` converges and its planted traps still trip; its
   `EXPECTED.md` states free-form statements and the new kinds.
@@ -229,3 +229,42 @@ concrete is now a verdict the evidence names, checked against the staged work
   delete (the pair's own `rejudge-pair` goal carries it), `reconcile-section`'s
   extraction duties (attributes, transitions, the page subject), and the placement and
   split judgments of `curate-view`, `split-view`, and `abstract-entity`.
+
+## Stability review (2026-10-09)
+
+A code review of every module for crashes, corruption, hangs, and lost updates, each
+finding verified in code before a change. What landed, all docs-first with tests:
+
+- The disk boundary. Every store, ledger, and drafts write lands through a sibling
+  temporary file renamed into place; a file that exists but does not parse makes its
+  owner read-only instead of reading as empty; a writer re-reads the generation under
+  an OS advisory lock and refuses `store-moved`
+  ([writes and unreadable files](./compiler/graph.md#writes-and-unreadable-files),
+  [concurrency](./compiler/graph.md#concurrency)). The stored hash is pinned to
+  SipHash-1-3 ([section](./compiler/model/section.md)).
+- Bounds. Every shell command runs under the command timeout and reads exit `124`
+  ([runners](./consumers/gen.md#a-test-that-could-not-run-says-nothing)); the ACP
+  handshake, session calls, and the embedded agent's MCP calls wait at most the idle
+  timeout; `read_text_file` is capped; a goal resolved and re-opened with the same
+  change twice parks ([parked and failed](./compiler/reconciler.md#parked-and-failed)).
+- Input. An unreadable document keeps its stored tree; repeated heading slugs take
+  numeric suffixes; headings follow CommonMark spacing
+  ([parsing](./compiler/parsing.md)).
+- Cost. Derived indices are built once per derivation
+  ([derived data](./compiler/graph.md#derived-data)); journal reads are bounded and the
+  pair scorer's inputs are computed once per pass ([journal](./compiler/graph.md#journal),
+  [pairs](./compiler/reconciler.md#pairs)); the local API keeps disk work off the async
+  runtime, coalesces board derivations, and bounds the jobs it holds
+  ([jobs](./frontends/gui.md#jobs)).
+- Panic boundaries around GUI jobs, embedded agent turns, and proxy commands.
+
+Left open, each an owner decision or a measurement:
+
+- The validation ladder under NOW has not run since the landing; the dogfood row of
+  `bootstrap/VALIDATION.md` still reads "no result". Every change above is verified by
+  unit tests and synthetic stores, not by a converging build.
+- Pair judgment volume ([pair judgment volume](#pair-judgment-volume-2026-09-05)): the
+  derivation is cheap now, the sessions are not; the degree cap and locality batching
+  want measuring on `example-saas`.
+- The fixed cost of a round ([NEXT](#next)): measure cached input through LocalRouter
+  before cutting any payload.

@@ -434,6 +434,18 @@ from the facts because it is a function of them.
 - The name index (name and alias → entity id) is rebuilt on load and after each commit.
   The [search tool](./tools.md#read-tools) queries it, and lookalike scoring across
   documents reads it.
+- Derived indices are computed once per derivation and never stored. A commit, a
+  [board derivation](./reconciler.md#goal-derivation), and the
+  [checks](./compilation.md#checks) each build them from the facts at their start and
+  pass them down: the document levels from the stamped roots, the requirement and
+  entity document orders, parent to children, entity to the requirements naming it, the
+  [levels](./concepts/levels.md#levels) with their members and flow views (a reference
+  reaches the levels its ancestor chain passes through, so each edge and each
+  requirement is visited once per level it reaches), the referrer index the
+  [cone](./reconciler.md#cones) walk follows, and the name token index
+  [lookalike scoring](./goals/dedupe-candidates.md) pairs by. An index is a function
+  of the facts it reads, so what is derived through it is what the scan it replaces
+  derives.
 
 Renderings under `diagrams/` are derived too, one step further out: the renderer reads
 the committed views and facts and writes `.puml` and `.svg`, and stores nothing back.

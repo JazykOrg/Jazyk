@@ -14,9 +14,12 @@ use std::collections::{BTreeMap, BTreeSet};
 // rules, state machines feed the state rule, views feed the limit counts.
 pub fn recompute(store: &mut Store, build: &str, batch: &mut RecordBatch) {
     recompute_relationships(store);
-    recompute_state_machines(store);
-    recompute_default_views(store, build, batch);
-    record_threshold_crossings(store, batch);
+    // The indices every later step reads, built once: none of the steps changes the
+    // facts they index. Mirrors docs/compiler/graph.md#derived-data.
+    let ix = Indices::build(store);
+    recompute_state_machines_with(store, &ix);
+    recompute_default_views_with(store, &ix, build, batch);
+    record_threshold_crossings_with(store, &ix, batch);
 }
 
 // ---- relationships ----
@@ -163,7 +166,11 @@ pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usiz
 // Requirements with no quote source sort last, by id.
 // Mirrors docs/compiler/model/view.md#default-views.
 pub fn document_order(store: &Store) -> Vec<String> {
-    let levels = doc_levels_from(store, &store.status.roots);
+    document_order_with(store, &doc_levels_from(store, &store.status.roots))
+}
+
+// The document order over precomputed document levels.
+fn document_order_with(store: &Store, levels: &BTreeMap<String, usize>) -> Vec<String> {
     let mut keyed: Vec<((usize, String, usize, String), String)> = store
         .graph
         .requirements
@@ -189,6 +196,91 @@ pub fn document_order(store: &Store) -> Vec<String> {
     keyed.into_iter().map(|(_, id)| id).collect()
 }
 
+// ---- indices ----
+
+// The indices one derivation reads, built once from the store at the start of a
+// commit, a board derivation, or the checks, passed down, never stored: the document
+// levels from the stamped roots, the requirement and entity document orders, parent to
+// children, and entity to the requirements naming it. Each index holds what the scan it
+// replaces computes. Mirrors docs/compiler/graph.md#derived-data.
+pub struct Indices {
+    pub doc_levels: BTreeMap<String, usize>,
+    // Requirement ids in document order, and each id's position in it.
+    pub document_order: Vec<String>,
+    pub requirement_position: BTreeMap<String, usize>,
+    pub entity_rank: BTreeMap<String, usize>,
+    // Parent id to its direct children, by id. A parent no entity carries is a key
+    // all the same, as the scan over `parent` would find it.
+    pub children: BTreeMap<String, Vec<String>>,
+    // Entity id (redirects followed) to the requirements naming it in `entities`, by
+    // id: what `Store::requirements_referencing` answers.
+    pub requirements_of: BTreeMap<String, Vec<String>>,
+    // The levels with their members and flow views, built on first use.
+    levels: std::cell::OnceCell<Levels>,
+}
+
+impl Indices {
+    pub fn build(store: &Store) -> Indices {
+        let doc_levels = doc_levels_from(store, &store.status.roots);
+        let document_order = document_order_with(store, &doc_levels);
+        let requirement_position = document_order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.clone(), i))
+            .collect();
+        let entity_rank = entity_document_rank_with(store, &doc_levels);
+        let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (id, e) in &store.graph.entities {
+            if let Some(p) = e.parent.as_ref() {
+                children.entry(p.clone()).or_default().push(id.clone());
+            }
+        }
+        let mut requirements_of: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (rid, r) in &store.graph.requirements {
+            for e in &r.entities {
+                let list = requirements_of
+                    .entry(store.resolve_id(e).to_string())
+                    .or_default();
+                if list.last() != Some(rid) {
+                    list.push(rid.clone());
+                }
+            }
+        }
+        Indices {
+            doc_levels,
+            document_order,
+            requirement_position,
+            entity_rank,
+            children,
+            requirements_of,
+            levels: std::cell::OnceCell::new(),
+        }
+    }
+
+    // The level index, built on first use from the store the indices were built from.
+    fn levels(&self, store: &Store) -> &Levels {
+        self.levels.get_or_init(|| Levels::build(store, self))
+    }
+
+    // Whether any entity names `id` as its parent.
+    pub fn has_children(&self, id: &str) -> bool {
+        self.children.contains_key(id)
+    }
+
+    // The direct children of `id`, by id.
+    pub fn children_of(&self, id: &str) -> &[String] {
+        self.children.get(id).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    // The requirements naming `id` in `entities`, by id.
+    pub fn requirements_referencing(&self, id: &str) -> &[String] {
+        self.requirements_of
+            .get(id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
 // ---- state machines ----
 
 // State names compare after trimming, lowercasing, and collapsing whitespace.
@@ -204,9 +296,14 @@ pub fn normalize_state(s: &str) -> String {
 // contributing requirements, arrows ordered by lowest requirement id, `initial` the one
 // state no transition enters. Mirrors docs/compiler/model/state-machine.md#derivation.
 pub fn recompute_state_machines(store: &mut Store) {
+    let ix = Indices::build(store);
+    recompute_state_machines_with(store, &ix);
+}
+
+fn recompute_state_machines_with(store: &mut Store, ix: &Indices) {
     let mut machines: BTreeMap<String, StateMachine> = BTreeMap::new();
-    for rid in document_order(store) {
-        let r = &store.graph.requirements[&rid];
+    for rid in &ix.document_order {
+        let r = &store.graph.requirements[rid];
         let Some(t) = r.transition.as_ref() else {
             continue;
         };
@@ -295,6 +392,7 @@ pub fn recompute_state_machines(store: &mut Store) {
 
 // ---- default views ----
 
+#[derive(Clone, Debug, PartialEq)]
 struct DefaultView {
     id: String,
     kind: &'static str,
@@ -420,6 +518,7 @@ const STRUCTURAL_STEREOTYPES: [&str; 5] = ["system", "component", "service", "in
 // One level: a node's direct children, or the parentless entities of a scope for the
 // root form (`node` is None, `target` is `scope:<scope>`). Children are in document
 // order. Mirrors docs/compiler/concepts/levels.md#levels.
+#[derive(Clone, Debug, PartialEq)]
 struct Level {
     target: String,
     node: Option<String>,
@@ -431,8 +530,10 @@ struct Level {
 // and the sources of the requirements naming it (document link level, then path, then
 // section line), entities no document places last, ties by id.
 // Mirrors docs/compiler/model/view.md#level-views.
-fn entity_document_rank(store: &Store) -> BTreeMap<String, usize> {
-    let levels = doc_levels_from(store, &store.status.roots);
+fn entity_document_rank_with(
+    store: &Store,
+    levels: &BTreeMap<String, usize>,
+) -> BTreeMap<String, usize> {
     let position = |s: &SourceRef| -> (usize, String, usize) {
         let line = store
             .docs
@@ -481,7 +582,8 @@ fn in_document_order(ids: &mut Vec<String>, rank: &BTreeMap<String, usize>) {
 
 // Every level of the store with at least one child: the scope roots and every node
 // that is a parent. Children in document order.
-fn levels(store: &Store, rank: &BTreeMap<String, usize>) -> Vec<Level> {
+fn levels(store: &Store, ix: &Indices) -> Vec<Level> {
+    let rank = &ix.entity_rank;
     let mut by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut scopes: BTreeSet<&str> = BTreeSet::new();
     for (id, e) in &store.graph.entities {
@@ -535,21 +637,20 @@ fn level_holds(store: &Store, level: &Level) -> bool {
 // The level a target names, when it derives a view: a node id (redirects followed)
 // or `scope:<scope>`. None for a leaf, a one-child node whose child carries no
 // attributes, or an unknown id.
-fn level_of_target(store: &Store, target: &str, rank: &BTreeMap<String, usize>) -> Option<Level> {
+fn level_of_target<'a>(store: &Store, target: &str, ix: &'a Indices) -> Option<&'a Level> {
     let target = match crate::board::scope_target(target) {
         Some(_) => target.to_string(),
         None => store.resolve_id(target).to_string(),
     };
-    levels(store, rank)
-        .into_iter()
-        .find(|l| l.target == target)
-        .filter(|l| level_holds(store, l))
+    let lv = ix.levels(store);
+    let i = *lv.by_target.get(&target)?;
+    lv.held.contains(&i).then(|| &lv.levels[i])
 }
 
 // The kind rule: component when the node, any child, or any descendant below a
 // child carries a structural stereotype (a grouping of components is a component
 // level), class otherwise. Mirrors docs/compiler/model/view.md#level-views.
-fn level_kind(store: &Store, level: &Level) -> &'static str {
+fn level_kind(store: &Store, ix: &Indices, level: &Level) -> &'static str {
     fn structural(store: &Store, id: &str) -> bool {
         store
             .graph
@@ -562,22 +663,19 @@ fn level_kind(store: &Store, level: &Level) -> &'static str {
                     .any(|x| s.eq_ignore_ascii_case(x))
             })
     }
-    fn structural_below(store: &Store, id: &str, depth: usize) -> bool {
+    fn structural_below(store: &Store, ix: &Indices, id: &str, depth: usize) -> bool {
         if depth > 64 {
             return false;
         }
-        store
-            .graph
-            .entities
+        ix.children_of(id)
             .iter()
-            .filter(|(_, e)| e.parent.as_deref() == Some(id))
-            .any(|(c, _)| structural(store, c) || structural_below(store, c, depth + 1))
+            .any(|c| structural(store, c) || structural_below(store, ix, c, depth + 1))
     }
     let any = level.node.as_deref().is_some_and(|n| structural(store, n))
         || level
             .children
             .iter()
-            .any(|c| structural(store, c) || structural_below(store, c, 0));
+            .any(|c| structural(store, c) || structural_below(store, ix, c, 0));
     if any {
         "component"
     } else {
@@ -624,12 +722,236 @@ pub fn lift_into(store: &Store, members: &[String], id: &str) -> Option<String> 
     }
 }
 
-// The members of a level view: the direct children, then every outside entity with a
-// lifted edge into the level (one end lifts to a child, the other lifts to nothing and
-// is not the node), each group in document order. An instantiation contribution does
-// not count: instances live in object views, so the reference graph's shop level lists
-// the customer and not Ana's cart. Mirrors docs/compiler/model/view.md#level-views.
-fn level_members_of(store: &Store, level: &Level, rank: &BTreeMap<String, usize>) -> Vec<String> {
+// The ancestor chain `lift_into` walks for an id: the id (redirects followed), then
+// each parent in turn, bounded as the walk is bounded. `lift_into` answers the first
+// element among the members.
+fn chain_of(store: &Store, id: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = store.resolve_id(id).to_string();
+    let mut depth = 0;
+    loop {
+        out.push(cur.clone());
+        let Some(parent) = store.graph.entities.get(&cur).and_then(|e| e.parent.clone()) else {
+            break;
+        };
+        cur = parent;
+        depth += 1;
+        if depth > 64 {
+            break;
+        }
+    }
+    out
+}
+
+// The frame of a level: the node and its ancestors, never peers of the level.
+fn frame_of(store: &Store, level: &Level) -> Vec<String> {
+    let mut frame: Vec<String> = Vec::new();
+    let mut cur = level.node.clone();
+    while let Some(id) = cur {
+        if frame.contains(&id) || frame.len() > 64 {
+            break;
+        }
+        cur = store.graph.entities.get(&id).and_then(|e| e.parent.clone());
+        frame.push(id);
+    }
+    frame
+}
+
+// Every level of a derivation with its members and flow views, computed for all
+// levels at once: a reference reaches the levels its ancestor chain passes through,
+// so each contribution and each requirement is visited once per level it reaches
+// instead of once per level. The level and flow view rules, the limit counts, and the
+// level of every view read it. Built on first use, never stored.
+// Mirrors docs/compiler/graph.md#derived-data.
+struct Levels {
+    // Every level, in `levels` order; the held ones (the levels that derive a view)
+    // by index; each target's index.
+    levels: Vec<Level>,
+    held: Vec<usize>,
+    by_target: BTreeMap<String, usize>,
+    // The members of every held level, by target.
+    members: BTreeMap<String, Vec<String>>,
+    // Every level's flow views with the level each belongs to.
+    flow_views: Vec<(String, DefaultView)>,
+}
+
+impl Levels {
+    fn build(store: &Store, ix: &Indices) -> Levels {
+        let levels = levels(store, ix);
+        let by_target: BTreeMap<String, usize> = levels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| (l.target.clone(), i))
+            .collect();
+        let held: Vec<usize> = (0..levels.len())
+            .filter(|i| level_holds(store, &levels[*i]))
+            .collect();
+        let is_held: BTreeSet<usize> = held.iter().copied().collect();
+        // The ancestor chain of every entity, and the held levels it reaches: the
+        // level each chain element is a child of.
+        let mut chains: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut reach: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for id in store.graph.entities.keys() {
+            let chain = chain_of(store, id);
+            let mut reached: Vec<usize> = Vec::new();
+            for c in &chain {
+                let Some(e) = store.graph.entities.get(c) else {
+                    continue;
+                };
+                let target = match &e.parent {
+                    Some(p) => p.clone(),
+                    None => scope_root_target(&e.scope),
+                };
+                if let Some(i) = by_target.get(&target) {
+                    if is_held.contains(i) && !reached.contains(i) {
+                        reached.push(*i);
+                    }
+                }
+            }
+            chains.insert(id.clone(), chain);
+            reach.insert(id.clone(), reached);
+        }
+        let chain = |id: &str| -> Vec<String> {
+            let cur = store.resolve_id(id);
+            chains
+                .get(cur)
+                .cloned()
+                .unwrap_or_else(|| vec![cur.to_string()])
+        };
+        let reached = |id: &str| -> &[usize] {
+            reach
+                .get(store.resolve_id(id))
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        };
+
+        // The members of every held level: the direct children, then every outside
+        // entity with a lifted edge into the level (one end lifts to a child, the other
+        // lifts to nothing and is not the node), each group in document order. An
+        // instantiation contribution does not count: instances live in object views,
+        // so the reference graph's shop level lists the customer and not Ana's cart.
+        // Mirrors docs/compiler/model/view.md#level-views.
+        let frames: Vec<Vec<String>> = levels.iter().map(|l| frame_of(store, l)).collect();
+        let mut outside: Vec<Vec<String>> = vec![Vec::new(); levels.len()];
+        for rel in store.graph.relationships.values() {
+            for c in &rel.contributions {
+                if c.r#type == INSTANTIATION {
+                    continue;
+                }
+                for (x, y) in [(&c.a, &c.b), (&c.b, &c.a)] {
+                    let y = store.resolve_id(y).to_string();
+                    if !store.graph.entities.contains_key(&y) {
+                        continue;
+                    }
+                    let reach_y = reached(&y);
+                    for i in reached(x) {
+                        if reach_y.contains(i)
+                            || frames[*i].contains(&y)
+                            || outside[*i].contains(&y)
+                        {
+                            continue;
+                        }
+                        outside[*i].push(y.clone());
+                    }
+                }
+            }
+        }
+        let mut members: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut member_sets: Vec<BTreeSet<String>> = vec![BTreeSet::new(); levels.len()];
+        for i in &held {
+            let mut out = std::mem::take(&mut outside[*i]);
+            in_document_order(&mut out, &ix.entity_rank);
+            let mut all = levels[*i].children.clone();
+            all.extend(out);
+            member_sets[*i] = all.iter().cloned().collect();
+            members.insert(levels[*i].target.clone(), all);
+        }
+
+        // The flow rule instances of every held level: the behavior and failure-mode
+        // requirements whose entities lift to at least one member, clustered by
+        // document (the author's own cut of the subject into flows; the actors are
+        // read off the members at render time, never baked into the key).
+        // Mirrors docs/compiler/model/view.md#level-views.
+        let mut clusters: Vec<BTreeMap<String, Vec<String>>> =
+            vec![BTreeMap::new(); levels.len()];
+        for rid in &ix.document_order {
+            let r = &store.graph.requirements[rid];
+            let flows = r
+                .facets
+                .iter()
+                .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
+            let Some(doc) = r.source.as_ref().map(|s| s.doc.clone()) else {
+                continue;
+            };
+            if !flows {
+                continue;
+            }
+            // Reaching means lifting to a child: an interactor is only ever the other
+            // end of a flow, never what makes a flow the level's own.
+            let mut reaching: Vec<usize> = Vec::new();
+            for e in &r.entities {
+                for i in reached(e) {
+                    if !reaching.contains(i) {
+                        reaching.push(*i);
+                    }
+                }
+            }
+            for i in reaching {
+                // A flow whose every entity lifts to one child with a level of its own
+                // is that child's, never a self-message here; a self-message on a leaf
+                // stays.
+                let lifts: Vec<Option<String>> = r
+                    .entities
+                    .iter()
+                    .map(|e| chain(e).into_iter().find(|c| member_sets[i].contains(c)))
+                    .collect();
+                let lifted: BTreeSet<String> = lifts.iter().flatten().cloned().collect();
+                if lifted.len() == 1 && lifts.iter().all(Option::is_some) {
+                    let only = lifted.iter().next().unwrap();
+                    if levels[i].children.contains(only) && ix.has_children(only) {
+                        continue;
+                    }
+                }
+                clusters[i].entry(doc.clone()).or_default().push(rid.clone());
+            }
+        }
+        let mut flow_views = Vec::new();
+        for i in &held {
+            let level = &levels[*i];
+            let level_members = &members[&level.target];
+            for w in flow_views_of_clusters(store, level, std::mem::take(&mut clusters[*i])) {
+                if flow_view_all_groupings(store, level_members, &w) {
+                    continue;
+                }
+                flow_views.push((level.target.clone(), w));
+            }
+        }
+        Levels {
+            levels,
+            held,
+            by_target,
+            members,
+            flow_views,
+        }
+    }
+}
+
+// Whether a flow view's participants all lift to groupings: boxes no document states
+// messaging each other, so the view is dropped.
+// Mirrors docs/compiler/model/view.md#level-views.
+fn flow_view_all_groupings(store: &Store, members: &[String], w: &DefaultView) -> bool {
+    let drawn: BTreeSet<String> = flow_participants(store, &w.members)
+        .into_iter()
+        .map(|p| lift_into(store, members, &p).unwrap_or(p))
+        .collect();
+    !drawn.is_empty() && drawn.iter().all(|p| store.is_grouping(p))
+}
+
+// The members of one level by the scan over every contribution: the reference the
+// level index is checked against.
+#[cfg(test)]
+fn level_members_of_scan(store: &Store, level: &Level, ix: &Indices) -> Vec<String> {
+    let rank = &ix.entity_rank;
     let children = &level.children;
     // The frame: the node and its ancestors are never peers of the level.
     let mut frame: Vec<String> = Vec::new();
@@ -670,9 +992,12 @@ fn level_members_of(store: &Store, level: &Level, rank: &BTreeMap<String, usize>
 // with a lifted edge into the level, in document order. Empty for a target that has
 // no level view. Mirrors docs/compiler/model/view.md#level-views.
 pub fn level_view_members(store: &Store, target: &str) -> Vec<String> {
-    let rank = entity_document_rank(store);
-    match level_of_target(store, target, &rank) {
-        Some(level) => level_members_of(store, &level, &rank),
+    level_view_members_with(store, &Indices::build(store), target)
+}
+
+pub fn level_view_members_with(store: &Store, ix: &Indices, target: &str) -> Vec<String> {
+    match level_of_target(store, target, ix) {
+        Some(level) => ix.levels(store).members[&level.target].clone(),
         None => Vec::new(),
     }
 }
@@ -682,26 +1007,53 @@ pub fn level_view_members(store: &Store, target: &str) -> Vec<String> {
 // parentless entities, the kind by the kind rule. None otherwise.
 // Mirrors docs/compiler/model/view.md#level-views.
 pub fn level_view_id(store: &Store, target: &str) -> Option<String> {
-    let rank = entity_document_rank(store);
-    let level = level_of_target(store, target, &rank)?;
-    Some(format!(
-        "view:{}/{}",
-        level_kind(store, &level),
-        level_slug(&level)
-    ))
+    level_view_id_with(store, &Indices::build(store), target)
 }
 
-// The flow rule instances of one level: the behavior and failure-mode requirements
-// whose entities lift to at least one member, clustered by document (the author's own
-// cut of the subject into flows; the actors are read off the members at render time,
-// never baked into the key); a cluster of two or more derives a use-case view and, when
-// two or more of its members carry an edge, a sequence view. The root form keeps the
-// unprefixed ids; a node prefixes its slug. Mirrors docs/compiler/model/view.md#level-views.
-fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<DefaultView> {
-    let mut out = Vec::new();
+pub fn level_view_id_with(store: &Store, ix: &Indices, target: &str) -> Option<String> {
+    let level = level_of_target(store, target, ix)?;
+    Some(level_id(store, ix, level))
+}
+
+// The id of a level's structural view: the kind by the kind rule, then the slug.
+fn level_id(store: &Store, ix: &Indices, level: &Level) -> String {
+    format!(
+        "view:{}/{}",
+        level_kind(store, ix, level),
+        level_slug(level)
+    )
+}
+
+// The level every default level view and lifted flow view belongs to: a lifted flow
+// view's level first, then the target whose structural level view the id is (an
+// entity, or `scope:<scope>` for a top level; a node ahead of a scope root when two
+// targets slug alike). A curated, object, or state view is absent.
+// Mirrors docs/compiler/reconciler.md#gc-gating.
+pub fn view_levels(store: &Store, ix: &Indices) -> BTreeMap<String, String> {
+    let mut out = flow_view_level_index(store, ix);
+    let lv = ix.levels(store);
+    let held: Vec<&Level> = lv.held.iter().map(|i| &lv.levels[*i]).collect();
+    for l in held.iter().filter(|l| l.node.is_some()) {
+        out.entry(level_id(store, ix, l)).or_insert_with(|| l.target.clone());
+    }
+    for l in held.iter().filter(|l| l.node.is_none()) {
+        out.entry(level_id(store, ix, l)).or_insert_with(|| l.target.clone());
+    }
+    out
+}
+
+// The flow rule instances of one level by the scan over every requirement: the
+// reference the level index is checked against.
+#[cfg(test)]
+fn flow_view_rules_scan(
+    store: &Store,
+    ix: &Indices,
+    level: &Level,
+    members: &[String],
+) -> Vec<DefaultView> {
     let mut clusters: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for rid in document_order(store) {
-        let r = &store.graph.requirements[&rid];
+    for rid in &ix.document_order {
+        let r = &store.graph.requirements[rid];
         let flows = r
             .facets
             .iter()
@@ -731,18 +1083,25 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
         let lifted: BTreeSet<String> = lifts.iter().flatten().cloned().collect();
         if lifted.len() == 1 && lifts.iter().all(Option::is_some) {
             let only = lifted.iter().next().unwrap();
-            if level.children.contains(only)
-                && store
-                    .graph
-                    .entities
-                    .values()
-                    .any(|e| e.parent.as_deref() == Some(only.as_str()))
-            {
+            if level.children.contains(only) && ix.has_children(only) {
                 continue;
             }
         }
-        clusters.entry(doc).or_default().push(rid);
+        clusters.entry(doc).or_default().push(rid.clone());
     }
+    flow_views_of_clusters(store, level, clusters)
+}
+
+// The flow views of one level's clusters: a cluster of two or more derives a use-case
+// view and, when two or more of its members carry an edge, a sequence view. The root
+// form keeps the unprefixed ids; a node prefixes its slug.
+// Mirrors docs/compiler/model/view.md#level-views.
+fn flow_views_of_clusters(
+    store: &Store,
+    level: &Level,
+    clusters: BTreeMap<String, Vec<String>>,
+) -> Vec<DefaultView> {
+    let mut out = Vec::new();
     let prefix = match level.node.as_deref() {
         Some(node) => format!("{}-", entity_slug(node)),
         None => String::new(),
@@ -802,16 +1161,19 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
 // Every level's flow views with the level each belongs to. A view whose participants
 // all lift to groupings is dropped: boxes no document states messaging each other.
 // Mirrors docs/compiler/model/view.md#level-views.
-fn level_flow_views(store: &Store, rank: &BTreeMap<String, usize>) -> Vec<(String, DefaultView)> {
+fn level_flow_views<'a>(store: &Store, ix: &'a Indices) -> &'a [(String, DefaultView)] {
+    &ix.levels(store).flow_views
+}
+
+// Every level's flow views by the scans over every level: the reference the level
+// index is checked against.
+#[cfg(test)]
+fn level_flow_views_scan(store: &Store, ix: &Indices) -> Vec<(String, DefaultView)> {
     let mut out = Vec::new();
-    for l in levels(store, rank).into_iter().filter(|l| level_holds(store, l)) {
-        let members = level_members_of(store, &l, rank);
-        for w in flow_view_rules(store, &l, &members) {
-            let drawn: BTreeSet<String> = flow_participants(store, &w.members)
-                .into_iter()
-                .map(|p| lift_into(store, &members, &p).unwrap_or(p))
-                .collect();
-            if !drawn.is_empty() && drawn.iter().all(|p| store.is_grouping(p)) {
+    for l in levels(store, ix).into_iter().filter(|l| level_holds(store, l)) {
+        let members = level_members_of_scan(store, &l, ix);
+        for w in flow_view_rules_scan(store, ix, &l, &members) {
+            if flow_view_all_groupings(store, &members, &w) {
                 continue;
             }
             out.push((l.target.clone(), w));
@@ -823,35 +1185,50 @@ fn level_flow_views(store: &Store, rank: &BTreeMap<String, usize>) -> Vec<(Strin
 // The level a default flow view was derived for: the node id, or `scope:<scope>` for
 // the root form. None for a flow view no level's rule names (a curated flow).
 pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
-    let rank = entity_document_rank(store);
-    level_flow_views(store, &rank)
-        .into_iter()
-        .find(|(_, w)| w.id == view_id)
-        .map(|(t, _)| t)
+    let ix = Indices::build(store);
+    flow_view_level_index(store, &ix).remove(view_id)
+}
+
+// The level of every lifted flow view, the first rule instance naming an id winning,
+// as `flow_view_level` reads it. Built once for a walk over every view.
+fn flow_view_level_index(store: &Store, ix: &Indices) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (t, w) in level_flow_views(store, ix) {
+        out.entry(w.id.clone()).or_insert_with(|| t.clone());
+    }
+    out
 }
 
 // Every lifted flow view with the level it belongs to, computed once for a walk over
 // the whole project. Mirrors docs/consumers/docsgen.md#entity-cards.
 pub fn flow_view_levels(store: &Store) -> BTreeMap<String, String> {
-    let rank = entity_document_rank(store);
-    level_flow_views(store, &rank)
-        .into_iter()
-        .map(|(t, w)| (w.id, t))
+    let ix = Indices::build(store);
+    level_flow_views(store, &ix)
+        .iter()
+        .map(|(t, w)| (w.id.clone(), t.clone()))
         .collect()
 }
 
 // The entities a view draws, as the card model reads them.
 pub fn drawn_entities_of(store: &Store, view_id: &str) -> Vec<String> {
-    match store.graph.views.get(view_id) {
-        Some(v) => drawn_entities(store, view_id, v),
-        None => Vec::new(),
-    }
+    let Some(v) = store.graph.views.get(view_id) else {
+        return Vec::new();
+    };
+    let ix = Indices::build(store);
+    let flow_levels = flow_view_level_index(store, &ix);
+    drawn_entities(store, &ix, &flow_levels, view_id, v)
 }
 
 // The entities a view draws: the entity members of a structural, object, or state
 // view; the participants of a flow view (each member's message endpoints, lifted to the
 // view's level when it has one), in first-appearance order.
-fn drawn_entities(store: &Store, view_id: &str, v: &View) -> Vec<String> {
+fn drawn_entities(
+    store: &Store,
+    ix: &Indices,
+    flow_levels: &BTreeMap<String, String>,
+    view_id: &str,
+    v: &View,
+) -> Vec<String> {
     let members = live_members(store, v);
     if !FLOW_KINDS.contains(&v.kind.as_str()) {
         return members
@@ -859,7 +1236,9 @@ fn drawn_entities(store: &Store, view_id: &str, v: &View) -> Vec<String> {
             .filter(|m| store.graph.entities.contains_key(m))
             .collect();
     }
-    let level = flow_view_level(store, view_id).map(|t| level_view_members(store, &t));
+    let level = flow_levels
+        .get(view_id)
+        .map(|t| level_view_members_with(store, ix, t));
     let mut out: Vec<String> = Vec::new();
     for m in &members {
         for p in flow_participants(store, std::slice::from_ref(m)) {
@@ -884,31 +1263,30 @@ pub fn children_of_view(store: &Store, view_id: &str) -> Vec<(String, String)> {
     let Some(v) = store.graph.views.get(view_id) else {
         return Vec::new();
     };
-    drawn_entities(store, view_id, v)
+    let ix = Indices::build(store);
+    let flow_levels = flow_view_level_index(store, &ix);
+    drawn_entities(store, &ix, &flow_levels, view_id, v)
         .into_iter()
-        .filter_map(|m| level_view_id(store, &m).map(|id| (m, id)))
+        .filter_map(|m| level_view_id_with(store, &ix, &m).map(|id| (m, id)))
         .collect()
 }
 
 // The rule instances that hold on the current graph.
-fn default_view_rules(store: &Store) -> Vec<DefaultView> {
+fn default_view_rules(store: &Store, ix: &Indices) -> Vec<DefaultView> {
     let instances = instance_types(store);
-    let rank = entity_document_rank(store);
     let mut out = Vec::new();
 
     // One structural level view per level of two or more, the scope root included, and
     // the flow views of the requirements lifted into it.
-    for level in levels(store, &rank) {
-        if !level_holds(store, &level) {
-            continue;
-        }
-        let members = level_members_of(store, &level, &rank);
+    let lv = ix.levels(store);
+    for level in lv.held.iter().map(|i| &lv.levels[*i]) {
+        let members = lv.members[&level.target].clone();
         let mut from: Vec<String> = level.node.iter().cloned().collect();
         from.extend(members.iter().cloned());
         out.push(DefaultView {
-            id: format!("view:{}/{}", level_kind(store, &level), level_slug(&level)),
-            kind: level_kind(store, &level),
-            title: level_title(store, &level),
+            id: level_id(store, ix, level),
+            kind: level_kind(store, ix, level),
+            title: level_title(store, level),
             members: members.clone(),
             query: None,
             from,
@@ -919,7 +1297,7 @@ fn default_view_rules(store: &Store) -> Vec<DefaultView> {
             },
         });
     }
-    out.extend(level_flow_views(store, &rank).into_iter().map(|(_, w)| w));
+    out.extend(level_flow_views(store, ix).iter().map(|(_, w)| w.clone()));
 
     // A state view per derived machine.
     for m in store.graph.state_machines.values() {
@@ -967,7 +1345,17 @@ fn default_view_rules(store: &Store) -> Vec<DefaultView> {
 // views alone; then recompute query membership on every view with a query.
 // Mirrors docs/compiler/model/view.md#default-views.
 pub fn recompute_default_views(store: &mut Store, build: &str, batch: &mut RecordBatch) {
-    let wanted = default_view_rules(store);
+    let ix = Indices::build(store);
+    recompute_default_views_with(store, &ix, build, batch);
+}
+
+fn recompute_default_views_with(
+    store: &mut Store,
+    ix: &Indices,
+    build: &str,
+    batch: &mut RecordBatch,
+) {
+    let wanted = default_view_rules(store, ix);
     let mut wanted_ids: BTreeSet<String> = BTreeSet::new();
     for w in wanted {
         wanted_ids.insert(w.id.clone());
@@ -1092,15 +1480,28 @@ fn live_members(store: &Store, v: &View) -> Vec<String> {
 
 // Arrows a view renders: the ranked contribution groups among its members.
 pub fn view_edge_count(store: &Store, members: &[String]) -> u64 {
-    let set: BTreeSet<&str> = members.iter().map(String::as_str).collect();
-    store
+    view_edge_count_with(&contributions_by_a(store), members)
+}
+
+// Every contribution by its `a` end, for the edge counts of many views at once.
+fn contributions_by_a(store: &Store) -> BTreeMap<&str, Vec<&Contribution>> {
+    let mut out: BTreeMap<&str, Vec<&Contribution>> = BTreeMap::new();
+    for c in store
         .graph
         .relationships
         .values()
         .flat_map(|r| r.contributions.iter())
-        .filter(|c| {
-            c.r#type != INSTANTIATION && set.contains(c.a.as_str()) && set.contains(c.b.as_str())
-        })
+    {
+        out.entry(c.a.as_str()).or_default().push(c);
+    }
+    out
+}
+
+fn view_edge_count_with(by_a: &BTreeMap<&str, Vec<&Contribution>>, members: &[String]) -> u64 {
+    let set: BTreeSet<&str> = members.iter().map(String::as_str).collect();
+    set.iter()
+        .flat_map(|a| by_a.get(*a).into_iter().flatten())
+        .filter(|c| c.r#type != INSTANTIATION && set.contains(c.b.as_str()))
         .count() as u64
 }
 
@@ -1134,6 +1535,12 @@ pub fn flow_participants(store: &Store, members: &[String]) -> BTreeSet<String> 
 
 // Every count over its node's soft threshold. Mirrors docs/compiler/graph.md#limits.
 pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
+    threshold_crossings_with(store, &Indices::build(store))
+}
+
+fn threshold_crossings_with(store: &Store, ix: &Indices) -> Vec<Crossing> {
+    let flow_levels = flow_view_level_index(store, ix);
+    let by_a = contributions_by_a(store);
     let mut out = Vec::new();
     let mut check =
         |subject: &str, limit: &'static str, count: u64, bumps: &BTreeMap<String, LimitBump>| {
@@ -1220,7 +1627,7 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
             check(
                 id,
                 "edges-per-view",
-                view_edge_count(store, &members),
+                view_edge_count_with(&by_a, &members),
                 &v.limits,
             );
         }
@@ -1234,7 +1641,7 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
             check(
                 id,
                 "edges-per-view",
-                view_edge_count(store, &members),
+                view_edge_count_with(&by_a, &members),
                 &v.limits,
             );
         }
@@ -1249,7 +1656,7 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
                 check(
                     id,
                     "participants-per-sequence-view",
-                    flow_view_participant_count(store, id, v) as u64,
+                    flow_view_participant_count_with(store, ix, &flow_levels, id, v) as u64,
                     &v.limits,
                 );
             }
@@ -1263,8 +1670,20 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
 // union of the members' initiators and receivers.
 // Mirrors docs/compiler/goals/split-view.md#created-when.
 pub fn flow_view_participant_count(store: &Store, view_id: &str, v: &View) -> usize {
-    if flow_view_level(store, view_id).is_some() {
-        return drawn_entities(store, view_id, v).len();
+    let ix = Indices::build(store);
+    let flow_levels = flow_view_level_index(store, &ix);
+    flow_view_participant_count_with(store, &ix, &flow_levels, view_id, v)
+}
+
+fn flow_view_participant_count_with(
+    store: &Store,
+    ix: &Indices,
+    flow_levels: &BTreeMap<String, String>,
+    view_id: &str,
+    v: &View,
+) -> usize {
+    if flow_levels.contains_key(view_id) {
+        return drawn_entities(store, ix, flow_levels, view_id, v).len();
     }
     let flow: Vec<String> = live_members(store, v)
         .into_iter()
@@ -1277,7 +1696,12 @@ pub fn flow_view_participant_count(store: &Store, view_id: &str, v: &View) -> us
 // the subject and limit is refreshed in place (count, level), never duplicated; one
 // whose count fell back under the threshold clears.
 pub fn record_threshold_crossings(store: &mut Store, batch: &mut RecordBatch) {
-    let crossings = threshold_crossings(store);
+    let ix = Indices::build(store);
+    record_threshold_crossings_with(store, &ix, batch);
+}
+
+fn record_threshold_crossings_with(store: &mut Store, ix: &Indices, batch: &mut RecordBatch) {
+    let crossings = threshold_crossings_with(store, ix);
     store.status.changes.retain(|c| {
         c.kind != CHANGE_THRESHOLD_CROSSED
             || crossings
@@ -1388,7 +1812,7 @@ pub(crate) mod tests {
             ent("User Account", Some("ent:users"), &["id", "role"]),
         );
         s.graph.entities.insert("ent:product".into(), ent("Product", Some("ent:inventory"), &[]));
-        let ids: Vec<String> = default_view_rules(&s).into_iter().map(|v| v.id).collect();
+        let ids: Vec<String> = default_view_rules(&s, &Indices::build(&s)).into_iter().map(|v| v.id).collect();
         assert!(ids.contains(&"view:class/users".to_string()), "{:?}", ids);
         assert!(!ids.iter().any(|i| i.ends_with("/inventory")), "{:?}", ids);
         assert_eq!(level_view_id(&s, "ent:users").as_deref(), Some("view:class/users"));
@@ -1427,7 +1851,7 @@ pub(crate) mod tests {
                 ..Default::default()
             });
         }
-        let ids: Vec<String> = default_view_rules(&s).into_iter().map(|v| v.id).collect();
+        let ids: Vec<String> = default_view_rules(&s, &Indices::build(&s)).into_iter().map(|v| v.id).collect();
         assert!(!ids.contains(&"view:usecase/plot".to_string()), "{:?}", ids);
         assert!(!ids.contains(&"view:sequence/plot".to_string()), "{:?}", ids);
         assert!(ids.contains(&"view:usecase/cast-plot".to_string()), "{:?}", ids);
@@ -2444,5 +2868,207 @@ pub(crate) mod tests {
         record_threshold_crossings(&mut s, &mut batch);
         assert_eq!(batch.records()[0].subject, "scope:public");
         assert_eq!(batch.records()[0].detail["level"], "hard");
+    }
+
+    // A synthetic store of a given size: twenty documents linked in a chain from the
+    // root, each with ten sections; a containment tree of fan-out eight over a wide
+    // top level; names from a small vocabulary, every fiftieth entity a lookalike of
+    // its neighbor across documents; requirements naming two entities each with an
+    // edge, a behavior facet on every other, a transition on every tenth.
+    pub(crate) fn synthetic_store(entities: usize, requirements: usize) -> Store {
+        const WORDS: [&str; 24] = [
+            "order", "service", "cart", "customer", "stock", "api", "gateway", "ledger",
+            "invoice", "payment", "shipment", "account", "catalog", "price", "report",
+            "audit", "session", "token", "queue", "worker", "cache", "index", "policy",
+            "region",
+        ];
+        let docs = 20;
+        let statement = |j: usize| {
+            format!(
+                "Statement {} of ent:e{} toward ent:e{}.",
+                j,
+                j % entities,
+                (j * 7 + 3) % entities
+            )
+        };
+        let mut s = Store::default();
+        for k in 0..docs {
+            let mut text = format!("# D{}\n\nThe document, see [next](d{}.md).\n", k, (k + 1) % docs);
+            for j in 0..10 {
+                text.push_str(&format!("\n## S{}\n\nThe body of section {} in {}.\n", j, j, k));
+                // The statements quoted from this section, so every anchor locates.
+                for r in (0..requirements).filter(|r| r % docs == k && (r / docs) % 10 == j) {
+                    text.push_str(&statement(r));
+                    text.push('\n');
+                }
+            }
+            let sections = md::parse_sections(&text);
+            let coverage = sections
+                .keys()
+                .map(|r| {
+                    (
+                        r.clone(),
+                        Coverage {
+                            state: "covered".into(),
+                            note: None,
+                            claimed_by: Some("g1".into()),
+                        },
+                    )
+                })
+                .collect();
+            s.docs.insert(
+                format!("d{}.md", k),
+                DocRecord {
+                    content_hash: hash_hex(&text),
+                    sections,
+                    coverage,
+                },
+            );
+        }
+        s.status.roots = vec!["d0.md".into()];
+        s.status.generation = 1;
+        for i in 0..entities {
+            let name = if i % 50 < 2 {
+                format!("{} concept", WORDS[(i / 50) % WORDS.len()])
+            } else {
+                format!("{} {}{}", WORDS[i % WORDS.len()], WORDS[(i / WORDS.len()) % WORDS.len()], i)
+            };
+            let parent = if i < 64 { None } else { Some(format!("ent:e{}", (i - 64) / 8)) };
+            let doc = format!("d{}.md", i % docs);
+            let section = format!("/d{}/s{}", i % docs, (i / docs) % 10);
+            s.graph.entities.insert(
+                format!("ent:e{}", i),
+                Entity {
+                    name: name.clone(),
+                    stereotype: if i % 7 == 0 { Some("service".into()) } else { None },
+                    parent,
+                    mentions: vec![src(&doc, &section, &name)],
+                    ..Default::default()
+                },
+            );
+        }
+        let types = ["dependency", "association", "composition", "realization"];
+        for j in 0..requirements {
+            let a = format!("ent:e{}", j % entities);
+            let b = format!("ent:e{}", (j * 7 + 3) % entities);
+            let doc = format!("d{}.md", j % docs);
+            let section = format!("/d{}/s{}", j % docs, (j / docs) % 10);
+            let statement = statement(j);
+            let transition = (j % 10 == 0).then(|| Transition {
+                subject: a.clone(),
+                from: "idle".into(),
+                to: format!("state{}", j % 3),
+                trigger: Some("event".into()),
+                guard: None,
+            });
+            s.graph.requirements.insert(
+                format!("req:r{:05}", j),
+                Requirement {
+                    statement: statement.clone(),
+                    entities: vec![a.clone(), b.clone()],
+                    edges: if a == b { vec![] } else { vec![edge(&a, &b, types[j % 4], None)] },
+                    transition,
+                    facets: if j % 2 == 0 { vec![behavior()] } else { vec![] },
+                    source: Some(src(&doc, &section, &statement)),
+                    ..Default::default()
+                },
+            );
+        }
+        s
+    }
+
+    // The level index holds what the per-level scans compute: the members of every
+    // held level and every flow view, in order.
+    // Mirrors docs/compiler/graph.md#derived-data.
+    #[test]
+    fn the_level_index_matches_the_per_level_scans() {
+        let mut synthetic = synthetic_store(300, 700);
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut synthetic, "g1", &mut batch);
+        let mut showcase = showcase_store();
+        recompute(&mut showcase, "g1", &mut batch);
+        for s in &[crate::board::tests::settled_store(), showcase, synthetic] {
+            let ix = Indices::build(s);
+            let lv = ix.levels(s);
+            let scanned: Vec<Level> = levels(s, &ix);
+            assert_eq!(lv.levels, scanned);
+            let held: Vec<usize> = (0..scanned.len())
+                .filter(|i| level_holds(s, &scanned[*i]))
+                .collect();
+            assert_eq!(lv.held, held);
+            assert_eq!(lv.members.len(), held.len());
+            for i in held {
+                let l = &scanned[i];
+                assert_eq!(lv.members[&l.target], level_members_of_scan(s, l, &ix), "{}", l.target);
+            }
+            assert_eq!(lv.flow_views, level_flow_views_scan(s, &ix));
+            assert!(!lv.flow_views.is_empty());
+        }
+    }
+
+    // The indices hold what the scans they replace compute: the document order, the
+    // children of every parent, the requirements referencing every entity, and the
+    // level of every view as the per-target lookups find it.
+    // Mirrors docs/compiler/graph.md#derived-data.
+    #[test]
+    fn indices_match_the_scans_they_replace() {
+        let mut synthetic = synthetic_store(120, 300);
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut synthetic, "g1", &mut batch);
+        for s in &[crate::board::tests::settled_store(), synthetic] {
+            let ix = Indices::build(s);
+            assert_eq!(ix.document_order, document_order(s));
+            assert_eq!(ix.doc_levels, doc_levels_from(s, &s.status.roots));
+            for (i, rid) in ix.document_order.iter().enumerate() {
+                assert_eq!(ix.requirement_position[rid], i);
+            }
+            let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (id, e) in &s.graph.entities {
+                if let Some(p) = &e.parent {
+                    children.entry(p.clone()).or_default().push(id.clone());
+                }
+            }
+            assert_eq!(ix.children, children);
+            for id in s.graph.entities.keys() {
+                assert_eq!(
+                    ix.requirements_referencing(id),
+                    s.requirements_referencing(id).as_slice(),
+                    "{}",
+                    id
+                );
+                assert_eq!(level_view_id_with(s, &ix, id), level_view_id(s, id), "{}", id);
+                assert_eq!(level_view_members_with(s, &ix, id), level_view_members(s, id));
+            }
+            // The level of every view, as the per-target lookups answer it: the
+            // entities by id, then the scope roots.
+            let mut targets: Vec<String> = s.graph.entities.keys().cloned().collect();
+            let mut scopes: Vec<String> = s
+                .graph
+                .entities
+                .values()
+                .map(|e| scope_root_target(&e.scope))
+                .collect();
+            scopes.sort();
+            scopes.dedup();
+            targets.extend(scopes);
+            let ids: Vec<(String, Option<String>)> = targets
+                .iter()
+                .map(|t| (t.clone(), level_view_id(s, t)))
+                .collect();
+            let flow_ids: Vec<String> = level_flow_views(s, &ix).iter().map(|(_, w)| w.id.clone()).collect();
+            let distinct: BTreeSet<&String> = flow_ids.iter().collect();
+            assert_eq!(distinct.len(), flow_ids.len(), "one level per flow view id");
+            let flows = flow_view_levels(s);
+            let levels = view_levels(s, &ix);
+            for vid in s.graph.views.keys() {
+                let expected = flows.get(vid).cloned().or_else(|| {
+                    ids.iter()
+                        .find(|(_, id)| id.as_deref() == Some(vid.as_str()))
+                        .map(|(t, _)| t.clone())
+                });
+                assert_eq!(levels.get(vid), expected.as_ref(), "{}", vid);
+            }
+            assert!(levels.len() >= flows.len());
+        }
     }
 }

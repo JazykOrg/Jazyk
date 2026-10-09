@@ -84,7 +84,10 @@ board shows the goals the next build will open; it writes nothing. The `edit` an
 `align` entries, the section trees, and the records they carry are written by the
 build that aligns for real, or by the serving's `done` before its commit. A read-only
 command never moves the graph. The graph
-never stores goals, so it cannot grow with them.
+never stores goals, so it cannot grow with them. A derivation builds its
+[derived indices](./graph.md#derived-data) (document order, parent to children, entity
+to requirements, the referrer index of the cone walk) once from the store and reads them
+for every goal; it stores none of them.
 
 E.g.:
 

@@ -10,6 +10,10 @@ use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 
+// Frames waiting for the language server thread. A frame arriving at a full queue
+// is dropped and logged once per connection (docs/frontends/gui.md#serving).
+const INBOUND_QUEUE: usize = 1024;
+
 enum SessionEvent {
     Client(Value),
     StoreChanged,
@@ -71,7 +75,7 @@ pub async fn ws(State(st): State<SharedState>, upgrade: WebSocketUpgrade) -> Res
 async fn session(st: SharedState, socket: WebSocket) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let (in_tx, in_rx) = std::sync::mpsc::channel::<SessionEvent>();
+    let (in_tx, in_rx) = std::sync::mpsc::sync_channel::<SessionEvent>(INBOUND_QUEUE);
 
     let writer = tokio::spawn(async move {
         while let Some(s) = out_rx.recv().await {
@@ -88,10 +92,14 @@ async fn session(st: SharedState, socket: WebSocket) {
         loop {
             match sub.recv().await {
                 Ok(ev) => {
-                    if ev["type"] == "store.generation"
-                        && gen_tx.send(SessionEvent::StoreChanged).is_err()
-                    {
-                        break;
+                    if ev["type"] != "store.generation" {
+                        continue;
+                    }
+                    // A full queue drops the nudge: the next one repaints the same
+                    // documents, and the thread refreshes on every client message.
+                    match gen_tx.try_send(SessionEvent::StoreChanged) {
+                        Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => {}
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -120,12 +128,23 @@ async fn session(st: SharedState, socket: WebSocket) {
         }
     });
 
+    let mut dropped_once = false;
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(t) => {
                 if let Ok(v) = serde_json::from_str::<Value>(&t) {
-                    if in_tx.send(SessionEvent::Client(v)).is_err() {
-                        break;
+                    match in_tx.try_send(SessionEvent::Client(v)) {
+                        Ok(()) => {}
+                        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                            if !dropped_once {
+                                dropped_once = true;
+                                eprintln!(
+                                    "[jazyk] warning: the editor's language server is {} frames behind; dropping frames until it catches up",
+                                    INBOUND_QUEUE
+                                );
+                            }
+                        }
+                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
                     }
                 }
             }
@@ -133,8 +152,12 @@ async fn session(st: SharedState, socket: WebSocket) {
             _ => {}
         }
     }
-    let _ = in_tx.send(SessionEvent::Closed);
-    let _ = session.await;
+    // The close marker may find the queue full: dropping every sender closes the
+    // channel too, so the thread ends once it drains. Both senders go first, or
+    // waiting on the thread would wait on ourselves.
+    let _ = in_tx.try_send(SessionEvent::Closed);
+    drop(in_tx);
     gen_task.abort();
+    let _ = session.await;
     writer.abort();
 }

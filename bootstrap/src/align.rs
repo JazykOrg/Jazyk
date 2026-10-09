@@ -299,7 +299,7 @@ fn anchors_in(graph: &Graph, at: &Full) -> Vec<(String, String)> {
 // vanished take part in matching; the rest serve as homes for a quote search.
 pub fn align(
     old: &BTreeMap<String, DocRecord>,
-    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    parsed: &crate::reconcile::ParsedDocs,
     graph: &Graph,
     th: &Thresholds,
 ) -> AlignPlan {
@@ -696,7 +696,7 @@ mod tests {
     use super::*;
     use crate::md::parse_sections;
 
-    fn docs(files: &[(&str, &str)]) -> BTreeMap<String, (String, BTreeMap<String, Section>)> {
+    fn docs(files: &[(&str, &str)]) -> crate::reconcile::ParsedDocs {
         files
             .iter()
             .map(|(d, t)| (d.to_string(), (hash_hex(t), parse_sections(t))))
@@ -704,7 +704,7 @@ mod tests {
     }
 
     fn stored(
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
     ) -> BTreeMap<String, DocRecord> {
         parsed
             .iter()

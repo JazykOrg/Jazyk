@@ -136,7 +136,8 @@ Project and store reads:
   directory, the [executors](../compiler/project-settings.md#executors), and the LLM
   model and base URL. The API key is never served.
 - `GET /api/status`: `status.yaml` (the store version, the generation, the
-  [verdict](../compiler/compilation.md#convergence) with its counts, the costs) plus
+  [verdict](../compiler/compilation.md#convergence) with its counts, the costs, the
+  `parked` goals as goal records each with its `reason`, the `failed` goals) plus
   node counts, the coverage fraction, open diagnostics by severity, and the board
   counts. The same summary as `jazyk status`.
 - `GET /api/overview`: the same summary without the board counts, plus verification
@@ -220,7 +221,9 @@ The board and causality:
   reconciler derives it from disk: every open, blocked, parked, and failed goal with its
   kind, class, `mandatory`, target and unit, `change`, `cause`, `state`, hints, its
   [readiness](../compiler/reconciler.md#readiness) (ready, or the blocking reason as a
-  sentence), and the batch id when a running session holds it. The ready goals come
+  sentence), for a parked goal the reason the build parked it (`parkedReason`,
+  [parked and failed](../compiler/reconciler.md#parked-and-failed)), and the batch id
+  when a running session holds it. The ready goals come
   grouped into the batches the scheduler would form ([batching](../compiler/reconciler.md#batching)),
   each with its id (`b<generation>-<n>`), so the board shows what the next session
   takes before it starts. Counts by class, kind, and state ride beside the list, and

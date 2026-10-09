@@ -1432,7 +1432,7 @@ fn read_project_store(root: &Path, out: &Path) -> Store {
     if out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {return Store::load(out);}
     let Ok(w)=crate::document_sets::Workspace::load(root) else {return Store::load(out);};
     if !w.exists {return Store::load(out);}
-    let mut combined=Store::default();combined.out=out.into();
+    let mut combined=Store{out:out.into(),..Default::default()};
     let mut graph=serde_json::to_value(&combined.graph).unwrap();let mut version=w.hash.clone();
     for set in &w.sets {
         let p=w.resolve(Some(&set.id)).unwrap();let store=Store::load(&p.out);

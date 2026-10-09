@@ -459,11 +459,14 @@ struct Transcript {
     out: std::path::PathBuf,
 }
 
+// A receiver of the structured trace events.
+pub type TraceSink = std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Trace {
     pub level: TraceLevel,
     // None renders to stderr. A sink receives the structured events instead.
-    sink: Option<std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>>,
+    sink: Option<TraceSink>,
     // Best-effort cancellation, checked between batches, entities, and rows. It rides
     // in the trace because the trace is already threaded through every runner.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -491,7 +494,7 @@ impl Trace {
     }
     pub fn to_sink(
         level: TraceLevel,
-        sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>,
+        sink: TraceSink,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Trace {
         Trace {

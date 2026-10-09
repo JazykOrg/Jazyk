@@ -1,5 +1,5 @@
 //! Filesystem-free native compiler embedding. See docs/compiler/hosted-runtime.md.
-use crate::session::{Trace, TraceEvent, TraceLevel};
+use crate::session::{Trace, TraceLevel};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,7 +11,7 @@ use std::sync::{
 
 pub type Snapshot = BTreeMap<String, Vec<u8>>;
 pub type ModelTransport = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
-pub type TraceSink = Arc<dyn Fn(&TraceEvent) + Send + Sync>;
+pub use crate::session::TraceSink;
 pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
 
 /// Text projections for authored revisions and delivery, not a verification verdict.

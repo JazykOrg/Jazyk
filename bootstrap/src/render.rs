@@ -152,8 +152,10 @@ const PNG_MAX_SIDE: f32 = 8192.0;
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
     if crate::vfs::is_scoped() { return Err(RenderError("hosted PNG export is unavailable; use SVG".into())); }
-    let mut opt = resvg::usvg::Options::default();
-    opt.fontdb = fonts();
+    let opt = resvg::usvg::Options {
+        fontdb: fonts(),
+        ..Default::default()
+    };
     let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| RenderError(e.to_string()))?;
     // At most PNG_MAX_SIDE pixels on the longer side: a wide view scales down instead
     // of asking for a gigabyte of pixels. Mirrors docs/compiler/diagrams.md#rendering.

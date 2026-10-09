@@ -295,6 +295,7 @@ pub(crate) fn encode_lease_id(task: &str) -> String {
     s
 }
 
+#[cfg(test)]
 pub(crate) fn decode_lease_id(safe: &str) -> Option<String> {
     let mut out: Vec<u8> = Vec::with_capacity(safe.len());
     let bytes = safe.as_bytes();

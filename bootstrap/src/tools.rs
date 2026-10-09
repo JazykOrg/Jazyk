@@ -1446,7 +1446,6 @@ pub struct ToolSession {
     // Goal lines already previewed this session: a repeat is counted, not repeated.
     previewed: std::collections::BTreeSet<String>,
     mutation_limit: usize,
-    default_budget: usize,
     // Staged entities (id -> entity) so lookup-before-create sees this session's own creates.
     staged_entities: std::collections::BTreeMap<String, Entity>,
     // The session's own staged findings, by their stage-minted ids: reads see
@@ -1507,7 +1506,6 @@ impl ToolSession {
             review_staged_note: None,
             previewed: std::collections::BTreeSet::new(),
             mutation_limit,
-            default_budget,
             staged_entities: Default::default(),
             staged_diags: Default::default(),
             staged_reqs: Default::default(),
@@ -8868,7 +8866,6 @@ mod tests {
         assert_eq!(v["definition"], "a person who buys things");
     }
 
-    #[test]
     // The severity gate is the model's own list: `none` (a considered judgment
     // recorded but not surfaced) passes, an invented level is refused naming the
     // list. Mirrors docs/compiler/model/diagnostic.md#fields.
@@ -8967,7 +8964,6 @@ mod tests {
         assert_eq!(r["resolved"], true);
     }
 
-    #[test]
     // delete_entity's parent gate and merge_entities' ancestor gate hold when the
     // call is staged, staged moves counted, so the reply never says done for a
     // mutation the commit would skip. Mirrors docs/compiler/tools.md#write-tools.

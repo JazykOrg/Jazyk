@@ -945,11 +945,46 @@ pub fn reqs_of_sorted(store: &Store, id: &str) -> Vec<String> {
     v
 }
 
+// What `reqs_of_sorted` answers for every entity, built in one pass over the
+// requirements: the requirement ids naming the entity (redirects followed), sorted.
+// A scan over the entities that asked per entity read the five thousand requirements
+// of a large store two thousand times.
+pub struct ReqsByEntity(BTreeMap<String, Vec<String>>);
+
+impl ReqsByEntity {
+    pub fn build(store: &Store) -> ReqsByEntity {
+        let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (rid, r) in &store.graph.requirements {
+            let mut named: Vec<&str> = Vec::new();
+            for e in &r.entities {
+                let id = store.resolve_id(e);
+                if !named.contains(&id) {
+                    named.push(id);
+                    map.entry(id.to_string()).or_default().push(rid.clone());
+                }
+            }
+        }
+        for v in map.values_mut() {
+            v.sort();
+        }
+        ReqsByEntity(map)
+    }
+
+    pub fn of(&self, id: &str) -> &[String] {
+        self.0.get(id).map(Vec::as_slice).unwrap_or(&[])
+    }
+}
+
 // The facts generation consumes, folded into one hash: name, definition,
 // stereotype, attributes, and every referencing statement with its edges. Any of
 // them changing flips the entity to generation work.
 // Mirrors docs/consumers/gen.md#the-ledger.
 pub fn fact_hash(store: &Store, id: &str) -> String {
+    fact_hash_over(store, id, &reqs_of_sorted(store, id))
+}
+
+// `fact_hash` with the entity's sorted requirement ids already in hand.
+pub fn fact_hash_over(store: &Store, id: &str, rids: &[String]) -> String {
     let e = &store.graph.entities[id];
     let mut facts = format!(
         "{}|{}|{}|",
@@ -965,8 +1000,8 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
             a.value.as_deref().unwrap_or("")
         ));
     }
-    for rid in reqs_of_sorted(store, id) {
-        if let Some(r) = store.graph.requirements.get(&rid) {
+    for rid in rids {
+        if let Some(r) = store.graph.requirements.get(rid) {
             facts.push_str(&r.statement);
             for edge in &r.edges {
                 facts.push_str(&format!(
@@ -1224,14 +1259,15 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
 // Mirrors docs/compiler/goals/generate.md#created-when.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
+    let by_entity = ReqsByEntity::build(store);
     let mut out = Vec::new();
     for id in store.graph.entities.keys() {
-        let rids = reqs_of_sorted(store, id);
+        let rids = by_entity.of(id);
         if rids.is_empty() {
             continue;
         }
         let slug = slug_of(id);
-        let hash = fact_hash(store, id);
+        let hash = fact_hash_over(store, id, rids);
         let unimplemented: Vec<&String> = rids
             .iter()
             .filter(|rid| {
@@ -1244,7 +1280,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             .collect();
         let (reason, changed) = match ledger.entities.get(&slug) {
             Some(e) if e.fact_hash != hash => {
-                let (r, c) = change_diff(&ledger, &slug, &rids);
+                let (r, c) = change_diff(&ledger, &slug, rids);
                 (r, json!(c))
             }
             Some(e) => {
@@ -1323,14 +1359,14 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     let implementing = |f: &String| {
         !artifacts.contains(f) && !outputs.contains(f) && gs.deliverable.join(f).vis_file()
     };
-    if !e.files.iter().any(|f| implementing(f)) {
+    if !e.files.iter().any(&implementing) {
         let missing: Vec<String> = reqs_of_sorted(store, &id)
             .into_iter()
             .filter(|rid| {
                 !ledger
                     .requirements
                     .get(rid)
-                    .is_some_and(|row| row.files.iter().any(|f| implementing(f)))
+                    .is_some_and(|row| row.files.iter().any(&implementing))
             })
             .collect();
         if !missing.is_empty() {
@@ -1870,11 +1906,11 @@ pub fn mark(
             .into_iter()
             .filter(|rid| {
                 let named = match rows.iter().find(|(r, _, _)| r == rid) {
-                    Some((_, _, fs)) => fs.iter().any(|f| implementing(f)),
+                    Some((_, _, fs)) => fs.iter().any(&implementing),
                     None => pre
                         .requirements
                         .get(rid)
-                        .is_some_and(|row| row.files.iter().any(|f| implementing(f))),
+                        .is_some_and(|row| row.files.iter().any(&implementing)),
                 };
                 !named
             })
@@ -2629,6 +2665,33 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
 mod tests {
     use super::*;
 
+    // The one-pass requirement index answers what the per-entity scan answers, for
+    // every entity, and the fact hash over it is the fact hash.
+    #[test]
+    fn reqs_by_entity_matches_the_per_entity_scan() {
+        let mut synthetic = crate::derive::tests::synthetic_store(300, 700);
+        synthetic
+            .graph
+            .redirects
+            .insert("ent:old".into(), "ent:e1".into());
+        synthetic.graph.requirements.insert(
+            "req:redirected".into(),
+            crate::model::Requirement {
+                statement: "The old one, twice.".into(),
+                entities: vec!["ent:old".into(), "ent:e1".into(), "ent:e2".into()],
+                ..Default::default()
+            },
+        );
+        for s in [synthetic, crate::board::tests::settled_store()] {
+            let index = ReqsByEntity::build(&s);
+            assert!(index.of("ent:nope").is_empty());
+            for id in s.graph.entities.keys() {
+                assert_eq!(index.of(id), reqs_of_sorted(&s, id).as_slice(), "{}", id);
+                assert_eq!(fact_hash_over(&s, id, index.of(id)), fact_hash(&s, id), "{}", id);
+            }
+        }
+    }
+
     #[test]
     fn an_unparseable_ledger_reads_empty_and_refuses_to_save() {
         let out = std::env::temp_dir().join(format!(
@@ -2916,13 +2979,15 @@ mod tests {
             exit_code: None,
             evidence: None,
         };
-        let mut ledger = Ledger::default();
-        ledger.medium = Some(Medium {
-            form: "Python package".into(),
-            produced: "written".into(),
-            toolchain: "python3 with pytest".into(),
-            artifact: String::new(),
-        });
+        let mut ledger = Ledger {
+            medium: Some(Medium {
+                form: "Python package".into(),
+                produced: "written".into(),
+                toolchain: "python3 with pytest".into(),
+                artifact: String::new(),
+            }),
+            ..Default::default()
+        };
         assert!(medium_divergence(&ledger).is_none(), "no rows, no verdict");
         ledger
             .requirements
@@ -2953,13 +3018,15 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(&out).ok();
-        let mut ledger = Ledger::default();
-        ledger.medium = Some(Medium {
-            form: "Python package".into(),
-            produced: "written".into(),
-            toolchain: "python3 with pytest".into(),
-            artifact: String::new(),
-        });
+        let ledger = Ledger {
+            medium: Some(Medium {
+                form: "Python package".into(),
+                produced: "written".into(),
+                toolchain: "python3 with pytest".into(),
+                artifact: String::new(),
+            }),
+            ..Default::default()
+        };
         ledger.save(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
@@ -4466,7 +4533,7 @@ pub fn gen_one(
                         "product retry",
                     )
                     .map_err(|e| format!("product retry: {}", e))?;
-                let (p, b) = parse_file_reply(&reply2).map(|(p, b)| (p, b))?;
+                let (p, b) = parse_file_reply(&reply2)?;
                 if let Some(o) = owner_of(&p) {
                     return Err(format!("product path `{}` belongs to entity `{}`", p, o));
                 }
@@ -4476,7 +4543,7 @@ pub fn gen_one(
             product_rel = path;
             code = body;
         } else {
-            code.push_str("\n");
+            code.push('\n');
             code.push_str(&strip_fences(&reply));
         }
         code.push('\n');
@@ -4950,7 +5017,7 @@ pub fn gen_one(
         });
     for p in extra_written {
         let n = norm_rel(&p);
-        let deliverable_wide = declared_support.iter().any(|d| *d == n)
+        let deliverable_wide = declared_support.contains(&n)
             || build_entry_path.as_deref() == Some(n.as_str());
         if deliverable_wide {
             support_files.push(p);

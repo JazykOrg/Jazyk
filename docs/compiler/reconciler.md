@@ -722,10 +722,19 @@ attempts no model made, 302 in its last minutes.
 ## Parked and failed
 
 `status.yaml` carries both lists beside the change records: `parked` (whole goal
-records) and `failed` (`{goal, reason}`, `goal` the whole record). Both are read at
-derivation and stamp the goal's `state`. Both keep the goal whole, `change` payload
-included, so a parked or failed goal survives a re-derivation that would otherwise drop
-it.
+records, each with an optional `reason` beside the goal's fields) and `failed`
+(`{goal, reason}`, `goal` the whole record). Both are read at derivation and stamp the
+goal's `state`. Both keep the goal whole, `change` payload included, so a parked or
+failed goal survives a re-derivation that would otherwise drop it.
+
+The park `reason` says which road ran out, in the words the trace uses: the retry
+(`left open after its retry in session b12-3`), the build cap or the `--sessions`
+limit, the dead-endpoint breaker with the last error, a cancelled build, a reopen cycle
+(`reopened-after-resolve: ...`), or a flip (`cross-class flip: ...`,
+`reparent flip: ...`). An entry written without one reads with no reason. The reason
+rides wherever a parked goal is shown: the `incomplete-build` diagnostic's message,
+`jazyk explain` (a `parked:` line), the whole-build report of `jazyk ripple`, the
+board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status`.
 
 - Parked means "ran out of road": a session that exhausted its rounds without meeting
   the gate is retried once with a fresh session, then its goals park; a build that hits

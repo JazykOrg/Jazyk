@@ -409,9 +409,9 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
                 // The message carries the reply the model saw; its rule wins over the
                 // event's field, which some writers fill with the tool name.
                 let msg = e["message"].as_str().unwrap_or("");
-                let rule = regex::Regex::new(r#"\\?"rule\\?":\s*\\?"([a-z-]+)"#)
-                    .ok()
-                    .and_then(|r| r.captures(msg).map(|c| c[1].to_string()))
+                let rule = RULE_IN_MESSAGE
+                    .captures(msg)
+                    .map(|c| c[1].to_string())
                     .or_else(|| e["rule"].as_str().filter(|r| !r.is_empty()).map(String::from))
                     .unwrap_or_else(|| "?".to_string());
                 results.push(json!({"error": {"rule": rule, "message": msg}}));
@@ -437,7 +437,7 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         .unwrap_or_else(|| PathBuf::from("."));
     let mut docs = serde_json::Map::new();
     let mut files: Vec<PathBuf> = Vec::new();
-    collect_md(&root, &root, &mut files);
+    collect_md(&root, &mut files);
     files.sort();
     for f in files {
         if let Ok(t) = std::fs::read_to_string(&f) {
@@ -597,7 +597,12 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
     ))
 }
 
-fn collect_md(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
+// The `rule` a refusal message carries, quoted or JSON-escaped.
+static RULE_IN_MESSAGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"\\?"rule\\?":\s*\\?"([a-z-]+)"#).expect("a literal pattern")
+});
+
+fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
@@ -606,7 +611,7 @@ fn collect_md(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             if matches!(name.as_str(), ".jazyk" | ".jazyk.bak" | "node_modules" | "target") || name.starts_with('.') {
                 continue;
             }
-            collect_md(root, &p, out);
+            collect_md(&p, out);
         } else if name.ends_with(".md") && name != "EXPECTED.md" {
             out.push(p);
         }

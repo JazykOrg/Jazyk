@@ -624,27 +624,146 @@ struct SectionWork {
     causes: Vec<Cause>,
 }
 
-// Requirements sourced in a section, and the entities mentioned there.
-fn anchored_in(store: &Store, doc: &str, section: &str) -> (Vec<String>, Vec<String>) {
-    let reqs: Vec<String> = store
-        .graph
-        .requirements
-        .iter()
-        .filter(|(_, r)| r.anchored_at(doc, section))
-        .map(|(id, _)| id.clone())
-        .collect();
-    let ents: Vec<String> = store
-        .graph
-        .entities
-        .iter()
-        .filter(|(_, e)| {
-            e.mentions
+// How many requirements are sourced in each section (`doc#section`), one pass over
+// the requirements.
+fn requirements_per_section(store: &Store) -> BTreeMap<String, usize> {
+    let mut out: BTreeMap<String, usize> = BTreeMap::new();
+    for r in store.graph.requirements.values() {
+        if let Some(s) = &r.source {
+            *out.entry(format!("{}#{}", s.doc, s.section)).or_insert(0) += 1;
+        }
+    }
+    out
+}
+
+// The hint lines every section goal of one document shares: its subjects and the
+// known entities its text names. Computed once per document, not per section (a
+// store with two hundred dirty sections once lowercased its documents and searched
+// two thousand names two hundred times).
+struct DocHintLines {
+    subjects: Option<String>,
+    known: String,
+}
+
+// Every entity's name and aliases lowercased, the ones three characters or longer,
+// by id: what "named in the document" searches the text for, prepared once per
+// derivation rather than once per document per entity.
+struct EntityNames(BTreeMap<String, (String, Vec<String>)>);
+
+impl EntityNames {
+    fn build(store: &Store) -> EntityNames {
+        EntityNames(
+            store
+                .graph
+                .entities
                 .iter()
-                .any(|m| m.doc == doc && m.section == section)
+                .map(|(id, e)| {
+                    let lc: Vec<String> = std::iter::once(&e.name)
+                        .chain(e.aliases.iter())
+                        .filter(|n| n.len() >= 3)
+                        .map(|n| n.to_lowercase())
+                        .collect();
+                    (id.clone(), (e.name.clone(), lc))
+                })
+                .collect(),
+        )
+    }
+
+    fn named_in(&self, id: &str, text: &str) -> bool {
+        self.0
+            .get(id)
+            .is_some_and(|(_, lc)| lc.iter().any(|n| text.contains(n.as_str())))
+    }
+}
+
+fn doc_hint_lines(
+    store: &Store,
+    doc: &str,
+    linked: &[(String, String, String)],
+    names: &EntityNames,
+) -> DocHintLines {
+    // The document's own text decides what it names: an entity linked from
+    // another document counts as this one's subject only when this document
+    // names it (or is titled with its name), and the known entities are the
+    // ones whose name or alias occurs in the text, listed by id. A settings
+    // document once read "primarySubject: Scene; 0 entities mentioned" because
+    // a scene's setting linked to it and mentions were counted, not names.
+    // Mirrors docs/compiler/goals/reconcile-section.md#what-the-model-sees.
+    let text = store
+        .docs
+        .get(doc)
+        .map(|d| {
+            d.sections
+                .values()
+                .map(|s| s.raw.to_lowercase())
+                .collect::<Vec<_>>()
+                .join("\n")
         })
-        .map(|(id, _)| id.clone())
+        .unwrap_or_default();
+    let root_title = store.docs.get(doc).and_then(|d| {
+        d.sections
+            .values()
+            .find(|s| s.kind == "root")
+            .map(|s| s.title.to_lowercase())
+    });
+    let subjects: Vec<&(String, String, String)> = linked
+        .iter()
+        .filter(|(id, name, _)| {
+            root_title.as_deref() == Some(name.to_lowercase().as_str())
+                || names.named_in(id, &text)
+        })
         .collect();
-    (reqs, ents)
+    let subjects = match subjects.len() {
+        0 if !linked.is_empty() => Some(format!(
+            "linked from {} other document(s) (via {}); none of their entities is named here, so no primarySubject",
+            linked.len(),
+            linked
+                .iter()
+                .map(|(id, _, _)| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        0 => None,
+        1 => Some(format!(
+            "primarySubject: {} ({})",
+            subjects[0].0, subjects[0].1
+        )),
+        _ => Some(format!(
+            "candidateSubjects: {}",
+            subjects
+                .iter()
+                .map(|(id, name, _)| format!("{} ({})", id, name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    };
+    let mut known: Vec<String> = names
+        .0
+        .iter()
+        .filter(|(_, (_, lc))| lc.iter().any(|n| text.contains(n.as_str())))
+        .map(|(id, (name, _))| format!("{} ({})", name, id))
+        .collect();
+    let known_count = known.len();
+    known.truncate(8);
+    if known_count > 8 {
+        known.push(format!("and {} more", known_count - 8));
+    }
+    let known = if store.graph.entities.is_empty() {
+        "the graph holds no entity yet: create what the section states, no search can find anything".to_string()
+    } else if known_count == 0 {
+        format!(
+            "no known entity is named in the document; {} in the graph; search before creating",
+            store.graph.entities.len()
+        )
+    } else {
+        format!(
+            "{} known entities named in the document: {}; {} in the graph; search before creating",
+            known_count,
+            known.join(", "),
+            store.graph.entities.len()
+        )
+    };
+    DocHintLines { subjects, known }
 }
 
 // Whether a stale anchor still owes work: its quote fails to locate or it is flagged
@@ -672,6 +791,79 @@ fn anchor_stale(store: &Store, id: &str) -> bool {
 // Entities another document introduced for this one: a mention or a requirement
 // quote elsewhere whose link resolves to the document.
 pub fn linked_subjects(store: &Store, doc: &str) -> Vec<(String, String, String)> {
+    linked_subjects_all(store).remove(doc).unwrap_or_default()
+}
+
+// The linked subjects of every document in one pass: each mention's and each
+// quote's links are parsed once and credited to every document they resolve to, in
+// the order the per-document scan would list them, twelve per document. A per-section
+// hint once parsed every link in the store again for every dirty section.
+pub fn linked_subjects_all(store: &Store) -> BTreeMap<String, Vec<(String, String, String)>> {
+    let mut out: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
+    // The sentence carrying the link must name the entity it introduces; a scene's
+    // setting line linking to the settings page introduces no Scene.
+    // Mirrors docs/compiler/goals/reconcile-section.md#incoming-links.
+    let names = |e: &Entity, quote: &str| {
+        let q = quote.to_lowercase();
+        std::iter::once(&e.name)
+            .chain(e.aliases.iter())
+            .any(|n| n.len() >= 3 && q.contains(&n.to_lowercase()))
+    };
+    let listed = |out: &BTreeMap<String, Vec<(String, String, String)>>, doc: &str, id: &str| {
+        out.get(doc)
+            .is_some_and(|v| v.iter().any(|(x, _, _)| x == id))
+    };
+    for (id, e) in &store.graph.entities {
+        for m in &e.mentions {
+            if !names(e, &m.quote) {
+                continue;
+            }
+            for l in crate::md::doc_links(&m.quote, &m.doc) {
+                // One mention per entity per document: the first that links there.
+                if l == m.doc || listed(&out, &l, id) {
+                    continue;
+                }
+                out.entry(l).or_default().push((
+                    id.clone(),
+                    e.name.clone(),
+                    format!("{}#{}", m.doc, m.section),
+                ));
+            }
+        }
+    }
+    for r in store.graph.requirements.values() {
+        let Some(src) = r.source.as_ref() else { continue };
+        for l in crate::md::doc_links(&src.quote, &src.doc) {
+            if l == src.doc {
+                continue;
+            }
+            for e in &r.entities {
+                let id = store.resolve_id(e).to_string();
+                if listed(&out, &l, &id) {
+                    continue;
+                }
+                if let Some(ent) = store.graph.entities.get(&id) {
+                    if names(ent, &src.quote) {
+                        out.entry(l.clone()).or_default().push((
+                            id,
+                            ent.name.clone(),
+                            format!("{}#{}", src.doc, src.section),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    for v in out.values_mut() {
+        v.truncate(12);
+    }
+    out
+}
+
+// The linked subjects of one document by the plain scan: the reference the one-pass
+// index is checked against.
+#[cfg(test)]
+pub(crate) fn linked_subjects_scan(store: &Store, doc: &str) -> Vec<(String, String, String)> {
     let mut out: Vec<(String, String, String)> = Vec::new();
     // The sentence carrying the link must name the entity it introduces; a scene's
     // setting line linking to the settings page introduces no Scene.
@@ -837,6 +1029,13 @@ impl GoalKind for ReconcileSection {
             }
         }
         let mut out = Vec::new();
+        if work.is_empty() {
+            return Vec::new();
+        }
+        let per_section = requirements_per_section(store);
+        let linked = linked_subjects_all(store);
+        let names = EntityNames::build(store);
+        let mut doc_lines: BTreeMap<String, DocHintLines> = BTreeMap::new();
         for (full, w) in work {
             let Some((doc, sec_ref)) = split_section_ref(&full) else {
                 continue;
@@ -858,7 +1057,7 @@ impl GoalKind for ReconcileSection {
                 .iter()
                 .min_by_key(|c| (c.generation, c.mutation))
                 .cloned();
-            let (reqs, ents) = anchored_in(store, &doc, &sec_ref);
+            let sourced = per_section.get(&full).copied().unwrap_or(0);
             let mut hints = Vec::new();
             match (&w.dirty, w.unprocessed) {
                 (Some(d), _) => {
@@ -884,7 +1083,7 @@ impl GoalKind for ReconcileSection {
             }
             hints.push(format!(
                 "{} requirement(s) already sourced here; an unchanged statement is a no-op",
-                reqs.len()
+                sourced
             ));
             for a in &stale {
                 let what = store
@@ -911,95 +1110,20 @@ impl GoalKind for ReconcileSection {
                     .unwrap_or_default();
                 hints.push(format!("stale {} {}", a, what));
             }
-            // The document's own text decides what it names: an entity linked from
-            // another document counts as this one's subject only when this document
-            // names it (or is titled with its name), and the known entities are the
-            // ones whose name or alias occurs in the text, listed by id. A settings
-            // document once read "primarySubject: Scene; 0 entities mentioned" because
-            // a scene's setting linked to it and mentions were counted, not names.
+            // The document-level lines, once per document.
             // Mirrors docs/compiler/goals/reconcile-section.md#what-the-model-sees.
-            let text = store
-                .docs
-                .get(&doc)
-                .map(|d| {
-                    d.sections
-                        .values()
-                        .map(|s| s.raw.to_lowercase())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default();
-            let root_title = store.docs.get(&doc).and_then(|d| {
-                d.sections
-                    .values()
-                    .find(|s| s.kind == "root")
-                    .map(|s| s.title.to_lowercase())
-            });
-            let named_in_doc = |e: &Entity| {
-                std::iter::once(&e.name)
-                    .chain(e.aliases.iter())
-                    .any(|n| n.len() >= 3 && text.contains(&n.to_lowercase()))
-            };
-            let linked = linked_subjects(store, &doc);
-            let subjects: Vec<&(String, String, String)> = linked
-                .iter()
-                .filter(|(id, name, _)| {
-                    root_title.as_deref() == Some(name.to_lowercase().as_str())
-                        || store.graph.entities.get(id).is_some_and(named_in_doc)
-                })
-                .collect();
-            match subjects.len() {
-                0 if !linked.is_empty() => hints.push(format!(
-                    "linked from {} other document(s) (via {}); none of their entities is named here, so no primarySubject",
-                    linked.len(),
-                    linked
-                        .iter()
-                        .map(|(id, _, _)| id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-                0 => {}
-                1 => hints.push(format!(
-                    "primarySubject: {} ({})",
-                    subjects[0].0, subjects[0].1
-                )),
-                _ => hints.push(format!(
-                    "candidateSubjects: {}",
-                    subjects
-                        .iter()
-                        .map(|(id, name, _)| format!("{} ({})", id, name))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-            }
-            let mut known: Vec<String> = store
-                .graph
-                .entities
-                .iter()
-                .filter(|(_, e)| named_in_doc(e))
-                .map(|(id, e)| format!("{} ({})", e.name, id))
-                .collect();
-            let known_count = known.len();
-            known.truncate(8);
-            if known_count > 8 {
-                known.push(format!("and {} more", known_count - 8));
-            }
-            hints.push(if store.graph.entities.is_empty() {
-                "the graph holds no entity yet: create what the section states, no search can find anything".to_string()
-            } else if known_count == 0 {
-                format!(
-                    "no known entity is named in the document; {} in the graph; search before creating",
-                    store.graph.entities.len()
-                )
-            } else {
-                format!(
-                    "{} known entities named in the document: {}; {} in the graph; search before creating",
-                    known_count,
-                    known.join(", "),
-                    store.graph.entities.len()
+            let lines = doc_lines.entry(doc.clone()).or_insert_with(|| {
+                doc_hint_lines(
+                    store,
+                    &doc,
+                    linked.get(&doc).map(Vec::as_slice).unwrap_or(&[]),
+                    &names,
                 )
             });
-            let _ = ents;
+            if let Some(l) = &lines.subjects {
+                hints.push(l.clone());
+            }
+            hints.push(lines.known.clone());
             hints.push(format!("load {}", full));
             if sec.kind == "code" {
                 hints.push(format!(
@@ -1440,8 +1564,8 @@ pub fn pair_plan(store: &Store) -> PairPlan {
         .status
         .parked
         .iter()
-        .filter(|g| g.kind == "rejudge-pair")
-        .map(|g| g.target.as_str())
+        .filter(|g| g.goal.kind == "rejudge-pair")
+        .map(|g| g.goal.target.as_str())
         .collect();
     let failed: BTreeSet<&str> = store
         .status
@@ -2751,11 +2875,7 @@ impl GoalKind for Bind {
         // The evidence exists before a test encodes it
         // (docs/compiler/reconciler.md#tiers).
         let entity = goal.change["entity"].as_str().unwrap_or("");
-        let owes = board
-            .open_goals()
-            .iter()
-            .any(|g| g.kind == "derive-criteria" && g.target == entity);
-        if owes {
+        if board.open_kind_on("derive-criteria", entity) {
             return Ready::Blocked(format!(
                 "criteria: derive-criteria on {} runs first",
                 entity
@@ -2814,7 +2934,12 @@ impl GoalKind for Generate {
     }
     fn derive_goals(&self, store: &Store, gen: &GenSettings) -> Vec<Goal> {
         let ledger = crate::gen::Ledger::load(&store.out);
-        crate::gen::pending(store, gen)
+        let pending = crate::gen::pending(store, gen);
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        let by_entity = crate::gen::ReqsByEntity::build(store);
+        pending
             .into_iter()
             .filter_map(|p| {
                 let id = p["entity"].as_str()?.to_string();
@@ -2824,7 +2949,8 @@ impl GoalKind for Generate {
                 if !changed.is_empty() {
                     hints.push(format!("changed: {}", changed.join(", ")));
                 }
-                let bound: Vec<String> = crate::gen::reqs_of_sorted(store, &id)
+                let rids = by_entity.of(&id);
+                let bound: Vec<String> = rids
                     .iter()
                     .filter_map(|r| ledger.requirements.get(r).map(|row| row.test.name.clone()))
                     .collect();
@@ -2834,7 +2960,7 @@ impl GoalKind for Generate {
                 if let Some(b) = &ledger.build {
                     hints.push(format!("build: {} (cwd {})", b.run, b.cwd));
                 }
-                let n = crate::gen::reqs_of_sorted(store, &id).len();
+                let n = rids.len();
                 if n > 20 {
                     hints.push(format!("{} parts of 20 requirements", n.div_ceil(20)));
                 }
@@ -3618,15 +3744,59 @@ pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
     out
 }
 
+// The resolved goal ids of one journal entry, with the size and mtime of the file they
+// were read from.
+struct ResolvedEntry {
+    len: u64,
+    modified: std::time::SystemTime,
+    goals: Vec<String>,
+}
+
+// Per out directory, the resolved goal ids of every journal entry read so far, by
+// generation. A derivation lists the journal and stats each entry; only an entry whose
+// file is new or has changed size or mtime is parsed again, and an entry no longer on
+// disk (an archived store) drops. A board derivation once parsed the whole journal
+// for this set every time it ran.
+static RESOLVED_GOALS: std::sync::Mutex<BTreeMap<std::path::PathBuf, BTreeMap<u64, ResolvedEntry>>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
 // Goal ids the journal records as resolved, across every entry.
 pub fn journal_resolved_goals(out: &std::path::Path) -> BTreeSet<String> {
-    let mut set = BTreeSet::new();
-    for entry in read_journal(out) {
-        for r in &entry.resolved_goals {
-            set.insert(r.goal.clone());
+    let dir = out.join("journal");
+    let mut cache = RESOLVED_GOALS.lock().unwrap_or_else(|e| e.into_inner());
+    let per_gen = cache.entry(out.to_path_buf()).or_default();
+    let Ok(rd) = crate::vfs::read_dir(&dir) else {
+        per_gen.clear();
+        return BTreeSet::new();
+    };
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some(n) = name
+            .strip_prefix('g')
+            .and_then(|s| s.strip_suffix(".yaml"))
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let Ok(md) = e.metadata() else { continue };
+        let (len, modified) = (md.len(), md.modified().unwrap_or(std::time::UNIX_EPOCH));
+        seen.insert(n);
+        let fresh = per_gen
+            .get(&n)
+            .is_some_and(|c| c.len == len && c.modified == modified);
+        if !fresh {
+            let goals = read_journal_entry(&e.path(), n)
+                .map(|entry| entry.resolved_goals.iter().map(|r| r.goal.clone()).collect())
+                .unwrap_or_default();
+            per_gen.insert(n, ResolvedEntry { len, modified, goals });
         }
     }
-    set
+    per_gen.retain(|n, _| seen.contains(n));
+    per_gen
+        .values()
+        .flat_map(|c| c.goals.iter().cloned())
+        .collect()
 }
 
 // Every journal entry, by generation.
@@ -6808,5 +6978,136 @@ pub(crate) mod tests {
             let indexed = lookalike_scores(&s);
             assert_eq!(indexed, lookalike_scores_scan(&s));
         }
+    }
+
+    // The one-pass linked subjects list what the per-document scan lists, for every
+    // document, in its order: one entry per entity through its first linking mention,
+    // the requirement quotes after, twelve at most.
+    #[test]
+    fn linked_subjects_match_the_per_document_scan() {
+        let mut s = Store::default();
+        let ent = |name: &str, mentions: &[(&str, &str)]| Entity {
+            name: name.into(),
+            mentions: mentions
+                .iter()
+                .map(|(d, q)| SourceRef {
+                    doc: d.to_string(),
+                    section: "/x".into(),
+                    quote: q.to_string(),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        // Order links to orders.md twice (the first mention counts), Cart links to
+        // both, Stock names nothing it links, Ledger is linked only through a quote.
+        s.graph.entities.insert(
+            "ent:order".into(),
+            ent("Order", &[("a.md", "An [Order](orders.md) is placed."), ("b.md", "The [Order](orders.md) again.")]),
+        );
+        s.graph.entities.insert(
+            "ent:cart".into(),
+            ent("Cart", &[("a.md", "The [Cart](cart.md) feeds the [order flow](orders.md).")]),
+        );
+        s.graph.entities.insert(
+            "ent:stock".into(),
+            ent("Stock", &[("a.md", "See [inventory](stock.md).")]),
+        );
+        s.graph.entities.insert("ent:ledger".into(), ent("Ledger", &[("orders.md", "Ledger")]));
+        s.graph.requirements.insert(
+            "req:a-1".into(),
+            Requirement {
+                statement: "The ledger records every order.".into(),
+                entities: vec!["ent:ledger".into(), "ent:order".into()],
+                source: Some(SourceRef {
+                    doc: "a.md".into(),
+                    section: "/a".into(),
+                    quote: "The Ledger records every [Order](orders.md).".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:o-1".into(),
+            Requirement {
+                statement: "Stock is reserved.".into(),
+                entities: vec!["ent:stock".into()],
+                source: Some(SourceRef {
+                    doc: "orders.md".into(),
+                    section: "/o".into(),
+                    quote: "[Stock](stock.md) is reserved.".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        for st in [s, crate::board::tests::settled_store(), crate::derive::tests::synthetic_store(120, 300)] {
+            let all = linked_subjects_all(&st);
+            let mut docs: BTreeSet<String> = st.docs.keys().cloned().collect();
+            docs.extend(all.keys().cloned());
+            docs.extend(["orders.md".to_string(), "cart.md".to_string(), "stock.md".to_string(), "nope.md".to_string()]);
+            for d in docs {
+                assert_eq!(linked_subjects(&st, &d), linked_subjects_scan(&st, &d), "{}", d);
+            }
+        }
+        let st = Store::default();
+        assert!(linked_subjects_all(&st).is_empty());
+    }
+
+    // The resolved set follows the journal on disk: a new entry joins it, an entry
+    // rewritten under its path is read again, a removed entry leaves, and an
+    // unchanged entry is not parsed twice (its cached ids stand).
+    #[test]
+    fn journal_resolved_goals_follow_the_entries_on_disk() {
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-resolved-cache-{}",
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&out).ok();
+        let dir = out.join("journal");
+        crate::vfs::create_dir_all(&dir).unwrap();
+        let write = |gen: u64, goals: &[&str]| {
+            let entry = JournalEntry {
+                generation: gen,
+                kind: "session".into(),
+                resolved_goals: goals
+                    .iter()
+                    .map(|g| Resolved {
+                        goal: g.to_string(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            crate::vfs::write(
+                dir.join(format!("g{}.yaml", gen)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        };
+        assert!(journal_resolved_goals(&out).is_empty());
+        write(1, &["g:dedupe-candidates:ent:a~ent:b"]);
+        write(2, &["g:review-entity:ent:a"]);
+        let set = journal_resolved_goals(&out);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("g:dedupe-candidates:ent:a~ent:b"));
+        // Rewritten under the same path: the new ids replace the old.
+        write(1, &["g:dedupe-candidates:ent:c~ent:d-longer"]);
+        let set = journal_resolved_goals(&out);
+        assert!(!set.contains("g:dedupe-candidates:ent:a~ent:b"), "{:?}", set);
+        assert!(set.contains("g:dedupe-candidates:ent:c~ent:d-longer"));
+        // Removed: gone from the set. Unchanged: still there from the cache.
+        crate::vfs::remove_file(dir.join("g2.yaml")).unwrap();
+        let set = journal_resolved_goals(&out);
+        assert_eq!(
+            set.into_iter().collect::<Vec<_>>(),
+            vec!["g:dedupe-candidates:ent:c~ent:d-longer".to_string()]
+        );
+        // The journal directory gone: an empty set, and the cache forgets it.
+        crate::vfs::remove_dir_all(&out).ok();
+        assert!(journal_resolved_goals(&out).is_empty());
+        assert!(RESOLVED_GOALS
+            .lock()
+            .unwrap()
+            .get(&out)
+            .is_none_or(|per_gen| per_gen.is_empty()));
     }
 }

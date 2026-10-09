@@ -133,9 +133,7 @@ pub fn doc_baseline(store: &Store, rel: &str) -> Option<Value> {
     let mut expected = 0usize;
     for s in &secs {
         // Blank lines before the first heading belong to no section; restore them.
-        for _ in expected..s.lines[0] {
-            parts.push("");
-        }
+        parts.extend(std::iter::repeat_n("", s.lines[0].saturating_sub(expected)));
         parts.push(s.raw.as_str());
         expected = s.lines[1];
     }
@@ -230,11 +228,12 @@ mod tests {
     use std::path::Path;
 
     fn proj(dir: &Path) -> Project {
-        let mut p = Project::default();
-        p.root = dir.to_path_buf();
-        p.out = dir.join(".jazyk");
-        p.docs_glob = vec!["**/*.md".to_string(), "!fixtures/**".to_string()];
-        p
+        Project {
+            root: dir.to_path_buf(),
+            out: dir.join(".jazyk"),
+            docs_glob: vec!["**/*.md".to_string(), "!fixtures/**".to_string()],
+            ..Default::default()
+        }
     }
 
     #[test]

@@ -2618,7 +2618,7 @@ impl Store {
             let subject = &d.subjects[0];
             match d.rule.as_str() {
                 "incomplete-build" => {
-                    if !self.status.parked.iter().any(|p| &p.target == subject) {
+                    if !self.status.parked.iter().any(|p| &p.goal.target == subject) {
                         out.push((
                             id.clone(),
                             format!("{} is no longer parked; a later build resumed it", subject),
@@ -5414,7 +5414,7 @@ impl Store {
     // Mirrors docs/compiler/reconciler.md#dirty-set.
     pub fn sync_docs(
         &mut self,
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
     ) -> Vec<DirtyDoc> {
         self.sync_docs_inner(parsed, true)
     }
@@ -5428,14 +5428,14 @@ impl Store {
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn sync_docs_in_memory(
         &mut self,
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
     ) -> Vec<DirtyDoc> {
         self.sync_docs_inner(parsed, false)
     }
 
     fn sync_docs_inner(
         &mut self,
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
         persist: bool,
     ) -> Vec<DirtyDoc> {
         use crate::align::Full;
@@ -6196,13 +6196,7 @@ impl Store {
     // A run that changed anything is a `checks` generation of its own.
     pub fn reconcile_check_diags(
         &mut self,
-        findings: Vec<(
-            String,
-            Vec<String>,
-            String,
-            String,
-            Option<crate::model::DiagnosticPrompt>,
-        )>,
+        findings: Vec<crate::reconcile::Finding>,
     ) {
         let _flock = FileLock::acquire(&self.out);
         if self.refuse("checks").is_some() {
@@ -9927,12 +9921,15 @@ mod tests {
             "diag:uncovered-section-9".into(),
             marker("uncovered-section", "t.md#/t/gone"),
         );
-        s.status.parked.push(Goal {
-            id: "g:reconcile-section:t.md#/t/c".into(),
-            kind: "reconcile-section".into(),
-            target: format!("t.md#{}", refs[3]),
-            ..Default::default()
-        });
+        s.status.parked.push(
+            Goal {
+                id: "g:reconcile-section:t.md#/t/c".into(),
+                kind: "reconcile-section".into(),
+                target: format!("t.md#{}", refs[3]),
+                ..Default::default()
+            }
+            .into(),
+        );
         s.graph.diagnostics.insert(
             "diag:incomplete-build-1".into(),
             marker("incomplete-build", &format!("t.md#{}", refs[3])),

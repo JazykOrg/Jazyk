@@ -594,6 +594,11 @@ fn crumb_links(store: &Store, crumbs: &[Crumb], from: &str, link_last: bool) -> 
 }
 
 // The step count of a flow view: its member requirements.
+// A markdown link, its text in the first group.
+static MARKDOWN_LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)").expect("a literal pattern")
+});
+
 fn step_count(store: &Store, view_id: &str) -> usize {
     store
         .graph
@@ -603,15 +608,6 @@ fn step_count(store: &Store, view_id: &str) -> usize {
         .unwrap_or(0)
 }
 
-// "[title](<diagram page>) `view id` (n steps)".
-fn flow_line(store: &Store, view_id: &str, from: &str) -> String {
-    format!(
-        "{} `{}` ({} steps)",
-        view_page_link(store, view_id, from),
-        view_id,
-        step_count(store, view_id)
-    )
-}
 
 // One line per flow cluster: the title, the use-case and sequence pages as links,
 // and the step count. A cluster is one line, never one per kind.
@@ -1281,9 +1277,10 @@ fn goal_lines(store: &Store, id: &str, rids: &[String]) -> Vec<String> {
             .unwrap_or_default()
     };
     let mut out = Vec::new();
-    for g in &store.status.parked {
-        if matches(g) {
-            out.push(format!("- `{}` ({}) parked{}", g.id, g.kind, cause(g)));
+    for p in &store.status.parked {
+        if matches(&p.goal) {
+            let why = p.reason.as_deref().map(|r| format!(": {}", r)).unwrap_or_default();
+            out.push(format!("- `{}` ({}) parked{}{}", p.goal.id, p.goal.kind, why, cause(&p.goal)));
         }
     }
     for f in &store.status.failed {
@@ -1583,9 +1580,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 // (docs/consumers/docsgen.md#the-requirements-document).
                 let same = |a: &str, b: &str| {
                     let norm = |s: &str| -> Vec<String> {
-                        let unlinked = regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)")
-                            .map(|re| re.replace_all(s, "$1").to_string())
-                            .unwrap_or_else(|_| s.to_string());
+                        let unlinked = MARKDOWN_LINK.replace_all(s, "$1").to_string();
                         unlinked
                             .to_lowercase()
                             .split(|c: char| !(c.is_alphanumeric() || c == '`'))

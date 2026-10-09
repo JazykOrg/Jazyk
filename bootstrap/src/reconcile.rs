@@ -45,6 +45,9 @@ impl BuildReport {
 // One deterministic finding: rule, subjects, severity, message, and the question the
 // finding carries when its resolution is enumerable. Most checks name one subject;
 // nondeterministic-transition names the pair.
+// Every matched document parsed: path to its content hash and section tree.
+pub type ParsedDocs = BTreeMap<String, (String, BTreeMap<String, Section>)>;
+
 pub type Finding = (
     String,
     Vec<String>,
@@ -75,12 +78,7 @@ fn doc_path(proj: &Project, f: &std::path::Path) -> String {
 // A matched file no handler claims, or one its handler cannot read, contributes no
 // sections: the checks file `unsupported-format` or `parse-error` on it
 // (`format_checks`). Mirrors docs/compiler/parsing.md#format-handlers.
-pub fn parse_all(
-    proj: &Project,
-) -> (
-    BTreeMap<String, (String, BTreeMap<String, Section>)>,
-    BTreeMap<String, Vec<String>>,
-) {
+pub fn parse_all(proj: &Project) -> (ParsedDocs, BTreeMap<String, Vec<String>>) {
     let mut parsed = BTreeMap::new();
     let mut links = BTreeMap::new();
     for f in proj.doc_files() {
@@ -1162,12 +1160,17 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         ));
     }
     // Goals parked when a budget ran out.
-    for g in &store.status.parked {
+    for p in &store.status.parked {
+        let why = p
+            .reason
+            .as_deref()
+            .map(|r| format!(" ({})", r))
+            .unwrap_or_default();
         f.push(finding(
             "incomplete-build",
-            &g.target,
+            &p.goal.target,
             "warning",
-            format!("{} was parked; the next build resumes it", g.id),
+            format!("{} was parked{}; the next build resumes it", p.goal.id, why),
         ));
     }
     f.extend(drift_checks(store, proj));
@@ -1535,13 +1538,13 @@ fn journal_op(m: &serde_json::Value) -> Option<(String, &serde_json::Value)> {
 // commit hand back and forth. Two flips park the pair and file one
 // `unstable-derivation` diagnostic carrying both justifications.
 // Mirrors docs/compiler/reconciler.md#flip-detection.
-pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
+pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<ParkedGoal>) {
     flip_detection_over(store, &goals::read_journal(&store.out))
 }
 
 // Flip detection over journal entries read once: the cross-class replay and the
 // reparent replay share them (docs/compiler/graph.md#journal).
-fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec<Goal>) {
+fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec<ParkedGoal>) {
     struct Event {
         generation: u64,
         class: goals::Class,
@@ -1717,7 +1720,7 @@ fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>
             let class = goals::kind(kind)
                 .map(|k| k.class())
                 .unwrap_or(goals::Class::Compile);
-            parked.push(Goal {
+            let parked_goal = Goal {
                 id: goal.clone(),
                 kind: kind.to_string(),
                 class: class.name().to_string(),
@@ -1743,7 +1746,14 @@ fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>
                     "parked by flip detection; answer the unstable-derivation prompt on {}",
                     subject
                 )],
-            });
+            };
+            parked.push(ParkedGoal::new(
+                parked_goal,
+                format!(
+                    "cross-class flip: `{}` was handed back and forth between {} and {}; waits for the unstable-derivation ruling on {}",
+                    name, gc.goal, compile.goal, subject
+                ),
+            ));
         }
     }
     let (reparent_findings, reparent_parked) = reparent_flips(store, entries);
@@ -1763,7 +1773,7 @@ fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>
 // the first parent, the second, or a freeform ruling. A `reparent-flip` change record
 // the store wrote on a child names the pair when the replay alone cannot. Mirrors
 // docs/compiler/reconciler.md#flip-detection.
-fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec<Goal>) {
+fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec<ParkedGoal>) {
     struct Move {
         generation: u64,
         // The parent the move landed on; the prior parent rides in `from_key` only.
@@ -2036,7 +2046,13 @@ fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec
         let class = goals::kind(kind)
             .map(|k| k.class())
             .unwrap_or(goals::Class::Compile);
-        parked.push(Goal {
+        let reason = format!(
+            "reparent flip: `{}` was moved back and forth between {} and {}; waits for the unstable-derivation ruling",
+            subject,
+            parent_a.as_deref().unwrap_or("the scope root"),
+            parent_b.as_deref().unwrap_or("the scope root")
+        );
+        let parked_goal = Goal {
             id: goal.to_string(),
             kind: kind.to_string(),
             class: class.name().to_string(),
@@ -2065,7 +2081,8 @@ fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec
                 "parked by flip detection; answer the unstable-derivation prompt on {}",
                 subject
             )],
-        });
+        };
+        parked.push(ParkedGoal::new(parked_goal, reason));
     }
     (findings, parked)
 }
@@ -2084,7 +2101,7 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
         store
             .status
             .parked
-            .retain(|p| !board.dropped_parked.contains(&p.id));
+            .retain(|p| !board.dropped_parked.contains(&p.goal.id));
         store.save_status();
     }
 }
@@ -2130,7 +2147,7 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
 fn reload(
     store: &mut Store,
     out: &Path,
-    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    parsed: &ParsedDocs,
 ) {
     *store = Store::load(out);
     store.sync_docs(parsed);
@@ -2228,7 +2245,7 @@ pub(crate) struct SessionsRun {
     pub sessions: u32,
     pub applied: usize,
     pub costs: Costs,
-    pub parked: Vec<Goal>,
+    pub parked: Vec<ParkedGoal>,
 }
 
 // The session loop of a build: derive the board, run one session per batch, highest
@@ -2243,7 +2260,7 @@ pub(crate) fn run_sessions(
     max_sessions: Option<usize>,
     runner: &dyn crate::runner::SessionRunner,
     store: &mut Store,
-    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    parsed: &ParsedDocs,
     control: &Control,
 ) -> SessionsRun {
     crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
@@ -2264,7 +2281,7 @@ pub(crate) fn run_sessions(
     let mut applied = 0usize;
     let mut costs = Costs::default();
     let mut attempts: BTreeMap<String, u32> = BTreeMap::new();
-    let mut parked: Vec<Goal> = Vec::new();
+    let mut parked: Vec<ParkedGoal> = Vec::new();
     let mut parked_ids: BTreeSet<String> = BTreeSet::new();
     let mut known: BTreeSet<String> = board.open_goals().iter().map(|g| g.id.clone()).collect();
     // The reopen cycle count: the change each resolved goal was resolved under, and per
@@ -2313,28 +2330,29 @@ pub(crate) fn run_sessions(
             || dead_endpoint >= crate::limits::ENDPOINT_BREAKER
         {
             // Exhaustion parks every open goal the loop could still run.
+            let reason = if trace.is_cancelled() {
+                "the build was cancelled".to_string()
+            } else if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
+                format!(
+                    "the endpoint answers only errors ({}); the build stopped early",
+                    endpoint_error
+                )
+            } else if max_sessions.is_some() {
+                format!("the session limit of {} (--sessions) ran out", cap)
+            } else {
+                format!("the build cap of {} sessions ran out", cap)
+            };
             for g in board.open_goals() {
                 if !parked_ids.contains(&g.id) {
                     parked_ids.insert(g.id.clone());
-                    parked.push(g.clone());
+                    parked.push(ParkedGoal::new(g.clone(), reason.clone()));
                     trace.event(TraceEvent::Goal {
                         label: "build".into(),
                         goal: g.id.clone(),
                         event: "parked".into(),
                         cause: None,
                         justification: None,
-                        reason: Some(if trace.is_cancelled() {
-                            "the build was cancelled".into()
-                        } else if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
-                            format!(
-                                "the endpoint answers only errors ({}); the build stopped early",
-                                endpoint_error
-                            )
-                        } else if max_sessions.is_some() {
-                            format!("the session limit of {} (--sessions) ran out", cap)
-                        } else {
-                            format!("the build cap of {} sessions ran out", cap)
-                        }),
+                        reason: Some(reason.clone()),
                     });
                 }
             }
@@ -2480,7 +2498,7 @@ pub(crate) fn run_sessions(
                 }
                 // Resolving a parked goal clears its entry with its record; the
                 // tail only adds and replaces. Mirrors docs/compiler/reconciler.md#parked-and-failed.
-                store.status.parked.retain(|p| p.id != *id);
+                store.status.parked.retain(|p| p.goal.id != *id);
                 attempts.remove(id);
                 continue;
             }
@@ -2504,15 +2522,16 @@ pub(crate) fn run_sessions(
             *n += 1;
             if *n >= 2 {
                 if let Some(g) = board.goal(id) {
+                    let reason = format!("left open after its retry in session {}", batch.id);
                     parked_ids.insert(id.clone());
-                    parked.push(g.clone());
+                    parked.push(ParkedGoal::new(g.clone(), reason.clone()));
                     trace.event(TraceEvent::Goal {
                         label: batch.id.clone(),
                         goal: id.clone(),
                         event: "parked".into(),
                         cause: None,
                         justification: None,
-                        reason: Some(format!("left open after its retry in session {}", batch.id)),
+                        reason: Some(reason),
                     });
                 }
             }
@@ -2552,18 +2571,19 @@ pub(crate) fn run_sessions(
                 )),
             });
             if n >= crate::limits::REOPEN_CYCLES && !parked_ids.contains(&g.id) {
+                let reason = format!(
+                    "reopened-after-resolve: resolved and re-derived with the same change {} times in this build",
+                    n
+                );
                 parked_ids.insert(g.id.clone());
-                parked.push(g.clone());
+                parked.push(ParkedGoal::new(g.clone(), reason.clone()));
                 trace.event(TraceEvent::Goal {
                     label: batch.id.clone(),
                     goal: g.id.clone(),
                     event: "parked".into(),
                     cause: None,
                     justification: None,
-                    reason: Some(format!(
-                        "reopened-after-resolve: resolved and re-derived with the same change {} times in this build",
-                        n
-                    )),
+                    reason: Some(reason),
                 });
             }
         }
@@ -2636,7 +2656,7 @@ fn sweep(store: &mut Store, trace: &Trace) {
 pub fn finalize(
     s: &mut Store,
     proj: &Project,
-    parked: Vec<Goal>,
+    parked: Vec<ParkedGoal>,
     costs: &Costs,
     trace: &Trace,
 ) -> BuildReport {
@@ -2647,14 +2667,14 @@ pub fn finalize(
     // Parked goals persist whole, deduplicated by id; flip detection adds its pairs.
     let (flips, flipped) = flip_detection(s);
     for g in parked.into_iter().chain(flipped) {
-        match s.status.parked.iter_mut().find(|p| p.id == g.id) {
+        match s.status.parked.iter_mut().find(|p| p.goal.id == g.goal.id) {
             Some(p) => *p = g,
             None => s.status.parked.push(g),
         }
     }
     s.status
         .parked
-        .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.id));
+        .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.goal.id));
     let mut findings = checks(s, proj);
     findings.extend(flips);
     let placement = flow_placement(s, &Indices::build(s));
@@ -2829,11 +2849,10 @@ pub fn finalize(
         optional: v.optional as usize,
         errors,
         warnings,
-        coverage_pct: if total_secs == 0 {
-            100
-        } else {
-            (covered_secs * 100 / total_secs) as u32
-        },
+        coverage_pct: (covered_secs * 100)
+            .checked_div(total_secs)
+            .map(|pct| pct as u32)
+            .unwrap_or(100),
         tokens: s.status.costs.tokens,
     }
 }
@@ -2868,7 +2887,7 @@ pub struct RippleTree {
     pub tokens: u64,
     pub recomputes: usize,
     pub by_kind: BTreeMap<String, CostLine>,
-    pub parked: Vec<Goal>,
+    pub parked: Vec<ParkedGoal>,
     pub failed: Vec<FailedGoal>,
     pub verdict: String,
 }
@@ -3246,7 +3265,10 @@ pub fn render_ripple(tree: &RippleTree) -> String {
         tree.verdict, tree.sessions, tree.recomputes, tokens
     ));
     for p in &tree.parked {
-        out.push_str(&format!("parked: {}\n", p.id));
+        match &p.reason {
+            Some(r) => out.push_str(&format!("parked: {} ({})\n", p.goal.id, r)),
+            None => out.push_str(&format!("parked: {}\n", p.goal.id)),
+        }
     }
     for f in &tree.failed {
         out.push_str(&format!("failed: {} ({})\n", f.goal.id, f.reason));
@@ -3529,8 +3551,10 @@ mod tests {
     #[test]
     fn unratified_flags_an_untouched_decompiled_draft_and_clears_on_edit() {
         let dir = journal_dir();
-        let mut s = Store::default();
-        s.out = dir.clone();
+        let mut s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
         let drafted = "# Cart\nThe Cart holds items.\n";
         seed_doc(&mut s, "cart.md", drafted);
         seed_doc(&mut s, "shop.md", "# Shop\nThe Shop sells.\n");
@@ -3959,8 +3983,10 @@ mod tests {
         assert!(missing[0].1.iter().any(|x| x == "req:a-1"));
         let restates = rules_for(&f, "criterion-restates");
         assert_eq!(restates.len(), 1, "{:?}", restates);
-        let mut p = Project::default();
-        p.gen_deliverable = Some("product".into());
+        let p = Project {
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
         let f = checks(&s, &p);
         assert_eq!(rules_for(&f, "criterion-missing")[0].2, "warning");
     }
@@ -4421,7 +4447,7 @@ mod tests {
             msg
         );
         assert_eq!(prompt.as_ref().unwrap().options.len(), 2);
-        let ids: BTreeSet<&str> = parked.iter().map(|g| g.id.as_str()).collect();
+        let ids: BTreeSet<&str> = parked.iter().map(|g| g.goal.id.as_str()).collect();
         assert_eq!(
             ids,
             ["g:abstract-entity:ent:order", "g:review-entity:ent:order"]
@@ -4429,7 +4455,8 @@ mod tests {
                 .collect()
         );
         // Blocked on the ruling, so no batch takes them (a parked goal resumes first).
-        assert!(parked.iter().all(|g| matches!(&g.state, GoalState::Blocked { on } if on.contains("unstable-derivation ruling"))), "{:?}", parked);
+        assert!(parked.iter().all(|g| matches!(&g.goal.state, GoalState::Blocked { on } if on.contains("unstable-derivation ruling"))), "{:?}", parked);
+        assert!(parked.iter().all(|g| g.reason.as_deref().is_some_and(|r| r.starts_with("cross-class flip"))), "{:?}", parked);
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -4720,9 +4747,10 @@ mod tests {
         assert!(p.freeform);
         assert!(p.question.contains("`Backend`"), "{}", p.question);
         assert_eq!(parked.len(), 1);
-        assert_eq!(parked[0].id, "g:review-entity:ent:storage");
-        assert!(matches!(&parked[0].state, GoalState::Blocked { on } if on.contains("ent:database")), "{:?}", parked[0].state);
-        assert_eq!(parked[0].change["reparent"], "ent:database");
+        assert_eq!(parked[0].goal.id, "g:review-entity:ent:storage");
+        assert!(matches!(&parked[0].goal.state, GoalState::Blocked { on } if on.contains("ent:database")), "{:?}", parked[0].goal.state);
+        assert_eq!(parked[0].goal.change["reparent"], "ent:database");
+        assert!(parked[0].reason.as_deref().is_some_and(|r| r.starts_with("reparent flip")), "{:?}", parked[0].reason);
 
         // A later regroup under a re-minted id is the same flip on the same natural
         // key; the newest move is the one parked.
@@ -4741,15 +4769,17 @@ mod tests {
         let (f, parked) = flip_detection(&s);
         assert_eq!(f.len(), 1, "{:?}", f);
         assert!(f[0].3.contains("regrouped"), "{}", f[0].3);
-        assert_eq!(parked[0].id, "g:abstract-entity:ent:backend");
+        assert_eq!(parked[0].goal.id, "g:abstract-entity:ent:backend");
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn ripple_walks_opened_goals_to_their_resolvers() {
         let dir = journal_dir();
-        let mut s = Store::default();
-        s.out = dir.clone();
+        let s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
         let edit = JournalEntry {
             build: "g87".into(),
             generation: 87,
@@ -5402,7 +5432,7 @@ mod tests {
             actions
         );
         assert!(s.gc().is_empty());
-        assert!(s.graph.entities.get("ent:platform").is_none());
+        assert!(!s.graph.entities.contains_key("ent:platform"));
         assert_eq!(s.resolve_id("ent:platform"), "ent:backend");
         assert_eq!(
             s.graph.entities["ent:cache"].parent.as_deref(),
@@ -5419,7 +5449,7 @@ mod tests {
             top.members,
             vec!["ent:cache", "ent:fulfillment", "ent:ordering"]
         );
-        assert!(s.graph.views.get("view:class/platform").is_none());
+        assert!(!s.graph.views.contains_key("view:class/platform"));
         // Anything holding the dissolved id resolves through the redirect to the
         // parent's level.
         assert_eq!(
@@ -5638,9 +5668,14 @@ mod tests {
         // frontend's commit, was resolved again, came back again: parked at the
         // second cycle, the reason naming the cycle.
         let backend = "g:abstract-entity:ent:backend";
-        let parked: Vec<&Goal> = run.parked.iter().filter(|g| g.id == backend).collect();
+        let parked: Vec<&ParkedGoal> = run.parked.iter().filter(|g| g.goal.id == backend).collect();
         assert_eq!(parked.len(), 1, "{:?}", run.parked);
-        assert!(run.parked.iter().all(|g| g.id == backend), "{:?}", run.parked);
+        assert!(run.parked.iter().all(|g| g.goal.id == backend), "{:?}", run.parked);
+        assert!(
+            parked[0].reason.as_deref().is_some_and(|r| r.starts_with("reopened-after-resolve")),
+            "{:?}",
+            parked[0].reason
+        );
         let ev = events.lock().unwrap();
         let park = ev
             .iter()
@@ -5664,14 +5699,23 @@ mod tests {
         // goal; the next derivation resumes it parked and explain shows it so.
         let _ = finalize(&mut s, &proj, run.parked, &run.costs, &trace);
         let status = Store::load(&out).status;
+        let entry = status
+            .parked
+            .iter()
+            .find(|p| p.goal.id == backend)
+            .unwrap_or_else(|| panic!("{:?}", status.parked));
         assert!(
-            status.parked.iter().any(|p| p.id == backend),
+            entry.reason.as_deref().is_some_and(|r| r.starts_with("reopened-after-resolve")),
             "{:?}",
-            status.parked
+            entry.reason
         );
         let board = Board::derive(&s, &proj, &control);
         let text = board.explain(&s, backend).expect("explain");
         assert!(text.contains("parked"), "{}", text);
+        assert!(text.contains("parked: reopened-after-resolve"), "{}", text);
+        // The whole-build report names the reason beside the parked goal.
+        let report = render_ripple(&ripple(&s, &format!("g{}", s.status.generation), false).expect("ripple"));
+        assert!(report.contains(&format!("parked: {} (reopened-after-resolve", backend)), "{}", report);
         crate::vfs::remove_dir_all(&out).ok();
     }
 }

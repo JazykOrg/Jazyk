@@ -355,11 +355,13 @@ mod tests {
             "# Shop\n\nThe shop stores orders. The shop is small.\n",
         )
         .unwrap();
-        let mut proj = Project::default();
-        proj.root = root.clone();
-        proj.docs_glob = vec!["docs/**/*.md".into()];
         let out = root.join(".jazyk");
-        proj.out = out.clone();
+        let proj = Project {
+            root: root.clone(),
+            docs_glob: vec!["docs/**/*.md".into()],
+            out: out.clone(),
+            ..Default::default()
+        };
         // Seed the graph through the same tools a session uses.
         let mut session = session_for(&proj, &out, "seed");
         session

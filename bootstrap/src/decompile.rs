@@ -381,9 +381,11 @@ mod tests {
             std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", crate::sys::process_id(), n));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(&root).unwrap();
-        let mut proj = Project::default();
-        proj.root = root.clone();
-        proj.out = root.join(".jazyk");
+        let proj = Project {
+            root: root.clone(),
+            out: root.join(".jazyk"),
+            ..Default::default()
+        };
         let store = Store {
             out: proj.out.clone(),
             ..Default::default()

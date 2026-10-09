@@ -13,7 +13,13 @@ pub struct ShellOutput {
     pub code: i32,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    // The command ran past the command timeout and was killed; `code` is 124.
+    pub timed_out: bool,
 }
+
+// The most of each stream a command keeps, the tail: what a reader of the evidence
+// or a session's output tail can use. A chatty command never fills memory.
+pub const SHELL_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
 
 impl ShellOutput {
     // The `{}` of a `std::process::ExitStatus`, kept so error text reads the same.
@@ -30,18 +36,104 @@ impl ShellOutput {
 mod imp {
     use super::{Duration, Path, ShellOutput};
 
+    // Run a command under the command timeout (limits::command_timeout): stdin closed,
+    // both streams drained as they arrive and kept to their tails, the child killed
+    // when the deadline passes and reported as exit 124.
+    // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     pub fn run_shell(script: &str, cwd: &Path) -> std::io::Result<ShellOutput> {
+        run_shell_within(script, cwd, crate::limits::command_timeout())
+    }
+
+    pub fn run_shell_within(
+        script: &str,
+        cwd: &Path,
+        timeout: Duration,
+    ) -> std::io::Result<ShellOutput> {
         if crate::vfs::is_scoped() { return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "hosted workspaces run commands through delivery CI")); }
-        let out = std::process::Command::new("sh")
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        use std::sync::{Arc, Mutex};
+        let mut child = Command::new("sh")
             .arg("-c")
             .arg(script)
             .current_dir(cwd)
-            .output()?;
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        // A drain keeps reading until the writer closes the pipe; the buffer holds the
+        // tail, shared so a killed command still yields what it printed.
+        fn drain<R: Read + Send + 'static>(mut pipe: R) -> Arc<Mutex<Vec<u8>>> {
+            let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+            let shared = Arc::clone(&buf);
+            std::thread::spawn(move || {
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let n = match pipe.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    let mut b = shared.lock().unwrap_or_else(|p| p.into_inner());
+                    b.extend_from_slice(&chunk[..n]);
+                    if b.len() > super::SHELL_CAPTURE_BYTES {
+                        let excess = b.len() - super::SHELL_CAPTURE_BYTES;
+                        b.drain(..excess);
+                    }
+                }
+            });
+            buf
+        }
+        let stdout = child.stdout.take().map(drain);
+        let stderr = child.stderr.take().map(drain);
+        let started = std::time::Instant::now();
+        let status = loop {
+            if let Some(st) = child.try_wait()? {
+                break Some(st);
+            }
+            if started.elapsed() >= timeout {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let (success, code, timed_out) = match status {
+            Some(st) => (st.success(), st.code().unwrap_or(-1), false),
+            None => {
+                child.kill().ok();
+                child.wait().ok();
+                (false, 124, true)
+            }
+        };
+        // Give the drains a moment to see the pipes close; a grandchild holding a pipe
+        // open past the kill costs the tail of its output, never the build.
+        let take = |buf: Option<Arc<Mutex<Vec<u8>>>>| -> Vec<u8> {
+            let Some(buf) = buf else { return Vec::new() };
+            let until = std::time::Instant::now() + Duration::from_secs(2);
+            while Arc::strong_count(&buf) > 1 && std::time::Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let b = buf.lock().unwrap_or_else(|p| p.into_inner());
+            b.clone()
+        };
+        let stdout = take(stdout);
+        let mut stderr = take(stderr);
+        if timed_out {
+            if !stderr.is_empty() && !stderr.ends_with(b"\n") {
+                stderr.push(b'\n');
+            }
+            stderr.extend_from_slice(
+                format!(
+                    "jazyk: command killed after {}s (JAZYK_COMMAND_TIMEOUT)\n",
+                    timeout.as_secs()
+                )
+                .as_bytes(),
+            );
+        }
         Ok(ShellOutput {
-            success: out.status.success(),
-            code: out.status.code().unwrap_or(-1),
-            stdout: out.stdout,
-            stderr: out.stderr,
+            success,
+            code,
+            stdout,
+            stderr,
+            timed_out,
         })
     }
 
@@ -88,6 +180,14 @@ mod imp {
             std::io::ErrorKind::Unsupported,
             format!("the browser backend has no shell to run `{}` in", script),
         ))
+    }
+
+    pub fn run_shell_within(
+        script: &str,
+        cwd: &Path,
+        _timeout: Duration,
+    ) -> std::io::Result<ShellOutput> {
+        run_shell(script, cwd)
     }
 
     // One backend per tab, and nothing to disambiguate against.
@@ -161,4 +261,52 @@ pub use imp::*;
 /// Hosted requests never inherit owner or service environment configuration.
 pub fn env_var(key: &str) -> Result<String, std::env::VarError> {
     if crate::vfs::is_scoped() { Err(std::env::VarError::NotPresent) } else { std::env::var(key) }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_past_the_timeout_is_killed_and_reads_exit_124() {
+        let cwd = std::env::temp_dir();
+        let started = std::time::Instant::now();
+        let out = run_shell_within(
+            "echo started; sleep 30; echo never",
+            &cwd,
+            Duration::from_millis(300),
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(out.timed_out);
+        assert!(!out.success);
+        assert_eq!(out.code, 124);
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "started");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("killed after 0s"));
+    }
+
+    #[test]
+    fn a_finished_command_reports_its_code_and_both_streams() {
+        let cwd = std::env::temp_dir();
+        let out = run_shell_within("echo out; echo err 1>&2; exit 3", &cwd, Duration::from_secs(30))
+            .unwrap();
+        assert!(!out.timed_out);
+        assert_eq!(out.code, 3);
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "out");
+        assert_eq!(String::from_utf8_lossy(&out.stderr).trim(), "err");
+        assert_eq!(out.status(), "exit status: 3");
+    }
+
+    #[test]
+    fn a_chatty_command_keeps_only_the_tail() {
+        let cwd = std::env::temp_dir();
+        let script = format!(
+            "yes 0123456789abcdef | head -c {}; echo; echo last-line",
+            SHELL_CAPTURE_BYTES * 2
+        );
+        let out = run_shell_within(&script, &cwd, Duration::from_secs(60)).unwrap();
+        assert!(out.success);
+        assert!(out.stdout.len() <= SHELL_CAPTURE_BYTES + 64, "{}", out.stdout.len());
+        assert!(String::from_utf8_lossy(&out.stdout).trim_end().ends_with("last-line"));
+    }
 }

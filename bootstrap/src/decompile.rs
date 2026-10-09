@@ -25,18 +25,45 @@ pub fn drafts_path(out: &Path) -> std::path::PathBuf {
 }
 
 pub fn drafts(out: &Path) -> BTreeMap<String, String> {
-    crate::vfs::read_to_string(drafts_path(out))
-        .ok()
-        .and_then(|t| serde_norway::from_str(&t).ok())
-        .unwrap_or_default()
+    read_drafts(out).unwrap_or_default()
 }
 
+// Missing reads as empty; a file that exists but does not parse is an error naming it.
+fn read_drafts(out: &Path) -> Result<BTreeMap<String, String>, String> {
+    let path = drafts_path(out);
+    let text = match crate::vfs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return Ok(BTreeMap::new()),
+    };
+    if text.trim().is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    serde_norway::from_str(&text).map_err(|e| format!("{}: {}", path.display(), e))
+}
+
+// Through a sibling temporary file renamed into place; a drafts file that does not
+// parse is reported and nothing is recorded over it.
+// Mirrors docs/consumers/decompile.md#ratification.
 fn record_draft(out: &Path, doc: &str, hash: &str) {
-    let mut d = drafts(out);
+    let mut d = match read_drafts(out) {
+        Ok(d) => d,
+        Err(why) => {
+            eprintln!(
+                "[jazyk] error: refusing to record the draft of {}: {}",
+                doc, why
+            );
+            return;
+        }
+    };
     d.insert(doc.to_string(), hash.to_string());
-    crate::vfs::create_dir_all(out.join("decompile")).ok();
-    if let Ok(text) = serde_norway::to_string(&d) {
-        crate::vfs::write(drafts_path(out), text).ok();
+    let path = drafts_path(out);
+    match serde_norway::to_string(&d) {
+        Ok(text) => {
+            if let Err(e) = crate::store::write_atomic(&path, text.as_bytes()) {
+                eprintln!("[jazyk] error: cannot write {}: {}", path.display(), e);
+            }
+        }
+        Err(e) => eprintln!("[jazyk] error: cannot serialize {}: {}", path.display(), e),
     }
 }
 

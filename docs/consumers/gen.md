@@ -534,6 +534,13 @@ the first run; `build`, present only when that medium must be produced by a tool
 ([the build](#the-build)); and `contradicted`, the rows recorded over an open error
 diagnostic ([rows recorded over an open contradiction](#rows-recorded-over-an-open-contradiction)).
 
+The file is written through a sibling temporary file renamed into place, so a reader
+or a crash never sees a half-written ledger, the same way the
+[store](../compiler/graph.md#writes-and-unreadable-files) writes. A ledger that exists
+but does not parse is reported and reads as empty, and every path that would save it
+refuses, so a torn or hand-broken file is never replaced by an empty one. Repair or
+remove the file; `jazyk test --audit` then rebuilds what the artifacts carry.
+
 ```yaml
 support:                                  # deliverable-wide files any session may rewrite
   - build_deck.py                         # the build's entry point
@@ -748,8 +755,9 @@ before any row is judged and reports the build's own output. A row cannot say an
 true about an artifact that was never produced, so reporting failures per requirement
 would name the wrong culprit.
 
-- `programmatic`: `jazyk test` executes `run` in `cwd` under the deliverable. Exit 0 is
-  a pass, anything else is a fail. Before running, the runner greps the artifact for the
+- `programmatic`: `jazyk test` executes `run` in `cwd` under the deliverable, bounded
+  by the command timeout ([budgets](../compiler/graph.md#budgets-and-thresholds)). Exit
+  0 is a pass, anything else is a fail. Before running, the runner greps the artifact for the
   test `name`; if absent the row is `missing` (reason `artifact-gone`), not `failing`,
   nothing executes, and the row is bind work. The row records the exit code beside the
   output, so a verdict can be read back without rerunning it.
@@ -775,6 +783,11 @@ of the tool:
 
 - Exit `127` or `126`: the command was not found, or was not executable. That is the
   runner, never the requirement.
+- Exit `124`: the command ran past the command timeout (600 seconds,
+  `JAZYK_COMMAND_TIMEOUT` overrides) and the harness killed it, the convention of
+  `timeout(1)`. A test that never finished judged nothing, and a build must not hang
+  with it. The output captured until the kill stays as evidence, with a last line
+  saying the command was killed.
 - Every executed row in the run failed, none passed, and their evidence is identical
   once the command line is stripped. One broken runner produces one message, repeated;
   N unmet requirements do not. The run reports the runner once and leaves every row

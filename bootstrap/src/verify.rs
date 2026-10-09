@@ -522,10 +522,11 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
 }
 
 impl ProgRun {
-    // The command was never executed: not found, or not executable. Nothing here says
-    // anything about the requirement.
+    // The command was never executed (not found, not executable) or never finished (the
+    // command timeout killed it, exit 124). Nothing here says anything about the
+    // requirement. Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     pub fn runner_failed(&self) -> bool {
-        self.code == 126 || self.code == 127
+        self.code == 124 || self.code == 126 || self.code == 127
     }
 }
 

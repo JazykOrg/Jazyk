@@ -70,6 +70,11 @@ impl GenSettings {
 // state per requirement. Mirrors docs/consumers/gen.md#the-ledger.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Ledger {
+    // Set when gen/ledger.yaml existed but did not parse: the error. The ledger then
+    // refuses to save, so a torn or hand-broken file is never replaced by an empty one.
+    // Mirrors docs/consumers/gen.md#the-ledger.
+    #[serde(skip)]
+    pub unreadable: Option<String>,
     // Files that belong to the deliverable, not to an entity: what makes the recorded
     // commands runnable (a package.json, the entry point the build runs). Any task may
     // rewrite one; ownership never applies.
@@ -568,7 +573,25 @@ impl Ledger {
         let Ok(text) = crate::vfs::read_to_string(&path) else {
             return Ledger::default();
         };
-        if crate::vfs::is_scoped() { return serde_norway::from_str(&text).unwrap_or_default(); }
+        // A file that exists but does not parse reads as empty and read-only; an
+        // empty file is no ledger yet.
+        let parse = |text: &str| -> Ledger {
+            if text.trim().is_empty() {
+                return Ledger::default();
+            }
+            match serde_norway::from_str::<Ledger>(text) {
+                Ok(l) => l,
+                Err(e) => {
+                    let why = format!("{}: {}", path.display(), e);
+                    eprintln!("[jazyk] error: the ledger did not load: {}", why);
+                    Ledger {
+                        unreadable: Some(why),
+                        ..Default::default()
+                    }
+                }
+            }
+        };
+        if crate::vfs::is_scoped() { return parse(&text); }
         let mut h = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut h);
         let key = h.finish();
@@ -579,20 +602,34 @@ impl Ledger {
                 }
             }
         }
-        let ledger: Ledger = serde_norway::from_str(&text).unwrap_or_default();
+        let ledger: Ledger = parse(&text);
         if let Ok(mut guard) = CACHE.lock() {
             *guard = Some((path, key, ledger.clone()));
         }
         ledger
     }
 
+    // Through a sibling temporary file renamed into place; refused while the file on
+    // disk did not parse. Mirrors docs/consumers/gen.md#the-ledger.
     pub fn save(&self, out: &Path) {
         let path = Self::path(out);
-        if let Some(parent) = path.parent() {
-            crate::vfs::create_dir_all(parent).ok();
+        if let Some(why) = &self.unreadable {
+            eprintln!(
+                "[jazyk] error: refusing to write {}: the ledger did not load: {}",
+                path.display(),
+                why
+            );
+            return;
         }
-        if let Ok(text) = serde_norway::to_string(self) {
-            crate::vfs::write(&path, text).ok();
+        let text = match serde_norway::to_string(self) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("[jazyk] error: cannot serialize {}: {}", path.display(), e);
+                return;
+            }
+        };
+        if let Err(e) = crate::store::write_atomic(&path, text.as_bytes()) {
+            eprintln!("[jazyk] error: cannot write {}: {}", path.display(), e);
         }
     }
 }
@@ -2589,6 +2626,35 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unparseable_ledger_reads_empty_and_refuses_to_save() {
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-gen-unreadable-{}",
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&out).ok();
+        let path = Ledger::path(&out);
+        let mut l = Ledger::default();
+        l.support.push("package.json".to_string());
+        l.save(&out);
+        assert!(Ledger::load(&out).support.contains(&"package.json".to_string()));
+        let broken = "support: [unterminated\n";
+        crate::vfs::write(&path, broken).unwrap();
+        let mut bad = Ledger::load(&out);
+        assert!(bad.unreadable.as_deref().is_some_and(|w| w.contains("ledger.yaml")));
+        assert!(bad.support.is_empty());
+        bad.support.push("other".to_string());
+        bad.save(&out);
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), broken);
+        let leftover: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftover.is_empty(), "{:?}", leftover);
+    }
     use crate::model::*;
 
     // A runner that stops without recording, and one that records: gen counts an

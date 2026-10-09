@@ -347,6 +347,10 @@ They bound the endpoint and the process; session and build budgets are
   keep arriving, streaming or not. Connecting is bounded separately at 15 seconds.
   Every layer above adds its own bound: session round budgets, the ACP idle watchdog
   (`JAZYK_ACP_IDLE_TIMEOUT`), and lease TTLs, so no single stall can hold a build.
+- `JAZYK_COMMAND_TIMEOUT`: seconds one shell command may run (default 600): a recorded
+  build or test under `jazyk test`, a session's `run_command`. Past it the harness kills
+  the command and records exit `124`
+  ([a test that could not run says nothing](../consumers/gen.md#a-test-that-could-not-run-says-nothing)).
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose
   [trace events](./sessions.md#trace-events) including full loaded sets and raw
   payloads.

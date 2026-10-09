@@ -141,6 +141,21 @@ pub const ALIGN_SPLIT_COVERAGE: f64 = 0.6;
 // place-anchors session sees (`alignment-candidates`).
 pub const ALIGN_CANDIDATES: usize = 3;
 
+// The most one shell command runs (a recorded build or test, a session's
+// `run_command`) before the harness kills it and records exit 124.
+// `JAZYK_COMMAND_TIMEOUT` overrides, in seconds.
+// Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
+pub const COMMAND_TIMEOUT_SECS: u64 = 600;
+
+pub fn command_timeout() -> std::time::Duration {
+    let secs = crate::sys::env_var("JAZYK_COMMAND_TIMEOUT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(COMMAND_TIMEOUT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

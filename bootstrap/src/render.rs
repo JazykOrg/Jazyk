@@ -144,6 +144,10 @@ fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
         .clone()
 }
 
+// The longer side of a rasterized view, in pixels.
+#[cfg(not(target_arch = "wasm32"))]
+const PNG_MAX_SIDE: f32 = 8192.0;
+
 // SVG to PNG bytes through resvg.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
@@ -151,12 +155,18 @@ pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = fonts();
     let tree = resvg::usvg::Tree::from_str(svg, &opt).map_err(|e| RenderError(e.to_string()))?;
-    let size = tree.size().to_int_size();
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
+    // At most PNG_MAX_SIDE pixels on the longer side: a wide view scales down instead
+    // of asking for a gigabyte of pixels. Mirrors docs/compiler/diagrams.md#rendering.
+    let size = tree.size();
+    let longer = size.width().max(size.height());
+    let scale = if longer > PNG_MAX_SIDE { PNG_MAX_SIDE / longer } else { 1.0 };
+    let width = (size.width() * scale).ceil().max(1.0) as u32;
+    let height = (size.height() * scale).ceil().max(1.0) as u32;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| RenderError("the svg has no size".to_string()))?;
     resvg::render(
         &tree,
-        resvg::tiny_skia::Transform::default(),
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
     pixmap.encode_png().map_err(|e| RenderError(e.to_string()))
@@ -170,6 +180,12 @@ fn oneline(s: &str) -> String {
 
 fn quoted(name: &str) -> String {
     format!("\"{}\"", oneline(name).replace('"', "'"))
+}
+
+// The `[Part]` form of a component view: a bracket inside the name would end it, so
+// it renders as a parenthesis. Mirrors docs/compiler/diagrams.md#the-emitters.
+fn bracketed(name: &str) -> String {
+    format!("[{}]", oneline(name).replace('[', "(").replace(']', ")"))
 }
 
 // Words PlantUML reads as syntax at the start of a line; an alias never spells one.
@@ -825,7 +841,7 @@ fn declare(scene: &Scene, keyword: &str, id: &str, stereotype: bool) -> String {
     if stereotype {
         if let Some(s) = e.stereotype.as_deref() {
             if !s.eq_ignore_ascii_case(keyword) {
-                line.push_str(&format!(" <<{}>>", oneline(s)));
+                line.push_str(&format!(" <<{}>>", oneline(s).replace(['<', '>'], "")));
             }
         }
     }
@@ -1067,8 +1083,8 @@ fn emit_composite(scene: &Scene) -> String {
     ));
     for p in &parts {
         out.push(format!(
-            "  [{}] as {}{}",
-            scene.name(p),
+            "  {} as {}{}",
+            bracketed(&scene.name(p)),
             alias_of(p),
             link_suffix(p)
         ));
@@ -1076,8 +1092,8 @@ fn emit_composite(scene: &Scene) -> String {
     out.push("}".to_string());
     for o in &outside {
         out.push(format!(
-            "[{}] as {}{}",
-            scene.name(o),
+            "{} as {}{}",
+            bracketed(&scene.name(o)),
             alias_of(o),
             link_suffix(o)
         ));
@@ -1937,6 +1953,13 @@ pub fn png_for(out: &Path, view_id: &str) -> Result<PathBuf, RenderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn part_names_and_stereotypes_cannot_break_the_component_syntax() {
+        assert_eq!(bracketed("Queue [legacy]"), "[Queue (legacy)]");
+        assert_eq!(bracketed("Cache]"), "[Cache)]");
+        assert_eq!(quoted("say \"hi\""), "\"say 'hi'\"");
+    }
     use crate::derive::recompute;
     use crate::derive::tests::showcase_store;
 

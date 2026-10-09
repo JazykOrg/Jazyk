@@ -378,7 +378,18 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             })
         };
         let trace = Trace::to_sink(TraceLevel::Normal, sink, cancel.clone()).with_run(&stem);
-        let result = execute(&st, &kind, &trace);
+        // A panic inside the run fails this job and leaves the worker standing;
+        // otherwise the thread would die with the job marked running forever.
+        // Mirrors docs/frontends/gui.md#jobs.
+        let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            execute(&st, &kind, &trace)
+        })) {
+            Ok(r) => r,
+            Err(p) => Err(format!(
+                "the job panicked: {}",
+                crate::sys::panic_text(p.as_ref())
+            )),
+        };
 
         let (state, result) = match result {
             Ok(v) if cancel.load(Ordering::Relaxed) => ("cancelled", Some(v)),

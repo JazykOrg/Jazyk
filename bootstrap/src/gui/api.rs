@@ -485,26 +485,13 @@ pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -
 // sees. Mirrors docs/frontends/gui.md#api.
 pub async fn doc_baseline(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
     let store = load_store(&st).await;
-    let Some(rec) = store.docs.get(&p.path) else {
-        return err(
+    match crate::webapi::docs::doc_baseline(&store, &p.path) {
+        Some(v) => Json(v).into_response(),
+        None => err(
             StatusCode::NOT_FOUND,
             format!("{} has never reconciled", p.path),
-        );
-    };
-    let mut secs: Vec<&crate::model::Section> = rec.sections.values().collect();
-    secs.sort_by_key(|s| s.lines[0]);
-    let mut parts: Vec<&str> = Vec::new();
-    let mut expected = 0usize;
-    for s in &secs {
-        // Blank lines before the first heading belong to no section; restore them.
-        for _ in expected..s.lines[0] {
-            parts.push("");
-        }
-        parts.push(s.raw.as_str());
-        expected = s.lines[1];
+        ),
     }
-    let text = parts.join("\n");
-    Json(json!({ "path": p.path, "text": text, "hash": rec.content_hash })).into_response()
 }
 
 pub async fn gen_pending(State(st): State<SharedState>) -> Json<Value> {

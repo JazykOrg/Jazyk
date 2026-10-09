@@ -1839,10 +1839,15 @@ impl McpServer {
                             // (docs/frontends/wasm.md#the-seams).
                             #[cfg(not(target_arch = "wasm32"))]
                             {
-                                let wref = self.worker.clone();
+                                // A weak handle: the thread ends when the serving
+                                // that registered the worker is gone, so a replaced
+                                // child serving stops heartbeating as a live worker.
+                                let wref = std::sync::Arc::downgrade(&self.worker);
                                 std::thread::spawn(move || loop {
                                     std::thread::sleep(std::time::Duration::from_secs(30));
-                                    match wref.lock().unwrap().as_mut() {
+                                    let Some(w) = wref.upgrade() else { break };
+                                    let mut guard = w.lock().unwrap_or_else(|p| p.into_inner());
+                                    match guard.as_mut() {
                                         Some(h) => h.refresh(None),
                                         None => break,
                                     }

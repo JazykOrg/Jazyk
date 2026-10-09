@@ -446,6 +446,8 @@ cancellation.
   kind contends on the store lock and the LLM budget, so serializing them is the
   point.
 - Submitting a `compile` while one is already queued returns the queued job's id.
+- A job whose run panics ends `failed` with the panic message as its result, and the
+  worker goes on to the next job: nothing stays `running`.
 - Cancellation is best effort: a job stops at its next boundary (between sessions,
   entities, or rows). An LLM call already in flight is not interrupted. A cancelled
   compile parks its remaining goals

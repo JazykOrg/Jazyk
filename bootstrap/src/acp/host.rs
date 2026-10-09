@@ -240,7 +240,11 @@ impl AcpHost {
                 }
             })
             .map_err(|e| format!("cannot spawn acp host thread: {}", e))?;
-        match ready_rx.recv() {
+        // The handshake is bounded like a silent session: an agent that never answers
+        // initialize fails the start instead of holding the build.
+        // Mirrors docs/frontends/acp.md#worker-sessions.
+        let wait = super::config::idle_timeout();
+        match ready_rx.recv_timeout(wait) {
             Ok(Ok(info)) => Ok(AcpHost {
                 cmd_tx,
                 thread: Some(thread),
@@ -251,6 +255,11 @@ impl AcpHost {
             Ok(Err(e)) => Err(format!(
                 "agent `{}` failed to initialize: {}",
                 agent.name, e
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+                "agent `{}` did not answer initialize within {}s (JAZYK_ACP_IDLE_TIMEOUT)",
+                agent.name,
+                wait.as_secs()
             )),
             Err(_) => Err(format!("agent `{}` exited during initialize", agent.name)),
         }
@@ -287,9 +296,18 @@ impl AcpHost {
                 reply,
             })
             .map_err(|_| "acp host is gone".to_string())?;
-        let id = rx
-            .recv()
-            .map_err(|_| "acp host dropped the session request".to_string())??;
+        let wait = super::config::idle_timeout();
+        let id = match rx.recv_timeout(wait) {
+            Ok(r) => r?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "agent `{}` did not answer session/new within {}s (JAZYK_ACP_IDLE_TIMEOUT)",
+                    self.agent.name,
+                    wait.as_secs()
+                ))
+            }
+            Err(_) => return Err("acp host dropped the session request".to_string()),
+        };
         Ok(SessionHandle {
             id,
             cmd_tx: self.cmd_tx.clone(),
@@ -358,7 +376,16 @@ impl SessionHandle {
             })
             .is_ok()
         {
-            let _ = rx.recv();
+            // Bounded: a wedged agent that never answers session/close must not hold
+            // the thread that is tearing the session down.
+            let wait = super::config::idle_timeout();
+            if rx.recv_timeout(wait).is_err() {
+                eprintln!(
+                    "[acp] agent `{}` did not answer session/close within {}s; moving on",
+                    self.agent,
+                    wait.as_secs()
+                );
+            }
         }
     }
 }

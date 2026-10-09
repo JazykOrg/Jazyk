@@ -179,6 +179,15 @@ fn quoted(p: &Option<Provenance>, source: &Option<SourceRef>) -> Option<String> 
 }
 
 fn node_document(id: &str, graph: &Graph) -> Option<String> {
+    node_document_at(id, graph, 0)
+}
+
+// One hop at most: a criterion names its requirement, and a requirement names a
+// document. A record that loops never recurses past that.
+fn node_document_at(id: &str, graph: &Graph, depth: usize) -> Option<String> {
+    if depth > 1 {
+        return None;
+    }
     let mut cur = id;
     for _ in 0..8 {
         match graph.redirects.get(cur) {
@@ -197,7 +206,7 @@ fn node_document(id: &str, graph: &Graph) -> Option<String> {
     }
     if let Some(c) = graph.criteria.get(cur) {
         return quoted(&c.provenance, &c.source)
-            .or_else(|| node_document(&c.requirement, graph));
+            .or_else(|| node_document_at(&c.requirement, graph, depth + 1));
     }
     None
 }

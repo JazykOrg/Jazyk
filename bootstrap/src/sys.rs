@@ -21,6 +21,18 @@ pub struct ShellOutput {
 // or a session's output tail can use. A chatty command never fills memory.
 pub const SHELL_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
 
+// The message a caught panic carried, for a panic boundary that reports instead of
+// unwinding further (a job worker, an agent turn).
+pub fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
 impl ShellOutput {
     // The `{}` of a `std::process::ExitStatus`, kept so error text reads the same.
     pub fn status(&self) -> String {

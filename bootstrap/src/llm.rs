@@ -244,7 +244,11 @@ fn call_timeout() -> Duration {
 // Whether an error looks transient (worth retrying) versus a hard client error.
 fn is_transient(err: &str) -> bool {
     let e = err.to_lowercase();
-    e.contains("502")
+    e.contains("http 429")
+        || e.contains("rate limit")
+        || e.contains("too many requests")
+        || e.contains("overloaded")
+        || e.contains("502")
         || e.contains("503")
         || e.contains("504")
         || e.contains("bad gateway")
@@ -492,7 +496,7 @@ impl Llm {
                     }
                     // A model that rejects `temperature` answers 400 (often wrapped by a
                     // proxy). Drop the parameter once, sticky for the run, and retry.
-                    let looks_400 = e.contains("400") || e.to_lowercase().contains("temperature");
+                    let looks_400 = e.contains("HTTP 400") || e.to_lowercase().contains("temperature");
                     if looks_400
                         && self.temperature.is_some()
                         && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed)

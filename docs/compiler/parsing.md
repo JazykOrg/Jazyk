@@ -13,15 +13,18 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
   [project settings](./project-settings.md).
 - A handler claims a file by its extension. A file matched by the docs glob that no
   handler claims yields an `unsupported-format` diagnostic on the document and is not
-  parsed. A file its handler cannot read (not valid UTF-8, or unreadable) yields
-  `parse-error` on the document. Either file contributes no sections: it is absent from
-  the parse like a deleted document, so a stored record of it leaves the store the way a
-  removed document does, and the file is ingested as new once it reads. Both diagnostics
-  are filed by the [deterministic checks](./compilation.md#checks) at the end of every
-  build, on the document path, and resolve when the condition clears (the file reads
-  again, gains a handler, or leaves the glob). A no-op rebuild re-files nothing. An empty
-  file yields `empty-file` the same way: with no sections there is nothing for parsing to
-  attach a diagnostic to.
+  parsed; it contributes no sections and is absent from the parse like a deleted
+  document. A file its handler cannot read (not valid UTF-8, or unreadable) yields
+  `parse-error` on the document. An unreadable file that has a stored record keeps it:
+  the build sees the document unchanged and ingests the new text once the file reads
+  again, so a read that fails for a moment (an editor mid-save, a lock on a network
+  drive) never removes a document's facts. An unreadable file never seen before
+  contributes nothing. Both diagnostics are filed by the
+  [deterministic checks](./compilation.md#checks) at the end of every build, on the
+  document path, and resolve when the condition clears (the file reads again, gains a
+  handler, or leaves the glob). A no-op rebuild re-files nothing. An empty file yields
+  `empty-file` the same way: with no sections there is nothing for parsing to attach a
+  diagnostic to.
 
 ## Section tree
 
@@ -77,7 +80,10 @@ Each section carries:
 ## References
 
 - A section's internal reference is its path inside the document, derived from heading
-  slugs. E.g. `/cli/commands/compile`.
+  slugs. E.g. `/cli/commands/compile`. A slug repeated under one parent takes a numeric
+  suffix in document order (`/notes`, `/notes-2`), the GitHub convention, so no
+  heading's prose vanishes behind a sibling's reference; a heading with no title slugs
+  to `section`.
 - A block's internal reference is its parent's reference followed by `/<kind>-<n>`,
   `n` counting the parent's blocks of that kind in order from 1. E.g.
   `/cli/commands/diagram-1`, `/cli/commands/code-block-2`; a block in the preamble is

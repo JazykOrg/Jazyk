@@ -321,9 +321,9 @@ They bound the endpoint and the process; session and build budgets are
 [sequential](./control-plane.md#sequential-builds), so there is no concurrency knob.
 
 - `JAZYK_MAX_RETRIES`: retries, in addition to the first attempt, for a failed LLM call
-  (default 2). A transient transport failure retries after a 5 second pause; a
-  rate-limited call waits 20 seconds. Hammering a struggling endpoint only makes it
-  worse.
+  (default 2). A transient failure (a transport error, HTTP 429, 502, 503, or 504)
+  retries after a 5 second pause; a rate-limited call (HTTP 429) waits 20 seconds.
+  Hammering a struggling endpoint only makes it worse.
 - `JAZYK_MIN_INTERVAL_MS`: minimum gap between request starts to the endpoint
   (default 500). Bounds the request rate even when calls fail fast in a tight loop.
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the

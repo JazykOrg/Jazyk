@@ -248,13 +248,21 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
                     .join("/")
             ))
         };
-        let sl = slug(&h.title);
-        let path: Vec<String> = stack
-            .iter()
-            .map(|(_, s)| s.clone())
-            .chain(std::iter::once(sl.clone()))
-            .collect();
-        let reference = format!("/{}", path.join("/"));
+        let mut sl = slug(&h.title);
+        if sl.is_empty() {
+            sl = "section".to_string();
+        }
+        // A slug repeated under one parent takes a numeric suffix, the GitHub
+        // convention, so no heading's prose vanishes behind a sibling's reference.
+        // Mirrors docs/compiler/parsing.md#references.
+        let prefix: String = stack.iter().map(|(_, s)| format!("{}/", s)).collect();
+        let base = sl.clone();
+        let mut n = 1;
+        while sections.contains_key(&format!("/{}{}", prefix, sl)) {
+            n += 1;
+            sl = format!("{}-{}", base, n);
+        }
+        let reference = format!("/{}{}", prefix, sl);
         let pkey = parent_ref.clone().unwrap_or_else(|| "/".to_string());
         let order = {
             let c = sibling_counts.entry(pkey).or_insert(0);
@@ -461,6 +469,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn repeated_headings_take_numeric_suffixes_and_an_empty_title_slugs_to_section() {
+        let text = "# Doc\n\n## Notes\nFirst notes.\n\n## Notes\nSecond notes.\n\n### Notes\nNested.\n\n## \nUntitled.\n";
+        let s = parse_sections(text);
+        let mut refs: Vec<&String> = s.keys().collect();
+        refs.sort();
+        assert_eq!(
+            refs,
+            vec!["/doc", "/doc/notes", "/doc/notes-2", "/doc/notes-2/notes", "/doc/section"]
+        );
+        assert!(s["/doc/notes"].raw.contains("First notes."));
+        assert!(s["/doc/notes-2"].raw.contains("Second notes."));
+        assert_eq!(s["/doc/notes-2/notes"].parent.as_deref(), Some("/doc/notes-2"));
+        assert!(s["/doc/section"].raw.contains("Untitled."));
+    }
 
     #[test]
     fn parses_tree_with_refs_and_hashes() {

@@ -88,6 +88,14 @@ pub fn parse_all(
             continue;
         }
         let Ok(text) = md::read_doc(&f) else {
+            // A file that exists but cannot be read this time (an editor mid-save, a
+            // lock, a transient error) keeps its stored section tree, so the build
+            // sees it unchanged and never as removed; the checks file `parse-error`.
+            // Mirrors docs/compiler/parsing.md#format-handlers.
+            let rel = doc_path(proj, &f);
+            if let Some(rec) = crate::store::stored_doc(&proj.out, &rel) {
+                parsed.insert(rel, (rec.content_hash, rec.sections));
+            }
             continue;
         };
         let rel = doc_path(proj, &f);
@@ -3557,6 +3565,44 @@ mod tests {
         assert!(hits
             .iter()
             .all(|(_, subj, sev, _, _)| sev == "warning" && *subj != ["full.md"]));
+    }
+
+    // A document that exists but cannot be read this time keeps its stored section
+    // tree: the parse carries the record forward, so alignment sees it unchanged and
+    // the sweep never collects its facts. Mirrors docs/compiler/parsing.md#format-handlers.
+    #[test]
+    fn an_unreadable_document_keeps_its_stored_record() {
+        let dir = std::env::temp_dir().join(format!("jazyk-unreadable-doc-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\nThe system shall respond.\n").unwrap();
+        let proj = Project {
+            root: dir.clone(),
+            out: dir.join(".jazyk"),
+            docs_glob: vec!["docs/**/*.md".to_string()],
+            ..Default::default()
+        };
+        let mut store = Store {
+            out: proj.out.clone(),
+            ..Default::default()
+        };
+        let (parsed, _) = parse_all(&proj);
+        let hash = parsed["docs/a.md"].0.clone();
+        store.sync_docs(&parsed);
+        assert!(crate::store::stored_doc(&proj.out, "docs/a.md").is_some());
+        crate::vfs::write(dir.join("docs/a.md"), b"# A\n\xff\xfe\n").unwrap();
+        let (parsed, _) = parse_all(&proj);
+        assert_eq!(parsed["docs/a.md"].0, hash);
+        assert!(parsed["docs/a.md"].1.contains_key("/a"));
+        let mut again = Store::load(&proj.out);
+        assert!(again.sync_docs(&parsed).is_empty());
+        assert!(again.docs.contains_key("docs/a.md"));
+        let findings = checks(&again, &proj);
+        let errors = rules_for(&findings, "parse-error");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        crate::vfs::write(dir.join("docs/a.md"), "# A\nThe system shall respond.\n").unwrap();
+        let (parsed, _) = parse_all(&proj);
+        assert!(Store::load(&proj.out).sync_docs(&parsed).is_empty());
     }
 
     // A matched file no handler claims is `unsupported-format`; one its handler cannot

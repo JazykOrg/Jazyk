@@ -26,8 +26,8 @@ view → `.puml` → `.svg` (→ `.png` on demand)
   disk and whose `.svg` exists. Most commits touch few views, so most renders are
   skipped.
 - A deleted view loses its files at the commit that deleted it.
-- `.png` is rasterized from the `.svg` only when a surface asks for one, and is written
-  beside it. [Docsgen](../consumers/docsgen.md) embeds `.svg`. The
+- `.png` is rasterized from the `.svg` only when a surface asks for one (at most 8192
+  pixels on the longer side, scaled down past that), and is written beside it. [Docsgen](../consumers/docsgen.md) embeds `.svg`. The
   [LSP](../frontends/lsp.md) hover embeds `.svg` through a `file://` link. The
   [GUI](../frontends/gui.md) draws its projections from the graph directly and reads
   none of these files.
@@ -147,8 +147,9 @@ The kinds, with what each reads from the graph:
   ```
 
 - `composite`: one member entity as the boundary, its children among the members as
-  parts (`[Part]`) inside `component "Name" { }`, connectors from the relationships among
-  the parts and from parts to members outside the boundary.
+  parts (`[Part]`, a bracket in a part's name rendered as a parenthesis) inside
+  `component "Name" { }`, connectors from the relationships among the parts and from
+  parts to members outside the boundary.
 - `deployment`: the member entities as `artifact`s. Every attribute with a `value` on a
   member is a placement: the artifact sits inside a `node` labeled `<value> <name>`
   (`region = EU` → `node "EU region"`), and members sharing a placement share the node.

@@ -80,7 +80,7 @@ pub fn limit(name: &str) -> Option<&'static Limit> {
 pub fn threshold(name: &str, node_bump: Option<u64>) -> Option<(u64, u64)> {
     let l = limit(name)?;
     Some(match node_bump {
-        Some(n) => (n, n + (l.hard - l.soft)),
+        Some(n) => (n, n.saturating_add(l.hard - l.soft)),
         None => (l.soft, l.hard),
     })
 }
@@ -185,6 +185,10 @@ mod tests {
         );
         assert_eq!(threshold(CHILDREN_PER_ENTITY, None), Some((9, 15)));
         assert_eq!(threshold(CHILDREN_PER_ENTITY, Some(12)), Some((12, 18)));
+        assert_eq!(
+            threshold("edges-per-view", Some(u64::MAX)),
+            Some((u64::MAX, u64::MAX))
+        );
         assert_eq!(ENTITY_LIMITS.len() + VIEW_LIMITS.len(), LIMITS.len());
         for l in &LIMITS {
             assert!(ENTITY_LIMITS.contains(&l.name) || VIEW_LIMITS.contains(&l.name));

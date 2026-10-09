@@ -792,6 +792,12 @@ impl<T: Serialize> YamlFile for T {
     }
 }
 
+// The stored record of one document, as the last build left it; None when the
+// document never reconciled or its record does not read.
+pub fn stored_doc(out: &Path, rel: &str) -> Option<DocRecord> {
+    yaml_to(&out.join("docs").join(format!("{}.yaml", rel)))
+}
+
 // A store write that failed is reported with its path, never dropped.
 fn report_write(path: &Path, r: std::io::Result<()>) {
     if let Err(e) = r {

@@ -197,14 +197,20 @@ pub fn run() -> i32 {
                     // The blocking loop (HTTP calls, subprocess dispatch) runs on its
                     // own thread; updates are queued straight onto the connection.
                     std::thread::spawn(move || {
-                        let mut state = entry.state.lock().unwrap();
+                        let notify = |update: SessionUpdate| {
+                            let _ = cx.send_notification(SessionNotification::new(sid.clone(), update));
+                        };
+                        // A panic anywhere in the turn answers the prompt as a refusal
+                        // carrying the panic text, never a dropped responder the client
+                        // waits on until the idle timeout. A poisoned session lock is
+                        // taken anyway: what it guards is the history.
+                        // Mirrors docs/frontends/acp.md#the-embedded-agent.
+                        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut state = entry.state.lock().unwrap_or_else(|p| p.into_inner());
                         // The session's model, which the client may have changed since
                         // the last turn. Mirrors docs/frontends/acp.md#choosing-a-model.
                         let llm = crate::llm::Llm { model: state.model.clone(), ..llm };
                         state.history.push(json!({"role": "user", "content": text}));
-                        let notify = |update: SessionUpdate| {
-                            let _ = cx.send_notification(SessionNotification::new(sid.clone(), update));
-                        };
                         let cancelled = entry.cancelled.clone();
                         let mut total_tokens = 0u64;
                         let label = format!("agent {}", sid);
@@ -250,7 +256,7 @@ pub fn run() -> i32 {
                                 notify(SessionUpdate::UsageUpdate(usage));
                             }
                         };
-                        let stop = agent_loop::run_loop(LoopArgs {
+                        agent_loop::run_loop(LoopArgs {
                             llm: &llm,
                             history: &mut state.history,
                             tools: &state.tools,
@@ -260,7 +266,15 @@ pub fn run() -> i32 {
                             max_rounds: max_rounds(),
                             label,
                             conversation: false,
-                        });
+                        })
+                        }));
+                        let stop = match outcome {
+                            Ok(stop) => stop,
+                            Err(p) => Stop::Error(format!(
+                                "the agent panicked: {}",
+                                crate::sys::panic_text(p.as_ref())
+                            )),
+                        };
                         let _ = match stop {
                             Stop::EndTurn => responder.respond(PromptResponse::new(StopReason::EndTurn)),
                             Stop::MaxRounds => {

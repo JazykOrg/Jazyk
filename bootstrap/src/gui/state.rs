@@ -96,12 +96,7 @@ impl AppState {
 // the binary needs randomness.
 pub fn mint_token() -> String {
     let mut buf = [0u8; 16];
-    if std::io::Read::read_exact(
-        &mut std::fs::File::open("/dev/urandom").expect("open /dev/urandom"),
-        &mut buf,
-    )
-    .is_err()
-    {
+    if getrandom::fill(&mut buf).is_err() {
         // Fallback: time-derived, still unguessable enough for a localhost session.
         let t = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

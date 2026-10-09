@@ -1316,7 +1316,10 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            // Two ASCII hex digits; a multibyte character after the `%` is no escape,
+            // and slicing the str there would split a character.
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 out.push(b);
                 i += 3;
                 continue;
@@ -1369,6 +1372,15 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn percent_decode_leaves_a_multibyte_character_after_a_percent_alone() {
+        assert_eq!(super::percent_decode("a%20b"), "a b");
+        assert_eq!(super::percent_decode("%aé.md"), "%aé.md");
+        assert_eq!(super::percent_decode("caf%C3%A9"), "café");
+        assert_eq!(super::percent_decode("%"), "%");
+        assert_eq!(super::percent_decode("%2"), "%2");
+    }
+
     use super::*;
     use crate::gen::{GenSettings, Ledger, ReqRow, RowHashes, Site, TestRef};
     use crate::model::{Requirement, SourceRef};

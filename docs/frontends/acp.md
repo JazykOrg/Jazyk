@@ -214,7 +214,8 @@ endpoint) ends the prompt as a refusal with `agent error: ...` in a message chun
 than a protocol error, which would close the host and every session on it; the worker
 runner reads that chunk back as the session's stop reason, so the caller of a ledger
 batch names it (a generate session that never recorded once failed its entities with
-the record gate's wording while the cause was a 429). No jazyk prompting, no jazyk tool
+the record gate's wording while the cause was a 429). A panic inside the turn answers the same way, `agent error: the agent
+panicked: ...`, so the client never waits on a prompt nobody will answer. No jazyk prompting, no jazyk tool
 knowledge, no shortcut into the store. The same session against OpenCode or the
 embedded agent carries the same prompt and the same injected tools, which is what
 makes the embedded agent a faithful test double for the whole path.
@@ -372,7 +373,10 @@ The automated path. For each goal batch the runner:
 A session that goes silent is cancelled after an idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
 default 600 seconds). Cancellation follows the protocol: pending permission requests
 are answered `cancelled`, then `session/cancel` goes out. The lease TTLs bound what a
-dead agent can hold either way.
+dead agent can hold either way. The same timeout bounds the calls the host waits on
+synchronously: an agent that does not answer `initialize`, `session/new`, or
+`session/close` within it fails that call with a message naming the wait, instead of
+holding the build.
 
 A host process that dies would otherwise take every later session with it: session
 creation and prompts fail with `acp host is gone`. The runner treats that as the

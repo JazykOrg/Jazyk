@@ -267,8 +267,8 @@ pub fn recompute_pending(st: &SharedState) {
     let verify = crate::verify::pending_counts(&store, &st.gs());
     let now = json!({ "gen": gen_n, "verify": verify });
     let mut last = st.last_pending.lock().unwrap();
-    if *last != now {
-        *last = now.clone();
+    if last.get(&st.set_key()) != Some(&now) {
+        last.insert(st.set_key(), now.clone());
         st.events.emit("pending.changed", now);
     }
 }

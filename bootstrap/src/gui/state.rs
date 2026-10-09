@@ -29,13 +29,16 @@ pub struct AppState {
     pub events: super::events::EventHub,
     // Board derivations coalesced per set (docs/frontends/gui.md#events).
     pub board: Arc<super::events::BoardCoalescer>,
-    // Last emitted pending.changed payload, to emit only on movement.
-    pub last_pending: std::sync::Mutex<serde_json::Value>,
+    // Last emitted pending.changed payload per set, to emit only on movement.
+    // Shared by every scoped state, since each job and watcher runs against a
+    // fresh one.
+    pub last_pending: Arc<std::sync::Mutex<std::collections::BTreeMap<String, serde_json::Value>>>,
     pub jobs: Arc<super::jobs::JobManager>,
     // The chat pane's sessions and their shared agent host (docs/frontends/gui.md#chat).
     pub chat: Arc<super::chat::ChatManager>,
-    // Watch-mode retry backoff in seconds (30 doubling to 300, reset on success).
-    pub backoff: std::sync::atomic::AtomicU64,
+    // Watch-mode retry backoff in seconds per set (30 doubling to 300, reset on
+    // success), shared the same way (docs/frontends/gui.md#jobs).
+    pub backoff: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u64>>>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -84,9 +87,14 @@ impl AppState {
             jobs: self.jobs.clone(),
             chat: self.chat.clone(),
             board: self.board.clone(),
-            last_pending: std::sync::Mutex::new(serde_json::Value::Null),
-            backoff: std::sync::atomic::AtomicU64::new(30),
+            last_pending: self.last_pending.clone(),
+            backoff: self.backoff.clone(),
         }))
+    }
+
+    // The key of this state's set in the shared per-set maps.
+    pub fn set_key(&self) -> String {
+        self.proj.read().unwrap().set_id.clone().unwrap_or_default()
     }
 
     pub fn proj(&self) -> Project {

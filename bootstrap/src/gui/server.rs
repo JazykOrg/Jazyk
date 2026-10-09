@@ -527,11 +527,11 @@ mod tests {
             dev: false,
             shutdown: Arc::new(tokio::sync::Notify::new()),
             events: events::EventHub::new(),
-            last_pending: std::sync::Mutex::new(serde_json::Value::Null),
+            last_pending: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
             jobs: Arc::new(jobs::JobManager::new()),
             chat: Arc::new(chat::ChatManager::default()),
             board: Arc::new(events::BoardCoalescer::default()),
-            backoff: std::sync::atomic::AtomicU64::new(30),
+            backoff: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         })
     }
 

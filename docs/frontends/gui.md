@@ -388,6 +388,14 @@ Diagnostics:
 - `GET /api/project/file?path=`: one file under the project directory, as its bytes
   (in a tab, as text; a file that is not text is 501). A path that leaves the
   project directory is 400, a path that names nothing 404.
+- `PUT /api/project/file?path=` with `{text}` or `{base64}`: create one new file
+  anywhere under the project directory, inside a document set or not. It never
+  overwrites: an existing path is 409. Missing folders are created. A path that
+  leaves the project directory, crosses a symlink or a nested project, or names a
+  dot-folder (`.jazyk` included), `.git`, `node_modules`, `target`, or the out
+  directory is 400. A DOCX or PDF must be a valid package (422). The limit is 32 MiB
+  (413). The new file gets ordinary permissions. Edits to an existing document go
+  through its document endpoints.
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
   [triage state](../compiler/model/diagnostic.md#lifecycle-and-triage)
   (`acknowledged`, `suppressed`, `wontfix`, or null to clear). The write commits

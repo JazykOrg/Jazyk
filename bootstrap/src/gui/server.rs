@@ -155,7 +155,7 @@ fn api_router(st: SharedState) -> Router {
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
         .route("/project/files", get(projfiles::list))
-        .route("/project/file", get(projfiles::file))
+        .route("/project/file", get(projfiles::file).put(projfiles::create).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
@@ -181,7 +181,7 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     use serde_json::{json, Value};
     use tower::ServiceExt;
     let (mut parts, body) = req.into_parts();
-    let limit = if parts.uri.path().ends_with("/docs/document") { 45 * 1024 * 1024 } else { 32 * 1024 * 1024 };
+    let limit = if parts.uri.path().ends_with("/docs/document") || parts.uri.path().ends_with("/project/file") { 45 * 1024 * 1024 } else { 32 * 1024 * 1024 };
     let bytes = match axum::body::to_bytes(body, limit).await {
         Ok(bytes) => bytes,
         Err(e) => return api::err(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),

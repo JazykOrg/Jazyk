@@ -104,6 +104,42 @@ pub fn project_file(root: &Path, rel: &str) -> Result<Vec<u8>, Refusal> {
     crate::vfs::read(&abs).map_err(|e| (404, format!("cannot read {}: {}", rel, e)))
 }
 
+// `PUT /api/project/file?path=`: create one new file anywhere under the project
+// directory, inside a document set or not (docs/frontends/gui.md#diagnostics). It
+// never overwrites an existing path.
+pub fn create_project_file(root: &Path, out: &Path, rel: &str, body: &serde_json::Value) -> Result<serde_json::Value, Refusal> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    if !crate::document_sets::safe_relative(root, rel) {
+        return Err((400, format!("cannot create {rel}: choose a path inside the project, outside hidden, build, and dependency folders")));
+    }
+    let abs = root.join(rel);
+    if abs.starts_with(out) {
+        return Err((400, format!("cannot create {rel} inside the out directory")));
+    }
+    let bytes = if let Some(text) = body["text"].as_str() {
+        text.as_bytes().to_vec()
+    } else if let Some(encoded) = body["base64"].as_str() {
+        STANDARD.decode(encoded).map_err(|_| (400, "invalid base64 content".to_string()))?
+    } else {
+        return Err((400, "text or base64 is required".into()));
+    };
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err((413, "files must be at most 32 MiB".into()));
+    }
+    #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
+    if crate::documents::supported(&abs) {
+        crate::documents::validate(&abs, &bytes).map_err(|e| (422, e))?;
+    }
+    if abs.vexists() {
+        return Err((409, format!("{rel} already exists")));
+    }
+    if let Some(parent) = abs.parent() {
+        crate::vfs::create_dir_all(parent).map_err(|e| (500, e.to_string()))?;
+    }
+    crate::vfs::write(&abs, &bytes).map_err(|e| (500, e.to_string()))?;
+    Ok(serde_json::json!({ "path": rel }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +166,16 @@ mod tests {
         assert_eq!(project_file(&dir, "../etc/passwd").unwrap_err().0, 400);
         assert_eq!(project_file(&dir, ".git/HEAD").unwrap_err().0, 400);
         assert_eq!(project_file(&dir, "nope.md").unwrap_err().0, 404);
+        let out = dir.join(".jazyk");
+        let text = serde_json::json!({"text": "hello"});
+        assert_eq!(create_project_file(&dir, &out, "src/new/notes.txt", &text).unwrap()["path"], "src/new/notes.txt");
+        assert_eq!(std::fs::read_to_string(dir.join("src/new/notes.txt")).unwrap(), "hello");
+        assert_eq!(create_project_file(&dir, &out, "src/new/notes.txt", &text).unwrap_err().0, 409);
+        assert_eq!(create_project_file(&dir, &out, ".jazyk/x.md", &text).unwrap_err().0, 400);
+        assert_eq!(create_project_file(&dir, &out, "../x.md", &text).unwrap_err().0, 400);
+        assert_eq!(create_project_file(&dir, &out, "node_modules/x.md", &text).unwrap_err().0, 400);
+        assert_eq!(create_project_file(&dir, &out, "a.bin", &serde_json::json!({"base64": "aGk="})).unwrap()["path"], "a.bin");
+        assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"hi");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

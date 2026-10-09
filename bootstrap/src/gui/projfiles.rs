@@ -3,7 +3,7 @@
 use super::api::refused;
 use super::state::SharedState;
 use crate::webapi::outfiles::content_type;
-use crate::webapi::projfiles::{project_file, project_files};
+use crate::webapi::projfiles::{create_project_file, project_file, project_files};
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
@@ -41,5 +41,16 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
         )
             .into_response(),
         Err(r) => refused(r),
+    }
+}
+
+// Create one new file anywhere under the project directory; never an overwrite.
+pub async fn create(State(st): State<SharedState>, Query(p): Query<FileQ>, Json(body): Json<serde_json::Value>) -> Response {
+    let root = st.root.clone();
+    let out = st.out.clone();
+    match tokio::task::spawn_blocking(move || create_project_file(&root, &out, &p.path, &body)).await {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(r)) => refused(r),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

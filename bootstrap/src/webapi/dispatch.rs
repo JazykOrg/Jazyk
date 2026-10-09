@@ -720,6 +720,10 @@ pub(crate) fn request_scoped(
                 &p.docs_glob,
             ))
         }
+        ("PUT", "/project/file") => {
+            let p = project();
+            answer(super::projfiles::create_project_file(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
+        }
         ("GET", "/project/file") => {
             let rel = param(&q, "path").unwrap_or_default();
             match super::projfiles::project_file(&project().root, &rel) {

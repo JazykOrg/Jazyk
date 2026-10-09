@@ -293,6 +293,13 @@ computed deterministically:
   password still pair on `password`, and the rest derive nothing.
 - Best six by score.
 
+The scorer's inputs over the whole graph (the hub, each entity's statement count and
+token counts, the requirements naming each entity, each requirement's content tokens)
+are computed in one walk of the requirements and shared by every requirement the pass
+scores: once per goal derivation, once per sweep of the change records. A requirement's
+candidates are then the requirements naming one of its entities, so a pass over `n`
+records costs `n` candidate sets, not `n` walks of every requirement and its tokens.
+
 Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed
 requirement also pairs with every partner such a diagnostic ties it to, so editing one
 side of a known pair always re-judges the other. A record's candidates are its

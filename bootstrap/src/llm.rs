@@ -57,8 +57,21 @@ pub struct Spend {
 fn usage_billed(u: &Value) -> Option<u64> {
     u["total_tokens"].as_u64().or_else(|| {
         let prompt = u["prompt_tokens"].as_u64()?;
-        Some(prompt + u["completion_tokens"].as_u64().unwrap_or(0))
+        Some(prompt.saturating_add(u["completion_tokens"].as_u64().unwrap_or(0)))
     })
+}
+
+// Whether two base URLs name the same endpoint: the same text once a trailing slash
+// and a trailing `/v1` are dropped. What decides whether the configured API key rides.
+pub fn same_endpoint(a: &str, b: &str) -> bool {
+    let norm = |s: &str| {
+        s.trim()
+            .trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .trim_end_matches('/')
+            .to_lowercase()
+    };
+    norm(a) == norm(b)
 }
 
 // The cached input tokens a usage object reports: OpenAI's
@@ -693,8 +706,10 @@ impl Llm {
         };
 
         if streaming {
+            // The same byte cap as the whole-body path: a proxy that never ends a
+            // line cannot grow the buffer without bound.
             return read_stream_message(
-                BufReader::new(resp.into_reader()),
+                BufReader::new(resp.into_reader().take(64 * 1024 * 1024)),
                 max_completion_tokens(),
                 call_timeout(),
             )
@@ -748,7 +763,7 @@ fn settle(t: Transported, sent_estimate: u64) -> Result<(Value, Spend), String> 
     match t {
         Transported::Message((m, mut spend)) => {
             if !spend.measured {
-                spend.billed += sent_estimate;
+                spend.billed = spend.billed.saturating_add(sent_estimate);
             }
             Ok((m, spend))
         }

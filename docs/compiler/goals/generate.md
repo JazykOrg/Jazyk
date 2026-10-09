@@ -258,7 +258,9 @@ own editor and shell
 serves these:
 
 - `read_text_file({path, line?, limit?})`: one file's content, path relative to the
-  deliverable.
+  deliverable. `limit` defaults to 400 lines and the content is capped at 64 KiB;
+  when more remains the reply carries `truncated: true` and `nextLine`, so a bundle
+  or a lockfile never floods the history the session resends every round.
 - `write_text_file({path, content, append?})`: write one file, or append to it when
   `append` is true, so a long file is written in parts that fit a model's reply cap.
   A path recorded for an entity outside the session's component group is rejected with

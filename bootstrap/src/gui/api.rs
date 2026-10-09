@@ -554,7 +554,13 @@ pub async fn benchmark_models(
     Query(p): Query<ModelsQ>,
 ) -> Json<Value> {
     let base = p.base_url.unwrap_or_else(|| st.llm().base_url.clone());
-    let api_key = st.llm().api_key.clone();
+    // The configured key rides only to the configured endpoint: a listing of another
+    // base URL goes out without it, so the page cannot be used to send the key away.
+    let api_key = if crate::llm::same_endpoint(&base, &st.llm().base_url) {
+        st.llm().api_key.clone()
+    } else {
+        String::new()
+    };
     let url = format!(
         "{}/v1/models",
         base.trim_end_matches('/').trim_end_matches("/v1")

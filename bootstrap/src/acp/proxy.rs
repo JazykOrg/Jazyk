@@ -324,7 +324,23 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             // A command runs off the dispatch task: a build takes
                             // minutes, and the connection must keep serving.
                             std::thread::spawn(move || {
-                                let reply = run_command(&st, cmd, &args, &up, &sid);
+                                // A panic inside the command still ends the turn, with
+                                // the panic text, and leaves no build marked running.
+                                let reply = match std::panic::catch_unwind(
+                                    std::panic::AssertUnwindSafe(|| {
+                                        run_command(&st, cmd, &args, &up, &sid)
+                                    }),
+                                ) {
+                                    Ok(r) => r,
+                                    Err(p) => {
+                                        st.building
+                                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                                        format!(
+                                            "failed: the command panicked: {}",
+                                            crate::sys::panic_text(p.as_ref())
+                                        )
+                                    }
+                                };
                                 let _ = up.send_notification(SessionNotification::new(
                                     sid_of(&sid),
                                     SessionUpdate::AgentMessageChunk(ContentChunk::new(

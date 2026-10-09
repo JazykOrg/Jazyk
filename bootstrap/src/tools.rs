@@ -4195,6 +4195,11 @@ impl ToolSession {
         }
     }
 
+    // What one read_text_file reply holds at most: lines by default, bytes always.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    const READ_FILE_LINES: usize = 400;
+    const READ_FILE_BYTES: usize = 64 * 1024;
+
     fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         match name {
             "read_text_file" => {
@@ -4210,13 +4215,35 @@ impl ToolSession {
                     .as_u64()
                     .map(|l| (l as usize).saturating_sub(1))
                     .unwrap_or(0);
+                // Bounded by lines and by bytes: what the session reads is resent
+                // on every later round. Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
                 let limit = args["limit"]
                     .as_u64()
                     .map(|l| l as usize)
-                    .unwrap_or(usize::MAX);
-                let lines: Vec<&str> = text.lines().skip(start).take(limit).collect();
+                    .unwrap_or(Self::READ_FILE_LINES);
                 let total = text.lines().count();
-                let mut reply = json!({"content": lines.join("\n"), "totalLines": total});
+                let mut content = String::new();
+                let mut taken = 0usize;
+                let mut truncated = false;
+                for line in text.lines().skip(start).take(limit) {
+                    if content.len() + line.len() + 1 > Self::READ_FILE_BYTES && taken > 0 {
+                        truncated = true;
+                        break;
+                    }
+                    if taken > 0 {
+                        content.push('\n');
+                    }
+                    content.push_str(line);
+                    taken += 1;
+                }
+                if start + taken < total {
+                    truncated = true;
+                }
+                let mut reply = json!({"content": content, "totalLines": total});
+                if truncated {
+                    reply["truncated"] = json!(true);
+                    reply["nextLine"] = json!(start + taken + 1);
+                }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
                 }

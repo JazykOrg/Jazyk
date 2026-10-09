@@ -1287,21 +1287,32 @@ fn occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
         return out;
     }
     let nlow = needle.to_lowercase();
-    let nlen = needle.chars().count();
     for (lineno, line) in text.lines().enumerate() {
         let chars: Vec<char> = line.chars().collect();
-        let lower: String = line.to_lowercase();
+        // Lowercasing can change a character's length (one `İ` becomes two chars),
+        // so every byte of the lowered line maps back to the original char it came
+        // from; columns are reported on the original.
+        let mut lower = String::new();
+        let mut origin: Vec<usize> = Vec::new();
+        for (ci, c) in chars.iter().enumerate() {
+            for lc in c.to_lowercase() {
+                let from = lower.len();
+                lower.push(lc);
+                origin.extend(std::iter::repeat_n(ci, lower.len() - from));
+            }
+        }
         let mut start = 0usize;
         while let Some(byte_idx) = lower[start..].find(&nlow) {
             let abs = start + byte_idx;
-            let col = lower[..abs].chars().count();
+            let col = origin[abs];
+            let end = abs + nlow.len();
+            let after_idx = if end < origin.len() { origin[end] } else { chars.len() };
             let before_ok = col == 0 || !chars[col - 1].is_alphanumeric();
-            let after_idx = col + nlen;
             let after_ok = after_idx >= chars.len() || !chars[after_idx].is_alphanumeric();
-            if before_ok && after_ok {
-                out.push((lineno, col, nlen));
+            if before_ok && after_ok && after_idx > col {
+                out.push((lineno, col, after_idx - col));
             }
-            start = abs + nlow.len();
+            start = end;
             if start > lower.len() {
                 break;
             }
@@ -1372,6 +1383,15 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn occurrences_report_columns_on_the_original_text() {
+        let hits = super::occurrences("İstanbul order Order", "order");
+        assert_eq!(hits, vec![(0, 9, 5), (0, 15, 5)]);
+        let hits = super::occurrences("orders order", "order");
+        assert_eq!(hits, vec![(0, 7, 5)]);
+        assert!(super::occurrences("İİİ", "x").is_empty());
+    }
+
     #[test]
     fn percent_decode_leaves_a_multibyte_character_after_a_percent_alone() {
         assert_eq!(super::percent_decode("a%20b"), "a b");

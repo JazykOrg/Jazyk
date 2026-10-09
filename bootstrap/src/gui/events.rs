@@ -355,17 +355,27 @@ pub fn spawn_docs_watcher(st: SharedState) {
         };
         let mut last = fingerprints();
         let (tx, rx) = std::sync::mpsc::channel();
-        let Ok(mut watcher) = notify::recommended_watcher(move |res: Result<notify::Event, _>| {
+        let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, _>| {
             if res.is_ok() {
                 let _ = tx.send(());
             }
-        }) else {
-            return;
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!(
+                    "[jazyk] warning: no file watcher for {}: {}; document changes will not be noticed until a restart",
+                    st.root.display(),
+                    e
+                );
+                return;
+            }
         };
-        if watcher
-            .watch(&st.root, notify::RecursiveMode::Recursive)
-            .is_err()
-        {
+        if let Err(e) = watcher.watch(&st.root, notify::RecursiveMode::Recursive) {
+            eprintln!(
+                "[jazyk] warning: cannot watch {}: {}; document changes will not be noticed until a restart",
+                st.root.display(),
+                e
+            );
             return;
         }
         while rx.recv().is_ok() {

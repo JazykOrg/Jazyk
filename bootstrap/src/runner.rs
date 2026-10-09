@@ -183,7 +183,7 @@ impl<'a> LoopTrace<'a> {
         match ev {
             AgentEvent::Usage { tokens, cached } => {
                 self.rounds += 1;
-                self.tokens += tokens;
+                self.tokens = self.tokens.saturating_add(tokens);
                 self.cached += cached;
             }
             AgentEvent::Message(text) | AgentEvent::Thought(text) => {

@@ -512,6 +512,10 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         JobKind::Benchmark { base_url, model } => {
             let mut llm = st.llm();
             if let Some(b) = base_url {
+                // The configured key rides only to the configured endpoint.
+                if !crate::llm::same_endpoint(b, &llm.base_url) {
+                    llm.api_key.clear();
+                }
                 llm.base_url = b.clone();
             }
             if let Some(m) = model {

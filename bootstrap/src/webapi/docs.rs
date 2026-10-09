@@ -178,7 +178,9 @@ pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>)
         // unreadable existing files and symlinks without replacing their bytes.
         crate::vfs::create_new(&abs, text)
     } else {
-        crate::vfs::write(&abs, text)
+        // A replacement lands whole: the watcher and a concurrent build never read
+        // a half-written document.
+        crate::store::write_atomic(&abs, text.as_bytes())
     };
     if let Err(e) = written {
         if base_hash.is_none() && e.kind() == std::io::ErrorKind::AlreadyExists {

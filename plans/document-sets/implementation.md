@@ -153,7 +153,7 @@ validate this planning change.
 
 ## Later import work
 
-After the complete Markdown flow works, specify the import manifest and adapter
-contract, choose maintained Word/PDF converters, and test conversion quality on
-tables, headings, images, scans, and repeated imports. This is a separate milestone,
-not a dependency of multi-set configuration or compilation.
+The [Word and PDF import plan](./import.md) specifies the proposed manifest,
+adapter boundary, converter candidates, review and re-import flow, storage work,
+and acceptance corpus. This remains a separate milestone from the released
+multi-set configuration and compilation.

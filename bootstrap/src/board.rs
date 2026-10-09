@@ -103,6 +103,16 @@ impl Cone {
         }
         self.docs.contains(target)
     }
+
+    // Every key `holds_target` answers true for: the nodes (a pair target through
+    // either member), the sections, the documents.
+    pub fn held_keys(&self) -> impl Iterator<Item = &str> {
+        self.nodes
+            .iter()
+            .chain(self.sections.iter())
+            .chain(self.docs.iter())
+            .map(String::as_str)
+    }
 }
 
 fn parent_section(store: &Store, full: &str) -> Option<String> {
@@ -673,6 +683,11 @@ pub struct Board {
     // Mirrors docs/compiler/reconciler.md#gc-gating.
     view_levels: BTreeMap<String, String>,
     records: BTreeMap<String, Vec<String>>,
+    // Goal id to its position in `goals`, and the (kind, target) of every open goal:
+    // the lookups batching and readiness make per goal, so a board of five thousand
+    // ledger goals is not scanned once per goal. Built once the goals are final.
+    by_id: BTreeMap<String, usize>,
+    open_kinds: BTreeSet<(String, String)>,
     // The pairs the degree cap holds back, by goal id: they derive no goal until a
     // slot frees. Mirrors docs/compiler/reconciler.md#pairs.
     pub waiting: BTreeMap<String, goals::WaitingPair>,
@@ -795,7 +810,12 @@ impl Board {
             };
         }
 
-        // Records the goals stand on, and the ones whose evidence lapsed.
+        // Records the goals stand on, and the ones whose evidence lapsed. The records
+        // are indexed by subject once; a goal's list keeps the records' own order.
+        let mut by_subject: BTreeMap<&str, Vec<(usize, &ChangeRecord)>> = BTreeMap::new();
+        for (i, c) in store.status.changes.iter().enumerate() {
+            by_subject.entry(c.subject.as_str()).or_default().push((i, c));
+        }
         let mut records: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for g in &goals {
             let kinds = goals::record_kinds(&g.kind);
@@ -803,16 +823,15 @@ impl Board {
                 Some((a, b)) => vec![a, b],
                 None => vec![g.target.as_str()],
             };
-            let ids: Vec<String> = store
-                .status
-                .changes
+            let mut hits: Vec<(usize, &str)> = subjects
                 .iter()
-                .filter(|c| {
-                    kinds.contains(&c.kind.as_str()) && subjects.contains(&c.subject.as_str())
-                })
-                .map(|c| c.id.clone())
+                .flat_map(|s| by_subject.get(s).into_iter().flatten())
+                .filter(|(_, c)| kinds.contains(&c.kind.as_str()))
+                .map(|(i, c)| (*i, c.id.as_str()))
                 .collect();
-            records.insert(g.id.clone(), ids);
+            hits.sort_unstable();
+            hits.dedup();
+            records.insert(g.id.clone(), hits.into_iter().map(|(_, id)| id.to_string()).collect());
         }
         let standing: BTreeSet<&String> = records.values().flatten().collect();
         let lapsed: Vec<String> = store
@@ -857,14 +876,33 @@ impl Board {
         // The indices of this derivation: the referrer index every cone reads and the
         // level of every view. Mirrors docs/compiler/graph.md#derived-data.
         let refs = Refs::build(store);
+        // The open compile goals by what a cone would hold them through: a node,
+        // section, or document target directly, a pair target through either member.
+        // Each cone then looks its blockers up instead of testing every goal, and
+        // the list keeps the goals' order.
+        let mut compile_by_key: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (i, o) in goals.iter().enumerate() {
+            if o.class != "compile" || !is_open(o) {
+                continue;
+            }
+            match goals::pair_members(&o.target) {
+                Some((a, b)) => {
+                    compile_by_key.entry(a).or_default().push(i);
+                    compile_by_key.entry(b).or_default().push(i);
+                }
+                None => compile_by_key.entry(o.target.as_str()).or_default().push(i),
+            }
+        }
         let mut cone_blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for g in goals.iter().filter(|g| g.class == "gc") {
             let cone = cone_with(store, &refs, &g.target);
-            let blockers: Vec<String> = goals
-                .iter()
-                .filter(|o| o.class == "compile" && is_open(o) && cone.holds_target(&o.target))
-                .map(|o| o.id.clone())
+            let mut hits: Vec<usize> = cone
+                .held_keys()
+                .flat_map(|k| compile_by_key.get(k).into_iter().flatten().copied())
                 .collect();
+            hits.sort_unstable();
+            hits.dedup();
+            let blockers: Vec<String> = hits.into_iter().map(|i| goals[i].id.clone()).collect();
             cone_blockers.insert(g.id.clone(), blockers);
         }
         let mut view_levels: BTreeMap<String, String> = BTreeMap::new();
@@ -878,6 +916,16 @@ impl Board {
             }
         }
 
+        let by_id: BTreeMap<String, usize> = goals
+            .iter()
+            .enumerate()
+            .map(|(i, g)| (g.id.clone(), i))
+            .collect();
+        let open_kinds: BTreeSet<(String, String)> = goals
+            .iter()
+            .filter(|g| is_open(g))
+            .map(|g| (g.kind.clone(), g.target.clone()))
+            .collect();
         let mut board = Board {
             generation: store.status.generation,
             goals,
@@ -902,6 +950,8 @@ impl Board {
             cone_blockers,
             view_levels,
             records,
+            by_id,
+            open_kinds,
             waiting: pairs.waiting,
         };
 
@@ -1010,7 +1060,13 @@ impl Board {
     }
 
     pub fn open(&self, goal_id: &str) -> bool {
-        self.goals.iter().any(|g| g.id == goal_id && is_open(g))
+        self.goal(goal_id).is_some_and(is_open)
+    }
+
+    // Whether an open goal of the kind stands on the target.
+    pub fn open_kind_on(&self, kind: &str, target: &str) -> bool {
+        self.open_kinds
+            .contains(&(kind.to_string(), target.to_string()))
     }
 
     // The open compile goals in a GC goal's cone.
@@ -1025,7 +1081,12 @@ impl Board {
     }
 
     pub fn goal(&self, id: &str) -> Option<&Goal> {
-        self.goals.iter().find(|g| g.id == id)
+        // The index is built when the goals are final; a scan stands in for a board
+        // whose goals moved under it.
+        match self.by_id.get(id).and_then(|i| self.goals.get(*i)) {
+            Some(g) if g.id == id => Some(g),
+            _ => self.goals.iter().find(|g| g.id == id),
+        }
     }
 
     // The change record ids a goal stands on.
@@ -3413,6 +3474,68 @@ pub(crate) mod tests {
     // Ignored in the normal run (the ledger goals over five thousand requirements
     // alone take seconds in debug); `cargo test -- --ignored a_large_store` runs it.
     // Mirrors docs/compiler/graph.md#derived-data.
+    // The indices a derivation builds (goal by id, open kinds, the records a goal
+    // stands on, the compile goals in a GC goal's cone) answer what the scans over
+    // the goals and the change records answered.
+    #[test]
+    fn derivation_indices_match_the_scans() {
+        let mut synthetic = crate::derive::tests::synthetic_store(300, 700);
+        let mut batch = RecordBatch::new(1);
+        crate::derive::recompute(&mut synthetic, "g1", &mut batch);
+        for r in batch.records() {
+            synthetic.status.record_change(r.clone());
+        }
+        let mut settled = settled_store();
+        record(
+            &mut settled,
+            10,
+            store::CHANGE_SECTION_DIRTY,
+            "shop.md#/shop/orders",
+            "section",
+            json!({"added": 1}),
+        );
+        record(&mut settled, 10, store::CHANGE_ENTITY, "ent:order", "entities", json!({}));
+        let mut cones = 0;
+        for s in [synthetic, settled] {
+            let b = derive(&s);
+            cones += b.goals.iter().filter(|g| g.class == "gc").count();
+            let refs = Refs::build(&s);
+            for g in &b.goals {
+                assert!(std::ptr::eq(b.goal(&g.id).unwrap(), g));
+                assert_eq!(
+                    b.open_kind_on(&g.kind, &g.target),
+                    b.open_goals().iter().any(|o| o.kind == g.kind && o.target == g.target)
+                );
+                let kinds = goals::record_kinds(&g.kind);
+                let subjects: Vec<&str> = match goals::pair_members(&g.target) {
+                    Some((x, y)) => vec![x, y],
+                    None => vec![g.target.as_str()],
+                };
+                let scanned: Vec<String> = s
+                    .status
+                    .changes
+                    .iter()
+                    .filter(|c| kinds.contains(&c.kind.as_str()) && subjects.contains(&c.subject.as_str()))
+                    .map(|c| c.id.clone())
+                    .collect();
+                assert_eq!(b.records_of(&g.id), scanned, "{}", g.id);
+                if g.class == "gc" {
+                    let cone = cone_with(&s, &refs, &g.target);
+                    let scanned: Vec<String> = b
+                        .goals
+                        .iter()
+                        .filter(|o| o.class == "compile" && is_open(o) && cone.holds_target(&o.target))
+                        .map(|o| o.id.clone())
+                        .collect();
+                    assert_eq!(b.cone_blockers(&g.id), scanned, "{}", g.id);
+                }
+            }
+            assert!(b.goal("g:bind:req:nope").is_none());
+            assert!(!b.open_kind_on("bind", "req:nope"));
+        }
+        assert!(cones > 0, "a GC goal walks a cone");
+    }
+
     #[test]
     #[ignore]
     fn a_large_store_derives_and_checks_in_bounded_time() {
@@ -3430,6 +3553,14 @@ pub(crate) mod tests {
         let checked = started.elapsed() - recomputed - derived;
         assert!(b.goals.iter().any(|g| g.class == "gc"), "a GC goal walks a cone");
         assert!(!f.is_empty());
+        eprintln!(
+            "large store: recompute {:?}, derive {:?} ({} goals, {} batches), checks {:?}",
+            recomputed,
+            derived,
+            b.goals.len(),
+            b.batches.len(),
+            checked
+        );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(10),
             "recompute {:?}, derive {:?}, checks {:?}",

@@ -5,6 +5,10 @@ explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
 physical files and report every membership. The document-set contract defines
 configuration, aggregate reads, management commands, and grouped compilation.
 
+The project tool `read_document` takes a relative `path`. It reads Markdown or a
+[native DOCX/PDF projection](../compiler/binary-documents.md#diagnostics-and-agents)
+with source locations and diagnostics. It does not return binary base64 to agents.
+
 `jazyk mcp <toolsets>` serves the [tool registry](../compiler/tools.md) over stdio as an
 MCP server: line-delimited JSON-RPC per the Model Context Protocol. It dispatches the
 same tool implementations the compiler's own [sessions](../compiler/sessions.md) use.

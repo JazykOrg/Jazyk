@@ -1,4 +1,4 @@
-//! Optional, native-only document evaluation. See docs/compiler/document-proof.md.
+//! Native format readers. See docs/compiler/binary-documents.md.
 use pdfium_render::prelude::*;
 use serde::Serialize;
 use serde_json::Value;
@@ -41,8 +41,8 @@ pub fn read(path: &Path) -> Result<Projection, String> {
 }
 
 pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Projection, String> {
-    if bytes.len() > 32 * 1024 * 1024 {
-        return Err("document proof accepts files up to 32 MiB".into());
+    if bytes.len() > MAX_BYTES {
+        return Err("documents must be at most 32 MiB".into());
     }
     let format = path
         .extension()
@@ -58,12 +58,13 @@ pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Projection, String> {
     };
     match format.as_str() {
         "docx" => {
+            check_docx_package(bytes)?;
             let doc = docx_rs::read_docx(bytes).map_err(|e| format!("DOCX reader: {e}"))?;
             // Traverse the library's typed model, not OOXML or ZIP bytes. The JSON
             // view preserves document order and also covers nested table cells.
             let value = serde_json::to_value(&doc.document).map_err(|e| e.to_string())?;
             docx_blocks(&value, "body", &mut p)?;
-            p.limitations.push("Evaluation profile: body paragraphs and table cells only. Headers, footers, notes, shapes, numbering, and Word layout are not certified. Original bytes are never rewritten by this reader.".into());
+            p.limitations.push("Extraction profile: body paragraphs and table cells only. Headers, footers, notes, shapes, numbering, and Word layout are not certified. Original bytes are never rewritten by this reader.".into());
         }
         "pdf" => {
             let _guard = PDF_LOCK.lock().map_err(|e| e.to_string())?;
@@ -88,29 +89,84 @@ pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Projection, String> {
                     }));
                 }
             }
-            p.limitations.push("Evaluation profile: text-bearing PDF pages. Complex reading order, tables, OCR, rotated pages, and vertical writing are not certified.".into());
+            p.limitations.push("Extraction profile: text-bearing PDF pages. Complex reading order, tables, OCR, rotated pages, and vertical writing are not certified.".into());
         }
         _ => return Err("document proof expects DOCX or PDF".into()),
     }
     Ok(p)
 }
 
+pub const MAX_BYTES: usize = 32 * 1024 * 1024;
+
 static PDF_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn pdfium() -> Result<&'static Pdfium, String> {
-    // pdfium-render installs bindings once per process. Keep the corresponding
-    // engine alive across parse, checks, LSP reads, and geometry queries.
-    static INSTANCE: std::sync::OnceLock<Result<Pdfium, String>> = std::sync::OnceLock::new();
-    INSTANCE
-        .get_or_init(|| {
-            let lib = std::env::var("JAZYK_PROOF_PDFIUM")
-                .map_err(|_| "set JAZYK_PROOF_PDFIUM to the PDFium library path".to_string())?;
-            Pdfium::bind_to_library(lib)
-                .map(Pdfium::new)
-                .map_err(|e| e.to_string())
-        })
-        .as_ref()
-        .map_err(Clone::clone)
+    // All callers hold PDF_LOCK. Keep the library alive across compiler and API reads.
+    static INSTANCE: std::sync::OnceLock<Pdfium> = std::sync::OnceLock::new();
+    if let Some(instance) = INSTANCE.get() {
+        return Ok(instance);
+    }
+    let configured = std::env::var("JAZYK_PDFIUM")
+        .or_else(|_| std::env::var("JAZYK_PROOF_PDFIUM"))
+        .ok();
+    let bindings = if let Some(path) = configured {
+        Pdfium::bind_to_library(path)
+    } else {
+        let adjacent = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("lib")));
+        adjacent.and_then(|dir| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&dir)).ok())
+            .map(Ok).unwrap_or_else(Pdfium::bind_to_system_library)
+    }.map_err(|e| format!("PDFium is unavailable: {e}. Install PDFium beside jazyk in lib/ or set JAZYK_PDFIUM to its library path."))?;
+    let _ = INSTANCE.set(Pdfium::new(bindings));
+    Ok(INSTANCE.get().expect("PDFium initialized under lock"))
+}
+
+fn check_docx_package(bytes: &[u8]) -> Result<(), String> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("Invalid DOCX package: {e}"))?;
+    if archive.len() > 10_000 {
+        return Err("DOCX has too many package entries".into());
+    }
+    let mut expanded = 0u64;
+    for i in 0..archive.len() {
+        expanded = expanded.saturating_add(archive.by_index(i).map_err(|e| e.to_string())?.size());
+        if expanded > 128 * 1024 * 1024 {
+            return Err("Expanded DOCX package exceeds 128 MiB".into());
+        }
+    }
+    for part in ["[Content_Types].xml", "word/document.xml"] {
+        archive
+            .by_name(part)
+            .map_err(|_| format!("DOCX is missing {part}"))?;
+    }
+    Ok(())
+}
+
+/// Package validation is distinct from the supported prose extraction profile.
+/// A valid document with a drawing can be edited even when compilation refuses it.
+pub fn validate(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() > MAX_BYTES {
+        return Err("documents must be at most 32 MiB".into());
+    }
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "docx" => {
+            check_docx_package(bytes)?;
+            docx_rs::read_docx(bytes).map_err(|e| format!("DOCX reader: {e}"))?;
+        }
+        "pdf" => {
+            let _guard = PDF_LOCK.lock().map_err(|e| e.to_string())?;
+            pdfium()?
+                .load_pdf_from_byte_slice(bytes, None)
+                .map_err(|e| format!("PDF reader: {e}"))?;
+        }
+        _ => return Err("expected DOCX or PDF".into()),
+    }
+    Ok(())
 }
 
 /// Locate a unique quote in the PDF's native text layer, in top-left page points.
@@ -205,15 +261,13 @@ fn inline(v: &Value, out: &mut String) -> Result<(), String> {
             out.push('\n');
             return Ok(());
         }
-        Some("insert" | "delete" | "moveFrom" | "moveTo") => {
-            return Err(
-                "DOCX proof refuses tracked changes until the revision interpretation is defined"
-                    .into(),
-            )
-        }
+        Some("insert" | "delete" | "moveFrom" | "moveTo") => return Err(
+            "DOCX extraction refuses tracked changes until the revision interpretation is defined"
+                .into(),
+        ),
         Some("drawing" | "shape" | "footnoteReference" | "sym") => {
             return Err(
-                "DOCX proof encountered unsupported inline content; refusing incomplete prose"
+                "DOCX extraction encountered unsupported inline content; refusing incomplete prose"
                     .into(),
             )
         }

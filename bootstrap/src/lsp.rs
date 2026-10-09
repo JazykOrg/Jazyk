@@ -96,6 +96,15 @@ impl Lsp {
         self.refresh(out);
         match method.as_str() {
             "initialize" => reply(out, id, self.capabilities()),
+            "jazyk/document" => {
+                let result = params["uri"].as_str().and_then(|uri| self.uri_to_doc(uri))
+                    .ok_or((400, "expected a document URI inside this project".into()))
+                    .and_then(|doc| crate::webapi::binary_documents::read(&crate::project::Project::load(&self.root), &doc));
+                match result {
+                    Ok(value) => reply(out, id, value),
+                    Err((code, message)) => write_message(out, &json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602, "message":message, "data":{"status":code}}})),
+                }
+            }
             "initialized" => {}
             "shutdown" => reply(out, id, Value::Null),
             "exit" => return false,
@@ -1380,14 +1389,14 @@ mod tests {
     use crate::gen::{GenSettings, Ledger, ReqRow, RowHashes, Site, TestRef};
     use crate::model::{Requirement, SourceRef};
 
-    #[cfg(all(feature = "document-proof", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
     #[test]
     fn docx_warning_publishes_against_the_native_projection() {
         let root = std::env::temp_dir().join(format!("jazyk-lsp-docx-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&root).unwrap();
         crate::vfs::write(root.join("contract.docx"), include_bytes!("../tests/fixtures/document-proof/contract.docx")).unwrap();
         let project = crate::project::Project::load(&root);
-        let lsp = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&project));
+        let mut lsp = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&project));
         let mut bytes = Vec::new();
         lsp.publish(&mut bytes, "contract.docx");
         let msg = read_message(&mut std::io::BufReader::new(bytes.as_slice())).unwrap();
@@ -1397,6 +1406,12 @@ mod tests {
         let line = text.lines().nth(warning["range"]["start"]["line"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(line, "Reference: [contract](missing.md)");
         assert_eq!(warning["range"]["start"]["character"], 11);
+        let mut response = Vec::new();
+        lsp.handle(json!({"jsonrpc":"2.0", "id":1, "method":"jazyk/document", "params":{"uri":lsp.doc_to_uri("contract.docx")}}), &mut response);
+        let msg = read_message(&mut std::io::BufReader::new(response.as_slice())).unwrap();
+        assert_eq!(msg["result"]["format"], "docx");
+        assert_eq!(msg["result"]["projection"]["text"], text);
+        assert!(!msg["result"]["diagnostics"][0]["locations"].as_array().unwrap().is_empty());
         crate::vfs::remove_dir_all(&root).unwrap();
     }
 

@@ -1,5 +1,8 @@
 # Local editor API
 
+[Binary documents](../compiler/binary-documents.md) define native DOCX and PDF
+reading, binary saves, source locations, and the `binaryDocuments` capability.
+
 A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
 explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
 physical files and report every membership. The document-set contract defines

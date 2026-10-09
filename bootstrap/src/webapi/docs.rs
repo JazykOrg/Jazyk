@@ -109,7 +109,7 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
         Ok(a) => a,
         Err(why) => return DocRead::Invalid(format!("invalid document path {}: {}", rel, why)),
     };
-    match crate::vfs::read_to_string(&abs) {
+    match crate::md::read_doc(&abs) {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);
             let links = crate::md::missing_document_links(&proj.root, rel, &text);

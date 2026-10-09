@@ -102,3 +102,21 @@ pub async fn doc_delete(State(st): State<SharedState>, Query(p): Query<DocPathQ>
     }
     Json(json!({ "deleted": p.path })).into_response()
 }
+
+// Original bytes, projection and diagnostics share one revision.
+pub async fn binary_read(State(st): State<SharedState>, Query(p): Query<DocPathQ>) -> Response {
+    let project = st.proj();
+    match tokio::task::spawn_blocking(move || crate::webapi::binary_documents::read(&project, &p.path)).await {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(r)) => super::api::refused(r),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+pub async fn binary_write(State(st): State<SharedState>, Query(p): Query<DocPathQ>, Json(body): Json<serde_json::Value>) -> Response {
+    let project = st.proj();
+    match tokio::task::spawn_blocking(move || crate::webapi::binary_documents::write(&project, &p.path, &body)).await {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(r)) => super::api::refused(r),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}

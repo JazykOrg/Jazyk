@@ -1,6 +1,8 @@
 # Binary document proof
 
-Status: experimental. Enabled only by the native Cargo feature `document-proof`.
+Status: completed evaluation. The standalone API example uses the native Cargo
+feature `document-proof`. [Binary documents](binary-documents.md) define the
+integrated native readers and editor API.
 
 The proof reads DOCX and PDF bytes in the Jazyk binary without a browser or office
 service. `compile`, including a build limited to zero model sessions, uses that

@@ -1678,6 +1678,7 @@ impl McpServer {
                 t["inputSchema"]["properties"]["setId"] = json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});
             }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
+            tools.push(json!({"name":"read_document","description":"Read a project document as compiler text. DOCX and PDF include source locations and diagnostics. Never overwrite binary documents with text.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}));
             if writable {
                 for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("create_document_set","Create a named document set."),("update_document_set","Update a document set while preserving its identity."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
                     tools.push(json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":{
@@ -1697,6 +1698,21 @@ impl McpServer {
         let name = params["name"].as_str().unwrap_or_default();
         if name == "list_document_sets" {
             return Ok(result_value(w.summary()));
+        }
+        if name == "read_document" {
+            let path = params["arguments"]["path"].as_str().ok_or((-32602, "path is required".into()))?;
+            let project = w.files_project();
+            let binary = std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf"));
+            let mut value = if binary {
+                crate::webapi::binary_documents::read(&project, path).map_err(|(_, message)| (-32602, message))?
+            } else {
+                match crate::webapi::docs::doc_content(&project, path) {
+                    crate::webapi::docs::DocRead::Found(value) => value,
+                    crate::webapi::docs::DocRead::Missing(message) | crate::webapi::docs::DocRead::Invalid(message) => return Err((-32602, message)),
+                }
+            };
+            if let Some(object) = value.as_object_mut() { object.remove("base64"); }
+            return Ok(result_value(value));
         }
         if name == "compile_document_sets" {
             if !writable {
@@ -2622,6 +2638,9 @@ impl McpServer {
         full: &str,
     ) -> Result<(), String> {
         let path = self.project.root.join(rel);
+        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf")) {
+            return Err("DOCX and PDF cannot be changed by a text edit; use the format editor".into());
+        }
         if let Some(sink) = &self.bridge.edit_sink {
             if sink_write(sink, &path, old_text, new_text, full).is_ok() {
                 return Ok(());
@@ -3233,7 +3252,18 @@ mod tests {
         assert!(!instructions.contains("The write tools are"));
         let names = tool_names(&s);
         assert!(names.iter().any(|name| name == "list_document_sets"));
-        assert!(names.iter().all(|name| name == "list_document_sets" || crate::tools::READ_TOOLS.contains(&name.as_str())));
+        assert!(names.iter().any(|name| name == "read_document"));
+        assert!(names.iter().all(|name| name == "list_document_sets" || name == "read_document" || crate::tools::READ_TOOLS.contains(&name.as_str())));
+        #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
+        {
+            crate::vfs::write(dir.join("docs/contract.docx"), include_bytes!("../tests/fixtures/document-proof/contract.docx")).unwrap();
+            let result = s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"docs/contract.docx"}})).unwrap();
+            let value: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert!(value["projection"]["text"].as_str().unwrap().contains("The gateway shall return"));
+            assert!(value.get("base64").is_none());
+            assert_eq!(value["diagnostics"][0]["code"], "broken-link");
+            assert!(s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"../outside.docx"}})).is_err());
+        }
     }
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {

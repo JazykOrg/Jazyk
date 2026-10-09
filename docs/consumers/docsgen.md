@@ -340,8 +340,8 @@ detail either way.
 
 Below the class views the index lists every view in the graph, default and curated: the
 id, the kind, the title, the member count, links to its `.svg` and `.puml`, and the goal
-it carries when it is over a limit. The glossary and the reports below render as sections
-of the index after the views.
+it carries when it is over a limit. The index ends with one line linking the glossary
+and the two reports below, each a file of its own beside it.
 
 ## Glossary
 

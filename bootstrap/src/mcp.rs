@@ -1991,6 +1991,18 @@ impl McpServer {
                     {
                         tools.push(json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}));
                     }
+                    // The two decree tools beside edit_fact: undo one, raise one
+                    // threshold. Mirrors docs/compiler/tools.md#chat-tools.
+                    tools.push(json!({
+                        "name": "retract_decree",
+                        "description": "Undo one decree: a node created by decree is deleted; a field decreed over a quoted fact returns to the prior value and source its journal entry recorded. The open ratify goal closes. One atomic commit.",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["id", "reason"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "bump_limit",
+                        "description": "Raise one entity's or view's own threshold above the built-in limit (limits: {<limit>: value}), recorded with decree provenance. limit is a registry name that applies to the node's kind, value positive. This dismisses a size goal: it stops deriving until the count crosses the raised threshold.",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "limit": {"type": "string"}, "value": {"type": "integer", "minimum": 1}, "note": {"type": "string"}}, "required": ["id", "limit", "value"], "additionalProperties": false}
+                    }));
                     tools.push(json!({
                         "name": "answer_diagnostic",
                         "description": "Record a human answer to a diagnostic's prompt, relayed from conversation. Pass option (index) for a chosen option or text for a freeform reply. An edit option applies as a dual write and resolves the finding before this returns; any other answer is recorded and the reply hands the handling contract back to you: act on it with the tools, then resolve_diagnostic.",
@@ -2238,6 +2250,16 @@ impl McpServer {
                     }
                     "edit_fact" if self.modes.iter().any(|m| m == "chat") => {
                         let r = self.edit_fact(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "retract_decree" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.retract_decree(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "bump_limit" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.bump_limit(&params["arguments"]);
                         let is_err = !r["error"].is_null();
                         return Ok(text_result(r, is_err));
                     }
@@ -2774,6 +2796,143 @@ impl McpServer {
         v["committed"] = json!(true);
         v["generation"] = json!(report.generation);
         v
+    }
+
+    // The decree's author: the connected client's name, else the login, else `human`,
+    // the same ladder a chat ToolSession climbs for edit_fact.
+    fn chat_decree_author(&self) -> String {
+        self.client
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|c| !c.trim().is_empty())
+            .or_else(|| crate::sys::env_var("USER").ok().filter(|u| !u.is_empty()))
+            .unwrap_or_else(|| "human".to_string())
+    }
+
+    // Undo one decree as its own `decree` changeset. The store holds the gate (a
+    // quoted or otherwise non-pending node is refused as `not-a-decree`) and the
+    // commit closes the open ratify goal. Mirrors docs/compiler/tools.md#chat-tools.
+    fn retract_decree(&self, args: &Value) -> Value {
+        let id = args["id"].as_str().unwrap_or_default().trim();
+        let reason = args["reason"].as_str().unwrap_or_default().trim();
+        if id.is_empty() || reason.is_empty() {
+            return json!({"error": {"rule": "missing-argument", "message": "pass id (the decreed node) and reason (one line, journaled)"}});
+        }
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut s = Store::load(&self.out);
+        s.sync_docs(&parsed);
+        let rid = s.resolve_id(id).to_string();
+        // The store's predicate, asked first so a refusal writes no generation: a
+        // decree or derivation is any provenance but a quote, on a node with no
+        // sentence of its own; a default view was never decreed.
+        let pending = |p: &Option<crate::model::Provenance>| {
+            p.as_ref()
+                .is_some_and(|p| !matches!(p, crate::model::Provenance::Quote(_)))
+        };
+        let is_decree = if let Some(r) = s.graph.requirements.get(&rid) {
+            r.source.is_none() && pending(&r.provenance)
+        } else if let Some(e) = s.graph.entities.get(&rid) {
+            pending(&e.provenance)
+        } else if let Some(v) = s.graph.views.get(&rid) {
+            !v.default && pending(&v.provenance)
+        } else if let Some(c) = s.graph.criteria.get(&rid) {
+            pending(&c.provenance)
+        } else {
+            return json!({"error": {"rule": "unknown-id", "message": format!("unknown node `{}`", rid)}});
+        };
+        if !is_decree {
+            return json!({"error": {"rule": "not-a-decree", "message": format!(
+                "{} is quoted from the documents, not decreed; retract_requirement or edit_fact changes it", rid)}});
+        }
+        let report = s.apply(
+            vec![crate::store::Op::RetractDecree {
+                id: rid.clone(),
+                reason: reason.to_string(),
+            }],
+            &crate::store::Commit::store("decree"),
+        );
+        if !report.skipped.is_empty() {
+            let msg = report.skipped.join("; ");
+            let rule = if msg.contains("not a decree") {
+                "not-a-decree"
+            } else {
+                "commit-skipped"
+            };
+            return json!({"error": {"rule": rule, "message": msg}});
+        }
+        json!({
+            "id": rid, "retracted": true, "path": "decree",
+            "generation": report.generation, "swept": report.swept,
+        })
+    }
+
+    // Raise one node's own threshold, recorded with decree provenance, as its own
+    // `decree` changeset. The store holds the gates (registry name, applies to the
+    // kind, positive value). Mirrors docs/compiler/tools.md#chat-tools and
+    // docs/compiler/graph.md#per-node-bumps.
+    fn bump_limit(&self, args: &Value) -> Value {
+        let id = args["id"].as_str().unwrap_or_default().trim();
+        let limit = args["limit"].as_str().unwrap_or_default().trim();
+        let Some(value) = args["value"].as_u64().filter(|v| *v > 0) else {
+            return json!({"error": {"rule": "bad-value", "message": "value is a positive integer: the node's new threshold"}});
+        };
+        if id.is_empty() || limit.is_empty() {
+            return json!({"error": {"rule": "missing-argument", "message": format!(
+                "pass id (an entity or view) and limit, one of: {}",
+                crate::limits::LIMITS.iter().map(|l| l.name).collect::<Vec<_>>().join(", "))}});
+        }
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut s = Store::load(&self.out);
+        s.sync_docs(&parsed);
+        let rid = s.resolve_id(id).to_string();
+        let is_entity = s.graph.entities.contains_key(&rid);
+        let is_view = s.graph.views.contains_key(&rid);
+        if !is_entity && !is_view {
+            return json!({"error": {"rule": "unknown-id", "message": format!("no entity or view `{}`", rid)}});
+        }
+        // The store's gates, asked first so a refusal writes no generation: a
+        // registry name that applies to the node's kind.
+        let Some(l) = crate::limits::limit(limit) else {
+            return json!({"error": {"rule": "bad-limit", "message": format!(
+                "unknown limit `{}`; one of: {}", limit,
+                crate::limits::LIMITS.iter().map(|l| l.name).collect::<Vec<_>>().join(", "))}});
+        };
+        let applies = (is_entity && crate::limits::ENTITY_LIMITS.contains(&l.name))
+            || (is_view && crate::limits::VIEW_LIMITS.contains(&l.name));
+        if !applies {
+            return json!({"error": {"rule": "bad-limit", "message": format!(
+                "`{}` does not apply to {}; {} limits: {}", limit, rid,
+                if is_entity { "entity" } else { "view" },
+                if is_entity { crate::limits::ENTITY_LIMITS.join(", ") } else { crate::limits::VIEW_LIMITS.join(", ") })}});
+        }
+        let note = args["note"]
+            .as_str()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| format!("raised {} to {}", limit, value));
+        let provenance = crate::model::Provenance::Decree {
+            author: self.chat_decree_author(),
+            at: crate::verify::now_iso(),
+            note: Some(note),
+        };
+        let report = s.apply(
+            vec![crate::store::Op::BumpLimit {
+                id: rid.clone(),
+                limit: limit.to_string(),
+                value,
+                provenance,
+            }],
+            &crate::store::Commit::store("decree"),
+        );
+        if !report.skipped.is_empty() {
+            return json!({"error": {"rule": "bad-limit", "message": report.skipped.join("; ")}});
+        }
+        json!({
+            "id": rid, "limit": limit, "value": value, "path": "bump",
+            "generation": report.generation,
+        })
     }
 
     // Record a human answer relayed from conversation. An edit option is applied by
@@ -3540,6 +3699,99 @@ mod tests {
             );
         }
         assert!(!names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // The chat serving carries the two decree tools beside edit_fact: bump_limit
+    // records a node's own threshold with decree provenance as its own changeset
+    // and refuses a limit that does not apply; retract_decree deletes a node created
+    // by decree and refuses a quoted one. Mirrors docs/compiler/tools.md#chat-tools.
+    #[test]
+    fn chat_serving_bumps_limits_and_retracts_decrees() {
+        use crate::model::{Entity, Provenance, SourceRef};
+        use crate::store::{Commit, Op};
+        let dir = bare_dir("chat-decree");
+        crate::vfs::write(dir.join("docs/shop.md"), "# Shop\n\nAn Order is placed.\n").unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:order".into(),
+                    entity: Entity {
+                        name: "Order".into(),
+                        mentions: vec![SourceRef {
+                            doc: "docs/shop.md".into(),
+                            section: "/shop".into(),
+                            quote: "An Order is placed.".into(),
+                        }],
+                        ..Default::default()
+                    },
+                },
+                Op::CreateEntity {
+                    id: "ent:fulfilment".into(),
+                    entity: Entity {
+                        name: "Fulfilment".into(),
+                        provenance: Some(Provenance::Decree {
+                            author: "owner".into(),
+                            at: "t".into(),
+                            note: None,
+                        }),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &Commit::store("decree"),
+        );
+        let before = s.status.generation;
+        drop(s);
+
+        let server = chat_server(&dir);
+        let names = tool_names(&server);
+        for t in ["bump_limit", "retract_decree"] {
+            assert!(names.iter().any(|n| n == t), "{} missing from {:?}", t, names);
+        }
+
+        // A bump lands as its own changeset with the raised threshold on the node.
+        let v = server.bump_limit(
+            &json!({"id": "ent:order", "limit": "requirements-per-entity", "value": 90}),
+        );
+        assert_eq!(v["path"], "bump", "{}", v);
+        let s = Store::load(&out);
+        assert_eq!(s.status.generation, before + 1, "one changeset");
+        assert_eq!(
+            s.graph.entities["ent:order"].limits["requirements-per-entity"].value,
+            90
+        );
+        drop(s);
+        // A view limit on an entity is refused with the store's rule, nothing lands.
+        let v = server.bump_limit(
+            &json!({"id": "ent:order", "limit": "members-per-structural-view", "value": 40}),
+        );
+        assert_eq!(v["error"]["rule"], "bad-limit", "{}", v);
+        assert_eq!(Store::load(&out).status.generation, before + 1);
+        // A zero or missing value never reaches the store.
+        let v = server.bump_limit(&json!({"id": "ent:order", "limit": "requirements-per-entity", "value": 0}));
+        assert_eq!(v["error"]["rule"], "bad-value", "{}", v);
+
+        // Retracting the decreed entity deletes it; the quoted one is not a decree.
+        let v = server.retract_decree(&json!({"id": "ent:fulfilment", "reason": "never stated"}));
+        assert_eq!(v["retracted"], true, "{}", v);
+        let s = Store::load(&out);
+        assert!(!s.graph.entities.contains_key("ent:fulfilment"));
+        assert_eq!(s.status.generation, before + 2);
+        drop(s);
+        let v = server.retract_decree(&json!({"id": "ent:order", "reason": "no"}));
+        assert_eq!(v["error"]["rule"], "not-a-decree", "{}", v);
+        let s = Store::load(&out);
+        assert!(s.graph.entities.contains_key("ent:order"));
+        assert_eq!(s.status.generation, before + 2, "a refusal writes nothing");
+        drop(s);
+        let v = server.retract_decree(&json!({"id": "ent:nobody", "reason": "no"}));
+        assert_eq!(v["error"]["rule"], "unknown-id", "{}", v);
         crate::vfs::remove_dir_all(&dir).ok();
     }
 

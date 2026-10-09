@@ -1008,6 +1008,34 @@ pub struct FailedGoal {
     pub reason: String,
 }
 
+// A goal a build parked, with why (its retry ran out, the build cap, a reopen cycle,
+// a flip). The goal's fields flatten into the entry, so an entry written before
+// reasons were recorded reads with `reason` absent, and every payload that lists
+// parked goals stays a list of goal records with one more field.
+// Mirrors docs/compiler/reconciler.md#parked-and-failed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ParkedGoal {
+    #[serde(flatten)]
+    pub goal: Goal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl ParkedGoal {
+    pub fn new(goal: Goal, reason: impl Into<String>) -> ParkedGoal {
+        ParkedGoal {
+            goal,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+impl From<Goal> for ParkedGoal {
+    fn from(goal: Goal) -> ParkedGoal {
+        ParkedGoal { goal, reason: None }
+    }
+}
+
 // A goal a changeset resolved, with its one-line justification.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Resolved {
@@ -1186,9 +1214,10 @@ pub struct Status {
     // The open change records: the input of goal derivation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changes: Vec<ChangeRecord>,
-    // Goals left open when a budget ran out, whole, so a re-derivation keeps them.
+    // Goals left open when a budget ran out, whole and with the reason they parked,
+    // so a re-derivation keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub parked: Vec<Goal>,
+    pub parked: Vec<ParkedGoal>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<FailedGoal>,
     #[serde(default, skip_serializing_if = "Costs::is_empty")]
@@ -1277,7 +1306,7 @@ impl Status {
 
     // The parked goal for a wave-loop item, if any.
     pub fn parked_items(&self) -> Vec<WorkItem> {
-        self.parked.iter().map(WorkItem::from_goal).collect()
+        self.parked.iter().map(|p| WorkItem::from_goal(&p.goal)).collect()
     }
 }
 
@@ -1691,5 +1720,45 @@ mod tests {
         // A status.yaml without a version reads as version 0.
         let old: Status = serde_norway::from_str("generation: 4\n").unwrap();
         assert_eq!(old.version, 0);
+    }
+
+    // A parked entry written before reasons were recorded is a bare goal record: it
+    // still reads, with no reason. A new park writes the goal's fields and the reason
+    // beside them, and reads back whole.
+    #[test]
+    fn parked_entries_read_with_and_without_a_reason() {
+        let old: Status = serde_norway::from_str(
+            "generation: 9\nparked:\n- id: g:bind:req:a-1\n  kind: bind\n  class: compile\n  mandatory: true\n  target: req:a-1\n  change:\n    row: stale\n  cause:\n    generation: 8\n    mutation: 2\n    via: ledger\n",
+        )
+        .unwrap();
+        assert_eq!(old.parked.len(), 1);
+        assert_eq!(old.parked[0].goal.id, "g:bind:req:a-1");
+        assert_eq!(old.parked[0].goal.change["row"], "stale");
+        assert_eq!(old.parked[0].goal.cause.as_ref().map(|c| c.generation), Some(8));
+        assert_eq!(old.parked[0].reason, None);
+
+        let mut s = Status::default();
+        s.parked.push(ParkedGoal::new(
+            Goal {
+                id: "g:bind:req:a-1".into(),
+                kind: "bind".into(),
+                class: "compile".into(),
+                mandatory: true,
+                target: "req:a-1".into(),
+                change: serde_json::json!({"row": "stale"}),
+                ..Default::default()
+            },
+            "the build cap of 11 sessions ran out",
+        ));
+        let text = serde_norway::to_string(&s).unwrap();
+        assert!(text.contains("reason: the build cap of 11 sessions ran out"), "{}", text);
+        assert!(text.contains("id: g:bind:req:a-1"), "{}", text);
+        let back: Status = serde_norway::from_str(&text).unwrap();
+        assert_eq!(back.parked, s.parked);
+        // The JSON shape stays a goal record with one more field.
+        let json = serde_json::to_value(&s.parked[0]).unwrap();
+        assert_eq!(json["id"], "g:bind:req:a-1");
+        assert_eq!(json["reason"], "the build cap of 11 sessions ran out");
+        assert!(json.get("goal").is_none());
     }
 }

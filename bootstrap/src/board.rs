@@ -656,6 +656,9 @@ pub struct Board {
     pub reopened: Vec<String>,
     // Parked entries whose target is gone or whose change moved on.
     pub dropped_parked: Vec<String>,
+    // Why each parked goal parked, by goal id, from its stored entry.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    pub parked_reasons: BTreeMap<String, String>,
     pub verdict: Verdict,
     pub open_diags: BTreeMap<String, u64>,
     pub dangling_diags: bool,
@@ -694,8 +697,11 @@ impl Board {
 
         // Parked and failed goals keep their identity (the change) and their state.
         let mut dropped_parked = Vec::new();
+        let mut parked_reasons = BTreeMap::new();
         let mut reopened = Vec::new();
-        for p in &store.status.parked {
+        for entry in &store.status.parked {
+            let p = &entry.goal;
+            let mut kept = true;
             match goals.iter_mut().find(|g| g.id == p.id) {
                 Some(g) => {
                     if g.change == p.change || p.change.is_null() {
@@ -703,7 +709,7 @@ impl Board {
                             g.state = parked_state(p);
                         }
                     } else {
-                        dropped_parked.push(p.id.clone());
+                        kept = false;
                     }
                 }
                 None => {
@@ -716,9 +722,14 @@ impl Board {
                         g.state = parked_state(p);
                         goals.push(g);
                     } else {
-                        dropped_parked.push(p.id.clone());
+                        kept = false;
                     }
                 }
+            }
+            if !kept {
+                dropped_parked.push(p.id.clone());
+            } else if let Some(r) = &entry.reason {
+                parked_reasons.insert(p.id.clone(), r.clone());
             }
         }
         for f in &store.status.failed {
@@ -879,6 +890,7 @@ impl Board {
             lapsed,
             reopened,
             dropped_parked,
+            parked_reasons,
             verdict: store.status.verdict.clone(),
             open_diags: store.open_diag_counts(),
             dangling_diags: store.has_dangling_diags(),
@@ -1520,6 +1532,9 @@ impl Board {
         if let Some(r) = self.readiness.get(&g.id).and_then(|r| r.reason()) {
             v["blockedBy"] = json!(r);
         }
+        if let Some(r) = self.parked_reasons.get(&g.id) {
+            v["parkedReason"] = json!(r);
+        }
         if let Some(w) = self.claimed.get(&g.id) {
             v["claimedBy"] = json!(if self.own.contains(&g.id) { "you" } else { w.as_str() });
         }
@@ -1706,6 +1721,9 @@ impl Board {
             let blockers = self.cone_blockers(&g.id);
             if !blockers.is_empty() {
                 s.push_str(&format!("  cone:   {}\n", blockers.join(", ")));
+            }
+            if let Some(r) = self.parked_reasons.get(&g.id) {
+                s.push_str(&format!("  parked: {}\n", r));
             }
             for r in self.records_of(&g.id) {
                 s.push_str(&format!("  record: {}\n", r));
@@ -2503,8 +2521,14 @@ pub(crate) mod tests {
         assert_eq!(a.records_of(&ga.id), b.records_of(&gb.id));
         assert_eq!(a.records_of(&ga.id).len(), 1);
         // A parked entry with the same change keeps the goal parked and first in line.
-        s.status.parked.push(ga.clone());
+        s.status.parked.push(ParkedGoal::new(ga.clone(), "left open after its retry in session b7-1"));
         let c = derive(&s);
+        assert_eq!(
+            c.parked_reasons.get(&ga.id).map(String::as_str),
+            Some("left open after its retry in session b7-1")
+        );
+        assert!(c.explain(&s, &ga.id).unwrap().contains("parked: left open after its retry"));
+        assert_eq!(c.goal_json(c.goal(&ga.id).unwrap())["parkedReason"], "left open after its retry in session b7-1");
         assert_eq!(c.goal(&ga.id).unwrap().state, GoalState::Parked);
         assert!(c.dropped_parked.is_empty());
         assert_eq!(c.counts().parked, 1);
@@ -3258,7 +3282,7 @@ pub(crate) mod tests {
             state: GoalState::Open,
             hints: vec!["load scope:public".into()],
         };
-        s.status.parked.push(goal.clone());
+        s.status.parked.push(goal.clone().into());
         record(
             &mut s,
             10,
@@ -3305,7 +3329,7 @@ pub(crate) mod tests {
         let mut stray = goal.clone();
         stray.id = "g:abstract-entity:scope:nope".into();
         stray.target = "scope:nope".into();
-        empty.status.parked.push(stray.clone());
+        empty.status.parked.push(stray.clone().into());
         let b = derive(&empty);
         assert!(b.goal(&stray.id).is_none());
         assert!(b.dropped_parked.contains(&stray.id));
@@ -3317,7 +3341,7 @@ pub(crate) mod tests {
         done.id = format!("g:verify:{}", req);
         done.kind = "verify".into();
         done.target = req;
-        verified.status.parked.push(done.clone());
+        verified.status.parked.push(done.clone().into());
         let b = derive(&verified);
         assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
         assert!(b.dropped_parked.contains(&done.id));
@@ -3331,7 +3355,7 @@ pub(crate) mod tests {
         flip.target = ent.clone();
         flip.change = json!({"reparent": "ent:row-of-shops", "between": ["ent:a", "ent:b"]});
         flip.cause = Some(crate::model::Cause { generation: 95, mutation: 0, via: "flip-detection".into() });
-        ruled.status.parked.push(flip.clone());
+        ruled.status.parked.push(flip.clone().into());
         let b = derive(&ruled);
         let g = b.goal(&flip.id).expect("the flip entry stands");
         assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:row-of-shops")), "{:?}", g.state);

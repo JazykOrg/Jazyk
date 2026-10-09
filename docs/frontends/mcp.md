@@ -249,7 +249,8 @@ serving; what it claims is a batch:
   `ready`, `parked`, `failed` are the mandatory ones; `by_class` and `by_kind` include
   both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
-  (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. A goal the
+  (`ready`, or the blocking reason as a sentence), `gated`, `claimedBy`, and for a parked
+  goal `parkedReason`. A goal the
   calling serving itself holds (its open batch, or a batch of the running build the
   serving belongs to) reads `claimedBy: you`, and its blocking sentence says the goal
   is yours to mark and finish, since a session once read its own batch as another

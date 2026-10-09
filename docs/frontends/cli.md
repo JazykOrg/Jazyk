@@ -527,7 +527,10 @@ change records, and the graph. It makes no LLM call and writes nothing.
 - For a goal: the change record that produced it (kind, subject, `via`, the detail),
   its cause (generation, mutation, the edge or computation), its class and whether it
   is mandatory, its [readiness](../compiler/reconciler.md#readiness) (the tier, ready
-  or the reason it waits, rendered as a sentence), what blocks it, and its hints. E.g.:
+  or the reason it waits, rendered as a sentence), what blocks it, its hints, and for
+  a [parked](../compiler/reconciler.md#parked-and-failed) goal a `parked:` line with
+  the reason the build parked it (e.g. `parked: the build cap of 23 sessions ran
+  out`). E.g.:
 
 ```
 g:retrace:view:usecase/holds  retrace, compile, mandatory, open
@@ -578,7 +581,8 @@ opened with, the whole-build report.
 - For a generation (`g87`, or `87`): the full tree forward from it. Rooted at the
   generation a build opened with, this is the whole-build report: the causality DAG,
   the cost totals (sessions, tokens, per goal kind), and the parked and failed goals
-  with their reasons. A generation doubles as the whole-build report this way.
+  with their reasons (`parked: <goal> (<reason>)`, `failed: <goal> (<reason>)`). A
+  generation doubles as the whole-build report this way.
 - For a document path: the cascade rooted at the last `edit` entry that dirtied it.
 - `--back`: causes instead of consequences. From the root, walk backward through the
   `updated` markers and the recorded causes to the human edit that started everything.

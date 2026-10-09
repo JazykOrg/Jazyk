@@ -1179,7 +1179,7 @@ impl McpServer {
         // A resumed parked goal is no longer parked.
         let batch_ids: BTreeSet<&String> = o.goals.iter().map(|g| &g.id).collect();
         let parked_before = s.status.parked.len();
-        s.status.parked.retain(|p| !batch_ids.contains(&p.id));
+        s.status.parked.retain(|p| !batch_ids.contains(&p.goal.id));
         if !failed.is_empty() || parked_before != s.status.parked.len() {
             s.save_status();
         }

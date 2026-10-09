@@ -2618,7 +2618,7 @@ impl Store {
             let subject = &d.subjects[0];
             match d.rule.as_str() {
                 "incomplete-build" => {
-                    if !self.status.parked.iter().any(|p| &p.target == subject) {
+                    if !self.status.parked.iter().any(|p| &p.goal.target == subject) {
                         out.push((
                             id.clone(),
                             format!("{} is no longer parked; a later build resumed it", subject),
@@ -9927,12 +9927,15 @@ mod tests {
             "diag:uncovered-section-9".into(),
             marker("uncovered-section", "t.md#/t/gone"),
         );
-        s.status.parked.push(Goal {
-            id: "g:reconcile-section:t.md#/t/c".into(),
-            kind: "reconcile-section".into(),
-            target: format!("t.md#{}", refs[3]),
-            ..Default::default()
-        });
+        s.status.parked.push(
+            Goal {
+                id: "g:reconcile-section:t.md#/t/c".into(),
+                kind: "reconcile-section".into(),
+                target: format!("t.md#{}", refs[3]),
+                ..Default::default()
+            }
+            .into(),
+        );
         s.graph.diagnostics.insert(
             "diag:incomplete-build-1".into(),
             marker("incomplete-build", &format!("t.md#{}", refs[3])),

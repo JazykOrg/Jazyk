@@ -1440,8 +1440,8 @@ pub fn pair_plan(store: &Store) -> PairPlan {
         .status
         .parked
         .iter()
-        .filter(|g| g.kind == "rejudge-pair")
-        .map(|g| g.target.as_str())
+        .filter(|g| g.goal.kind == "rejudge-pair")
+        .map(|g| g.goal.target.as_str())
         .collect();
     let failed: BTreeSet<&str> = store
         .status

@@ -264,7 +264,8 @@ Every check run journals a `checks` entry under its own generation.
   ([facets](./model/requirement.md#facets)).
 - Cross-class flip detection: `unstable-derivation`, parking the oscillating pair
   ([flip detection](./reconciler.md#flip-detection)).
-- `incomplete-build`: goals parked because a budget ran out.
+- `incomplete-build`: goals parked because a budget ran out, the park reason in the
+  message ([parked and failed](./reconciler.md#parked-and-failed)).
 
 The checks also settle stranded diagnostics: every open judged diagnostic whose subjects
 are all missing from the graph is resolved and journaled (`settle-diagnostics`), so a

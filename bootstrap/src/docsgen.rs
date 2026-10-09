@@ -1281,9 +1281,10 @@ fn goal_lines(store: &Store, id: &str, rids: &[String]) -> Vec<String> {
             .unwrap_or_default()
     };
     let mut out = Vec::new();
-    for g in &store.status.parked {
-        if matches(g) {
-            out.push(format!("- `{}` ({}) parked{}", g.id, g.kind, cause(g)));
+    for p in &store.status.parked {
+        if matches(&p.goal) {
+            let why = p.reason.as_deref().map(|r| format!(": {}", r)).unwrap_or_default();
+            out.push(format!("- `{}` ({}) parked{}{}", p.goal.id, p.goal.kind, why, cause(&p.goal)));
         }
     }
     for f in &store.status.failed {

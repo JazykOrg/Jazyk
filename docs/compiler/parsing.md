@@ -8,6 +8,8 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 
 - A handler claims a file by its format and produces the section tree.
 - Markdown (`.md`, `.markdown`) is built in.
+- The optional native `document-proof` build evaluates DOCX and PDF input through
+  [the binary document proof](./document-proof.md). It is not production format support.
 - Custom handlers per project are planned; Markdown is the only handler today. The
   configuration format is specified in
   [project settings](./project-settings.md).

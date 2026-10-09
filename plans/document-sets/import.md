@@ -1,6 +1,8 @@
 # Plan: Word and PDF import
 
-Status: proposed, not implemented. Written 2026-10-08. Extends the released
+Status: superseded as the default direction by authoritative DOCX/PDF sources and
+the [binary document proof](../../docs/compiler/document-proof.md). Retained as an
+optional conversion workflow. Written 2026-10-08. Extends the released
 [document-set implementation](./implementation.md). Converter recommendations
 below are based on upstream documentation, not a completed conversion benchmark.
 

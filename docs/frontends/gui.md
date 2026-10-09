@@ -438,8 +438,13 @@ Transcripts:
 ## Jobs
 
 The local API server runs builds and workers itself. `POST /api/jobs` with
-`{kind: compile | gen | verify | audit | decompile | benchmark}` (plus targets and `force` where
-the kind takes them) queues a job and returns its id. `GET /api/jobs` lists jobs,
+`{kind: build | compile | gen | verify | audit | decompile | benchmark}` (plus targets and `force` where
+the kind takes them) queues a job and returns its id. `build` is the whole pipeline
+for one document set in one job: compile, then generate when entities wait to be
+generated, then review when the ledger holds generated code. A failed step ends
+the job; a cancelled one stops at the next step. Its result lists each step it
+ran. A worker preference that dispatches to an attached agent treats `build` as
+a compile release. `GET /api/jobs` lists jobs,
 `GET /api/jobs/{id}` returns one job with its state, result, and its whole trace: the
 server keeps every event a job emitted, numbered per job, so a reloaded page shows the
 same history the live stream showed. `POST /api/jobs/{id}/cancel` requests

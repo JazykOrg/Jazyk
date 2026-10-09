@@ -17,6 +17,9 @@ pub struct Lsp {
     out: PathBuf,
     store: Store,
     generation: u64,
+    // The cheap per-set generations plus the configuration hash the store was
+    // loaded at; refresh reloads only when it moved (lsp.md#rebuilds-and-refresh).
+    fingerprint: String,
     gen: crate::gen::GenSettings,
     // Open documents: project-relative doc path -> current editor text.
     overlay: HashMap<String, String>,
@@ -27,6 +30,7 @@ pub struct Lsp {
 
 impl Lsp {
     pub fn new(root: PathBuf, out: PathBuf, gen: crate::gen::GenSettings) -> Lsp {
+        let fingerprint = store_fingerprint(&root, &out);
         let store = read_project_store(&root, &out);
         let generation = store.status.generation;
         Lsp {
@@ -34,6 +38,7 @@ impl Lsp {
             out,
             store,
             generation,
+            fingerprint,
             gen,
             overlay: HashMap::new(),
             next_srv_id: 1,
@@ -181,19 +186,23 @@ impl Lsp {
         })
     }
 
-    // Reload the store when the generation counter moved, and republish every open
-    // document so the editor reflects the new build.
+    // Reload the store when a set's generation counter or the configuration moved,
+    // and republish every open document so the editor reflects the new build. The
+    // comparison reads one line per set; the graph loads only on a change.
     pub(crate) fn refresh<W: Write>(&mut self, out: &mut W) {
-        let current = read_project_store(&self.root, &self.out);
-        if current.status.generation != self.generation {
-            eprintln!(
-                "[jazyk-lsp] store generation {} -> {}; reloading",
-                self.generation, current.status.generation
-            );
-            self.generation = current.status.generation;
-            self.store = current;
-            self.publish_all(out);
+        let now = store_fingerprint(&self.root, &self.out);
+        if now == self.fingerprint {
+            return;
         }
+        self.fingerprint = now;
+        let current = read_project_store(&self.root, &self.out);
+        eprintln!(
+            "[jazyk-lsp] store generation {} -> {}; reloading",
+            self.generation, current.status.generation
+        );
+        self.generation = current.status.generation;
+        self.store = current;
+        self.publish_all(out);
     }
 
     // ---- document sync ----
@@ -1355,8 +1364,7 @@ enum Event {
 // Mirrors docs/frontends/lsp.md#build-activity-in-the-log.
 fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
     std::thread::spawn(move || {
-        let read_generation = |out: &Path| read_project_store(&root,out).status.generation;
-        let mut last_gen = read_generation(&out);
+        let mut last_gen = store_fingerprint(&root, &out);
         let mut lock_seen = out.join(".lock").vexists();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -1372,7 +1380,7 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
                     }
                 );
             }
-            let gen_now = read_generation(&out);
+            let gen_now = store_fingerprint(&root, &out);
             if gen_now != last_gen {
                 last_gen=gen_now;
                 if tx.send(Event::StoreChanged).is_err() {return;}
@@ -1383,6 +1391,57 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
 
 #[cfg(test)]
 mod tests {
+    // The refresh keys on one line per set plus the configuration hash, and loads
+    // the graph only when one moved (docs/frontends/lsp.md#rebuilds-and-refresh).
+    #[test]
+    fn refresh_reloads_only_when_a_set_generation_or_the_configuration_moved() {
+        let tmp = std::env::temp_dir().join(format!("jz-lsp-fingerprint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".jazyk")).unwrap();
+        let config = |extra: &str| {
+            format!(
+                "version = 1\n\n[[sets]]\nid = \"ds_a\"\nname = \"A\"\ndocs = [\"a/**\"]\n\n[[sets]]\nid = \"ds_b\"\nname = \"B\"\ndocs = [\"b/**\"]\n{}",
+                extra
+            )
+        };
+        std::fs::write(tmp.join(".jazyk/jazyk.toml"), config("")).unwrap();
+        for id in ["ds_a", "ds_b"] {
+            let mut s = crate::store::Store::load(&tmp.join(".jazyk").join(id));
+            s.status.generation = 1;
+            s.save();
+        }
+        let out = tmp.join(".jazyk");
+        let first = super::store_fingerprint(&tmp, &out);
+        assert_eq!(first, super::store_fingerprint(&tmp, &out));
+        let gs = crate::gen::GenSettings {
+            configured: false,
+            deliverable: tmp.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        let mut lsp = super::Lsp::new(tmp.clone(), out.clone(), gs);
+        let loaded = lsp.generation;
+        let mut sink = Vec::new();
+        lsp.refresh(&mut sink);
+        assert_eq!(lsp.generation, loaded);
+        assert!(sink.is_empty(), "no reload, nothing republished");
+        // One set's generation moves: the fingerprint and the loaded store follow.
+        let mut s = crate::store::Store::load(&out.join("ds_b"));
+        s.status.generation = 2;
+        s.save_status();
+        let second = super::store_fingerprint(&tmp, &out);
+        assert_ne!(first, second);
+        lsp.refresh(&mut sink);
+        assert_ne!(lsp.generation, loaded);
+        assert_eq!(lsp.fingerprint, second);
+        // The configuration moves without any generation: a reload too.
+        std::fs::write(tmp.join(".jazyk/jazyk.toml"), config("\n[llm]\nmodel = \"m\"\n")).unwrap();
+        assert_ne!(second, super::store_fingerprint(&tmp, &out));
+        // A set's own out directory keys on its generation alone.
+        assert_eq!(super::store_fingerprint(&tmp, &out.join("ds_b")), "2");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn occurrences_report_columns_on_the_original_text() {
         let hits = super::occurrences("İstanbul order Order", "order");
@@ -1487,11 +1546,13 @@ mod tests {
             .graph
             .requirements
             .insert("req:shop-1".into(), r.clone());
+        let fingerprint = store_fingerprint(&root, &out);
         let lsp = Lsp {
             root,
             out,
             store,
             generation: 0,
+            fingerprint,
             gen: GenSettings {
                 configured: true,
                 deliverable: deliv,
@@ -1550,11 +1611,13 @@ mod tests {
             .graph
             .requirements
             .insert("req:shop-1".into(), r.clone());
+        let fingerprint = store_fingerprint(&tmp, &out);
         let lsp = Lsp {
             root: tmp.clone(),
             out,
             store,
             generation: 0,
+            fingerprint,
             gen: GenSettings {
                 configured: true,
                 deliverable: tmp.join("product"),
@@ -1704,11 +1767,14 @@ mod tests {
     }
 
     fn lsp_at(root: std::path::PathBuf, out: std::path::PathBuf, store: Store) -> Lsp {
+        // The store is in memory only: key the refresh to disk so it never reloads.
+        let fingerprint = store_fingerprint(&root, &out);
         Lsp {
             root,
             out: out.clone(),
             store,
             generation: 0,
+            fingerprint,
             gen: GenSettings {
                 configured: true,
                 deliverable: out.join("product"),
@@ -2010,6 +2076,29 @@ mod tests {
         assert!(card.contains("diagrams/sequence/one.svg"), "{}", card);
         crate::vfs::remove_dir_all(&tmp).ok();
     }
+}
+
+// What a reload keys on: the configuration hash and one line of each set's
+// status.yaml (or the one set's generation when the out directory is a set).
+// Mirrors docs/frontends/lsp.md#rebuilds-and-refresh.
+fn store_fingerprint(root: &Path, out: &Path) -> String {
+    let own = || crate::store::read_generation(out).to_string();
+    if out.file_name().and_then(|s| s.to_str()).is_some_and(crate::document_sets::valid_id) {
+        return own();
+    }
+    let Ok(w) = crate::document_sets::Workspace::load(root) else {
+        return own();
+    };
+    if !w.exists {
+        return own();
+    }
+    let mut v = w.hash.clone();
+    for set in &w.sets {
+        if let Ok(p) = w.resolve(Some(&set.id)) {
+            v.push_str(&format!("{}:{};", set.id, crate::store::read_generation(&p.out)));
+        }
+    }
+    v
 }
 
 // An in-memory projection only. It is never saved or passed to a graph mutator.

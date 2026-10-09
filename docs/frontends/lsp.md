@@ -147,9 +147,11 @@ event-driven the LSP way: file watching belongs to the client, so the editor wat
 store's `status.yaml` with its native file events and notifies the server
 (`workspace/didChangeWatchedFiles`); on any notification the server compares the
 generation counter, reloads, and republishes every open document (see
-[concurrency](../compiler/graph.md#concurrency)). For clients without file watchers the
-server keeps a slow background poll as a fallback, so a committed build always repaints
-eventually. Hover images are read from disk at hover time and a view's file path is
+[concurrency](../compiler/graph.md#concurrency)). The comparison is cheap: one line
+of each set's `status.yaml` plus the configuration hash, read on every message. The
+graph reloads only when one of them moved, so typing costs no reload. For clients
+without file watchers the server keeps a slow background poll as a fallback (the
+same comparison every 2 seconds), so a committed build always repaints eventually. Hover images are read from disk at hover time and a view's file path is
 stable across builds, so a rebuilt diagram shows at the next hover without a reload.
 
 ## Build activity in the log

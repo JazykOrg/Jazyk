@@ -457,7 +457,7 @@ pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
             let mut list: Vec<Value> = Vec::new();
             for f in proj.doc_files() {
                 let rel = rel_doc(&proj.root, &f);
-                let text = crate::vfs::read_to_string(&f).unwrap_or_default();
+                let text = crate::md::read_doc(&f).unwrap_or_default();
                 let hash = crate::model::hash_hex(&text);
                 let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
                 let stale = graph_hash.as_deref() != Some(hash.as_str());

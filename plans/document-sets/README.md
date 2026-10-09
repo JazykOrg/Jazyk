@@ -1,7 +1,8 @@
 # Plan: document sets in one project
 
-Status: proposed, not implemented. Written 2026-10-07. This is a planning change.
-The configuration, runtime, and editor still use the current single-graph model.
+Status: the document-set core was released on 2026-10-07. The original design below
+records its decisions. [Implementation and release](./implementation.md) records
+completion. [Word and PDF import](./import.md) is the proposed next milestone.
 
 This plan supersedes [workspaces, specs, and mappings](../workspaces-and-mappings.md)
 for project configuration, independent compilation, and frontend scope. That older
@@ -20,6 +21,8 @@ sets with one action.
   ongoing management, and later document imports.
 - [Implementation sequence](./implementation.md): repository ownership, ordered
   changes, and acceptance cases.
+- [Word and PDF import](./import.md): conversion, review, origin records, re-import,
+  storage prerequisites, and phased delivery.
 
 ## Decisions
 

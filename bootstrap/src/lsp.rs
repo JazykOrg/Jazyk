@@ -101,6 +101,15 @@ impl Lsp {
         self.refresh(out);
         match method.as_str() {
             "initialize" => reply(out, id, self.capabilities()),
+            "jazyk/document" => {
+                let result = params["uri"].as_str().and_then(|uri| self.uri_to_doc(uri))
+                    .ok_or((400, "expected a document URI inside this project".into()))
+                    .and_then(|doc| crate::webapi::binary_documents::read(&crate::project::Project::load(&self.root), &doc));
+                match result {
+                    Ok(value) => reply(out, id, value),
+                    Err((code, message)) => write_message(out, &json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602, "message":message, "data":{"status":code}}})),
+                }
+            }
             "initialized" => {}
             "shutdown" => reply(out, id, Value::Null),
             "exit" => return false,
@@ -250,7 +259,7 @@ impl Lsp {
         if let Some(t) = self.overlay.get(doc) {
             return t.clone();
         }
-        crate::vfs::read_to_string(self.root.join(doc)).unwrap_or_default()
+        md::read_doc(&self.root.join(doc)).unwrap_or_default()
     }
 
     // ---- anchoring ----
@@ -300,6 +309,18 @@ impl Lsp {
     // Publish the open diagnostics that anchor to one document. Suppressed triage stays
     // out of the editor; resolved findings are never shown.
     fn publish<W: Write>(&self, out: &mut W, doc: &str) {
+        let items = self.document_diagnostics(doc);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": { "uri": self.doc_to_uri(doc), "diagnostics": items }
+        });
+        write_message(out, &msg);
+    }
+
+    // Shared with the optional custom-document proof. Ranges refer to the reader's
+    // text projection; only the custom view maps them to binary document locations.
+    pub fn document_diagnostics(&self, doc: &str) -> Vec<Value> {
         let mut items: Vec<Value> = Vec::new();
         if md::supported_format(Path::new(doc)) {
             for link in md::missing_document_links(&self.root, doc, &self.doc_text(doc)) {
@@ -371,12 +392,7 @@ impl Lsp {
                 }
             }
         }
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/publishDiagnostics",
-            "params": { "uri": self.doc_to_uri(doc), "diagnostics": items }
-        });
-        write_message(out, &msg);
+        items
     }
 
     // Where a diagnostic subject anchors inside `doc`, if it does at all.
@@ -1509,6 +1525,32 @@ mod tests {
     use super::*;
     use crate::gen::{GenSettings, Ledger, ReqRow, RowHashes, Site, TestRef};
     use crate::model::{Requirement, SourceRef};
+
+    #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
+    #[test]
+    fn docx_warning_publishes_against_the_native_projection() {
+        let root = std::env::temp_dir().join(format!("jazyk-lsp-docx-{}", crate::sys::process_id()));
+        crate::vfs::create_dir_all(&root).unwrap();
+        crate::vfs::write(root.join("contract.docx"), include_bytes!("../tests/fixtures/document-proof/contract.docx")).unwrap();
+        let project = crate::project::Project::load(&root);
+        let mut lsp = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&project));
+        let mut bytes = Vec::new();
+        lsp.publish(&mut bytes, "contract.docx");
+        let msg = read_message(&mut std::io::BufReader::new(bytes.as_slice())).unwrap();
+        assert_eq!(msg["method"], "textDocument/publishDiagnostics");
+        let warning = msg["params"]["diagnostics"].as_array().unwrap().iter().find(|d| d["code"] == "broken-link").unwrap();
+        let text = lsp.doc_text("contract.docx");
+        let line = text.lines().nth(warning["range"]["start"]["line"].as_u64().unwrap() as usize).unwrap();
+        assert_eq!(line, "Reference: [contract](missing.md)");
+        assert_eq!(warning["range"]["start"]["character"], 11);
+        let mut response = Vec::new();
+        lsp.handle(json!({"jsonrpc":"2.0", "id":1, "method":"jazyk/document", "params":{"uri":lsp.doc_to_uri("contract.docx")}}), &mut response);
+        let msg = read_message(&mut std::io::BufReader::new(response.as_slice())).unwrap();
+        assert_eq!(msg["result"]["format"], "docx");
+        assert_eq!(msg["result"]["projection"]["text"], text);
+        assert!(!msg["result"]["diagnostics"][0]["locations"].as_array().unwrap().is_empty());
+        crate::vfs::remove_dir_all(&root).unwrap();
+    }
 
     fn requirement() -> Requirement {
         Requirement {

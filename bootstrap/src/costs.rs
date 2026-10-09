@@ -168,7 +168,7 @@ fn documents_of(target: &str, graph: &Graph) -> Vec<String> {
 }
 
 fn is_path(target: &str) -> bool {
-    target.contains('#') || (target.contains('/') && !target.contains(':')) || target.ends_with(".md")
+    target.contains('#') || (target.contains('/') && !target.contains(':')) || crate::md::is_document_target(target)
 }
 
 fn quoted(p: &Option<Provenance>, source: &Option<SourceRef>) -> Option<String> {

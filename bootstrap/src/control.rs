@@ -146,7 +146,7 @@ pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
                 .strip_prefix(&proj.root)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| f.to_string_lossy().to_string());
-            crate::vfs::read_to_string(f)
+            crate::md::read_doc(f)
                 .ok()
                 .map(|t| (rel, crate::model::hash_hex(&t)))
         })

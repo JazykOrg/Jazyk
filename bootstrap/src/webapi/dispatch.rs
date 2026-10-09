@@ -171,8 +171,10 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
         "/project"
             | "/project/files"
             | "/project/file"
+            | "/project/text"
             | "/deliverable/raw"
             | "/docs/content"
+            | "/docs/document"
             | "/docs/rename"
             | "/settings"
             | "/ping"
@@ -345,7 +347,7 @@ pub(crate) fn request_scoped(
                 .iter()
                 .map(|f| {
                     let rel = super::status::rel_doc(&p.root, f);
-                    let text = crate::vfs::read_to_string(f).unwrap_or_default();
+                    let text = crate::md::read_doc(f).unwrap_or_default();
                     let hash = crate::model::hash_hex(&text);
                     let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
                     json!({
@@ -360,6 +362,9 @@ pub(crate) fn request_scoped(
                 .collect();
             ok(json!({ "docs": docs }))
         }
+
+        ("GET", "/docs/document") => answer(super::binary_documents::read(&project(), &param(&q, "path").unwrap_or_default())),
+        ("PUT", "/docs/document") => answer(super::binary_documents::write(&project(), &param(&q, "path").unwrap_or_default(), body)),
 
         ("GET", "/docs/content") => {
             let rel = param(&q, "path").unwrap_or_default();
@@ -715,6 +720,15 @@ pub(crate) fn request_scoped(
                 &p.out,
                 &p.docs_glob,
             ))
+        }
+        ("GET", "/project/text") => answer(super::projfiles::project_text(&project().root, &param(&q, "path").unwrap_or_default())),
+        ("PUT", "/project/text") => {
+            let p = project();
+            answer(super::projfiles::write_project_text(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
+        }
+        ("PUT", "/project/file") => {
+            let p = project();
+            answer(super::projfiles::create_project_file(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
         }
         ("GET", "/project/file") => {
             let rel = param(&q, "path").unwrap_or_default();

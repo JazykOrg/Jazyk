@@ -155,6 +155,7 @@ fn api_router(st: SharedState) -> Router {
                 .put(docs::doc_write)
                 .delete(docs::doc_delete),
         )
+        .route("/docs/document", get(docs::binary_read).put(docs::binary_write).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
         .route("/docs/baseline", get(api::doc_baseline))
         .route("/docs/rename", post(docs::doc_rename))
         .route("/gen/pending", get(api::gen_pending))
@@ -180,7 +181,8 @@ fn api_router(st: SharedState) -> Router {
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
         .route("/project/files", get(projfiles::list))
-        .route("/project/file", get(projfiles::file))
+        .route("/project/file", get(projfiles::file).put(projfiles::create).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
+        .route("/project/text", get(projfiles::text).put(projfiles::write_text))
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
@@ -206,7 +208,8 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     use serde_json::{json, Value};
     use tower::ServiceExt;
     let (mut parts, body) = req.into_parts();
-    let bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
+    let limit = if parts.uri.path().ends_with("/docs/document") || parts.uri.path().ends_with("/project/file") { 45 * 1024 * 1024 } else { 32 * 1024 * 1024 };
+    let bytes = match axum::body::to_bytes(body, limit).await {
         Ok(bytes) => bytes,
         Err(e) => return api::err(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
     };
@@ -230,8 +233,10 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             | "/project"
             | "/project/files"
             | "/project/file"
+            | "/project/text"
             | "/deliverable/raw"
             | "/docs/content"
+            | "/docs/document"
             | "/docs/rename"
             | "/settings"
             | "/events"
@@ -341,7 +346,8 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         return response;
     }
     let (mut parts, body) = response.into_parts();
-    let bytes = match axum::body::to_bytes(body, 32 * 1024 * 1024).await {
+    let limit = if route == "/docs/document" { 128 * 1024 * 1024 } else { 32 * 1024 * 1024 };
+    let bytes = match axum::body::to_bytes(body, limit).await {
         Ok(b) => b,
         Err(e) => return api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };

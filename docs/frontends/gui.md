@@ -1,5 +1,8 @@
 # Local editor API
 
+[Binary documents](../compiler/binary-documents.md) define native DOCX and PDF
+reading, binary saves, source locations, and the `binaryDocuments` capability.
+
 A project opens all [document sets](../compiler/document-sets.md). Graph operations address one set
 explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
 physical files and report every membership. The document-set contract defines
@@ -326,6 +329,13 @@ Settings:
   parsed from `jazyk.toml`: which keys the file sets, the effective defaults for the
   rest, and the file hash. The API key is reported only as set or unset, never its
   value.
+- `GET /api/settings` also returns `text`: the settings file as written, for the
+  editor's text mode. A stored `llm.api_key` value reads as `"(stored)"`; the key
+  never reaches the client.
+- `PUT /api/settings` with `{baseHash, text}`: write the settings file as given.
+  The text must parse and describe valid document sets, else 400. An
+  `llm.api_key` still reading `"(stored)"` keeps the stored key. A stale
+  `baseHash` is 409.
 - `PUT /api/settings` with `{baseHash, settings}`: regenerate `jazyk.toml` from the
   form values and apply them to the running server without a restart. The write is
   conditional on `baseHash` like a document write. The file is rewritten in canonical
@@ -402,6 +412,22 @@ Diagnostics:
   like a skipped folder. A `jazyk.toml` is served with every `api_key` value
   replaced by `<redacted>`: the key is never served, the same rule as
   `GET /api/project` and `GET /api/settings`.
+- `GET /api/project/text?path=`: one existing project file as `{path, text, hash}`,
+  for editing. A file that is not UTF-8 text is 415. `PUT /api/project/text?path=`
+  with `{text, baseHash}` replaces it when `baseHash` still names the file on disk
+  (else 409), keeping its permissions. Every project file can be edited this way,
+  inside a document set or not, under the rules of the next item, except that
+  dot-folders other than `.jazyk` and `.git` are allowed. A `.env` file or a
+  `jazyk.toml` cannot be written this way (400): the settings file is edited
+  through `/api/settings`, which never serves the key.
+- `PUT /api/project/file?path=` with `{text}` or `{base64}`: create one new file
+  anywhere under the project directory, inside a document set or not. It never
+  overwrites: an existing path is 409. Missing folders are created. A path that
+  leaves the project directory, crosses a symlink or a nested project, or names a
+  dot-folder (`.jazyk` included), `.git`, `node_modules`, `target`, the out
+  directory, a `.env` file, or a `jazyk.toml` is 400. A DOCX or PDF must be a valid package (422). The limit is 32 MiB
+  (413). The new file gets ordinary permissions. Edits to an existing document go
+  through its document endpoints.
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
   [triage state](../compiler/model/diagnostic.md#lifecycle-and-triage)
   (`acknowledged`, `suppressed`, `wontfix`, or null to clear). The write commits
@@ -430,8 +456,13 @@ Transcripts:
 ## Jobs
 
 The local API server runs builds and workers itself. `POST /api/jobs` with
-`{kind: compile | gen | verify | audit | decompile | benchmark}` (plus targets and `force` where
-the kind takes them) queues a job and returns its id. `GET /api/jobs` lists jobs,
+`{kind: build | compile | gen | verify | audit | decompile | benchmark}` (plus targets and `force` where
+the kind takes them) queues a job and returns its id. `build` is the whole pipeline
+for one document set in one job: compile, then generate when entities wait to be
+generated, then review when the ledger holds generated code. A failed step ends
+the job; a cancelled one stops at the next step. Its result lists each step it
+ran. A worker preference that dispatches to an attached agent treats `build` as
+a compile release. `GET /api/jobs` lists jobs,
 `GET /api/jobs/{id}` returns one job with its state, result, and its whole trace: the
 server keeps every event a job emitted, numbered per job, so a reloaded page shows the
 same history the live stream showed. `POST /api/jobs/{id}/cancel` requests

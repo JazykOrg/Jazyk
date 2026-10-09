@@ -109,7 +109,7 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
         Ok(a) => a,
         Err(why) => return DocRead::Invalid(format!("invalid document path {}: {}", rel, why)),
     };
-    match crate::vfs::read_to_string(&abs) {
+    match crate::md::read_doc(&abs) {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);
             let links = crate::md::missing_document_links(&proj.root, rel, &text);
@@ -153,6 +153,10 @@ pub enum DocWrite {
 // The write is conditional on the hash the client read, so two editors on one
 // document never silently overwrite each other.
 pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>) -> DocWrite {
+    if Path::new(rel).extension().and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf")) {
+        return DocWrite::Invalid("binary documents require a format-specific editor".into());
+    }
     let abs = match safe_doc_path_why(proj, rel) {
         Ok(a) => a,
         Err(why) => return DocWrite::Invalid(format!("invalid document path {}: {}", rel, why)),
@@ -231,6 +235,19 @@ mod tests {
         p.out = dir.join(".jazyk");
         p.docs_glob = vec!["**/*.md".to_string(), "!fixtures/**".to_string()];
         p
+    }
+
+    #[test]
+    fn text_writes_never_replace_binary_documents() {
+        let dir = std::env::temp_dir().join(format!("jazyk-binary-write-{}", crate::sys::process_id()));
+        crate::vfs::create_dir_all(&dir).unwrap();
+        let p = proj(&dir);
+        for name in ["contract.docx", "contract.DOCX", "contract.pdf", "contract.PDF"] {
+            crate::vfs::write(dir.join(name), b"original binary bytes").unwrap();
+            assert!(matches!(doc_write(&p, name, "replacement prose", None), DocWrite::Invalid(_)));
+            assert_eq!(crate::vfs::read(dir.join(name)).unwrap(), b"original binary bytes");
+        }
+        crate::vfs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

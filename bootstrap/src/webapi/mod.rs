@@ -3,6 +3,7 @@
 // A handler in either transport is a thin wrapper around a function here.
 // See docs/frontends/wasm.md#one-api-two-transports.
 pub mod board;
+pub mod binary_documents;
 pub mod card;
 pub mod deliverable;
 pub mod docs;

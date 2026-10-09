@@ -502,7 +502,7 @@ pub fn target_doc(target: &str) -> Option<String> {
     if let Some((doc, _)) = split_section_ref(target) {
         return Some(doc);
     }
-    if !target.contains(':') && target.ends_with(".md") {
+    if crate::md::is_document_target(target) {
         return Some(target.to_string());
     }
     None

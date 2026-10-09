@@ -61,6 +61,8 @@ pub(crate) fn elide(v: &Value) -> Value {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobKind {
+    // The whole pipeline for one set: compile, generate, review (docs/frontends/gui.md#jobs).
+    Build,
     Scoped {
         set_id: String,
         config_hash: String,
@@ -97,6 +99,7 @@ impl JobKind {
         match self {
             JobKind::Scoped { kind, .. } => kind.name(),
             JobKind::CompileSets { .. } => "compile",
+            JobKind::Build => "build",
             JobKind::Compile => "compile",
             JobKind::Gen { .. } => "gen",
             JobKind::Verify { .. } => "verify",
@@ -113,6 +116,7 @@ impl JobKind {
                 v
             }
             JobKind::CompileSets { set_ids, .. } => json!({"kind":"compile", "setIds":set_ids}),
+            JobKind::Build => json!({ "kind": "build" }),
             JobKind::Compile => json!({ "kind": "compile" }),
             JobKind::Gen { entities, force } => {
                 json!({ "kind": "gen", "entities": entities, "force": force })
@@ -487,6 +491,23 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             }
             Ok(json!({"sets":results}))
         }
+        JobKind::Build => {
+            let mut steps = Vec::new();
+            trace.line("build", "compile");
+            steps.push(json!({"step": "compile", "result": execute(st, &JobKind::Compile, trace)?}));
+            let store = crate::store::Store::load(&st.out);
+            if !trace.is_cancelled() && !crate::gen::pending(&store, &st.gs()).is_empty() {
+                trace.line("build", "generate");
+                let gen = JobKind::Gen { entities: vec![], force: false };
+                steps.push(json!({"step": "generate", "result": execute(st, &gen, trace)?}));
+            }
+            if !trace.is_cancelled() && !crate::gen::Ledger::load(&st.out).requirements.is_empty() {
+                trace.line("build", "review");
+                let verify = JobKind::Verify { targets: vec![], test_kind: None, force: false };
+                steps.push(json!({"step": "review", "result": execute(st, &verify, trace)?}));
+            }
+            Ok(json!({ "steps": steps }))
+        }
         JobKind::Compile => {
             let report = crate::reconcile::compile(&st.proj(), &st.llm(), &st.out, trace);
             Ok(json!(report))
@@ -608,7 +629,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
     // records the release and the agent does the work. Mirrors
     // docs/compiler/control-plane.md#dispatch.
     if let Some(stage) = match body["kind"].as_str() {
-        Some("compile") => Some("compile"),
+        Some("compile") | Some("build") => Some("compile"),
         Some("gen") => Some("generate"),
         Some("decompile") => Some("decompile"),
         _ => None,
@@ -655,6 +676,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
         }
     }
     let kind = match body["kind"].as_str() {
+        Some("build") => JobKind::Build,
         Some("compile") => JobKind::Compile,
         Some("benchmark") => JobKind::Benchmark {
             base_url: body["baseUrl"].as_str().map(String::from),
@@ -676,7 +698,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
         _ => {
             return super::api::err(
                 StatusCode::BAD_REQUEST,
-                "kind must be compile, gen, verify, audit, decompile, or benchmark",
+                "kind must be build, compile, gen, verify, audit, decompile, or benchmark",
             )
         }
     };

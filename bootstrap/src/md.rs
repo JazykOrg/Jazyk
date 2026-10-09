@@ -72,19 +72,33 @@ pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
     (line, col)
 }
 
-// Whether the Markdown handler claims a file: by its extension, `.md` or `.markdown`.
+// Whether a handler claims a file: by its extension (`.md`, `.markdown`, `.txt`, and
+// natively DOCX and PDF).
 // A matched file no handler claims is `unsupported-format` territory.
 // Mirrors docs/compiler/parsing.md#format-handlers.
+// Whether a goal or ripple target names a whole document: a path a handler claims.
+pub fn is_document_target(target: &str) -> bool {
+    !target.contains(':') && supported_format(std::path::Path::new(target))
+}
+
 pub fn supported_format(path: &std::path::Path) -> bool {
+    #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
+    if crate::documents::supported(path) {
+        return true;
+    }
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown"))
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt"))
         .unwrap_or(false)
 }
 
 // Read a document for its handler: the text, or why it cannot be read (unreadable, or
 // not valid UTF-8), the message a `parse-error` diagnostic carries.
 pub fn read_doc(path: &std::path::Path) -> Result<String, String> {
+    #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
+    if crate::documents::supported(path) {
+        return crate::documents::read(path).map(|d| d.text);
+    }
     let bytes = crate::vfs::read(path).map_err(|e| format!("cannot read the file: {}", e))?;
     String::from_utf8(bytes).map_err(|e| format!("not valid UTF-8: {}", e.utf8_error()))
 }
@@ -603,7 +617,10 @@ mod tests {
         use std::path::Path;
         assert!(supported_format(Path::new("docs/a.md")));
         assert!(supported_format(Path::new("docs/A.MARKDOWN")));
-        assert!(!supported_format(Path::new("docs/a.txt")));
+        assert!(supported_format(Path::new("docs/a.txt")));
+        assert!(!supported_format(Path::new("docs/a.rs")));
+        assert!(is_document_target("docs/a.txt"));
+        assert!(!is_document_target("ent:a.md"));
         assert!(!supported_format(Path::new("docs/README")));
         let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();
@@ -630,7 +647,11 @@ mod tests {
     fn document_links_follow_markdown_syntax_and_preserve_utf16_occurrence_ranges() {
         let text = "# Slides\n😀 See [Intro](slide-intro.md?mode=read#top \"Title\") and [More][more].\n\n[more]: <../More%20Info.MARKDOWN> \"More\"\n\n`[code](inline.md)`\n\n```md\n[fenced](code.md)\n```\n\n![asset](image.md) [site](https://host/a.md) [mail](mailto:a.md) [anchor](#here) [pdf](notes.pdf)\n";
         let links = document_links(text, "slides/main.md");
-        assert_eq!(links.len(), 2, "{:?}", links);
+        let binary_formats = cfg!(all(feature = "native-documents", not(target_arch = "wasm32")));
+        assert_eq!(links.len(), if binary_formats { 3 } else { 2 }, "{:?}", links);
+        if binary_formats {
+            assert_eq!(links[2].target, "slides/notes.pdf");
+        }
         assert_eq!(links[0].target, "slides/slide-intro.md");
         assert_eq!(links[0].href, "slide-intro.md?mode=read#top");
         assert_eq!(links[0].range.start, LinkPosition { line: 1, character: 7 });

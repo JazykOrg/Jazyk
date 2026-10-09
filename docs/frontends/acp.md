@@ -141,7 +141,10 @@ rules it obeys:
 with no external agent installed, and it is deliberately ignorant of jazyk:
 
 - It answers `initialize` with protocol version 1 and stdio MCP support.
-- On `session/new` it spawns the listed MCP servers and collects their tools.
+- On `session/new` it spawns the listed MCP servers and collects their tools. Every
+  call to a server waits at most the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`) for its
+  answer; a server that stays silent fails that call with a message naming the wait,
+  so a wedged server never pins the turn.
 - On `session/prompt` it runs a plain agentic loop against the configured
   OpenAI-compatible endpoint ([LLM settings](../compiler/project-settings.md#llm)):
   send the messages and the MCP tools, dispatch the calls the model makes, append the

@@ -6,7 +6,7 @@ pub use crate::agent_loop::GenericTool;
 // Mirrors docs/frontends/acp.md#the-embedded-agent.
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 
 pub struct McpServerConn {
     pub name: String,
@@ -14,7 +14,9 @@ pub struct McpServerConn {
     // Option so Drop can close it first: EOF is the server's shutdown signal, and a
     // jazyk `--ephemeral` serving runs its implicit finish on it.
     stdin: Option<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
+    // The server's lines, read on a thread so a request waits with a deadline; the
+    // channel closes when the server does. Mirrors docs/frontends/acp.md#the-embedded-agent.
+    lines: std::sync::mpsc::Receiver<String>,
     next_id: u64,
     pub tools: Vec<GenericTool>,
 }
@@ -40,12 +42,27 @@ impl McpServerConn {
             .spawn()
             .map_err(|e| format!("cannot spawn MCP server `{}`: {}", command, e))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
-        let stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
+        let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
+        let (tx, lines) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match stdout.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if tx.send(String::from_utf8_lossy(&buf).to_string()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
         let mut conn = McpServerConn {
             name: name.to_string(),
             child,
             stdin: Some(stdin),
-            stdout,
+            lines,
             next_id: 0,
             tools: Vec::new(),
         };
@@ -108,19 +125,27 @@ impl McpServerConn {
         stdin
             .flush()
             .map_err(|e| format!("mcp {} flush: {}", self.name, e))?;
-        // Skip notifications and unrelated traffic until our response arrives.
+        // Skip notifications and unrelated traffic until our response arrives, each
+        // wait bounded: a wedged server fails the call instead of pinning the turn.
+        let wait = crate::acp::config::idle_timeout();
         loop {
-            let mut buf = String::new();
-            let n = self
-                .stdout
-                .read_line(&mut buf)
-                .map_err(|e| format!("mcp {} read: {}", self.name, e))?;
-            if n == 0 {
-                return Err(format!(
-                    "mcp {}: server closed the stream during `{}`",
-                    self.name, method
-                ));
-            }
+            let buf = match self.lines.recv_timeout(wait) {
+                Ok(line) => line,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(format!(
+                        "mcp {}: no answer to `{}` within {}s (JAZYK_ACP_IDLE_TIMEOUT)",
+                        self.name,
+                        method,
+                        wait.as_secs()
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(format!(
+                        "mcp {}: server closed the stream during `{}`",
+                        self.name, method
+                    ));
+                }
+            };
             let v: Value = match serde_json::from_str(buf.trim()) {
                 Ok(v) => v,
                 Err(_) => continue,

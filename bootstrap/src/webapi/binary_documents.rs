@@ -95,7 +95,9 @@ mod tests {
             assert_eq!(mode & 0o777, 0o644);
         }
         assert_eq!(write(&p, "docs/import.docx", &content).unwrap_err().0, 409);
-        assert_eq!(write(&p, "outside.docx", &content).unwrap_err().0, 400);
+        // Any project path may hold a DOCX, inside a document set or not.
+        write(&p, "outside.docx", &content).unwrap();
+        assert_eq!(write(&p, ".jazyk/escape.docx", &content).unwrap_err().0, 400);
         assert_eq!(write(&p, "../escape.docx", &content).unwrap_err().0, 400);
         assert_eq!(read(&p, "../escape.docx").unwrap_err().0, 400);
         std::fs::write(p.root.join("docs/reference.pdf"), b"original pdf bytes").unwrap();
@@ -263,8 +265,8 @@ mod native {
         if documents::revision(&now) != revision {
             return Err((409, "document changed while being read; reopen it".into()));
         }
-        let writable =
-            format == "docx" && super::super::docs::safe_doc_path(project, path).is_some();
+        let writable = format == "docx"
+            && super::super::projfiles::writable_path(&project.root, &project.out, path).is_ok();
         let (projection, extraction_error) = match projection {
             Ok(p) => (json!(p), Value::Null),
             Err(e) => (Value::Null, json!(e)),
@@ -280,8 +282,7 @@ mod native {
         if !documents::supported(Path::new(path)) {
             return Err((400, "expected DOCX or PDF".into()));
         }
-        let absolute =
-            super::super::docs::safe_doc_path_why(project, path).map_err(|e| (400, e))?;
+        let absolute = super::super::projfiles::writable_path(&project.root, &project.out, path)?;
         let _lock = crate::document_sets::ProjectLock::acquire(&project.root, "documents.lock")?;
         let current = match std::fs::read(&absolute) {
             Ok(bytes) => Some(bytes),
@@ -313,7 +314,7 @@ mod native {
             .parent()
             .ok_or((400, "document has no parent".into()))?;
         std::fs::create_dir_all(parent).map_err(|e| (500, e.to_string()))?;
-        super::super::docs::safe_doc_path_why(project, path).map_err(|e| (400, e))?;
+        super::super::projfiles::writable_path(&project.root, &project.out, path)?;
         let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| (500, e.to_string()))?;
         temp.write_all(&bytes)
             .and_then(|_| temp.as_file().sync_all())

@@ -64,7 +64,8 @@ The native API supports the following routes:
 - `PUT /api/docs/document?path=...` accepts `base64` and `baseHash`. Existing DOCX
   saves require the current byte revision. A mismatch returns `409`. New DOCX or
   PDF imports omit `baseHash` and create exclusively. Existing PDF writes return
-  `405`. The destination must belong to a document set.
+  `405`. The destination may be any project file path (see
+  [`/api/project/text`](../frontends/gui.md#api)), inside a document set or not.
 - Validate the document package before writing. Serialize writes through a project
   document lock and replace an existing file atomically, keeping its permissions. A
   new file gets ordinary permissions (`0644` on Unix). Refuse malformed data,

@@ -171,6 +171,7 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
         "/project"
             | "/project/files"
             | "/project/file"
+            | "/project/text"
             | "/deliverable/raw"
             | "/docs/content"
             | "/docs/document"
@@ -719,6 +720,11 @@ pub(crate) fn request_scoped(
                 &p.out,
                 &p.docs_glob,
             ))
+        }
+        ("GET", "/project/text") => answer(super::projfiles::project_text(&project().root, &param(&q, "path").unwrap_or_default())),
+        ("PUT", "/project/text") => {
+            let p = project();
+            answer(super::projfiles::write_project_text(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
         }
         ("PUT", "/project/file") => {
             let p = project();

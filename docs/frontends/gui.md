@@ -316,6 +316,13 @@ Settings:
   parsed from `jazyk.toml`: which keys the file sets, the effective defaults for the
   rest, and the file hash. The API key is reported only as set or unset, never its
   value.
+- `GET /api/settings` also returns `text`: the settings file as written, for the
+  editor's text mode. A stored `llm.api_key` value reads as `"(stored)"`; the key
+  never reaches the client.
+- `PUT /api/settings` with `{baseHash, text}`: write the settings file as given.
+  The text must parse and describe valid document sets, else 400. An
+  `llm.api_key` still reading `"(stored)"` keeps the stored key. A stale
+  `baseHash` is 409.
 - `PUT /api/settings` with `{baseHash, settings}`: regenerate `jazyk.toml` from the
   form values and apply them to the running server without a restart. The write is
   conditional on `baseHash` like a document write. The file is rewritten in canonical
@@ -388,6 +395,13 @@ Diagnostics:
 - `GET /api/project/file?path=`: one file under the project directory, as its bytes
   (in a tab, as text; a file that is not text is 501). A path that leaves the
   project directory is 400, a path that names nothing 404.
+- `GET /api/project/text?path=`: one existing project file as `{path, text, hash}`,
+  for editing. A file that is not UTF-8 text is 415. `PUT /api/project/text?path=`
+  with `{text, baseHash}` replaces it when `baseHash` still names the file on disk
+  (else 409), keeping its permissions. Every project file can be edited this way,
+  inside a document set or not, under the rules of the next item, except that
+  dot-folders other than `.jazyk` and `.git` are allowed. The settings file is
+  edited through `/api/settings`.
 - `PUT /api/project/file?path=` with `{text}` or `{base64}`: create one new file
   anywhere under the project directory, inside a document set or not. It never
   overwrites: an existing path is 409. Missing folders are created. A path that

@@ -156,6 +156,7 @@ fn api_router(st: SharedState) -> Router {
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
         .route("/project/files", get(projfiles::list))
         .route("/project/file", get(projfiles::file).put(projfiles::create).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
+        .route("/project/text", get(projfiles::text).put(projfiles::write_text))
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
@@ -207,6 +208,7 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             | "/project"
             | "/project/files"
             | "/project/file"
+            | "/project/text"
             | "/deliverable/raw"
             | "/docs/content"
             | "/docs/document"

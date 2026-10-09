@@ -104,18 +104,40 @@ pub fn project_file(root: &Path, rel: &str) -> Result<Vec<u8>, Refusal> {
     crate::vfs::read(&abs).map_err(|e| (404, format!("cannot read {}: {}", rel, e)))
 }
 
-// `PUT /api/project/file?path=`: create one new file anywhere under the project
-// directory, inside a document set or not (docs/frontends/gui.md#diagnostics). It
-// never overwrites an existing path.
-pub fn create_project_file(root: &Path, out: &Path, rel: &str, body: &serde_json::Value) -> Result<serde_json::Value, Refusal> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    if !crate::document_sets::safe_relative(root, rel) {
-        return Err((400, format!("cannot create {rel}: choose a path inside the project, outside hidden, build, and dependency folders")));
+// Where a project file may be written (docs/frontends/gui.md#api): under the project
+// directory, never in `.git`, `.jazyk` (the settings go through /api/settings),
+// `node_modules`, `target`, or the out directory, never across a symlink out of the
+// project or into a nested project. Other dot-folders (`.github`) are fine.
+pub fn writable_path(root: &Path, out: &Path, rel: &str) -> Result<PathBuf, Refusal> {
+    let refuse = || (400, format!("cannot write {rel}: choose a path inside the project, outside .git, .jazyk, build, and dependency folders"));
+    if rel.is_empty() || rel.starts_with('/') || rel.contains(['\\', '\0', ':']) {
+        return Err(refuse());
+    }
+    if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c == ".jazyk" || c.starts_with("jazyk-out") || SKIP.contains(&c)) {
+        return Err(refuse());
     }
     let abs = root.join(rel);
     if abs.starts_with(out) {
-        return Err((400, format!("cannot create {rel} inside the out directory")));
+        return Err((400, format!("cannot write {rel} inside the out directory")));
     }
+    let base = root.vcanonicalize().map_err(|e| (500, e.to_string()))?;
+    for ancestor in abs.ancestors().take_while(|p| *p != root) {
+        if ancestor != abs && ancestor.vis_dir() && ancestor.join(crate::document_sets::CONFIG).vexists() {
+            return Err((400, format!("cannot write {rel}: it is inside a nested project")));
+        }
+        if ancestor.vexists() && !ancestor.vcanonicalize().is_ok_and(|p| p.starts_with(&base)) {
+            return Err((400, format!("cannot write {rel}: it leaves the project through a symlink")));
+        }
+    }
+    Ok(abs)
+}
+
+// `PUT /api/project/file?path=`: create one new file anywhere under the project
+// directory, inside a document set or not (docs/frontends/gui.md#api). It never
+// overwrites an existing path.
+pub fn create_project_file(root: &Path, out: &Path, rel: &str, body: &serde_json::Value) -> Result<serde_json::Value, Refusal> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let abs = writable_path(root, out, rel)?;
     let bytes = if let Some(text) = body["text"].as_str() {
         text.as_bytes().to_vec()
     } else if let Some(encoded) = body["base64"].as_str() {
@@ -138,6 +160,31 @@ pub fn create_project_file(root: &Path, out: &Path, rel: &str, body: &serde_json
     }
     crate::vfs::write(&abs, &bytes).map_err(|e| (500, e.to_string()))?;
     Ok(serde_json::json!({ "path": rel }))
+}
+
+// `GET /api/project/text?path=`: an existing project file as text with its hash.
+pub fn project_text(root: &Path, rel: &str) -> Result<serde_json::Value, Refusal> {
+    let bytes = project_file(root, rel)?;
+    let text = String::from_utf8(bytes).map_err(|_| (415, format!("{rel} is not UTF-8 text")))?;
+    let hash = crate::model::hash_hex(&text);
+    Ok(serde_json::json!({ "path": rel, "text": text, "hash": hash }))
+}
+
+// `PUT /api/project/text?path=` with `{text, baseHash}`: replace an existing project
+// file when the hash still names what is on disk. The file keeps its permissions.
+pub fn write_project_text(root: &Path, out: &Path, rel: &str, body: &serde_json::Value) -> Result<serde_json::Value, Refusal> {
+    let abs = writable_path(root, out, rel)?;
+    let text = body["text"].as_str().ok_or((400, "text is required".to_string()))?;
+    let base = body["baseHash"].as_str().ok_or((400, "baseHash is required; create new files with PUT /api/project/file".to_string()))?;
+    if !abs.vexists() || abs.vis_dir() {
+        return Err((404, format!("no file {rel}")));
+    }
+    let current = crate::vfs::read_to_string(&abs).map_err(|_| (415, format!("{rel} is not UTF-8 text")))?;
+    if crate::model::hash_hex(&current) != base {
+        return Err((409, "the file changed on disk since it was read".into()));
+    }
+    crate::vfs::write(&abs, text).map_err(|e| (500, e.to_string()))?;
+    Ok(serde_json::json!({ "path": rel, "hash": crate::model::hash_hex(text) }))
 }
 
 #[cfg(test)]
@@ -176,6 +223,17 @@ mod tests {
         assert_eq!(create_project_file(&dir, &out, "node_modules/x.md", &text).unwrap_err().0, 400);
         assert_eq!(create_project_file(&dir, &out, "a.bin", &serde_json::json!({"base64": "aGk="})).unwrap()["path"], "a.bin");
         assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"hi");
+        assert_eq!(create_project_file(&dir, &out, ".github/workflows/ci.yml", &text).unwrap()["path"], ".github/workflows/ci.yml");
+        assert_eq!(create_project_file(&dir, &out, ".git/x", &text).unwrap_err().0, 400);
+        let read = project_text(&dir, "src/new/notes.txt").unwrap();
+        let edit = serde_json::json!({"text": "edited", "baseHash": read["hash"]});
+        assert_eq!(write_project_text(&dir, &out, "src/new/notes.txt", &edit).unwrap()["hash"], crate::model::hash_hex("edited"));
+        assert_eq!(std::fs::read_to_string(dir.join("src/new/notes.txt")).unwrap(), "edited");
+        assert_eq!(write_project_text(&dir, &out, "src/new/notes.txt", &edit).unwrap_err().0, 409);
+        assert_eq!(write_project_text(&dir, &out, "src/none.txt", &edit).unwrap_err().0, 404);
+        assert_eq!(write_project_text(&dir, &out, ".jazyk/jazyk.toml", &edit).unwrap_err().0, 400);
+        std::fs::write(dir.join("img.bin"), [0xff, 0xfe]).unwrap();
+        assert_eq!(project_text(&dir, "img.bin").unwrap_err().0, 415);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

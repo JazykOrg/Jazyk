@@ -14,6 +14,9 @@ use std::sync::{Arc, Condvar, Mutex};
 
 const JOB_EVENT_RING: usize = 50_000;
 const TRACE_RETENTION_DAYS: u64 = 30;
+// Finished jobs held in memory, events included; older ones answer from their
+// transcript file (docs/frontends/gui.md#jobs).
+const RETAINED_FINISHED_JOBS: usize = 50;
 
 // Strings longer than this travel as a preview. The transcript on disk keeps the
 // whole payload; a reader asks for the one event it wants to see in full
@@ -168,6 +171,23 @@ struct Inner {
     stop: bool,
 }
 
+impl Inner {
+    // Drop finished jobs past the retention cap, oldest first. The queued and the
+    // running job always stay. Mirrors docs/frontends/gui.md#jobs.
+    fn prune(&mut self) {
+        let finished: Vec<u64> = self
+            .jobs
+            .values()
+            .filter(|j| j.state != "queued" && j.state != "running")
+            .map(|j| j.id)
+            .collect();
+        let excess = finished.len().saturating_sub(RETAINED_FINISHED_JOBS);
+        for id in finished.into_iter().take(excess) {
+            self.jobs.remove(&id);
+        }
+    }
+}
+
 pub struct JobManager {
     inner: Mutex<Inner>,
     wake: Condvar,
@@ -260,6 +280,7 @@ impl JobManager {
             job.state = "cancelled";
             job.finished_at = Some(crate::verify::now_iso());
             let summary = job.summary();
+            inner.prune();
             drop(inner);
             st.events.emit(
                 "job.finished",
@@ -403,6 +424,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             job.state = state;
             job.finished_at = Some(crate::verify::now_iso());
             job.result = result.clone();
+            inner.prune();
         }
         write_line(
             &writer,
@@ -669,10 +691,86 @@ pub async fn list_jobs(State(st): State<SharedState>) -> Json<Value> {
 }
 
 pub async fn get_job(State(st): State<SharedState>, UrlPath(id): UrlPath<u64>) -> Response {
-    match st.jobs.get(id) {
+    if let Some(v) = st.jobs.get(id) {
+        return Json(v).into_response();
+    }
+    // Out of memory: the transcript holds the whole job (docs/frontends/gui.md#jobs).
+    let dir = st.out.join("trace");
+    let from_file = tokio::task::spawn_blocking(move || job_from_transcript(&dir, id))
+        .await
+        .expect("job transcript read");
+    match from_file {
         Some(v) => Json(v).into_response(),
         None => super::api::err(StatusCode::NOT_FOUND, format!("no job {}", id)),
     }
+}
+
+// Rebuild a job's API shape from its transcript: the newest file whose stem ends in
+// `-j<id>` (ids restart with the process, so an older server's file can share one).
+// The metadata line gives the kind and the times, the outcome line the state and
+// result; a transcript without an outcome died mid-run and reads as failed.
+fn job_from_transcript(dir: &std::path::Path, id: u64) -> Option<Value> {
+    let suffix = format!("-j{}", id);
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for e in crate::vfs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if !stem.ends_with(&suffix) {
+            continue;
+        }
+        if let Ok(text) = crate::vfs::read_to_string(&p) {
+            candidates.push((stem.to_string(), text));
+        }
+    }
+    let started = |text: &str| -> String {
+        text.lines()
+            .next()
+            .and_then(|l| serde_json::from_str::<Value>(l).ok())
+            .and_then(|m| m["meta"]["startedAt"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    };
+    candidates.sort_by_key(|(_, text)| std::cmp::Reverse(started(text)));
+    let (stem, text) = candidates.into_iter().next()?;
+    let mut meta = Value::Null;
+    let mut outcome = Value::Null;
+    let mut events: Vec<Value> = Vec::new();
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if !v["meta"].is_null() {
+            meta = v["meta"].clone();
+        } else if !v["outcome"].is_null() {
+            outcome = v["outcome"].clone();
+        } else if v["n"].is_u64() {
+            events.push(json!({ "jobId": id, "n": v["n"], "event": elide(&v["event"]) }));
+        }
+    }
+    if meta.is_null() {
+        return None;
+    }
+    let (state, result) = if outcome.is_null() {
+        (
+            json!("failed"),
+            json!({ "error": "the job ended without an outcome" }),
+        )
+    } else {
+        (outcome["state"].clone(), outcome["result"].clone())
+    };
+    Some(json!({
+        "id": id,
+        "kind": meta["kind"],
+        "state": state,
+        "queuedAt": meta["queuedAt"],
+        "startedAt": meta["startedAt"],
+        "finishedAt": outcome["finishedAt"],
+        "result": result,
+        "stem": stem,
+        "events": events,
+    }))
 }
 
 pub async fn cancel_job(State(st): State<SharedState>, UrlPath(id): UrlPath<u64>) -> Response {
@@ -870,5 +968,88 @@ mod tests {
         // A small event travels untouched, flag included.
         let small = json!({"kind": "note", "label": "a", "text": "b"});
         assert_eq!(elide(&small), small);
+    }
+
+    fn finished(id: u64, state: &'static str) -> Job {
+        Job {
+            id,
+            kind: JobKind::Audit,
+            state,
+            queued_at: String::new(),
+            started_at: None,
+            finished_at: None,
+            result: None,
+            events: VecDeque::from([json!({"n": 1})]),
+            cancel: Arc::new(AtomicBool::new(false)),
+            stem: String::new(),
+        }
+    }
+
+    #[test]
+    fn pruning_keeps_the_latest_finished_jobs_and_every_live_one() {
+        let mut inner = Inner {
+            jobs: BTreeMap::new(),
+            queue: VecDeque::new(),
+            next_id: 0,
+            running: None,
+            stop: false,
+        };
+        for id in 1..=(RETAINED_FINISHED_JOBS as u64 + 10) {
+            inner.jobs.insert(id, finished(id, "done"));
+        }
+        inner.jobs.insert(1000, finished(1000, "running"));
+        inner.jobs.insert(1001, finished(1001, "queued"));
+        inner.prune();
+        assert_eq!(inner.jobs.len(), RETAINED_FINISHED_JOBS + 2);
+        assert!(!inner.jobs.contains_key(&1));
+        assert!(!inner.jobs.contains_key(&10));
+        assert!(inner.jobs.contains_key(&11));
+        assert!(inner.jobs.contains_key(&1000) && inner.jobs.contains_key(&1001));
+    }
+
+    #[test]
+    fn a_pruned_job_reads_back_from_its_transcript() {
+        let dir = std::env::temp_dir().join(format!("jz-jobs-transcript-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let long = "y".repeat(WIRE_STRING_CAP + 10);
+        std::fs::write(
+            dir.join("20260101T000000Z-audit-j7.jsonl"),
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                json!({"meta": {"id": 7, "kind": {"kind": "audit"}, "queuedAt": "q", "startedAt": "s", "generation": 3}}),
+                json!({"n": 1, "event": {"kind": "note", "text": "a"}}),
+                json!({"n": 2, "event": {"kind": "note", "text": long}}),
+                json!({"outcome": {"state": "done", "result": {"ok": true}, "finishedAt": "f", "generation": 4}}),
+            ),
+        )
+        .unwrap();
+        // A stale file from an earlier server shares the id but started earlier.
+        std::fs::write(
+            dir.join("20250101T000000Z-compile-j7.jsonl"),
+            format!("{}\n", json!({"meta": {"id": 7, "kind": {"kind": "compile"}, "startedAt": "0"}})),
+        )
+        .unwrap();
+        let v = job_from_transcript(&dir, 7).unwrap();
+        assert_eq!(v["id"], 7);
+        assert_eq!(v["kind"]["kind"], "audit");
+        assert_eq!(v["state"], "done");
+        assert_eq!(v["result"]["ok"], true);
+        assert_eq!(v["finishedAt"], "f");
+        assert_eq!(v["stem"], "20260101T000000Z-audit-j7");
+        let events = v["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["jobId"], 7);
+        assert_eq!(events[0]["n"], 1);
+        assert_eq!(events[1]["event"]["elided"], true);
+        // Without an outcome the job died mid-run.
+        std::fs::write(
+            dir.join("20260101T000000Z-audit-j8.jsonl"),
+            format!("{}\n", json!({"meta": {"id": 8, "kind": {"kind": "audit"}, "startedAt": "s"}})),
+        )
+        .unwrap();
+        assert_eq!(job_from_transcript(&dir, 8).unwrap()["state"], "failed");
+        assert!(job_from_transcript(&dir, 9).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

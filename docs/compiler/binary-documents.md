@@ -10,6 +10,34 @@ tested profile. Headers, notes, numbering, tracked revisions, OCR, and complex P
 reading order are not certified. An unreadable projection produces a parse error.
 The GUI can still show the original file and explain why compilation cannot read it.
 
+## Projection structure
+
+The DOCX projection writes document structure as Markdown, so sections, the
+outline, and link checks behave as they do for a Markdown document:
+
+- A paragraph with a heading level becomes a Markdown heading of that level. The
+  level comes from the paragraph's outline level, else from its style (`Title`,
+  `Heading1` to `Heading6`, or a style named `heading N`).
+- A Word hyperlink becomes `[text](target)`. An external link keeps its relationship
+  target verbatim. A bookmark link becomes `[text](#bookmark)`.
+
+E.g.:
+
+```text
+# Gateway contract
+
+The gateway shall return a response within 3 seconds.
+
+See the [operator notes](notes.md).
+```
+
+The markup exists only in the projection. A view that locates a quote in the
+original reads it as visible text: heading markers are dropped and a link reads as
+its text. The PDF projection carries no heading or link markup. PDF link
+annotations are a viewer concern.
+
+## Hashing
+
 The compiler hashes the extracted text for dirtiness, alignment, release gates,
 and document status. File saves use a SHA-256 revision of the original bytes.
 Formatting changes therefore invalidate an editor's save revision without forcing

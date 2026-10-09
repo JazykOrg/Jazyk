@@ -63,7 +63,12 @@ pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Projection, String> {
             // Traverse the library's typed model, not OOXML or ZIP bytes. The JSON
             // view preserves document order and also covers nested table cells.
             let value = serde_json::to_value(&doc.document).map_err(|e| e.to_string())?;
-            docx_blocks(&value, "body", &mut p)?;
+            let styles = serde_json::to_value(&doc.styles).map_err(|e| e.to_string())?;
+            let cx = Docx {
+                links: doc.hyperlinks.iter().map(|(id, target, _)| (id.clone(), target.clone())).collect(),
+                levels: heading_styles(&styles),
+            };
+            docx_blocks(&value, "body", &cx, &mut p)?;
             p.limitations.push("Extraction profile: body paragraphs and table cells only. Headers, footers, notes, shapes, numbering, and Word layout are not certified. Original bytes are never rewritten by this reader.".into());
         }
         "pdf" => {
@@ -221,10 +226,56 @@ impl Projection {
     }
 }
 
-fn docx_blocks(v: &Value, path: &str, p: &mut Projection) -> Result<(), String> {
+// What the reader needs from the package beyond the body: hyperlink relationship
+// targets by id, and the heading level of each paragraph style.
+struct Docx {
+    links: std::collections::HashMap<String, String>,
+    levels: std::collections::HashMap<String, usize>,
+}
+
+// A heading level from an outline level (0 is level 1; Word's 9 is body text).
+fn outline_level(v: &Value) -> Option<usize> {
+    v.as_u64().map(|n| n as usize + 1).filter(|n| *n <= 6)
+}
+
+// A heading level from a style name or id: `Title`, `Heading1`, `heading 1`.
+fn named_level(name: &str) -> Option<usize> {
+    let n = name.to_ascii_lowercase().replace(' ', "");
+    if n == "title" {
+        return Some(1);
+    }
+    n.strip_prefix("heading")?
+        .parse::<usize>()
+        .ok()
+        .filter(|l| (1..=6).contains(l))
+}
+
+fn heading_styles(styles: &Value) -> std::collections::HashMap<String, usize> {
+    let mut out = std::collections::HashMap::new();
+    for s in styles["styles"].as_array().into_iter().flatten() {
+        let Some(id) = s["styleId"].as_str() else { continue };
+        let level = outline_level(&s["paragraphProperty"]["outlineLvl"])
+            .or_else(|| s["name"].as_str().and_then(named_level))
+            .or_else(|| named_level(id));
+        if let Some(level) = level {
+            out.insert(id.to_string(), level);
+        }
+    }
+    out
+}
+
+fn docx_blocks(v: &Value, path: &str, cx: &Docx, p: &mut Projection) -> Result<(), String> {
     if v["type"] == "paragraph" {
         let mut text = String::new();
-        inline(&v["data"], &mut text)?;
+        inline(&v["data"], cx, &mut text)?;
+        let property = &v["data"]["property"];
+        let level = outline_level(&property["outlineLvl"]).or_else(|| {
+            let style = property["style"].as_str()?;
+            cx.levels.get(style).copied().or_else(|| named_level(style))
+        });
+        if let Some(level) = level.filter(|_| !text.trim().is_empty()) {
+            text = format!("{} {}", "#".repeat(level), text.trim());
+        }
         p.push(
             text,
             serde_json::json!({"part": "word/document.xml", "block": path}),
@@ -233,19 +284,19 @@ fn docx_blocks(v: &Value, path: &str, p: &mut Projection) -> Result<(), String> 
     }
     if let Some(a) = v.as_array() {
         for (i, child) in a.iter().enumerate() {
-            docx_blocks(child, &format!("{path}/{i}"), p)?;
+            docx_blocks(child, &format!("{path}/{i}"), cx, p)?;
         }
     } else if let Some(o) = v.as_object() {
         for key in ["data", "children", "rows", "cells"] {
             if let Some(child) = o.get(key) {
-                docx_blocks(child, &format!("{path}/{key}"), p)?;
+                docx_blocks(child, &format!("{path}/{key}"), cx, p)?;
             }
         }
     }
     Ok(())
 }
 
-fn inline(v: &Value, out: &mut String) -> Result<(), String> {
+fn inline(v: &Value, cx: &Docx, out: &mut String) -> Result<(), String> {
     match v["type"].as_str() {
         Some("text") => {
             if let Some(s) = v["data"]["text"].as_str() {
@@ -259,6 +310,20 @@ fn inline(v: &Value, out: &mut String) -> Result<(), String> {
         }
         Some("break" | "carriageReturn") => {
             out.push('\n');
+            return Ok(());
+        }
+        Some("hyperlink") => {
+            let link = &v["data"];
+            let mut text = String::new();
+            inline(&link["children"], cx, &mut text)?;
+            let target = match link["type"].as_str() {
+                Some("anchor") => link["anchor"].as_str().map(|a| format!("#{a}")),
+                _ => link["rid"].as_str().and_then(|id| cx.links.get(id).cloned()),
+            };
+            match target.filter(|t| !t.is_empty() && !text.trim().is_empty()) {
+                Some(t) => out.push_str(&format!("[{text}]({})", t.replace(' ', "%20"))),
+                None => out.push_str(&text),
+            }
             return Ok(());
         }
         Some("insert" | "delete" | "moveFrom" | "moveTo") => return Err(
@@ -275,12 +340,12 @@ fn inline(v: &Value, out: &mut String) -> Result<(), String> {
     }
     if let Some(a) = v.as_array() {
         for c in a {
-            inline(c, out)?;
+            inline(c, cx, out)?;
         }
     } else if let Some(o) = v.as_object() {
         for key in ["data", "children"] {
             if let Some(c) = o.get(key) {
-                inline(c, out)?;
+                inline(c, cx, out)?;
             }
         }
     }
@@ -304,6 +369,48 @@ mod tests {
             assert_eq!(x.location, y.location);
             assert_eq!(&a.text[x.start..x.end], x.text);
         }
+    }
+
+    #[test]
+    fn docx_headings_and_hyperlinks_project_as_markdown_structure() {
+        use docx_rs::{Hyperlink, HyperlinkType, Paragraph, Run};
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        docx_rs::Docx::new()
+            .add_paragraph(Paragraph::new().style("Heading1").add_run(Run::new().add_text("Gateway")))
+            .add_paragraph(Paragraph::new().style("Heading2").add_run(Run::new().add_text("Timeouts")))
+            .add_paragraph(
+                Paragraph::new()
+                    .add_run(Run::new().add_text("See the "))
+                    .add_hyperlink(
+                        Hyperlink::new("notes.md", HyperlinkType::External)
+                            .add_run(Run::new().add_text("operator notes")),
+                    )
+                    .add_run(Run::new().add_text(" and "))
+                    .add_hyperlink(
+                        Hyperlink::new("limits", HyperlinkType::Anchor)
+                            .add_run(Run::new().add_text("limits")),
+                    )
+                    .add_run(Run::new().add_text(".")),
+            )
+            .build()
+            .pack(&mut bytes)
+            .unwrap();
+        let p = from_bytes(Path::new("gateway.docx"), &bytes.into_inner()).unwrap();
+        assert_eq!(
+            p.text,
+            "# Gateway\n\n## Timeouts\n\nSee the [operator notes](notes.md) and [limits](#limits)."
+        );
+    }
+
+    #[test]
+    fn a_word_package_projects_its_heading_styles_and_relationship_links() {
+        let docx = include_bytes!("../tests/fixtures/document-proof/structured.docx");
+        let p = from_bytes(Path::new("gateway.docx"), docx).unwrap();
+        assert!(p.text.starts_with("# Gateway contract\n\n"));
+        assert!(p.text.contains("\n\n## Timeouts\n\n"));
+        assert!(p.text.contains("Operators follow the [operator notes](notes.md)."));
+        assert!(p.text.contains("[payment reference](reference.pdf)"));
+        assert!(p.text.contains("[jazyk.org](https://jazyk.org)"));
     }
 
     #[test]

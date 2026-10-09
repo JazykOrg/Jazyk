@@ -194,7 +194,12 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
 // live leases, gated counts. Mirrors docs/frontends/gui.md#workers.
 
 pub async fn workers(State(st): State<SharedState>) -> Json<Value> {
-    Json(workers_snapshot(&st))
+    let st2 = st.clone();
+    Json(
+        tokio::task::spawn_blocking(move || workers_snapshot(&st2))
+            .await
+            .expect("workers snapshot"),
+    )
 }
 
 // Record a release without running anything: the workers strip's button. The wake
@@ -210,8 +215,14 @@ pub async fn release(State(st): State<SharedState>, Json(body): Json<Value>) -> 
             );
         }
     }
-    crate::control::release(&st.proj(), &st.out, stage);
-    let snap = workers_snapshot(&st);
+    let stage = stage.map(str::to_string);
+    let st2 = st.clone();
+    let snap = tokio::task::spawn_blocking(move || {
+        crate::control::release(&st2.proj(), &st2.out, stage.as_deref());
+        workers_snapshot(&st2)
+    })
+    .await
+    .expect("release");
     st.events.emit("control.changed", snap.clone());
     Json(snap).into_response()
 }
@@ -472,7 +483,11 @@ pub struct DocQ {
 }
 
 pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
-    match crate::webapi::docs::doc_content(&st.proj(), &p.path) {
+    let proj = st.proj();
+    let read = tokio::task::spawn_blocking(move || crate::webapi::docs::doc_content(&proj, &p.path))
+        .await
+        .expect("document read");
+    match read {
         crate::webapi::docs::DocRead::Found(value) => Json(value).into_response(),
         crate::webapi::docs::DocRead::Missing(message) => err(StatusCode::NOT_FOUND, message),
         crate::webapi::docs::DocRead::Invalid(message) => err(StatusCode::BAD_REQUEST, message),

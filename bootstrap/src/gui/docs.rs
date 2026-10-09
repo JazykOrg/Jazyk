@@ -30,7 +30,13 @@ pub async fn doc_write(
     Query(p): Query<DocPathQ>,
     Json(body): Json<DocWrite>,
 ) -> Response {
-    match crate::webapi::docs::doc_write(&st.proj(), &p.path, &body.text, body.base_hash.as_deref()) {
+    let proj = st.proj();
+    let written = tokio::task::spawn_blocking(move || {
+        crate::webapi::docs::doc_write(&proj, &p.path, &body.text, body.base_hash.as_deref())
+    })
+    .await
+    .expect("document write");
+    match written {
         crate::webapi::docs::DocWrite::Written(value) => Json(value).into_response(),
         crate::webapi::docs::DocWrite::Conflict(value) => (StatusCode::CONFLICT, Json(value)).into_response(),
         crate::webapi::docs::DocWrite::Invalid(message) => err(StatusCode::BAD_REQUEST, message),
@@ -47,6 +53,12 @@ pub struct DocRename {
 // Move a document. The graph is untouched: the next build's dirty set sees the move
 // and the reconciler rewrites references mechanically.
 pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRename>) -> Response {
+    tokio::task::spawn_blocking(move || rename_sync(&st, body))
+        .await
+        .expect("document rename")
+}
+
+fn rename_sync(st: &SharedState, body: DocRename) -> Response {
     let Some(from) = safe_doc_path(&st.proj(), &body.from) else {
         return err(
             StatusCode::BAD_REQUEST,
@@ -85,6 +97,12 @@ pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRenam
 // Delete a document. The graph is untouched: the next build reconciles the
 // disappearance and garbage collection removes what nothing mentions anymore.
 pub async fn doc_delete(State(st): State<SharedState>, Query(p): Query<DocPathQ>) -> Response {
+    tokio::task::spawn_blocking(move || delete_sync(&st, p))
+        .await
+        .expect("document delete")
+}
+
+fn delete_sync(st: &SharedState, p: DocPathQ) -> Response {
     let Some(abs) = safe_doc_path(&st.proj(), &p.path) else {
         return err(
             StatusCode::BAD_REQUEST,

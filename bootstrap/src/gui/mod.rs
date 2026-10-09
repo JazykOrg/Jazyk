@@ -26,6 +26,8 @@ use state::SharedState;
 // enqueues a build. Manual only surfaces the change (docs.changed already fired).
 // Mirrors docs/frontends/gui.md#workflow-modes.
 fn jobs_hook_on_docs_changed(st: &SharedState) {
+    // A change resets the retry backoff, as it does for `jazyk watch`.
+    st.backoff.lock().unwrap().remove(&st.set_key());
     if st.control().compile == "auto" {
         st.jobs.submit(st, jobs::JobKind::Compile);
     }
@@ -57,13 +59,19 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
         return;
     }
     let verdict = crate::store::Store::load(&st.out).status.verdict;
+    let key = st.set_key();
     if verdict.state != "incomplete" {
-        st.backoff.store(30, std::sync::atomic::Ordering::Relaxed);
+        st.backoff.lock().unwrap().remove(&key);
         return;
     }
-    let secs = st.backoff.load(std::sync::atomic::Ordering::Relaxed);
-    st.backoff
-        .store((secs * 2).min(300), std::sync::atomic::Ordering::Relaxed);
+    // Per set, shared across the scoped states every job runs against, so the
+    // delay grows across retries (docs/frontends/gui.md#jobs).
+    let secs = {
+        let mut backoff = st.backoff.lock().unwrap();
+        let secs = *backoff.get(&key).unwrap_or(&30);
+        backoff.insert(key, (secs * 2).min(300));
+        secs
+    };
     let st = st.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(secs));
@@ -183,10 +191,11 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
         dev: gopts.dev,
         shutdown: Arc::new(tokio::sync::Notify::new()),
         events: events::EventHub::new(),
-        last_pending: std::sync::Mutex::new(serde_json::Value::Null),
+        last_pending: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         jobs: Arc::new(jobs::JobManager::new()),
         chat: Arc::new(chat::ChatManager::default()),
-        backoff: std::sync::atomic::AtomicU64::new(30),
+        board: Arc::new(events::BoardCoalescer::default()),
+        backoff: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
     });
     // --watch is a mode change, recorded where every worker reads it.
     if gopts.watch {

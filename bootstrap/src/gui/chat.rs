@@ -123,11 +123,13 @@ impl ChatManager {
     // use so a restarted server shows them. They have no live agent behind them
     // until prompted, which opens a fresh session under the same id.
     // Mirrors docs/frontends/acp.md#session-store.
+    // The files are read before the sessions lock is taken, so a slow disk never
+    // stalls the handlers that only snapshot the list.
     pub fn restore(&self, out: &std::path::Path) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if !sessions.is_empty() {
+        if !self.sessions.lock().unwrap().is_empty() {
             return;
         }
+        let mut restored: Vec<(String, ChatSession)> = Vec::new();
         for meta in crate::acp::sessions::list(out).into_iter().take(30) {
             let records = crate::acp::sessions::read(out, &meta.id);
             let mut ring: VecDeque<(u64, Value)> = VecDeque::new();
@@ -150,9 +152,9 @@ impl ChatManager {
             if n > seq {
                 self.seq.store(n, Ordering::Relaxed);
             }
-            sessions.insert(
+            restored.push((
                 meta.id.clone(),
-                Arc::new(Mutex::new(ChatSession {
+                ChatSession {
                     id: meta.id,
                     title: meta.title,
                     state: "idle".into(),
@@ -160,10 +162,26 @@ impl ChatManager {
                     ring,
                     next_n,
                     pending: Vec::new(),
-                })),
-            );
+                },
+            ));
+        }
+        let mut sessions = self.sessions.lock().unwrap();
+        // Another request restored meanwhile: its sessions may be live already.
+        if !sessions.is_empty() {
+            return;
+        }
+        for (id, session) in restored {
+            sessions.insert(id, Arc::new(Mutex::new(session)));
         }
     }
+}
+
+// Restore off the runtime: the first call reads every stored conversation.
+async fn restore(st: &SharedState) {
+    let st = st.clone();
+    tokio::task::spawn_blocking(move || st.chat.restore(&st.out))
+        .await
+        .expect("chat restore");
 }
 
 fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, update: Value) {
@@ -228,7 +246,7 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
 }
 
 pub async fn list_sessions(State(st): State<SharedState>) -> Response {
-    st.chat.restore(&st.out);
+    restore(&st).await;
     // The same catalog the IDE proxy advertises; the GUI is a jazyk client like any
     // other. Mirrors docs/frontends/acp.md#slash-commands.
     let commands: Vec<Value> = crate::acp::commands::available(true)
@@ -239,7 +257,7 @@ pub async fn list_sessions(State(st): State<SharedState>) -> Response {
 
 pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
     // A reload can ask for one conversation by id without listing first.
-    st.chat.restore(&st.out);
+    restore(&st).await;
     let sess = st.chat.sessions.lock().unwrap().get(&id).cloned();
     match sess {
         Some(s) => {
@@ -266,7 +284,7 @@ pub async fn post_prompt(
     Json(body): Json<Value>,
 ) -> Response {
     // Prompting a conversation restored from the store is how it resumes.
-    st.chat.restore(&st.out);
+    restore(&st).await;
     let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
         return super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id));
     };

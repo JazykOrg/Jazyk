@@ -54,6 +54,19 @@ independently. The client checks compatibility before adopting a connection.
   response. A request from any other origin gets no allow header and the browser
   drops it. The token still guards every request: the allow header opens the
   transport, never the project.
+- The allow header stops a page from reading an answer, not from sending a request:
+  a browser sends a cross-origin `POST` without reading the reply. So every request
+  other than `GET`, `HEAD`, or `OPTIONS` passes an origin check too. A request whose
+  `Origin` header names an origin the server does not admit is refused with `403`.
+  A request without `Origin` whose `Sec-Fetch-Site` is neither `same-origin` nor
+  `none` is refused the same way. A request carrying neither header (a local tool,
+  `curl`) passes. The check holds with or without a token, so `--no-token` keeps
+  `POST /api/shutdown` and the write routes out of reach of another site's page.
+- The editor's WebSocket (`/lsp`) feeds one language server thread per connection
+  through a bounded queue of 1024 frames. A frame arriving at a full queue is
+  dropped, and the server logs the drop once per connection; the editor's next full
+  text sync restores the state. A build notification that finds the queue full is
+  dropped too, since the next one repaints the same documents.
 - A request to a path the API does not serve answers `404`. The server serves no
   page.
 - Each start mints a random session token, embedded in the URL the browser opens. Every
@@ -378,13 +391,17 @@ Diagnostics:
 
 - `GET /api/project/files`: every file under the project directory (the folder of
   `jazyk.toml`), recursively, each `{path, size}` relative to it, dot-folders and the
-  out directory included; `.git`, `node_modules`, and `target` are left out. Beside
+  out directory included; `.git`, `node_modules`, and `target` are left out, and so
+  is every file whose name starts with `.env` (they hold secrets). Beside
   the list: `deliverable` and `out`, the product and out directories relative to the
   project directory (absent when outside it), and `docsGlob`. The
   [navigator](#workspace) draws its tree from it.
 - `GET /api/project/file?path=`: one file under the project directory, as its bytes
   (in a tab, as text; a file that is not text is 501). A path that leaves the
-  project directory is 400, a path that names nothing 404.
+  project directory is 400, a path that names nothing 404. A `.env` file is 400,
+  like a skipped folder. A `jazyk.toml` is served with every `api_key` value
+  replaced by `<redacted>`: the key is never served, the same rule as
+  `GET /api/project` and `GET /api/settings`.
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
   [triage state](../compiler/model/diagnostic.md#lifecycle-and-triage)
   (`acknowledged`, `suppressed`, `wontfix`, or null to clear). The write commits
@@ -425,6 +442,18 @@ cancellation.
   panel lists past jobs from these files, so the history survives server restarts and
   page reloads, and any tool can load a transcript programmatically. Files older
   than 30 days are removed when the server starts.
+- Retention in memory is bounded: the server holds the queued and running jobs and
+  the 50 most recent finished jobs, events included. An older finished job leaves
+  memory: `GET /api/jobs` no longer lists it, and `GET /api/jobs/{id}` answers from
+  its transcript file, which holds every event already, so the job reads the same
+  either way (state, result, and the numbered events, elided like the stream). A
+  job whose transcript was removed is `404`. The transcripts under `GET /api/trace`
+  are the record of past runs; the job list is the record of this server's current
+  work.
+- In the automatic compile mode a compile that ends `incomplete` (work parked, e.g.
+  a transient endpoint outage) retries with the backoff `jazyk watch` uses: 30
+  seconds doubling to 5 minutes, kept per document set for the life of the server,
+  reset by a compile that completes or by a document change.
 - The file holds the [full payloads](../compiler/sessions.md#trace-events): every
   prompt sent and every reply received. What travels to the browser is elided: a
   string over 2000 characters becomes a preview naming its full length, and every
@@ -480,7 +509,10 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
   the client sees each committed changeset as it lands, mid-build included.
 - `board.changed`: the board was re-derived, after a commit, a document save, a
   control change, or a triage. Carries the counts by class, kind, and state; the client
-  refetches `GET /api/board` for the cards.
+  refetches `GET /api/board` for the cards. Derivations coalesce per document set:
+  the causes landing within about 300 ms of each other produce one derivation and
+  one event, and one derivation runs per set at a time, so a burst of commits or a
+  lease heartbeat never queues work behind itself.
 - `goal.opened`: one goal joined the board. Carries the goal, its cause (generation,
   mutation, `via`), and the batch that opened it when a session did. One event per
   entry in a committed changeset's `opened_goals`.
@@ -495,7 +527,9 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
 - `watch.state`: the workflow modes changed (compile or generation). Carries both.
 - `control.changed`: the [control plane](../compiler/control-plane.md)
   moved: a release landed, a worker registered or dropped, a lease was taken or
-  freed. Carries the workers snapshot the workers strip renders.
+  freed. Carries the workers snapshot the workers strip renders. The event is
+  scoped: one per document set whose control files moved, `setId` naming it, and
+  that set's board re-derives behind it.
 
 External activity surfaces the same way: a `jazyk compile` run from a terminal, or an
 [MCP](./mcp.md) agent committing through write tools, moves the lock and the counter,

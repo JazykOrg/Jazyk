@@ -24,6 +24,9 @@ use tower_http::set_header::SetResponseHeaderLayer;
 async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
     let guarded = (path.starts_with("/api") || path == "/lsp") && path != "/api/ping";
+    if guarded && !origin_admitted(&req, &st.gui_origin) {
+        return (StatusCode::FORBIDDEN, "origin not admitted").into_response();
+    }
     let Some(expect) = st.token.as_deref() else {
         return next.run(req).await;
     };
@@ -44,6 +47,29 @@ async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Respon
         next.run(req).await
     } else {
         (StatusCode::UNAUTHORIZED, "missing or invalid session token").into_response()
+    }
+}
+
+// The allow header stops a page from reading an answer, not from sending a request:
+// a browser sends a cross-origin POST without reading the reply. So a request other
+// than GET, HEAD, or OPTIONS must name an admitted origin, or come from the same
+// site or no browser at all. Token or not (docs/frontends/gui.md#serving).
+fn origin_admitted(req: &Request, gui_origin: &str) -> bool {
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return true;
+    }
+    let text = |name: &str| {
+        req.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    };
+    if let Some(origin) = text("origin") {
+        return admitted_origins(gui_origin).iter().any(|o| *o == origin);
+    }
+    match text("sec-fetch-site") {
+        Some(site) => site == "same-origin" || site == "none",
+        None => true,
     }
 }
 
@@ -198,7 +224,6 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         Err((code, e)) => return api::err(StatusCode::from_u16(code).unwrap(), e),
     };
     let route = routed.path.split('?').next().unwrap_or_default();
-    let workspace = crate::document_sets::Workspace::load(&st.root);
     let project_route = matches!(
         route,
         "/ping"
@@ -249,37 +274,51 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             Err(e) => api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         };
     }
-    let selector = if routed.selector.is_some() {
-        routed.selector.as_deref()
-    } else if project_route {
-        None
-    } else if let Ok(w) = &workspace {
-        if w.sets.len() == 1 {
-            Some(w.sets[0].id.as_str())
-        } else {
-            None
-        }
-    } else {
-        None
+    // The workspace and the scoped state both read disk (the configuration, the
+    // global LLM config): resolve them off the runtime, once per request.
+    let tolerant = matches!(
+        route,
+        "/ping" | "/settings" | "/project/files" | "/project/file"
+    );
+    let resolved = {
+        let st = st.clone();
+        let explicit = routed.selector.clone();
+        tokio::task::spawn_blocking(move || {
+            let workspace = crate::document_sets::Workspace::load(&st.root);
+            let selector: Option<String> = if explicit.is_some() {
+                explicit
+            } else if project_route {
+                None
+            } else if let Ok(w) = &workspace {
+                (w.sets.len() == 1).then(|| w.sets[0].id.clone())
+            } else {
+                None
+            };
+            if !project_route && selector.is_none() {
+                return Err((
+                    400u16,
+                    "this operation requires setId or a qualified graph reference".to_string(),
+                ));
+            }
+            let context = match &workspace {
+                Ok(w) => st.scoped_in(w, selector.as_deref()),
+                Err(e) => Err(e.clone()),
+            };
+            let context = match context {
+                Ok(c) => c,
+                Err(_) if tolerant => st.clone(),
+                Err(e) => return Err(e),
+            };
+            Ok((workspace, selector, context))
+        })
+        .await
+        .expect("request scope resolution")
     };
-    if !project_route && selector.is_none() {
-        return api::err(
-            StatusCode::BAD_REQUEST,
-            "this operation requires setId or a qualified graph reference",
-        );
-    }
-    let context = match st.scoped(selector) {
-        Ok(s) => s,
-        Err((code, e))
-            if !matches!(
-                route,
-                "/ping" | "/settings" | "/project/files" | "/project/file"
-            ) =>
-        {
-            return api::err(StatusCode::from_u16(code).unwrap(), e)
-        }
-        Err(_) => st.clone(),
+    let (workspace, selector, context) = match resolved {
+        Ok(r) => r,
+        Err((code, e)) => return api::err(StatusCode::from_u16(code).unwrap(), e),
     };
+    let selector = selector.as_deref();
     // The outer wildcard capture must not be appended to the inner route's captures.
     parts.extensions.clear();
     parts.uri = format!("/api{}", routed.path).parse().unwrap();
@@ -311,9 +350,15 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         Err(_) => return Response::from_parts(parts, axum::body::Body::from(bytes)),
     };
     if route == "/project" {
-        if let Ok(w) = &workspace {
-            value["sets"] = w.summary()["sets"].clone();
-            value["configHash"] = json!(w.hash);
+        if let Ok(w) = workspace {
+            // The summary loads every set's store and derives its board: off the
+            // runtime like every other heavy read.
+            let hash = w.hash.clone();
+            let sets = tokio::task::spawn_blocking(move || w.summary()["sets"].take())
+                .await
+                .expect("workspace summary");
+            value["sets"] = sets;
+            value["configHash"] = json!(hash);
         }
     }
     if let Some(id) = selector {
@@ -508,10 +553,11 @@ mod tests {
             dev: false,
             shutdown: Arc::new(tokio::sync::Notify::new()),
             events: events::EventHub::new(),
-            last_pending: std::sync::Mutex::new(serde_json::Value::Null),
+            last_pending: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
             jobs: Arc::new(jobs::JobManager::new()),
             chat: Arc::new(chat::ChatManager::default()),
-            backoff: std::sync::atomic::AtomicU64::new(30),
+            board: Arc::new(events::BoardCoalescer::default()),
+            backoff: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         })
     }
 
@@ -753,6 +799,80 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         std::fs::remove_dir_all(&st.root).ok();
     }
+    // A page on another site can send a POST it never reads; the origin check
+    // refuses it, with or without a token (docs/frontends/gui.md#serving).
+    #[tokio::test]
+    async fn a_write_from_a_foreign_origin_is_refused_even_without_a_token() {
+        let post = |origin: Option<&str>, site: Option<&str>| {
+            let mut b = Request::builder().method(Method::POST).uri("/api/jobs/1/cancel");
+            if let Some(o) = origin {
+                b = b.header("origin", o);
+            }
+            if let Some(s) = site {
+                b = b.header("sec-fetch-site", s);
+            }
+            b.body(Body::empty()).unwrap()
+        };
+        let st = state(None, "https://jazyk.dev");
+        let r = send(st.clone(), post(Some("https://evil.example"), Some("cross-site"))).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = send(st.clone(), post(Some("null"), None)).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = send(st.clone(), post(None, Some("cross-site"))).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        // The page, a same-site request, and a local tool all pass to the route.
+        let r = send(st.clone(), post(Some("https://jazyk.dev"), Some("cross-site"))).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        let r = send(st.clone(), post(None, Some("same-origin"))).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        let r = send(st.clone(), post(None, Some("none"))).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        let r = send(st.clone(), post(None, None)).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        // A read from a foreign origin still reaches the route: the allow header
+        // keeps the browser from showing the answer.
+        let r = send(st.clone(), get_from("/api/ping", "https://evil.example")).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        // With a token the origin check comes first.
+        let st = state(Some("secret"), "https://jazyk.dev");
+        let r = send(st.clone(), post(Some("https://evil.example"), None)).await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = send(st.clone(), post(None, None)).await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
+    // A burst of causes derives the board once and emits one event; a cause landing
+    // after the derivation started derives again (docs/frontends/gui.md#events).
+    #[tokio::test]
+    async fn board_derivations_coalesce_per_set() {
+        let st = state(None, "https://coalesce.test");
+        let mut rx = st.events.subscribe();
+        for _ in 0..5 {
+            events::emit_board_changed(&st);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        let mut seen = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if ev["type"] == "board.changed" {
+                seen += 1;
+                assert!(ev["counts"].is_object(), "{}", ev);
+                assert!(ev["verdict"].is_string(), "{}", ev);
+            }
+        }
+        assert_eq!(seen, 1);
+        events::emit_board_changed(&st);
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        let mut seen = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if ev["type"] == "board.changed" {
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 1);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
     #[tokio::test]
     async fn all_sets_are_visible_and_colliding_ids_route_to_their_own_store() {
         use serde_json::{json, Value};

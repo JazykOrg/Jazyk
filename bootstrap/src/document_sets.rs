@@ -131,23 +131,15 @@ impl Workspace {
             .flat_map(|s| s.source.iter().cloned())
             .collect();
         p.docs_glob.clear();
-        p.explicit_files = Some(
-            self.files()
-                .into_iter()
-                .filter(|f| self.sets.iter().any(|s| included(&s.docs, f)))
-                .map(|f| self.root.join(f))
-                .collect(),
-        );
+        // The documents are resolved when asked for, not here: loading the
+        // workspace must stay cheap enough to run on every request.
+        p.set_docs = Some(self.sets.iter().map(|s| s.docs.clone()).collect());
         p.config_hash = self.hash.clone();
         p
     }
 
     pub fn files(&self) -> Vec<String> {
-        let mut files = Vec::new();
-        walk(&self.root, &self.root, &mut BTreeSet::new(), &mut files);
-        files.sort();
-        files.dedup();
-        files
+        files_under(&self.root)
     }
 
     pub fn memberships(&self, path: &str) -> Vec<Value> {
@@ -272,6 +264,16 @@ pub fn matched<'a>(patterns: &'a [String], path: &str) -> Option<&'a str> {
 }
 pub fn included(patterns: &[String], path: &str) -> bool {
     matched(patterns, path).is_some()
+}
+
+// Every eligible file under the project, project-relative, sorted. A full walk with
+// a canonicalize per entry: call it when the files are needed, never per request.
+pub fn files_under(root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    walk(root, root, &mut BTreeSet::new(), &mut files);
+    files.sort();
+    files.dedup();
+    files
 }
 
 fn walk(root: &Path, dir: &Path, seen: &mut BTreeSet<PathBuf>, files: &mut Vec<String>) {

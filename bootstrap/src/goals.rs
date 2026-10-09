@@ -3618,15 +3618,59 @@ pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
     out
 }
 
+// The resolved goal ids of one journal entry, with the size and mtime of the file they
+// were read from.
+struct ResolvedEntry {
+    len: u64,
+    modified: std::time::SystemTime,
+    goals: Vec<String>,
+}
+
+// Per out directory, the resolved goal ids of every journal entry read so far, by
+// generation. A derivation lists the journal and stats each entry; only an entry whose
+// file is new or has changed size or mtime is parsed again, and an entry no longer on
+// disk (an archived store) drops. A board derivation once parsed the whole journal
+// for this set every time it ran.
+static RESOLVED_GOALS: std::sync::Mutex<BTreeMap<std::path::PathBuf, BTreeMap<u64, ResolvedEntry>>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
 // Goal ids the journal records as resolved, across every entry.
 pub fn journal_resolved_goals(out: &std::path::Path) -> BTreeSet<String> {
-    let mut set = BTreeSet::new();
-    for entry in read_journal(out) {
-        for r in &entry.resolved_goals {
-            set.insert(r.goal.clone());
+    let dir = out.join("journal");
+    let mut cache = RESOLVED_GOALS.lock().unwrap_or_else(|e| e.into_inner());
+    let per_gen = cache.entry(out.to_path_buf()).or_default();
+    let Ok(rd) = crate::vfs::read_dir(&dir) else {
+        per_gen.clear();
+        return BTreeSet::new();
+    };
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some(n) = name
+            .strip_prefix('g')
+            .and_then(|s| s.strip_suffix(".yaml"))
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let Ok(md) = e.metadata() else { continue };
+        let (len, modified) = (md.len(), md.modified().unwrap_or(std::time::UNIX_EPOCH));
+        seen.insert(n);
+        let fresh = per_gen
+            .get(&n)
+            .is_some_and(|c| c.len == len && c.modified == modified);
+        if !fresh {
+            let goals = read_journal_entry(&e.path(), n)
+                .map(|entry| entry.resolved_goals.iter().map(|r| r.goal.clone()).collect())
+                .unwrap_or_default();
+            per_gen.insert(n, ResolvedEntry { len, modified, goals });
         }
     }
-    set
+    per_gen.retain(|n, _| seen.contains(n));
+    per_gen
+        .values()
+        .flat_map(|c| c.goals.iter().cloned())
+        .collect()
 }
 
 // Every journal entry, by generation.
@@ -6808,5 +6852,64 @@ pub(crate) mod tests {
             let indexed = lookalike_scores(&s);
             assert_eq!(indexed, lookalike_scores_scan(&s));
         }
+    }
+
+    // The resolved set follows the journal on disk: a new entry joins it, an entry
+    // rewritten under its path is read again, a removed entry leaves, and an
+    // unchanged entry is not parsed twice (its cached ids stand).
+    #[test]
+    fn journal_resolved_goals_follow_the_entries_on_disk() {
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-resolved-cache-{}",
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&out).ok();
+        let dir = out.join("journal");
+        crate::vfs::create_dir_all(&dir).unwrap();
+        let write = |gen: u64, goals: &[&str]| {
+            let entry = JournalEntry {
+                generation: gen,
+                kind: "session".into(),
+                resolved_goals: goals
+                    .iter()
+                    .map(|g| Resolved {
+                        goal: g.to_string(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            crate::vfs::write(
+                dir.join(format!("g{}.yaml", gen)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        };
+        assert!(journal_resolved_goals(&out).is_empty());
+        write(1, &["g:dedupe-candidates:ent:a~ent:b"]);
+        write(2, &["g:review-entity:ent:a"]);
+        let set = journal_resolved_goals(&out);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("g:dedupe-candidates:ent:a~ent:b"));
+        // Rewritten under the same path: the new ids replace the old.
+        write(1, &["g:dedupe-candidates:ent:c~ent:d-longer"]);
+        let set = journal_resolved_goals(&out);
+        assert!(!set.contains("g:dedupe-candidates:ent:a~ent:b"), "{:?}", set);
+        assert!(set.contains("g:dedupe-candidates:ent:c~ent:d-longer"));
+        // Removed: gone from the set. Unchanged: still there from the cache.
+        crate::vfs::remove_file(dir.join("g2.yaml")).unwrap();
+        let set = journal_resolved_goals(&out);
+        assert_eq!(
+            set.into_iter().collect::<Vec<_>>(),
+            vec!["g:dedupe-candidates:ent:c~ent:d-longer".to_string()]
+        );
+        // The journal directory gone: an empty set, and the cache forgets it.
+        crate::vfs::remove_dir_all(&out).ok();
+        assert!(journal_resolved_goals(&out).is_empty());
+        assert!(RESOLVED_GOALS
+            .lock()
+            .unwrap()
+            .get(&out)
+            .is_none_or(|per_gen| per_gen.is_empty()));
     }
 }

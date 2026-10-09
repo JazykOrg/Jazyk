@@ -29,6 +29,7 @@ percent-encoding = "2"
 form_urlencoded = "1"
 # The per-session bearer token of the MCP-over-HTTP serving (docs/frontends/mcp.md).
 getrandom = "0.3"
+siphasher = "1"
 
 # Native only: a process, sockets, threads, a terminal, and the C renderer.
 # Infrastructure comes from crates; only domain logic is hand-rolled (owner decision).

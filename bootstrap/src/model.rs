@@ -1322,9 +1322,12 @@ pub fn rel_rank(t: &str) -> usize {
 }
 
 // Process-stable content hash (SipHash with fixed keys), hex-encoded.
+// SipHash-1-3 with zero keys, pinned: the standard library's default hasher is the
+// same function today but documents no stability promise, and a change there would
+// make every stored hash miss. Mirrors docs/compiler/model/section.md#fields.
 pub fn hash_hex(s: &str) -> String {
     use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut h = siphasher::sip::SipHasher13::new_with_keys(0, 0);
     s.hash(&mut h);
     format!("{:016x}", h.finish())
 }
@@ -1341,6 +1344,20 @@ pub fn split_section_ref(full: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The pinned hash reproduces the values every existing store holds: a fixed
+    // vector, and today's standard hasher for the same input.
+    #[test]
+    fn hash_hex_is_pinned_siphash13_with_zero_keys() {
+        assert_eq!(hash_hex(""), "30406ea523c53def");
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        "The system shall respond.".hash(&mut h);
+        assert_eq!(
+            hash_hex("The system shall respond."),
+            format!("{:016x}", h.finish())
+        );
+    }
 
     fn quote(doc: &str, sec: &str, q: &str) -> SourceRef {
         SourceRef {

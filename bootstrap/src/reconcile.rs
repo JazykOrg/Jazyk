@@ -858,7 +858,9 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     for id in store.graph.entities.keys() {
         if let Some(pos) = id.rfind('-') {
             let (base, suffix) = id.split_at(pos);
-            if suffix[1..].chars().all(|c| c.is_ascii_digit())
+            let digits = &suffix[1..];
+            if !digits.is_empty()
+                && digits.chars().all(|c| c.is_ascii_digit())
                 && store
                     .graph
                     .redirects

@@ -1916,7 +1916,9 @@ pub fn mark(
         if raw.is_empty() {
             continue;
         }
-        crate::vfs::write(&path, clean).map_err(|e| e.to_string())?;
+        // Through a sibling temporary file renamed into place: a crash mid-strip
+        // never leaves a truncated source file.
+        crate::store::write_atomic(&path, clean.as_bytes()).map_err(|e| e.to_string())?;
         for s in raw {
             let rid = store.resolve_id(&s.rid).to_string();
             sites_by_rid.entry(rid).or_default().push(Site {

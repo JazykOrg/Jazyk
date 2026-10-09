@@ -1318,6 +1318,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "serde_norway",
+ "siphasher",
  "tokio",
  "tokio-stream",
  "toml",

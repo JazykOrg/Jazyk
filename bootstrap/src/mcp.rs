@@ -580,8 +580,17 @@ impl McpServer {
     pub fn run(&self) {
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
-        for line in stdin.lock().lines() {
-            let Ok(line) = line else { break };
+        let mut input = stdin.lock();
+        let mut bytes: Vec<u8> = Vec::new();
+        loop {
+            // Bytes, not `lines()`: one non-UTF-8 byte must not end the serving as if
+            // the agent had hung up, and a line is decoded lossily instead.
+            bytes.clear();
+            match input.read_until(b'\n', &mut bytes) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let line = String::from_utf8_lossy(&bytes);
             if line.trim().is_empty() {
                 continue;
             }

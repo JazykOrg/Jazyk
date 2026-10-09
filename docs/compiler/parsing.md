@@ -28,7 +28,9 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 
 ## Section tree
 
-A section is a heading and its body, or a fenced block inside that body: a code block,
+A heading is one to six `#` followed by a space, a tab, or the end of the line,
+indented by at most three spaces (deeper indentation is code, as in CommonMark); a
+`#` glued to a word is prose. A section is a heading and its body, or a fenced block inside that body: a code block,
 or a diagram. Sections form a tree per document.
 
 Content before the first heading, and a document with no headings at all, forms a

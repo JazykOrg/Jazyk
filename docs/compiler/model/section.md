@@ -32,7 +32,10 @@ As produced by [parsing](../parsing.md#section-tree):
   none ([section tree](../parsing.md#section-tree)).
 - `raw`: the verbatim source text. A block's `raw` repeats inside its parent's.
 - `hash`: a content hash of `raw`, the input to
-  [section diffing](../parsing.md#section-diffing) and [alignment](../alignment.md).
+  [section diffing](../parsing.md#section-diffing) and [alignment](../alignment.md). The hash is SipHash-1-3 with zero keys, 16 hex
+  digits, the same function for `content_hash` and every stored hash. It is pinned
+  to that algorithm, never the standard library's default hasher, so a toolchain
+  change can never make every document read as changed.
 - `lines`: the line range in the source file, for editor integration.
 
 Sections are stored per document under the graph store's `docs/` shard, not under

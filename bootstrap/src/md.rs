@@ -195,9 +195,20 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
                 }
             }
         }
+        // One to six `#` then a space, a tab, or the end of the line, indented by
+        // at most three spaces: deeper indentation is code, as in CommonMark.
+        // Mirrors docs/compiler/parsing.md#section-tree.
+        let indent: usize = l
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .map(|c| if c == '\t' { 4 } else { 1 })
+            .sum();
         let t = l.trim_start();
         let hashes = t.chars().take_while(|&c| c == '#').count();
-        if (1..=6).contains(&hashes) && t.chars().nth(hashes) == Some(' ') {
+        if indent < 4
+            && (1..=6).contains(&hashes)
+            && matches!(t.chars().nth(hashes), Some(' ') | Some('\t') | None)
+        {
             heads.push(Head {
                 level: hashes,
                 title: t[hashes..].trim().to_string(),
@@ -469,6 +480,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn headings_follow_commonmark_spacing_and_indentation() {
+        let text = "# Doc\n\n##\tTabbed\nBody.\n\n    # Indented code\n\n#hashtag is prose\n\n##\n\n  ## Two spaces in\n";
+        let s = parse_sections(text);
+        let mut refs: Vec<&String> = s.keys().collect();
+        refs.sort();
+        assert_eq!(refs, vec!["/doc", "/doc/section", "/doc/tabbed", "/doc/two-spaces-in"]);
+        assert!(s["/doc/tabbed"].raw.contains("# Indented code"));
+        assert!(s["/doc/tabbed"].raw.contains("#hashtag is prose"));
+    }
 
     #[test]
     fn repeated_headings_take_numeric_suffixes_and_an_empty_title_slugs_to_section() {

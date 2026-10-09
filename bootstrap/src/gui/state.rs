@@ -27,6 +27,8 @@ pub struct AppState {
     // Signals the server to stop (ctrl-c or POST /api/shutdown).
     pub shutdown: Arc<tokio::sync::Notify>,
     pub events: super::events::EventHub,
+    // Board derivations coalesced per set (docs/frontends/gui.md#events).
+    pub board: Arc<super::events::BoardCoalescer>,
     // Last emitted pending.changed payload, to emit only on movement.
     pub last_pending: std::sync::Mutex<serde_json::Value>,
     pub jobs: Arc<super::jobs::JobManager>,
@@ -81,6 +83,7 @@ impl AppState {
             shutdown: self.shutdown.clone(),
             jobs: self.jobs.clone(),
             chat: self.chat.clone(),
+            board: self.board.clone(),
             last_pending: std::sync::Mutex::new(serde_json::Value::Null),
             backoff: std::sync::atomic::AtomicU64::new(30),
         }))

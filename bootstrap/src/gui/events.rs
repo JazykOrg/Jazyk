@@ -11,7 +11,7 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use futures_util::stream::{self, Stream, StreamExt};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -164,14 +164,62 @@ fn entry_summary(g: u64, entry: &Value) -> Value {
     })
 }
 
+// Causes landing within this window share one derivation (gui.md#events).
+const BOARD_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
+// One board derivation per document set at a time. A cause marks the set dirty; a
+// worker thread per dirty set sleeps the window, derives once, and goes on while
+// more causes landed. Shared by every scoped state of the process.
+#[derive(Default)]
+pub struct BoardCoalescer {
+    sets: Mutex<BTreeMap<String, BoardSlot>>,
+}
+
+#[derive(Default)]
+struct BoardSlot {
+    dirty: bool,
+    running: bool,
+    // The scoped state of the latest cause: what the derivation runs against.
+    latest: Option<SharedState>,
+}
+
 // Re-derive the board off the calling thread and emit board.changed with the
-// counts; the client refetches GET /api/board for the cards.
-// Mirrors docs/frontends/gui.md#events.
+// counts; the client refetches GET /api/board for the cards. Bursts coalesce per
+// set behind BOARD_DEBOUNCE. Mirrors docs/frontends/gui.md#events.
 pub fn emit_board_changed(st: &SharedState) {
-    let st = st.clone();
-    std::thread::spawn(move || {
-        let board = crate::board::Board::compute(&st.proj(), &st.out);
-        st.events.emit(
+    let key = st.proj().set_id.unwrap_or_default();
+    let coalescer = st.board.clone();
+    {
+        let mut sets = coalescer.sets.lock().unwrap();
+        let slot = sets.entry(key.clone()).or_default();
+        slot.dirty = true;
+        slot.latest = Some(st.clone());
+        if slot.running {
+            return;
+        }
+        slot.running = true;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(BOARD_DEBOUNCE);
+        let scope = {
+            let mut sets = coalescer.sets.lock().unwrap();
+            let slot = sets.entry(key.clone()).or_default();
+            if !slot.dirty {
+                slot.running = false;
+                slot.latest = None;
+                return;
+            }
+            slot.dirty = false;
+            match slot.latest.clone() {
+                Some(s) => s,
+                None => {
+                    slot.running = false;
+                    return;
+                }
+            }
+        };
+        let board = crate::board::Board::compute(&scope.proj(), &scope.out);
+        scope.events.emit(
             "board.changed",
             json!({
                 "counts": board.counts(),
@@ -275,24 +323,23 @@ pub fn spawn_store_watcher(st: SharedState) {
     });
 }
 
-// Watch the documents with native file events: debounce bursts, then diff a
-// per-file fingerprint so editor temp files and out-dir writes never signal.
-// Emits control.changed when the control plane moves: a release, a mode change, a
-// worker registering or dropping, a lease taken or freed. Polling: the surfaces are
-// tiny files, and a 2 second cadence is livelier than a heartbeat needs.
+// Emits control.changed when a set's control plane moves: a release, a mode change,
+// a worker registering or dropping, a lease taken or freed. Polling: the surfaces
+// are tiny files, and a 2 second cadence is livelier than a heartbeat needs. The
+// event is scoped to the set whose files moved, and its board re-derives behind it.
 // Mirrors docs/frontends/gui.md#events.
 pub fn spawn_control_watcher(st: SharedState) {
     std::thread::spawn(move || {
-        let fingerprint = |st: &SharedState| -> String {
+        let fingerprint = |out: &Path| -> String {
             let mut s = String::new();
             let meta = |p: &std::path::Path| {
                 std::fs::metadata(p)
                     .map(|m| format!("{}:{:?};", m.len(), m.modified().ok()))
                     .unwrap_or_default()
             };
-            s.push_str(&meta(&crate::control::Control::path(&st.out)));
+            s.push_str(&meta(&crate::control::Control::path(out)));
             for dir in ["workers", "leases"] {
-                if let Ok(entries) = crate::vfs::read_dir(st.out.join(dir)) {
+                if let Ok(entries) = crate::vfs::read_dir(out.join(dir)) {
                     let mut names: Vec<String> = entries
                         .flatten()
                         .map(|e| format!("{}{}", e.file_name().to_string_lossy(), meta(&e.path())))
@@ -303,26 +350,43 @@ pub fn spawn_control_watcher(st: SharedState) {
             }
             s
         };
-        let all = || {
-            crate::document_sets::Workspace::load(&st.root)
-                .map(|w| {
-                    w.sets
-                        .iter()
-                        .filter_map(|s| st.scoped(Some(&s.id)).ok())
-                        .map(|s| fingerprint(&s))
-                        .collect::<Vec<_>>()
-                        .join(";")
+        // Per set: the fingerprint of its control files.
+        let all = || -> BTreeMap<String, (std::path::PathBuf, String)> {
+            let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
+                return BTreeMap::new();
+            };
+            w.sets
+                .iter()
+                .filter_map(|s| w.resolve(Some(&s.id)).ok())
+                .map(|p| {
+                    let fp = fingerprint(&p.out);
+                    (p.set_id.clone().unwrap_or_default(), (p.out, fp))
                 })
-                .unwrap_or_default()
+                .collect()
         };
         let mut last = all();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
             let now = all();
-            if now != last {
-                last = now;
-                st.events.emit("control.changed", json!({}));
-                emit_board_changed(&st);
+            let moved: Vec<String> = now
+                .iter()
+                .filter(|(id, (_, fp))| last.get(*id).map(|(_, l)| l) != Some(fp))
+                .map(|(id, _)| id.clone())
+                .collect();
+            last = now;
+            if moved.is_empty() {
+                continue;
+            }
+            let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
+                continue;
+            };
+            for id in moved {
+                let Ok(scope) = st.scoped_in(&w, Some(&id)) else {
+                    continue;
+                };
+                let snap = super::api::workers_snapshot(&scope);
+                scope.events.emit("control.changed", snap);
+                emit_board_changed(&scope);
             }
         }
     });

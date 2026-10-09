@@ -186,6 +186,7 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
         jobs: Arc::new(jobs::JobManager::new()),
         chat: Arc::new(chat::ChatManager::default()),
+        board: Arc::new(events::BoardCoalescer::default()),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
     // --watch is a mode change, recorded where every worker reads it.

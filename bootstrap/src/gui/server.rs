@@ -530,6 +530,7 @@ mod tests {
             last_pending: std::sync::Mutex::new(serde_json::Value::Null),
             jobs: Arc::new(jobs::JobManager::new()),
             chat: Arc::new(chat::ChatManager::default()),
+            board: Arc::new(events::BoardCoalescer::default()),
             backoff: std::sync::atomic::AtomicU64::new(30),
         })
     }
@@ -772,6 +773,37 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         std::fs::remove_dir_all(&st.root).ok();
     }
+    // A burst of causes derives the board once and emits one event; a cause landing
+    // after the derivation started derives again (docs/frontends/gui.md#events).
+    #[tokio::test]
+    async fn board_derivations_coalesce_per_set() {
+        let st = state(None, "https://coalesce.test");
+        let mut rx = st.events.subscribe();
+        for _ in 0..5 {
+            events::emit_board_changed(&st);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        let mut seen = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if ev["type"] == "board.changed" {
+                seen += 1;
+                assert!(ev["counts"].is_object(), "{}", ev);
+                assert!(ev["verdict"].is_string(), "{}", ev);
+            }
+        }
+        assert_eq!(seen, 1);
+        events::emit_board_changed(&st);
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        let mut seen = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if ev["type"] == "board.changed" {
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 1);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
     #[tokio::test]
     async fn all_sets_are_visible_and_colliding_ids_route_to_their_own_store() {
         use serde_json::{json, Value};

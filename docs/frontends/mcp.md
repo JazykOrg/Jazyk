@@ -58,7 +58,8 @@ separated; each adds its tools to the union:
   [binding](../compiler/tools.md#binding-tools),
   [generation](../compiler/tools.md#generation-tools), and
   [verification](../compiler/tools.md#verification-tools) lifecycles, the
-  [dual-write tools](./acp.md#dual-write-tools), `update_diagnostic` and
+  [dual-write tools](./acp.md#dual-write-tools), the decree tools `retract_decree`
+  and `bump_limit` ([chat tools](../compiler/tools.md#chat-tools)), `update_diagnostic` and
   `answer_diagnostic` ([questions in chat](./acp.md#questions-in-chat)), and the
   [project tools](./acp.md#project-tools). No raw write tools: a chat edit moves the
   prose and the graph together or not at all. In a browser tab the serving leaves

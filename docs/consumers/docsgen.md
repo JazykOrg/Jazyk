@@ -19,15 +19,17 @@ and the redirect names the survivor ([mutations](../compiler/graph.md#mutations)
 
 The page, in order:
 
-- The header: the name, aliases, `stereotype`, `scope`, one link to the entity's
-  [card](#entity-cards), the `definition`, the `parent` and the children as links to
-  their pages ([containment](../compiler/model/entity.md#containment)), and the
-  `attributes` (name, type, value, each with its provenance). An entity whose
-  provenance is `derived` or `decree` says so here and links to its proposal. An
-  entity with a level (two or more children) links to its [level page](#level-pages);
-  every entity links to the level page of its parent, or of the scope root when it has
-  no parent, on the containment line. The requirements documents link among themselves (parent, children, ties,
-  relationships); the card is the one link out of that web.
+- The header, in order: the name; one line with the id, aliases, `stereotype`,
+  `scope`, and one link to the entity's [card](#entity-cards); the `definition`; the
+  containment line, the `parent` and the children as links to their pages
+  ([containment](../compiler/model/entity.md#containment)); the level line, a link to
+  the level page of the parent (the scope root's for a parentless entity) when that
+  level has a page, and, for an entity with a level of its own (two or more children),
+  a link to its own [level page](#level-pages); the `attributes` (name, type, value, each with its
+  provenance). An entity whose provenance is `derived` or `decree` says so last in
+  the header and links to its proposal. The requirements documents link among
+  themselves (parent, children, ties, relationships); the card is the one link out of
+  that web.
 - `## Diagrams`: the rendered views the entity appears in
   ([diagrams on entity pages](#diagrams-on-entity-pages)).
 - `## Requirements`: one block per requirement that names the entity, under a `###`
@@ -340,8 +342,8 @@ detail either way.
 
 Below the class views the index lists every view in the graph, default and curated: the
 id, the kind, the title, the member count, links to its `.svg` and `.puml`, and the goal
-it carries when it is over a limit. The glossary and the reports below render as sections
-of the index after the views.
+it carries when it is over a limit. The index ends with one line linking the glossary
+and the two reports below, each a file of its own beside it.
 
 ## Glossary
 

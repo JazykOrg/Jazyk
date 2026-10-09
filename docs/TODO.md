@@ -155,27 +155,17 @@ LocalRouter; the default local model fails judgment-heavy goals.
 
 A read-only audit compared every doc area with the code that mirrors it and found
 42 discrepancies; the full ranked list is in the session's scratchpad
-(`docs-audit-2026-09-04.md`). The ones to fix first, each docs-first with a test:
+(`docs-audit-2026-09-04.md`). The eight ranked first are closed (2026-10-09): the
+sweep runs behind every commit, verify servings carry the read-only file tools,
+mandatory GC batches rank first, the delete and merge gates hold at staging, the
+section kinds the Markdown handler produces are the ones the docs name, the CLI
+refuses unknown options with exit `2`, the `via` lists agree, the chat serving
+carries `retract_decree` and `bump_limit`, and `docsgen.md` states the entity header
+and the report files as rendered. One item stays open as an owner decision:
 
-- The GC sweep runs only inside a build; every other commit path (MCP writes, decree,
-  dual-write, ratify, answer, triage) skips it. `graph.md` promises the sweep at commit.
-- Verify sessions never receive the file tools `serve_files` promises them
-  (`mcp.rs` adds them for generate only).
-- `docsgen.md` documents glossary, fragmentation, and staleness sections the index
-  never writes: implement or strike.
-- `jazyk mcp chat` lacks the documented lifecycle tools; `bump_limit` and
-  `retract_decree` are GUI-only, not chat tools.
-- Mandatory GC goals do not sort before optional ones within a burst (the tier bit is
-  dropped for GC batches).
-- Documented section kinds `list-item`, `code-block`, `blockquote`, `diagram` are never
-  parsed, so diagrams as input cannot work.
-- `delete_entity` and `merge_entities` defer two gates to commit while reporting
-  success at staging.
-- Entity pages lack the documented link to the parent's level page; the level page
-  and entity header orders differ from the doc; `compile --help` omits `--sessions`;
-  unknown flags are absorbed instead of exiting 2; several `via` values are documented
-  but never produced, and `reparent-flip`, `flip-detection`, and `requirements` are
-  produced but undocumented.
+- The section kinds `list-item` and `blockquote` are reserved in `parsing.md` and
+  `section.md` for a handler that produces them; the Markdown handler does not, by
+  design. Decide whether a handler will, or strike the two kinds from the closed list.
 
 ## Pair judgment volume (2026-09-05)
 

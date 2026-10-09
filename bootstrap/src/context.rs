@@ -195,7 +195,7 @@ impl LoadedSet {
         self.items.len() != before
     }
 
-    fn resolved<'a>(&self, store: &'a Store, target: &str) -> String {
+    fn resolved(&self, store: &Store, target: &str) -> String {
         store.resolve_id(target).to_string()
     }
 

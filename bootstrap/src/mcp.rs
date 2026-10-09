@@ -2925,7 +2925,7 @@ impl McpServer {
                     new_text: text.clone(),
                     full: format!(
                         "{}\n\n{}{}",
-                        &old_full[..at].trim_end_matches('\n'),
+                        old_full[..at].trim_end_matches('\n'),
                         text,
                         &old_full[at..]
                     ),
@@ -3152,6 +3152,10 @@ fn text_result(v: Value, is_error: bool) -> Value {
         "content": [{"type": "text", "text": text}],
         "isError": is_error
     })
+}
+
+fn result_value(value: Value) -> Value {
+    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
 }
 
 #[cfg(test)]
@@ -3875,8 +3879,4 @@ mod tests {
         assert_eq!(r["error"]["rule"], "not-a-project");
         crate::vfs::remove_dir_all(&base).ok();
     }
-}
-
-fn result_value(value: Value) -> Value {
-    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
 }

@@ -143,6 +143,35 @@ fn resolve_executor_name(proj: &Project, goals: &[crate::model::Goal]) -> Result
     .map(|a| a.name)
 }
 
+// A goal: its change, cause, readiness, blockers. A node or section: the cone of
+// goals a change to it would open. The same rendering as `jazyk explain`.
+pub fn explain_value(proj: &Project, out: &Path, target: &str) -> Option<Value> {
+    let mut store = crate::store::Store::load(out);
+    let (parsed, _) = crate::reconcile::parse_all(proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(proj, out);
+    let board = crate::board::Board::derive(&store, proj, &control);
+    let goal = board.goal(target).map(|g| {
+        let mut v = board.goal_json(g);
+        v["tier"] = json!(crate::goals::tier(&g.kind));
+        v
+    });
+    board
+        .explain(&store, target)
+        .map(|text| json!({ "target": target, "text": text, "goal": goal }))
+}
+
+// The causality DAG over the journal, forward from a generation or the last cascade
+// that touched a target; `back` walks causes instead. A generation's DAG doubles as
+// the whole-build report.
+pub fn ripple_value(out: &Path, root: &str, back: bool) -> Option<Value> {
+    let store = crate::store::Store::load(out);
+    crate::reconcile::ripple(&store, root, back).map(|tree| {
+        let text = crate::reconcile::render_ripple(&tree);
+        json!({ "root": root, "back": back, "tree": tree, "text": text })
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 fn resolve_executor_name(_proj: &Project, _goals: &[crate::model::Goal]) -> Result<String, String> {
     Ok("in-page".to_string())
@@ -245,33 +274,4 @@ mod tests {
         assert!(toolset.contains(&"load"));
         crate::vfs::remove_dir_all(&proj.root).ok();
     }
-}
-
-// A goal: its change, cause, readiness, blockers. A node or section: the cone of
-// goals a change to it would open. The same rendering as `jazyk explain`.
-pub fn explain_value(proj: &Project, out: &Path, target: &str) -> Option<Value> {
-    let mut store = crate::store::Store::load(out);
-    let (parsed, _) = crate::reconcile::parse_all(proj);
-    store.sync_docs(&parsed);
-    let control = crate::control::Control::load(proj, out);
-    let board = crate::board::Board::derive(&store, proj, &control);
-    let goal = board.goal(target).map(|g| {
-        let mut v = board.goal_json(g);
-        v["tier"] = json!(crate::goals::tier(&g.kind));
-        v
-    });
-    board
-        .explain(&store, target)
-        .map(|text| json!({ "target": target, "text": text, "goal": goal }))
-}
-
-// The causality DAG over the journal, forward from a generation or the last cascade
-// that touched a target; `back` walks causes instead. A generation's DAG doubles as
-// the whole-build report.
-pub fn ripple_value(out: &Path, root: &str, back: bool) -> Option<Value> {
-    let store = crate::store::Store::load(out);
-    crate::reconcile::ripple(&store, root, back).map(|tree| {
-        let text = crate::reconcile::render_ripple(&tree);
-        json!({ "root": root, "back": back, "tree": tree, "text": text })
-    })
 }

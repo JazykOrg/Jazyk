@@ -1386,7 +1386,7 @@ fn watch_runs(state: &Arc<ProxyState>) {
                 if let Some(up) = st.up.get() {
                     if let Ok(msg) = agent_client_protocol::UntypedMessage::new(
                         "_jazyk/session_list_changed",
-                        &json!({}),
+                        json!({}),
                     ) {
                         let _ = up.send_notification(msg);
                     }

@@ -764,6 +764,31 @@ fn close_compile_attempt(
     }
 }
 
+impl SessionRunner for AcpRunner {
+    fn agent_name(&self) -> String {
+        self.agent().name.clone()
+    }
+    fn set_build_token(&self, token: Option<String>) {
+        AcpRunner::set_build_token(self, token)
+    }
+    fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
+        AcpRunner::run_item(self, batch, trace)
+    }
+    fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
+        AcpRunner::ask(self, system, user, label, step)
+    }
+    fn ask_traced(
+        &self,
+        system: &str,
+        user: &str,
+        label: &str,
+        step: &str,
+        trace: Option<&Trace>,
+    ) -> Result<String, String> {
+        AcpRunner::ask_traced(self, system, user, label, step, trace)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,30 +933,5 @@ mod tests {
         let t = terminals(&events.lock().unwrap(), "g:generate:ent:cart");
         assert_eq!(t.len(), 1);
         assert!(t[0].1.starts_with("the ledger judges"));
-    }
-}
-
-impl SessionRunner for AcpRunner {
-    fn agent_name(&self) -> String {
-        self.agent().name.clone()
-    }
-    fn set_build_token(&self, token: Option<String>) {
-        AcpRunner::set_build_token(self, token)
-    }
-    fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
-        AcpRunner::run_item(self, batch, trace)
-    }
-    fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
-        AcpRunner::ask(self, system, user, label, step)
-    }
-    fn ask_traced(
-        &self,
-        system: &str,
-        user: &str,
-        label: &str,
-        step: &str,
-        trace: Option<&Trace>,
-    ) -> Result<String, String> {
-        AcpRunner::ask_traced(self, system, user, label, step, trace)
     }
 }

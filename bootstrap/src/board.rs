@@ -2009,7 +2009,7 @@ fn locality_keys(store: &Store, g: &Goal) -> Vec<String> {
             } else if let Some(r) = store.graph.requirements.get(&g.target) {
                 entity_keys(&r.entities);
             } else {
-                entity_keys(&[g.target.clone()]);
+                entity_keys(std::slice::from_ref(&g.target));
             }
         }
         "declare-edges" => {
@@ -2736,7 +2736,8 @@ pub(crate) mod tests {
         let mut s = Store::default();
         let text = "# T\n\nThe X serves the Y nightly. The X also names the Y nightly. The P serves the Q nightly. The P also names the Q nightly.\n";
         let mut coverage = BTreeMap::new();
-        for r in ["/t"] {
+        {
+            let r = "/t";
             coverage.insert(
                 r.to_string(),
                 Coverage {

@@ -26,7 +26,7 @@ pub fn section_of(d: &Diagnostic) -> Option<&'static str> {
     let asking = d
         .answer
         .as_ref()
-        .map_or(true, |a| a.status == "handling" || a.status == "failed");
+        .is_none_or(|a| a.status == "handling" || a.status == "failed");
     if PROPOSAL_RULES.contains(&d.rule.as_str()) && asking {
         return Some("proposals");
     }
@@ -39,7 +39,7 @@ pub fn section_of(d: &Diagnostic) -> Option<&'static str> {
 // Whether a listed question or proposal waits on a person: a `handling` answer is
 // listed with its progress and not counted.
 fn waiting(d: &Diagnostic) -> bool {
-    d.answer.as_ref().map_or(true, |a| a.status == "failed")
+    d.answer.as_ref().is_none_or(|a| a.status == "failed")
 }
 
 pub fn inbox_value(proj: &Project, gs: &crate::gen::GenSettings, out: &Path, store: &Store) -> Value {

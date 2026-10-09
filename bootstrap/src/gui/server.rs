@@ -65,7 +65,7 @@ fn origin_admitted(req: &Request, gui_origin: &str) -> bool {
             .map(str::to_string)
     };
     if let Some(origin) = text("origin") {
-        return admitted_origins(gui_origin).iter().any(|o| *o == origin);
+        return admitted_origins(gui_origin).contains(&origin);
     }
     match text("sec-fetch-site") {
         Some(site) => site == "same-origin" || site == "none",

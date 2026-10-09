@@ -386,7 +386,7 @@ impl Llm {
             .collect();
         names.sort();
         names.dedup();
-        if !self.model.is_empty() && !names.iter().any(|n| *n == self.model) {
+        if !self.model.is_empty() && !names.contains(&self.model) {
             names.insert(0, self.model.clone());
         }
         names
@@ -690,7 +690,7 @@ impl Llm {
         if !self.api_key.is_empty() {
             req = req.set("Authorization", &format!("Bearer {}", self.api_key));
         }
-        let resp = match req.send_string(&body) {
+        let resp = match req.send_string(body) {
             Ok(r) => r,
             Err(ureq::Error::Status(code, r)) => {
                 let text = r.into_string().unwrap_or_default();

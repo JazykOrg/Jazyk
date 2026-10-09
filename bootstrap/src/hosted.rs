@@ -165,7 +165,7 @@ fn set_projection(
 ) -> Result<Projection, String> {
     use crate::vfs::VPathExt;
     let store = crate::store::Store::load(&p.out);
-    let gs = crate::gen::GenSettings::resolve(&p);
+    let gs = crate::gen::GenSettings::resolve(p);
     let ledger = crate::gen::Ledger::load(&p.out);
     // Resolve through the VFS so redirected projects and dot components use the
     // same paths as compilation. No absent or out-of-workspace file can enter.

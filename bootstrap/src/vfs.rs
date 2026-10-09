@@ -245,7 +245,7 @@ mod imp {
 
     pub fn entry_metadata(p: &Path) -> io::Result<super::Metadata> {
         if super::is_scoped() {
-            return super::memory::entry_metadata(&super::checked(p.as_ref())?);
+            return super::memory::entry_metadata(&super::checked(p)?);
         }
         let md = std::fs::metadata(p)?;
         Ok(super::Metadata {
@@ -265,8 +265,8 @@ mod memory {
     // One tree per tab. The browser runs the backend on a single thread, so a
     // RefCell is the whole of the locking story.
     thread_local! {
-        static FILES: RefCell<BTreeMap<PathBuf, Vec<u8>>> = RefCell::new(BTreeMap::new());
-        static DIRS: RefCell<BTreeSet<PathBuf>> = RefCell::new(BTreeSet::new());
+        static FILES: RefCell<BTreeMap<PathBuf, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
+        static DIRS: RefCell<BTreeSet<PathBuf>> = const { RefCell::new(BTreeSet::new()) };
     }
 
     pub(super) type Tree = (BTreeMap<PathBuf, Vec<u8>>, BTreeSet<PathBuf>);

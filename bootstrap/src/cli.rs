@@ -9,6 +9,7 @@ use crate::store::Store;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct Options {
     pub set: Option<String>,
     pub dirty: bool,
@@ -68,51 +69,6 @@ pub struct Options {
     pub text: Option<String>,
 }
 
-impl Default for Options {
-    fn default() -> Self {
-        Options {
-            set: None, dirty: false, docs: vec![], source: vec![], roots: vec![], name: None,
-            base_url: None,
-            model: None,
-            api_key: None,
-            out: None,
-            verbose: false,
-            quiet: false,
-            write: false,
-            depth: None,
-            expand: Vec::new(),
-            back: false,
-            force: false,
-            kind: None,
-            list: false,
-            audit: false,
-            port: None,
-            no_open: false,
-            watch: false,
-            gui_url: None,
-            no_token: false,
-            dev: false,
-            mcp: None,
-            json: false,
-            costs: false,
-            cached: None,
-            once: false,
-            agent: None,
-            acp_ide: None,
-            ephemeral: false,
-            only: None,
-            build_token: None,
-            serve_files: false,
-            edit_sink: None,
-            packaged: false,
-            project: None,
-            goal: None,
-            sessions: None,
-            option: None,
-            text: None,
-        }
-    }
-}
 
 // Initialize the current directory as a project root: a minimal jazyk.toml plus
 // optional MCP integration for a coding agent. Warns instead of overwriting.

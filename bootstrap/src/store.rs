@@ -648,14 +648,14 @@ pub(crate) fn normalize_statement(s: &str) -> String {
     for (i, &c) in chars.iter().enumerate() {
         let prev = i.checked_sub(1).map(|j| chars[j]);
         let next = chars.get(i + 1).copied();
-        let digit = |c: Option<char>| c.map_or(false, |c| c.is_ascii_digit());
+        let digit = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
         if c.is_alphanumeric() || (c == '.' && digit(prev) && digit(next)) {
             tok.push(c);
             continue;
         }
         // A sign is a minus right before a digit that does not follow a word (`-1`,
         // not `2024-09` or `read-only`).
-        let sign = c == '-' && digit(next) && !prev.map_or(false, |p| p.is_alphanumeric());
+        let sign = c == '-' && digit(next) && !prev.is_some_and(|p| p.is_alphanumeric());
         if !tok.is_empty() {
             tokens.push(std::mem::take(&mut tok));
         }
@@ -1890,7 +1890,7 @@ impl Store {
         normalize_statement(statement)
             .split(' ')
             .filter(|t| is_content_token(t))
-            .map(|t| stem(t))
+            .map(stem)
             .filter(|t| is_content_token(t))
             .filter(|t| !name_toks.contains(t))
             .collect()
@@ -4761,7 +4761,7 @@ impl Store {
                         {
                             dirt.revised(&rid, m, "quote");
                         }
-                        let old_source = std::mem::replace(&mut r.source, Some(to.clone()))
+                        let old_source = r.source.replace(to.clone())
                             .unwrap_or_else(|| from.clone());
                         r.provenance = None;
                         r.updated = Some(build.clone());
@@ -5792,7 +5792,7 @@ impl Store {
     // reconcile item as stale anchors, their section dirty, whether or not the document
     // changed this build. Mirrors docs/compiler/reconciler.md#dirty-set.
     fn reevaluate_items(&self, mut out: Vec<DirtyDoc>) -> Vec<DirtyDoc> {
-        for (doc, _) in &self.docs {
+        for doc in self.docs.keys() {
             let (stale, sections) = self.stale_extras(doc);
             if stale.is_empty() {
                 continue;

@@ -654,13 +654,13 @@ pub(crate) fn request_scoped(
         }
         ("PUT", "/watch") => {
             let p = project();
-            answer(super::workers::watch_write(&p, &p.out, &body))
+            answer(super::workers::watch_write(&p, &p.out, body))
         }
         // The inspector's fact edits, the server's own core
         // (docs/frontends/gui.md#api, facts).
         ("POST", path) if path.starts_with("/facts/") && path.ends_with("/edit") => {
             let id = decode(path.trim_start_matches("/facts/").trim_end_matches("/edit"));
-            answer(super::facts::edit_fact_core(&project(), &out(), &id, &body))
+            answer(super::facts::edit_fact_core(&project(), &out(), &id, body))
         }
         // The Inbox, the server's own cores (docs/frontends/wasm.md#the-inbox).
         ("GET", "/inbox") => {
@@ -679,7 +679,7 @@ pub(crate) fn request_scoped(
                 path.trim_start_matches("/diagnostics/")
                     .trim_end_matches("/triage"),
             );
-            answer(super::inbox::triage_value(&out(), &id, &body))
+            answer(super::inbox::triage_value(&out(), &id, body))
         }
         // A reply that records `handling` waits for the next build, which runs its
         // answer session; the reply says so.
@@ -690,7 +690,7 @@ pub(crate) fn request_scoped(
             );
             let p = project();
             answer(
-                super::inbox::answer_value(&p, &p.out, &id, &body).map(|mut v| {
+                super::inbox::answer_value(&p, &p.out, &id, body).map(|mut v| {
                     if v["status"] == "handling" {
                         v["note"] = json!("recorded; the next build acts on the answer");
                     }
@@ -701,7 +701,7 @@ pub(crate) fn request_scoped(
         ("GET", "/settings") => ok(crate::project::settings_read(root)),
         // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
         // file lands in the tree, and the page mirrors it the way any change goes.
-        ("PUT", "/settings") => match crate::project::settings_write(root, &body) {
+        ("PUT", "/settings") => match crate::project::settings_write(root, body) {
             Ok(v) => ok(v),
             Err((code, msg)) => err(code, msg),
         },
@@ -760,7 +760,7 @@ pub(crate) fn request_scoped(
         // The chat pane: conversations run in the worker on the page's model, and
         // their progress is posted to the page as events while the prompt request
         // is still running. See docs/frontends/wasm.md#chat.
-        ("POST", "/chat/sessions") => ok(crate::conversation::create(&body)),
+        ("POST", "/chat/sessions") => ok(crate::conversation::create(body)),
         ("GET", "/chat/sessions") => ok(crate::conversation::list()),
         ("GET", p) if p.starts_with("/chat/sessions/") => {
             let id = decode(p.trim_start_matches("/chat/sessions/"));
@@ -782,7 +782,7 @@ pub(crate) fn request_scoped(
                 p.trim_start_matches("/chat/sessions/")
                     .trim_end_matches("/prompt"),
             );
-            let (status, v) = crate::conversation::prompt(&id, &body);
+            let (status, v) = crate::conversation::prompt(&id, body);
             reply(status, v)
         }
         // The page answers a cancel while a turn runs; one that reaches the worker

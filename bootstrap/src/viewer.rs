@@ -544,9 +544,9 @@ fn tree(store: &Store) -> String {
             .collect();
         let mut s: Vec<&str> = vec![target, name];
         s.extend(views.iter().map(|(v, _)| v.as_str()));
-        let _ = write!(
+        let _ = writeln!(
             out,
-            "<div class=\"tn\" data-s=\"{}\" style=\"padding-left:{}px\">{}{}{}{}</div>\n",
+            "<div class=\"tn\" data-s=\"{}\" style=\"padding-left:{}px\">{}{}{}{}</div>",
             search_attr(&s),
             depth * 20,
             label,
@@ -677,9 +677,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     h.push_str(STYLE);
     h.push_str("</style>\n</head>\n<body>\n<div class=\"wrap\">\n");
     h.push_str("<h1>Jazyk graph</h1>\n");
-    let _ = write!(
+    let _ = writeln!(
         h,
-        "<p class=\"stats\">{} entities · {} requirements · {} relationships · open diagnostics: {} error, {} warning, {} info, {} none · coverage {}/{} sections · generation {}</p>\n",
+        "<p class=\"stats\">{} entities · {} requirements · {} relationships · open diagnostics: {} error, {} warning, {} info, {} none · coverage {}/{} sections · generation {}</p>",
         g.entities.len(),
         g.requirements.len(),
         g.relationships.len(),
@@ -705,9 +705,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             }
         }
         if ok + bad + stale + unv > 0 {
-            let _ = write!(
+            let _ = writeln!(
                 h,
-                "<p class=\"stats\">verification: <span class=\"v-ok\">{} verified</span> · <span class=\"v-bad\">{} failing</span> · <span class=\"v-stale\">{} stale</span> · {} unverified · {} not generated</p>\n",
+                "<p class=\"stats\">verification: <span class=\"v-ok\">{} verified</span> · <span class=\"v-bad\">{} failing</span> · <span class=\"v-stale\">{} stale</span> · {} unverified · {} not generated</p>",
                 ok, bad, stale, unv, not_gen
             );
         }
@@ -815,9 +815,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             .filter_map(|c| g.entities.get(c).map(|e| e.name.as_str()))
             .collect();
         s.extend(member_names);
-        let _ = write!(
+        let _ = writeln!(
             h,
-            "<div class=\"card\" data-s=\"{}\">{}</div>\n",
+            "<div class=\"card\" data-s=\"{}\">{}</div>",
             search_attr(&s),
             body
         );
@@ -961,7 +961,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 .iter()
                 .filter_map(|r| vmap.get(r).and_then(|v| v["status"].as_str()))
                 .collect();
-            if statuses.iter().any(|s| *s == "failing") {
+            if statuses.contains(&"failing") {
                 "agg-bad"
             } else if statuses.iter().any(|s| s.starts_with("stale")) {
                 "agg-stale"
@@ -977,9 +977,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             e.definition.as_deref().unwrap_or(""),
             &e.aliases.join(" "),
         ]);
-        let _ = write!(
+        let _ = writeln!(
             h,
-            "<div class=\"card {}\" data-s=\"{}\">{}</div>\n",
+            "<div class=\"card {}\" data-s=\"{}\">{}</div>",
             agg, s, body
         );
     }
@@ -1090,7 +1090,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             .map(|s| s.doc.as_str())
             .unwrap_or_default();
         let s = search_attr(&[id, &r.statement, doc]);
-        let _ = write!(h, "<div class=\"card\" data-s=\"{}\">{}</div>\n", s, body);
+        let _ = writeln!(h, "<div class=\"card\" data-s=\"{}\">{}</div>", s, body);
     }
 
     // Relationships.
@@ -1121,9 +1121,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             );
         }
         let s = search_attr(&[id, rel.strongest(), &rel.members.join(" ")]);
-        let _ = write!(
+        let _ = writeln!(
             h,
-            "<div class=\"card\" data-s=\"{}\"><h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3><p><span class=\"k\">members</span> {}</p>{}</div>\n",
+            "<div class=\"card\" data-s=\"{}\"><h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3><p><span class=\"k\">members</span> {}</p>{}</div>",
             s,
             esc(id),
             esc(id),
@@ -1241,9 +1241,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
         }
         let mut s: Vec<&str> = vec![id, &v.kind, &v.title];
         s.extend(drawn_names.iter().map(String::as_str));
-        let _ = write!(
+        let _ = writeln!(
             h,
-            "<div class=\"card\" data-s=\"{}\">{}</div>\n",
+            "<div class=\"card\" data-s=\"{}\">{}</div>",
             search_attr(&s),
             body
         );
@@ -1287,7 +1287,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             subjects.join(" ")
         );
         let s = search_attr(&[id, &d.rule, &d.severity, &d.message]);
-        let _ = write!(h, "<div class=\"card\" data-s=\"{}\">{}</div>\n", s, body);
+        let _ = writeln!(h, "<div class=\"card\" data-s=\"{}\">{}</div>", s, body);
     }
 
     // Coverage.
@@ -1304,9 +1304,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 _ => unproc += 1,
             }
         }
-        let _ = write!(
+        let _ = writeln!(
             h,
-            "<tr data-s=\"{}\"><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>\n",
+            "<tr data-s=\"{}\"><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
             search_attr(&[doc]),
             esc(doc),
             covered,

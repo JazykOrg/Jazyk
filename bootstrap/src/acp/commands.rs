@@ -120,7 +120,7 @@ pub fn is_command(word: &str, in_project: bool) -> bool {
 }
 
 // The command word and the rest of the line, for a prompt that starts with one.
-pub fn split<'a>(text: &'a str, in_project: bool) -> Option<(&'static str, &'a str)> {
+pub fn split(text: &str, in_project: bool) -> Option<(&'static str, &str)> {
     let text = text.trim();
     let (word, rest) = match text.split_once(char::is_whitespace) {
         Some((w, r)) => (w, r.trim()),

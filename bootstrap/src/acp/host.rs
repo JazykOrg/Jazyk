@@ -633,7 +633,7 @@ async fn session_task(
                                     RequestPermissionOutcome::Cancelled,
                                 ));
                             }
-                            let stop = serde_json::to_value(&stop)
+                            let stop = serde_json::to_value(stop)
                                 .ok()
                                 .and_then(|v| v.as_str().map(|x| x.to_string()))
                                 .unwrap_or_else(|| format!("{:?}", stop));

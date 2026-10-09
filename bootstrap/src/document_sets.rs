@@ -548,6 +548,26 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
     Ok(value)
 }
 
+/// Check the existing ancestry too, including when the final file is new.
+pub fn safe_relative(root: &Path, relative: &str) -> bool {
+    if !eligible(relative) {
+        return false;
+    }
+    let Ok(base) = root.vcanonicalize() else {
+        return false;
+    };
+    let path = root.join(relative);
+    for ancestor in path.ancestors().take_while(|p| *p != root) {
+        if ancestor.vis_dir() && ancestor.join(CONFIG).vexists() {
+            return false;
+        }
+        if ancestor.vexists() && !ancestor.vcanonicalize().is_ok_and(|p| p.starts_with(&base)) {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,24 +759,4 @@ mod tests {
             .iter()
             .any(|f| f.starts_with("nested/") || f.starts_with("outside/")));
     }
-}
-
-/// Check the existing ancestry too, including when the final file is new.
-pub fn safe_relative(root: &Path, relative: &str) -> bool {
-    if !eligible(relative) {
-        return false;
-    }
-    let Ok(base) = root.vcanonicalize() else {
-        return false;
-    };
-    let path = root.join(relative);
-    for ancestor in path.ancestors().take_while(|p| *p != root) {
-        if ancestor.vis_dir() && ancestor.join(CONFIG).vexists() {
-            return false;
-        }
-        if ancestor.vexists() && !ancestor.vcanonicalize().is_ok_and(|p| p.starts_with(&base)) {
-            return false;
-        }
-    }
-    true
 }

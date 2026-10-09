@@ -716,7 +716,7 @@ pub fn handling_ids(out: &Path) -> Vec<String> {
         .diagnostics
         .iter()
         .filter(|(_, d)| {
-            d.lifecycle == "open" && d.answer.as_ref().map_or(false, |a| a.status == "handling")
+            d.lifecycle == "open" && d.answer.as_ref().is_some_and(|a| a.status == "handling")
         })
         .map(|(id, _)| id.clone())
         .collect()

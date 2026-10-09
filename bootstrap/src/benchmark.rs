@@ -3053,7 +3053,7 @@ mod tests {
                     assert!(s.quote_locates(&m.doc, &m.section, &m.quote), "{}: {}", name, id);
                 }
             }
-            for (full, _) in &case.coverage {
+            for full in case.coverage.keys() {
                 let (doc, section) = split_section_ref(full).unwrap();
                 assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, full);
             }

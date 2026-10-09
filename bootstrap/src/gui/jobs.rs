@@ -634,7 +634,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
                 } else {
                     crate::control::release(&st.proj(), &st.out, Some(stage));
                 }
-                let snap = super::api::workers_snapshot(&st);
+                let snap = super::api::workers_snapshot(st);
                 st.events.emit("control.changed", snap);
                 return (
                     StatusCode::ACCEPTED,

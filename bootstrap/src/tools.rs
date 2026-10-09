@@ -3233,8 +3233,8 @@ impl ToolSession {
         let names_pair = |d: &Diagnostic| {
             d.lifecycle == "open"
                 && (d.rule == "contradiction" || d.rule == "duplicate-requirement")
-                && d.subjects.iter().any(|s| *s == a)
-                && d.subjects.iter().any(|s| *s == b)
+                && d.subjects.contains(&a)
+                && d.subjects.contains(&b)
         };
         let resolved_here: BTreeSet<&str> = self
             .staged
@@ -7601,7 +7601,7 @@ impl ToolSession {
                 if replaced {
                     v["note"] = json!("replaced the earlier report for this batch");
                 }
-                return Ok(v);
+                Ok(v)
             }
             // Feedback about jazyk's own prompts and tools. It stages nothing, spends no
             // mutation budget, and passes no gate beyond a non-empty message: a model
@@ -8349,7 +8349,7 @@ impl ToolSession {
                         &sentence,
                         &decree,
                         former.as_ref(),
-                        &[eid.clone()],
+                        std::slice::from_ref(&eid),
                         attr_name.as_deref(),
                     );
                     let (add_attributes, provenance) = match attribute {

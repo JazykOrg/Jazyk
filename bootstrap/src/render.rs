@@ -608,7 +608,7 @@ fn frame(scene: &Scene) -> Frame {
                 .iter()
                 .filter(|o| *o != s && is_below(store, s, o))
                 .count();
-            if below > 0 && best.as_ref().map_or(true, |(_, n)| below > *n) {
+            if below > 0 && best.as_ref().is_none_or(|(_, n)| below > *n) {
                 best = Some((s.clone(), below));
             }
         }
@@ -1200,7 +1200,7 @@ fn ordered_edges<'a>(store: &Store, r: &'a Requirement) -> Vec<&'a ReqEdge> {
     let rank = |e: &ReqEdge| -> u8 {
         if subject.as_deref() == Some(store.resolve_id(&e.a)) {
             0
-        } else if e.rel_type.as_deref().map_or(true, |t| t == "dependency") {
+        } else if e.rel_type.as_deref().is_none_or(|t| t == "dependency") {
             1
         } else {
             2

@@ -344,7 +344,7 @@ fn recompute_state_machines_with(store: &mut Store, ix: &Indices) {
                 && agrees(&a.guard, &t.guard)
         }) {
             Some(a) => {
-                if !a.requirements.contains(&rid) {
+                if !a.requirements.contains(rid) {
                     a.requirements.push(rid.clone());
                 }
                 // The first spelling in document order stays; a side that named no
@@ -491,9 +491,9 @@ pub fn query_matches(
         .iter()
         .filter(|(id, _)| !instances.contains_key(*id))
         .filter(|(id, _)| !excluded.iter().any(|x| &x.id == *id))
-        .filter(|(_, e)| q.scope.as_deref().map_or(true, |s| e.scope == s))
+        .filter(|(_, e)| q.scope.as_deref().is_none_or(|s| e.scope == s))
         .filter(|(_, e)| {
-            q.stereotype.as_deref().map_or(true, |s| {
+            q.stereotype.as_deref().is_none_or(|s| {
                 e.stereotype
                     .as_deref()
                     .is_some_and(|x| x.eq_ignore_ascii_case(s))
@@ -706,7 +706,7 @@ pub fn lift_into(store: &Store, members: &[String], id: &str) -> Option<String> 
     let mut cur = store.resolve_id(id).to_string();
     let mut depth = 0;
     loop {
-        if members.iter().any(|m| *m == cur) {
+        if members.contains(&cur) {
             return Some(cur);
         }
         let parent = store

@@ -454,11 +454,10 @@ impl Lsp {
             names.extend(e.aliases.iter().cloned());
             for n in names {
                 for (l, c, len) in occurrences(&text, &n) {
-                    if l == line && character >= c && character < c + len {
-                        if best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
+                    if l == line && character >= c && character < c + len
+                        && best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
                             best = Some((len, id.clone()));
                         }
-                    }
                 }
             }
         }
@@ -1389,6 +1388,53 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
     });
 }
 
+// What a reload keys on: the configuration hash and one line of each set's
+// status.yaml (or the one set's generation when the out directory is a set).
+// Mirrors docs/frontends/lsp.md#rebuilds-and-refresh.
+fn store_fingerprint(root: &Path, out: &Path) -> String {
+    let own = || crate::store::read_generation(out).to_string();
+    if out.file_name().and_then(|s| s.to_str()).is_some_and(crate::document_sets::valid_id) {
+        return own();
+    }
+    let Ok(w) = crate::document_sets::Workspace::load(root) else {
+        return own();
+    };
+    if !w.exists {
+        return own();
+    }
+    let mut v = w.hash.clone();
+    for set in &w.sets {
+        if let Ok(p) = w.resolve(Some(&set.id)) {
+            v.push_str(&format!("{}:{};", set.id, crate::store::read_generation(&p.out)));
+        }
+    }
+    v
+}
+
+// An in-memory projection only. It is never saved or passed to a graph mutator.
+fn read_project_store(root: &Path, out: &Path) -> Store {
+    if out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {return Store::load(out);}
+    let Ok(w)=crate::document_sets::Workspace::load(root) else {return Store::load(out);};
+    if !w.exists {return Store::load(out);}
+    let mut combined=Store::default();combined.out=out.into();
+    let mut graph=serde_json::to_value(&combined.graph).unwrap();let mut version=w.hash.clone();
+    for set in &w.sets {
+        let p=w.resolve(Some(&set.id)).unwrap();let store=Store::load(&p.out);
+        version.push_str(&format!("{}:{};",set.id,store.status.generation));
+        let value=crate::webapi::sets::qualify_value(serde_json::to_value(&store.graph).unwrap(),&set.id);
+        for (kind,map) in value.as_object().unwrap() {
+            if let (Some(to),Some(from))=(graph[kind].as_object_mut(),map.as_object()) {to.extend(from.clone());}
+        }
+        for (path,doc) in store.docs {combined.docs.entry(path).or_insert(doc);}
+    }
+    combined.graph=serde_json::from_value(graph).unwrap_or_default();
+    combined.status.generation=u64::from_str_radix(&crate::model::hash_hex(&version)[..16],16).unwrap_or(0);
+    combined
+}
+fn diagnostic_source(root: &Path, id: &str) -> String {
+    crate::webapi::sets::unqualify(id).0.and_then(|id|crate::document_sets::Workspace::load(root).ok()?.select(&id).ok().map(|s|format!("jazyk · {}",s.name))).unwrap_or_else(||"jazyk".into())
+}
+
 #[cfg(test)]
 mod tests {
     // The refresh keys on one line per set plus the configuration hash, and loads
@@ -1825,8 +1871,7 @@ mod tests {
         let blocks: Vec<&str> = card.split("\n\n").collect();
         assert_eq!(
             blocks,
-            vec![
-                "**Order Service** «service» · Takes and fulfils orders.".to_string(),
+            ["**Order Service** «service» · Takes and fulfils orders.".to_string(),
                 "Sits in: Public › Shop › **Order Service**".to_string(),
                 format!("![view:component/shop]({}/diagrams/component/shop.svg)", o),
                 format!(
@@ -1836,8 +1881,7 @@ mod tests {
                 format!(
                     "[card]({o}/docsgen/entities/order-service.md) · [requirements (2)]({o}/docsgen/order-service.md) · [level: Shop]({o}/docsgen/levels/shop.md)",
                     o = o
-                ),
-            ]
+                )]
             .iter()
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
@@ -2076,51 +2120,4 @@ mod tests {
         assert!(card.contains("diagrams/sequence/one.svg"), "{}", card);
         crate::vfs::remove_dir_all(&tmp).ok();
     }
-}
-
-// What a reload keys on: the configuration hash and one line of each set's
-// status.yaml (or the one set's generation when the out directory is a set).
-// Mirrors docs/frontends/lsp.md#rebuilds-and-refresh.
-fn store_fingerprint(root: &Path, out: &Path) -> String {
-    let own = || crate::store::read_generation(out).to_string();
-    if out.file_name().and_then(|s| s.to_str()).is_some_and(crate::document_sets::valid_id) {
-        return own();
-    }
-    let Ok(w) = crate::document_sets::Workspace::load(root) else {
-        return own();
-    };
-    if !w.exists {
-        return own();
-    }
-    let mut v = w.hash.clone();
-    for set in &w.sets {
-        if let Ok(p) = w.resolve(Some(&set.id)) {
-            v.push_str(&format!("{}:{};", set.id, crate::store::read_generation(&p.out)));
-        }
-    }
-    v
-}
-
-// An in-memory projection only. It is never saved or passed to a graph mutator.
-fn read_project_store(root: &Path, out: &Path) -> Store {
-    if out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {return Store::load(out);}
-    let Ok(w)=crate::document_sets::Workspace::load(root) else {return Store::load(out);};
-    if !w.exists {return Store::load(out);}
-    let mut combined=Store::default();combined.out=out.into();
-    let mut graph=serde_json::to_value(&combined.graph).unwrap();let mut version=w.hash.clone();
-    for set in &w.sets {
-        let p=w.resolve(Some(&set.id)).unwrap();let store=Store::load(&p.out);
-        version.push_str(&format!("{}:{};",set.id,store.status.generation));
-        let value=crate::webapi::sets::qualify_value(serde_json::to_value(&store.graph).unwrap(),&set.id);
-        for (kind,map) in value.as_object().unwrap() {
-            if let (Some(to),Some(from))=(graph[kind].as_object_mut(),map.as_object()) {to.extend(from.clone());}
-        }
-        for (path,doc) in store.docs {combined.docs.entry(path).or_insert(doc);}
-    }
-    combined.graph=serde_json::from_value(graph).unwrap_or_default();
-    combined.status.generation=u64::from_str_radix(&crate::model::hash_hex(&version)[..16],16).unwrap_or(0);
-    combined
-}
-fn diagnostic_source(root: &Path, id: &str) -> String {
-    crate::webapi::sets::unqualify(id).0.and_then(|id|crate::document_sets::Workspace::load(root).ok()?.select(&id).ok().map(|s|format!("jazyk · {}",s.name))).unwrap_or_else(||"jazyk".into())
 }

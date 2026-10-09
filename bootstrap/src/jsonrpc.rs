@@ -50,7 +50,7 @@ pub fn write_message<W: Write>(w: &mut W, msg: &Value) {
     let _ = write!(
         w,
         "Content-Length: {}\r\n\r\n{}",
-        body.as_bytes().len(),
+        body.len(),
         body
     );
     let _ = w.flush();

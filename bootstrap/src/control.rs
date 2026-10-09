@@ -258,7 +258,7 @@ pub fn workers(out: &Path) -> Vec<Worker> {
         }
         v.push(w);
     }
-    v.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+    v.sort_by_key(|a| a.started_at);
     v
 }
 

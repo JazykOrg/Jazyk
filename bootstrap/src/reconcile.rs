@@ -1650,7 +1650,7 @@ fn flip_detection_over(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>
         // A ruling already given, or a filing newer than the last flip, ends it.
         let settled = store.graph.diagnostics.values().any(|d| {
             d.rule == "unstable-derivation"
-                && d.subjects.iter().any(|s| *s == subject)
+                && d.subjects.contains(&subject)
                 && (d.answer.is_some()
                     || d.updated
                         .as_deref()
@@ -1946,7 +1946,7 @@ fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec
         // A ruling already given, or a filing newer than the last move, ends it.
         let settled = store.graph.diagnostics.values().any(|d| {
             d.rule == "unstable-derivation"
-                && d.subjects.iter().any(|s| *s == subject)
+                && d.subjects.contains(&subject)
                 && (d.answer.is_some()
                     || d.updated
                         .as_deref()

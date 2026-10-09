@@ -1163,8 +1163,8 @@ impl GoalKind for ReconcileSection {
                     id,
                     source: Some(s),
                     ..
-                } => {
-                    if !store.quote_locates(&s.doc, &s.section, &s.quote) {
+                }
+                    if !store.quote_locates(&s.doc, &s.section, &s.quote) => {
                         out.push(Violation::new(
                             "quote-not-found",
                             format!(
@@ -1173,7 +1173,6 @@ impl GoalKind for ReconcileSection {
                             ),
                         ));
                     }
-                }
                 _ => {}
             }
         }
@@ -4745,7 +4744,7 @@ fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -
             more,
             c.weight
         ));
-            if crate::board::scope_target(&target).is_some() {
+            if crate::board::scope_target(target).is_some() {
                 // The default scope's top level, not a scope anyone set
                 // (docs/compiler/goals/abstract-entity.md#the-fan-out-variant).
                 hints.push(format!(
@@ -5285,7 +5284,7 @@ impl GoalKind for AbstractEntity {
                     let too_large = store.graph.diagnostics.values().any(|d| {
                         d.lifecycle == "open"
                             && d.rule == "section-too-large"
-                            && d.subjects.iter().any(|s| *s == full)
+                            && d.subjects.contains(&full)
                     });
                     hints.push(format!(
                         "load {}{}",
@@ -5453,8 +5452,8 @@ impl GoalKind for AbstractEntity {
                         }
                     }
                 }
-                Op::DeleteEntity { id, .. } | Op::MergeEntities { absorb: id, .. } => {
-                    if !staged_parents.contains(id) {
+                Op::DeleteEntity { id, .. } | Op::MergeEntities { absorb: id, .. }
+                    if !staged_parents.contains(id) => {
                         out.push(Violation::new(
                             "target-removed",
                             format!(
@@ -5463,7 +5462,6 @@ impl GoalKind for AbstractEntity {
                             ),
                         ));
                     }
-                }
                 _ => {}
             }
         }
@@ -5507,7 +5505,7 @@ pub(crate) mod tests {
                 // bind and derive-criteria derive from state (the ledger, the criteria),
                 // not from a record kind of their own.
                 assert!(
-                    record_kinds(k.kind()).len() > 0
+                    !record_kinds(k.kind()).is_empty()
                         || matches!(k.kind(), "bind" | "derive-criteria")
                 );
             }
@@ -6386,7 +6384,7 @@ pub(crate) mod tests {
         assert!(c.iter().all(|x| x.ids.len() + x.rest <= 4), "{:?}", c);
         assert!(c.len() >= 4, "{:?}", c);
         let total: usize = c.iter().map(|x| x.ids.len() + x.rest).sum();
-        assert!(total >= 28 && total <= 30, "{}", total);
+        assert!((28..=30).contains(&total), "{}", total);
         assert_eq!(c, coupling_candidates(&s, "ent:hub", 9));
         // Ties break by id: two equal-weight pairs merge the one whose ids sort first.
         let mut s = Store::default();

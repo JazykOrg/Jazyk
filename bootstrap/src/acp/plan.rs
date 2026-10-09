@@ -228,13 +228,10 @@ impl PlanTracker {
                     return None;
                 }
             }
-            TraceEvent::GenEntityFailed { .. } => {
-                if self.current_is_ledger() {
+            TraceEvent::GenEntityFailed { .. }
+                if self.current_is_ledger() => {
                     self.current = None;
-                } else {
-                    return None;
                 }
-            }
             _ => return None,
         }
         Some(self.publish())

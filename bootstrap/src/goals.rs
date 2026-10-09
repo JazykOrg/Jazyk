@@ -1240,6 +1240,8 @@ pub fn pair_plan(store: &Store) -> PairPlan {
         pinned: bool,
     }
     let mut pairs: BTreeMap<String, PairWork> = BTreeMap::new();
+    // The scorer's inputs once for the pass (docs/compiler/reconciler.md#pairs).
+    let scoring = store.pair_scoring();
     for rec in records_of(
         store,
         &[store::CHANGE_REQ_CREATED, store::CHANGE_REQ_REVISED],
@@ -1248,7 +1250,7 @@ pub fn pair_plan(store: &Store) -> PairPlan {
         let Some(req) = store.graph.requirements.get(rid) else {
             continue;
         };
-        for (nbr, score) in store.pair_review_candidates(rec) {
+        for (nbr, score) in store.pair_review_candidates_with(rec, &scoring) {
             let Some(other) = store.graph.requirements.get(&nbr) else {
                 continue;
             };
@@ -1256,7 +1258,7 @@ pub fn pair_plan(store: &Store) -> PairPlan {
             let shared_ent = shared_entity(store, req, other);
             // The words both statements share, minus the shared entities' boilerplate
             // the scorer dropped (docs/compiler/reconciler.md#pairs).
-            let boilerplate = store.pair_boilerplate(req, other);
+            let boilerplate = store.pair_boilerplate_with(req, other, &scoring);
             let other_stems = content_tokens(store, &other.statement, &other.entities);
             let mut tokens: Vec<String> = Vec::new();
             for (stemmed, word) in content_token_words(store, &req.statement, &req.entities) {
@@ -3569,19 +3571,65 @@ pub fn read_journal(out: &std::path::Path) -> Vec<JournalEntry> {
         else {
             continue;
         };
-        let Ok(text) = crate::vfs::read_to_string(e.path()) else {
-            continue;
-        };
-        let Ok(mut entry) = serde_norway::from_str::<JournalEntry>(&text) else {
-            continue;
-        };
-        if entry.generation == 0 {
-            entry.generation = n;
+        if let Some(entry) = read_journal_entry(&e.path(), n) {
+            entries.push((n, entry));
         }
-        entries.push((n, entry));
     }
     entries.sort_by_key(|(n, _)| *n);
     entries.into_iter().map(|(_, e)| e).collect()
+}
+
+// The journal entries of the generations in `(from, to]`, oldest first: the files
+// named by those generations alone, so a build reading what one session wrote parses
+// nothing older. Mirrors docs/compiler/graph.md#journal.
+pub fn read_journal_range(out: &std::path::Path, from: u64, to: u64) -> Vec<JournalEntry> {
+    let dir = out.join("journal");
+    (from + 1..=to)
+        .filter_map(|g| read_journal_entry(&dir.join(format!("g{}.yaml", g)), g))
+        .collect()
+}
+
+// One journal entry by path; `generation` is the file's, stamped on an entry that
+// carries none. A missing file is nothing; a file that does not parse is skipped with
+// one warning per process naming it, so a torn entry is visible and never silent.
+// Mirrors docs/compiler/graph.md#journal.
+pub fn read_journal_entry(path: &std::path::Path, generation: u64) -> Option<JournalEntry> {
+    let text = match crate::vfs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn_journal_once(path, &e.to_string());
+            }
+            return None;
+        }
+    };
+    let mut entry = match serde_norway::from_str::<JournalEntry>(&text) {
+        Ok(entry) => entry,
+        Err(e) => {
+            warn_journal_once(path, &e.to_string());
+            return None;
+        }
+    };
+    if entry.generation == 0 {
+        entry.generation = generation;
+    }
+    Some(entry)
+}
+
+fn warn_journal_once(path: &std::path::Path, why: &str) {
+    static WARNED: std::sync::Mutex<BTreeSet<std::path::PathBuf>> =
+        std::sync::Mutex::new(BTreeSet::new());
+    let fresh = WARNED
+        .lock()
+        .map(|mut set| set.insert(path.to_path_buf()))
+        .unwrap_or(true);
+    if fresh {
+        eprintln!(
+            "[jazyk] warning: journal entry {} skipped: {}",
+            path.display(),
+            why
+        );
+    }
 }
 
 impl GoalKind for DedupeCandidates {

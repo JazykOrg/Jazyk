@@ -593,6 +593,25 @@ derivable, never stored: start at a generation, follow `opened_goals` to the gen
 that resolved them, repeat; or walk backward from any node's `updated` marker to the
 `edit` entry that started everything.
 
+The journal is read as files, never indexed, and every reader bounds what it parses:
+
+- A lookup that wants the latest entry reads newest first and stops at the first hit:
+  the prior a decree recorded (`retract_decree` restores it), the last parent move of a
+  child and the create of a parent that no longer exists (the
+  [reparent flip](./reconciler.md#flip-detection) the commit records compares against
+  them). An id is minted once, so the first create found is the only one.
+- A build reads only the entries a session wrote (the generations between the
+  session's start and its commit) to record the goals it resolved and the ones it
+  opened, and the whole journal once at the build's tail for
+  [flip detection](./reconciler.md#flip-detection), parsed once and shared by the
+  cross-class and reparent replays.
+- An entry that does not parse is skipped with one warning naming the file
+  (`[jazyk] warning: journal entry ... skipped`), once per process. The journal is the
+  trail, not the graph: a torn entry makes nothing read-only
+  ([writes and unreadable files](#writes-and-unreadable-files)), but it is never
+  silent, since a missing generation hides a cause from `jazyk ripple` and a spend from
+  the cost report.
+
 ## Garbage collection
 
 Garbage collection has two halves. The sweep is mechanical: deterministic, at every

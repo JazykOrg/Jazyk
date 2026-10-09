@@ -94,13 +94,32 @@ Each document file under `docs/` holds:
   answers, MCP sessions) read the stamp to order documents by
   [link level](./reconciler.md#link-levels) when they recompute derived data.
 
+### Writes and unreadable files
+
+Every file the store writes (a shard, a doc record, a journal entry, `status.yaml`)
+lands through a sibling temporary file renamed into place, so a reader or a crash never
+sees a half-written file. `save` writes `status.yaml` last: its generation is the commit
+point a reader checks. A write that fails is reported with its path and the error,
+never dropped.
+
+A file that exists but does not parse makes the store read-only. The load reports the
+file and the parse error, reads continue with what did parse, and every writer
+(`apply`, the sweep, record clearing, a persisting alignment) refuses with
+`store-unreadable` naming the file until it is repaired or removed. A shard is never
+read as empty because it failed to parse: that would let the next commit overwrite it,
+and the sweep would collect the requirements of a document whose record did not load.
+
 ### Store version
 
 `status.yaml` carries `version: 2`. On load, an out directory whose `status.yaml` lacks
 `version` or carries a different one is archived whole to `<out>.bak` (a sibling
 directory; an existing `.bak` is replaced) and the store starts empty. The next build
 reconciles from the empty graph, the same way a first build does. There is no migration
-code: a version mismatch is a fresh start with the old store kept beside it.
+code: a version mismatch is a fresh start with the old store kept beside it. Outside a
+build, a store of another version reads as empty and read-only: a writer refuses with
+`store-version` until a build archives it. When the archive itself fails (the `.bak`
+cannot be replaced, the rename is refused), the build does not proceed over the old
+directory: the store is read-only and the error names the directory.
 
 ## Mutations
 
@@ -728,7 +747,14 @@ thresholds and no goal resolves it, so it is not a row of the table above.
 
 ## Concurrency
 
-- Writers take `.lock`. One changeset commits at a time.
+- Writers take `.lock`, an advisory lock the operating system releases when its holder
+  exits, so a crashed writer never leaves a stale lock and a waiter never overrides a
+  live one (a wait past ten seconds is reported, then continues). One changeset commits
+  at a time.
+- A writer commits against the generation it loaded. Under the lock it re-reads the
+  generation in `status.yaml` and refuses with `store-moved` when another writer landed
+  first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites
+  commits it has not seen. The caller reloads and restages.
 - Compilation is sequential: one build at a time (the build lease enforces it), one
   session at a time within it. See [workers and leases](./control-plane.md#workers-and-leases).
 - Human paths (chat dual writes, decrees, triage, answers) commit between sessions under

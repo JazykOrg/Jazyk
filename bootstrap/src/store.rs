@@ -567,6 +567,9 @@ pub struct Store {
     pub status: Status,
     // Alignment thresholds, registry constants (docs/compiler/graph.md#budgets-and-thresholds).
     pub align: crate::align::Thresholds,
+    // Files that existed but did not parse at load, each with its error. Non-empty
+    // makes the store read-only. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+    pub load_errors: Vec<String>,
 }
 
 pub(crate) fn normalize(name: &str) -> String {
@@ -719,16 +722,80 @@ pub fn text_contains(hay: &str, needle: &str) -> bool {
 }
 
 fn yaml_to<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
-    let text = crate::vfs::read_to_string(path).ok()?;
-    serde_norway::from_str(&text).ok()
+    yaml_read(path).ok().flatten()
 }
 
-fn write_yaml<T: Serialize>(path: &Path, value: &T) {
-    if let Some(parent) = path.parent() {
-        crate::vfs::create_dir_all(parent).ok();
+// A missing file reads as `None`; a file that exists but does not parse is an error
+// naming it, never an empty value.
+// Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+fn yaml_read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    let text = match crate::vfs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {}", path.display(), e)),
+    };
+    if text.trim().is_empty() {
+        return Err(format!("{}: empty file", path.display()));
     }
-    if let Ok(text) = serde_norway::to_string(value) {
-        crate::vfs::write(path, text).ok();
+    serde_norway::from_str(&text)
+        .map(Some)
+        .map_err(|e| format!("{}: {}", path.display(), e))
+}
+
+// A shard read at load: missing reads as empty, unparseable is recorded and reads as
+// empty for this load only (the store refuses to write while `errors` is non-empty).
+fn shard<T: serde::de::DeserializeOwned + Default>(path: &Path, errors: &mut Vec<String>) -> T {
+    match yaml_read::<T>(path) {
+        Ok(Some(v)) => v,
+        Ok(None) => T::default(),
+        Err(e) => {
+            errors.push(e);
+            T::default()
+        }
+    }
+}
+
+fn write_yaml<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    let text = serde_norway::to_string(value)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    write_atomic(path, text.as_bytes())
+}
+
+// Write through a sibling temporary file renamed into place, so a reader or a crash
+// never sees a half-written file. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        crate::vfs::create_dir_all(parent)?;
+    }
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{}.{}.tmp", name, crate::sys::process_id()));
+    crate::vfs::write(&tmp, bytes)?;
+    if let Err(e) = crate::vfs::rename(&tmp, path) {
+        crate::vfs::remove_file(&tmp).ok();
+        return Err(e);
+    }
+    Ok(())
+}
+
+// Any serializable value behind one object type, so `save` writes every shard through
+// the same path.
+trait YamlFile {
+    fn write_to(&self, path: &Path) -> std::io::Result<()>;
+}
+
+impl<T: Serialize> YamlFile for T {
+    fn write_to(&self, path: &Path) -> std::io::Result<()> {
+        write_yaml(path, self)
+    }
+}
+
+// A store write that failed is reported with its path, never dropped.
+fn report_write(path: &Path, r: std::io::Result<()>) {
+    if let Err(e) = r {
+        eprintln!("[jazyk] error: cannot write {}: {}", path.display(), e);
     }
 }
 
@@ -919,6 +986,9 @@ impl Store {
                 break;
             }
         }
+        for e in &store.load_errors {
+            eprintln!("[jazyk] error: {} did not load: {}", out.display(), e);
+        }
         if store.status.version != STORE_VERSION {
             return Store {
                 out: out.to_path_buf(),
@@ -952,12 +1022,20 @@ impl Store {
                         out.display(),
                         bak.display()
                     ),
-                    Err(e) => eprintln!(
-                        "[jazyk] warning: could not archive {} to {}: {}",
-                        out.display(),
-                        bak.display(),
-                        e
-                    ),
+                    Err(e) => {
+                        let why = format!(
+                            "could not archive {} to {}: {}",
+                            out.display(),
+                            bak.display(),
+                            e
+                        );
+                        eprintln!("[jazyk] error: {}; the store stays read-only", why);
+                        return Store {
+                            out: out.to_path_buf(),
+                            load_errors: vec![why],
+                            ..Default::default()
+                        };
+                    }
                 }
                 return Store {
                     out: out.to_path_buf(),
@@ -970,21 +1048,23 @@ impl Store {
 
     fn load_once(out: &Path) -> Store {
         let g = out.join("graph");
+        let mut errors: Vec<String> = Vec::new();
         let mut store = Store {
             out: out.to_path_buf(),
             graph: Graph {
-                entities: yaml_to(&g.join("entities.yaml")).unwrap_or_default(),
-                requirements: yaml_to(&g.join("requirements.yaml")).unwrap_or_default(),
-                criteria: yaml_to(&g.join("criteria.yaml")).unwrap_or_default(),
-                views: yaml_to(&g.join("views.yaml")).unwrap_or_default(),
-                relationships: yaml_to(&g.join("relationships.yaml")).unwrap_or_default(),
-                state_machines: yaml_to(&g.join("state-machines.yaml")).unwrap_or_default(),
-                diagnostics: yaml_to(&g.join("diagnostics.yaml")).unwrap_or_default(),
-                redirects: yaml_to(&g.join("redirects.yaml")).unwrap_or_default(),
+                entities: shard(&g.join("entities.yaml"), &mut errors),
+                requirements: shard(&g.join("requirements.yaml"), &mut errors),
+                criteria: shard(&g.join("criteria.yaml"), &mut errors),
+                views: shard(&g.join("views.yaml"), &mut errors),
+                relationships: shard(&g.join("relationships.yaml"), &mut errors),
+                state_machines: shard(&g.join("state-machines.yaml"), &mut errors),
+                diagnostics: shard(&g.join("diagnostics.yaml"), &mut errors),
+                redirects: shard(&g.join("redirects.yaml"), &mut errors),
             },
             docs: BTreeMap::new(),
-            status: yaml_to(&out.join("status.yaml")).unwrap_or_default(),
+            status: shard(&out.join("status.yaml"), &mut errors),
             align: Default::default(),
+            load_errors: Vec::new(),
         };
         let docs_dir = out.join("docs");
         let mut files = Vec::new();
@@ -993,37 +1073,108 @@ impl Store {
             if let Ok(rel) = f.strip_prefix(&docs_dir) {
                 let doc = rel.to_string_lossy().replace('\\', "/");
                 let doc = doc.strip_suffix(".yaml").unwrap_or(&doc).to_string();
-                if let Some(rec) = yaml_to::<DocRecord>(&f) {
-                    store.docs.insert(doc, rec);
+                match yaml_read::<DocRecord>(&f) {
+                    Ok(Some(rec)) => {
+                        store.docs.insert(doc, rec);
+                    }
+                    Ok(None) => {}
+                    Err(e) => errors.push(e),
                 }
             }
         }
+        store.load_errors = errors;
         store
     }
 
+    // Why this store must not write: a file that did not parse at load.
+    // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+    fn unreadable(&self) -> Option<String> {
+        self.load_errors.first().map(|e| {
+            format!(
+                "store-unreadable: {} (repair or remove the file, then retry)",
+                e
+            )
+        })
+    }
+
+    // Why this store must not commit: it did not load cleanly, the directory holds a
+    // store of another version, or another writer landed a generation since it loaded.
+    // Called under the lock. Mirrors docs/compiler/graph.md#concurrency.
+    fn refusal(&self) -> Option<String> {
+        if let Some(why) = self.unreadable() {
+            return Some(why);
+        }
+        match yaml_read::<Status>(&self.out.join("status.yaml")) {
+            Ok(Some(disk)) if disk.version != STORE_VERSION => Some(format!(
+                "store-version: {} holds a version {} store and this is version {}; a build archives it",
+                self.out.display(),
+                disk.version,
+                STORE_VERSION
+            )),
+            Ok(Some(disk)) if disk.generation != self.status.generation => Some(format!(
+                "store-moved: {} is at g{} on disk and g{} in memory; reload and restage",
+                self.out.display(),
+                disk.generation,
+                self.status.generation
+            )),
+            Err(e) => Some(format!(
+                "store-unreadable: {} (repair or remove the file, then retry)",
+                e
+            )),
+            _ => None,
+        }
+    }
+
+    // The refusal, reported. Every writer calls this under the lock before it mutates.
+    fn refuse(&self, what: &str) -> Option<String> {
+        let why = self.refusal()?;
+        eprintln!("[jazyk] error: {} refused: {}", what, why);
+        Some(why)
+    }
+
+    // Shards and doc records first, `status.yaml` last: its generation is the commit
+    // point a reader checks. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
     pub fn save(&self) {
+        if let Some(why) = self.unreadable() {
+            eprintln!(
+                "[jazyk] error: refusing to write {}: {}",
+                self.out.display(),
+                why
+            );
+            return;
+        }
         let g = self.out.join("graph");
-        write_yaml(&g.join("entities.yaml"), &self.graph.entities);
-        write_yaml(&g.join("requirements.yaml"), &self.graph.requirements);
+        let put = |p: PathBuf, v: &dyn YamlFile| report_write(&p, v.write_to(&p));
+        put(g.join("entities.yaml"), &self.graph.entities);
+        put(g.join("requirements.yaml"), &self.graph.requirements);
         if !self.graph.criteria.is_empty() || g.join("criteria.yaml").vexists() {
-            write_yaml(&g.join("criteria.yaml"), &self.graph.criteria);
+            put(g.join("criteria.yaml"), &self.graph.criteria);
         }
-        write_yaml(&g.join("views.yaml"), &self.graph.views);
-        write_yaml(&g.join("relationships.yaml"), &self.graph.relationships);
-        write_yaml(&g.join("state-machines.yaml"), &self.graph.state_machines);
-        write_yaml(&g.join("diagnostics.yaml"), &self.graph.diagnostics);
-        write_yaml(&g.join("redirects.yaml"), &self.graph.redirects);
-        self.save_status();
+        put(g.join("views.yaml"), &self.graph.views);
+        put(g.join("relationships.yaml"), &self.graph.relationships);
+        put(g.join("state-machines.yaml"), &self.graph.state_machines);
+        put(g.join("diagnostics.yaml"), &self.graph.diagnostics);
+        put(g.join("redirects.yaml"), &self.graph.redirects);
         for (doc, rec) in &self.docs {
-            write_yaml(&self.out.join("docs").join(format!("{}.yaml", doc)), rec);
+            put(self.out.join("docs").join(format!("{}.yaml", doc)), rec);
         }
+        self.save_status();
     }
 
     // Every status write stamps the store version.
     pub fn save_status(&self) {
+        if let Some(why) = self.unreadable() {
+            eprintln!(
+                "[jazyk] error: refusing to write {}: {}",
+                self.out.display(),
+                why
+            );
+            return;
+        }
         let mut status = self.status.clone();
         status.version = STORE_VERSION;
-        write_yaml(&self.out.join("status.yaml"), &status);
+        let path = self.out.join("status.yaml");
+        report_write(&path, write_yaml(&path, &status));
     }
 
     // The journal entry for one commit. Mirrors docs/compiler/graph.md#journal.
@@ -1149,7 +1300,8 @@ impl Store {
     }
 
     fn write_journal(&self, entry: &JournalEntry) {
-        write_yaml(&self.journal_path(entry.generation), entry);
+        let path = self.journal_path(entry.generation);
+        report_write(&path, write_yaml(&path, entry));
     }
 
     // The latest journal mutation that decreed over the given fact and recorded the
@@ -1277,7 +1429,7 @@ impl Store {
             return;
         };
         entry.opened_goals = opened;
-        write_yaml(&path, &entry);
+        report_write(&path, write_yaml(&path, &entry));
     }
 
     // Resolving a goal clears the records it stood on, except the created and revised
@@ -1304,6 +1456,9 @@ impl Store {
             return;
         }
         let _flock = FileLock::acquire(&self.out);
+        if self.refuse("clear-changes").is_some() {
+            return;
+        }
         self.status.changes.retain(|c| !ids.contains(&c.id));
         self.save_status();
     }
@@ -2337,6 +2492,9 @@ impl Store {
     // settle-diagnostics. Mirrors docs/compiler/graph.md#the-sweep.
     pub fn settle_cleared_markers(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
+        if self.refuse("settle").is_some() {
+            return Vec::new();
+        }
         self.settle_cleared_markers_locked()
     }
 
@@ -2371,6 +2529,9 @@ impl Store {
     // Mirrors docs/compiler/reconciler.md#pairs.
     pub fn settle_dangling_diags(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
+        if self.refuse("settle").is_some() {
+            return Vec::new();
+        }
         self.settle_dangling_diags_locked()
     }
 
@@ -2688,6 +2849,17 @@ impl Store {
     // generation, write shards. Mirrors docs/compiler/graph.md#changesets.
     pub fn apply(&mut self, ops: Vec<Op>, commit: &Commit) -> CommitReport {
         let _flock = FileLock::acquire(&self.out);
+        if let Some(why) = self.refuse("commit") {
+            return CommitReport {
+                applied: 0,
+                skipped: vec![why],
+                generation: self.status.generation,
+                changes: Vec::new(),
+                touched_entities: BTreeSet::new(),
+                changed_requirements: BTreeSet::new(),
+                swept: Vec::new(),
+            };
+        }
         let generation = self.status.generation + 1;
         let build = format!("g{}", generation);
         let mut remap: BTreeMap<String, String> = BTreeMap::new();
@@ -4979,6 +5151,9 @@ impl Store {
     // Mirrors docs/compiler/graph.md#the-sweep.
     pub fn sweep(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
+        if self.refuse("sweep").is_some() {
+            return Vec::new();
+        }
         self.sweep_locked()
     }
 
@@ -5097,6 +5272,10 @@ impl Store {
         persist: bool,
     ) -> Vec<DirtyDoc> {
         use crate::align::Full;
+        // Persisting alignment is a write like a commit: under the lock, against the
+        // generation it loaded. Mirrors docs/compiler/graph.md#concurrency.
+        let _flock = persist.then(|| FileLock::acquire(&self.out));
+        let persist = persist && self.refuse("align").is_none();
         let mut entries: Vec<JournalEntry> = Vec::new();
         let mut removed_docs: Vec<String> = Vec::new();
         let changed: BTreeSet<String> = self
@@ -5858,6 +6037,10 @@ impl Store {
             Option<crate::model::DiagnosticPrompt>,
         )>,
     ) {
+        let _flock = FileLock::acquire(&self.out);
+        if self.refuse("checks").is_some() {
+            return;
+        }
         let generation = self.status.generation + 1;
         let build = format!("g{}", generation);
         let mut seen: BTreeSet<(String, Vec<String>)> = BTreeSet::new();
@@ -5971,18 +6154,71 @@ fn collect_yaml(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-// Cross-process single-writer lock. In-process serialization is the caller's mutex.
+// Cross-process single-writer lock: an advisory lock on `.lock` the operating system
+// releases when its holder exits, so a crashed writer leaves nothing stale and a waiter
+// never overrides a live holder. Two handles in one process exclude each other too.
+// A scoped (in-memory) store belongs to one process and keeps a marker file instead.
+// Mirrors docs/compiler/graph.md#concurrency.
 struct FileLock {
-    path: PathBuf,
+    #[cfg(not(target_arch = "wasm32"))]
+    _file: Option<std::fs::File>,
+    marker: Option<PathBuf>,
 }
 
 impl FileLock {
     fn acquire(out: &Path) -> FileLock {
         let path = out.join(".lock");
         crate::vfs::create_dir_all(out).ok();
+        #[cfg(not(target_arch = "wasm32"))]
+        if !crate::vfs::is_scoped() {
+            let opened = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path);
+            let file = match opened {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!(
+                        "[jazyk] warning: cannot open {}: {}; writing without the lock",
+                        path.display(),
+                        e
+                    );
+                    return FileLock {
+                        _file: None,
+                        marker: None,
+                    };
+                }
+            };
+            let started = std::time::Instant::now();
+            let mut warned = false;
+            loop {
+                if fs2::FileExt::try_lock_exclusive(&file).is_ok() {
+                    return FileLock {
+                        _file: Some(file),
+                        marker: None,
+                    };
+                }
+                if !warned && started.elapsed() >= std::time::Duration::from_secs(10) {
+                    eprintln!(
+                        "[jazyk] waiting for the writer holding {}",
+                        path.display()
+                    );
+                    warned = true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
         for _ in 0..100 {
             match crate::vfs::create_new(&path, &crate::sys::process_id().to_string()) {
-                Ok(()) => return FileLock { path },
+                Ok(()) => {
+                    return FileLock {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        _file: None,
+                        marker: Some(path),
+                    }
+                }
                 Err(_) => crate::sys::sleep(std::time::Duration::from_millis(100)),
             }
         }
@@ -5990,13 +6226,19 @@ impl FileLock {
             "[jazyk] warning: stale lock at {}; proceeding",
             path.display()
         );
-        FileLock { path }
+        FileLock {
+            #[cfg(not(target_arch = "wasm32"))]
+            _file: None,
+            marker: Some(path),
+        }
     }
 }
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        crate::vfs::remove_file(&self.path).ok();
+        if let Some(p) = &self.marker {
+            crate::vfs::remove_file(p).ok();
+        }
     }
 }
 
@@ -6015,8 +6257,16 @@ mod tests {
         assert_eq!(normalize_statement("x >= 5"), "x > = 5");
     }
 
+    // A fresh directory per call: parallel tests each hold a store of their own, so a
+    // commit never finds another test's generation on disk (`store-moved`).
     fn tmp() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-store-test-{}", crate::sys::process_id()));
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-store-test-{}-{}",
+            crate::sys::process_id(),
+            n
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).ok();
         dir
@@ -6029,6 +6279,86 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).ok();
         dir
+    }
+
+    #[test]
+    fn an_unparseable_shard_makes_the_store_read_only() {
+        let out = own_dir("unreadable");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        let r = s.apply(vec![create("ent:a", "A")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let shard = out.join("graph").join("entities.yaml");
+        let broken = "ent:a: [this is not an entity\n";
+        crate::vfs::write(&shard, broken).unwrap();
+        let mut again = Store::load(&out);
+        assert!(
+            again.load_errors.iter().any(|e| e.contains("entities.yaml")),
+            "{:?}",
+            again.load_errors
+        );
+        let r = again.apply(vec![create("ent:b", "B")], &session());
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].starts_with("store-unreadable:"), "{:?}", r.skipped);
+        assert!(again.sweep().is_empty());
+        again.save();
+        assert_eq!(crate::vfs::read_to_string(&shard).unwrap(), broken);
+        assert!(!out.join("journal").join("g2.yaml").vexists());
+        assert_eq!(Store::load(&out).status.generation, 1);
+    }
+
+    #[test]
+    fn a_commit_against_a_moved_store_is_refused() {
+        let out = own_dir("moved");
+        let mut a = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        assert_eq!(a.apply(vec![create("ent:a", "A")], &session()).applied, 1);
+        let mut b = Store::load(&out);
+        assert_eq!(b.apply(vec![create("ent:b", "B")], &session()).applied, 1);
+        let r = a.apply(vec![create("ent:c", "C")], &session());
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].starts_with("store-moved:"), "{:?}", r.skipped);
+        let disk = Store::load(&out);
+        assert_eq!(disk.status.generation, 2);
+        assert!(disk.graph.entities.contains_key("ent:b"));
+        assert!(!disk.graph.entities.contains_key("ent:c"));
+        let mut a = Store::load(&out);
+        assert_eq!(a.apply(vec![create("ent:c", "C")], &session()).applied, 1);
+        assert_eq!(Store::load(&out).status.generation, 3);
+    }
+
+    #[test]
+    fn writes_land_whole_and_leave_no_temporary_files() {
+        let out = own_dir("atomic");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        assert_eq!(s.apply(vec![create("ent:a", "A")], &session()).applied, 1);
+        fn walk(dir: &Path, into: &mut Vec<PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, into);
+                } else {
+                    into.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(&out, &mut files);
+        let leftover: Vec<_> = files
+            .iter()
+            .filter(|p| p.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftover.is_empty(), "{:?}", leftover);
+        assert!(out.join("status.yaml").vexists());
+        assert!(out.join("graph").join("entities.yaml").vexists());
+        assert!(out.join("journal").join("g1.yaml").vexists());
     }
 
     fn wi() -> WorkItem {

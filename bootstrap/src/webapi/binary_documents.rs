@@ -88,6 +88,12 @@ mod tests {
         let (_dir, p) = project();
         let content = json!({"base64": STANDARD.encode(edited())});
         write(&p, "docs/import.docx", &content).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(p.root.join("docs/import.docx")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o644);
+        }
         assert_eq!(write(&p, "docs/import.docx", &content).unwrap_err().0, 409);
         assert_eq!(write(&p, "outside.docx", &content).unwrap_err().0, 400);
         assert_eq!(write(&p, "../escape.docx", &content).unwrap_err().0, 400);
@@ -325,6 +331,14 @@ mod native {
                 .map_err(|e| (500, e.to_string()))?;
             temp.persist(&absolute).map_err(|e| (500, e.to_string()))?;
         } else {
+            // A new file gets ordinary permissions, not the temporary file's 0600.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                temp.as_file()
+                    .set_permissions(std::fs::Permissions::from_mode(0o644))
+                    .map_err(|e| (500, e.to_string()))?;
+            }
             temp.persist_noclobber(&absolute)
                 .map_err(|e| (409, format!("cannot create document exclusively: {e}")))?;
         }

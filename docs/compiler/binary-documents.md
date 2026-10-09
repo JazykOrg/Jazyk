@@ -66,7 +66,8 @@ The native API supports the following routes:
   PDF imports omit `baseHash` and create exclusively. Existing PDF writes return
   `405`. The destination must belong to a document set.
 - Validate the document package before writing. Serialize writes through a project
-  document lock and replace an existing file atomically. Refuse malformed data,
+  document lock and replace an existing file atomically, keeping its permissions. A
+  new file gets ordinary permissions (`0644` on Unix). Refuse malformed data,
   oversized files, path escapes, symlinks, and nested-project writes.
 - `GET /api/docs/content` exposes the extracted text for read-only consumers.
   Text write endpoints continue to refuse DOCX and PDF.

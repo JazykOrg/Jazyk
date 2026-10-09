@@ -72,9 +72,15 @@ pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
     (line, col)
 }
 
-// Whether the Markdown handler claims a file: by its extension, `.md` or `.markdown`.
+// Whether a handler claims a file: by its extension (`.md`, `.markdown`, `.txt`, and
+// natively DOCX and PDF).
 // A matched file no handler claims is `unsupported-format` territory.
 // Mirrors docs/compiler/parsing.md#format-handlers.
+// Whether a goal or ripple target names a whole document: a path a handler claims.
+pub fn is_document_target(target: &str) -> bool {
+    !target.contains(':') && supported_format(std::path::Path::new(target))
+}
+
 pub fn supported_format(path: &std::path::Path) -> bool {
     #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
     if crate::documents::supported(path) {
@@ -82,7 +88,7 @@ pub fn supported_format(path: &std::path::Path) -> bool {
     }
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown"))
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt"))
         .unwrap_or(false)
 }
 
@@ -565,7 +571,10 @@ mod tests {
         use std::path::Path;
         assert!(supported_format(Path::new("docs/a.md")));
         assert!(supported_format(Path::new("docs/A.MARKDOWN")));
-        assert!(!supported_format(Path::new("docs/a.txt")));
+        assert!(supported_format(Path::new("docs/a.txt")));
+        assert!(!supported_format(Path::new("docs/a.rs")));
+        assert!(is_document_target("docs/a.txt"));
+        assert!(!is_document_target("ent:a.md"));
         assert!(!supported_format(Path::new("docs/README")));
         let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();

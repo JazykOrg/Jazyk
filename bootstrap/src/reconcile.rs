@@ -2903,7 +2903,7 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
         .filter(|_| root.chars().all(|c| c.is_ascii_digit() || c == 'g'));
     let start: &JournalEntry = if let Some(n) = generation {
         by_gen(n)?
-    } else if root.ends_with(".md") && !root.contains(':') {
+    } else if crate::md::is_document_target(root) {
         entries.iter().rev().find(|e| {
             e.kind == "edit"
                 && e.dirtied
@@ -3570,7 +3570,7 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(dir.join("docs/good.md"), "# Good\nThe system shall respond.\n").unwrap();
-        crate::vfs::write(dir.join("docs/notes.txt"), "plain notes\n").unwrap();
+        crate::vfs::write(dir.join("docs/notes.rst"), "plain notes\n").unwrap();
         crate::vfs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
         let proj = Project {
             root: dir.clone(),
@@ -3583,7 +3583,7 @@ mod tests {
         let f = checks(&Store::default(), &proj);
         let unsupported = rules_for(&f, "unsupported-format");
         assert_eq!(unsupported.len(), 1, "{:?}", unsupported);
-        assert_eq!(unsupported[0].1, ["docs/notes.txt"]);
+        assert_eq!(unsupported[0].1, ["docs/notes.rst"]);
         assert_eq!(unsupported[0].2, "warning");
         let errors = rules_for(&f, "parse-error");
         assert_eq!(errors.len(), 1, "{:?}", errors);
@@ -3610,7 +3610,7 @@ mod tests {
         assert_eq!(open(&s, "parse-error"), 1);
         assert_eq!(s.graph.diagnostics.len(), 2);
         crate::vfs::write(dir.join("docs/bad.md"), "# Bad\nnow readable\n").unwrap();
-        crate::vfs::remove_file(dir.join("docs/notes.txt")).unwrap();
+        crate::vfs::remove_file(dir.join("docs/notes.rst")).unwrap();
         s.reconcile_check_diags(checks(&s, &proj));
         assert_eq!(open(&s, "unsupported-format"), 0);
         assert_eq!(open(&s, "parse-error"), 0);

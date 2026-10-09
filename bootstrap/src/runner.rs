@@ -251,7 +251,7 @@ impl<'a> LoopTrace<'a> {
 pub fn batch_doc(batch: &BatchRun) -> Option<String> {
     batch.goals.iter().find_map(|g| {
         let doc = g.target.split('#').next().unwrap_or_default();
-        doc.ends_with(".md").then(|| doc.to_string())
+        crate::md::is_document_target(doc).then(|| doc.to_string())
     })
 }
 

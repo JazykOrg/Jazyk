@@ -8,6 +8,8 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 
 - A handler claims a file by its format and produces the section tree.
 - Markdown (`.md`, `.markdown`) is built in.
+- Plain text (`.txt`) is built in and read by the Markdown handler. Plain prose parses
+  as paragraphs; a line that happens to look like Markdown reads as Markdown.
 - Native builds also read [DOCX and PDF](./binary-documents.md), within the documented
   extraction profile. The browser-only engine currently reads Markdown.
 - Custom handlers per project are planned. The

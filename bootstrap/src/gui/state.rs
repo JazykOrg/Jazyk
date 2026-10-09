@@ -43,6 +43,16 @@ pub type SharedState = Arc<AppState>;
 impl AppState {
     pub fn scoped(&self, id: Option<&str>) -> Result<SharedState, (u16, String)> {
         let workspace = crate::document_sets::Workspace::load(&self.root)?;
+        self.scoped_in(&workspace, id)
+    }
+
+    // The scoped state against a workspace the caller already loaded. Sync disk reads
+    // (the global LLM config) live here: call it off the async runtime.
+    pub fn scoped_in(
+        &self,
+        workspace: &crate::document_sets::Workspace,
+        id: Option<&str>,
+    ) -> Result<SharedState, (u16, String)> {
         let proj = match id {
             Some(id) => workspace.resolve(Some(id))?,
             None => workspace.files_project(),

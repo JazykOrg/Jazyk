@@ -551,7 +551,15 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
 
 // ---- handlers ----
 
+// Submission reads the workspace summary (every set's store and board) and the
+// control plane: off the runtime, like every other heavy read.
 pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
+    tokio::task::spawn_blocking(move || submit_sync(&st, body))
+        .await
+        .expect("job submission")
+}
+
+fn submit_sync(st: &SharedState, body: Value) -> Response {
     if body["kind"] == "compile" && st.proj().set_id.is_none() {
         let w = match crate::document_sets::Workspace::load(&st.root) {
             Ok(w) => w,
@@ -582,7 +590,7 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
                 .collect()
         };
         let id = st.jobs.submit(
-            &st,
+            st,
             JobKind::CompileSets {
                 set_ids: ids,
                 config_hash: w.hash,
@@ -672,7 +680,7 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
             )
         }
     };
-    let id = st.jobs.submit(&st, kind);
+    let id = st.jobs.submit(st, kind);
     (StatusCode::ACCEPTED, Json(json!({ "jobId": id }))).into_response()
 }
 

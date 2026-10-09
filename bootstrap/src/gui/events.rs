@@ -228,25 +228,24 @@ pub fn recompute_pending(st: &SharedState) {
 // Watch the store from outside any build: the lock marks builds starting and ending
 // (this process or any other), and each generation bump carries its journal entries.
 // The LSP watcher is the reference; this one emits events instead of stderr lines.
+// A plain thread: every step is a disk read, which has no place on the runtime.
 pub fn spawn_store_watcher(st: SharedState) {
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         let mut previous = std::collections::BTreeMap::new();
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
+            std::thread::sleep(std::time::Duration::from_secs(1));
             let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
                 continue;
             };
             previous.retain(|id, _| w.sets.iter().any(|s| &s.id == id));
-            for set in w.sets {
-                let Ok(scope) = st.scoped(Some(&set.id)) else {
+            for set in &w.sets {
+                let Ok(scope) = st.scoped_in(&w, Some(&set.id)) else {
                     continue;
                 };
                 let now = read_generation(&scope.out);
                 let locked = scope.out.join(".lock").vexists();
                 let (last, lock_seen) = previous
-                    .insert(set.id, (now, locked))
+                    .insert(set.id.clone(), (now, locked))
                     .unwrap_or((now, locked));
                 if locked != lock_seen {
                     scope.events.emit("store.lock", json!({"held":locked}));
@@ -270,7 +269,7 @@ pub fn spawn_store_watcher(st: SharedState) {
                 );
                 emit_goal_events(&scope, &entries);
                 emit_board_changed(&scope);
-                tokio::task::spawn_blocking(move || recompute_pending(&scope));
+                recompute_pending(&scope);
             }
         }
     });

@@ -198,7 +198,6 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         Err((code, e)) => return api::err(StatusCode::from_u16(code).unwrap(), e),
     };
     let route = routed.path.split('?').next().unwrap_or_default();
-    let workspace = crate::document_sets::Workspace::load(&st.root);
     let project_route = matches!(
         route,
         "/ping"
@@ -249,37 +248,51 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             Err(e) => api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         };
     }
-    let selector = if routed.selector.is_some() {
-        routed.selector.as_deref()
-    } else if project_route {
-        None
-    } else if let Ok(w) = &workspace {
-        if w.sets.len() == 1 {
-            Some(w.sets[0].id.as_str())
-        } else {
-            None
-        }
-    } else {
-        None
+    // The workspace and the scoped state both read disk (the configuration, the
+    // global LLM config): resolve them off the runtime, once per request.
+    let tolerant = matches!(
+        route,
+        "/ping" | "/settings" | "/project/files" | "/project/file"
+    );
+    let resolved = {
+        let st = st.clone();
+        let explicit = routed.selector.clone();
+        tokio::task::spawn_blocking(move || {
+            let workspace = crate::document_sets::Workspace::load(&st.root);
+            let selector: Option<String> = if explicit.is_some() {
+                explicit
+            } else if project_route {
+                None
+            } else if let Ok(w) = &workspace {
+                (w.sets.len() == 1).then(|| w.sets[0].id.clone())
+            } else {
+                None
+            };
+            if !project_route && selector.is_none() {
+                return Err((
+                    400u16,
+                    "this operation requires setId or a qualified graph reference".to_string(),
+                ));
+            }
+            let context = match &workspace {
+                Ok(w) => st.scoped_in(w, selector.as_deref()),
+                Err(e) => Err(e.clone()),
+            };
+            let context = match context {
+                Ok(c) => c,
+                Err(_) if tolerant => st.clone(),
+                Err(e) => return Err(e),
+            };
+            Ok((workspace, selector, context))
+        })
+        .await
+        .expect("request scope resolution")
     };
-    if !project_route && selector.is_none() {
-        return api::err(
-            StatusCode::BAD_REQUEST,
-            "this operation requires setId or a qualified graph reference",
-        );
-    }
-    let context = match st.scoped(selector) {
-        Ok(s) => s,
-        Err((code, e))
-            if !matches!(
-                route,
-                "/ping" | "/settings" | "/project/files" | "/project/file"
-            ) =>
-        {
-            return api::err(StatusCode::from_u16(code).unwrap(), e)
-        }
-        Err(_) => st.clone(),
+    let (workspace, selector, context) = match resolved {
+        Ok(r) => r,
+        Err((code, e)) => return api::err(StatusCode::from_u16(code).unwrap(), e),
     };
+    let selector = selector.as_deref();
     // The outer wildcard capture must not be appended to the inner route's captures.
     parts.extensions.clear();
     parts.uri = format!("/api{}", routed.path).parse().unwrap();
@@ -311,9 +324,15 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         Err(_) => return Response::from_parts(parts, axum::body::Body::from(bytes)),
     };
     if route == "/project" {
-        if let Ok(w) = &workspace {
-            value["sets"] = w.summary()["sets"].clone();
-            value["configHash"] = json!(w.hash);
+        if let Ok(w) = workspace {
+            // The summary loads every set's store and derives its board: off the
+            // runtime like every other heavy read.
+            let hash = w.hash.clone();
+            let sets = tokio::task::spawn_blocking(move || w.summary()["sets"].take())
+                .await
+                .expect("workspace summary");
+            value["sets"] = sets;
+            value["configHash"] = json!(hash);
         }
     }
     if let Some(id) = selector {

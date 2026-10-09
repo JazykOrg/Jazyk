@@ -235,6 +235,9 @@ pub struct Project {
     // When set (ad-hoc `jazyk compile <paths>` with no jazyk.toml), these files are used
     // directly instead of resolving the docs glob.
     pub explicit_files: Option<Vec<PathBuf>>,
+    // The files project of a workspace: one docs pattern list per document set. The
+    // documents are the union, walked when `doc_files` is asked, never at load.
+    pub set_docs: Option<Vec<Vec<String>>>,
 }
 
 impl Default for Project {
@@ -257,6 +260,7 @@ impl Default for Project {
             linting: Linting::default(),
             executors: Executors::default(),
             explicit_files: None,
+            set_docs: None,
         }
     }
 }
@@ -499,6 +503,13 @@ impl Project {
     pub fn doc_files(&self) -> Vec<PathBuf> {
         if let Some(files) = &self.explicit_files {
             return files.clone();
+        }
+        if let Some(sets) = &self.set_docs {
+            return crate::document_sets::files_under(&self.root)
+                .into_iter()
+                .filter(|f| sets.iter().any(|docs| crate::document_sets::included(docs, f)))
+                .map(|f| self.root.join(f))
+                .collect();
         }
         let mut patterns: Vec<String> = Vec::new();
         if let Some(rel) = self.deliverable_rel() {

@@ -379,7 +379,9 @@ are answered `cancelled`, then `session/cancel` goes out. The lease TTLs bound w
 dead agent can hold either way. The same timeout bounds the calls the host waits on
 synchronously: an agent that does not answer `initialize`, `session/new`, or
 `session/close` within it fails that call with a message naming the wait, instead of
-holding the build.
+holding the build. The session's own task on the host waits for the `session/close`
+answer under the same timeout and then drops the session, so a wedged agent holds no
+session on the host after the caller has moved on.
 
 A host process that dies would otherwise take every later session with it: session
 creation and prompts fail with `acp host is gone`. The runner treats that as the

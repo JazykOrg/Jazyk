@@ -563,14 +563,27 @@ async fn session_task(
             SessCmd::Close { reply } => {
                 // session/close is capability-gated; an agent without it answers
                 // method-not-found, and dropping our handle is all there is to do.
+                // The wait is bounded by the idle timeout, like the synchronous
+                // caller's: a wedged agent that never answers must not keep this
+                // task, and the session it owns, alive on the host.
                 let sid = session.session_id().clone();
-                let _ = session
+                let close = session
                     .connection()
                     .send_request(agent_client_protocol::schema::v1::CloseSessionRequest::new(
                         sid,
                     ))
-                    .block_task()
-                    .await;
+                    .block_task();
+                let answered = futures::select! {
+                    _ = close.fuse() => true,
+                    _ = FutureExt::fuse(async_io::Timer::after(idle)) => false,
+                };
+                if !answered {
+                    eprintln!(
+                        "[acp] session `{}` did not answer session/close within {}s; dropping it",
+                        session.session_id(),
+                        idle.as_secs()
+                    );
+                }
                 let _ = reply.send(());
                 break;
             }

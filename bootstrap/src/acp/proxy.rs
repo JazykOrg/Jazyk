@@ -109,7 +109,6 @@ impl ProxyState {
 
 pub fn run(opts: &crate::cli::Options) -> i32 {
     // An arbitrary folder can acquire its first document set through project tools.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let in_project = true;
     let (mut proj, llm, mut out) = crate::cli::resolve(&[], opts);
     if opts.set.is_none() {

@@ -1,4 +1,3 @@
-use crate::vfs::VPathExt;
 // The reconciler: compares the documents (desired state) against the graph (observed
 // state), derives the goal board, and runs sessions one batch at a time until no goal
 // is ready or the budget is spent. Then the deterministic tail: the checks, flip

@@ -3,7 +3,7 @@ use crate::vfs::VPathExt;
 // derived, never stored; every staleness flip is a hash comparison. Mirrors
 // docs/consumers/gen.md (the ledger, runners) and
 // docs/compiler/tools.md#verification-tools.
-use crate::gen::{artifact_path, hash_file, hash_files, GenSettings, Ledger, ReqRow};
+use crate::gen::{artifact_path, hash_file, GenSettings, Ledger, ReqRow};
 use crate::model::hash_hex;
 use crate::store::Store;
 use serde_json::{json, Value};

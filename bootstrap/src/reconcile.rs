@@ -2181,9 +2181,43 @@ pub fn compile_with(
     // record the compile release so manual mode gates nothing this run asked for.
     crate::control::release(proj, out, Some("compile"));
     let control = Control::load(proj, out);
-    crate::derive::record_ledger_stale(&mut store, &crate::gen::GenSettings::resolve(proj));
-    let mut board = Board::derive(&store, proj, &control);
-    absorb_derivation(&mut store, &board);
+    let run = run_sessions(proj, out, trace, max_sessions, runner, &mut store, &parsed, &control);
+    let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
+    report.goals = run.derived;
+    report.sessions = run.sessions;
+    report.applied = run.applied;
+    report
+}
+
+// What the session loop leaves for the tail: the goals the board derived when the
+// build opened, the sessions run, the mutations applied, the spend, and the goals
+// parked along the way.
+pub(crate) struct SessionsRun {
+    pub derived: usize,
+    pub sessions: u32,
+    pub applied: usize,
+    pub costs: Costs,
+    pub parked: Vec<Goal>,
+}
+
+// The session loop of a build: derive the board, run one session per batch, highest
+// ready tier first, until no batch is runnable or a budget is spent. The store is
+// synced and swept; the runner is whatever runs a batch (an ACP worker, the
+// in-process loop, a test's stub). Mirrors docs/compiler/compilation.md#a-build.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_sessions(
+    proj: &Project,
+    out: &Path,
+    trace: &Trace,
+    max_sessions: Option<usize>,
+    runner: &dyn crate::runner::SessionRunner,
+    store: &mut Store,
+    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    control: &Control,
+) -> SessionsRun {
+    crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
+    let mut board = Board::derive(store, proj, control);
+    absorb_derivation(store, &board);
     trace.event(TraceEvent::Board {
         label: "build".into(),
         goals: board.open_goals().len(),
@@ -2202,6 +2236,12 @@ pub fn compile_with(
     let mut parked: Vec<Goal> = Vec::new();
     let mut parked_ids: BTreeSet<String> = BTreeSet::new();
     let mut known: BTreeSet<String> = board.open_goals().iter().map(|g| g.id.clone()).collect();
+    // The reopen cycle count: the change each resolved goal was resolved under, and per
+    // goal id the change it keeps coming back with and how many times it has. A goal
+    // re-derived with the same change after its resolution is a cycle; the second one
+    // parks it. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    let mut resolved_changes: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let mut cycles: BTreeMap<String, (serde_json::Value, u32)> = BTreeMap::new();
     // The dead-endpoint breaker: consecutive failed sessions that spent no tokens.
     // Mirrors docs/compiler/reconciler.md#escalation.
     let mut dead_endpoint = 0usize;
@@ -2352,12 +2392,12 @@ pub fn compile_with(
             report.tokens,
             report.cached,
         );
-        reload(&mut store, out, &parsed);
-        sweep(&mut store, trace);
+        reload(store, out, parsed);
+        sweep(store, trace);
         let before = board;
-        crate::derive::record_ledger_stale(&mut store, &crate::gen::GenSettings::resolve(proj));
-        board = Board::derive(&store, proj, &control);
-        absorb_derivation(&mut store, &board);
+        crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
+        board = Board::derive(store, proj, control);
+        absorb_derivation(store, &board);
         let gen_after = crate::store::read_generation(out);
         let resolved_in_journal: BTreeMap<String, String> = goals::read_journal(out)
             .iter()
@@ -2403,6 +2443,9 @@ pub fn compile_with(
                 if !ids.is_empty() {
                     store.clear_resolved(&ids);
                 }
+                if let Some(g) = before.goal(id) {
+                    resolved_changes.insert(id.clone(), g.change.clone());
+                }
                 // Resolving a parked goal clears its entry with its record; the
                 // tail only adds and replaces. Mirrors docs/compiler/reconciler.md#parked-and-failed.
                 store.status.parked.retain(|p| p.id != *id);
@@ -2443,8 +2486,54 @@ pub fn compile_with(
             }
         }
         if !resolved_in_journal.is_empty() || !board.lapsed.is_empty() {
-            reload(&mut store, out, &parsed);
-            board = Board::derive(&store, proj, &control);
+            reload(store, out, parsed);
+            board = Board::derive(store, proj, control);
+        }
+        // A resolved goal back on the board with the change it was resolved under is a
+        // cycle: the commit recomputed the record behind it and a session would mark
+        // the same work done again. The second cycle parks it, as the retry rule
+        // parks the second attempt. A different change is new work under an old id
+        // and starts the count over. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+        for g in board.open_goals() {
+            let Some(change) = resolved_changes.remove(&g.id) else {
+                continue;
+            };
+            if change != g.change {
+                cycles.remove(&g.id);
+                continue;
+            }
+            let n = match cycles.get(&g.id) {
+                Some((c, n)) if *c == g.change => n + 1,
+                _ => 1,
+            };
+            cycles.insert(g.id.clone(), (g.change.clone(), n));
+            trace.event(TraceEvent::Goal {
+                label: batch.id.clone(),
+                goal: g.id.clone(),
+                event: "reopened".into(),
+                cause: None,
+                justification: None,
+                reason: Some(format!(
+                    "re-derived with the same change after its resolution ({} of {})",
+                    n,
+                    crate::limits::REOPEN_CYCLES
+                )),
+            });
+            if n >= crate::limits::REOPEN_CYCLES && !parked_ids.contains(&g.id) {
+                parked_ids.insert(g.id.clone());
+                parked.push(g.clone());
+                trace.event(TraceEvent::Goal {
+                    label: batch.id.clone(),
+                    goal: g.id.clone(),
+                    event: "parked".into(),
+                    cause: None,
+                    justification: None,
+                    reason: Some(format!(
+                        "reopened-after-resolve: resolved and re-derived with the same change {} times in this build",
+                        n
+                    )),
+                });
+            }
         }
         let opened: Vec<OpenedGoal> = board
             .open_goals()
@@ -2490,11 +2579,13 @@ pub fn compile_with(
         });
     }
 
-    let mut report = finalize(&mut store, proj, parked, &costs, trace);
-    report.goals = derived;
-    report.sessions = sessions;
-    report.applied = applied;
-    report
+    SessionsRun {
+        derived,
+        sessions,
+        applied,
+        costs,
+        parked,
+    }
 }
 
 // The deterministic sweep (garbage collection and both settles), traced. Every
@@ -5361,5 +5452,193 @@ mod tests {
                 "g:review-entity:ent:ordering".to_string(),
             ]
         );
+    }
+
+    // A record the commit recomputes while its condition holds re-opens the goal a
+    // session just resolved: the stub session marks every batch done and changes
+    // nothing, so each fan-out goal comes back after the other's commit, resolved
+    // and re-derived with the same change. The second cycle parks it, well under
+    // the build cap. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    #[test]
+    fn a_goal_resolved_and_reopened_with_the_same_change_parks_at_its_second_cycle() {
+        use crate::board::tests::{control_auto, project_for};
+        use crate::limits::{CHILDREN_PER_ENTITY_HARD, CHILDREN_PER_ENTITY_SOFT, REOPEN_CYCLES};
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        use crate::store::{Commit, Op, CHANGE_THRESHOLD_CROSSED};
+        use std::sync::{Arc, Mutex};
+
+        // Marks every goal of its batch done and stages nothing.
+        struct DoneRunner {
+            out: std::path::PathBuf,
+        }
+        impl SessionRunner for DoneRunner {
+            fn agent_name(&self) -> String {
+                "done-stub".into()
+            }
+            fn set_build_token(&self, _token: Option<String>) {}
+            fn run_item(&self, batch: &BatchRun, _trace: &Trace) -> SessionReport {
+                let mut s = Store::load(&self.out);
+                let mut commit = Commit::session(batch.goal_ids(), 1, Some(10));
+                commit.resolved = batch
+                    .goals
+                    .iter()
+                    .map(|g| Resolved {
+                        goal: g.id.clone(),
+                        justification: "the level reads well as it stands".into(),
+                        evidence: Value::Null,
+                    })
+                    .collect();
+                let report = s.apply(vec![], &commit);
+                assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+                SessionReport {
+                    applied: 0,
+                    rounds: 1,
+                    tokens: 10,
+                    cached: 0,
+                    failed: None,
+                    resolved: batch.goal_ids(),
+                    stopped: None,
+                }
+            }
+            fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
+                Err("stub".into())
+            }
+            fn ask_traced(
+                &self,
+                _s: &str,
+                _u: &str,
+                _l: &str,
+                _st: &str,
+                _t: Option<&Trace>,
+            ) -> Result<String, String> {
+                Err("stub".into())
+            }
+        }
+
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-reopen-cycle-test-{}",
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        // Two levels over the fan-out limit: the backend past the hard threshold (a
+        // mandatory goal), the frontend past the soft one (optional), so they form
+        // separate GC batches and alternate. Decreed children stay out of the sweep.
+        let decree = Provenance::Decree {
+            author: "owner".into(),
+            at: "2026-10-09".into(),
+            note: None,
+        };
+        let mut ops = Vec::new();
+        for (parent, name, count) in [
+            ("ent:backend", "Backend", CHILDREN_PER_ENTITY_HARD + 1),
+            ("ent:frontend", "Frontend", CHILDREN_PER_ENTITY_SOFT + 1),
+        ] {
+            ops.push(Op::CreateEntity {
+                id: parent.into(),
+                entity: Entity {
+                    name: name.into(),
+                    stereotype: Some("system".into()),
+                    provenance: Some(decree.clone()),
+                    ..Default::default()
+                },
+            });
+            for i in 0..count {
+                ops.push(Op::CreateEntity {
+                    id: format!("{}-part-{}", parent, i),
+                    entity: Entity {
+                        name: format!("{} Part {}", name, i),
+                        parent: Some(parent.into()),
+                        provenance: Some(decree.clone()),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+        let report = s.apply(ops, &Commit::session(Vec::new(), 1, None));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert!(s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:backend"));
+        assert!(s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:frontend"));
+        // No model ingests here: only the fan-out records stand.
+        let ingest: Vec<String> = s
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.kind != CHANGE_THRESHOLD_CROSSED)
+            .map(|c| c.id.clone())
+            .collect();
+        s.clear_changes(&ingest);
+
+        let events: Arc<Mutex<Vec<(String, String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            Arc::new(move |ev: &TraceEvent| {
+                if let TraceEvent::Goal { goal, event, reason, .. } = ev {
+                    sink.lock().unwrap().push((
+                        goal.clone(),
+                        event.clone(),
+                        reason.clone().unwrap_or_default(),
+                    ));
+                }
+            }),
+            Default::default(),
+        );
+        let proj = project_for(&s);
+        let control = control_auto();
+        let runner = DoneRunner { out: out.clone() };
+        let parsed = BTreeMap::new();
+        let run = run_sessions(&proj, &out, &trace, None, &runner, &mut s, &parsed, &control);
+
+        // Both goals derived; the cap would allow 3 x 2 + 8 sessions. The loop ran
+        // backend, frontend, backend, frontend and stopped: the backend's goal parked
+        // at its second return, the frontend's was resolved and did not come back.
+        assert_eq!(run.derived, 2);
+        let cap = crate::limits::BUILD_SESSION_FACTOR * 2 + crate::limits::BUILD_SESSION_FLOOR;
+        assert_eq!(run.sessions, 4, "against a cap of {}", cap);
+        assert!(run.sessions as usize * 2 < cap);
+        // The backend's goal was resolved, came back with the same change after the
+        // frontend's commit, was resolved again, came back again: parked at the
+        // second cycle, the reason naming the cycle.
+        let backend = "g:abstract-entity:ent:backend";
+        let parked: Vec<&Goal> = run.parked.iter().filter(|g| g.id == backend).collect();
+        assert_eq!(parked.len(), 1, "{:?}", run.parked);
+        assert!(run.parked.iter().all(|g| g.id == backend), "{:?}", run.parked);
+        let ev = events.lock().unwrap();
+        let park = ev
+            .iter()
+            .find(|(g, e, _)| g == backend && e == "parked")
+            .expect("a parked event for the backend's goal");
+        assert!(park.2.starts_with("reopened-after-resolve"), "{}", park.2);
+        assert!(park.2.contains(&format!("{} times", REOPEN_CYCLES)), "{}", park.2);
+        let reopened = ev
+            .iter()
+            .filter(|(g, e, _)| g == backend && e == "reopened")
+            .count();
+        assert_eq!(reopened as u32, REOPEN_CYCLES);
+        let resolved = ev
+            .iter()
+            .filter(|(g, e, _)| g == backend && e == "resolved")
+            .count();
+        assert_eq!(resolved as u32, REOPEN_CYCLES);
+        drop(ev);
+
+        // The tail persists the parked goal whole in status.yaml, like any parked
+        // goal; the next derivation resumes it parked and explain shows it so.
+        let _ = finalize(&mut s, &proj, run.parked, &run.costs, &trace);
+        let status = Store::load(&out).status;
+        assert!(
+            status.parked.iter().any(|p| p.id == backend),
+            "{:?}",
+            status.parked
+        );
+        let board = Board::derive(&s, &proj, &control);
+        let text = board.explain(&s, backend).expect("explain");
+        assert!(text.contains("parked"), "{}", text);
+        crate::vfs::remove_dir_all(&out).ok();
     }
 }

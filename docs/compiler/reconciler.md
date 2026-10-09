@@ -723,6 +723,19 @@ it.
   their records, resume first in the next build, and count as open in the verdict
   (`incomplete`, with an `incomplete-build` diagnostic). Unfinished work is never
   silent.
+- Parked also means "the same work came back". A record the commit recomputes
+  deterministically (a `threshold-crossed` count still over its limit, a `ledger-stale`
+  row the ledger still disagrees on) is written again when the measured condition still
+  holds, so a goal a session just resolved derives again under the same id with the
+  same `change`. The build counts these cycles per goal id and `change` across its
+  sessions: a goal resolved and re-opened with the same `change` for the second time
+  in one build parks, the way a goal left open after its retry parks, and the trace
+  names the cycle (`reopened-after-resolve`, with the count). A goal re-opened with a
+  different `change` is new work under an old id, not a cycle: its count starts over.
+  The count is the `REOPEN_CYCLES` constant of the registry
+  ([budgets](./graph.md#budgets-and-thresholds)), two. Without it only the build cap
+  ends the loop (a session marks done, the board re-opens the identical goal, repeat),
+  and one goal spends the whole build's budget.
 - Failed means the session said so: `mark_goal_failed({goal, reason})` is always
   available, because a goal that cannot be accomplished (documents too deeply
   contradictory, a target that makes no sense any more) must be failable, or the board
@@ -783,8 +796,9 @@ stored: the journal is the history, and tombstone redirects mark deletions
   under the second, or a freeform ruling. The goal is blocked on that answer the same
   way, never batched (a novel's `conform-instance` goal behind a reparent flip was
   once batched, resolved, and re-derived six times in one build with no mutation
-  between). Answering it clears the parked entry and the next build resumes the
-  chosen direction.
+  between; the reopen cycle count in [parked and failed](#parked-and-failed) parks
+  such a goal at its second cycle). Answering it clears the parked entry and the next
+  build resumes the chosen direction.
 
 Flip detection and the budgets bound the alternation between the classes and the
 alternation of a child between parents. With them,

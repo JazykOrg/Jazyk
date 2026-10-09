@@ -743,6 +743,10 @@ harness kills it and records exit `124`; `JAZYK_COMMAND_TIMEOUT` overrides it pe
 The criteria batch cap is one too: `CRITERIA_GOALS_PER_BATCH` is 4, the most
 `derive-criteria` goals one batch packs ([batching](./reconciler.md#batching)).
 
+The reopen cycle count is one too: `REOPEN_CYCLES` is 2, the times a goal may be
+resolved and re-opened with the same `change` in one build before it parks
+([parked and failed](./reconciler.md#parked-and-failed)).
+
 The pair degree cap is a registry constant of the same kind: `pairs-per-requirement`
 is 8, the most open `rejudge-pair` goals one requirement takes part in at once, the
 rest waiting by score ([pairs](./reconciler.md#pairs)). It has no soft and hard

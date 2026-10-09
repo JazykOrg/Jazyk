@@ -541,7 +541,8 @@ mod memory {
     }
 
     // Empty the tree, so a project seeded after another starts from nothing rather
-    // than over the first one's files.
+    // than over the first one's files. The browser engine's reset calls it.
+    #[cfg(target_arch = "wasm32")]
     pub fn reset() {
         FILES.with(|f| f.borrow_mut().clear());
         DIRS.with(|d| d.borrow_mut().clear());

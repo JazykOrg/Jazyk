@@ -576,7 +576,7 @@ fn entity_document_rank_with(
         .collect()
 }
 
-fn in_document_order(ids: &mut Vec<String>, rank: &BTreeMap<String, usize>) {
+fn in_document_order(ids: &mut [String], rank: &BTreeMap<String, usize>) {
     ids.sort_by_key(|id| (rank.get(id).copied().unwrap_or(usize::MAX), id.clone()));
 }
 

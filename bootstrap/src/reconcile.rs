@@ -45,6 +45,9 @@ impl BuildReport {
 // One deterministic finding: rule, subjects, severity, message, and the question the
 // finding carries when its resolution is enumerable. Most checks name one subject;
 // nondeterministic-transition names the pair.
+// Every matched document parsed: path to its content hash and section tree.
+pub type ParsedDocs = BTreeMap<String, (String, BTreeMap<String, Section>)>;
+
 pub type Finding = (
     String,
     Vec<String>,
@@ -75,12 +78,7 @@ fn doc_path(proj: &Project, f: &std::path::Path) -> String {
 // A matched file no handler claims, or one its handler cannot read, contributes no
 // sections: the checks file `unsupported-format` or `parse-error` on it
 // (`format_checks`). Mirrors docs/compiler/parsing.md#format-handlers.
-pub fn parse_all(
-    proj: &Project,
-) -> (
-    BTreeMap<String, (String, BTreeMap<String, Section>)>,
-    BTreeMap<String, Vec<String>>,
-) {
+pub fn parse_all(proj: &Project) -> (ParsedDocs, BTreeMap<String, Vec<String>>) {
     let mut parsed = BTreeMap::new();
     let mut links = BTreeMap::new();
     for f in proj.doc_files() {
@@ -2149,7 +2147,7 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
 fn reload(
     store: &mut Store,
     out: &Path,
-    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    parsed: &ParsedDocs,
 ) {
     *store = Store::load(out);
     store.sync_docs(parsed);
@@ -2250,7 +2248,7 @@ pub(crate) fn run_sessions(
     max_sessions: Option<usize>,
     runner: &dyn crate::runner::SessionRunner,
     store: &mut Store,
-    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    parsed: &ParsedDocs,
     control: &Control,
 ) -> SessionsRun {
     crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
@@ -2839,11 +2837,10 @@ pub fn finalize(
         optional: v.optional as usize,
         errors,
         warnings,
-        coverage_pct: if total_secs == 0 {
-            100
-        } else {
-            (covered_secs * 100 / total_secs) as u32
-        },
+        coverage_pct: (covered_secs * 100)
+            .checked_div(total_secs)
+            .map(|pct| pct as u32)
+            .unwrap_or(100),
         tokens: s.status.costs.tokens,
     }
 }
@@ -3539,8 +3536,10 @@ mod tests {
     #[test]
     fn unratified_flags_an_untouched_decompiled_draft_and_clears_on_edit() {
         let dir = journal_dir();
-        let mut s = Store::default();
-        s.out = dir.clone();
+        let mut s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
         let drafted = "# Cart\nThe Cart holds items.\n";
         seed_doc(&mut s, "cart.md", drafted);
         seed_doc(&mut s, "shop.md", "# Shop\nThe Shop sells.\n");
@@ -3969,8 +3968,10 @@ mod tests {
         assert!(missing[0].1.iter().any(|x| x == "req:a-1"));
         let restates = rules_for(&f, "criterion-restates");
         assert_eq!(restates.len(), 1, "{:?}", restates);
-        let mut p = Project::default();
-        p.gen_deliverable = Some("product".into());
+        let p = Project {
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
         let f = checks(&s, &p);
         assert_eq!(rules_for(&f, "criterion-missing")[0].2, "warning");
     }
@@ -4760,8 +4761,10 @@ mod tests {
     #[test]
     fn ripple_walks_opened_goals_to_their_resolvers() {
         let dir = journal_dir();
-        let mut s = Store::default();
-        s.out = dir.clone();
+        let s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
         let edit = JournalEntry {
             build: "g87".into(),
             generation: 87,
@@ -5414,7 +5417,7 @@ mod tests {
             actions
         );
         assert!(s.gc().is_empty());
-        assert!(s.graph.entities.get("ent:platform").is_none());
+        assert!(!s.graph.entities.contains_key("ent:platform"));
         assert_eq!(s.resolve_id("ent:platform"), "ent:backend");
         assert_eq!(
             s.graph.entities["ent:cache"].parent.as_deref(),
@@ -5431,7 +5434,7 @@ mod tests {
             top.members,
             vec!["ent:cache", "ent:fulfillment", "ent:ordering"]
         );
-        assert!(s.graph.views.get("view:class/platform").is_none());
+        assert!(!s.graph.views.contains_key("view:class/platform"));
         // Anything holding the dissolved id resolves through the redirect to the
         // parent's level.
         assert_eq!(

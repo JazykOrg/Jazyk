@@ -1359,14 +1359,14 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     let implementing = |f: &String| {
         !artifacts.contains(f) && !outputs.contains(f) && gs.deliverable.join(f).vis_file()
     };
-    if !e.files.iter().any(|f| implementing(f)) {
+    if !e.files.iter().any(&implementing) {
         let missing: Vec<String> = reqs_of_sorted(store, &id)
             .into_iter()
             .filter(|rid| {
                 !ledger
                     .requirements
                     .get(rid)
-                    .is_some_and(|row| row.files.iter().any(|f| implementing(f)))
+                    .is_some_and(|row| row.files.iter().any(&implementing))
             })
             .collect();
         if !missing.is_empty() {
@@ -1906,11 +1906,11 @@ pub fn mark(
             .into_iter()
             .filter(|rid| {
                 let named = match rows.iter().find(|(r, _, _)| r == rid) {
-                    Some((_, _, fs)) => fs.iter().any(|f| implementing(f)),
+                    Some((_, _, fs)) => fs.iter().any(&implementing),
                     None => pre
                         .requirements
                         .get(rid)
-                        .is_some_and(|row| row.files.iter().any(|f| implementing(f))),
+                        .is_some_and(|row| row.files.iter().any(&implementing)),
                 };
                 !named
             })
@@ -2979,13 +2979,15 @@ mod tests {
             exit_code: None,
             evidence: None,
         };
-        let mut ledger = Ledger::default();
-        ledger.medium = Some(Medium {
-            form: "Python package".into(),
-            produced: "written".into(),
-            toolchain: "python3 with pytest".into(),
-            artifact: String::new(),
-        });
+        let mut ledger = Ledger {
+            medium: Some(Medium {
+                form: "Python package".into(),
+                produced: "written".into(),
+                toolchain: "python3 with pytest".into(),
+                artifact: String::new(),
+            }),
+            ..Default::default()
+        };
         assert!(medium_divergence(&ledger).is_none(), "no rows, no verdict");
         ledger
             .requirements
@@ -3016,13 +3018,15 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(&out).ok();
-        let mut ledger = Ledger::default();
-        ledger.medium = Some(Medium {
-            form: "Python package".into(),
-            produced: "written".into(),
-            toolchain: "python3 with pytest".into(),
-            artifact: String::new(),
-        });
+        let ledger = Ledger {
+            medium: Some(Medium {
+                form: "Python package".into(),
+                produced: "written".into(),
+                toolchain: "python3 with pytest".into(),
+                artifact: String::new(),
+            }),
+            ..Default::default()
+        };
         ledger.save(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
@@ -4529,7 +4533,7 @@ pub fn gen_one(
                         "product retry",
                     )
                     .map_err(|e| format!("product retry: {}", e))?;
-                let (p, b) = parse_file_reply(&reply2).map(|(p, b)| (p, b))?;
+                let (p, b) = parse_file_reply(&reply2)?;
                 if let Some(o) = owner_of(&p) {
                     return Err(format!("product path `{}` belongs to entity `{}`", p, o));
                 }
@@ -4539,7 +4543,7 @@ pub fn gen_one(
             product_rel = path;
             code = body;
         } else {
-            code.push_str("\n");
+            code.push('\n');
             code.push_str(&strip_fences(&reply));
         }
         code.push('\n');
@@ -5013,7 +5017,7 @@ pub fn gen_one(
         });
     for p in extra_written {
         let n = norm_rel(&p);
-        let deliverable_wide = declared_support.iter().any(|d| *d == n)
+        let deliverable_wide = declared_support.contains(&n)
             || build_entry_path.as_deref() == Some(n.as_str());
         if deliverable_wide {
             support_files.push(p);

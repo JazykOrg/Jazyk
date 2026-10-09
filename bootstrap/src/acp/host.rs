@@ -45,7 +45,7 @@ pub enum McpEntry {
 }
 
 impl McpEntry {
-    fn to_protocol(self) -> McpServer {
+    fn into_protocol(self) -> McpServer {
         match self {
             McpEntry::Stdio(s) => {
                 let mut stdio = McpServerStdio::new(s.name, s.command).args(s.args);
@@ -438,7 +438,7 @@ async fn main_loop(
                 reply,
             } => {
                 let servers: Vec<McpServer> =
-                    mcp.into_iter().map(McpEntry::to_protocol).collect();
+                    mcp.into_iter().map(McpEntry::into_protocol).collect();
                 let request = NewSessionRequest::new(&cwd).mcp_servers(servers);
                 open_seq += 1;
                 let ticket = open_seq;
@@ -599,6 +599,9 @@ async fn session_task(
                     continue;
                 }
                 let mut idled = false;
+                // One event lives on the stack per loop turn; boxing the message would
+                // allocate once per update for nothing.
+                #[allow(clippy::large_enum_variant)]
                 enum Ev {
                     Msg(Result<SessionMessage, agent_client_protocol::Error>),
                     Cmd(Option<SessCmd>),
@@ -831,24 +834,22 @@ mod tests {
                     let mut buf = Vec::new();
                     let mut tmp = [0u8; 4096];
                     let mut content_length = 0usize;
-                    let mut header_end = 0usize;
-                    loop {
+                    let header_end = loop {
                         let n = match s.read(&mut tmp) {
                             Ok(0) | Err(_) => return,
                             Ok(n) => n,
                         };
                         buf.extend_from_slice(&tmp[..n]);
                         if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                            header_end = pos + 4;
                             let headers = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
                             for line in headers.lines() {
                                 if let Some(v) = line.strip_prefix("content-length:") {
                                     content_length = v.trim().parse().unwrap_or(0);
                                 }
                             }
-                            break;
+                            break pos + 4;
                         }
-                    }
+                    };
                     while buf.len() < header_end + content_length {
                         let n = match s.read(&mut tmp) {
                             Ok(0) | Err(_) => return,

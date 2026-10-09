@@ -2110,7 +2110,6 @@ fn locality_keys(store: &Store, g: &Goal) -> Vec<String> {
         "generate" => own.push(format!("ent {}", crate::gen::group_root(store, &g.target))),
         _ => {}
     }
-    drop(entity_keys);
     // The kind's own key labels the locality; the entity keys join it.
     own.extend(keys);
     if own.is_empty() {

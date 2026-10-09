@@ -1105,8 +1105,10 @@ mod tests {
         .unwrap();
         assert_eq!(v["status"], "verified");
         // The implementing file is claimed; the unclaimed report excludes it.
-        let mut proj = crate::project::Project::default();
-        proj.root = s.out.clone();
+        let proj = crate::project::Project {
+            root: s.out.clone(),
+            ..Default::default()
+        };
         let un = unclaimed(&proj, &s, &gs);
         assert!(
             !un.contains(&"shop.sh".to_string()),
@@ -1127,13 +1129,15 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        let mut ledger = Ledger::default();
-        ledger.medium = Some(crate::gen::Medium {
-            form: "Python package".into(),
-            produced: "written".into(),
-            toolchain: "python3 with pytest".into(),
-            artifact: String::new(),
-        });
+        let ledger = Ledger {
+            medium: Some(crate::gen::Medium {
+                form: "Python package".into(),
+                produced: "written".into(),
+                toolchain: "python3 with pytest".into(),
+                artifact: String::new(),
+            }),
+            ..Default::default()
+        };
         ledger.save(&s.out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
@@ -1282,8 +1286,10 @@ mod tests {
         };
         crate::vfs::create_dir_all(&gs.deliverable).unwrap();
         crate::vfs::write(gs.deliverable.join("orphan.sh"), "echo lonely\n").unwrap();
-        let mut proj = crate::project::Project::default();
-        proj.root = s.out.clone();
+        let proj = crate::project::Project {
+            root: s.out.clone(),
+            ..Default::default()
+        };
         let un = unclaimed(&proj, &s, &gs);
         assert!(un.contains(&"orphan.sh".to_string()), "{:?}", un);
         // A built medium's artifact is made, not written: never unclaimed.

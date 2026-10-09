@@ -240,7 +240,7 @@ pub fn pending(
 pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap<String, Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = std::collections::BTreeMap::new();
-    for (rid, _r) in &store.graph.requirements {
+    for rid in store.graph.requirements.keys() {
         let entry = match ledger.requirements.get(rid) {
             Some(row) => {
                 let (status, reason) = status_of(store, rid, row, gs);

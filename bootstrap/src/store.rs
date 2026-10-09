@@ -5414,7 +5414,7 @@ impl Store {
     // Mirrors docs/compiler/reconciler.md#dirty-set.
     pub fn sync_docs(
         &mut self,
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
     ) -> Vec<DirtyDoc> {
         self.sync_docs_inner(parsed, true)
     }
@@ -5428,14 +5428,14 @@ impl Store {
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn sync_docs_in_memory(
         &mut self,
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
     ) -> Vec<DirtyDoc> {
         self.sync_docs_inner(parsed, false)
     }
 
     fn sync_docs_inner(
         &mut self,
-        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        parsed: &crate::reconcile::ParsedDocs,
         persist: bool,
     ) -> Vec<DirtyDoc> {
         use crate::align::Full;
@@ -6196,13 +6196,7 @@ impl Store {
     // A run that changed anything is a `checks` generation of its own.
     pub fn reconcile_check_diags(
         &mut self,
-        findings: Vec<(
-            String,
-            Vec<String>,
-            String,
-            String,
-            Option<crate::model::DiagnosticPrompt>,
-        )>,
+        findings: Vec<crate::reconcile::Finding>,
     ) {
         let _flock = FileLock::acquire(&self.out);
         if self.refuse("checks").is_some() {

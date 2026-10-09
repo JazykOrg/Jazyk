@@ -1524,11 +1524,7 @@ pub(crate) fn status_report(
             }
         }
     }
-    let pct = if total == 0 {
-        100
-    } else {
-        covered * 100 / total
-    };
+    let pct = (covered * 100).checked_div(total).unwrap_or(100);
     let mut by_sev: std::collections::BTreeMap<&str, usize> = Default::default();
     for d in store.graph.diagnostics.values() {
         if d.lifecycle == "open" && d.triage.as_deref() != Some("suppressed") {
@@ -1544,11 +1540,9 @@ pub(crate) fn status_report(
             .iter()
             .max_by_key(|(_, l)| (l.tokens, l.sessions))
             .map(|(kind, l)| {
-                let share = if c.tokens > 0 {
-                    l.tokens * 100 / c.tokens
-                } else {
-                    l.sessions * 100 / c.sessions.max(1)
-                };
+                let share = (l.tokens * 100)
+                    .checked_div(c.tokens)
+                    .unwrap_or_else(|| l.sessions * 100 / c.sessions.max(1));
                 json!({"kind": kind, "share": share})
             });
         json!({"sessions": c.sessions, "tokens": c.tokens, "top": top})
@@ -2568,8 +2562,10 @@ mod tests {
         let env = |name: &str| (name == "JAZYK_MODEL").then(|| "env-model".to_string());
         let r = resolve_llm(&Options::default(), &proj, &global, env);
         assert_eq!(r.model, "env-model");
-        let mut opts = Options::default();
-        opts.model = Some("flag-model".to_string());
+        let opts = Options {
+            model: Some("flag-model".to_string()),
+            ..Default::default()
+        };
         let r = resolve_llm(&opts, &proj, &global, env);
         assert_eq!(r.model, "flag-model");
 
@@ -2836,8 +2832,10 @@ mod tests {
             )
             .unwrap();
         }
-        let mut store = Store::default();
-        store.out = dir.clone();
+        let store = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
 
         let text = ripple_text_for(&store, Some("g1"), false).unwrap();
         assert!(

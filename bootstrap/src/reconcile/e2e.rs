@@ -24,20 +24,93 @@ pub(crate) struct Call {
     pub reply: Value,
 }
 
-// A domain term the script extracts: the entity's name and its stereotype. The
-// script references a term wherever a sentence names it; "the system" is the «system».
-struct Term {
+// A domain term the script extracts: the entity's name, its stereotype, and the parent
+// the fixture's sentences state for it (by name), passed to upsert_entity so the
+// containment the documents state lands at extraction and the level counts are the
+// documents'. The script references a term wherever a sentence names every word of
+// it; "the system" is the «system».
+pub(crate) struct Term {
     name: &'static str,
     stereotype: Option<&'static str>,
+    parent: Option<&'static str>,
+}
+
+const fn term(name: &'static str, stereotype: Option<&'static str>) -> Term {
+    Term { name, stereotype, parent: None }
 }
 
 const F1_TERMS: [Term; 5] = [
-    Term { name: "Shop", stereotype: Some("system") },
-    Term { name: "Customer", stereotype: Some("actor") },
-    Term { name: "Order", stereotype: None },
-    Term { name: "Product", stereotype: None },
-    Term { name: "Catalog", stereotype: None },
+    term("Shop", Some("system")),
+    term("Customer", Some("actor")),
+    term("Order", None),
+    term("Product", None),
+    term("Catalog", None),
 ];
+
+// The e2e-gc fixture's terms (bootstrap/example/e2e-gc/EXPECTED.md): a «system» with
+// sixteen services, a Data Layer with six stores, and a lookalike pair. The parent
+// comes first in the list and in every sentence that names a child, so it exists when
+// the child is created.
+const fn service(name: &'static str) -> Term {
+    Term { name, stereotype: Some("service"), parent: Some("Platform") }
+}
+
+const fn store(name: &'static str) -> Term {
+    Term { name, stereotype: None, parent: Some("Data Layer") }
+}
+
+const GC_TERMS: [Term; 25] = [
+    term("Platform", Some("system")),
+    term("Data Layer", None),
+    term("Order Audit Log", None),
+    term("Order Audit Trail", None),
+    service("Auth"),
+    service("Catalog"),
+    service("Search"),
+    service("Cart"),
+    service("Checkout"),
+    service("Pricing"),
+    service("Promotion"),
+    service("Review"),
+    service("Billing"),
+    service("Inventory"),
+    service("Shipping"),
+    service("Notification"),
+    service("Analytics"),
+    service("Reporting"),
+    service("Support"),
+    service("Fraud"),
+    store("User Store"),
+    store("Product Store"),
+    store("Order Store"),
+    store("Payment Store"),
+    store("Session Cache"),
+];
+
+// One derived requirement the script stages while reconciling a section, in place of
+// a quote: the ratification path's input.
+struct Derivation {
+    section: String,
+    statement: String,
+    from: Vec<&'static str>,
+}
+
+// Batches the script fails without touching the serving, the way a session that ran
+// out of rounds does: `remaining` failures on the first batch holding a goal of
+// `kind`, then that batch alone (its goals are remembered on the first failure).
+struct FailPlan {
+    kind: String,
+    remaining: u32,
+    goals: Option<Vec<String>>,
+}
+
+// The board as the runner derived it when a batch started: the goals with their
+// class, mandatory flag, and state, and each goal's `explain` text.
+pub(crate) struct BoardSnapshot {
+    pub batch: String,
+    pub goals: Vec<Goal>,
+    pub explain: BTreeMap<String, String>,
+}
 
 // A runner that resolves every goal of a batch through the serving's tools with the
 // minimal work each gate accepts, and panics on the first refusal: a bounced call is
@@ -45,8 +118,16 @@ const F1_TERMS: [Term; 5] = [
 pub(crate) struct ScriptedRunner {
     project: Project,
     out: PathBuf,
+    terms: &'static [Term],
+    // Whether extraction declares the edge of a multi-entity sentence in the same
+    // call (no `edges-missing` record, no declare-edges goal), as the extraction skill
+    // asks, or leaves it to the declare-edges net.
+    extract_edges: bool,
     token: Mutex<Option<String>>,
+    derivation: Mutex<Option<Derivation>>,
+    fail: Mutex<Option<FailPlan>>,
     pub calls: Arc<Mutex<Vec<Call>>>,
+    pub boards: Arc<Mutex<Vec<BoardSnapshot>>>,
 }
 
 fn str_list(v: &Value) -> Vec<String> {
@@ -94,18 +175,18 @@ fn stem(w: &str) -> String {
     }
 }
 
-fn terms_in(sentence: &str) -> Vec<&'static Term> {
+fn terms_in<'a>(terms: &'a [Term], sentence: &str) -> Vec<&'a Term> {
     let stems: BTreeSet<String> = sentence
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(stem)
         .collect();
-    let mut out: Vec<&Term> = F1_TERMS
+    let mut out: Vec<&Term> = terms
         .iter()
-        .filter(|t| stems.contains(&stem(t.name)))
+        .filter(|t| t.name.split(' ').all(|w| stems.contains(&stem(w))))
         .collect();
     if sentence.to_lowercase().contains("the system") {
-        if let Some(sys) = F1_TERMS.iter().find(|t| t.stereotype == Some("system")) {
+        if let Some(sys) = terms.iter().find(|t| t.stereotype == Some("system")) {
             if !out.iter().any(|t| t.name == sys.name) {
                 out.push(sys);
             }
@@ -137,16 +218,95 @@ fn facet_of(sentence: &str) -> (&'static str, &'static str) {
 
 impl ScriptedRunner {
     pub(crate) fn new(project: &Project) -> ScriptedRunner {
+        Self::with_terms(project, &F1_TERMS, false)
+    }
+
+    pub(crate) fn with_terms(
+        project: &Project,
+        terms: &'static [Term],
+        extract_edges: bool,
+    ) -> ScriptedRunner {
         ScriptedRunner {
             project: project.clone(),
             out: project.out.clone(),
+            terms,
+            extract_edges,
             token: Mutex::new(None),
+            derivation: Mutex::new(None),
+            fail: Mutex::new(None),
             calls: Default::default(),
+            boards: Default::default(),
         }
+    }
+
+    // While reconciling `section`, also stage `statement` as a derived requirement
+    // about the named terms (once).
+    pub(crate) fn derive_in(&self, section: &str, statement: &str, from: &[&'static str]) {
+        *self.derivation.lock().unwrap() = Some(Derivation {
+            section: section.to_string(),
+            statement: statement.to_string(),
+            from: from.to_vec(),
+        });
+    }
+
+    // Fail the first batch holding a goal of `kind` this many times before working it.
+    pub(crate) fn fail_batches_of(&self, kind: &str, times: u32) {
+        *self.fail.lock().unwrap() = Some(FailPlan {
+            kind: kind.to_string(),
+            remaining: times,
+            goals: None,
+        });
     }
 
     pub(crate) fn calls(&self) -> Vec<Call> {
         self.calls.lock().unwrap().clone()
+    }
+
+    pub(crate) fn boards(&self) -> std::sync::MutexGuard<'_, Vec<BoardSnapshot>> {
+        self.boards.lock().unwrap()
+    }
+
+    // The scripted failure a batch meets, when the plan names it.
+    fn scripted_failure(&self, batch: &BatchRun) -> Option<String> {
+        let mut plan = self.fail.lock().unwrap();
+        let p = plan.as_mut()?;
+        if p.remaining == 0 {
+            return None;
+        }
+        let hit = match &p.goals {
+            Some(ids) => batch.goals.iter().any(|g| ids.contains(&g.id)),
+            None => batch.goals.iter().any(|g| g.kind == p.kind),
+        };
+        if !hit {
+            return None;
+        }
+        if p.goals.is_none() {
+            p.goals = Some(batch.goal_ids());
+        }
+        p.remaining -= 1;
+        Some(format!(
+            "scripted: the session ran out of rounds on {} ({} more to go)",
+            batch.id, p.remaining
+        ))
+    }
+
+    // The board as a session would find it when the batch starts, kept for assertions
+    // on class and readiness mid-build; the GC goals carry their `explain` text.
+    fn snapshot_board(&self, batch: &BatchRun) {
+        let store = Store::load(&self.out);
+        let control = crate::control::Control::load(&self.project, &self.out);
+        let board = crate::board::Board::derive(&store, &self.project, &control);
+        let explain = board
+            .goals
+            .iter()
+            .filter(|g| g.class == "gc")
+            .filter_map(|g| board.explain(&store, &g.id).map(|e| (g.id.clone(), e)))
+            .collect();
+        self.boards.lock().unwrap().push(BoardSnapshot {
+            batch: batch.id.clone(),
+            goals: board.goals.clone(),
+            explain,
+        });
     }
 
     fn call(&self, server: &McpServer, batch: &str, name: &str, args: Value) -> Value {
@@ -173,8 +333,8 @@ impl ScriptedRunner {
         value
     }
 
-    // The ids of the entities a sentence names, created with the sentence as their
-    // mention when the graph and the session do not know them yet.
+    // The entities a sentence names as (id, name, parent id), created with the
+    // sentence as their mention when the graph and the session do not know them yet.
     fn entity_ids(
         &self,
         server: &McpServer,
@@ -182,25 +342,55 @@ impl ScriptedRunner {
         section: &str,
         sentence: &str,
         ids: &mut BTreeMap<String, String>,
-    ) -> Vec<String> {
+    ) -> Vec<(String, String, Option<String>)> {
         let mut out = Vec::new();
-        for term in terms_in(sentence) {
+        for term in terms_in(self.terms, sentence) {
             let key = term.name.to_lowercase();
+            let parent = term.parent.map(|p| {
+                ids.get(&p.to_lowercase()).cloned().unwrap_or_else(|| {
+                    panic!("the script creates {} before its parent {} exists", term.name, p)
+                })
+            });
             if let Some(id) = ids.get(&key) {
-                out.push(id.clone());
+                out.push((id.clone(), term.name.to_string(), parent));
                 continue;
             }
             let mut args = json!({"name": term.name, "mention": {"section": section, "quote": sentence}});
             if let Some(s) = term.stereotype {
                 args["stereotype"] = json!(s);
             }
+            if let Some(p) = &parent {
+                args["parent"] = json!(p);
+            }
             let reply = self.call(server, batch, "upsert_entity", args);
             let id = reply["id"].as_str().expect("an entity id").to_string();
             ids.insert(key, id.clone());
-            out.push(id);
+            out.push((id, term.name.to_string(), parent));
         }
         assert!(!out.is_empty(), "the script names no entity in `{}`", sentence);
         out
+    }
+
+    // The one edge the script declares among a sentence's entities, given as (id,
+    // name, parent id): the containment when one is another's parent, the f1
+    // aggregations by name, else an association between the first two.
+    fn edge_among(ents: &[(String, String, Option<String>)]) -> Value {
+        let whole_part = ents.iter().find_map(|a| {
+            ents.iter()
+                .find(|b| b.2.as_deref() == Some(a.0.as_str()))
+                .map(|b| (a.0.clone(), b.0.clone()))
+        });
+        if let Some((whole, part)) = whole_part {
+            return json!({"a": whole, "b": part, "type": "composition"});
+        }
+        let by_name = |n: &str| ents.iter().find(|e| e.1 == n).map(|e| e.0.clone());
+        if let (Some(c), Some(p)) = (by_name("Catalog"), by_name("Product")) {
+            return json!({"a": c, "b": p, "type": "aggregation", "cardinality": "1..*"});
+        }
+        if let (Some(o), Some(p)) = (by_name("Order"), by_name("Product")) {
+            return json!({"a": o, "b": p, "type": "aggregation", "cardinality": "1..*"});
+        }
+        json!({"a": ents[0].0, "b": ents[1].0, "type": "association"})
     }
 
     fn reconcile_section(
@@ -253,21 +443,49 @@ impl ScriptedRunner {
         }
         let mut yielded = !recorded.is_empty();
         for sentence in fresh {
-            let entities = self.entity_ids(server, batch, &full_ref, &sentence, ids);
+            let ents = self.entity_ids(server, batch, &full_ref, &sentence, ids);
+            let entities: Vec<&String> = ents.iter().map(|e| &e.0).collect();
             let (facet, why) = facet_of(&sentence);
+            let mut args = json!({
+                "statement": statement_of(&sentence),
+                "section": full_ref,
+                "quote": sentence,
+                "entities": entities,
+                "facets": [{"facet": facet, "reasoning": why}],
+            });
+            if self.extract_edges && ents.len() >= 2 {
+                args["edges"] = json!([Self::edge_among(&ents)]);
+            }
+            self.call(server, batch, "upsert_requirement", args);
+            yielded = true;
+        }
+        // The derivation the test asked for: a statement the documents do not state,
+        // with its upstream entities and reasoning, in place of a quote.
+        let derivation = {
+            let mut d = self.derivation.lock().unwrap();
+            if d.as_ref().is_some_and(|d| d.section == full_ref) {
+                d.take()
+            } else {
+                None
+            }
+        };
+        if let Some(d) = derivation {
+            let from: Vec<String> = d
+                .from
+                .iter()
+                .map(|n| ids.get(&n.to_lowercase()).cloned().expect("a known term"))
+                .collect();
             self.call(
                 server,
                 batch,
                 "upsert_requirement",
                 json!({
-                    "statement": statement_of(&sentence),
-                    "section": full_ref,
-                    "quote": sentence,
-                    "entities": entities,
-                    "facets": [{"facet": facet, "reasoning": why}],
+                    "statement": d.statement,
+                    "entities": from,
+                    "provenance": {"derived": {"from": from, "reasoning": "the section implies it without stating it; the proposal offers the sentence"}},
+                    "facets": [{"facet": "constraint", "reasoning": "the sentence states a fact the subject holds"}],
                 }),
             );
-            yielded = true;
         }
         let coverage = if yielded {
             json!({"section": full_ref, "state": "covered"})
@@ -335,27 +553,20 @@ impl ScriptedRunner {
     fn declare_edges(&self, server: &McpServer, batch: &str, snapshot: &Store, goal: &Goal) {
         let rid = snapshot.resolve_id(&goal.target).to_string();
         let r = &snapshot.graph.requirements[&rid];
-        let ents: Vec<String> = r
+        let ents: Vec<(String, String, Option<String>)> = r
             .entities
             .iter()
-            .map(|e| snapshot.resolve_id(e).to_string())
+            .map(|e| {
+                let id = snapshot.resolve_id(e).to_string();
+                let ent = &snapshot.graph.entities[&id];
+                (id, ent.name.clone(), ent.parent.clone())
+            })
             .collect();
-        let name = |id: &str| snapshot.graph.entities[id].name.clone();
-        let names: BTreeSet<String> = ents.iter().map(|e| name(e)).collect();
-        let by_name = |n: &str| ents.iter().find(|e| name(e) == n).cloned().unwrap();
-        let has = |a: &str, b: &str| names.contains(a) && names.contains(b);
-        let edge = if has("Catalog", "Product") {
-            json!({"a": by_name("Catalog"), "b": by_name("Product"), "type": "aggregation", "cardinality": "1..*"})
-        } else if has("Order", "Product") {
-            json!({"a": by_name("Order"), "b": by_name("Product"), "type": "aggregation", "cardinality": "1..*"})
-        } else {
-            json!({"a": ents[0], "b": ents[1], "type": "association"})
-        };
         self.call(
             server,
             batch,
             "update_requirement",
-            json!({"id": rid, "edges": [edge]}),
+            json!({"id": rid, "edges": [Self::edge_among(&ents)]}),
         );
         self.call(
             server,
@@ -410,6 +621,129 @@ impl ScriptedRunner {
         );
     }
 
+    // The fan-out variant: group the level's children by the heading of the section
+    // that first mentions each, one grouping per heading, named after it
+    // (docs/compiler/goals/abstract-entity.md#the-fan-out-variant).
+    fn abstract_entity(&self, server: &McpServer, batch: &str, snapshot: &Store, goal: &Goal) {
+        assert!(
+            goal.change["fan_out"].is_number(),
+            "the script groups levels only, not the caps variant: {:?}",
+            goal.change
+        );
+        let target = snapshot.resolve_id(&goal.target).to_string();
+        assert!(
+            snapshot.graph.entities.contains_key(&target),
+            "the script groups a node's level, not a scope root: {}",
+            goal.target
+        );
+        let children: Vec<(&String, &Entity)> = snapshot
+            .graph
+            .entities
+            .iter()
+            .filter(|(_, e)| e.parent.as_deref() == Some(target.as_str()))
+            .collect();
+        // The section listing a child is the one of its mentions in the node's own
+        // sections (where the node is mentioned too) that lists the most of its
+        // siblings: a heading that enumerates the level, not a passing mention
+        // elsewhere (docs/compiler/goals/abstract-entity.md#fan-out-hints).
+        let key = |m: &SourceRef| (m.doc.clone(), m.section.clone());
+        let own: BTreeSet<(String, String)> =
+            snapshot.graph.entities[&target].mentions.iter().map(key).collect();
+        let mut listed: BTreeMap<(String, String), usize> = BTreeMap::new();
+        for (_, e) in &children {
+            for m in &e.mentions {
+                *listed.entry(key(m)).or_default() += 1;
+            }
+        }
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (id, e) in &children {
+            let m = e
+                .mentions
+                .iter()
+                .max_by_key(|m| (own.contains(&key(m)), listed[&key(m)]))
+                .unwrap_or_else(|| panic!("{} has no mention to group by", id));
+            let title = snapshot.docs[&m.doc].sections[&m.section].title.clone();
+            groups.entry(title).or_default().push(id.to_string());
+        }
+        for (title, members) in &groups {
+            assert!(members.len() >= 2, "{} lists one child only: {:?}", title, members);
+            self.call(
+                server,
+                batch,
+                "group_entities",
+                json!({
+                    "name": title,
+                    "definition": format!("{} groups the services the documents list under that heading.", title),
+                    "members": members,
+                    "reasoning": format!("the documents list these members together under the {} heading", title),
+                }),
+            );
+        }
+        self.call(
+            server,
+            batch,
+            "mark_goal_done",
+            json!({"goal": goal.id, "justification": "The level is grouped along the headings the documents list its members under, one grouping per heading."}),
+        );
+    }
+
+    // A level view over its member limit: the entities drawn for their edges into the
+    // level move to a sub-view and are excluded from the level view with notes naming
+    // it, so the level's own children stay and nothing is dropped
+    // (docs/compiler/goals/split-view.md#gate).
+    fn split_view(&self, server: &McpServer, batch: &str, snapshot: &Store, goal: &Goal) {
+        let view = &snapshot.graph.views[&goal.target];
+        let node = snapshot
+            .graph
+            .entities
+            .keys()
+            .find(|id| crate::derive::level_view_id(snapshot, id).as_deref() == Some(goal.target.as_str()))
+            .cloned()
+            .unwrap_or_else(|| panic!("{} is not a node's level view", goal.target));
+        let moved: Vec<String> = view
+            .members
+            .iter()
+            .filter(|m| {
+                snapshot
+                    .graph
+                    .entities
+                    .get(*m)
+                    .and_then(|e| e.parent.as_deref())
+                    != Some(node.as_str())
+            })
+            .cloned()
+            .collect();
+        assert!(!moved.is_empty(), "{} shows only the level's children", goal.target);
+        let reply = self.call(
+            server,
+            batch,
+            "upsert_view",
+            json!({
+                "kind": view.kind,
+                "title": format!("{}: neighbours", view.title),
+                "members": moved,
+                "reasoning": "the entities drawn for their edges into the level, detailed beside it",
+            }),
+        );
+        let sub = reply["id"].as_str().expect("a view id").to_string();
+        let exclude: Vec<Value> = moved
+            .iter()
+            .map(|m| json!({"id": m, "note": format!("belongs to {}", sub)}))
+            .collect();
+        self.call(
+            server,
+            batch,
+            "update_view",
+            json!({"id": goal.target, "exclude": exclude}),
+        );
+        self.call(
+            server,
+            batch,
+            "mark_goal_done",
+            json!({"goal": goal.id, "justification": "The level view keeps the level's own children; the entities drawn for their edges into it moved to a sub-view the exclusion notes name, so every member survives."}),
+        );
+    }
+
     fn verdict_only(&self, server: &McpServer, batch: &str, goal: &Goal, evidence: Value, why: &str) {
         self.call(
             server,
@@ -430,6 +764,21 @@ impl SessionRunner for ScriptedRunner {
     }
 
     fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
+        self.snapshot_board(batch);
+        // A planned failure: the session spent something and committed nothing, as one
+        // that ran out of rounds does, so the build's retry rule sees an attempt.
+        if let Some(error) = self.scripted_failure(batch) {
+            trace.event(crate::runner::session_start(batch));
+            return SessionReport {
+                applied: 0,
+                rounds: 1,
+                tokens: 1,
+                cached: 0,
+                failed: Some(error),
+                resolved: Vec::new(),
+                stopped: None,
+            };
+        }
         // The serving the in-process runner opens: one batch, the build's token.
         let server = McpServer::with_bridge(
             self.project.clone(),
@@ -484,6 +833,8 @@ impl SessionRunner for ScriptedRunner {
                     "The two names share a word and nothing else; their statements are about different things.",
                 ),
                 "place-anchors" => self.place_anchors(&server, &batch.id, goal),
+                "abstract-entity" => self.abstract_entity(&server, &batch.id, &snapshot, goal),
+                "split-view" => self.split_view(&server, &batch.id, &snapshot, goal),
                 other => panic!("the script has no step for a {} goal: {:?}", other, goal),
             }
         }
@@ -565,20 +916,24 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-// A fresh copy of example/f1 under the temp dir, as a project of its own.
-fn f1_copy(label: &str) -> (PathBuf, Project) {
+// A fresh copy of one example under the temp dir, as a project of its own.
+fn example_copy(example: &str, label: &str) -> (PathBuf, Project) {
     let dir = std::env::temp_dir().join(format!(
         "jazyk-e2e-{}-{}",
         label,
         crate::sys::process_id()
     ));
     crate::vfs::remove_dir_all(&dir).ok();
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("example").join("f1");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("example").join(example);
     copy_tree(&src, &dir);
     let project = Project::load(&dir);
     assert!(project.config_error.is_none(), "{:?}", project.config_error);
     assert_eq!(project.set_id.as_deref(), Some("ds_main"));
     (dir, project)
+}
+
+fn f1_copy(label: &str) -> (PathBuf, Project) {
+    example_copy("f1", label)
 }
 
 fn capture() -> (Trace, Arc<Mutex<Vec<TraceEvent>>>) {
@@ -919,3 +1274,248 @@ fn editing_one_sentence_of_f1_reconciles_only_its_section_and_keeps_the_other_id
     assert!(errors.is_empty(), "{:?}", errors);
     crate::vfs::remove_dir_all(&dir).ok();
 }
+
+fn assert_no_errors(store: &Store, project: &Project) {
+    let findings = super::checks(store, project);
+    let errors: Vec<_> = findings.iter().filter(|f| f.2 == "error").collect();
+    assert!(errors.is_empty(), "{:?}", errors);
+}
+
+fn assert_diagrams_rendered(store: &Store, out: &Path) {
+    for id in store.graph.views.keys() {
+        let rel = id.strip_prefix("view:").unwrap();
+        for ext in ["puml", "svg"] {
+            let path = out.join("diagrams").join(format!("{}.{}", rel, ext));
+            assert!(path.exists(), "{} missing", path.display());
+        }
+    }
+}
+
+// The next build after a graph change opens with exactly `kinds` (kind, count) and
+// converges: downstream judgment, never the alignment or ingest a dirty section opens.
+fn assert_next_build_opens_with(
+    project: &Project,
+    runner: &ScriptedRunner,
+    kinds: &[(&str, usize)],
+    label: &str,
+) {
+    let (report, events) = build(project, runner);
+    eprintln!("[e2e {}] next build: {}, {} sessions", label, report.verdict, report.sessions);
+    assert_clean_build(&report, &events);
+    let opening = events
+        .iter()
+        .find_map(|e| match e {
+            TraceEvent::Board { kinds, .. } => Some(kinds.clone()),
+            _ => None,
+        })
+        .expect("a board event");
+    let expected: Vec<(String, usize)> = kinds.iter().map(|(k, n)| (k.to_string(), *n)).collect();
+    assert_eq!(opening, expected, "{:?}", opening);
+}
+
+// A rebuild of a converged store derives no goal and runs no session.
+fn assert_rebuild_is_a_no_op(project: &Project, label: &str) {
+    let out = project.out.clone();
+    let before = Store::load(&out);
+    let (report, events) = build(project, &PanickingRunner);
+    eprintln!("[e2e {}] rebuild: {}", label, report.verdict);
+    assert!(report.converged(), "verdict: {}", report.verdict);
+    assert_eq!((report.goals, report.sessions, report.applied), (0, 0, 0), "{:?}", report);
+    assert!(!events.iter().any(|e| matches!(e, TraceEvent::BatchStart { .. })));
+    assert_eq!(Store::load(&out).status.generation, before.status.generation);
+}
+
+// The GC burst, end to end on bootstrap/example/e2e-gc (its EXPECTED.md): sixteen
+// children under one node derive a mandatory fan-out `abstract-entity`, the Data
+// Layer's level view over its member limit derives `split-view`, and a cross-document
+// lookalike pair derives `dedupe-candidates`. Each waits for its cone, the Platform's
+// own `split-view` yields to the fan-out, the burst resolves them through the real
+// gates, the graph satisfies the limits, the new views render, the build converges
+// with the groupings' ratification proposals riding as blocked, and a rebuild is a
+// no-op. Mirrors docs/compiler/compilation.md#compile-and-garbage-collection.
+#[test]
+fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
+    let (dir, project) = example_copy("e2e-gc", "gc");
+    let runner = ScriptedRunner::with_terms(&project, &GC_TERMS, true);
+    let started = std::time::Instant::now();
+    let (report, events) = build(&project, &runner);
+    eprintln!(
+        "[e2e gc] fresh build: {} in {:.1}s, {} sessions",
+        report.verdict,
+        started.elapsed().as_secs_f64(),
+        report.sessions
+    );
+    for e in &events {
+        if let TraceEvent::BatchStart { label, class, goals, .. } = e {
+            let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+            for g in goals {
+                *kinds.entry(g["kind"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+            }
+            eprintln!("[e2e gc] batch {} ({}): {:?}", label, class, kinds);
+        }
+    }
+    assert_clean_build(&report, &events);
+    let out = project.out.clone();
+    let store = Store::load(&out);
+    let calls = runner.calls();
+
+    let fan_out = "g:abstract-entity:ent:platform";
+    let split = "g:split-view:view:class/data-layer";
+    let platform_split = "g:split-view:view:component/platform";
+    let dedupe = "g:dedupe-candidates:ent:order-audit-log~ent:order-audit-trail";
+    let marked: BTreeMap<String, String> = calls
+        .iter()
+        .filter(|c| c.name == "mark_goal_done")
+        .filter_map(|c| c.args["goal"].as_str().map(|g| (g.to_string(), c.batch.clone())))
+        .collect();
+    for g in [fan_out, split, dedupe] {
+        assert!(marked.contains_key(g), "{} never resolved: {:?}", g, marked.keys());
+    }
+    // The trace printed each burst with its count over the limit.
+    let bursts: Vec<(&String, &String, u64)> = events
+        .iter()
+        .filter_map(|e| match e {
+            TraceEvent::GcBurst { goal_kind, target, count, .. } => Some((goal_kind, target, *count)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        bursts.iter().any(|(k, t, n)| k.as_str() == "abstract-entity" && t.as_str() == "ent:platform" && *n == 16),
+        "{:?}",
+        bursts
+    );
+    assert!(
+        bursts.iter().any(|(k, t, n)| k.as_str() == "split-view" && t.as_str() == "view:class/data-layer" && *n == 21),
+        "{:?}",
+        bursts
+    );
+    assert!(bursts.iter().all(|(_, t, _)| t.as_str() != "view:component/platform"), "{:?}", bursts);
+
+    // Class and readiness as the board showed them while the build ran: the fan-out
+    // goal was gc and mandatory, waited on its cone before its burst and was ready in
+    // the batch that ran it; the Platform's split-view yielded to it and never ran.
+    let boards = runner.boards();
+    let ran = boards
+        .iter()
+        .position(|b| b.batch == marked[fan_out])
+        .expect("the fan-out batch's board");
+    let at_run = boards[ran].goals.iter().find(|g| g.id == fan_out).expect("the fan-out goal");
+    assert_eq!((at_run.class.as_str(), at_run.mandatory, &at_run.state), ("gc", true, &GoalState::Open), "{:?}", at_run);
+    assert!(boards[ran].explain[fan_out].contains("ready now"), "{}", boards[ran].explain[fan_out]);
+    assert!(
+        boards[..ran].iter().any(|b| b.explain.get(fan_out).is_some_and(|e| e.contains("waits:"))),
+        "the fan-out goal never waited on its cone"
+    );
+    assert!(
+        boards.iter().any(|b| b
+            .explain
+            .get(platform_split)
+            .is_some_and(|e| e.contains(&format!("fan-out first: {}", fan_out)))),
+        "the Platform's split-view never yielded to the fan-out"
+    );
+    let split_goal = boards
+        .iter()
+        .find_map(|b| b.goals.iter().find(|g| g.id == split))
+        .expect("the split-view goal");
+    assert_eq!((split_goal.class.as_str(), split_goal.mandatory), ("gc", false));
+    let dedupe_goal = boards
+        .iter()
+        .find_map(|b| b.goals.iter().find(|g| g.id == dedupe))
+        .expect("the dedupe goal");
+    assert_eq!((dedupe_goal.class.as_str(), dedupe_goal.mandatory), ("gc", false));
+    assert_eq!(dedupe_goal.change["score"], 0.5, "{}", dedupe_goal.change);
+    drop(boards);
+
+    // The level: two groupings under the Platform, each derived from exactly its
+    // members, the sixteen services under them.
+    let platform = &store.graph.entities["ent:platform"];
+    assert_eq!(platform.parent, None);
+    let groupings: Vec<(&String, &Entity)> = store
+        .graph
+        .entities
+        .iter()
+        .filter(|(_, e)| e.parent.as_deref() == Some("ent:platform"))
+        .collect();
+    let names: BTreeSet<&str> = groupings.iter().map(|(_, e)| e.name.as_str()).collect();
+    assert_eq!(names, BTreeSet::from(["Storefront", "Back Office"]), "{:?}", names);
+    let services: Vec<&String> = store
+        .graph
+        .entities
+        .iter()
+        .filter(|(_, e)| e.stereotype.as_deref() == Some("service"))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(services.len(), 16);
+    for (gid, g) in &groupings {
+        let members: BTreeSet<String> = store
+            .graph
+            .entities
+            .iter()
+            .filter(|(_, e)| e.parent.as_deref() == Some(gid.as_str()))
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(members.len(), 8, "{}: {:?}", gid, members);
+        match &g.provenance {
+            Some(Provenance::Derived { from, .. }) => {
+                assert_eq!(from.iter().cloned().collect::<BTreeSet<_>>(), members, "{}", gid)
+            }
+            other => panic!("{} carries {:?}", gid, other),
+        }
+        assert!(g.mentions.is_empty() && g.definition.is_some(), "{}: {:?}", gid, g);
+        assert!(members.iter().all(|m| services.contains(&m)), "{}: {:?}", gid, members);
+    }
+    // The split: the level view keeps its six stores, excludes the sixteen services
+    // with notes naming the sub-view that lists them, and both are under the limit.
+    let view = &store.graph.views["view:class/data-layer"];
+    assert!(!view.default);
+    assert_eq!(view.members.len(), 5, "{:?}", view.members);
+    assert!(view.members.iter().all(|m| store.graph.entities[m].parent.as_deref() == Some("ent:data-layer")));
+    assert_eq!(view.excluded.len(), 16, "{:?}", view.excluded);
+    let sub_ids: BTreeSet<String> = view
+        .excluded
+        .iter()
+        .map(|x| x.note.trim_start_matches("belongs to ").to_string())
+        .collect();
+    assert_eq!(sub_ids.len(), 1, "{:?}", sub_ids);
+    let sub = &store.graph.views[sub_ids.iter().next().unwrap()];
+    assert_eq!((sub.kind.as_str(), sub.members.len()), ("class", 16), "{:?}", sub);
+    assert!(view.excluded.iter().all(|x| sub.members.contains(&x.id)));
+    assert!(
+        crate::derive::threshold_crossings(&store).is_empty(),
+        "{:?}",
+        crate::derive::threshold_crossings(&store).iter().map(|c| (&c.subject, c.count)).collect::<Vec<_>>()
+    );
+    assert!(store.graph.views.contains_key("view:component/platform"));
+    for v in ["view:component/storefront", "view:component/back-office"] {
+        assert!(store.graph.views.contains_key(v), "{} missing: {:?}", v, store.graph.views.keys());
+    }
+    assert_diagrams_rendered(&store, &out);
+    // The lookalikes, kept apart as scripted, and the verdict remembered.
+    assert!(store.graph.entities.contains_key("ent:order-audit-log"));
+    assert!(store.graph.entities.contains_key("ent:order-audit-trail"));
+    let resolved: BTreeSet<String> = session_entries(&out, store.status.generation)
+        .iter()
+        .flat_map(|e| e.resolved_goals.iter().map(|r| r.goal.clone()))
+        .collect();
+    for g in [fan_out, split, dedupe] {
+        assert!(resolved.contains(g), "{} not in the journal", g);
+    }
+    // Converged, the groupings' proposals blocked on a human, nothing parked or failed.
+    assert!(store.status.verdict.converged(), "{}", store.status.verdict);
+    assert!(store.status.parked.is_empty() && store.status.failed.is_empty());
+    let control = crate::control::Control::load(&project, &out);
+    let board = crate::board::Board::derive(&store, &project, &control);
+    for (gid, _) in &groupings {
+        let ratify = format!("g:ratify:{}", gid);
+        let g = board.goal(&ratify).unwrap_or_else(|| panic!("{} missing", ratify));
+        assert!(matches!(g.state, GoalState::Blocked { .. }), "{:?}", g.state);
+        assert!(store.graph.diagnostics.values().any(|d| d.rule == "ratification-pending"
+            && d.lifecycle == "open"
+            && d.subjects == vec![gid.to_string()]));
+    }
+    assert!(board.open_goals().is_empty(), "{:?}", board.open_goals().iter().map(|g| &g.id).collect::<Vec<_>>());
+    assert_no_errors(&store, &project);
+    assert_rebuild_is_a_no_op(&project, "gc");
+    crate::vfs::remove_dir_all(&dir).ok();
+}
+

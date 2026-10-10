@@ -1519,3 +1519,352 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
+fn journal_len(out: &Path) -> usize {
+    let g = crate::store::read_generation(out);
+    crate::goals::read_journal_range(out, 0, g).len()
+}
+
+// A document is not dirty against the graph: a sync reports nothing to reconcile.
+fn assert_not_dirty(project: &Project) {
+    let (parsed, _) = super::parse_all(project);
+    let mut s = Store::load(&project.out);
+    for (doc, (hash, _)) in &parsed {
+        assert_eq!(&s.docs[doc].content_hash, hash, "{} is dirty", doc);
+    }
+    assert!(s.sync_docs(&parsed).is_empty(), "a sync found work");
+}
+
+// A derived requirement staged by extraction carries a ratification proposal with a
+// prompt, and the `ratify` goal rides blocked on a human. Accepting the proposal through
+// the one answer engine every frontend calls lands the sentence in the document, flips
+// the fact to a quote on it, resolves the proposal, journals one `ratify` entry,
+// dirties no section, and the next build derives nothing.
+// Mirrors docs/compiler/goals/ratify.md#accept.
+#[test]
+fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_quote() {
+    let (dir, project) = f1_copy("ratify");
+    let runner = ScriptedRunner::new(&project);
+    let sentence = "Each Customer holds exactly one account with the Shop.";
+    runner.derive_in("docs/system.md#/shop/customer", sentence, &["Customer", "Shop"]);
+    let started = std::time::Instant::now();
+    let (report, events) = build(&project, &runner);
+    eprintln!("[e2e ratify] fresh build: {} in {:.1}s", report.verdict, started.elapsed().as_secs_f64());
+    assert_clean_build(&report, &events);
+    let out = project.out.clone();
+    let before = Store::load(&out);
+
+    // The derived fact and its proposal.
+    let (rid, r) = before
+        .graph
+        .requirements
+        .iter()
+        .find(|(_, r)| r.source.is_none())
+        .expect("the derived requirement");
+    assert!(matches!(r.provenance, Some(Provenance::Derived { .. })), "{:?}", r.provenance);
+    assert_eq!(r.statement, sentence);
+    assert!(rid.starts_with("req:x-"), "{}", rid);
+    assert!(before.status.has_change(crate::store::CHANGE_PROVENANCE_PENDING, rid));
+    let (did, d) = before
+        .graph
+        .diagnostics
+        .iter()
+        .find(|(_, d)| d.rule == "ratification-pending" && d.subjects == vec![rid.clone()])
+        .expect("the proposal");
+    assert_eq!(d.lifecycle, "open");
+    let prompt = d.prompt.as_ref().expect("a prompt");
+    let edit = prompt.options[0].edit.clone().expect("the edit option first");
+    assert_eq!((edit.doc.as_str(), edit.new_text.as_str()), ("docs/system.md", sentence));
+    assert!(edit.old_text.is_empty(), "a derived fact's sentence is inserted, not a replacement");
+    assert!(prompt.options.iter().any(|o| o.answer.as_deref() == Some("retract")));
+    let control = crate::control::Control::load(&project, &out);
+    let board = crate::board::Board::derive(&before, &project, &control);
+    let ratify = board.goal(&format!("g:ratify:{}", rid)).expect("the ratify goal");
+    assert!(matches!(ratify.state, GoalState::Blocked { .. }), "{:?}", ratify.state);
+    let text_before = crate::vfs::read_to_string(dir.join("docs/system.md")).unwrap();
+    assert!(!text_before.contains(sentence));
+    let journal_before = journal_len(&out);
+
+    // The human accepts, as the LSP code action, the GUI, chat, and `jazyk answer` do.
+    let reply = crate::answer::answer(&project, &out, did, crate::answer::Reply::Choice(0), None)
+        .expect("the answer lands");
+    assert_eq!((reply["status"].as_str(), reply["resolved"].as_bool()), (Some("applied"), Some(true)), "{}", reply);
+
+    let after = Store::load(&out);
+    assert_eq!(after.status.generation, before.status.generation + 1, "one changeset");
+    let r = &after.graph.requirements[rid];
+    assert!(r.provenance.is_none(), "{:?}", r.provenance);
+    let src = r.source.as_ref().expect("a quote");
+    assert_eq!(
+        (src.doc.as_str(), src.section.as_str(), src.quote.as_str()),
+        ("docs/system.md", edit.section.as_str(), sentence)
+    );
+    assert!(after.quote_locates(&src.doc, &src.section, &src.quote));
+    assert_eq!(r.statement, sentence);
+    let text = crate::vfs::read_to_string(dir.join("docs/system.md")).unwrap();
+    assert!(text.contains(sentence), "{}", text);
+    let d = &after.graph.diagnostics[did];
+    assert_ne!(d.lifecycle, "open");
+    assert_eq!(d.answer.as_ref().map(|a| a.status.as_str()), Some("applied"));
+    assert!(!after.status.has_change(crate::store::CHANGE_PROVENANCE_PENDING, rid));
+    let entries = crate::goals::read_journal_range(&out, 0, after.status.generation);
+    assert_eq!(entries.len(), journal_before + 1);
+    assert_eq!(entries.last().unwrap().kind, "ratify");
+    let board = crate::board::Board::derive(&after, &project, &control);
+    assert!(board.goal(&format!("g:ratify:{}", rid)).is_none());
+    assert_not_dirty(&project);
+    assert_no_errors(&after, &project);
+    // No section was dirtied, so no `place-anchors` or `reconcile-section` follows the
+    // insert. What the next build opens with is downstream of the graph change alone:
+    // the landed sentence became a mention of each entity it names, and the
+    // `entity-changed` records derive one `review-entity` per entity (the answer's
+    // reply says no recompile is owed for the edit; a review is nonetheless derived,
+    // see the report of this test's authoring).
+    assert_next_build_opens_with(&project, &runner, &[("review-entity", 2)], "ratify");
+    let settled = Store::load(&out);
+    assert_eq!(settled.graph.requirements[rid].source, after.graph.requirements[rid].source);
+    assert_rebuild_is_a_no_op(&project, "ratify");
+    crate::vfs::remove_dir_all(&dir).ok();
+}
+
+// A dual write through the chat tool that wraps `Store::dual_write`: the sentence and
+// the requirement move in one changeset, the requirement keeps its id under the new
+// quote, the section is not re-dirtied (one journal entry, and the next build derives
+// zero goals). Mirrors docs/compiler/compilation.md#edit-paths.
+#[test]
+fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtying() {
+    let (dir, project, _runner, _) = converge_f1("dual");
+    let out = project.out.clone();
+    let before = Store::load(&out);
+    let old = "A Product has a name and a price.";
+    let new = "A Product has a name, a price, and a weight.";
+    let rid = before
+        .graph
+        .requirements
+        .iter()
+        .find(|(_, r)| r.source.as_ref().is_some_and(|s| s.quote == old))
+        .map(|(id, _)| id.clone())
+        .expect("the Product statement");
+    let journal_before = journal_len(&out);
+
+    let server = McpServer::with_bridge(
+        project.clone(),
+        out.clone(),
+        vec!["chat".into()],
+        false,
+        BridgeFlags::default(),
+    );
+    let reply = server
+        .handle(
+            "tools/call",
+            &json!({"name": "revise_requirement", "arguments": {"id": rid, "new_text": new, "statement": new}}),
+        )
+        .expect("the tool answers");
+    let v: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(v["committed"], true, "{}", v);
+
+    let doc = crate::vfs::read_to_string(dir.join("docs/catalog.md")).unwrap();
+    assert!(doc.contains(new) && !doc.contains(old), "{}", doc);
+    let after = Store::load(&out);
+    assert_eq!(after.status.generation, before.status.generation + 1, "one changeset");
+    assert_eq!(after.graph.requirements.len(), before.graph.requirements.len());
+    let r = &after.graph.requirements[&rid];
+    assert_eq!(r.source.as_ref().unwrap().quote, new);
+    assert_eq!(r.statement, new);
+    assert!(r.provenance.is_none(), "{:?}", r.provenance);
+    for (id, was) in &before.graph.requirements {
+        if id != &rid {
+            assert_eq!(after.graph.requirements[id].source, was.source, "{}", id);
+        }
+    }
+    let entries = crate::goals::read_journal_range(&out, 0, after.status.generation);
+    assert_eq!(entries.len(), journal_before + 1);
+    let entry = entries.last().unwrap();
+    assert_eq!(entry.kind, "dual-write");
+    assert!(entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"), "{:?}", entry.mutations);
+    assert_not_dirty(&project);
+    // Not re-dirtied: no `place-anchors` or `reconcile-section` follows the write. The
+    // next build opens with the downstream judgment the graph change derives, one
+    // `review-entity` on Product (its mention followed the rewritten sentence), and
+    // converges with every id in place.
+    assert_next_build_opens_with(&project, &_runner, &[("review-entity", 1)], "dual");
+    let settled = Store::load(&out);
+    assert_eq!(settled.graph.requirements.len(), before.graph.requirements.len());
+    assert_eq!(settled.graph.requirements[&rid].source.as_ref().unwrap().quote, new);
+    assert_rebuild_is_a_no_op(&project, "dual");
+    crate::vfs::remove_dir_all(&dir).ok();
+}
+
+// The store version: outside a build, a version-1 out directory reads as empty and
+// refuses a commit with `store-version`; a build archives it whole to `<out>.bak`
+// (the stray shard included), reconciles from empty to converged, and stamps the
+// current version. Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty() {
+    let (dir, project) = f1_copy("version");
+    let out = project.out.clone();
+    let status = "version: 1\ngeneration: 7\n";
+    crate::vfs::create_dir_all(out.join("graph")).unwrap();
+    crate::vfs::write(out.join("status.yaml"), status).unwrap();
+    crate::vfs::write(out.join("graph").join("dummy.yaml"), "dummy: true\n").unwrap();
+
+    // Read-only outside a build: empty, and a writer is refused without touching disk.
+    let mut read = Store::load(&out);
+    assert!(read.graph.entities.is_empty() && read.graph.requirements.is_empty());
+    assert_eq!(read.status.generation, 0);
+    let report = read.apply(
+        vec![crate::store::Op::CreateEntity {
+            id: "ent:cart".into(),
+            entity: Entity {
+                name: "Cart".into(),
+                ..Default::default()
+            },
+        }],
+        &crate::store::Commit::store("decree"),
+    );
+    assert_eq!(report.applied, 0);
+    assert!(
+        report.skipped.iter().any(|s| s.starts_with("store-version")),
+        "{:?}",
+        report.skipped
+    );
+    assert_eq!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap(), status);
+    assert!(out.join("graph").join("dummy.yaml").exists());
+    assert!(!out.join("graph").join("entities.yaml").exists());
+
+    // The build archives and starts over.
+    let runner = ScriptedRunner::new(&project);
+    let (report, events) = build(&project, &runner);
+    eprintln!("[e2e version] build over a version-1 store: {}", report.verdict);
+    assert_clean_build(&report, &events);
+    let bak = out.with_file_name(format!(
+        "{}.bak",
+        out.file_name().unwrap().to_string_lossy()
+    ));
+    assert!(bak.join("graph").join("dummy.yaml").exists(), "{} not archived whole", bak.display());
+    assert_eq!(crate::vfs::read_to_string(bak.join("status.yaml")).unwrap(), status);
+    assert!(!out.join("graph").join("dummy.yaml").exists());
+    let store = Store::load(&out);
+    assert_eq!(store.status.version, crate::store::STORE_VERSION);
+    assert_eq!(store.status.version, 2);
+    assert!(store.status.verdict.converged(), "{}", store.status.verdict);
+    assert_eq!(store.graph.requirements.len(), 12);
+    assert!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap().contains("version: 2"));
+    crate::vfs::remove_dir_all(&bak).ok();
+    crate::vfs::remove_dir_all(&dir).ok();
+}
+
+// A session that fails twice on one batch parks its goals after the retry:
+// `status.yaml` carries the reason, `Board::explain` shows it, the build is incomplete
+// with an `incomplete-build` diagnostic, and the next build resumes the parked goals
+// first and converges. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+#[test]
+fn a_batch_failing_twice_parks_its_goals_and_the_next_build_resumes_them_first() {
+    let (dir, project) = f1_copy("parked");
+    let runner = ScriptedRunner::new(&project);
+    runner.fail_batches_of("review-entity", 2);
+    let started = std::time::Instant::now();
+    let (report, events) = build(&project, &runner);
+    eprintln!(
+        "[e2e parked] build: {} in {:.1}s, {} sessions, {} parked",
+        report.verdict,
+        started.elapsed().as_secs_f64(),
+        report.sessions,
+        report.parked
+    );
+    let failed: Vec<(u32, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            TraceEvent::SessionFailed { attempt, label, .. } => Some((*attempt, label.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failed.len(), 2, "{:?}", failed);
+    assert_eq!((failed[0].0, failed[1].0), (1, 2), "{:?}", failed);
+    assert_eq!(failed[0].1, failed[1].1, "the retry is a fresh session on the same batch");
+    let parked: BTreeMap<String, String> = events
+        .iter()
+        .filter_map(|e| match e {
+            TraceEvent::Goal { goal, event, reason, .. } if event == "parked" => {
+                Some((goal.clone(), reason.clone().unwrap_or_default()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(!parked.is_empty());
+    // The whole batch parks: the review goals and whatever judgment batched with them.
+    let batch_goals: BTreeSet<String> = events
+        .iter()
+        .find_map(|e| match e {
+            TraceEvent::BatchStart { label, goals, .. } if label == &failed[0].1 => Some(
+                goals
+                    .iter()
+                    .filter_map(|g| g["id"].as_str().map(String::from))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("the failed batch");
+    assert_eq!(parked.keys().cloned().collect::<BTreeSet<_>>(), batch_goals);
+    assert!(parked.keys().any(|g| g.starts_with("g:review-entity:")), "{:?}", parked);
+    let expected_reason = format!("left open after its retry in session {}", failed[1].1);
+    for reason in parked.values() {
+        assert_eq!(reason, &expected_reason);
+    }
+    assert!(!report.converged(), "{}", report.verdict);
+    assert_eq!((report.parked, report.failed), (parked.len(), 0), "{:?}", report);
+    let out = project.out.clone();
+    let store = Store::load(&out);
+    let stored: BTreeMap<String, String> = store
+        .status
+        .parked
+        .iter()
+        .map(|p| (p.goal.id.clone(), p.reason.clone().unwrap_or_default()))
+        .collect();
+    assert_eq!(stored, parked);
+    assert!(store.status.parked.iter().all(|p| p.goal.class == "compile" && p.goal.mandatory), "{:?}", store.status.parked);
+    assert!(
+        store.graph.diagnostics.values().any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"),
+        "{:?}",
+        store.graph.diagnostics.values().map(|d| &d.rule).collect::<Vec<_>>()
+    );
+    let control = crate::control::Control::load(&project, &out);
+    let board = crate::board::Board::derive(&store, &project, &control);
+    for id in parked.keys() {
+        let text = board.explain(&store, id).unwrap_or_else(|| panic!("{} not on the board", id));
+        assert!(text.contains(&format!("parked: {}", expected_reason)), "{}", text);
+        assert!(text.contains(", compile, mandatory, parked"), "{}", text);
+    }
+    assert_eq!(board.counts().parked, parked.len());
+
+    // The next build resumes the parked goals first and converges.
+    let started = std::time::Instant::now();
+    let (report, events) = build(&project, &runner);
+    eprintln!(
+        "[e2e parked] resume: {} in {:.1}s, {} sessions",
+        report.verdict,
+        started.elapsed().as_secs_f64(),
+        report.sessions
+    );
+    assert_clean_build(&report, &events);
+    let first: BTreeSet<String> = events
+        .iter()
+        .find_map(|e| match e {
+            TraceEvent::BatchStart { goals, .. } => Some(
+                goals
+                    .iter()
+                    .filter_map(|g| g["id"].as_str().map(String::from))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("a batch");
+    assert_eq!(first, parked.keys().cloned().collect::<BTreeSet<_>>(), "the parked goals did not run first");
+    let resolved: BTreeSet<&String> = goal_events(&events, "resolved").into_iter().collect();
+    assert!(parked.keys().all(|g| resolved.contains(g)), "{:?}", resolved);
+    let after = Store::load(&out);
+    assert!(after.status.parked.is_empty() && after.status.failed.is_empty());
+    assert!(after.status.verdict.converged(), "{}", after.status.verdict);
+    assert!(!after.graph.diagnostics.values().any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"));
+    assert_eq!(after.graph.requirements.len(), 12);
+    crate::vfs::remove_dir_all(&dir).ok();
+}

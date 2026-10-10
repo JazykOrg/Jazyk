@@ -163,9 +163,8 @@ refuses unknown options with exit `2`, the `via` lists agree, the chat serving
 carries `retract_decree` and `bump_limit`, and `docsgen.md` states the entity header
 and the report files as rendered. One item stays open as an owner decision:
 
-- The section kinds `list-item` and `blockquote` are reserved in `parsing.md` and
-  `section.md` for a handler that produces them; the Markdown handler does not, by
-  design. Decide whether a handler will, or strike the two kinds from the closed list.
+- The section kinds `list-item` and `blockquote` left the closed list on 2026-10-10:
+  no handler produces them; a handler that does adds them when it lands.
 
 ## Pair judgment volume (2026-09-05)
 

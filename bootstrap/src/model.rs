@@ -627,15 +627,7 @@ pub struct DiagnosticAnswer {
 }
 
 // The section kinds parsing produces. Mirrors docs/compiler/model/section.md#fields.
-pub const SECTION_KINDS: [&str; 7] = [
-    "preamble",
-    "root",
-    "heading",
-    "list-item",
-    "code-block",
-    "blockquote",
-    "diagram",
-];
+pub const SECTION_KINDS: [&str; 5] = ["preamble", "root", "heading", "code-block", "diagram"];
 
 // The coverage states a section carries; `set_coverage` sets the last two.
 // Mirrors docs/compiler/model/section.md#coverage.

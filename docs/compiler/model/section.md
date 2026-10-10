@@ -20,11 +20,11 @@ Sections exist for three purposes:
 As produced by [parsing](../parsing.md#section-tree):
 
 - `title`: the heading text, or a block's info string.
-- `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
-  `diagram`. A `diagram` section holds a PlantUML block found in a source document. It is
-  input, parsed as prose. See [diagrams as input](../diagrams.md#diagrams-as-input). A
-  `code-block` section holds any other fenced block. Both are children of the section
-  whose body holds them; the Markdown handler produces no `list-item` or `blockquote`
+- `kind`: `preamble`, `root`, `heading`, `code-block`, or `diagram`. A `diagram`
+  section holds a PlantUML block found in a source document. It is input, parsed as
+  prose. See [diagrams as input](../diagrams.md#diagrams-as-input). A `code-block`
+  section holds any other fenced block. Both are children of the section whose body
+  holds them. List items and blockquotes stay inside their section's body
   ([section tree](../parsing.md#section-tree)).
 - `order`: position among siblings.
 - `parent`: the internal reference of the parent section. The preamble, the root (the

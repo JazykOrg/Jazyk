@@ -779,9 +779,7 @@ definitions:
           - preamble
           - root
           - heading
-          - list-item
           - code-block
-          - blockquote
           - diagram
       order:
         type: integer

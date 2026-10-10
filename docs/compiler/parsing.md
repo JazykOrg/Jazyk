@@ -63,16 +63,15 @@ inside a block dirties the block and its parent both. A `code-block` section der
 reconcile goal and owes no coverage mark of its own (the parent's session reads the
 block inside the body it covers); a `diagram` section does, as input of its own.
 
-List items and blockquotes stay inside their section's body: the kinds `list-item` and
-`blockquote` are reserved for a handler that produces them, and the Markdown handler
-does not.
+List items and blockquotes stay inside their section's body; no handler produces a
+section for them. The closed list of kinds names only what a handler produces today,
+and a handler that splits finer adds its kinds when it lands.
 
 Each section carries:
 
 - `title`: the heading text, or a block's info string (`plantuml` for a bare fence
   opening a diagram; empty for a bare code fence).
-- `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
-  `diagram`.
+- `kind`: `preamble`, `root`, `heading`, `code-block`, or `diagram`.
 - `order`: position among siblings.
 - `parent`: the internal reference of the parent. The preamble, the root, and a later
   top-level heading have none.

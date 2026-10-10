@@ -76,17 +76,31 @@ goals. `status.yaml` keeps a `lookalikes` list
 `{pair, verdict: separate, score, generation}`.
 
 - Resolving the goal with `separate` writes the entry with the pair's score at judgment
-  and clears the record. A merge needs no entry: one of the ids is gone, and the pair
-  with it.
+  and clears the record. The score is the formula's value over the graph as the
+  session's changeset commits (an alias the session added counts). A merge needs no
+  entry: one of the ids is gone, and the pair with it.
 - A `separate` verdict a [`review-entity`](./review-entity.md#gate) session records in
   its `evidence` writes the same entry for that pair, so a review that kept two entities
-  apart with a reason is not asked again by this goal. A merge it stages clears the
-  record outright.
+  apart with a reason is not asked again by this goal. The entry carries the formula's
+  value for the pair whether or not it reaches the threshold, so a pair the review kept
+  apart below the threshold is still remembered when it later crosses it unchanged. A
+  merge it stages clears the record outright.
 - The name index writes a fresh `lookalike` record for a judged pair only when its score
   differs from the recorded one: a rename, a new alias, a new mention document. The entry
   is dropped with it, and the pair is judged again over the new evidence.
 - An entry whose pair lost one of its ids (a delete, a merge, a retraction) is dropped at
   the same commit.
+- The list is the only memory. Goal derivation does not read the journal's resolved
+  goals for this kind, so a store written before the list existed judges each kept pair
+  once more and remembers it from then on.
+
+```yaml
+lookalikes:
+  - pair: ent:product~ent:product-price
+    verdict: separate
+    score: 0.75
+    generation: 419
+```
 
 ### Batching
 

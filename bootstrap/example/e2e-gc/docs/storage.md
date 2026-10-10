@@ -18,4 +18,4 @@ The Billing service writes the Payment Store. The Inventory service updates the 
 The Shipping service reads the Order Store. The Notification service reads the User Store.
 The Analytics service scans the Order Store. The Reporting service aggregates the Payment Store.
 The Support service reads the User Store. The Fraud service inspects the Payment Store.
-The Billing service appends every charge to the Order Audit Log. The Order Audit Log keeps one line per charge.
+The Billing service appends every charge to the Audit Log. The Audit Log keeps one line per charge.

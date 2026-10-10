@@ -62,8 +62,8 @@ const fn store(name: &'static str) -> Term {
 const GC_TERMS: [Term; 25] = [
     term("Platform", Some("system")),
     term("Data Layer", None),
-    term("Order Audit Log", None),
-    term("Order Audit Trail", None),
+    term("Audit Log", None),
+    term("Audit Trail", None),
     service("Auth"),
     service("Catalog"),
     service("Search"),
@@ -1362,7 +1362,7 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
     let fan_out = "g:abstract-entity:ent:platform";
     let split = "g:split-view:view:class/data-layer";
     let platform_split = "g:split-view:view:component/platform";
-    let dedupe = "g:dedupe-candidates:ent:order-audit-log~ent:order-audit-trail";
+    let dedupe = "g:dedupe-candidates:ent:audit-log~ent:audit-trail";
     let marked: BTreeMap<String, String> = calls
         .iter()
         .filter(|c| c.name == "mark_goal_done")
@@ -1490,9 +1490,17 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         assert!(store.graph.views.contains_key(v), "{} missing: {:?}", v, store.graph.views.keys());
     }
     assert_diagrams_rendered(&store, &out);
-    // The lookalikes, kept apart as scripted, and the verdict remembered.
-    assert!(store.graph.entities.contains_key("ent:order-audit-log"));
-    assert!(store.graph.entities.contains_key("ent:order-audit-trail"));
+    // The lookalikes, kept apart as scripted, and the verdict remembered: the pair's
+    // entry at its score, no standing record, and nothing to derive.
+    assert!(store.graph.entities.contains_key("ent:audit-log"));
+    assert!(store.graph.entities.contains_key("ent:audit-trail"));
+    let remembered = store
+        .status
+        .lookalike("ent:audit-log~ent:audit-trail")
+        .unwrap_or_else(|| panic!("no lookalikes entry: {:?}", store.status.lookalikes));
+    assert_eq!((remembered.verdict.as_str(), remembered.score), ("separate", 0.5));
+    assert!(!store.status.changes.iter().any(|c| c.kind == crate::goals::CHANGE_LOOKALIKE), "{:?}", store.status.changes);
+    assert!(crate::goals::pending_lookalikes(&store).is_empty());
     let resolved: BTreeSet<String> = session_entries(&out, store.status.generation)
         .iter()
         .flat_map(|e| e.resolved_goals.iter().map(|r| r.goal.clone()))

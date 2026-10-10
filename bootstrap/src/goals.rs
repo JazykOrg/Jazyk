@@ -3650,6 +3650,31 @@ fn lookalike_of(
     if docs_a.union(docs_b).count() < 2 {
         return None;
     }
+    let (score, tokens, documents, shared) = score_pair(ta, docs_a, tb, docs_b)?;
+    if score + 1e-9 < LOOKALIKE_THRESHOLD {
+        return None;
+    }
+    Some(Lookalike {
+        a: a.to_string(),
+        b: b.to_string(),
+        score,
+        tokens,
+        documents,
+        shared,
+        docs_a: docs_a.clone(),
+        docs_b: docs_b.clone(),
+    })
+}
+
+// The formula over two token sets and two mention-document sets: (score, tokens,
+// documents, shared tokens), each figure rounded to two decimals; None when either name
+// has no token or the names share none. The threshold is the caller's.
+fn score_pair(
+    ta: &BTreeSet<String>,
+    docs_a: &BTreeSet<String>,
+    tb: &BTreeSet<String>,
+    docs_b: &BTreeSet<String>,
+) -> Option<(f64, f64, f64, Vec<String>)> {
     if ta.is_empty() || tb.is_empty() {
         return None;
     }
@@ -3658,22 +3683,11 @@ fn lookalike_of(
         return None;
     }
     let tokens = 2.0 * shared.len() as f64 / (ta.len() + tb.len()) as f64;
-    let union = docs_a.union(docs_b).count();
+    let union = docs_a.union(docs_b).count().max(1);
     let documents = docs_a.intersection(docs_b).count() as f64 / union as f64;
     let score = LOOKALIKE_TOKEN_WEIGHT * tokens + LOOKALIKE_DOCUMENT_WEIGHT * documents;
-    if score + 1e-9 < LOOKALIKE_THRESHOLD {
-        return None;
-    }
-    Some(Lookalike {
-        a: a.to_string(),
-        b: b.to_string(),
-        score: (score * 100.0).round() / 100.0,
-        tokens: (tokens * 100.0).round() / 100.0,
-        documents: (documents * 100.0).round() / 100.0,
-        shared,
-        docs_a: docs_a.clone(),
-        docs_b: docs_b.clone(),
-    })
+    let round = |x: f64| (x * 100.0).round() / 100.0;
+    Some((round(score), round(tokens), round(documents), shared))
 }
 
 // The lookalike score over every candidate pair: two entities of one scope, neither
@@ -3744,58 +3758,42 @@ pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
     out
 }
 
-// The resolved goal ids of one journal entry, with the size and mtime of the file they
-// were read from.
-struct ResolvedEntry {
-    len: u64,
-    modified: std::time::SystemTime,
-    goals: Vec<String>,
+// The formula's value for one pair without the candidate rules or the threshold: what a
+// remembered verdict records and is compared against. 0 when the names share no token.
+// Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+pub fn lookalike_pair_score(store: &Store, a: &str, b: &str) -> f64 {
+    let (Some(ea), Some(eb)) = (store.graph.entities.get(a), store.graph.entities.get(b)) else {
+        return 0.0;
+    };
+    let (ta, tb) = (name_tokens(ea), name_tokens(eb));
+    let docs_a: BTreeSet<String> = ea.mentions.iter().map(|m| m.doc.clone()).collect();
+    let docs_b: BTreeSet<String> = eb.mentions.iter().map(|m| m.doc.clone()).collect();
+    score_pair(&ta, &docs_a, &tb, &docs_b)
+        .map(|(score, _, _, _)| score)
+        .unwrap_or(0.0)
 }
 
-// Per out directory, the resolved goal ids of every journal entry read so far, by
-// generation. A derivation lists the journal and stats each entry; only an entry whose
-// file is new or has changed size or mtime is parsed again, and an entry no longer on
-// disk (an archived store) drops. A board derivation once parsed the whole journal
-// for this set every time it ran.
-static RESOLVED_GOALS: std::sync::Mutex<BTreeMap<std::path::PathBuf, BTreeMap<u64, ResolvedEntry>>> =
-    std::sync::Mutex::new(BTreeMap::new());
-
-// Goal ids the journal records as resolved, across every entry.
-pub fn journal_resolved_goals(out: &std::path::Path) -> BTreeSet<String> {
-    let dir = out.join("journal");
-    let mut cache = RESOLVED_GOALS.lock().unwrap_or_else(|e| e.into_inner());
-    let per_gen = cache.entry(out.to_path_buf()).or_default();
-    let Ok(rd) = crate::vfs::read_dir(&dir) else {
-        per_gen.clear();
-        return BTreeSet::new();
+// The scored pairs the board asks about: every candidate pair over the threshold whose
+// verdict is not remembered (no `lookalikes` entry at the pair's score) and that no
+// creation note told apart. The name index writes records for exactly these.
+// Mirrors docs/compiler/goals/dedupe-candidates.md#created-when.
+pub fn pending_lookalikes(store: &Store) -> Vec<Lookalike> {
+    let told_apart = |x: &str, y: &str| {
+        store
+            .graph
+            .entities
+            .get(x)
+            .is_some_and(|e| e.distinct_from.contains_key(y))
     };
-    let mut seen: BTreeSet<u64> = BTreeSet::new();
-    for e in rd.flatten() {
-        let name = e.file_name().to_string_lossy().to_string();
-        let Some(n) = name
-            .strip_prefix('g')
-            .and_then(|s| s.strip_suffix(".yaml"))
-            .and_then(|s| s.parse::<u64>().ok())
-        else {
-            continue;
-        };
-        let Ok(md) = e.metadata() else { continue };
-        let (len, modified) = (md.len(), md.modified().unwrap_or(std::time::UNIX_EPOCH));
-        seen.insert(n);
-        let fresh = per_gen
-            .get(&n)
-            .is_some_and(|c| c.len == len && c.modified == modified);
-        if !fresh {
-            let goals = read_journal_entry(&e.path(), n)
-                .map(|entry| entry.resolved_goals.iter().map(|r| r.goal.clone()).collect())
-                .unwrap_or_default();
-            per_gen.insert(n, ResolvedEntry { len, modified, goals });
-        }
-    }
-    per_gen.retain(|n, _| seen.contains(n));
-    per_gen
-        .values()
-        .flat_map(|c| c.goals.iter().cloned())
+    lookalike_scores(store)
+        .into_iter()
+        .filter(|l| {
+            let remembered = store
+                .status
+                .lookalike(&pair_target(&l.a, &l.b))
+                .is_some_and(|v| (v.score - l.score).abs() < 1e-6);
+            !remembered && !told_apart(&l.a, &l.b) && !told_apart(&l.b, &l.a)
+        })
         .collect()
 }
 
@@ -3887,26 +3885,12 @@ impl GoalKind for DedupeCandidates {
         "entity pair"
     }
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
-        let judged = journal_resolved_goals(&store.out);
         let mut out = Vec::new();
-        for l in lookalike_scores(store) {
+        // A remembered verdict at the pair's score, or a note at creation that told
+        // the two apart, is the standing verdict: the pair is not asked about again.
+        // Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+        for l in pending_lookalikes(store) {
             let target = pair_target(&l.a, &l.b);
-            let id = goal_id("dedupe-candidates", &target);
-            if judged.contains(&id) {
-                continue;
-            }
-            // A note at creation told the two apart: the standing verdict.
-            // Mirrors docs/compiler/goals/dedupe-candidates.md#created-when.
-            let told_apart = |x: &str, y: &str| {
-                store
-                    .graph
-                    .entities
-                    .get(x)
-                    .is_some_and(|e| e.distinct_from.contains_key(y))
-            };
-            if told_apart(&l.a, &l.b) || told_apart(&l.b, &l.a) {
-                continue;
-            }
             let filed = store.graph.diagnostics.values().any(|d| {
                 d.lifecycle == "open"
                     && d.rule == "duplicate-entity"
@@ -6949,6 +6933,190 @@ pub(crate) mod tests {
         assert!(revised[0].judged().is_empty());
     }
 
+    // ---- verdicts are remembered ----
+
+    // A store on disk holding "backend" (api.md) and "backend system" (deploy.md): a
+    // lookalike pair at the threshold.
+    fn lookalike_store(label: &str) -> Store {
+        let out = std::env::temp_dir().join(format!("jazyk-lookalikes-{}-{}", label, crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let mut s = Store {
+            out,
+            ..Default::default()
+        };
+        // Each mention is backed by its document, so the sweep keeps the entities.
+        for (doc, text) in [
+            ("api.md", "# X\n\nThe backend serves requests. The backend system is deployed nightly.\n"),
+            ("deploy.md", "# X\n\nThe backend system is deployed nightly.\n"),
+        ] {
+            s.docs.insert(
+                doc.to_string(),
+                DocRecord {
+                    content_hash: hash_hex(text),
+                    sections: crate::md::parse_sections(text),
+                    coverage: BTreeMap::new(),
+                },
+            );
+        }
+        let ent = |name: &str, docs: &[&str]| Entity {
+            name: name.into(),
+            mentions: docs
+                .iter()
+                .map(|d| SourceRef {
+                    doc: d.to_string(),
+                    section: "/x".into(),
+                    quote: name.into(),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:backend".into(), ent("backend", &["api.md"]));
+        s.graph.entities.insert("ent:backend-system".into(), ent("backend system", &["deploy.md"]));
+        s
+    }
+
+    fn session_resolving(goal: &str, evidence: Value) -> store::Commit {
+        store::Commit {
+            kind: "session".into(),
+            batch: vec![goal.to_string()],
+            resolved: vec![Resolved {
+                goal: goal.to_string(),
+                justification: "judged".into(),
+                evidence,
+            }],
+            ..Default::default()
+        }
+    }
+
+    const PAIR: &str = "ent:backend~ent:backend-system";
+    const DEDUPE: &str = "g:dedupe-candidates:ent:backend~ent:backend-system";
+
+    // The name index writes the pair's record at commit; the goal derives with that
+    // record as its cause. Resolving it `separate` writes the entry at the pair's
+    // score, clears the record, and the pair derives nothing more: a no-op rebuild
+    // derives zero goals, from the store in memory and from disk.
+    // Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+    #[test]
+    fn a_separate_dedupe_verdict_is_remembered_and_the_pair_is_not_asked_again() {
+        let mut s = lookalike_store("dedupe");
+        s.apply(vec![], &store::Commit::store("edit"));
+        let record = s.status.changes.iter().find(|c| c.kind == CHANGE_LOOKALIKE).expect("a lookalike record");
+        assert_eq!((record.subject.as_str(), record.generation), (PAIR, 1));
+        assert_eq!(record.detail["score"], 0.5);
+        let goals = DedupeCandidates.derive_goals(&s, &gen_settings());
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].id, DEDUPE);
+        assert_eq!(goals[0].cause.as_ref().map(|c| c.generation), Some(1));
+
+        s.apply(vec![], &session_resolving(DEDUPE, json!("separate")));
+        assert_eq!(
+            s.status.lookalikes,
+            vec![LookalikeVerdict {
+                pair: PAIR.into(),
+                verdict: "separate".into(),
+                score: 0.5,
+                generation: 2
+            }]
+        );
+        assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
+        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        // A later commit writes no record and derives nothing; the list persists.
+        s.apply(vec![], &store::Commit::store("edit"));
+        assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
+        let loaded = Store::load(&s.out);
+        assert_eq!(loaded.status.lookalikes, s.status.lookalikes);
+        assert!(DedupeCandidates.derive_goals(&loaded, &gen_settings()).is_empty());
+        // The `{verdict}` shape counts too.
+        let mut t = lookalike_store("dedupe-shape");
+        t.apply(vec![], &session_resolving(DEDUPE, json!({"verdict": "separate"})));
+        assert_eq!(t.status.lookalikes.len(), 1);
+        crate::vfs::remove_dir_all(&s.out).ok();
+        crate::vfs::remove_dir_all(&t.out).ok();
+    }
+
+    // A review-entity session that kept a lookalike apart in its evidence writes the
+    // same entry, so dedupe-candidates never asks about the pair. A merged verdict
+    // writes nothing: the merge itself takes the pair away.
+    // Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+    #[test]
+    fn a_separate_review_verdict_suppresses_the_dedupe_goal() {
+        let mut s = lookalike_store("review");
+        let evidence = json!({
+            "definition": "current",
+            "lookalikes": [
+                {"id": "ent:backend-system", "verdict": "separate", "reason": "a deployment unit"},
+            ],
+        });
+        s.apply(vec![], &session_resolving("g:review-entity:ent:backend", evidence));
+        assert_eq!(s.status.lookalikes.len(), 1, "{:?}", s.status.lookalikes);
+        assert_eq!((s.status.lookalikes[0].pair.as_str(), s.status.lookalikes[0].score), (PAIR, 0.5));
+        assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
+        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        let mut t = lookalike_store("review-merged");
+        let evidence = json!({"definition": "current", "lookalikes": [{"id": "ent:backend-system", "verdict": "merged"}]});
+        t.apply(vec![], &session_resolving("g:review-entity:ent:backend", evidence));
+        assert!(t.status.lookalikes.is_empty());
+        crate::vfs::remove_dir_all(&s.out).ok();
+        crate::vfs::remove_dir_all(&t.out).ok();
+    }
+
+    // The score moves (a new mention document here): the entry drops at that commit,
+    // the name index writes a fresh record, and the pair is judged again with the new
+    // commit as its cause. Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+    #[test]
+    fn a_moved_score_drops_the_entry_and_reopens_the_pair() {
+        let mut s = lookalike_store("moved");
+        s.apply(vec![], &session_resolving(DEDUPE, json!("separate")));
+        assert_eq!(s.status.lookalikes.len(), 1);
+        // The same evidence again: nothing moves.
+        s.apply(vec![], &store::Commit::store("edit"));
+        assert_eq!(s.status.lookalikes.len(), 1);
+        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        s.graph.entities.get_mut("ent:backend-system").unwrap().mentions.push(SourceRef {
+            doc: "api.md".into(),
+            section: "/x".into(),
+            quote: "backend system".into(),
+        });
+        s.apply(vec![], &store::Commit::store("edit"));
+        assert!(s.status.lookalikes.is_empty(), "{:?}", s.status.lookalikes);
+        let record = s.status.changes.iter().find(|c| c.kind == CHANGE_LOOKALIKE).expect("a fresh record");
+        assert_eq!((record.subject.as_str(), record.generation), (PAIR, 3));
+        assert_eq!(record.detail["documents"], 0.5);
+        let goals = DedupeCandidates.derive_goals(&s, &gen_settings());
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].change["score"], 0.63);
+        assert_eq!(goals[0].cause.as_ref().map(|c| c.generation), Some(3));
+        crate::vfs::remove_dir_all(&s.out).ok();
+    }
+
+    // A merge takes one id with it: the entry and any record drop at the same commit.
+    // Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+    #[test]
+    fn a_merge_drops_the_entry_and_the_record() {
+        let absorb = || Op::MergeEntities {
+            keep: "ent:backend".into(),
+            absorb: "ent:backend-system".into(),
+            reason: "one concept".into(),
+        };
+        let mut s = lookalike_store("merge");
+        s.apply(vec![], &session_resolving(DEDUPE, json!("separate")));
+        assert_eq!(s.status.lookalikes.len(), 1);
+        let report = s.apply(vec![absorb()], &store::Commit::store("decree"));
+        assert_eq!(report.applied, 1, "{:?}", report.skipped);
+        assert!(s.status.lookalikes.is_empty(), "{:?}", s.status.lookalikes);
+        assert!(!s.status.changes.iter().any(|c| c.kind == CHANGE_LOOKALIKE));
+        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        // A record with no verdict drops the same way.
+        let mut t = lookalike_store("merge-record");
+        t.apply(vec![], &store::Commit::store("edit"));
+        assert!(t.status.has_change(CHANGE_LOOKALIKE, PAIR));
+        t.apply(vec![absorb()], &store::Commit::store("decree"));
+        assert!(!t.status.has_change(CHANGE_LOOKALIKE, PAIR));
+        crate::vfs::remove_dir_all(&s.out).ok();
+        crate::vfs::remove_dir_all(&t.out).ok();
+    }
+
     // The token index names every pair the pairwise scan scores, in the scan's order,
     // with the scan's scores. Mirrors docs/compiler/graph.md#derived-data.
     #[test]
@@ -7050,64 +7218,5 @@ pub(crate) mod tests {
         }
         let st = Store::default();
         assert!(linked_subjects_all(&st).is_empty());
-    }
-
-    // The resolved set follows the journal on disk: a new entry joins it, an entry
-    // rewritten under its path is read again, a removed entry leaves, and an
-    // unchanged entry is not parsed twice (its cached ids stand).
-    #[test]
-    fn journal_resolved_goals_follow_the_entries_on_disk() {
-        let out = std::env::temp_dir().join(format!(
-            "jazyk-resolved-cache-{}",
-            crate::sys::process_id()
-        ));
-        crate::vfs::remove_dir_all(&out).ok();
-        let dir = out.join("journal");
-        crate::vfs::create_dir_all(&dir).unwrap();
-        let write = |gen: u64, goals: &[&str]| {
-            let entry = JournalEntry {
-                generation: gen,
-                kind: "session".into(),
-                resolved_goals: goals
-                    .iter()
-                    .map(|g| Resolved {
-                        goal: g.to_string(),
-                        ..Default::default()
-                    })
-                    .collect(),
-                ..Default::default()
-            };
-            crate::vfs::write(
-                dir.join(format!("g{}.yaml", gen)),
-                serde_norway::to_string(&entry).unwrap(),
-            )
-            .unwrap();
-        };
-        assert!(journal_resolved_goals(&out).is_empty());
-        write(1, &["g:dedupe-candidates:ent:a~ent:b"]);
-        write(2, &["g:review-entity:ent:a"]);
-        let set = journal_resolved_goals(&out);
-        assert_eq!(set.len(), 2);
-        assert!(set.contains("g:dedupe-candidates:ent:a~ent:b"));
-        // Rewritten under the same path: the new ids replace the old.
-        write(1, &["g:dedupe-candidates:ent:c~ent:d-longer"]);
-        let set = journal_resolved_goals(&out);
-        assert!(!set.contains("g:dedupe-candidates:ent:a~ent:b"), "{:?}", set);
-        assert!(set.contains("g:dedupe-candidates:ent:c~ent:d-longer"));
-        // Removed: gone from the set. Unchanged: still there from the cache.
-        crate::vfs::remove_file(dir.join("g2.yaml")).unwrap();
-        let set = journal_resolved_goals(&out);
-        assert_eq!(
-            set.into_iter().collect::<Vec<_>>(),
-            vec!["g:dedupe-candidates:ent:c~ent:d-longer".to_string()]
-        );
-        // The journal directory gone: an empty set, and the cache forgets it.
-        crate::vfs::remove_dir_all(&out).ok();
-        assert!(journal_resolved_goals(&out).is_empty());
-        assert!(RESOLVED_GOALS
-            .lock()
-            .unwrap()
-            .get(&out)
-            .is_none_or(|per_gen| per_gen.is_empty()));
     }
 }

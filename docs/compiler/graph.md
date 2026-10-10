@@ -27,7 +27,8 @@ compiled ([glob](./project-settings.md#glob)): move it to
   status.yaml            # version, generation, verdict, change records, parked and
                          # failed goals, costs, budgets spent, open diagnostic counts
                          # by severity, pending alignment proposals, anchors marked
-                         # for re-evaluation, stamped root documents
+                         # for re-evaluation, stamped root documents, lookalike
+                         # verdicts
   graph/
     entities.yaml        # map: id -> entity
     requirements.yaml    # map: id -> requirement
@@ -93,6 +94,9 @@ Each document file under `docs/` holds:
   stamped by the build after the section trees sync. Commits outside a build (edits,
   answers, MCP sessions) read the stamp to order documents by
   [link level](./reconciler.md#link-levels) when they recompute derived data.
+- `lookalikes`: the entity pairs a session kept apart, `{pair, verdict, score,
+  generation}` each, the memory that keeps a judged pair off the board while its score
+  holds ([verdicts are remembered](./goals/dedupe-candidates.md#verdicts-are-remembered)).
 
 ### Writes and unreadable files
 

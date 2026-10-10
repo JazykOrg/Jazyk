@@ -1,7 +1,8 @@
 # Services
 
 The Platform is built from sixteen services. The services share the stores of the Data Layer described in [Storage](./storage.md).
-The Reporting service exports the Order Audit Trail. The Order Audit Trail lists every charge for the auditor.
+The Reporting service exports the Audit Trail. The Audit Trail lists every charge for the auditor.
+The Billing service also appends to the Audit Log.
 
 ## Storefront
 

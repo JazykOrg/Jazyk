@@ -2425,6 +2425,85 @@ impl Store {
         }
     }
 
+    // The lookalike memory and the name index, settled at every commit. A `separate`
+    // verdict (a resolved `dedupe-candidates` goal, or one entry of a resolved
+    // `review-entity` goal's `lookalikes` evidence) writes the pair's entry with the
+    // formula's value over the graph as it stands and clears the pair's record. An
+    // entry whose pair lost an id drops. Then the name index: every scored pair with no
+    // standing verdict takes a `lookalike` record, a remembered pair whose score moved
+    // drops its entry and takes one too, and a record whose pair is no longer pending
+    // clears. Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+    fn settle_lookalikes(&mut self, resolved: &[Resolved], generation: u64, batch: &mut RecordBatch) {
+        use crate::goals::{lookalike_pair_score, pair_members, pair_target, pending_lookalikes, CHANGE_LOOKALIKE};
+        let is_separate = |v: &serde_json::Value| {
+            v.as_str().or_else(|| v["verdict"].as_str()) == Some(LOOKALIKE_SEPARATE)
+        };
+        let mut kept: Vec<(String, String)> = Vec::new();
+        for r in resolved {
+            if let Some(target) = r.goal.strip_prefix("g:dedupe-candidates:") {
+                if let Some((a, b)) = pair_members(target) {
+                    if is_separate(&r.evidence) {
+                        kept.push((a.to_string(), b.to_string()));
+                    }
+                }
+            } else if let Some(target) = r.goal.strip_prefix("g:review-entity:") {
+                for item in r.evidence["lookalikes"].as_array().into_iter().flatten() {
+                    if let Some(other) = item["id"].as_str() {
+                        if is_separate(item) {
+                            kept.push((target.to_string(), other.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        for (a, b) in kept {
+            let (a, b) = (self.resolve_id(&a).to_string(), self.resolve_id(&b).to_string());
+            if a == b || !self.graph.entities.contains_key(&a) || !self.graph.entities.contains_key(&b) {
+                continue;
+            }
+            let pair = pair_target(&a, &b);
+            let score = lookalike_pair_score(self, &a, &b);
+            self.status.lookalikes.retain(|l| l.pair != pair);
+            self.status.lookalikes.push(LookalikeVerdict {
+                pair: pair.clone(),
+                verdict: LOOKALIKE_SEPARATE.to_string(),
+                score,
+                generation,
+            });
+            self.status.clear_changes(&[CHANGE_LOOKALIKE], &pair);
+        }
+        let entities = &self.graph.entities;
+        self.status.lookalikes.retain(|l| {
+            pair_members(&l.pair).is_some_and(|(a, b)| entities.contains_key(a) && entities.contains_key(b))
+        });
+        self.status.lookalikes.sort_by(|x, y| x.pair.cmp(&y.pair));
+        let pending = pending_lookalikes(self);
+        let mut subjects: BTreeSet<String> = BTreeSet::new();
+        for l in &pending {
+            let pair = pair_target(&l.a, &l.b);
+            subjects.insert(pair.clone());
+            // A remembered verdict the pending set let through scored differently:
+            // the pair is judged again over the new evidence.
+            self.status.lookalikes.retain(|v| v.pair != pair);
+            if !self.status.has_change(CHANGE_LOOKALIKE, &pair) {
+                batch.push(
+                    0,
+                    CHANGE_LOOKALIKE,
+                    &pair,
+                    "lookalike",
+                    serde_json::json!({
+                        "score": l.score, "tokens": l.tokens, "documents": l.documents,
+                        "shared": l.shared,
+                        "mentions": {&l.a: l.docs_a, &l.b: l.docs_b},
+                    }),
+                );
+            }
+        }
+        self.status
+            .changes
+            .retain(|c| c.kind != CHANGE_LOOKALIKE || subjects.contains(&c.subject));
+    }
+
     // Append the partner to `detail.judged` on both sides' created and revised
     // records for every resolved rejudge-pair goal. A goal of another kind, or one
     // whose target is no pair, marks nothing.
@@ -2571,6 +2650,9 @@ impl Store {
                         .map(|e| e.provenance.as_ref().is_some_and(provenance_is_pending))
                 })
                 .unwrap_or(false),
+            // Both ids live; the name index settles the rest at every commit.
+            crate::goals::CHANGE_LOOKALIKE => crate::goals::pair_members(&c.subject)
+                .is_some_and(|(a, b)| self.graph.entities.contains_key(a) && self.graph.entities.contains_key(b)),
             CHANGE_VIEW_MEMBER_GONE => self.graph.views.get(&c.subject).is_some_and(|v| {
                 v.members
                     .iter()
@@ -5264,6 +5346,7 @@ impl Store {
         // clears a record with no candidate left.
         // Mirrors docs/compiler/graph.md#change-records.
         self.mark_pairs_judged(&commit.resolved);
+        self.settle_lookalikes(&commit.resolved, generation, &mut batch);
         self.prune_records();
         let changes = self.commit_records(batch);
         self.mark_answered_pairs_judged(&applied);
@@ -6167,6 +6250,7 @@ impl Store {
                 };
                 batch.push(*m, kind, id, "sweep", serde_json::Value::Null);
             }
+            self.settle_lookalikes(&[], generation, &mut batch);
             self.prune_records();
             self.commit_records(batch);
             let entry = self.journal_entry(

@@ -1201,6 +1201,19 @@ impl std::fmt::Display for Verdict {
     }
 }
 
+// One entity pair a session kept apart: the memory that keeps the pair off the board
+// while its lookalike score holds.
+// Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LookalikeVerdict {
+    pub pair: String,
+    pub verdict: String,
+    pub score: f64,
+    pub generation: u64,
+}
+
+pub const LOOKALIKE_SEPARATE: &str = "separate";
+
 // The whole of status.yaml. Mirrors docs/compiler/graph.md#storage-layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Status {
@@ -1242,6 +1255,10 @@ pub struct Status {
     // Mirrors docs/compiler/graph.md#storage-layout and reconciler.md#link-levels.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots: Vec<String>,
+    // The entity pairs kept apart, one entry per pair, with the score at judgment.
+    // Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookalikes: Vec<LookalikeVerdict>,
 }
 
 impl Default for Status {
@@ -1259,6 +1276,7 @@ impl Default for Status {
             alignment: Vec::new(),
             reevaluate: Vec::new(),
             roots: Vec::new(),
+            lookalikes: Vec::new(),
         }
     }
 }
@@ -1293,6 +1311,11 @@ impl Status {
     pub fn clear_changes(&mut self, kinds: &[&str], subject: &str) {
         self.changes
             .retain(|c| !(kinds.contains(&c.kind.as_str()) && c.subject == subject));
+    }
+
+    // The remembered verdict on an entity pair (`pair` as `pair_target` spells it).
+    pub fn lookalike(&self, pair: &str) -> Option<&LookalikeVerdict> {
+        self.lookalikes.iter().find(|l| l.pair == pair)
     }
 
     // The ids of the records of the given kinds on one subject.

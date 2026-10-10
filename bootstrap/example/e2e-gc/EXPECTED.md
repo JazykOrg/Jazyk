@@ -16,7 +16,7 @@ harness derives the goals.
   goal derives on `ent:platform` in its fan-out form. The headings are the partition the
   script groups by: two groupings named `Storefront` and `Back Office`, each with
   derived provenance from its eight members and a `ratify` goal blocked on a human.
-  Links `storage.md`, `audit.md`, and `compliance.md` (level 2). The services carry
+  Links `storage.md` (level 2). The services carry
   one-word names (`Auth`, `Billing`) on purpose: a shared generic token such as
   `Service` would score every pair of them as lookalikes once the storage rules mention
   them in a second document (tokens 0.5, documents 1, score 0.63), 120 dedupe goals
@@ -32,11 +32,15 @@ harness derives the goals.
   grouping brings it back under the limit without a session. The stores share the
   token `Store` but are mentioned in this document alone, so no pair of them spans two
   documents and none is a lookalike candidate.
-- `audit.md` and `compliance.md`: `Order Audit Log` and `Order Audit Trail`, one per
-  document, three name tokens sharing two (`order`, `audit`). The lookalike score is
-  0.5 (tokens 0.67, documents 0), the threshold, so a `dedupe-candidates` goal derives
-  once both reviews close. Neither name is a qualifier variant of the other, so the
-  near-duplicate gate lets both through without a note. The script keeps them separate.
+- The lookalike pair: `Audit Log` and `Audit Trail`. The Billing service appends to the
+  Audit Log in `services.md` and `storage.md`; the Reporting service exports the Audit
+  Trail in `services.md` alone. Two name tokens sharing one (`audit`): tokens 0.5,
+  documents 0.5 (one shared document of two), score 0.5, the threshold, so a
+  `dedupe-candidates` goal derives once both reviews close. One shared token of two is
+  under the review hint's bar, so neither review lists the other as a lookalike and the
+  pair reaches the goal instead of being remembered by a review's `separate` verdict.
+  Neither name is a qualifier variant of the other, so the near-duplicate gate lets both
+  through without a note. The script keeps them separate.
 
 ## After the burst
 
@@ -45,7 +49,7 @@ harness derives the goals.
 - `view:class/data-layer` is curated, shows its six stores, and excludes the sixteen
   services with notes naming the sub-view that lists them; the sub-view and the level
   views of the two groupings render to `.puml` and `.svg`.
-- Both audit entities survive; the pair's goal is in the journal's resolved goals and
-  does not derive again.
+- Both audit entities survive; `status.yaml` remembers the pair under `lookalikes` with
+  its score 0.5, no `lookalike` record stands, and the pair does not derive again.
 - The build is `converged` with the two `ratify` goals and the `bind` goals riding as
   `blocked`; a rebuild derives zero goals and runs no session.

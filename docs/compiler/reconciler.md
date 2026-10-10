@@ -738,7 +738,8 @@ board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status
 
 - Parked means "ran out of road": a session that exhausted its rounds without meeting
   the gate is retried once with a fresh session, then its goals park; a build that hits
-  its cap (3 × derived goals + 8 sessions) parks every open goal. Parked goals keep
+  its cap (3 × the distinct goals derived so far in the build + 8 sessions, the count
+  cumulative over every board of the build) parks every open goal. Parked goals keep
   their records, resume first in the next build, and count as open in the verdict
   (`incomplete`, with an `incomplete-build` diagnostic). Unfinished work is never
   silent.

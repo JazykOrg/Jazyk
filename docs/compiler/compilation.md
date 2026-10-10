@@ -313,9 +313,14 @@ again ([parked and failed](./reconciler.md#parked-and-failed)), so a verdict nev
 an over-fan-out level.
 
 A build with open blocked goals is `converged, 2 blocked`, never silently done.
-A hard per-build cap (3 × derived goals + 8 sessions) backstops the loop; work still open
-when it runs out is parked in `status.yaml` and reported as an `incomplete-build`
-diagnostic, and the next build resumes parked goals first
+A hard per-build cap (3 × the distinct goals derived so far in the build + 8 sessions)
+backstops the loop. The count is cumulative: every goal id any board of this build has
+carried, recomputed after every commit, so a project whose deeper link levels derive
+their goals only after the roots ingest gets a cap sized for the whole build, not for
+its first board. The bound stays finite: goal ids are finite, and a goal that keeps
+coming back parks on its reopen cycle ([parked and failed](./reconciler.md#parked-and-failed)).
+Work still open when the cap runs out is parked in `status.yaml` and reported as an
+`incomplete-build` diagnostic, and the next build resumes parked goals first
 ([parked and failed](./reconciler.md#parked-and-failed)). A session that exhausts its
 round budget without meeting its gate leaves its goals open, so the verdict counts them;
 a build that stopped halfway is never reported as converged.

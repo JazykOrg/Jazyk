@@ -35,6 +35,9 @@ scratchpad's `validation-notes.md`, `iterate-cycle-1.md`, and `iterate-cycle-2.m
 | dogfood (`docs/`) | gpt-5.5 | no result: the first live window lost 262 sessions to the host death (fixed since, not rerun) | not recorded | not recorded | n/a |
 | f2 on the levels branch, snippets | qwen3.8:27b | not converged by design: 3 advance sessions (0 failures) then 7 goal snippets | 7 of 25 sections in the advance | 3 + 7, tokens not recorded | 6 pass (of 6) |
 | example-org on the levels branch, snippets | qwen3.8:27b | not converged by design: 3 advance sessions (0 failures) then 9 goal snippets, the root fan-out among them | 11 of 32 sections in the advance | 3 + 9, tokens not recorded | 8 pass (of 8; trap 5 on five of its eight sites) |
+| f1 (2026-10-10, master at `c8d43e8`) | gemma4:31b-mlx via LocalRouter | `converged, 12 blocked, 3 optional advised`, generation 7; rebuild: no dirty set, 0 LLM calls | 100% (5 of 5) | 5, 910k billed (journal sum) in 59 min | none planted |
+| f1 (2026-10-10) | qwen3.8:27b-mlx via LocalRouter | `incomplete`: Ollama's MLX runner panicked on the second call of both attempts (Metal threadgroup kernel error), 3 goals parked with reasons | n/a | 2 attempts, 0 landed | n/a |
+| f1 (2026-10-10) | llama3.1:8b via LocalRouter | `incomplete`: the model never satisfied the tool contract (missing `statement`, wrong `set_coverage` field), every call bounced, nothing landed, 3 goals parked | n/a | 2 attempts, 0 landed | n/a |
 
 The f2 traps: 1 cross-document identity (`ent:order`), 2 buyer lookalike, 3 the 21 versus
 30 day contradiction, 4 a rule hidden in an Examples section, 5 junk bait in `admin.md`,
@@ -53,6 +56,38 @@ hired stage, 8 a quality statement without a measure.
 - A version-0 out directory archived to `.jazyk.bak` and reconciled from empty.
 - Found during the run: the internal build never recorded the compile release, so
   default manual mode blocked everything (`6fc98ed`).
+
+## f1 on local models after the stability review (2026-10-10)
+
+Three runs on a temp copy of `f1`, each from an empty store, the binary built from
+master at `c8d43e8` (the stability review's merges: atomic store writes, the OS lock,
+command and ACP timeouts, derived indices, the reopen-cycle park, park reasons,
+remembered lookalike verdicts, weighted lookalike tokens).
+
+- `gemma4:31b-mlx`: converged in 5 sessions (b1 to b4 compile, b6 a `declare-edges`
+  burst), 59 minutes wall clock, 909,832 billed tokens by the journal's session sum
+  (the GC session alone 475k: the model called a tool before `begin_goals`, bounced
+  `no-open-batch`, then declared three of four edges "no longer derives"). 5 entities,
+  12 requirements, 4 relationships, 5 views rendered (2 component, 3 use case), 12
+  `criterion-missing` info diagnostics, 12 bind goals blocked behind the manual
+  generate release. Every `reconcile-section`, `rejudge-pair`, and `review-entity`
+  resolution carried a justification. An immediate rebuild reported no dirty document
+  set and made no call.
+- `qwen3.8:27b-mlx`: both attempts of the first batch died in Ollama's MLX runner
+  ("Maximum threads per threadgroup is 896 but requested 960 for kernel
+  sdpa_vector_2pass"), a runtime fault outside jazyk; a plain 21k-token prompt to the
+  same model through LocalRouter answers fine. The build retried once, parked the three
+  goals with `left open after its retry in session b1-1`, and ended `incomplete`.
+- `llama3.1:8b`: reached the model on every round and landed nothing: `bad-args` on
+  every `upsert_requirement` (no `statement`) and `set_coverage` (`mark` for `state`),
+  the repeated-call guard after the third identical call, `unmarked-section` on
+  `mark_goal_done`, then `mark_goal_failed` and an end of turn with no `done`. Parked
+  the same way. The harness held exactly as the division of labor says; the model did
+  not.
+
+The 910k-token figure against the 28k the first f1 row records is not a like-for-like
+comparison: that run predates the journal's billed-token accounting and the
+tool-schema resend per round ([the fixed cost of a round](../docs/TODO.md#next)).
 
 ## f2 on the local model: the baseline
 

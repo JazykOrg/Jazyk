@@ -62,24 +62,24 @@ const fn store(name: &'static str) -> Term {
 const GC_TERMS: [Term; 25] = [
     term("Platform", Some("system")),
     term("Data Layer", None),
-    term("Order Audit Log", None),
-    term("Order Audit Trail", None),
-    service("Auth"),
-    service("Catalog"),
-    service("Search"),
-    service("Cart"),
-    service("Checkout"),
-    service("Pricing"),
-    service("Promotion"),
-    service("Review"),
-    service("Billing"),
-    service("Inventory"),
-    service("Shipping"),
-    service("Notification"),
-    service("Analytics"),
-    service("Reporting"),
-    service("Support"),
-    service("Fraud"),
+    term("Audit Log", None),
+    term("Audit Trail", None),
+    service("Auth Service"),
+    service("Catalog Service"),
+    service("Search Service"),
+    service("Cart Service"),
+    service("Checkout Service"),
+    service("Pricing Service"),
+    service("Promotion Service"),
+    service("Review Service"),
+    service("Billing Service"),
+    service("Inventory Service"),
+    service("Shipping Service"),
+    service("Notification Service"),
+    service("Analytics Service"),
+    service("Reporting Service"),
+    service("Support Service"),
+    service("Fraud Service"),
     store("User Store"),
     store("Product Store"),
     store("Order Store"),
@@ -1362,7 +1362,7 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
     let fan_out = "g:abstract-entity:ent:platform";
     let split = "g:split-view:view:class/data-layer";
     let platform_split = "g:split-view:view:component/platform";
-    let dedupe = "g:dedupe-candidates:ent:order-audit-log~ent:order-audit-trail";
+    let dedupe = "g:dedupe-candidates:ent:audit-log~ent:audit-trail";
     let marked: BTreeMap<String, String> = calls
         .iter()
         .filter(|c| c.name == "mark_goal_done")
@@ -1424,6 +1424,16 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .expect("the dedupe goal");
     assert_eq!((dedupe_goal.class.as_str(), dedupe_goal.mandatory), ("gc", false));
     assert_eq!(dedupe_goal.change["score"], 0.5, "{}", dedupe_goal.change);
+    // The sixteen `X Service` entities share one generic token and the same two
+    // documents; its weight keeps every pair of them under the threshold, so the audit
+    // pair is the only dedupe goal any board ever held.
+    let dedupes: BTreeSet<&str> = boards
+        .iter()
+        .flat_map(|b| b.goals.iter())
+        .filter(|g| g.kind == "dedupe-candidates")
+        .map(|g| g.id.as_str())
+        .collect();
+    assert_eq!(dedupes, BTreeSet::from([dedupe]), "{:?}", dedupes);
     drop(boards);
 
     // The level: two groupings under the Platform, each derived from exactly its
@@ -1490,9 +1500,17 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         assert!(store.graph.views.contains_key(v), "{} missing: {:?}", v, store.graph.views.keys());
     }
     assert_diagrams_rendered(&store, &out);
-    // The lookalikes, kept apart as scripted, and the verdict remembered.
-    assert!(store.graph.entities.contains_key("ent:order-audit-log"));
-    assert!(store.graph.entities.contains_key("ent:order-audit-trail"));
+    // The lookalikes, kept apart as scripted, and the verdict remembered: the pair's
+    // entry at its score, no standing record, and nothing to derive.
+    assert!(store.graph.entities.contains_key("ent:audit-log"));
+    assert!(store.graph.entities.contains_key("ent:audit-trail"));
+    let remembered = store
+        .status
+        .lookalike("ent:audit-log~ent:audit-trail")
+        .unwrap_or_else(|| panic!("no lookalikes entry: {:?}", store.status.lookalikes));
+    assert_eq!((remembered.verdict.as_str(), remembered.score), ("separate", 0.5));
+    assert!(!store.status.changes.iter().any(|c| c.kind == crate::goals::CHANGE_LOOKALIKE), "{:?}", store.status.changes);
+    assert!(crate::goals::pending_lookalikes(&store).is_empty());
     let resolved: BTreeSet<String> = session_entries(&out, store.status.generation)
         .iter()
         .flat_map(|e| e.resolved_goals.iter().map(|r| r.goal.clone()))

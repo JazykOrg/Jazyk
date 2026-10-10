@@ -2142,7 +2142,7 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
         ),
         "dedupe-candidates" => (
             (g.change["score"].as_f64().unwrap_or(0.0) * 100.0) as u64,
-            (goals::LOOKALIKE_THRESHOLD * 100.0) as u64,
+            (crate::limits::LOOKALIKE_THRESHOLD * 100.0) as u64,
             "lookalike score, percent".into(),
         ),
         _ => (

@@ -27,7 +27,8 @@ compiled ([glob](./project-settings.md#glob)): move it to
   status.yaml            # version, generation, verdict, change records, parked and
                          # failed goals, costs, budgets spent, open diagnostic counts
                          # by severity, pending alignment proposals, anchors marked
-                         # for re-evaluation, stamped root documents
+                         # for re-evaluation, stamped root documents, lookalike
+                         # verdicts
   graph/
     entities.yaml        # map: id -> entity
     requirements.yaml    # map: id -> requirement
@@ -93,6 +94,9 @@ Each document file under `docs/` holds:
   stamped by the build after the section trees sync. Commits outside a build (edits,
   answers, MCP sessions) read the stamp to order documents by
   [link level](./reconciler.md#link-levels) when they recompute derived data.
+- `lookalikes`: the entity pairs a session kept apart, `{pair, verdict, score,
+  generation}` each, the memory that keeps a judged pair off the board while its score
+  holds ([verdicts are remembered](./goals/dedupe-candidates.md#verdicts-are-remembered)).
 
 ### Writes and unreadable files
 
@@ -773,6 +777,11 @@ harness kills it and records exit `124`; `JAZYK_COMMAND_TIMEOUT` overrides it pe
 
 The criteria batch cap is one too: `CRITERIA_GOALS_PER_BATCH` is 4, the most
 `derive-criteria` goals one batch packs ([batching](./reconciler.md#batching)).
+
+The lookalike score's constants are registry constants too: `lookalike-token-weight`
+0.75, `lookalike-document-weight` 0.25, `lookalike-threshold` 0.5, and
+`lookalike-distinctive-holders` 3, the holder count under which a name token keeps its
+full weight ([the lookalike score](./goals/dedupe-candidates.md#the-lookalike-score)).
 
 The reopen cycle count is one too: `REOPEN_CYCLES` is 2, the times a goal may be
 resolved and re-opened with the same `change` in one build before it parks

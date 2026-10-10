@@ -43,19 +43,37 @@ pair; the model never computes or adjusts it.
   document is [`review-entity`](./review-entity.md#hints)'s to judge.
 - `tokens`: the name and aliases of each entity, lowercased, punctuation stripped, stop
   words dropped, reduced to crude stems (the normalization
-  [pair selection](../reconciler.md#pairs) uses), as one token set per entity. The
-  overlap is the Dice coefficient: twice the shared tokens over the sizes of both sets.
+  [pair selection](../reconciler.md#pairs) uses), as one token set per entity. Each
+  token carries a weight, its inverse document frequency over the entity names and
+  aliases in the graph, so a token many names share (`service`, `store`) carries less
+  signal than one two names share. With `E` the entities in the graph and `n` the
+  entities whose token set holds the token:
+  `weight = min(1, ln(1 + E / n) / ln(1 + E / 3))`. A token held by three entities or
+  fewer (`lookalike-distinctive-holders` 3) weighs 1; the weight falls from there. The
+  overlap is the weighted Dice coefficient: twice the weight of the shared tokens over
+  the summed weights of both sets. Sets of full-weight tokens give the plain Dice
+  coefficient, so two names sharing one distinctive token score as they always did.
 - `documents`: the documents mentioning each entity, as one set per entity. The overlap
   is the Jaccard index: the shared documents over the union.
 - `score = 0.75 × tokens + 0.25 × documents`. The record is written when the score
   reaches `0.5`. The weights (`lookalike-token-weight` 0.75, `lookalike-document-weight`
-  0.25) and the threshold (`lookalike-threshold` 0.5) are registry constants, not
-  settings ([budgets and thresholds](../graph.md#budgets-and-thresholds)).
+  0.25), the threshold (`lookalike-threshold` 0.5), and the holder count
+  (`lookalike-distinctive-holders` 3) are registry constants, not settings
+  ([budgets and thresholds](../graph.md#budgets-and-thresholds)).
 
 E.g. "backend" and "backend system", each mentioned in its own document: `tokens` 0.67,
 `documents` 0, score 0.5, a candidate. "Product" and "Product price" mentioned in the
 same two documents: `tokens` 0.67, `documents` 1, score 0.75, a candidate the judgment
 keeps apart. "Order" and "Reorder point": no shared token, never a candidate.
+
+E.g. the weight at work: "Auth Service" and "Billing Service" among sixteen `X Service`
+entities in a graph of 25, both mentioned in the same two documents. `service` is held
+by 16 of 25 entities: `weight = ln(1 + 25/16) / ln(1 + 25/3) = 0.94 / 2.23 = 0.42`;
+`auth` and `billing` weigh 1. `tokens = 2 × 0.42 / (1.42 + 1.42) = 0.3`, `documents`
+1, score 0.47, not a candidate. The same two names in a graph of two entities: `service`
+is held by both, weight 1, `tokens` 0.5, score 0.63, a candidate. Sixteen services that
+share one generic word are not 120 pairs to judge; a shared word two names hold still
+is.
 
 ```yaml
 - id: c418-0
@@ -76,17 +94,31 @@ goals. `status.yaml` keeps a `lookalikes` list
 `{pair, verdict: separate, score, generation}`.
 
 - Resolving the goal with `separate` writes the entry with the pair's score at judgment
-  and clears the record. A merge needs no entry: one of the ids is gone, and the pair
-  with it.
+  and clears the record. The score is the formula's value over the graph as the
+  session's changeset commits (an alias the session added counts). A merge needs no
+  entry: one of the ids is gone, and the pair with it.
 - A `separate` verdict a [`review-entity`](./review-entity.md#gate) session records in
   its `evidence` writes the same entry for that pair, so a review that kept two entities
-  apart with a reason is not asked again by this goal. A merge it stages clears the
-  record outright.
+  apart with a reason is not asked again by this goal. The entry carries the formula's
+  value for the pair whether or not it reaches the threshold, so a pair the review kept
+  apart below the threshold is still remembered when it later crosses it unchanged. A
+  merge it stages clears the record outright.
 - The name index writes a fresh `lookalike` record for a judged pair only when its score
   differs from the recorded one: a rename, a new alias, a new mention document. The entry
   is dropped with it, and the pair is judged again over the new evidence.
 - An entry whose pair lost one of its ids (a delete, a merge, a retraction) is dropped at
   the same commit.
+- The list is the only memory. Goal derivation does not read the journal's resolved
+  goals for this kind, so a store written before the list existed judges each kept pair
+  once more and remembers it from then on.
+
+```yaml
+lookalikes:
+  - pair: ent:product~ent:product-price
+    verdict: separate
+    score: 0.75
+    generation: 419
+```
 
 ### Batching
 

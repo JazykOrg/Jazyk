@@ -43,19 +43,37 @@ pair; the model never computes or adjusts it.
   document is [`review-entity`](./review-entity.md#hints)'s to judge.
 - `tokens`: the name and aliases of each entity, lowercased, punctuation stripped, stop
   words dropped, reduced to crude stems (the normalization
-  [pair selection](../reconciler.md#pairs) uses), as one token set per entity. The
-  overlap is the Dice coefficient: twice the shared tokens over the sizes of both sets.
+  [pair selection](../reconciler.md#pairs) uses), as one token set per entity. Each
+  token carries a weight, its inverse document frequency over the entity names and
+  aliases in the graph, so a token many names share (`service`, `store`) carries less
+  signal than one two names share. With `E` the entities in the graph and `n` the
+  entities whose token set holds the token:
+  `weight = min(1, ln(1 + E / n) / ln(1 + E / 3))`. A token held by three entities or
+  fewer (`lookalike-distinctive-holders` 3) weighs 1; the weight falls from there. The
+  overlap is the weighted Dice coefficient: twice the weight of the shared tokens over
+  the summed weights of both sets. Sets of full-weight tokens give the plain Dice
+  coefficient, so two names sharing one distinctive token score as they always did.
 - `documents`: the documents mentioning each entity, as one set per entity. The overlap
   is the Jaccard index: the shared documents over the union.
 - `score = 0.75 × tokens + 0.25 × documents`. The record is written when the score
   reaches `0.5`. The weights (`lookalike-token-weight` 0.75, `lookalike-document-weight`
-  0.25) and the threshold (`lookalike-threshold` 0.5) are registry constants, not
-  settings ([budgets and thresholds](../graph.md#budgets-and-thresholds)).
+  0.25), the threshold (`lookalike-threshold` 0.5), and the holder count
+  (`lookalike-distinctive-holders` 3) are registry constants, not settings
+  ([budgets and thresholds](../graph.md#budgets-and-thresholds)).
 
 E.g. "backend" and "backend system", each mentioned in its own document: `tokens` 0.67,
 `documents` 0, score 0.5, a candidate. "Product" and "Product price" mentioned in the
 same two documents: `tokens` 0.67, `documents` 1, score 0.75, a candidate the judgment
 keeps apart. "Order" and "Reorder point": no shared token, never a candidate.
+
+E.g. the weight at work: "Auth Service" and "Billing Service" among sixteen `X Service`
+entities in a graph of 25, both mentioned in the same two documents. `service` is held
+by 16 of 25 entities: `weight = ln(1 + 25/16) / ln(1 + 25/3) = 0.94 / 2.23 = 0.42`;
+`auth` and `billing` weigh 1. `tokens = 2 × 0.42 / (1.42 + 1.42) = 0.3`, `documents`
+1, score 0.47, not a candidate. The same two names in a graph of two entities: `service`
+is held by both, weight 1, `tokens` 0.5, score 0.63, a candidate. Sixteen services that
+share one generic word are not 120 pairs to judge; a shared word two names hold still
+is.
 
 ```yaml
 - id: c418-0

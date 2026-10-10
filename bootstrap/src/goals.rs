@@ -6,7 +6,9 @@
 // docs/compiler/goals/.
 use crate::board::Board;
 use crate::gen::GenSettings;
-use crate::limits;
+use crate::limits::{
+    self, LOOKALIKE_DISTINCTIVE_HOLDERS, LOOKALIKE_DOCUMENT_WEIGHT, LOOKALIKE_THRESHOLD, LOOKALIKE_TOKEN_WEIGHT,
+};
 use crate::model::*;
 use crate::store::{self, Op, Store};
 use serde_json::{json, Value};
@@ -3591,9 +3593,35 @@ impl GoalKind for DeclareEdges {
 
 pub struct DedupeCandidates;
 
-pub const LOOKALIKE_TOKEN_WEIGHT: f64 = 0.75;
-pub const LOOKALIKE_DOCUMENT_WEIGHT: f64 = 0.25;
-pub const LOOKALIKE_THRESHOLD: f64 = 0.5;
+// The weight of one name token: its inverse document frequency over the graph's entity
+// token sets, 1 for a token held by `lookalike-distinctive-holders` entities or fewer,
+// falling from there. Mirrors docs/compiler/goals/dedupe-candidates.md#the-lookalike-score.
+pub fn token_weight(entities: usize, holders: usize) -> f64 {
+    let e = entities as f64;
+    let k = LOOKALIKE_DISTINCTIVE_HOLDERS as f64;
+    let w = (1.0 + e / holders.max(1) as f64).ln() / (1.0 + e / k).ln();
+    w.min(1.0)
+}
+
+// The weight of every token any entity's name or aliases hold, over the given token
+// sets (one per entity in the graph).
+fn token_weights(tokens: &[BTreeSet<String>]) -> BTreeMap<String, f64> {
+    let mut holders: BTreeMap<&str, usize> = BTreeMap::new();
+    for ts in tokens {
+        for t in ts {
+            *holders.entry(t.as_str()).or_default() += 1;
+        }
+    }
+    holders
+        .into_iter()
+        .map(|(t, n)| (t.to_string(), token_weight(tokens.len(), n)))
+        .collect()
+}
+
+// The name token sets of every entity, in id order.
+fn all_name_tokens(store: &Store) -> Vec<BTreeSet<String>> {
+    store.graph.entities.values().map(name_tokens).collect()
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lookalike {
@@ -3632,6 +3660,7 @@ fn tied_pairs(store: &Store) -> BTreeSet<(String, String)> {
 fn lookalike_of(
     store: &Store,
     tied: &BTreeSet<(String, String)>,
+    weights: &BTreeMap<String, f64>,
     a: &str,
     ta: &BTreeSet<String>,
     docs_a: &BTreeSet<String>,
@@ -3650,7 +3679,7 @@ fn lookalike_of(
     if docs_a.union(docs_b).count() < 2 {
         return None;
     }
-    let (score, tokens, documents, shared) = score_pair(ta, docs_a, tb, docs_b)?;
+    let (score, tokens, documents, shared) = score_pair(weights, ta, docs_a, tb, docs_b)?;
     if score + 1e-9 < LOOKALIKE_THRESHOLD {
         return None;
     }
@@ -3666,10 +3695,12 @@ fn lookalike_of(
     })
 }
 
-// The formula over two token sets and two mention-document sets: (score, tokens,
-// documents, shared tokens), each figure rounded to two decimals; None when either name
-// has no token or the names share none. The threshold is the caller's.
+// The formula over two token sets and two mention-document sets, the tokens weighted
+// by `weights` (a token outside the map weighs 1): (score, tokens, documents, shared
+// tokens), each figure rounded to two decimals; None when either name has no token or
+// the names share none. The threshold is the caller's.
 fn score_pair(
+    weights: &BTreeMap<String, f64>,
     ta: &BTreeSet<String>,
     docs_a: &BTreeSet<String>,
     tb: &BTreeSet<String>,
@@ -3682,7 +3713,9 @@ fn score_pair(
     if shared.is_empty() {
         return None;
     }
-    let tokens = 2.0 * shared.len() as f64 / (ta.len() + tb.len()) as f64;
+    let weigh = |ts: &[String]| -> f64 { ts.iter().map(|t| weights.get(t).copied().unwrap_or(1.0)).sum() };
+    let sum = |ts: &BTreeSet<String>| -> f64 { ts.iter().map(|t| weights.get(t).copied().unwrap_or(1.0)).sum() };
+    let tokens = 2.0 * weigh(&shared) / (sum(ta) + sum(tb));
     let union = docs_a.union(docs_b).count().max(1);
     let documents = docs_a.intersection(docs_b).count() as f64 / union as f64;
     let score = LOOKALIKE_TOKEN_WEIGHT * tokens + LOOKALIKE_DOCUMENT_WEIGHT * documents;
@@ -3714,6 +3747,7 @@ pub fn lookalike_scores(store: &Store) -> Vec<Lookalike> {
                 .collect()
         })
         .collect();
+    let weights = token_weights(&tokens);
     let mut by_token: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, ts) in tokens.iter().enumerate() {
         for t in ts {
@@ -3732,7 +3766,7 @@ pub fn lookalike_scores(store: &Store) -> Vec<Lookalike> {
         .into_iter()
         .filter_map(|(i, j)| {
             lookalike_of(
-                store, &tied, ids[i], &tokens[i], &docs[i], ids[j], &tokens[j], &docs[j],
+                store, &tied, &weights, ids[i], &tokens[i], &docs[i], ids[j], &tokens[j], &docs[j],
             )
         })
         .collect()
@@ -3743,6 +3777,7 @@ pub fn lookalike_scores(store: &Store) -> Vec<Lookalike> {
 #[cfg(test)]
 pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
     let tied = tied_pairs(store);
+    let weights = token_weights(&all_name_tokens(store));
     let ids: Vec<&String> = store.graph.entities.keys().collect();
     let mut out = Vec::new();
     for i in 0..ids.len() {
@@ -3752,7 +3787,7 @@ pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
             let docs_a: BTreeSet<String> = ea.mentions.iter().map(|m| m.doc.clone()).collect();
             let docs_b: BTreeSet<String> = eb.mentions.iter().map(|m| m.doc.clone()).collect();
             let (ta, tb) = (name_tokens(ea), name_tokens(eb));
-            out.extend(lookalike_of(store, &tied, a, &ta, &docs_a, b, &tb, &docs_b));
+            out.extend(lookalike_of(store, &tied, &weights, a, &ta, &docs_a, b, &tb, &docs_b));
         }
     }
     out
@@ -3768,7 +3803,8 @@ pub fn lookalike_pair_score(store: &Store, a: &str, b: &str) -> f64 {
     let (ta, tb) = (name_tokens(ea), name_tokens(eb));
     let docs_a: BTreeSet<String> = ea.mentions.iter().map(|m| m.doc.clone()).collect();
     let docs_b: BTreeSet<String> = eb.mentions.iter().map(|m| m.doc.clone()).collect();
-    score_pair(&ta, &docs_a, &tb, &docs_b)
+    let weights = token_weights(&all_name_tokens(store));
+    score_pair(&weights, &ta, &docs_a, &tb, &docs_b)
         .map(|(score, _, _, _)| score)
         .unwrap_or(0.0)
 }
@@ -6931,6 +6967,64 @@ pub(crate) mod tests {
         assert_eq!(revised.len(), 1);
         assert_eq!(revised[0].generation, 7);
         assert!(revised[0].judged().is_empty());
+    }
+
+    // A token many names share carries less signal: sixteen `X Service` entities
+    // mentioned in the same two documents pair with none of each other, while two names
+    // sharing one distinctive token still pair, and the weights follow the documented
+    // formula. Mirrors docs/compiler/goals/dedupe-candidates.md#the-lookalike-score.
+    #[test]
+    fn a_token_many_names_share_carries_less_signal() {
+        let mut s = Store::default();
+        let ent = |name: &str, docs: &[&str]| Entity {
+            name: name.into(),
+            mentions: docs
+                .iter()
+                .map(|d| SourceRef {
+                    doc: d.to_string(),
+                    section: "/x".into(),
+                    quote: name.into(),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let services = [
+            "Auth", "Catalog", "Search", "Cart", "Checkout", "Pricing", "Promotion", "Review", "Billing",
+            "Inventory", "Shipping", "Notification", "Analytics", "Reporting", "Support", "Fraud",
+        ];
+        for name in services {
+            let id = format!("ent:{}-service", name.to_lowercase());
+            s.graph.entities.insert(id, ent(&format!("{} Service", name), &["services.md", "storage.md"]));
+        }
+        for name in ["Platform", "Data Layer", "User Store", "Product Store", "Order Store", "Payment Store", "Session Cache"] {
+            s.graph.entities.insert(format!("ent:{}", crate::md::slug(name)), ent(name, &["storage.md"]));
+        }
+        s.graph.entities.insert("ent:audit-log".into(), ent("Audit Log", &["services.md", "storage.md"]));
+        s.graph.entities.insert("ent:audit-trail".into(), ent("Audit Trail", &["services.md"]));
+        assert_eq!(s.graph.entities.len(), 25);
+        // The weights: full up to three holders, falling from there.
+        assert_eq!(token_weight(25, 1), 1.0);
+        assert_eq!(token_weight(25, 2), 1.0);
+        assert_eq!(token_weight(25, 3), 1.0);
+        assert!((token_weight(25, 16) - 0.42).abs() < 0.01, "{}", token_weight(25, 16));
+        assert_eq!(token_weight(2, 2), 1.0);
+        let scores = lookalike_scores(&s);
+        let ids: Vec<(&str, &str)> = scores.iter().map(|l| (l.a.as_str(), l.b.as_str())).collect();
+        assert_eq!(ids, vec![("ent:audit-log", "ent:audit-trail")], "{:?}", ids);
+        assert_eq!((scores[0].tokens, scores[0].documents, scores[0].score), (0.5, 0.5, 0.5));
+        // The same two services alone in a graph: `service` is distinctive and they pair.
+        let mut two = Store::default();
+        for name in ["Auth", "Billing"] {
+            two.graph.entities.insert(
+                format!("ent:{}-service", name.to_lowercase()),
+                ent(&format!("{} Service", name), &["services.md", "storage.md"]),
+            );
+        }
+        let scores = lookalike_scores(&two);
+        assert_eq!(scores.len(), 1);
+        assert_eq!((scores[0].tokens, scores[0].documents, scores[0].score), (0.5, 1.0, 0.63));
+        assert_eq!(lookalike_scores(&s), lookalike_scores_scan(&s));
+        assert_eq!(lookalike_scores(&two), lookalike_scores_scan(&two));
     }
 
     // ---- verdicts are remembered ----

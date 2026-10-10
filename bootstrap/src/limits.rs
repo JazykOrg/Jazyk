@@ -107,6 +107,15 @@ pub const VIEW_LIMITS: [&str; 5] = [
 pub const PAIRS_PER_REQUIREMENT: &str = "pairs-per-requirement";
 pub const PAIRS_PER_REQUIREMENT_CAP: usize = 8;
 
+// The lookalike score (docs/compiler/goals/dedupe-candidates.md#the-lookalike-score):
+// the two term weights, the threshold a candidate pair's score reaches, and the holder
+// count under which a name token keeps its full weight (a token held by more entities
+// weighs its inverse document frequency over the graph's entity names and aliases).
+pub const LOOKALIKE_TOKEN_WEIGHT: f64 = 0.75;
+pub const LOOKALIKE_DOCUMENT_WEIGHT: f64 = 0.25;
+pub const LOOKALIKE_THRESHOLD: f64 = 0.5;
+pub const LOOKALIKE_DISTINCTIVE_HOLDERS: usize = 3;
+
 // Session budgets. Mirrors docs/compiler/sessions.md#budgets.
 pub const SESSION_ROUNDS: u32 = 24;
 // The embedded agent's flat runaway stop, in model round-trips (one may carry

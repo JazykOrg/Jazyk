@@ -16,16 +16,18 @@ harness derives the goals.
   goal derives on `ent:platform` in its fan-out form. The headings are the partition the
   script groups by: two groupings named `Storefront` and `Back Office`, each with
   derived provenance from its eight members and a `ratify` goal blocked on a human.
-  Links `storage.md` (level 2). The services carry
-  one-word names (`Auth`, `Billing`) on purpose: a shared generic token such as
-  `Service` would score every pair of them as lookalikes once the storage rules mention
-  them in a second document (tokens 0.5, documents 1, score 0.63), 120 dedupe goals
-  the fixture does not want.
-- `storage.md`: six stores under the Data Layer, then one access sentence per service
-  (`The Auth service reads the User Store.`). Each access sentence names two entities and
+  Links `storage.md` (level 2). The services carry two-word names (`Auth Service`,
+  `Billing Service`) on purpose: all sixteen share the token `Service`, and once the
+  storage rules mention them in a second document a plain Dice overlap would score every
+  pair of them as lookalikes (tokens 0.5, documents 1, score 0.63), 120 dedupe goals.
+  The inverse document frequency weight on `service` (held by 16 of the graph's 25
+  entities, weight 0.42) brings each pair to tokens 0.3, score 0.47, under the
+  threshold, so none derives: the audit pair below is the only dedupe goal of the build.
+- `storage.md`: five stores under the Data Layer, then one access sentence per service
+  (`The Auth Service reads the User Store.`). Each access sentence names two entities and
   opens `declare-edges`; the declared edges make every service an outside member of the
-  Data Layer's level view, so `view:class/data-layer` holds 6 children plus 16 outside
-  entities (22 > 20) and an optional `split-view` goal derives. The script moves the
+  Data Layer's level view, so `view:class/data-layer` holds 5 children plus 16 outside
+  entities (21 > 20) and an optional `split-view` goal derives. The script moves the
   outside entities to a sub-view and excludes them from the level view with notes
   naming it. The Platform's own level view crosses the same limit meanwhile (16 children
   plus the stores) and its `split-view` goal is blocked with `fan-out first`; the
@@ -46,7 +48,7 @@ harness derives the goals.
 
 - `ent:platform` has two children, the groupings, each `derived` from exactly its
   members with the Platform as `parent`; the sixteen services sit under them.
-- `view:class/data-layer` is curated, shows its six stores, and excludes the sixteen
+- `view:class/data-layer` is curated, shows its five stores, and excludes the sixteen
   services with notes naming the sub-view that lists them; the sub-view and the level
   views of the two groupings render to `.puml` and `.svg`.
 - Both audit entities survive; `status.yaml` remembers the pair under `lookalikes` with

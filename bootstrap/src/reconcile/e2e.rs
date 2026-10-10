@@ -64,22 +64,22 @@ const GC_TERMS: [Term; 25] = [
     term("Data Layer", None),
     term("Audit Log", None),
     term("Audit Trail", None),
-    service("Auth"),
-    service("Catalog"),
-    service("Search"),
-    service("Cart"),
-    service("Checkout"),
-    service("Pricing"),
-    service("Promotion"),
-    service("Review"),
-    service("Billing"),
-    service("Inventory"),
-    service("Shipping"),
-    service("Notification"),
-    service("Analytics"),
-    service("Reporting"),
-    service("Support"),
-    service("Fraud"),
+    service("Auth Service"),
+    service("Catalog Service"),
+    service("Search Service"),
+    service("Cart Service"),
+    service("Checkout Service"),
+    service("Pricing Service"),
+    service("Promotion Service"),
+    service("Review Service"),
+    service("Billing Service"),
+    service("Inventory Service"),
+    service("Shipping Service"),
+    service("Notification Service"),
+    service("Analytics Service"),
+    service("Reporting Service"),
+    service("Support Service"),
+    service("Fraud Service"),
     store("User Store"),
     store("Product Store"),
     store("Order Store"),
@@ -1424,6 +1424,16 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .expect("the dedupe goal");
     assert_eq!((dedupe_goal.class.as_str(), dedupe_goal.mandatory), ("gc", false));
     assert_eq!(dedupe_goal.change["score"], 0.5, "{}", dedupe_goal.change);
+    // The sixteen `X Service` entities share one generic token and the same two
+    // documents; its weight keeps every pair of them under the threshold, so the audit
+    // pair is the only dedupe goal any board ever held.
+    let dedupes: BTreeSet<&str> = boards
+        .iter()
+        .flat_map(|b| b.goals.iter())
+        .filter(|g| g.kind == "dedupe-candidates")
+        .map(|g| g.id.as_str())
+        .collect();
+    assert_eq!(dedupes, BTreeSet::from([dedupe]), "{:?}", dedupes);
     drop(boards);
 
     // The level: two groupings under the Platform, each derived from exactly its

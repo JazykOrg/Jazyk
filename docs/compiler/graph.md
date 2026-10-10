@@ -778,6 +778,11 @@ harness kills it and records exit `124`; `JAZYK_COMMAND_TIMEOUT` overrides it pe
 The criteria batch cap is one too: `CRITERIA_GOALS_PER_BATCH` is 4, the most
 `derive-criteria` goals one batch packs ([batching](./reconciler.md#batching)).
 
+The lookalike score's constants are registry constants too: `lookalike-token-weight`
+0.75, `lookalike-document-weight` 0.25, `lookalike-threshold` 0.5, and
+`lookalike-distinctive-holders` 3, the holder count under which a name token keeps its
+full weight ([the lookalike score](./goals/dedupe-candidates.md#the-lookalike-score)).
+
 The reopen cycle count is one too: `REOPEN_CYCLES` is 2, the times a goal may be
 resolved and re-opened with the same `change` in one build before it parks
 ([parked and failed](./reconciler.md#parked-and-failed)).

@@ -329,8 +329,10 @@ The two ways out:
   changeset, and in the same changeset the fact's provenance flips to `quote` with the
   landed sentence as the quote (`source` on a requirement, a mention on an entity, the
   attribute's `provenance`). The diagnostic resolves with `status: applied`, the change
-  record clears, the goal is gone. No session runs. Downstream goals derive from the
-  graph change as usual.
+  record clears, the goal is gone. No session runs. A reworded statement opens
+  `rejudge-pair` as usual; the accepting commit writes no `entity-changed` record, so
+  no `review-entity` follows the mention the sentence adds
+  ([edit paths](../compilation.md#edit-paths)).
 - Retract. Choosing the retract option runs `retract_decree`
   ([mutations](../graph.md#mutations)) with reason `retracted`, journaled as `ratify`,
   deterministically. A node created by derivation or decree is deleted. A field decreed

@@ -3041,6 +3041,15 @@ impl Store {
         let mut moves: Vec<(String, Option<String>, Option<String>, usize)> = Vec::new();
         let mut dirt = Dirt::default();
         let mut batch = RecordBatch::new(generation);
+        // A human edit is the review: a dual write and an accepted ratification
+        // proposal land a sentence the person just read, and the mention it adds to
+        // each entity it names is the quote they confirmed, so neither writes
+        // `entity-changed`. A retract (journaled as `ratify` too) removes facts the
+        // person did not read and writes its records as usual.
+        // Mirrors docs/compiler/compilation.md#edit-paths.
+        let human_confirmed = commit.kind == "dual-write"
+            || (commit.kind == "ratify"
+                && !ops.iter().any(|o| matches!(o, Op::RetractDecree { .. })));
         // The state an all-or-nothing changeset rolls back to when an op is skipped.
         let snapshot = commit
             .all_or_nothing
@@ -5036,9 +5045,13 @@ impl Store {
             .iter()
             .filter_map(|r| r.goal.strip_prefix("g:review-entity:"))
             .collect();
-        for (id, (m, via)) in &dirt.entities {
-            if self.graph.entities.contains_key(id) && !reviewed.contains(id.as_str()) {
-                batch.push(*m, CHANGE_ENTITY, id, via, serde_json::Value::Null);
+        // `human_confirmed` (a dual write or an accepted proposal) skips the whole
+        // list: a revised statement still writes `requirement-revised` below.
+        if !human_confirmed {
+            for (id, (m, via)) in &dirt.entities {
+                if self.graph.entities.contains_key(id) && !reviewed.contains(id.as_str()) {
+                    batch.push(*m, CHANGE_ENTITY, id, via, serde_json::Value::Null);
+                }
             }
         }
         for (id, m) in &dirt.created {
@@ -6743,6 +6756,9 @@ mod tests {
             "within 21 days",
         )
         .unwrap();
+        // The setup's own records go, so what the dual write writes stands alone.
+        let setup: Vec<String> = s.status.changes.iter().map(|c| c.id.clone()).collect();
+        s.clear_changes(&setup);
         let report = s
             .dual_write(
                 &root,
@@ -6780,6 +6796,11 @@ mod tests {
             .mentions
             .iter()
             .any(|m| m.quote == "An Order is paid within 21 days."));
+        // A human edit is the review: the mention opens no review of the Order, while
+        // the revised statement keeps its pair judgment against other requirements.
+        // Mirrors docs/compiler/compilation.md#edit-paths.
+        assert!(!s.status.has_change(CHANGE_ENTITY, "ent:order"), "{:?}", s.status.changes);
+        assert!(s.status.has_change(CHANGE_REQ_REVISED, "req:pay-1"), "{:?}", s.status.changes);
         let entry = journal_entry(&s, report.generation);
         assert_eq!(entry.kind, "dual-write");
         assert!(entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"));
@@ -8422,6 +8443,8 @@ mod tests {
         s.gc();
         assert_eq!(s.graph.requirements.len(), 2);
         // Ratification flips the provenance to the quote and resolves the diagnostic.
+        let setup: Vec<String> = s.status.changes.iter().map(|c| c.id.clone()).collect();
+        s.clear_changes(&setup);
         let r = s.apply(
             vec![Op::RatifyProvenance {
                 id: "req:x-1".into(),
@@ -8433,6 +8456,9 @@ mod tests {
         let q = &s.graph.requirements["req:x-1"];
         assert!(q.source.is_some() && q.provenance.is_none());
         assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
+        // An accepted proposal is a human edit: the mention the landed sentence adds
+        // opens no review of the Cart. Mirrors docs/compiler/goals/ratify.md#accept.
+        assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"), "{:?}", s.status.changes);
         assert!(s
             .graph
             .diagnostics
@@ -8542,6 +8568,10 @@ mod tests {
         assert!(!q.entities.iter().any(|e| e == "ent:selection"));
         assert!(q.entities.iter().any(|e| e == "ent:checkout"));
         assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
+        // A retract is journaled as `ratify` but is no accepted sentence: the parent
+        // that took the requirement and the children is reviewed as usual.
+        // Mirrors docs/compiler/goals/ratify.md#retract.
+        assert!(s.status.has_change(CHANGE_ENTITY, "ent:checkout"), "{:?}", s.status.changes);
         let entry: JournalEntry = yaml_to(
             &s.out
                 .join("journal")

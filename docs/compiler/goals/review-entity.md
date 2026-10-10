@@ -46,7 +46,12 @@ everything since the last one. The commit that resolves a `review-entity` goal w
 no `entity-changed` record for its target from that session's own mutations: the review
 saw the result it staged, and a definition refresh must not re-open the review that
 made it. Mutations on other entities (a neighbor added to a statement's `entities`)
-open their own goals as usual.
+open their own goals as usual. A `dual-write` commit and an accepting `ratify` commit
+write no `entity-changed` record at all: a human edit is the review, and the mention
+the landed sentence adds to each entity it names is the quote the person confirmed
+([edit paths](../compilation.md#edit-paths)). A revised statement still writes
+`requirement-revised`, so its pairs are judged; a retract writes `entity-changed` as
+usual.
 
 E.g.:
 

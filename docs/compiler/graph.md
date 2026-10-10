@@ -509,7 +509,7 @@ The kinds, who writes them, and the goal each feeds:
 | `criterion-created`, `criterion-revised` | a commit that creates or revises a criterion, or the sweep marking a derived criterion revised because its requirement's statement changed (`via: requirement`) | nothing on the board; the ledger comparison reads them and marks the test keyed to the criterion stale ([the ledger](../consumers/gen.md#the-ledger)) |
 | `criterion-deleted` | a commit or the sweep that deletes a criterion | nothing (trail; the ledger prunes the row) |
 | `requirement-deleted`, `entity-deleted` | a commit that deletes the node (a session or the sweep); the subject is the dead node | nothing (trail; the ledger prunes on `requirement-deleted`). The `node-deleted` and `view-member-gone` records the same commit writes carry the goals |
-| `entity-changed` | a commit that changes an entity's fact set | `review-entity` |
+| `entity-changed` | a commit that changes an entity's fact set, except a `dual-write` commit and an accepting `ratify` commit: a human edit is the review, and the mention the landed sentence adds is the quote the person confirmed ([edit paths](./compilation.md#edit-paths)); a retract writes it as usual | `review-entity` |
 | `node-deleted` | a delete or the sweep, one record per live node that still referenced the dead one (`via` names the edge) | `retrace` (a view, an instance, a derived fact); `rejudge-pair` (a surviving diagnostic subject) |
 | `instance-changed` | a commit that changes an instance, its type, or the type's attributes | `conform-instance` |
 | `ledger-stale` | the ledger comparison as the build derives its board (unbound, requirement changed, artifact gone); refreshed in place, cleared when the row agrees again | `bind`, `generate`, `verify` |

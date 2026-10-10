@@ -131,8 +131,10 @@ write, journaled as `ratify` ([journal](../graph.md#journal)):
 - The diagnostic resolves (`status: applied`), the change record clears, the goal is
   gone. No session runs.
 
-Downstream goals derive from the graph change as usual: a requirement whose
-statement the human reworded opens `rejudge-pair` and `bind` on it.
+A requirement whose statement the human reworded opens `rejudge-pair` and `bind` on
+it. No `review-entity` follows: the accepting commit writes no `entity-changed`
+record, because the person just read the sentence and the mention it adds is the quote
+they confirmed ([edit paths](../compilation.md#edit-paths)).
 
 ### Retract
 

@@ -2281,10 +2281,19 @@ pub(crate) fn run_sessions(
         kinds: kinds_line(&board),
         blocked: board.counts().blocked,
     });
-    let derived = board.open_goals().len();
-    let cap = max_sessions.unwrap_or(
-        crate::limits::BUILD_SESSION_FACTOR * derived + crate::limits::BUILD_SESSION_FLOOR,
-    );
+    // The build cap grows with the build: `derived` counts the distinct goal ids any
+    // board of this build has carried, recomputed after every commit, so the deeper
+    // link levels of a project (whose goals derive only after the roots ingest) widen
+    // the cap instead of exhausting one sized for the first board. Finite: goal ids
+    // are finite and the reopen cycle parks a goal that keeps coming back.
+    // Mirrors docs/compiler/compilation.md#convergence.
+    let mut derived_ids: BTreeSet<String> =
+        board.open_goals().iter().map(|g| g.id.clone()).collect();
+    let cap_for = |derived: usize| {
+        max_sessions.unwrap_or(
+            crate::limits::BUILD_SESSION_FACTOR * derived + crate::limits::BUILD_SESSION_FLOOR,
+        )
+    };
 
     let mut sessions = 0u32;
     let mut applied = 0usize;
@@ -2305,6 +2314,8 @@ pub(crate) fn run_sessions(
     let mut endpoint_error = String::new();
 
     loop {
+        derived_ids.extend(board.open_goals().iter().map(|g| g.id.clone()));
+        let cap = cap_for(derived_ids.len());
         // The batches the serving can run: none of their goals parked this build.
         let runnable = |b: &crate::board::Batch| !b.goals.iter().any(|id| parked_ids.contains(id));
         let compile_batches: Vec<crate::board::Batch> = board
@@ -2639,7 +2650,7 @@ pub(crate) fn run_sessions(
     }
 
     SessionsRun {
-        derived,
+        derived: derived_ids.len(),
         sessions,
         applied,
         costs,
@@ -5725,6 +5736,181 @@ mod tests {
         // The whole-build report names the reason beside the parked goal.
         let report = render_ripple(&ripple(&s, &format!("g{}", s.status.generation), false).expect("ripple"));
         assert!(report.contains(&format!("parked: {} (reopened-after-resolve", backend)), "{}", report);
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // The build cap counts the distinct goals derived so far in the build, not the
+    // first board alone: the first board carries one `reconcile-section` goal (a cap
+    // sized for it would allow 3 x 1 + 8 sessions), the sync after the first session
+    // dirties twelve more documents, and each derives a goal of its own that runs
+    // once (a `reconcile-section` batch is walled per document). The build runs
+    // thirteen sessions, past the first board's cap, and parks nothing.
+    // Mirrors docs/compiler/compilation.md#convergence.
+    #[test]
+    fn the_build_cap_grows_with_the_goals_derived_during_the_build() {
+        use crate::board::tests::{control_auto, project_for};
+        use crate::limits::{BUILD_SESSION_FACTOR, BUILD_SESSION_FLOOR};
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        use crate::store::{Commit, Op};
+        use std::sync::Arc;
+
+        // Covers every section of its batch and marks the goals done: a section with a
+        // body and no coverage would derive again as unprocessed.
+        struct CoveringRunner {
+            out: std::path::PathBuf,
+        }
+        impl SessionRunner for CoveringRunner {
+            fn agent_name(&self) -> String {
+                "covering-stub".into()
+            }
+            fn set_build_token(&self, _token: Option<String>) {}
+            fn run_item(&self, batch: &BatchRun, _trace: &Trace) -> SessionReport {
+                let mut s = Store::load(&self.out);
+                let ops: Vec<Op> = batch
+                    .goals
+                    .iter()
+                    .filter_map(|g| g.target.split_once('#'))
+                    .map(|(doc, section)| Op::SetCoverage {
+                        doc: doc.to_string(),
+                        section: section.to_string(),
+                        state: "covered".into(),
+                        note: None,
+                    })
+                    .collect();
+                let applied = ops.len();
+                let mut commit = Commit::session(batch.goal_ids(), 1, Some(10));
+                commit.resolved = batch
+                    .goals
+                    .iter()
+                    .map(|g| Resolved {
+                        goal: g.id.clone(),
+                        justification: "the section states nothing to extract".into(),
+                        evidence: Value::Null,
+                    })
+                    .collect();
+                let report = s.apply(ops, &commit);
+                assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+                SessionReport {
+                    applied,
+                    rounds: 1,
+                    tokens: 10,
+                    cached: 0,
+                    failed: None,
+                    resolved: batch.goal_ids(),
+                    stopped: None,
+                }
+            }
+            fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
+                Err("stub".into())
+            }
+            fn ask_traced(
+                &self,
+                _s: &str,
+                _u: &str,
+                _l: &str,
+                _st: &str,
+                _t: Option<&Trace>,
+            ) -> Result<String, String> {
+                Err("stub".into())
+            }
+        }
+
+        // Thirteen one-section documents: the root links the other twelve, which sit
+        // one link level below it. The store is synced to the first version with the
+        // twelve covered; the parsed set the build reloads after every session carries
+        // a second version of each of the twelve, so the first reload dirties them:
+        // goals the first board never saw.
+        const LATER: usize = 12;
+        let doc_text = |i: usize, version: usize| {
+            let links: Vec<String> = (1..=LATER).map(|j| format!("[d{}](./d{}.md)", j, j)).collect();
+            format!(
+                "# Document {}\n\nThe document {} states its rule, version {}.{}\n",
+                i,
+                i,
+                version,
+                if i == 0 { format!(" See {}.", links.join(", ")) } else { String::new() }
+            )
+        };
+        let parsed_with = |version_of: &dyn Fn(usize) -> usize| -> ParsedDocs {
+            (0..=LATER)
+                .map(|i| {
+                    let text = doc_text(i, version_of(i));
+                    (
+                        format!("docs/d{}.md", i),
+                        (hash_hex(&text), crate::md::parse_sections(&text)),
+                    )
+                })
+                .collect()
+        };
+        let first = parsed_with(&|_| 1);
+        let later = parsed_with(&|i| if i == 0 { 1 } else { 2 });
+
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-growing-cap-test-{}",
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        s.sync_docs(&first);
+        // The twelve linked documents are covered and clean: only the root's section is
+        // dirty and unprocessed, so the first board carries one goal.
+        let covered: Vec<Op> = (1..=LATER)
+            .map(|i| Op::SetCoverage {
+                doc: format!("docs/d{}.md", i),
+                section: format!("/document-{}", i),
+                state: "covered".into(),
+                note: None,
+            })
+            .collect();
+        let report = s.apply(covered, &Commit::session(Vec::new(), 1, None));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let others: Vec<String> = s
+            .status
+            .changes
+            .iter()
+            .filter(|c| !c.subject.starts_with("docs/d0.md#"))
+            .map(|c| c.id.clone())
+            .collect();
+        s.clear_changes(&others);
+
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            Arc::new(|_: &TraceEvent| {}),
+            Default::default(),
+        );
+        let mut proj = project_for(&s);
+        proj.roots = vec!["docs/d0.md".into()];
+        let control = control_auto();
+        let first_board = Board::derive(&s, &proj, &control);
+        assert_eq!(
+            first_board.open_goals().iter().map(|g| g.id.clone()).collect::<Vec<_>>(),
+            vec!["g:reconcile-section:docs/d0.md#/document-0".to_string()]
+        );
+        let runner = CoveringRunner { out: out.clone() };
+        let run = run_sessions(&proj, &out, &trace, None, &runner, &mut s, &later, &control);
+
+        // One goal on the first board, thirteen distinct over the build, each run once:
+        // more sessions than a cap sized for the first board allows, under the grown
+        // cap, and nothing parked.
+        let goals = 1 + LATER;
+        let first_board_cap = BUILD_SESSION_FACTOR + BUILD_SESSION_FLOOR;
+        let grown_cap = BUILD_SESSION_FACTOR * goals + BUILD_SESSION_FLOOR;
+        let reasons: Vec<Option<String>> = run.parked.iter().map(|g| g.reason.clone()).collect();
+        assert_eq!(run.derived, goals, "{:?}", reasons);
+        assert_eq!(
+            run.sessions as usize,
+            goals,
+            "against a first-board cap of {}; parked {:?}",
+            first_board_cap,
+            reasons
+        );
+        assert!(run.sessions as usize > first_board_cap);
+        assert!((run.sessions as usize) < grown_cap);
+        assert!(run.parked.is_empty(), "{:?}", reasons);
         crate::vfs::remove_dir_all(&out).ok();
     }
 }

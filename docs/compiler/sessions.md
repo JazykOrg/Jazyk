@@ -447,8 +447,12 @@ Budgets are registry constants built into the binary, not settings
 - Skills per session: 4, counting every skill rendered this session, active or inactive
   ([skills](#skills)). Enforced by the tool serving on `load_skill` and by the harness
   on auto-load.
-- Per build: 3 × the derived goals plus 8 sessions, so a stuck build stops instead of
-  looping. When the cap is tight, compile outranks GC: the scheduler stops opening GC
+- Per build: 3 × the distinct goals derived so far in the build plus 8 sessions, so a
+  stuck build stops instead of looping. The count grows with the build: every goal id
+  any board of this build has carried, recomputed after every commit, so goals that
+  derive only after an earlier batch commits (the deeper link levels of a project)
+  widen the cap instead of exhausting it ([convergence](./compilation.md#convergence)).
+  When the cap is tight, compile outranks GC: the scheduler stops opening GC
   bursts before it stops compile batches. Exhaustion parks every open goal
   ([convergence](./compilation.md#convergence)). Five consecutive failed sessions
   that spent no tokens stop the build early the same way: an endpoint answering only

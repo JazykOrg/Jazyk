@@ -114,9 +114,15 @@ journals its own generation, so the root of every ripple is itself a generation
   graph mutation in one changeset (journal entry `dual-write`). Changing a
   class-diagram arrow's cardinality rewrites the sentence behind the requirement that
   declared it. The commit absorbs the new section hashes, so the edit does not dirty the
-  document it just changed; downstream goals derive from the graph change. When no
-  proposed rewrite is accepted, the edit falls through to the decree path: the compiler
-  never rewrites a source document without an accepted proposal.
+  document it just changed. A human edit is the review: the person just read the
+  sentence, and the mention it adds to each entity it names is the quote they
+  confirmed, so a `dual-write` commit writes no `entity-changed` record and opens no
+  `review-entity`. A revised statement still owes its judgment against other
+  requirements: the commit writes `requirement-revised` as usual and `rejudge-pair`
+  derives per neighbor ([pairs](./reconciler.md#pairs)). Deletions write their
+  `node-deleted` records as usual. When no proposed rewrite is accepted, the edit falls
+  through to the decree path: the compiler never rewrites a source document without an
+  accepted proposal.
 - Edit a derived fact, or add a fact with no prose behind it: a decree. The changeset
   lands graph-only with `decree` provenance (journal entry `decree`). Downstream goals
   derive normally. Upward, the commit writes a `provenance-pending` record and a
@@ -129,7 +135,12 @@ journals its own generation, so the root of every ripple is itself a generation
   resolves, and the `ratify` goal is gone. The commit absorbs the new section hashes
   like a dual write, so the inserted sentence dirties no section and no
   `reconcile-section` follows it: the flip is the ratify changeset's own work, never a
-  later session's. Retracting deletes the decree. The compiler never overwrites a
+  later session's. An accepted proposal is a human edit too: the accepting `ratify`
+  commit writes no `entity-changed` record, so the mention the landed sentence adds
+  opens no `review-entity`; a sentence the person reworded writes
+  `requirement-revised` and `rejudge-pair` derives per neighbor. Retracting deletes the
+  decree and writes its records as usual, `entity-changed` included: the facts that
+  remain were not what the person read. The compiler never overwrites a
   decree; it files diagnostics against it. Derived facts a GC session creates
   (`abstract-entity`'s new parents) take the same path.
 - Edit the deliverable or tests. Ledger statuses flip (`stale-code`, `stale-test`;
@@ -302,9 +313,14 @@ again ([parked and failed](./reconciler.md#parked-and-failed)), so a verdict nev
 an over-fan-out level.
 
 A build with open blocked goals is `converged, 2 blocked`, never silently done.
-A hard per-build cap (3 × derived goals + 8 sessions) backstops the loop; work still open
-when it runs out is parked in `status.yaml` and reported as an `incomplete-build`
-diagnostic, and the next build resumes parked goals first
+A hard per-build cap (3 × the distinct goals derived so far in the build + 8 sessions)
+backstops the loop. The count is cumulative: every goal id any board of this build has
+carried, recomputed after every commit, so a project whose deeper link levels derive
+their goals only after the roots ingest gets a cap sized for the whole build, not for
+its first board. The bound stays finite: goal ids are finite, and a goal that keeps
+coming back parks on its reopen cycle ([parked and failed](./reconciler.md#parked-and-failed)).
+Work still open when the cap runs out is parked in `status.yaml` and reported as an
+`incomplete-build` diagnostic, and the next build resumes parked goals first
 ([parked and failed](./reconciler.md#parked-and-failed)). A session that exhausts its
 round budget without meeting its gate leaves its goals open, so the verdict counts them;
 a build that stopped halfway is never reported as converged.

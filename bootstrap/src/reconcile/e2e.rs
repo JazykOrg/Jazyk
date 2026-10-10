@@ -1293,26 +1293,6 @@ fn assert_diagrams_rendered(store: &Store, out: &Path) {
 
 // The next build after a graph change opens with exactly `kinds` (kind, count) and
 // converges: downstream judgment, never the alignment or ingest a dirty section opens.
-fn assert_next_build_opens_with(
-    project: &Project,
-    runner: &ScriptedRunner,
-    kinds: &[(&str, usize)],
-    label: &str,
-) {
-    let (report, events) = build(project, runner);
-    eprintln!("[e2e {}] next build: {}, {} sessions", label, report.verdict, report.sessions);
-    assert_clean_build(&report, &events);
-    let opening = events
-        .iter()
-        .find_map(|e| match e {
-            TraceEvent::Board { kinds, .. } => Some(kinds.clone()),
-            _ => None,
-        })
-        .expect("a board event");
-    let expected: Vec<(String, usize)> = kinds.iter().map(|(k, n)| (k.to_string(), *n)).collect();
-    assert_eq!(opening, expected, "{:?}", opening);
-}
-
 // A rebuild of a converged store derives no goal and runs no session.
 fn assert_rebuild_is_a_no_op(project: &Project, label: &str) {
     let out = project.out.clone();
@@ -1632,14 +1612,15 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
     assert_not_dirty(&project);
     assert_no_errors(&after, &project);
     // No section was dirtied, so no `place-anchors` or `reconcile-section` follows the
-    // insert. What the next build opens with is downstream of the graph change alone:
-    // the landed sentence became a mention of each entity it names, and the
-    // `entity-changed` records derive one `review-entity` per entity (the answer's
-    // reply says no recompile is owed for the edit; a review is nonetheless derived,
-    // see the report of this test's authoring).
-    assert_next_build_opens_with(&project, &runner, &[("review-entity", 2)], "ratify");
-    let settled = Store::load(&out);
-    assert_eq!(settled.graph.requirements[rid].source, after.graph.requirements[rid].source);
+    // insert, and the accepted sentence is the human's review: the mention it added to
+    // Customer and Shop writes no `entity-changed`, the statement did not change, so
+    // the next build derives zero goals and makes no model call.
+    // Mirrors docs/compiler/goals/ratify.md#accept.
+    assert!(
+        !after.status.changes.iter().any(|c| c.kind == crate::store::CHANGE_ENTITY && c.generation == after.status.generation),
+        "{:?}",
+        after.status.changes
+    );
     assert_rebuild_is_a_no_op(&project, "ratify");
     crate::vfs::remove_dir_all(&dir).ok();
 }
@@ -1700,14 +1681,18 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
     assert_eq!(entry.kind, "dual-write");
     assert!(entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"), "{:?}", entry.mutations);
     assert_not_dirty(&project);
-    // Not re-dirtied: no `place-anchors` or `reconcile-section` follows the write. The
-    // next build opens with the downstream judgment the graph change derives, one
-    // `review-entity` on Product (its mention followed the rewritten sentence), and
-    // converges with every id in place.
-    assert_next_build_opens_with(&project, &_runner, &[("review-entity", 1)], "dual");
-    let settled = Store::load(&out);
-    assert_eq!(settled.graph.requirements.len(), before.graph.requirements.len());
-    assert_eq!(settled.graph.requirements[&rid].source.as_ref().unwrap().quote, new);
+    // Not re-dirtied: no `place-anchors` or `reconcile-section` follows the write, and
+    // the rewritten sentence is the human's review: Product's mention followed it
+    // without an `entity-changed` record. The revised statement keeps its
+    // `requirement-revised` record, so its pairs would be judged; on f1 no neighbor
+    // shares two content tokens with it, so the next build derives zero goals.
+    // Mirrors docs/compiler/compilation.md#edit-paths.
+    assert!(
+        !after.status.changes.iter().any(|c| c.kind == crate::store::CHANGE_ENTITY && c.generation == after.status.generation),
+        "{:?}",
+        after.status.changes
+    );
+    assert!(after.status.has_change(crate::store::CHANGE_REQ_REVISED, &rid), "{:?}", after.status.changes);
     assert_rebuild_is_a_no_op(&project, "dual");
     crate::vfs::remove_dir_all(&dir).ok();
 }

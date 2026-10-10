@@ -3126,12 +3126,15 @@ impl Store {
         // A human edit is the review: a dual write and an accepted ratification
         // proposal land a sentence the person just read, and the mention it adds to
         // each entity it names is the quote they confirmed, so neither writes
-        // `entity-changed`. A retract (journaled as `ratify` too) removes facts the
-        // person did not read and writes its records as usual.
+        // `entity-changed`. An answer whose option carried a suggested edit is the
+        // same edit under another entry. A retract (journaled as `ratify` too) removes
+        // facts the person did not read and writes its records as usual.
         // Mirrors docs/compiler/compilation.md#edit-paths.
         let human_confirmed = commit.kind == "dual-write"
             || (commit.kind == "ratify"
-                && !ops.iter().any(|o| matches!(o, Op::RetractDecree { .. })));
+                && !ops.iter().any(|o| matches!(o, Op::RetractDecree { .. })))
+            || (commit.kind == "answer"
+                && ops.iter().any(|o| matches!(o, Op::EditDocProse { .. })));
         // The state an all-or-nothing changeset rolls back to when an op is skipped.
         let snapshot = commit
             .all_or_nothing
@@ -6791,6 +6794,97 @@ mod tests {
     // hashes so the document is not dirty against the graph, re-anchors the quoted
     // facts in the section, and puts the file back when the commit skips.
     // Mirrors docs/compiler/compilation.md#edit-paths.
+    // An answer whose option carried a suggested edit is a human edit too: the commit
+    // lands as `answer` with the prose edit and writes no `entity-changed`.
+    // Mirrors docs/compiler/compilation.md#edit-paths.
+    #[test]
+    fn an_answer_carrying_an_edit_writes_no_entity_changed() {
+        let root = own_dir("answer-edit");
+        let text = "# Pay\n\nAn Order is paid within 30 days.\n";
+        crate::vfs::create_dir_all(root.join("docs")).unwrap();
+        crate::vfs::write(root.join("docs/pay.md"), text).unwrap();
+        let mut s = Store {
+            out: root.join(".jazyk"),
+            ..Default::default()
+        };
+        let mut parsed = BTreeMap::new();
+        parsed.insert(
+            "docs/pay.md".to_string(),
+            (hash_hex(text), crate::md::parse_sections(text)),
+        );
+        s.sync_docs(&parsed);
+        s.apply(
+            vec![
+                create("ent:order", "Order"),
+                Op::CreateRequirement {
+                    id: "req:pay-1".into(),
+                    requirement: Requirement {
+                        statement: "An Order is paid within 30 days.".into(),
+                        entities: vec!["ent:order".into()],
+                        source: Some(mention(
+                            "docs/pay.md",
+                            "/pay",
+                            "An Order is paid within 30 days.",
+                        )),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let raw = s.docs["docs/pay.md"].sections["/pay"].raw.clone();
+        let edit = ProseEdit::locate(
+            "docs/pay.md",
+            "/pay",
+            Some(&raw),
+            text,
+            "within 30 days",
+            "within 21 days",
+        )
+        .unwrap();
+        let setup: Vec<String> = s.status.changes.iter().map(|c| c.id.clone()).collect();
+        s.clear_changes(&setup);
+        let report = s
+            .dual_write(
+                &root,
+                &edit,
+                vec![Op::UpdateRequirement {
+                    id: "req:pay-1".into(),
+                    statement: Some("An Order is paid within 21 days.".into()),
+                    entities: None,
+                    edges: None,
+                    transition: None,
+                    facets: None,
+                    source: Some(mention(
+                        "docs/pay.md",
+                        "/pay",
+                        "An Order is paid within 21 days.",
+                    )),
+                    provenance: None,
+                }],
+                &Commit::store("answer"),
+                None,
+            )
+            .unwrap();
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert!(
+            !s.status
+                .changes
+                .iter()
+                .any(|c| c.kind == CHANGE_ENTITY && c.subject == "ent:order"),
+            "{:?}",
+            s.status.changes
+        );
+        assert!(
+            s.status
+                .changes
+                .iter()
+                .any(|c| c.kind == CHANGE_REQ_REVISED && c.subject == "req:pay-1"),
+            "{:?}",
+            s.status.changes
+        );
+    }
+
     #[test]
     fn dual_write_absorbs_its_own_hashes_and_rolls_back_a_stale_edit() {
         let root = own_dir("dual-write");

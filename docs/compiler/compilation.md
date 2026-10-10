@@ -117,7 +117,9 @@ journals its own generation, so the root of every ripple is itself a generation
   document it just changed. A human edit is the review: the person just read the
   sentence, and the mention it adds to each entity it names is the quote they
   confirmed, so a `dual-write` commit writes no `entity-changed` record and opens no
-  `review-entity`. A revised statement still owes its judgment against other
+  `review-entity`; an answer whose chosen option carries a suggested edit lands the
+  same way (journal entry `answer` with the prose edit). A revised statement still
+  owes its judgment against other
   requirements: the commit writes `requirement-revised` as usual and `rejudge-pair`
   derives per neighbor ([pairs](./reconciler.md#pairs)). Deletions write their
   `node-deleted` records as usual. When no proposed rewrite is accepted, the edit falls

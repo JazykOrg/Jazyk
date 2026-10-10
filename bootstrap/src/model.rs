@@ -1001,16 +1001,83 @@ pub struct FailedGoal {
 }
 
 // A goal a build parked, with why (its retry ran out, the build cap, a reopen cycle,
-// a flip). The goal's fields flatten into the entry, so an entry written before
-// reasons were recorded reads with `reason` absent, and every payload that lists
-// parked goals stays a list of goal records with one more field.
+// a flip). The entry is the goal's record with one more field, `reason`, so an entry
+// written before reasons were recorded reads with `reason` absent, and every payload
+// that lists parked goals stays a list of goal records. The record is spelled out
+// field by field rather than with serde's `flatten`: flatten buffers the fields and
+// cannot hand a tagged `state` (`!blocked`) back to the YAML reader, so a stored
+// parked goal failed to load and made the whole store read-only.
 // Mirrors docs/compiler/reconciler.md#parked-and-failed.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ParkedGoal {
-    #[serde(flatten)]
     pub goal: Goal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+// The stored shape of a parked goal: every field of `Goal`, same names and defaults,
+// then `reason`. `parked_record_mirrors_every_goal_field` holds the two in step.
+#[derive(Serialize, Deserialize)]
+struct ParkedRecord {
+    id: String,
+    kind: String,
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    mandatory: bool,
+    target: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    unit: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    change: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cause: Option<Cause>,
+    #[serde(default)]
+    state: GoalState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+impl Serialize for ParkedGoal {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let g = &self.goal;
+        ParkedRecord {
+            id: g.id.clone(),
+            kind: g.kind.clone(),
+            class: g.class.clone(),
+            mandatory: g.mandatory,
+            target: g.target.clone(),
+            unit: g.unit.clone(),
+            change: g.change.clone(),
+            cause: g.cause.clone(),
+            state: g.state.clone(),
+            hints: g.hints.clone(),
+            reason: self.reason.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParkedGoal {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let r = ParkedRecord::deserialize(deserializer)?;
+        Ok(ParkedGoal {
+            goal: Goal {
+                id: r.id,
+                kind: r.kind,
+                class: r.class,
+                mandatory: r.mandatory,
+                target: r.target,
+                unit: r.unit,
+                change: r.change,
+                cause: r.cause,
+                state: r.state,
+                hints: r.hints,
+            },
+            reason: r.reason,
+        })
+    }
 }
 
 impl ParkedGoal {
@@ -1741,12 +1808,57 @@ mod tests {
     // still reads, with no reason. A new park writes the goal's fields and the reason
     // beside them, and reads back whole.
     #[test]
+    fn parked_record_mirrors_every_goal_field() {
+        let goal = Goal {
+            id: "g:split-view:view:class/x".into(),
+            kind: "split-view".into(),
+            class: "gc".into(),
+            mandatory: false,
+            target: "view:class/x".into(),
+            unit: "view".into(),
+            change: serde_json::json!({"count": 21, "limit": {"soft": 20, "hard": 30}}),
+            cause: Some(Cause {
+                generation: 3,
+                mutation: 1,
+                via: "limits".into(),
+            }),
+            state: GoalState::Failed {
+                reason: "could not split".into(),
+            },
+            hints: vec!["one".into(), "two".into()],
+        };
+        let parked = ParkedGoal::new(goal.clone(), "the build cap ran out");
+        let yaml = serde_norway::to_string(&parked).unwrap();
+        let back: ParkedGoal = serde_norway::from_str(&yaml).unwrap();
+        assert_eq!(back, parked);
+        let json = serde_json::to_value(&parked).unwrap();
+        let as_goal: Goal = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(as_goal, goal, "a parked entry reads as the goal it holds");
+        assert_eq!(json["reason"], "the build cap ran out");
+        assert_eq!(
+            serde_json::to_value(&goal).unwrap().as_object().unwrap().len() + 1,
+            json.as_object().unwrap().len(),
+            "the record is the goal's fields plus reason"
+        );
+    }
+
+    #[test]
     fn parked_entries_read_with_and_without_a_reason() {
+        // The shapes a store on disk holds: a parked state, and a tagged blocked state
+        // from a flip park, both written before reasons existed.
         let old: Status = serde_norway::from_str(
-            "generation: 9\nparked:\n- id: g:bind:req:a-1\n  kind: bind\n  class: compile\n  mandatory: true\n  target: req:a-1\n  change:\n    row: stale\n  cause:\n    generation: 8\n    mutation: 2\n    via: ledger\n",
+            "generation: 9\nparked:\n- id: g:bind:req:a-1\n  kind: bind\n  class: compile\n  mandatory: true\n  target: req:a-1\n  state: parked\n  change:\n    row: stale\n  cause:\n    generation: 8\n    mutation: 2\n    via: ledger\n- id: g:conform-instance:ent:x\n  kind: conform-instance\n  class: compile\n  mandatory: true\n  target: ent:x\n  unit: instance\n  change:\n    reparent: ent:x\n  cause:\n    generation: 5\n    mutation: 0\n    via: flip-detection\n  state: !blocked\n    on: 'human: unstable-derivation ruling on ent:x'\n  hints:\n  - parked by flip detection\n",
         )
         .unwrap();
-        assert_eq!(old.parked.len(), 1);
+        assert_eq!(old.parked.len(), 2);
+        assert_eq!(old.parked[0].goal.state, GoalState::Parked);
+        assert_eq!(
+            old.parked[1].goal.state,
+            GoalState::Blocked {
+                on: "human: unstable-derivation ruling on ent:x".into()
+            }
+        );
+        assert_eq!(old.parked[1].goal.hints, vec!["parked by flip detection".to_string()]);
         assert_eq!(old.parked[0].goal.id, "g:bind:req:a-1");
         assert_eq!(old.parked[0].goal.change["row"], "stale");
         assert_eq!(old.parked[0].goal.cause.as_ref().map(|c| c.generation), Some(8));

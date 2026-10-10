@@ -2122,6 +2122,15 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
             l["limit"].as_str().unwrap_or("").to_string(),
         );
     }
+    // The fan-out variant: `{fan_out, limit: {soft, hard}}`
+    // (docs/compiler/goals/abstract-entity.md#the-change).
+    if let Some(n) = g.change["fan_out"].as_u64() {
+        return (
+            n,
+            g.change["limit"]["soft"].as_u64().unwrap_or(0),
+            crate::limits::CHILDREN_PER_ENTITY.to_string(),
+        );
+    }
     match g.kind.as_str() {
         "declare-edges" => (
             g.change["entities"]

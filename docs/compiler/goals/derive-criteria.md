@@ -16,6 +16,14 @@ when the project configures a `[gen]` deliverable
 - carries a `requirement-revised` record newer than its criteria (its derived criteria
   were marked `criterion-revised` by the sweep, [change records](../graph.md#change-records)).
 
+A requirement with no criterion that waits on an open question is not listed: an open
+`invented-choice`, or an open `contradiction`, `decision`, or `ambiguity` with a prompt,
+names it (the condition the [`open-question`](#gate) verdict stands on). It keeps no
+criterion until the answer, and the goal derives for it again once the question closes.
+Listing it would re-open a goal a session just resolved honestly, with the same change,
+until the [reopen cycle](../reconciler.md#parked-and-failed) parked it and the build
+ended `incomplete` (a local model on f2 parked two entities this way).
+
 The `change` carries two id lists, `none` (no criterion yet) and `revised` (a derived
 criterion gone stale); the `cause` is the newest record among them. Up to four goals
 share a batch ([batching](../reconciler.md#batching)), within the context budget, and

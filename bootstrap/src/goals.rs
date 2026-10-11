@@ -2609,6 +2609,25 @@ impl GoalKind for ConformInstance {
 // The requirements of one entity that still owe criteria: none recorded, or a
 // derived one gone stale under a statement change. Keyed by the requirement's
 // leading entity. Mirrors docs/compiler/goals/derive-criteria.md#created-when.
+// A diagnostic that asks a person for the value a requirement's evidence waits on: an
+// invented choice, or a contradiction, decision, or ambiguity carrying its prompt.
+// Mirrors docs/compiler/goals/derive-criteria.md#gate.
+pub fn asks_for_answer(rule: &str, prompt: &Option<DiagnosticPrompt>) -> bool {
+    rule == "invented-choice"
+        || (prompt.is_some() && matches!(rule, "contradiction" | "decision" | "ambiguity"))
+}
+
+// Whether an open question names the requirement: the condition the open-question
+// verdict stands on, and what keeps the goal from deriving for it again.
+// Mirrors docs/compiler/goals/derive-criteria.md#created-when.
+pub fn awaits_answer(store: &Store, rid: &str) -> bool {
+    store.graph.diagnostics.values().any(|d| {
+        d.lifecycle == "open"
+            && asks_for_answer(&d.rule, &d.prompt)
+            && d.subjects.iter().any(|s| store.resolve_id(s) == rid)
+    })
+}
+
 pub fn criteria_owed(store: &Store) -> BTreeMap<String, Vec<(String, &'static str)>> {
     let mut out: BTreeMap<String, Vec<(String, &'static str)>> = BTreeMap::new();
     for (rid, r) in &store.graph.requirements {
@@ -2621,6 +2640,9 @@ pub fn criteria_owed(store: &Store) -> BTreeMap<String, Vec<(String, &'static st
         }
         let crits = store.criteria_of(rid);
         let reason = if crits.is_empty() {
+            if awaits_answer(store, rid) {
+                continue;
+            }
             "none"
         } else if crits
             .iter()
@@ -6336,6 +6358,38 @@ pub(crate) mod tests {
         let mut targets: Vec<&str> = goals.iter().map(|g| g.target.as_str()).collect();
         targets.sort();
         assert_eq!(targets, vec!["ent:line", "ent:sort"], "{:?}", targets);
+
+        // A requirement waiting on an open question is not listed until it closes.
+        let mut waiting = s.clone();
+        waiting.graph.diagnostics.insert(
+            "diag:invented-choice-1".into(),
+            Diagnostic {
+                rule: "invented-choice".into(),
+                severity: "warning".into(),
+                subjects: vec!["req:a-2".into()],
+                message: "How long may a line be?".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let held: Vec<String> = DeriveCriteria
+            .derive_goals(&waiting, &gen)
+            .iter()
+            .map(|g| g.target.clone())
+            .collect();
+        assert_eq!(held, vec!["ent:sort".to_string()], "ent:line waits on its question");
+        waiting
+            .graph
+            .diagnostics
+            .get_mut("diag:invented-choice-1")
+            .unwrap()
+            .lifecycle = "resolved".into();
+        assert_eq!(DeriveCriteria.derive_goals(&waiting, &gen).len(), 2, "the answer reopens it");
         let sort = goals.iter().find(|g| g.target == "ent:sort").unwrap();
         assert_eq!(sort.change["none"], json!(["req:a-1"]));
         assert_eq!(sort.change["revised"], json!(["req:a-3"]));

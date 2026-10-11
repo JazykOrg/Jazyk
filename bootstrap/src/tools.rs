@@ -3066,10 +3066,7 @@ impl ToolSession {
                         // Any open question naming the requirement backs the verdict:
                         // a standing contradiction with its prompt is the question
                         // (docs/compiler/goals/derive-criteria.md#gate).
-                        let asks = |rule: &str, prompt: &Option<crate::model::DiagnosticPrompt>| {
-                            rule == "invented-choice"
-                                || (prompt.is_some() && matches!(rule, "contradiction" | "decision" | "ambiguity"))
-                        };
+                        let asks = crate::goals::asks_for_answer;
                         let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
                             if asks(&diagnostic.rule, &diagnostic.prompt) && diagnostic.subjects.iter().any(|s| s == &rid)))
                             || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && asks(&d.rule, &d.prompt) && d.subjects.iter().any(|s| s == &rid));

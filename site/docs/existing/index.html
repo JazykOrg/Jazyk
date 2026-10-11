@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Existing projects · Jazyk docs</title>
-<meta name="description" content="Document and bind a focused part of an existing project before expanding or generating.">
+<title>Documenting existing code · Jazyk docs</title>
+<meta name="description" content="Bind existing implementations and review prose drafted from code and tests.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -34,30 +34,39 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/" aria-current="page">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/" aria-current="page">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
 <details class="mobile-nav">
-<summary>Existing projects<span>Browse docs</span>
+<summary>Documenting existing code<span>Browse docs</span>
 </summary>
 <nav aria-label="Documentation">
 <div class="nav-group">
@@ -66,25 +75,34 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/" aria-current="page">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/" aria-current="page">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -94,25 +112,25 @@
 <div class="breadcrumbs">
 <a href="../">Docs</a>
 <span aria-hidden="true">/</span>
-<span>Existing projects</span>
+<span>Documenting existing code</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">WORK WITH CHANGE</p>
-<h1>Start with what already works.</h1>
-<p class="lede">Document and bind a focused part of an existing project before expanding or generating.</p>
+<p class="eyebrow">DOCUMENTS</p>
+<h1>Documenting existing code</h1>
+<p class="lede">Bind existing implementations and review prose drafted from code and tests.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#small">Adopt one part first</a>
-<a href="#draft">Draft docs from existing code</a>
-<a href="#review">Review description against intent</a>
-<a href="#grow">Expand when the first slice is useful</a>
+<a href="#small">Selecting an existing subsystem</a>
+<a href="#draft">Decompilation</a>
+<a href="#review">Reviewing draft documents</a>
+<a href="#grow">Unclaimed files and scope</a>
 </nav>
 </details>
 <article>
 <section id="small" class="article-section">
-<h2>Adopt one part first</h2>
+<h2>Selecting an existing subsystem</h2>
 <p>An existing project does not need to be regenerated. Pick one behavior or subsystem, add documents for it, and select the existing source paths it describes.</p>
 <p>Compile the documents and inspect the graph before asking for generation. Binding can connect the requirements to current files and tests. Start with evidence you already trust.</p>
 <div class="code-block">
@@ -126,7 +144,7 @@
 </div>
 </section>
 <section id="draft" class="article-section">
-<h2>Draft docs from existing code</h2>
+<h2>Decompilation</h2>
 <p>Decompilation reads source and produces prose drafts. Tests are strong evidence because they already assert observable behavior. Implementation alone can show what happens without explaining whether it is intended.</p>
 <div class="code-block">
 <div class="code-head">
@@ -140,13 +158,13 @@
 <p>Drafts distinguish observed behavior backed by tests from behavior inferred from code. They land in the docs selection and follow the normal compile path. Decompilation does not place code-derived requirements straight into the graph.</p>
 </section>
 <section id="review" class="article-section">
-<h2>Review description against intent</h2>
+<h2>Reviewing draft documents</h2>
 <p>A bug faithfully described is still a bug. Review each draft for whether it states what the product should do, not merely what it happened to do.</p>
 <p>Draft documents remain provisional until human editing changes their recorded hash. Revise their statements, clarify assumptions, and compile. The docs become the source of the graph’s obligations.</p>
 <p>Do not broaden generation paths until you have checked the graph, bindings, and existing test evidence. A source selection grants write scope; it does not certify that generated replacements are needed.</p>
 </section>
 <section id="grow" class="article-section">
-<h2>Expand when the first slice is useful</h2>
+<h2>Unclaimed files and scope</h2>
 <p>The unclaimed report identifies source files with no recorded binding. Use it as a map of territory to investigate, not as proof that every unclaimed file is wrong.</p>
 <p>Add the next subsystem, or a separate set for another subject. Keep shared docs deliberate. Continue until the model and evidence cover the area you care about.</p>
 <aside class="related">
@@ -161,10 +179,10 @@
 </section>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
-<a href="../diagrams/">
-<small>Previous</small>← Diagrams & views</a>
-<a href="../cli/">
-<small>Next</small>CLI reference →</a>
+<a href="../writing/">
+<small>Previous</small>← Writing requirements</a>
+<a href="../graph/">
+<small>Next</small>Graph model →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -172,10 +190,10 @@
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#small">Adopt one part first</a>
-<a href="#draft">Draft docs from existing code</a>
-<a href="#review">Review description against intent</a>
-<a href="#grow">Expand when the first slice is useful</a>
+<a href="#small">Selecting an existing subsystem</a>
+<a href="#draft">Decompilation</a>
+<a href="#review">Reviewing draft documents</a>
+<a href="#grow">Unclaimed files and scope</a>
 </nav>
 </aside>
 </div>

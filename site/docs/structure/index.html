@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Document structure · Jazyk docs</title>
-<meta name="description" content="Organize documents so both a person and the compiler can follow what they describe.">
+<meta name="description" content="Document sets, headings, links, supported formats, and source-file selection.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -34,25 +34,34 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/" aria-current="page">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -66,25 +75,34 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/" aria-current="page">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -97,23 +115,23 @@
 <span>Document structure</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">LEARN THE COMPILER</p>
-<h1>Give the subject a home.</h1>
-<p class="lede">Organize documents so both a person and the compiler can follow what they describe.</p>
+<p class="eyebrow">DOCUMENTS</p>
+<h1>Document structure</h1>
+<p class="lede">Document sets, headings, links, supported formats, and source-file selection.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#subject">Organize around the subject</a>
-<a href="#headings">Use headings and links as structure</a>
-<a href="#sets">Choose the right document-set boundary</a>
-<a href="#roles">Keep documents and source files distinct</a>
-<a href="#formats">Pick an input format you can maintain</a>
+<a href="#subject">Document sets</a>
+<a href="#headings">Headings and links</a>
+<a href="#sets">Set boundaries</a>
+<a href="#roles">Documents, source files, and state</a>
+<a href="#formats">Supported input formats</a>
 </nav>
 </details>
 <article>
 <section id="subject" class="article-section">
-<h2>Organize around the subject</h2>
+<h2>Document sets</h2>
 <p>A document set is a collection of documents about one subject. It may describe an application, a department, a story, or a deck. Headings divide that subject into sections the compiler can reconcile.</p>
 <p>Start with a front door that names the subject and links to its parts. Give each part a stable home. Split a file when a reader needs a focused explanation, not to meet a word count.</p>
 <div class="code-block">
@@ -132,7 +150,7 @@
 <p>Jazyk does not require these names or this folder. The chosen set’s patterns determine input.</p>
 </section>
 <section id="headings" class="article-section">
-<h2>Use headings and links as structure</h2>
+<h2>Headings and links</h2>
 <div class="code-block">
 <div class="code-head">
 <span>Example · docs/main.md</span>
@@ -152,7 +170,7 @@ Orderly accepts customer Orders and records their Payments.
 <p>Relative document links connect the reading order and help the compiler ingest foundational documents first. Configure roots as entry points. A heading groups text; it does not automatically create an entity with that heading’s name.</p>
 </section>
 <section id="sets" class="article-section">
-<h2>Choose the right document-set boundary</h2>
+<h2>Set boundaries</h2>
 <p>Use one set for a coherent subject. Use separate sets for separate models, such as an application and its operating organization. Each has independent identities, graph, diagnostics, and history.</p>
 <p>Files can belong to several sets, but each set compiles them separately. Shared input is deliberate duplication of work, not one shared graph. Review overlaps when selecting paths.</p>
 <div class="code-block">
@@ -167,7 +185,7 @@ Orderly accepts customer Orders and records their Payments.
 <p>Quote shell patterns. Use exclusions for documents you do not want compiled, such as archival notes or model instruction payloads.</p>
 </section>
 <section id="roles" class="article-section">
-<h2>Keep documents and source files distinct</h2>
+<h2>Documents, source files, and state</h2>
 <div class="table-scroll">
 <table>
 <thead>
@@ -205,7 +223,7 @@ Orderly accepts customer Orders and records their Payments.
 <p>Selecting source files does not prove which requirement they implement. Binding records that evidence. Files selected as docs cannot be generation write targets, even if a broad source pattern also matches them.</p>
 </section>
 <section id="formats" class="article-section">
-<h2>Pick an input format you can maintain</h2>
+<h2>Supported input formats</h2>
 <p>Markdown is the simplest portable choice. Native builds also read plain text, DOCX, and PDF within their extraction profiles. The browser-only engine currently reads Markdown.</p>
 <p>Keep one obvious title and meaningful section headings. A PDF’s reading order and extracted text may need inspection. Unsupported or unreadable inputs produce diagnostics rather than silently becoming a successful compile.</p>
 <aside class="related">
@@ -229,11 +247,11 @@ Orderly accepts customer Orders and records their Payments.
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#subject">Organize around the subject</a>
-<a href="#headings">Use headings and links as structure</a>
-<a href="#sets">Choose the right document-set boundary</a>
-<a href="#roles">Keep documents and source files distinct</a>
-<a href="#formats">Pick an input format you can maintain</a>
+<a href="#subject">Document sets</a>
+<a href="#headings">Headings and links</a>
+<a href="#sets">Set boundaries</a>
+<a href="#roles">Documents, source files, and state</a>
+<a href="#formats">Supported input formats</a>
 </nav>
 </aside>
 </div>

@@ -9,12 +9,15 @@ Documentation uses shared CSS and a small script. There is no build step. Specif
 | File | Route |
 | --- | --- |
 | `index.html` | `/`, the pitch and the sort example's snippets |
-| `docs/index.html` | `/docs/`, workspace choices and the compiler learning path |
+| `docs/index.html` | `/docs/`, workspace choices and documentation topic overview |
 | `docs/installation/index.html` | `/docs/installation/`, local and Cloud setup overview |
 | `docs/{gui,ide,agents,cloud}/index.html` | installation subpages for each workspace |
-| `docs/{structure,writing,graph,product,verification}/index.html` | learn the compiler, from authored intent to evidence |
-| `docs/{changes,decisions,diagrams,existing}/index.html` | ongoing work, provenance, views, and adoption |
-| `docs/{cli,models,project,troubleshooting}/index.html` | compiler reference and recovery |
+| `docs/{structure,writing,graph,product,verification}/index.html` | document input, the graph model, generation, and tests |
+| `docs/{changes,decisions,diagrams,existing}/index.html` | incremental builds, provenance, views, and existing code |
+| `docs/{project,configuration}/index.html` | `.jazyk` files and project configuration |
+| `docs/graph-format/index.html` | graph YAML records and references |
+| `docs/compilation/index.html` | build stages, goals, sessions, and verdicts |
+| `docs/{cli,models,troubleshooting}/index.html` | commands, model setup, and recovery |
 | `docs/docs.css`, `docs/docs.js` | shared styles, copying, section navigation, and a change illustration |
 | `example/*.svg` | the diagrams on the page |
 | `favicon.svg` | `/favicon.svg` |

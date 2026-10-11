@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compilation · Jazyk docs</title>
+<meta name="description" content="Build stages, agent sessions, validated commits, and convergence.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Documents</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../existing/">Documenting existing code</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/" aria-current="page">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Compilation<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Documents</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../existing/">Documenting existing code</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/" aria-current="page">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Compilation</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">SEMANTIC GRAPH</p>
+<h1>Compilation</h1>
+<p class="lede">Build stages, agent sessions, validated commits, and convergence.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#command">Running compilation</a>
+<a href="#build">Build stages</a>
+<a href="#goals">Goals and sessions</a>
+<a href="#verdict">Reading the verdict</a>
+<a href="#limits">Previewing and bounding work</a>
+</nav>
+</details>
+<article>
+<section id="command" class="article-section">
+<h2>Running compilation</h2>
+<p>
+<code>jazyk compile</code> brings each selected document set’s graph into line with its documents. It can call the configured agent. With no selector it processes dirty sets in configuration order.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk compile --set Main</code></pre></div>
+<p>Compilation establishes the semantic model. Producing a deliverable and evaluating its tests are later operations.</p>
+</section>
+<section id="build" class="article-section">
+<h2>Build stages</h2>
+<ol class="steps">
+<li>
+<h3>Parse and align</h3>
+<p>The harness reads sections, compares them with stored state, and relocates anchors. Unchanged material does not need another extraction session.</p>
+</li>
+<li>
+<h3>Derive the work</h3>
+<p>The compiler derives goals from docs, graph, history, and evidence. It orders and groups ready work. The model resolves a goal; it does not invent the schedule.</p>
+</li>
+<li>
+<h3>Reconcile and judge</h3>
+<p>Agent sessions extract facts and compare meaning. Validated mutations commit as a changeset. Ambiguities and contradictions become findings rather than silently disappearing.</p>
+</li>
+<li>
+<h3>Derive and render</h3>
+<p>Commits recompute relationships, state machines, and default views. Native rendering projects those views into diagrams.</p>
+</li>
+<li>
+<h3>Check the result</h3>
+<p>Deterministic checks assess coverage, references, stale provenance, conformance, and other invariants. The final verdict reports mandatory work and human-blocked or optional counts.</p>
+</li>
+</ol>
+</section>
+<section id="goals" class="article-section">
+<h2>Goals and sessions</h2>
+<p>A goal is work the harness derives from project state, such as reconciling a section or reviewing an entity. Goals are not a stored task list. The board derives readiness, blockers, and batches on each update.</p>
+<p>The model extracts and judges meaning. The harness owns identity, scheduling, budgets, write validation, derived data, and commit. A session resolves or fails its assigned goals and records a justification. It cannot create or prioritize goals.</p>
+<p>One build holds a lease, and one agent session runs at a time. A successful changeset commits atomically and records a journal generation.</p>
+</section>
+<section id="verdict" class="article-section">
+<h2>Reading the verdict</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Verdict</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Converged</td>
+<td>No open or failed mandatory work remains and the checks pass. Read diagnostic, blocked, and optional counts too.</td>
+</tr>
+<tr>
+<td>Incomplete</td>
+<td>Mandatory work remains, failed, or was parked at a limit. Read its reason and resume from committed state.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Convergence describes compiler work. It does not certify every generated artifact, settle every human question, or erase standing diagnostics.</p>
+</section>
+<section id="limits" class="article-section">
+<h2>Previewing and bounding work</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk preview --set Main
+jazyk compile --set Main --sessions 1</code></pre></div>
+<p>Preview shows the next assembled session prompt. A session limit bounds a run without disguising unfinished work. A no-op rebuild opens no goals and makes no LLM calls.</p>
+<aside class="related">
+<p class="eyebrow">RELATED TOPICS</p>
+<a href="../changes/">Incremental builds and history <span aria-hidden="true">→</span>
+</a>
+<a href="../product/">Generation <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Model configuration and benchmarks <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../graph/">
+<small>Previous</small>← Graph model</a>
+<a href="../changes/">
+<small>Next</small>Incremental builds →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#command">Running compilation</a>
+<a href="#build">Build stages</a>
+<a href="#goals">Goals and sessions</a>
+<a href="#verdict">Reading the verdict</a>
+<a href="#limits">Previewing and bounding work</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

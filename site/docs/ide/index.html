@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IDE setup · Jazyk docs</title>
-<meta name="description" content="Connect language support and the Jazyk chat agent to the same local project.">
+<meta name="description" content="Configure inline diagnostics, navigation, and the Jazyk chat agent.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -40,25 +40,34 @@
 </div>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -78,25 +87,34 @@
 </div>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -111,9 +129,9 @@
 <span>IDE setup</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">SETUP</p>
-<h1>Stay in your workspace.</h1>
-<p class="lede">Connect language support and the Jazyk chat agent to the same local project.</p>
+<p class="eyebrow">INSTALLATION</p>
+<h1>IDE setup</h1>
+<p class="lede">Configure inline diagnostics, navigation, and the Jazyk chat agent.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
@@ -302,9 +320,9 @@ npm run compile</code>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
 <a href="../installation/">
-<small>Back to setup</small>← Installation</a>
+<small>Setup overview</small>← Installation</a>
 <a href="../structure/">
-<small>Next: learn the compiler</small>Document structure →</a>
+<small>Next topic</small>Document structure →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>

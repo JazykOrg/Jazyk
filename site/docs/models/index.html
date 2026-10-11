@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Models & benchmarks · Jazyk docs</title>
-<meta name="description" content="Configure session execution, test capability, and inspect quality and cost on a small subject.">
+<title>Models and benchmarks · Jazyk docs</title>
+<meta name="description" content="Agent selection, endpoint settings, precedence, capability tests, and costs.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -34,30 +34,39 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/" aria-current="page">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/" aria-current="page">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
 <details class="mobile-nav">
-<summary>Models & benchmarks<span>Browse docs</span>
+<summary>Models and benchmarks<span>Browse docs</span>
 </summary>
 <nav aria-label="Documentation">
 <div class="nav-group">
@@ -66,25 +75,34 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/" aria-current="page">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/" aria-current="page">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -94,27 +112,27 @@
 <div class="breadcrumbs">
 <a href="../">Docs</a>
 <span aria-hidden="true">/</span>
-<span>Models & benchmarks</span>
+<span>Models and benchmarks</span>
 </div>
 <div class="article-header">
 <p class="eyebrow">REFERENCE</p>
-<h1>Choose AI you can evaluate.</h1>
-<p class="lede">Configure session execution, test capability, and inspect quality and cost on a small subject.</p>
+<h1>Models and benchmarks</h1>
+<p class="lede">Agent selection, endpoint settings, precedence, capability tests, and costs.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#choose">Choose who runs the sessions</a>
+<a href="#choose">Embedded and external agents</a>
 <a href="#endpoint">Configure the embedded agent</a>
-<a href="#precedence">Understand which setting wins</a>
-<a href="#benchmark">Test session capability first</a>
-<a href="#quality">Separate capability from judgment</a>
-<a href="#cost">Control work with scope and visibility</a>
+<a href="#precedence">Settings precedence</a>
+<a href="#benchmark">Benchmarking</a>
+<a href="#quality">Evaluating model quality</a>
+<a href="#cost">Session limits and cost</a>
 </nav>
 </details>
 <article>
 <section id="choose" class="article-section">
-<h2>Choose who runs the sessions</h2>
+<h2>Embedded and external agents</h2>
 <p>The embedded agent calls an OpenAI-compatible endpoint. An external agent runs through an ACP profile and brings its own model and authentication.</p>
 <p>Choose an external agent if it is the coding tool you already trust and have configured. Choose the embedded agent when you want direct control over endpoint and model settings. Neither path requires a Cloud account for local work.</p>
 <p>Cloud uses its included AI and available service capabilities. Your local endpoint settings do not configure a Cloud project’s hosted worker.</p>
@@ -137,7 +155,7 @@ api_key_env = &quot;JAZYK_API_KEY&quot;</code>
 <p>Use the URL and model your server serves. For a hosted provider, set its compatible endpoint and keep the API key in the named environment variable. Do not track credentials in project files.</p>
 </section>
 <section id="precedence" class="article-section">
-<h2>Understand which setting wins</h2>
+<h2>Settings precedence</h2>
 <p>Resolution is per field, from highest to lowest priority:</p>
 <ol>
 <li>CLI flags.</li>
@@ -150,7 +168,7 @@ api_key_env = &quot;JAZYK_API_KEY&quot;</code>
 <p>An environment variable can explain why changing the project’s model had no effect. External agents ignore embedded-agent model settings and use their own configuration.</p>
 </section>
 <section id="benchmark" class="article-section">
-<h2>Test session capability first</h2>
+<h2>Benchmarking</h2>
 <div class="code-block">
 <div class="code-head">
 <span>Terminal</span>
@@ -165,13 +183,13 @@ api_key_env = &quot;JAZYK_API_KEY&quot;</code>
 <p>Inspect failures and recorded rounds, tokens, and checks. An endpoint that returns prose is not necessarily a model that can resolve compiler goals. Small local models can fail capability tests.</p>
 </section>
 <section id="quality" class="article-section">
-<h2>Separate capability from judgment</h2>
+<h2>Evaluating model quality</h2>
 <p>After the benchmark, try a small document set whose meaning you understand. Inspect extracted obligations, missing facts, contradictions, and criteria. A session that passes its gate can still make a weak judgment.</p>
 <p>Use the same input to compare models and inspect evidence rather than confidence in the reply. More capable models may be worth using for abstraction and cross-requirement judgment even when a cheaper one extracts simple facts adequately.</p>
 <p>Executor overrides can choose profiles by goal kind or class. Keep that an advanced tuning step until one configuration produces useful results.</p>
 </section>
 <section id="cost" class="article-section">
-<h2>Control work with scope and visibility</h2>
+<h2>Session limits and cost</h2>
 <p>Start with a focused set and a bounded run. Read a preview before broad changes. Use <code>jazyk status --costs</code> and transcripts to understand where sessions and tokens went.</p>
 <div class="code-block">
 <div class="code-head">
@@ -197,9 +215,9 @@ api_key_env = &quot;JAZYK_API_KEY&quot;</code>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
 <a href="../cli/">
-<small>Previous</small>← CLI reference</a>
-<a href="../project/">
-<small>Next</small>Project files →</a>
+<small>Previous</small>← CLI commands</a>
+<a href="../troubleshooting/">
+<small>Next</small>Troubleshooting →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -207,12 +225,12 @@ api_key_env = &quot;JAZYK_API_KEY&quot;</code>
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#choose">Choose who runs the sessions</a>
+<a href="#choose">Embedded and external agents</a>
 <a href="#endpoint">Configure the embedded agent</a>
-<a href="#precedence">Understand which setting wins</a>
-<a href="#benchmark">Test session capability first</a>
-<a href="#quality">Separate capability from judgment</a>
-<a href="#cost">Control work with scope and visibility</a>
+<a href="#precedence">Settings precedence</a>
+<a href="#benchmark">Benchmarking</a>
+<a href="#quality">Evaluating model quality</a>
+<a href="#cost">Session limits and cost</a>
 </nav>
 </aside>
 </div>

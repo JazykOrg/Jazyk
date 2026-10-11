@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project configuration · Jazyk docs</title>
+<meta name="description" content="Named document sets, file patterns, shared settings, and Git tracking.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Documents</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../existing/">Documenting existing code</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/" aria-current="page">Project configuration</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Project configuration<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Documents</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../existing/">Documenting existing code</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/" aria-current="page">Project configuration</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Project configuration</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">PROJECT FILES</p>
+<h1>Project configuration</h1>
+<p class="lede">Named document sets, file patterns, shared settings, and Git tracking.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#config">Project configuration lives in .jazyk</a>
+<a href="#matching">How selections match</a>
+<a href="#git">Track the authored contract</a>
+<a href="#settings">Settings change execution, docs define intent</a>
+<a href="#state-files">Compiler state files</a>
+</nav>
+</details>
+<article>
+<section id="config" class="article-section">
+<h2>Project configuration lives in .jazyk</h2>
+<p>
+<code>.jazyk/jazyk.toml</code> declares the project. Paths resolve from its containing project folder, not from the metadata directory. This example uses the current named-set schema:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · .jazyk/jazyk.toml</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>version = 1
+
+[[sets]]
+id = &quot;ds_main&quot;
+name = &quot;Main&quot;
+docs = [&quot;docs/**/*.md&quot;, &quot;!docs/archive/**&quot;]
+roots = [&quot;docs/main.md&quot;]
+source = [&quot;src/**&quot;, &quot;tests/**&quot;, &quot;package.json&quot;]</code>
+</pre>
+</div>
+<p>Each ID is immutable and unique, with the <code>ds_</code> prefix. Renaming a set changes its display name, not its graph identity. Prefer <code>jazyk sets</code> or the editor’s Document sets controls for ordinary selection changes.</p>
+</section>
+<section id="matching" class="article-section">
+<h2>How selections match</h2>
+<ul>
+<li>Exact paths and globs can be mixed.</li>
+<li>
+<code>!</code> excludes; later matches override earlier ones.</li>
+<li>Overlapping document selections compile independently in each set.</li>
+<li>Empty source selection disables bind, generation, and verification work.</li>
+<li>Docs selected by any set are excluded from source write scopes in every set.</li>
+<li>Compiler state, Git metadata, caches, and nested project boundaries are excluded.</li>
+</ul>
+<p>Source globs name allowed product paths. Their files may not exist yet, so a warning can report a pattern with no matches. Inspect selection previews and overlaps before broadening access.</p>
+</section>
+
+<section id="git" class="article-section">
+<h2>Track the authored contract</h2>
+<p>Track the docs, source files, <code>.jazyk/jazyk.toml</code>, and <code>.jazyk/.gitignore</code>. Keep generated state and secrets ignored. The metadata ignore file can allow just the config and ignore file:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · .jazyk/.gitignore</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>*
+!jazyk.toml
+!.gitignore</code>
+</pre>
+</div>
+<p>If the outer repository ignores the entire <code>.jazyk</code> directory, inner exceptions cannot rescue the config. Narrow that parent rule. Machine defaults belong in <code>~/.jazyk/config.toml</code>; that file does not mark a project.</p>
+</section>
+<section id="settings" class="article-section">
+<h2>Settings change execution, docs define intent</h2>
+<p>Project defaults can configure agents, endpoints, executors, workflow, and linting. Set-specific values override inherited settings. Model values resolve through the <a href="../models/#precedence">full precedence order</a>.</p>
+<p>The config selects inputs and where work may write. State the deliverable’s medium, content, and required technology in the documents so they become graph obligations.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../structure/">Choose document boundaries <span aria-hidden="true">→</span>
+</a>
+<a href="../cli/">Manage sets from the terminal <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Configure machine defaults <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+<section id="state-files" class="article-section">
+<h2>Compiler state files</h2>
+<p>Configuration defines what the compiler reads and where generation may write. The persistent graph and build records are stored separately beneath each set ID. See the <a href="../project/">.jazyk directory reference</a> for that layout.</p>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../project/">
+<small>Previous</small>← .jazyk directory</a>
+<a href="../cli/">
+<small>Next</small>CLI commands →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#config">Project configuration lives in .jazyk</a>
+<a href="#matching">How selections match</a>
+<a href="#git">Track the authored contract</a>
+<a href="#settings">Settings change execution, docs define intent</a>
+<a href="#state-files">Compiler state files</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

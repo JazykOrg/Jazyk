@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graph YAML format · Jazyk docs</title>
+<meta name="description" content="Record fields, IDs, references, and provenance in the graph shards.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Documents</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../existing/">Documenting existing code</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/" aria-current="page">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Graph YAML format<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Documents</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../existing/">Documenting existing code</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/" aria-current="page">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Graph YAML format</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">SEMANTIC GRAPH</p>
+<h1>Graph YAML format</h1>
+<p class="lede">Record fields, IDs, references, and provenance in the graph shards.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#shards">ID-keyed YAML maps</a>
+<a href="#entities">Entities: names, containment, and mentions</a>
+<a href="#requirements">Requirements: statements, edges, and transitions</a>
+<a href="#criteria">Criteria: one owner and an observable outcome</a>
+<a href="#provenance">Quoted, derived, and decreed facts</a>
+<a href="#other">Views, derived records, and diagnostics</a>
+<a href="#identifiers">IDs and set scope</a>
+</nav>
+</details>
+<article>
+<section id="shards" class="article-section">
+<h2>ID-keyed YAML maps</h2>
+<p>Each node type is stored in its own YAML file (a shard), mapping node ID to record. The ID is the mapping key, not a field inside the record. Field names differ by node type.</p>
+<p>Examples use illustrative IDs and source text. Writes are validated against live nodes and located quotes.</p>
+</section>
+<section id="entities" class="article-section">
+<h2>Entities: names, containment, and mentions</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Example · graph/entities.yaml</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>ent:order:
+  name: Order
+  definition: A customer order placed through Orderly.
+  stereotype: class
+  mentions:
+    - doc: docs/orders.md
+      section: /orders
+      quote: An Order records the customer and placement date.
+  created: g12
+  updated: g12</code></pre></div>
+<p>
+<code>name</code> identifies the concept to a reader. <code>aliases</code> records other names. <code>parent</code> is an entity ID for containment. <code>attributes</code> holds typed or valued attributes, each with provenance. <code>mentions</code> locates the concept in prose.</p>
+<p>An entity with no authored mention can instead carry derived or decreed <code>provenance</code>. Renaming the entity preserves its ID.</p>
+</section>
+<section id="requirements" class="article-section">
+<h2>Requirements: statements, edges, and transitions</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Example · graph/requirements.yaml</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>req:orders-1:
+  statement: An unpaid Order becomes cancelled at the start of day 22.
+  entities: [ent:order]
+  transition:
+    subject: ent:order
+    from: placed
+    to: cancelled
+    trigger: start of day 22 after placement
+    guard: the Order is unpaid
+  facets:
+    - facet: behavior
+      reasoning: The Order changes state under a stated condition.
+  source:
+    doc: docs/orders.md
+    section: /orders/cancellation
+    quote: An unpaid Order becomes cancelled at the start of day 22.
+  created: g12
+  updated: g12</code></pre></div>
+<p>
+<code>statement</code> is the obligation as the model restates it. <code>source.quote</code> remains verbatim. A requirement has exactly one of <code>source</code> or <code>provenance</code>.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Excerpt · edges on a different requirement</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>edges:
+  - a: ent:checkout
+    b: ent:inventory
+    type: dependency
+    cardinality: &quot;1&quot;</code></pre></div>
+<p>An edge is directional from <code>a</code> to <code>b</code>. Both endpoints must be in that requirement’s <code>entities</code>. A missing edge type contributes a dependency. A transition’s <code>subject</code> must also be in <code>entities</code>.</p>
+</section>
+<section id="criteria" class="article-section">
+<h2>Criteria: one owner and an observable outcome</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Example · graph/criteria.yaml</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>crit:orders-1:
+  requirement: req:orders-1
+  statement: An Order placed on day 0 and unpaid at the start of day 22 is cancelled.
+  kind: boundary
+  source:
+    doc: docs/orders.md
+    section: /orders/examples
+    quote: An Order placed on day 0 and unpaid at the start of day 22 is cancelled.
+  created: g12
+  updated: g12</code></pre></div>
+<p>
+<code>requirement</code> is the single owning requirement ID. Optional <code>given</code>, <code>when</code>, and <code>then</code> split the same condition. A quality criterion can carry a <code>measure</code>. Tests in the ledger are keyed to criterion IDs.</p>
+</section>
+<section id="provenance" class="article-section">
+<h2>Quoted, derived, and decreed facts</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Excerpt · derived provenance</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>provenance:
+  derived:
+    from: [req:orders-1]
+    reasoning: The cancellation rule implies a cancelled state.</code></pre></div>
+<p>Derived provenance names upstream IDs and reasoning. Decree provenance names the human author and timestamp, with an optional note. Quote provenance names <code>doc</code>, <code>section</code>, and verbatim <code>quote</code>.</p>
+<p>Quote placement is whitespace-insensitive string matching, not a character offset. Requirements and criteria use <code>source</code> for their quote form; entities use <code>mentions</code>; attributes use <code>provenance</code>.</p>
+</section>
+<section id="other" class="article-section">
+<h2>Views, derived records, and diagnostics</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Shard</th>
+<th scope="col">Record content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>views.yaml</code>
+</td>
+<td>
+<code>kind</code>, <code>title</code>, ordered <code>members</code>, optional <code>query</code>, <code>collapse</code>, exclusions, and provenance. Defaults carry <code>default: true</code>.</td>
+</tr>
+<tr>
+<td>
+<code>relationships.yaml</code>
+</td>
+<td>Entity pairs and contributions grouped by direction and type, derived from requirement edges.</td>
+</tr>
+<tr>
+<td>
+<code>state-machines.yaml</code>
+</td>
+<td>Subject entity, states, and transitions derived from requirement transitions.</td>
+</tr>
+<tr>
+<td>
+<code>diagnostics.yaml</code>
+</td>
+<td>
+<code>rule</code>, <code>severity</code>, <code>subjects</code>, <code>message</code>, judgment reasoning, lifecycle, and optional prompt, answer, and triage.</td>
+</tr>
+<tr>
+<td>
+<code>redirects.yaml</code>
+</td>
+<td>An absorbed node ID mapped to its surviving ID.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Relationships and state machines are rewritten at commit. Their contributions lead back to requirements. A view selects facts for a diagram; it does not store their coordinates.</p>
+</section>
+<section id="identifiers" class="article-section">
+<h2>IDs and set scope</h2>
+<p>Prefixes identify node kinds: <code>ent:</code>, <code>req:</code>, <code>crit:</code>, <code>view:</code>, <code>rel:</code>, <code>sm:</code>, and <code>diag:</code>. The same local ID can exist in different set stores.</p>
+<p>On disk, records use local IDs. Cross-set API results qualify them, e.g. <code>req:ds_main::orders-1</code>. CLI graph operations use <code>--set</code> to disambiguate scope. <code>created</code> and <code>updated</code> are generation markers such as <code>g12</code>.</p>
+<p>Use compiler tools for validated edits. YAML readability makes records inspectable; a text edit does not provide the provenance, gates, and journal work of a changeset.</p>
+<aside class="related">
+<p class="eyebrow">RELATED TOPICS</p>
+<a href="../graph/">Graph model <span aria-hidden="true">→</span>
+</a>
+<a href="../project/">Directory and companion record formats <span aria-hidden="true">→</span>
+</a>
+<a href="../decisions/">Questions and provenance <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../changes/">
+<small>Previous</small>← Incremental builds</a>
+<a href="../decisions/">
+<small>Next</small>Questions and provenance →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#shards">ID-keyed YAML maps</a>
+<a href="#entities">Entities: names, containment, and mentions</a>
+<a href="#requirements">Requirements: statements, edges, and transitions</a>
+<a href="#criteria">Criteria: one owner and an observable outcome</a>
+<a href="#provenance">Quoted, derived, and decreed facts</a>
+<a href="#other">Views, derived records, and diagnostics</a>
+<a href="#identifiers">IDs and set scope</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

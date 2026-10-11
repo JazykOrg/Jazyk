@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Understanding the graph · Jazyk docs</title>
-<meta name="description" content="Follow prose into a persistent model of entities, requirements, criteria, and derived structure.">
+<title>Graph model · Jazyk docs</title>
+<meta name="description" content="Node types, their relationships, and the facts each document set records.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -34,30 +34,39 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/" aria-current="page">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/" aria-current="page">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
 <details class="mobile-nav">
-<summary>Understanding the graph<span>Browse docs</span>
+<summary>Graph model<span>Browse docs</span>
 </summary>
 <nav aria-label="Documentation">
 <div class="nav-group">
@@ -66,25 +75,34 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/" aria-current="page">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/" aria-current="page">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -94,31 +112,32 @@
 <div class="breadcrumbs">
 <a href="../">Docs</a>
 <span aria-hidden="true">/</span>
-<span>Understanding the graph</span>
+<span>Graph model</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">LEARN THE COMPILER</p>
-<h1>Read what Jazyk understood.</h1>
-<p class="lede">Follow prose into a persistent model of entities, requirements, criteria, and derived structure.</p>
+<p class="eyebrow">SEMANTIC GRAPH</p>
+<h1>Semantic graph</h1>
+<p class="lede">Node types, their relationships, and the facts each document set records.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#meaning">A persistent model of meaning</a>
-<a href="#sentence">Follow one sentence through the model</a>
-<a href="#parts">The pieces you will inspect</a>
-<a href="#build">What a compile does</a>
-<a href="#inspect">Inspect meaning before generating</a>
+<a href="#meaning">One graph per document set</a>
+<a href="#sentence">From a sentence to graph records</a>
+<a href="#parts">Node types</a>
+<a href="#inspect">Inspecting the graph</a>
+<a href="#storage">How the graph is stored</a>
 </nav>
 </details>
 <article>
 <section id="meaning" class="article-section">
-<h2>A persistent model of meaning</h2>
+<h2>One graph per document set</h2>
+<p>Each named document set owns one persistent semantic graph.</p>
 <p>The graph is edited in place as the docs change. It is not a fresh summary regenerated on each run. Authored nodes keep their IDs through renames and updates; a merge leaves a redirect to the surviving node.</p>
-<p>Every fact has provenance: a quote from the documents, an inference with its reasoning, or a human decree. Inferences and decrees carry proposals toward prose so the docs can catch up.</p>
+<p>Every fact has provenance: a quote from the documents, an inference with its reasoning, or a human decree. Derived or decreed entities, requirements, and attributes carry proposals toward prose. Views are projections and do not require ratification.</p>
 </section>
 <section id="sentence" class="article-section">
-<h2>Follow one sentence through the model</h2>
+<h2>From a sentence to graph records</h2>
 <div class="semantic-example">
 <p class="eyebrow">ILLUSTRATION / ORDERLY</p>
 <blockquote>Orderly cancels an unpaid Order at the start of day 22 after placement.</blockquote>
@@ -138,7 +157,7 @@
 <p>This illustrates the model; it is not output from a compiler run. Read your actual graph to see the facts its sessions recorded.</p>
 </section>
 <section id="parts" class="article-section">
-<h2>The pieces you will inspect</h2>
+<h2>Node types</h2>
 <div class="table-scroll">
 <table>
 <thead>
@@ -184,33 +203,9 @@
 </table>
 </div>
 </section>
-<section id="build" class="article-section">
-<h2>What a compile does</h2>
-<ol class="steps">
-<li>
-<h3>Parse and align</h3>
-<p>The harness reads sections, compares them with stored state, and relocates anchors. Unchanged material does not need another extraction session.</p>
-</li>
-<li>
-<h3>Derive the work</h3>
-<p>The compiler derives goals from docs, graph, history, and evidence. It orders and groups ready work. The model resolves a goal; it does not invent the schedule.</p>
-</li>
-<li>
-<h3>Reconcile and judge</h3>
-<p>Agent sessions extract facts and compare meaning. Validated mutations commit as a changeset. Ambiguities and contradictions become findings rather than silently disappearing.</p>
-</li>
-<li>
-<h3>Derive and render</h3>
-<p>Commits recompute relationships, state machines, and default views. Native rendering projects those views into diagrams.</p>
-</li>
-<li>
-<h3>Check the result</h3>
-<p>Deterministic checks assess coverage, references, stale provenance, conformance, and other invariants. The final verdict reports mandatory work and human-blocked or optional counts.</p>
-</li>
-</ol>
-</section>
+
 <section id="inspect" class="article-section">
-<h2>Inspect meaning before generating</h2>
+<h2>Inspecting the graph</h2>
 <p>Check entity boundaries, requirement wording, and criteria. Follow a quote back to its sentence. Ask whether a diagram’s connection is supported by a requirement. Review any inferred facts that need to become explicit prose.</p>
 <p>The graph is also the contract consumed by generation, verification, docs generation, and agent retrieval. A mistake here can affect every downstream result.</p>
 <aside class="related">
@@ -223,12 +218,18 @@
 </a>
 </aside>
 </section>
+<section id="storage" class="article-section">
+<h2>How the graph is stored</h2>
+<p>Each node kind has an ID-keyed YAML map under <code>.jazyk/&lt;set-id&gt;/graph/</code>. Entities reference requirements, requirements reference entities, and criteria reference their owning requirement. Relationships and state machines are recomputed from requirement fields.</p>
+<p>
+<a href="../graph-format/">Graph YAML format</a> shows the records and their references. The <a href="../project/">.jazyk directory</a> describes the document records, status, journal, and ledger beside the graph. The ledger refers to the graph; it is not another graph shard.</p>
+</section>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
-<a href="../writing/">
-<small>Previous</small>← Writing requirements</a>
-<a href="../product/">
-<small>Next</small>From docs to product →</a>
+<a href="../existing/">
+<small>Previous</small>← Documenting existing code</a>
+<a href="../compilation/">
+<small>Next</small>Compilation →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -236,11 +237,11 @@
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#meaning">A persistent model of meaning</a>
-<a href="#sentence">Follow one sentence through the model</a>
-<a href="#parts">The pieces you will inspect</a>
-<a href="#build">What a compile does</a>
-<a href="#inspect">Inspect meaning before generating</a>
+<a href="#meaning">One graph per document set</a>
+<a href="#sentence">From a sentence to graph records</a>
+<a href="#parts">Node types</a>
+<a href="#inspect">Inspecting the graph</a>
+<a href="#storage">How the graph is stored</a>
 </nav>
 </aside>
 </div>

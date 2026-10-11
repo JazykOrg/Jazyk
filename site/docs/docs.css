@@ -1077,3 +1077,40 @@ main:focus {
     gap: 12px;
   }
 }
+
+.topic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 30px;
+  margin-top: 20px;
+}
+.topic-grid a {
+  display: block;
+  padding: 19px 0;
+  border-top: 1px solid var(--line);
+  text-decoration: none;
+}
+.topic-grid h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.topic-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.topic-grid a:hover h3 {
+  color: var(--green);
+}
+.question-links li {
+  font-size: 13px;
+}
+@media (max-width: 740px) {
+  .topic-grid {
+    grid-template-columns: 1fr;
+  }
+}

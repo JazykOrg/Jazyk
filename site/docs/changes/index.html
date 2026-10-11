@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Changes & history · Jazyk docs</title>
-<meta name="description" content="Understand incremental builds, preserved identity, and the causal chain from prose to fresh evidence.">
+<title>Incremental builds · Jazyk docs</title>
+<meta name="description" content="Change detection, stable identities, stale evidence, and committed history.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -34,30 +34,39 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/" aria-current="page">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/" aria-current="page">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
 <details class="mobile-nav">
-<summary>Changes & history<span>Browse docs</span>
+<summary>Incremental builds<span>Browse docs</span>
 </summary>
 <nav aria-label="Documentation">
 <div class="nav-group">
@@ -66,25 +75,34 @@
 <a href="../installation/">Installation</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Learn the compiler</p>
+<p class="nav-group-title">Documents</p>
 <a href="../structure/">Document structure</a>
 <a href="../writing/">Writing requirements</a>
-<a href="../graph/">Understanding the graph</a>
-<a href="../product/">From docs to product</a>
-<a href="../verification/">Verification & evidence</a>
+<a href="../existing/">Documenting existing code</a>
 </div>
 <div class="nav-group">
-<p class="nav-group-title">Work with change</p>
-<a href="../changes/" aria-current="page">Changes & history</a>
-<a href="../decisions/">Questions & provenance</a>
-<a href="../diagrams/">Diagrams & views</a>
-<a href="../existing/">Existing projects</a>
+<p class="nav-group-title">Semantic graph</p>
+<a href="../graph/">Graph model</a>
+<a href="../compilation/">Compilation</a>
+<a href="../changes/" aria-current="page">Incremental builds</a>
+<a href="../graph-format/">Graph YAML format</a>
+<a href="../decisions/">Questions and provenance</a>
+<a href="../diagrams/">Diagrams and views</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Generation and tests</p>
+<a href="../product/">Generation</a>
+<a href="../verification/">Testing and evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Project files</p>
+<a href="../project/">.jazyk directory</a>
+<a href="../configuration/">Project configuration</a>
 </div>
 <div class="nav-group">
 <p class="nav-group-title">Reference</p>
-<a href="../cli/">CLI reference</a>
-<a href="../models/">Models & benchmarks</a>
-<a href="../project/">Project files</a>
+<a href="../cli/">CLI commands</a>
+<a href="../models/">Models and benchmarks</a>
 <a href="../troubleshooting/">Troubleshooting</a>
 </div>
 </nav>
@@ -94,31 +112,31 @@
 <div class="breadcrumbs">
 <a href="../">Docs</a>
 <span aria-hidden="true">/</span>
-<span>Changes & history</span>
+<span>Incremental builds</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">WORK WITH CHANGE</p>
-<h1>Follow an edit through the project.</h1>
-<p class="lede">Understand incremental builds, preserved identity, and the causal chain from prose to fresh evidence.</p>
+<p class="eyebrow">SEMANTIC GRAPH</p>
+<h1>Incremental builds</h1>
+<p class="lede">Change detection, stable identities, stale evidence, and committed history.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#incremental">An edit updates a model that already exists</a>
-<a href="#effects">See what different edits affect</a>
-<a href="#history">Trace the cause instead of guessing</a>
-<a href="#preview">Look at the work before running it</a>
-<a href="#review">Review a change as a connected set</a>
+<a href="#incremental">Change detection and identity</a>
+<a href="#effects">What changes after an edit</a>
+<a href="#history">Journal and causal history</a>
+<a href="#preview">Preview and session limits</a>
+<a href="#review">Change review checklist</a>
 </nav>
 </details>
 <article>
 <section id="incremental" class="article-section">
-<h2>An edit updates a model that already exists</h2>
+<h2>Change detection and identity</h2>
 <p>The compiler aligns the new section tree with its stored one and derives work from the change. It does not discard the graph and re-extract every document.</p>
 <p>Names can change without changing identities. A merge redirects the old ID. A moved section can retain its facts when alignment recognizes the move. A changed quote may need review before its anchor is trusted again.</p>
 </section>
 <section id="effects" class="article-section">
-<h2>See what different edits affect</h2>
+<h2>What changes after an edit</h2>
 <p>This is an illustration of the contracts, not a compiler run. Choose a kind of edit to follow the likely work.</p>
 <div class="change-lab">
 <label for="change-kind">What changed?</label>
@@ -145,7 +163,7 @@
 </div>
 </section>
 <section id="history" class="article-section">
-<h2>Trace the cause instead of guessing</h2>
+<h2>Journal and causal history</h2>
 <p>Each committed changeset records a generation in the journal. Opened goals carry causes; resolved goals carry justifications. This gives you a path from an edit to its downstream work.</p>
 <div class="code-block">
 <div class="code-head">
@@ -163,7 +181,7 @@ jazyk ripple &lt;target-or-generation-or-doc&gt; --set Main --back</code>
 <code>explain</code> tells you why work exists. <code>ripple</code> follows the causal chain; <code>--back</code> walks toward the change that started it. You do not have to reconstruct the build from chat recollections.</p>
 </section>
 <section id="preview" class="article-section">
-<h2>Look at the work before running it</h2>
+<h2>Preview and session limits</h2>
 <div class="code-block">
 <div class="code-head">
 <span>Terminal</span>
@@ -177,7 +195,7 @@ jazyk ripple &lt;target-or-generation-or-doc&gt; --set Main --back</code>
 <p>To bound a diagnostic run, use <code>jazyk compile --set Main --sessions 1</code>. An unfinished run reports incomplete honestly; later work continues from committed state.</p>
 </section>
 <section id="review" class="article-section">
-<h2>Review a change as a connected set</h2>
+<h2>Change review checklist</h2>
 <ul>
 <li>Did the prose change the intended obligation?</li>
 <li>Are the graph facts and diagrams consistent with it?</li>
@@ -198,10 +216,10 @@ jazyk ripple &lt;target-or-generation-or-doc&gt; --set Main --back</code>
 </section>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
-<a href="../verification/">
-<small>Previous</small>← Verification & evidence</a>
-<a href="../decisions/">
-<small>Next</small>Questions & provenance →</a>
+<a href="../compilation/">
+<small>Previous</small>← Compilation</a>
+<a href="../graph-format/">
+<small>Next</small>Graph YAML format →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -209,11 +227,11 @@ jazyk ripple &lt;target-or-generation-or-doc&gt; --set Main --back</code>
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#incremental">An edit updates a model that already exists</a>
-<a href="#effects">See what different edits affect</a>
-<a href="#history">Trace the cause instead of guessing</a>
-<a href="#preview">Look at the work before running it</a>
-<a href="#review">Review a change as a connected set</a>
+<a href="#incremental">Change detection and identity</a>
+<a href="#effects">What changes after an edit</a>
+<a href="#history">Journal and causal history</a>
+<a href="#preview">Preview and session limits</a>
+<a href="#review">Change review checklist</a>
 </nav>
 </aside>
 </div>

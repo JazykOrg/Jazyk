@@ -77,7 +77,7 @@ The home page and compiler documentation.
     a 14-day trial; paid plans continue it. Prices live in the editor's Plan & usage,
     never on this page, since plans are edited without a site deploy.
 - Header and footer link to the documentation.
-- The home page has no repository link. The CLI installation guide links to the
+- The home page has no repository link. The installation guide links to the
   public source repository.
 
 ### Documentation (`/docs/`)
@@ -89,15 +89,17 @@ The documentation teaches the compiler. Frontend setup is one part of it.
   to verified output.` A demo precedes workspace choices.
 - The next page is Installation. It explains local and Cloud setup briefly.
   Local GUI, IDE, coding-agent, and Cloud guides are setup subpages.
-- The primary reading path continues through document structure, writing
-  requirements, the graph, generation, and verification.
-- A second group covers incremental change, questions and provenance,
-  diagrams, and adopting Jazyk in an existing project.
-- Reference covers CLI commands and options, model selection and benchmarks,
-  project files, and troubleshooting.
-- The sidebar groups pages by learning stage. Setup subpages appear under
-  Installation when the reader visits that part. Each article has section
-  navigation, previous/next links, and related reading.
+- Group navigation by concrete subjects: Getting started, Documents, Semantic
+  graph, Generation and tests, Project files, and Reference. Do not use `Learn the compiler`
+  or `Work with change` as categories.
+- Page labels and H1 headings name their contents. Keep the requested opening
+  on Start here. Elsewhere use literal titles such as `Document structure`,
+  `Semantic graph`, `Graph YAML format`, `Compilation`, `Generation`,
+  `Testing and evidence`, `.jazyk directory`, and `Project configuration`.
+- Source document structure, graph records, generated product, and compiler
+  metadata are distinct topics. The overview explains where to find each.
+- Setup subpages appear under Installation in that section. Each article has
+  section navigation, previous/next links, and related reading.
 - On small screens the guide navigation is collapsible and the table of contents
   moves above the article. Desktop guide navigation scrolls independently when
   the viewport is short.
@@ -126,7 +128,7 @@ The documentation teaches the compiler. Frontend setup is one part of it.
 - `/docs/cloud/`: create or import hosted projects, build, review, back up,
   and explicitly deliver to GitHub. Prices and availability live in Plan & usage.
 
-### Learn the compiler
+### Documents and semantic graph
 
 - `/docs/structure/`: document sets, roots, headings, links, input formats,
   and the separation of docs, source files, and compiler state.
@@ -135,12 +137,17 @@ The documentation teaches the compiler. Frontend setup is one part of it.
   prose without prescribing a controlled language.
 - `/docs/graph/`: entities, requirements, criteria, derived relationships and
   state machines, views, diagnostics, provenance, and the compiler build loop.
+- `/docs/graph-format/`: ID-keyed YAML shards, entity mentions, requirement
+  sources and edges, criterion ownership, views, derived data, and identifier
+  scope. Examples use actual serialized field names and are labeled as examples.
+- `/docs/compilation/`: parse, align, derive goals, run bounded sessions, commit,
+  derive output, and report convergence. Explain what the harness and model own.
 - `/docs/product/`: bind → generate → verify. Explain source write scope,
   artifact medium, existing implementations, and explicit delivery.
 - `/docs/verification/`: evidence per criterion, programmatic and model tests,
   failure and stale evidence, coverage, and limits of convergence.
 
-### Work with change
+### Compilation and review
 
 - `/docs/changes/`: incremental reconciliation, preserved identities,
   stale evidence, causality, journal, and preview. Include a clearly labeled
@@ -159,8 +166,12 @@ The documentation teaches the compiler. Frontend setup is one part of it.
   and automation exit codes. Link setup back to Installation.
 - `/docs/models/`: embedded and external agents, endpoint settings, resolution
   precedence, benchmark codecs, model quality, and practical cost control.
-- `/docs/project/`: current `.jazyk/jazyk.toml` schema, named sets, matching,
-  source scopes, generated state, global configuration, and Git tracking.
+- `/docs/project/`: the complete `.jazyk` directory map. Separate project-wide
+  metadata and per-set state. Explain graph shards, mirrored documents and
+  coverage, status, journal, ledger, transcripts, diagrams, and control files.
+  Show labeled format excerpts and distinguish persistent records from projections.
+- `/docs/configuration/`: current `.jazyk/jazyk.toml` schema, named sets,
+  matching, source scopes, global settings, and Git tracking.
 - `/docs/troubleshooting/`: symptom-led recovery for missing sets, unsupported
   files, incomplete builds, stale evidence, unavailable models, and editor refresh.
 

@@ -66,6 +66,13 @@ One page.
 - A link to [the editor](#the-editor) to open the demos, start a project, or open a
   folder. A folder needs no existing configuration. Choose named document sets
   and the source files each describes in the editor.
+- The ways to run it, under the link, one line each:
+  - Demo: a ready-made project in the browser, no account.
+  - Local folder: a folder on the computer, compiled by the reader's own coding AI,
+    no account.
+  - Cloud: projects kept online and compiled with included AI. GitHub sign-in starts
+    a 14-day trial; paid plans continue it. Prices live in the editor's Plan & usage,
+    never on this page, since plans are edited without a site deploy.
 - No link to the repository.
 
 ### 404

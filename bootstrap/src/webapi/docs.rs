@@ -60,7 +60,18 @@ pub fn safe_doc_path_why(proj: &Project, rel: &str) -> Result<PathBuf, String> {
         }
     }
     if !glob_included(proj, rel) {
-        return Err(format!("outside the docs glob {:?}", proj.docs_glob));
+        // A project with no document set has no documents yet, only files; say that
+        // instead of naming an empty glob. Mirrors docs/compiler/document-sets.md#discovery-and-opening.
+        if proj.set_docs.as_ref().is_some_and(|s| s.is_empty())
+            || (proj.set_docs.is_none() && proj.docs_glob.is_empty() && proj.set_id.is_none())
+        {
+            return Err("no-document-set: this project has no document set yet, so no file is a document; add one under Document sets, or open the file as a project file".into());
+        }
+        let globs = match &proj.set_docs {
+            Some(sets) => sets.concat(),
+            None => proj.docs_glob.clone(),
+        };
+        return Err(format!("outside the document sets' paths {:?}", globs));
     }
     if !crate::document_sets::safe_relative(&proj.root, rel) {
         return Err("path crosses a nested project or a symlink boundary".into());
@@ -104,10 +115,29 @@ pub enum DocRead {
     Invalid(String),
 }
 
+// The status of a refused document path: a project with no document set is a 409 with
+// its own reason, every other refusal a 400 naming the rule the path broke.
+// Mirrors docs/compiler/document-sets.md#discovery-and-opening.
+pub fn invalid_status(message: &str) -> u16 {
+    if message.starts_with("no-document-set") {
+        409
+    } else {
+        400
+    }
+}
+
+fn invalid_path(rel: &str, why: String) -> String {
+    if why.starts_with("no-document-set") {
+        why
+    } else {
+        format!("invalid document path {}: {}", rel, why)
+    }
+}
+
 pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
     let abs = match safe_doc_path_why(proj, rel) {
         Ok(a) => a,
-        Err(why) => return DocRead::Invalid(format!("invalid document path {}: {}", rel, why)),
+        Err(why) => return DocRead::Invalid(invalid_path(rel, why)),
     };
     match crate::md::read_doc(&abs) {
         Ok(text) => {
@@ -157,7 +187,7 @@ pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>)
     }
     let abs = match safe_doc_path_why(proj, rel) {
         Ok(a) => a,
-        Err(why) => return DocWrite::Invalid(format!("invalid document path {}: {}", rel, why)),
+        Err(why) => return DocWrite::Invalid(invalid_path(rel, why)),
     };
     let on_disk = crate::vfs::read_to_string(&abs)
         .ok()

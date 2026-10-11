@@ -371,7 +371,7 @@ pub(crate) fn request_scoped(
             match super::docs::doc_content(&project(), &rel) {
                 super::docs::DocRead::Found(v) => ok(v),
                 super::docs::DocRead::Missing(m) => err(404, m),
-                super::docs::DocRead::Invalid(m) => err(400, m),
+                super::docs::DocRead::Invalid(m) => err(super::docs::invalid_status(&m), m),
             }
         }
 
@@ -382,7 +382,7 @@ pub(crate) fn request_scoped(
             match super::docs::doc_write(&project(), &rel, text, base) {
                 super::docs::DocWrite::Written(v) => ok(v),
                 super::docs::DocWrite::Conflict(v) => reply(409, v),
-                super::docs::DocWrite::Invalid(m) => err(400, m),
+                super::docs::DocWrite::Invalid(m) => err(super::docs::invalid_status(&m), m),
                 super::docs::DocWrite::Failed(m) => err(500, m),
             }
         }

@@ -96,6 +96,12 @@ impl Workspace {
         let set = match selector {
             Some(id) => self.select(id)?,
             None if self.sets.len() == 1 => &self.sets[0],
+            None if self.sets.is_empty() => {
+                return Err((
+                    409,
+                    "no-document-set: this project has no document set yet. Add one under Document sets to choose which documents Jazyk compiles; the files stay browsable meanwhile".into(),
+                ))
+            }
             None => return Err((400, "choose a document set explicitly".into())),
         };
         let mut settings = toml::Value::Table(self.settings.clone());

@@ -1,14 +1,19 @@
 # Site
 
 The public site at [jazyk.org](https://jazyk.org). Plain static HTML with
-[Tailwind CSS](https://tailwindcss.com) loaded from its CDN, so there is no
-build step. Specified in [`../docs/site.md`](../docs/site.md).
+[Tailwind CSS](https://tailwindcss.com) loaded from its CDN on the home page.
+Documentation uses shared CSS and a small script. There is no build step. Specified in [`../docs/site.md`](../docs/site.md).
 
 ## Pages
 
 | File | Route |
 | --- | --- |
-| `index.html` | `/`, the one page: the pitch and the sort example's snippets |
+| `index.html` | `/`, the pitch and the sort example's snippets |
+| `docs/index.html` | `/docs/`, choose a workspace and learn the workflow |
+| `docs/cli/index.html` | `/docs/cli/`, local setup and command line usage |
+| `docs/ide/index.html` | `/docs/ide/`, language support, chat agents, and coding tools |
+| `docs/cloud/index.html` | `/docs/cloud/`, hosted projects, builds, and delivery |
+| `docs/docs.css`, `docs/docs.js` | shared docs styles, copying, and active section navigation |
 | `example/*.svg` | the diagrams on the page |
 | `favicon.svg` | `/favicon.svg` |
 | `404.html` | served with status 404 for any path that has no object |
@@ -31,6 +36,9 @@ example directory.
 cd site
 python3 -m http.server 8000   # then open http://localhost:8000
 ```
+
+Use trailing-slash paths in the local preview, e.g. `http://localhost:8000/docs/`.
+CloudFront also maps extensionless paths to each directory's `index.html`.
 
 ## Hosting
 

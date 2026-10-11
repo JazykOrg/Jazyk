@@ -4,13 +4,16 @@ The public site for the project is hosted at [jazyk.org](https://jazyk.org).
 
 ## Style
 
-- Static HTML, one hand-editable file per page, styled with Tailwind classes from its
-  CDN script. No build step, no framework, no bundler.
+- Static HTML, one hand-editable file per page. The home page uses Tailwind
+  classes from its CDN script. Documentation pages share a stylesheet and a small
+  script for copying examples and highlighting the current section. No build
+  step, no framework, no bundler.
 - Every image the site shows is a real rendering, copied into `site/` as a static asset
   from a built example's `.jazyk/`. A page never links into an example directory or
   into an out directory; links between pages and to assets are relative to the site.
-- Code blocks are real output: trace events, shard YAML, cards, and terminal lines are
-  copied from a run, condensed where a line would wrap, never invented.
+- Output blocks are copied from real runs, condensed where a line would wrap.
+  Setup commands are checked against the CLI. Instructional examples are labeled
+  as examples and never presented as compiler output.
 
 ## Hosting
 
@@ -36,7 +39,7 @@ same way, with the differences listed there.
 
 ## Pages
 
-One page.
+The home page and four documentation pages.
 
 ### Home (/)
 
@@ -73,7 +76,69 @@ One page.
   - Cloud: projects kept online and compiled with included AI. GitHub sign-in starts
     a 14-day trial; paid plans continue it. Prices live in the editor's Plan & usage,
     never on this page, since plans are edited without a site deploy.
-- No link to the repository.
+- Header and footer link to the documentation.
+- The home page has no repository link. The CLI installation guide links to the
+  public source repository.
+
+### Documentation (`/docs/`)
+
+- The entry page is `Start here`. It helps a developer or creator choose CLI,
+  IDE, or Cloud by file location, AI setup, and account requirements.
+- A demo is the shortest path to inspect an existing project. Local browser
+  folders and the local CLI remain distinct choices.
+- The common workflow is write → compile → review → generate → verify.
+  Compilation builds the graph. Generation produces source or another
+  deliverable. Verification evaluates its criteria. Cloud Build groups these
+  steps when the set has work.
+- Each guide states prerequisites, gives a first successful workflow, explains
+  human decisions, and links to the next guide.
+- The shell has the site header, persistent guide navigation, breadcrumbs,
+  an on-page table of contents, and previous/next links. The active page and
+  section are identified. On small screens the guide navigation is collapsible
+  and the table of contents moves above the article.
+- Examples have copy buttons with a success or failure message. Links, controls,
+  and navigation work with a keyboard. A skip link goes to the article. Reduced
+  motion preferences disable smooth scrolling. Content works without JavaScript.
+- No documentation search is needed for four pages. Every guide is reachable
+  in one click from the shared navigation.
+
+### CLI (`/docs/cli/`)
+
+- Build from source with Rust and Git, then put the binary on `PATH`.
+- Initialize a project, write a document, and add a named document set.
+  `jazyk init` creates `.jazyk/jazyk.toml` with an empty set list.
+- Choose an installed coding agent or configure the embedded agent's endpoint.
+  Keep credentials in the environment. Benchmark the chosen model.
+- Compile, inspect the verdict, resolve questions, and recompile.
+  `--set` selects a document set. Quote shell globs.
+- Explain the everyday commands by task, including generation, verification,
+  graph inspection, and the local browser editor.
+- Explain where configuration, source, and generated state live.
+
+### IDE (`/docs/ide/`)
+
+- Start from a configured local project and a binary available to the IDE.
+- Separate inline language support (LSP), the Jazyk chat agent (ACP), and tools
+  used by an existing coding agent (MCP). Explain their purpose before naming
+  the protocols.
+- Give concrete setup paths for VS Code, Zed, JetBrains, Cursor, and coding
+  agents. State any extension or adapter requirement.
+- Show the edit, compile, inspect, and answer workflow. The language server
+  reads the graph and does not compile on its own.
+- Explain stale diagnostics, missing binary paths, and agent setup failures.
+
+### Cloud (`/docs/cloud/`)
+
+- Sign in with GitHub at jazyk.dev. Create a project or import from GitHub.
+  Import and repository access are explicit steps.
+- Explain document sets, Docs, Model, Product, Inbox, Build, and delivery.
+- Cloud files and compilation live in the hosted service. Signing in does
+  not move local files into Cloud.
+- Explain trial eligibility and included AI. Link to the app's Plan & usage
+  for current availability, prices, limits, and remaining usage.
+- Explain backups, interrupted builds, and explicit GitHub delivery.
+  Delivery requires review of the repository and branch before confirmation.
+- Do not claim that hosted compilation of a local folder is available.
 
 ### 404
 

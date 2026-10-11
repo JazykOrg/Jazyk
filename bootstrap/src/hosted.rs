@@ -344,12 +344,14 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
             Err((code, e)) => return Ok(Reply::json(code, json!({"error":e}))),
         };
     let (route, query) = routed.path.split_once('?').unwrap_or((&routed.path, ""));
-    let workspace = crate::document_sets::Workspace::load(&root()).map_err(|e| e.1)?;
-    let selected = || {
-        workspace
-            .resolve(routed.selector.as_deref())
-            .map_err(|e| e.1)
+    // A configuration that does not load, or a project with no document set, is a
+    // state of the project with its own status, never a server failure.
+    // Mirrors docs/compiler/document-sets.md#discovery-and-opening.
+    let workspace = match crate::document_sets::Workspace::load(&root()) {
+        Ok(w) => w,
+        Err((code, e)) => return Ok(Reply::json(code, json!({"error":e}))),
     };
+    let selected = || workspace.resolve(routed.selector.as_deref());
     let route = route.strip_prefix("/api").unwrap_or(route);
     if method == "GET" && matches!(route, "/out/file" | "/project/file" | "/deliverable/raw") {
         let rel = url::form_urlencoded::parse(query.as_bytes())
@@ -360,7 +362,10 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
             if matches!(route, "/project/file" | "/deliverable/raw") && routed.selector.is_none() {
                 workspace.files_project()
             } else {
-                selected()?
+                match selected() {
+                    Ok(p) => p,
+                    Err((code, e)) => return Ok(Reply::json(code, json!({"error":e}))),
+                }
             };
         let result = match route {
             "/out/file" => crate::webapi::outfiles::out_file(&p.out, &rel),
@@ -383,7 +388,10 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
         let request = routed.body.clone();
         let kind = request["kind"].as_str().unwrap_or("compile");
         if matches!(kind, "verify" | "audit" | "gen") {
-            let p = selected()?;
+            let p = match selected() {
+                Ok(p) => p,
+                Err((code, e)) => return Ok(Reply::json(code, json!({"error":e}))),
+            };
             let store = crate::store::Store::load(&p.out);
             let gs = crate::gen::GenSettings::resolve(&p);
             let result = if kind == "gen" {
@@ -458,6 +466,37 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    // A project carrying only a root jazyk.toml from before document sets has no set:
+    // its files stay browsable, a document read and a job each answer 409
+    // no-document-set, and nothing fails the request.
+    // Mirrors docs/compiler/document-sets.md#discovery-and-opening.
+    #[test]
+    fn a_project_without_document_sets_answers_no_document_set_instead_of_failing() {
+        let mut files = Snapshot::new();
+        files.insert(
+            "jazyk.toml".into(),
+            b"[docs]\nglob = [\"docs/**/*.md\"]\n\n[roots]\nfiles = [\"docs/main.md\"]\n".to_vec(),
+        );
+        files.insert("docs/main.md".into(), b"# Main\n\nThe system shall respond.\n".to_vec());
+        let mut w = Workspace::new(files).unwrap();
+        let e = Execution::default();
+        let doc = w.request("GET", "/api/docs/content?path=docs/main.md", "", &e).unwrap();
+        assert_eq!(doc.status, 409, "{}", String::from_utf8_lossy(&doc.body));
+        assert!(String::from_utf8_lossy(&doc.body).contains("no-document-set"));
+        let job = w.request("POST", "/api/jobs", r#"{"kind":"audit"}"#, &e).unwrap();
+        assert_eq!(job.status, 409, "{}", String::from_utf8_lossy(&job.body));
+        assert!(String::from_utf8_lossy(&job.body).contains("Add one under Document sets"));
+        let text = w.request("GET", "/api/project/text?path=docs/main.md", "", &e).unwrap();
+        assert_eq!(text.status, 200);
+        assert!(String::from_utf8_lossy(&text.body).contains("The system shall respond."));
+        // The old paths come back as the first set's suggestion, and nothing is written.
+        let sets = w.request("GET", "/api/sets", "", &e).unwrap();
+        let v: Value = serde_json::from_slice(&sets.body).unwrap();
+        assert_eq!(v["suggested"]["docs"], json!(["docs/**/*.md"]), "{}", v);
+        assert_eq!(v["suggested"]["roots"], json!(["docs/main.md"]), "{}", v);
+        assert!(!w.snapshot().contains_key(".jazyk/jazyk.toml"));
+    }
 
     #[test]
     fn hosted_ledger_runner_sends_the_shared_batch_contract() {

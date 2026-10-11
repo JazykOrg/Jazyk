@@ -39,7 +39,10 @@ pub async fn doc_write(
     match written {
         crate::webapi::docs::DocWrite::Written(value) => Json(value).into_response(),
         crate::webapi::docs::DocWrite::Conflict(value) => (StatusCode::CONFLICT, Json(value)).into_response(),
-        crate::webapi::docs::DocWrite::Invalid(message) => err(StatusCode::BAD_REQUEST, message),
+        crate::webapi::docs::DocWrite::Invalid(message) => err(
+            StatusCode::from_u16(crate::webapi::docs::invalid_status(&message)).unwrap_or(StatusCode::BAD_REQUEST),
+            message,
+        ),
         crate::webapi::docs::DocWrite::Failed(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
     }
 }

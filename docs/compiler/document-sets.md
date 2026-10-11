@@ -65,6 +65,17 @@ one shared service across transports. Saves use atomic replacement.
 - Reading an arbitrary folder creates no config, graph, or starter documents.
   `Add document set` saves the first config. `jazyk init` may explicitly create an
   empty project. Canceling setup leaves the folder untouched.
+- A request that needs a document set, asked of a project that has none (a new
+  folder, or a project still carrying only a root `jazyk.toml` from before document
+  sets), answers `409` with `no-document-set: this project has no document set yet`
+  and says to add one under Document sets. It is a state of the project, never a
+  server failure: every backend (native, WASM, hosted) answers it the same way, and
+  file browsing keeps working.
+- A project with no `.jazyk/jazyk.toml` whose root `jazyk.toml` still carries the
+  paths from before document sets (`[docs] glob`, and `[roots] files`) gets them back
+  as a suggestion: the `/api/sets` summary carries `suggested: {name, docs, roots}`,
+  and Add document set opens prefilled with it. Nothing is written until the person
+  saves the set; the root file is never read as configuration.
 - Invalid config keeps file browsing and config editing available. Show the parse
   error and suspend operations that require its mappings. Do not use stale mappings
   for writes while silently falling back to the last valid config.

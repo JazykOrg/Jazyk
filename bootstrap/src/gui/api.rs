@@ -490,7 +490,10 @@ pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -
     match read {
         crate::webapi::docs::DocRead::Found(value) => Json(value).into_response(),
         crate::webapi::docs::DocRead::Missing(message) => err(StatusCode::NOT_FOUND, message),
-        crate::webapi::docs::DocRead::Invalid(message) => err(StatusCode::BAD_REQUEST, message),
+        crate::webapi::docs::DocRead::Invalid(message) => err(
+            StatusCode::from_u16(crate::webapi::docs::invalid_status(&message)).unwrap_or(StatusCode::BAD_REQUEST),
+            message,
+        ),
     }
 }
 

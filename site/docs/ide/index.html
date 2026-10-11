@@ -1,22 +1,252 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>IDE · Jazyk docs</title><meta name="description" content="Write prose with language support, inspect its meaning, and run compiler work through your editor or coding agent.">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IDE · Jazyk docs</title>
+<meta name="description" content="Write prose with language support, inspect its meaning, and run compiler work through your editor or coding agent.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
-<link rel="stylesheet" href="../docs.css"><script src="../docs.js" defer></script>
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
-<header class="site-header"><nav aria-label="Site"><a class="logo" href="../../"><img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span><span class="logo-docs">Docs</span></a><div class="header-links"><a href="../../">Home</a><a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span></a></div></nav></header>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
 <div class="docs-layout">
-<aside class="sidebar"><span class="sidebar-label">DOCUMENTATION</span><nav class="desktop-nav" aria-label="Guides"><a href="../"><span class="nav-number">01</span>Start here</a><a href="../cli/"><span class="nav-number">02</span>CLI</a><a href="../ide/" aria-current="page"><span class="nav-number">03</span>IDE</a><a href="../cloud/"><span class="nav-number">04</span>Cloud</a></nav><details class="mobile-nav"><summary>IDE<span>Browse guides</span></summary><nav aria-label="Guides"><a href="../"><span class="nav-number">01</span>Start here</a><a href="../cli/"><span class="nav-number">02</span>CLI</a><a href="../ide/" aria-current="page"><span class="nav-number">03</span>IDE</a><a href="../cloud/"><span class="nav-number">04</span>Cloud</a></nav></details><div class="sidebar-footer"><p>English as a<br>programming language.</p><a href="https://jazyk.dev">Try a demo ↗</a></div></aside>
-<main id="main" tabindex="-1"><div class="breadcrumbs"><a href="../">Docs</a><span aria-hidden="true">/</span><span>IDE</span></div><div class="article-header"><p class="eyebrow">USAGE GUIDE / IDE</p><h1>Stay in your workspace.</h1><p class="lede">Write prose with language support, inspect its meaning, and run compiler work through your editor or coding agent.</p></div><details class="mobile-toc"><summary>On this page</summary><nav aria-label="On this page"><a href="#choose">Choose an integration</a><a href="#vscode">VS Code</a><a href="#agent">Zed and JetBrains</a><a href="#existing-agent">Your existing agent</a><a href="#loop">The editing loop</a><a href="#troubleshooting">Troubleshooting</a></nav></details><article><aside class="note"><strong>Before you connect</strong><p>Install <a href="../cli/#install">the CLI</a>, make <code>jazyk</code> available to your editor, and <a href="../cli/#project">create a document set</a>. Compilation also needs a <a href="../cli/#ai">configured agent or model</a>.</p></aside><section id="choose" class="article-section"><h2>Choose how Jazyk fits your editor</h2><p>You can read the graph inline, run Jazyk as a chat agent, or give your existing coding agent Jazyk tools. These integrations can work together.</p><div class="table-scroll"><table><thead><tr><th scope="col">You want…</th><th scope="col">Use</th><th scope="col">What it does</th></tr></thead><tbody><tr><td>Diagnostics and navigation in prose</td><td>Language support (LSP)</td><td>Reads the last compiled graph. Shows diagnostics, entity hovers, definitions, references, and requirement links.</td></tr><tr><td>Jazyk in the editor’s agent panel</td><td>Jazyk agent (ACP)</td><td>Runs your configured downstream agent with Jazyk tools, build commands, and project context.</td></tr><tr><td>Your existing agent to inspect or compile</td><td>Jazyk tools (MCP)</td><td>Makes the graph and lifecycle tools available to Claude Code, Codex, Cursor, or another MCP client.</td></tr></tbody></table></div></section><section id="vscode" class="article-section"><h2>VS Code: inline language support</h2><p>Run the launcher from the project folder:</p><div class="code-block"><div class="code-head"><span>Terminal</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>jazyk launch vscode</code></pre></div><p>The launcher configures MCP and registers the ACP entry. It checks for the <code>jazyk.jazyk</code> language extension and prints an install hint if it is missing. The ACP entry needs a separate ACP client extension in VS Code; the language extension handles inline support.</p><h3>Build the language extension from source</h3><p>The extension lives in your Jazyk checkout. You need Node.js and npm.</p><div class="code-block"><div class="code-head"><span>Terminal · replace the checkout path</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>cd /path/to/Jazyk/bootstrap/editors/vscode
+<aside class="sidebar">
+<span class="sidebar-label">DOCUMENTATION</span>
+<nav class="desktop-nav" aria-label="Guides">
+<a href="../">
+<span class="nav-number">01</span>Start here</a>
+<a href="../cli/">
+<span class="nav-number">02</span>CLI</a>
+<a href="../ide/" aria-current="page">
+<span class="nav-number">03</span>IDE</a>
+<a href="../cloud/">
+<span class="nav-number">04</span>Cloud</a>
+</nav>
+<details class="mobile-nav">
+<summary>IDE<span>Browse guides</span>
+</summary>
+<nav aria-label="Guides">
+<a href="../">
+<span class="nav-number">01</span>Start here</a>
+<a href="../cli/">
+<span class="nav-number">02</span>CLI</a>
+<a href="../ide/" aria-current="page">
+<span class="nav-number">03</span>IDE</a>
+<a href="../cloud/">
+<span class="nav-number">04</span>Cloud</a>
+</nav>
+</details>
+<div class="sidebar-footer">
+<p>English as a<br>programming language.</p>
+<a href="https://jazyk.dev">Try a demo ↗</a>
+</div>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>IDE</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">USAGE GUIDE / IDE</p>
+<h1>Stay in your workspace.</h1>
+<p class="lede">Write prose with language support, inspect its meaning, and run compiler work through your editor or coding agent.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#choose">Choose an integration</a>
+<a href="#vscode">VS Code</a>
+<a href="#agent">Zed and JetBrains</a>
+<a href="#existing-agent">Your existing agent</a>
+<a href="#loop">The editing loop</a>
+<a href="#troubleshooting">Troubleshooting</a>
+</nav>
+</details>
+<article>
+<aside class="note">
+<strong>Before you connect</strong>
+<p>Install <a href="../cli/#install">the CLI</a>, make <code>jazyk</code> available to your editor, and <a href="../cli/#project">create a document set</a>. Compilation also needs a <a href="../cli/#ai">configured agent or model</a>.</p>
+</aside>
+<section id="choose" class="article-section">
+<h2>Choose how Jazyk fits your editor</h2>
+<p>You can read the graph inline, run Jazyk as a chat agent, or give your existing coding agent Jazyk tools. These integrations can work together.</p>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">You want…</th>
+<th scope="col">Use</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Diagnostics and navigation in prose</td>
+<td>Language support (LSP)</td>
+<td>Reads the last compiled graph. Shows diagnostics, entity hovers, definitions, references, and requirement links.</td>
+</tr>
+<tr>
+<td>Jazyk in the editor’s agent panel</td>
+<td>Jazyk agent (ACP)</td>
+<td>Runs your configured downstream agent with Jazyk tools, build commands, and project context.</td>
+</tr>
+<tr>
+<td>Your existing agent to inspect or compile</td>
+<td>Jazyk tools (MCP)</td>
+<td>Makes the graph and lifecycle tools available to Claude Code, Codex, Cursor, or another MCP client.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="vscode" class="article-section">
+<h2>VS Code: inline language support</h2>
+<p>Run the launcher from the project folder:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk launch vscode</code></pre></div>
+<p>The launcher configures MCP and registers the ACP entry. It checks for the <code>jazyk.jazyk</code> language extension and prints an install hint if it is missing. The ACP entry needs a separate ACP client extension in VS Code; the language extension handles inline support.</p>
+<h3>Build the language extension from source</h3>
+<p>The extension lives in your Jazyk checkout. You need Node.js and npm.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal · replace the checkout path</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>cd /path/to/Jazyk/bootstrap/editors/vscode
 npm install
-npm run compile</code></pre></div><p>Open that extension folder in VS Code and press <kbd>F5</kbd> to launch an Extension Development Host. In the new window, open your project folder. This is the development setup for the extension, not a Marketplace install.</p><p>If the binary is not on the editor’s <code>PATH</code>, set <code>jazyk.server.path</code> to its absolute location in VS Code settings.</p></section><section id="agent" class="article-section"><h2>Zed and JetBrains: the Jazyk chat agent</h2><p>Register Jazyk with the editor you use:</p><div class="code-block"><div class="code-head"><span>Terminal · Zed</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>jazyk acp install zed</code></pre></div><div class="code-block"><div class="code-head"><span>Terminal · JetBrains</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>jazyk acp install jetbrains</code></pre></div><p>Open your project and choose <strong>Jazyk</strong> in the editor’s ACP agent picker. Registration is global; the opened project supplies its own configuration. You can also use <code>jazyk launch zed</code> or <code>jazyk launch jetbrains</code> to check setup and open the folder.</p><p>In the Jazyk chat, ask about a requirement or use its commands:</p><div class="code-block"><div class="code-head"><span>Jazyk agent chat</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>/status
+npm run compile</code></pre></div>
+<p>Open that extension folder in VS Code and press <kbd>F5</kbd> to launch an Extension Development Host. In the new window, open your project folder. This is the development setup for the extension, not a Marketplace install.</p>
+<p>If the binary is not on the editor’s <code>PATH</code>, set <code>jazyk.server.path</code> to its absolute location in VS Code settings.</p>
+</section>
+<section id="agent" class="article-section">
+<h2>Zed and JetBrains: the Jazyk chat agent</h2>
+<p>Register Jazyk with the editor you use:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal · Zed</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk acp install zed</code></pre></div>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal · JetBrains</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk acp install jetbrains</code></pre></div>
+<p>Open your project and choose <strong>Jazyk</strong> in the editor’s ACP agent picker. Registration is global; the opened project supplies its own configuration. You can also use <code>jazyk launch zed</code> or <code>jazyk launch jetbrains</code> to check setup and open the folder.</p>
+<p>In the Jazyk chat, ask about a requirement or use its commands:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Jazyk agent chat</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>/status
 /preview
 /compile
-/questions</code></pre></div><p><code>/compile</code> reconciles documents with the graph. <code>/questions</code> lists decisions waiting for you. <code>/generate</code> and <code>/verify</code> handle the deliverable when source paths are selected.</p><aside class="note"><strong>Chat support and inline support are separate</strong><p>Registering the chat agent does not install a language server. For inline support in another LSP-capable editor, configure it to launch <code>jazyk lsp</code> over stdio in your project.</p></aside></section><section id="existing-agent" class="article-section"><h2>Keep your existing coding agent</h2><p>Use the launcher to connect Jazyk tools and start your usual tool:</p><div class="code-block"><div class="code-head"><span>Terminal · Cursor</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>jazyk launch cursor</code></pre></div><p>The same launcher accepts <code>claude</code>, <code>codex</code>, and <code>gemini</code>. The chosen program must already be installed. Setup merges a Jazyk MCP entry instead of replacing the rest of your configuration.</p><p>To set up a client without launching it, use <code>jazyk init --mcp cursor</code>. For a client you configure by hand, run the server with:</p><div class="code-block"><div class="code-head"><span>MCP server command</span><button type="button" class="copy-button" hidden>Copy</button></div><pre><code>jazyk mcp all</code></pre></div><p>Set its working directory to your project. Ask the agent to inspect the document sets and compile the intended set. The slash commands above belong to the Jazyk ACP agent; another agent uses the MCP tools exposed to it.</p></section><section id="loop" class="article-section"><h2>The everyday editing loop</h2><ol class="steps"><li><h3>Edit and save the prose</h3><p>Keep obligations and concrete examples in the docs. Save before asking Jazyk to compile the change.</p></li><li><h3>Compile deliberately</h3><p>Use <code>/compile</code> in the Jazyk agent, or <code>jazyk compile --set Main</code> in a terminal. Use <code>jazyk watch --set Main</code> when you want saved edits to recompile automatically.</p></li><li><h3>Read what the sentence became</h3><p>With language support connected, hover an entity to read its definition and diagram. Hover a requirement’s quote to inspect its statement and any recorded code and test evidence. Follow definitions and references across documents.</p></li><li><h3>Answer or revise</h3><p>Review inline diagnostics. A diagnostic with options can offer code actions; the VS Code extension also provides <strong>Jazyk: answer</strong> for a text reply. You can revise the prose directly, then compile again.</p></li></ol></section><section id="troubleshooting" class="article-section"><h2>When something looks wrong</h2><details open><summary>No diagnostics or hovers</summary><p>Check that the document belongs to a set and that the set has been compiled. The language server reads the stored graph; opening a file does not call the AI.</p></details><details><summary>Diagnostics still describe old text</summary><p>Save and compile the affected set. The language server refreshes after a committed graph change. If it stays stale, inspect the Jazyk output channel and restart the language server.</p></details><details><summary>The IDE cannot find jazyk</summary><p>GUI applications may have a different PATH from your terminal. Set the binary’s absolute path in the LSP configuration, or <code>jazyk.server.path</code> in VS Code. Register the ACP agent again from a terminal where the binary is available.</p></details><details><summary>The Jazyk chat agent fails to start</summary><p>Check the selected agent and its authentication. Confirm Node.js is available if its profile uses an <code>npx</code> adapter. Run <code>jazyk benchmark</code> in the project terminal to test the configured agent and model.</p></details></section></article><nav class="page-nav" aria-label="Previous and next"><a href="../cli/"><small>Previous</small>← CLI</a><a href="../cloud/"><small>Next guide</small>Cloud →</a></nav><footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a></footer></main>
-<aside class="toc"><p>ON THIS PAGE</p><nav aria-label="On this page"><a href="#choose">Choose an integration</a><a href="#vscode">VS Code</a><a href="#agent">Zed and JetBrains</a><a href="#existing-agent">Your existing agent</a><a href="#loop">The editing loop</a><a href="#troubleshooting">Troubleshooting</a></nav></aside>
-</div><span class="sr-only" id="copy-status" role="status" aria-live="polite"></span>
-</body></html>
+/questions</code></pre></div>
+<p>
+<code>/compile</code> reconciles documents with the graph. <code>/questions</code> lists decisions waiting for you. <code>/generate</code> and <code>/verify</code> handle the deliverable when source paths are selected.</p>
+<aside class="note">
+<strong>Chat support and inline support are separate</strong>
+<p>Registering the chat agent does not install a language server. For inline support in another LSP-capable editor, configure it to launch <code>jazyk lsp</code> over stdio in your project.</p>
+</aside>
+</section>
+<section id="existing-agent" class="article-section">
+<h2>Keep your existing coding agent</h2>
+<p>Use the launcher to connect Jazyk tools and start your usual tool:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal · Cursor</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk launch cursor</code></pre></div>
+<p>The same launcher accepts <code>claude</code>, <code>codex</code>, and <code>gemini</code>. The chosen program must already be installed. Setup merges a Jazyk MCP entry instead of replacing the rest of your configuration.</p>
+<p>To set up a client without launching it, use <code>jazyk init --mcp cursor</code>. For a client you configure by hand, run the server with:</p>
+<div class="code-block">
+<div class="code-head">
+<span>MCP server command</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div><pre><code>jazyk mcp all</code></pre></div>
+<p>Set its working directory to your project. Ask the agent to inspect the document sets and compile the intended set. The slash commands above belong to the Jazyk ACP agent; another agent uses the MCP tools exposed to it.</p>
+</section>
+<section id="loop" class="article-section">
+<h2>The everyday editing loop</h2>
+<ol class="steps">
+<li>
+<h3>Edit and save the prose</h3>
+<p>Keep obligations and concrete examples in the docs. Save before asking Jazyk to compile the change.</p>
+</li>
+<li>
+<h3>Compile deliberately</h3>
+<p>Use <code>/compile</code> in the Jazyk agent, or <code>jazyk compile --set Main</code> in a terminal. Use <code>jazyk watch --set Main</code> when you want saved edits to recompile automatically.</p>
+</li>
+<li>
+<h3>Read what the sentence became</h3>
+<p>With language support connected, hover an entity to read its definition and diagram. Hover a requirement’s quote to inspect its statement and any recorded code and test evidence. Follow definitions and references across documents.</p>
+</li>
+<li>
+<h3>Answer or revise</h3>
+<p>Review inline diagnostics. A diagnostic with options can offer code actions; the VS Code extension also provides <strong>Jazyk: answer</strong> for a text reply. You can revise the prose directly, then compile again.</p>
+</li>
+</ol>
+</section>
+<section id="troubleshooting" class="article-section">
+<h2>When something looks wrong</h2>
+<details open>
+<summary>No diagnostics or hovers</summary>
+<p>Check that the document belongs to a set and that the set has been compiled. The language server reads the stored graph; opening a file does not call the AI.</p>
+</details>
+<details>
+<summary>Diagnostics still describe old text</summary>
+<p>Save and compile the affected set. The language server refreshes after a committed graph change. If it stays stale, inspect the Jazyk output channel and restart the language server.</p>
+</details>
+<details>
+<summary>The IDE cannot find jazyk</summary>
+<p>GUI applications may have a different PATH from your terminal. Set the binary’s absolute path in the LSP configuration, or <code>jazyk.server.path</code> in VS Code. Register the ACP agent again from a terminal where the binary is available.</p>
+</details>
+<details>
+<summary>The Jazyk chat agent fails to start</summary>
+<p>Check the selected agent and its authentication. Confirm Node.js is available if its profile uses an <code>npx</code> adapter. Run <code>jazyk benchmark</code> in the project terminal to test the configured agent and model.</p>
+</details>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../cli/">
+<small>Previous</small>← CLI</a>
+<a href="../cloud/">
+<small>Next guide</small>Cloud →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#choose">Choose an integration</a>
+<a href="#vscode">VS Code</a>
+<a href="#agent">Zed and JetBrains</a>
+<a href="#existing-agent">Your existing agent</a>
+<a href="#loop">The editing loop</a>
+<a href="#troubleshooting">Troubleshooting</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

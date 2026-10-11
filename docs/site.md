@@ -39,7 +39,7 @@ same way, with the differences listed there.
 
 ## Pages
 
-The home page and four documentation pages.
+The home page and compiler documentation.
 
 ### Home (/)
 
@@ -82,63 +82,87 @@ The home page and four documentation pages.
 
 ### Documentation (`/docs/`)
 
-- The entry page is `Start here`. It helps a developer or creator choose CLI,
-  IDE, or Cloud by file location, AI setup, and account requirements.
-- A demo is the shortest path to inspect an existing project. Local browser
-  folders and the local CLI remain distinct choices.
-- The common workflow is write → compile → review → generate → verify.
-  Compilation builds the graph. Generation produces source or another
-  deliverable. Verification evaluates its criteria. Cloud Build groups these
-  steps when the set has work.
-- Each guide states prerequisites, gives a first successful workflow, explains
-  human decisions, and links to the next guide.
-- The shell has the site header, persistent guide navigation, breadcrumbs,
-  an on-page table of contents, and previous/next links. The active page and
-  section are identified. On small screens the guide navigation is collapsible
-  and the table of contents moves above the article.
-- Examples have copy buttons with a success or failure message. Links, controls,
-  and navigation work with a keyboard. A skip link goes to the article. Reduced
-  motion preferences disable smooth scrolling. Content works without JavaScript.
-- No documentation search is needed for four pages. Every guide is reachable
-  in one click from the shared navigation.
+The documentation teaches the compiler. Frontend setup is one part of it.
 
-### CLI (`/docs/cli/`)
+- Keep the entry page opening: `GETTING STARTED`, `Build from your words.`,
+  and `Choose a workspace, write a first document, and learn the loop from intent
+  to verified output.` A demo precedes workspace choices.
+- The next page is Installation. It explains local and Cloud setup briefly.
+  Local GUI, IDE, coding-agent, and Cloud guides are setup subpages.
+- The primary reading path continues through document structure, writing
+  requirements, the graph, generation, and verification.
+- A second group covers incremental change, questions and provenance,
+  diagrams, and adopting Jazyk in an existing project.
+- Reference covers CLI commands and options, model selection and benchmarks,
+  project files, and troubleshooting.
+- The sidebar groups pages by learning stage. Setup subpages appear under
+  Installation when the reader visits that part. Each article has section
+  navigation, previous/next links, and related reading.
+- On small screens the guide navigation is collapsible and the table of contents
+  moves above the article. Desktop guide navigation scrolls independently when
+  the viewport is short.
+- Copy buttons announce success or select text when clipboard access fails.
+  Navigation works with a keyboard. A skip link goes to the article. Reduced
+  motion disables smooth scrolling. Articles work without JavaScript.
+- Use labeled instructional examples. A running Orderly example connects prose,
+  requirements, criteria, change, and evidence. It is not presented as compiler
+  output. Existing example diagrams retain their actual project attribution.
+- Explain software and non-software artifacts. The deliverable is the artifact
+  the documents require, not a description of that artifact.
+- No documentation search is needed for this initial set of pages. Grouped
+  navigation and contextual links expose the complete collection.
 
-- Build from source with Rust and Git, then put the binary on `PATH`.
-- Initialize a project, write a document, and add a named document set.
-  `jazyk init` creates `.jazyk/jazyk.toml` with an empty set list.
-- Choose an installed coding agent or configure the embedded agent's endpoint.
-  Keep credentials in the environment. Benchmark the chosen model.
-- Compile, inspect the verdict, resolve questions, and recompile.
-  `--set` selects a document set. Quote shell globs.
-- Explain the everyday commands by task, including generation, verification,
-  graph inspection, and the local browser editor.
-- Explain where configuration, source, and generated state live.
+### Getting started
 
-### IDE (`/docs/ide/`)
+- `/docs/`: choose a workspace and see the complete reading path.
+- `/docs/installation/`: build the local binary, initialize a project, add a
+  document set, and choose how to work. State AI prerequisites before compiling.
+- `/docs/gui/`: use jazyk.dev with a local compiler or browser folder.
+  State where files live and whether a model is ready.
+- `/docs/ide/`: inline language support, the Jazyk chat agent, and their setup.
+  Language support reads the graph and never compiles by itself.
+- `/docs/agents/`: expose Jazyk tools to an existing coding agent or select a
+  downstream compilation agent. Explain the distinction and named set scope.
+- `/docs/cloud/`: create or import hosted projects, build, review, back up,
+  and explicitly deliver to GitHub. Prices and availability live in Plan & usage.
 
-- Start from a configured local project and a binary available to the IDE.
-- Separate inline language support (LSP), the Jazyk chat agent (ACP), and tools
-  used by an existing coding agent (MCP). Explain their purpose before naming
-  the protocols.
-- Give concrete setup paths for VS Code, Zed, JetBrains, Cursor, and coding
-  agents. State any extension or adapter requirement.
-- Show the edit, compile, inspect, and answer workflow. The language server
-  reads the graph and does not compile on its own.
-- Explain stale diagnostics, missing binary paths, and agent setup failures.
+### Learn the compiler
 
-### Cloud (`/docs/cloud/`)
+- `/docs/structure/`: document sets, roots, headings, links, input formats,
+  and the separation of docs, source files, and compiler state.
+- `/docs/writing/`: named subjects, obligations, boundaries, failure paths,
+  measured qualities, constraints, and concrete examples. Show weak and revised
+  prose without prescribing a controlled language.
+- `/docs/graph/`: entities, requirements, criteria, derived relationships and
+  state machines, views, diagnostics, provenance, and the compiler build loop.
+- `/docs/product/`: bind → generate → verify. Explain source write scope,
+  artifact medium, existing implementations, and explicit delivery.
+- `/docs/verification/`: evidence per criterion, programmatic and model tests,
+  failure and stale evidence, coverage, and limits of convergence.
 
-- Sign in with GitHub at jazyk.dev. Create a project or import from GitHub.
-  Import and repository access are explicit steps.
-- Explain document sets, Docs, Model, Product, Inbox, Build, and delivery.
-- Cloud files and compilation live in the hosted service. Signing in does
-  not move local files into Cloud.
-- Explain trial eligibility and included AI. Link to the app's Plan & usage
-  for current availability, prices, limits, and remaining usage.
-- Explain backups, interrupted builds, and explicit GitHub delivery.
-  Delivery requires review of the repository and branch before confirmation.
-- Do not claim that hosted compilation of a local folder is available.
+### Work with change
+
+- `/docs/changes/`: incremental reconciliation, preserved identities,
+  stale evidence, causality, journal, and preview. Include a clearly labeled
+  interactive illustration of how different edits affect the project.
+  It illustrates the contract and does not run a compiler.
+- `/docs/decisions/`: contradictions, ambiguity, human answers, quoted and
+  proposed facts, ratification, and durable diagnostic triage.
+- `/docs/diagrams/`: diagrams as graph projections, view types, containment,
+  lifted arrows, collapse, and PlantUML as document input.
+- `/docs/existing/`: adopt one part of an existing project, bind to its current
+  implementation, and use decompilation drafts with human review.
+
+### Reference
+
+- `/docs/cli/`: commands by task, selectors, trace options, bounded sessions,
+  and automation exit codes. Link setup back to Installation.
+- `/docs/models/`: embedded and external agents, endpoint settings, resolution
+  precedence, benchmark codecs, model quality, and practical cost control.
+- `/docs/project/`: current `.jazyk/jazyk.toml` schema, named sets, matching,
+  source scopes, generated state, global configuration, and Git tracking.
+- `/docs/troubleshooting/`: symptom-led recovery for missing sets, unsupported
+  files, incomplete builds, stale evidence, unavailable models, and editor refresh.
 
 ### 404
 

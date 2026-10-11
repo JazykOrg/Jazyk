@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cloud · Jazyk docs</title>
+<title>Cloud setup · Jazyk docs</title>
 <meta name="description" content="Keep a project online, compile with included AI, and deliver to GitHub when the result is ready.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
@@ -27,57 +27,104 @@
 </header>
 <div class="docs-layout">
 <aside class="sidebar">
-<span class="sidebar-label">DOCUMENTATION</span>
-<nav class="desktop-nav" aria-label="Guides">
-<a href="../">
-<span class="nav-number">01</span>Start here</a>
-<a href="../cli/">
-<span class="nav-number">02</span>CLI</a>
-<a href="../ide/">
-<span class="nav-number">03</span>IDE</a>
-<a href="../cloud/" aria-current="page">
-<span class="nav-number">04</span>Cloud</a>
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+<div class="setup-nav">
+<a href="../gui/" class="setup-nav-link">Local GUI</a>
+<a href="../ide/" class="setup-nav-link">IDE setup</a>
+<a href="../agents/" class="setup-nav-link">Coding agents</a>
+<a href="../cloud/" aria-current="page" class="setup-nav-link">Cloud setup</a>
+</div>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
 </nav>
 <details class="mobile-nav">
-<summary>Cloud<span>Browse guides</span>
+<summary>Cloud setup<span>Browse docs</span>
 </summary>
-<nav aria-label="Guides">
-<a href="../">
-<span class="nav-number">01</span>Start here</a>
-<a href="../cli/">
-<span class="nav-number">02</span>CLI</a>
-<a href="../ide/">
-<span class="nav-number">03</span>IDE</a>
-<a href="../cloud/" aria-current="page">
-<span class="nav-number">04</span>Cloud</a>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+<div class="setup-nav">
+<a href="../gui/" class="setup-nav-link">Local GUI</a>
+<a href="../ide/" class="setup-nav-link">IDE setup</a>
+<a href="../agents/" class="setup-nav-link">Coding agents</a>
+<a href="../cloud/" aria-current="page" class="setup-nav-link">Cloud setup</a>
+</div>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
 </nav>
 </details>
-<div class="sidebar-footer">
-<p>English as a<br>programming language.</p>
-<a href="https://jazyk.dev">Try a demo ↗</a>
-</div>
 </aside>
 <main id="main" tabindex="-1">
 <div class="breadcrumbs">
 <a href="../">Docs</a>
 <span aria-hidden="true">/</span>
-<span>Cloud</span>
+<a href="../installation/">Installation</a>
+<span aria-hidden="true">/</span>
+<span>Cloud setup</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">USAGE GUIDE / CLOUD</p>
+<p class="eyebrow">SETUP</p>
 <h1>Create in the browser.</h1>
 <p class="lede">Keep a project online, compile with included AI, and deliver to GitHub when the result is ready.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#start">Open a project</a>
-<a href="#write">Write and build</a>
-<a href="#decisions">Questions and proposals</a>
-<a href="#github">GitHub delivery</a>
-<a href="#plans">Plans and usage</a>
-<a href="#backup">Backups</a>
-<a href="#recovery">Interrupted work</a>
+<a href="#start">1. Open a Cloud project</a>
+<a href="#write">2. Write, build, and inspect</a>
+<a href="#decisions">3. Resolve the decisions</a>
+<a href="#github">4. Deliver when you are ready</a>
+<a href="#plans">Plans and included AI</a>
+<a href="#backup">Back up your work</a>
+<a href="#recovery">When work is interrupted</a>
 </nav>
 </details>
 <article>
@@ -191,7 +238,7 @@
 </details>
 <details>
 <summary>You want to keep working locally</summary>
-<p>Open a local folder in the editor, or follow the <a href="../cli/">CLI guide</a> for a local compiler. Local projects use your own agent or model and do not require a Cloud subscription. Switching projects does not transfer files between them.</p>
+<p>Open a local folder in the editor, or follow the <a href="../installation/">installation guide</a> for a local compiler. Local projects use your own agent or model and do not require a Cloud subscription. Switching projects does not transfer files between them.</p>
 </details>
 <p class="end-action">
 <a class="primary-button" href="https://jazyk.dev">Open Jazyk Cloud <span aria-hidden="true">↗</span>
@@ -200,10 +247,10 @@
 </section>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
-<a href="../ide/">
-<small>Previous</small>← IDE</a>
-<a href="../">
-<small>Choose another workspace</small>Start here →</a>
+<a href="../installation/">
+<small>Back to setup</small>← Installation</a>
+<a href="../structure/">
+<small>Next: learn the compiler</small>Document structure →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -211,13 +258,13 @@
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#start">Open a project</a>
-<a href="#write">Write and build</a>
-<a href="#decisions">Questions and proposals</a>
-<a href="#github">GitHub delivery</a>
-<a href="#plans">Plans and usage</a>
-<a href="#backup">Backups</a>
-<a href="#recovery">Interrupted work</a>
+<a href="#start">1. Open a Cloud project</a>
+<a href="#write">2. Write, build, and inspect</a>
+<a href="#decisions">3. Resolve the decisions</a>
+<a href="#github">4. Deliver when you are ready</a>
+<a href="#plans">Plans and included AI</a>
+<a href="#backup">Back up your work</a>
+<a href="#recovery">When work is interrupted</a>
 </nav>
 </aside>
 </div>

@@ -33,3 +33,51 @@ if ('IntersectionObserver' in window) {
   }, { rootMargin: '-100px 0px -55% 0px' });
   sections.forEach(section => observer.observe(section));
 }
+
+// This example illustrates change contracts. It does not execute the compiler.
+const changeSelect = document.getElementById('change-kind');
+if (changeSelect) {
+  changeSelect.disabled = false;
+  const examples = {
+    rule: {
+      title: 'The cancellation rule',
+      detail: 'Changing the cancellation day means reconciling the affected section and rejudging its requirements. Derived criteria may become stale. Bound tests and implementation evidence need review.',
+      steps: ['Prose edit', 'Reconcile', 'Review evidence']
+    },
+    move: {
+      title: 'A section moved unchanged',
+      detail: 'When alignment recognizes the same section in a new location, the compiler rewrites its stored references mechanically. That move does not mark the section dirty or require another extraction session.',
+      steps: ['Section move', 'Align anchors', 'Preserve facts']
+    },
+    source: {
+      title: 'The implementation changed',
+      detail: 'Changing product files makes their recorded verification evidence stale. Verify again. A failure with implementing files is a finding to inspect; it is not automatically a request to regenerate all code.',
+      steps: ['Source edit', 'Evidence stale', 'Verify again']
+    },
+    proposal: {
+      title: 'An inferred fact was accepted',
+      detail: 'Accepting its ratification proposal inserts the prose and flips the fact’s provenance to quote in one changeset. The fact keeps its ID. Changed obligations can still open downstream judgment or evidence work.',
+      steps: ['Accept proposal', 'Prose + graph', 'Quoted fact']
+    }
+  };
+  changeSelect.addEventListener('change', () => {
+    const example = examples[changeSelect.value];
+    if (!example) return;
+    const result = document.getElementById('change-result');
+    result.querySelector('h3').textContent = example.title;
+    result.querySelector('p').textContent = example.detail;
+    const flow = result.querySelector('.workflow');
+    flow.replaceChildren();
+    example.steps.forEach((step, index) => {
+      if (index) {
+        const arrow = document.createElement('span');
+        arrow.textContent = '→';
+        arrow.setAttribute('aria-hidden', 'true');
+        flow.append(arrow);
+      }
+      const label = document.createElement('span');
+      label.textContent = step;
+      flow.append(label);
+    });
+  });
+}

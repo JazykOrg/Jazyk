@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting · Jazyk docs</title>
+<meta name="description" content="Recover from missing input, incomplete work, weak models, stale evidence, and editor problems.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/" aria-current="page">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Troubleshooting<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/" aria-current="page">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Troubleshooting</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">REFERENCE</p>
+<h1>Find the cause and resume.</h1>
+<p class="lede">Recover from missing input, incomplete work, weak models, stale evidence, and editor problems.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#start">Start with the state, not a reset</a>
+<a href="#inputs">No documents or unexpected input</a>
+<a href="#build">A build does not finish</a>
+<a href="#evidence">The result looks complete but is not verified</a>
+<a href="#editor">Editor state and connections</a>
+</nav>
+</details>
+<article>
+<section id="start" class="article-section">
+<h2>Start with the state, not a reset</h2>
+<p>Read <code>jazyk status</code>, the build thread, or Inbox. Identify the set, the remaining work, and the actual reason. Committed progress survives incomplete runs.</p>
+<p>For a surprising goal, use <code>jazyk explain</code>. For a surprising cascade, use <code>jazyk ripple</code>. Inspect the next prompt with <code>jazyk preview</code> before running a larger retry.</p>
+</section>
+<section id="inputs" class="article-section">
+<h2>No documents or unexpected input</h2>
+<details open>
+<summary>No document set exists</summary>
+<p>Init creates an empty set list. Add a set with <code>jazyk sets add Main --docs 'docs/**/*.md'</code>, or use Document sets in the editor. Browsing files alone does not select compiler input.</p>
+</details>
+<details>
+<summary>The set matches zero files</summary>
+<p>Check paths relative to the project root, exclusions, and spelling. Quote CLI globs. Read <code>jazyk sets list</code> and the selection warnings.</p>
+</details>
+<details>
+<summary>Unsupported input or parse error</summary>
+<p>Check the backend’s format support and whether the file is readable. Native and browser formats differ. An empty or unreadable file is not a successfully compiled subject.</p>
+</details>
+</section>
+<section id="build" class="article-section">
+<h2>A build does not finish</h2>
+<details open>
+<summary>Incomplete after a bounded run</summary>
+<p>A session limit or budget can stop the run after real progress. Read the parked or failed reason, fix it if necessary, then compile the same set again.</p>
+</details>
+<details>
+<summary>Work is blocked on a human</summary>
+<p>Review the diagnostic’s question or proposal. Answer or revise the prose. Retrying cannot supply your intent.</p>
+</details>
+<details>
+<summary>Agent or endpoint unavailable</summary>
+<p>Verify the agent’s installation and authentication, or the embedded endpoint and model. Check higher-priority environment settings. Use <code>jazyk benchmark</code> after recovery.</p>
+</details>
+<details>
+<summary>Model keeps producing weak or invalid work</summary>
+<p>Read its benchmark results and test a small known subject. Check the codec and session transcript. Select a model capable of the work before blaming the prose alone.</p>
+</details>
+</section>
+<section id="evidence" class="article-section">
+<h2>The result looks complete but is not verified</h2>
+<details open>
+<summary>A graph converged, but evidence is missing</summary>
+<p>Convergence is the compiler checkpoint. Select the source files, inspect bindings and criteria, and run verification. Read which criteria have current results.</p>
+</details>
+<details>
+<summary>A previous pass became stale</summary>
+<p>Code, tests, or the underlying criteria changed. Rerun verification. Inspect the changed inputs rather than treating the old pass as current.</p>
+</details>
+<details>
+<summary>A deck, site, or artifact is only described in prose</summary>
+<p>Check the documented medium and generation result. The requested artifact must actually be built and inspected; a description or placeholder does not satisfy it.</p>
+</details>
+</section>
+<section id="editor" class="article-section">
+<h2>Editor state and connections</h2>
+<details open>
+<summary>No IDE diagnostics or hovers</summary>
+<p>Verify that language support is running, the file belongs to a set, and the set has been compiled. The LSP reads the graph and does not compile on opening a document.</p>
+</details>
+<details>
+<summary>The GUI cannot connect locally</summary>
+<p>Keep <code>jazyk gui</code> running, reopen its connection link, and allow local-network access if requested. Confirm the selected project root.</p>
+</details>
+<details>
+<summary>Cloud sign-in expired or a save was interrupted</summary>
+<p>Keep the tab open. Sign in with the same account and inspect the recovered draft in the same project before closing it. Recovery storage depends on browser availability.</p>
+</details>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../cli/">Inspect compiler work <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Test model setup <span aria-hidden="true">→</span>
+</a>
+<a href="../cloud/">Hosted recovery and backups <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../project/">
+<small>Previous</small>← Project files</a>
+<a href="../">
+<small>Next</small>Start here →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#start">Start with the state, not a reset</a>
+<a href="#inputs">No documents or unexpected input</a>
+<a href="#build">A build does not finish</a>
+<a href="#evidence">The result looks complete but is not verified</a>
+<a href="#editor">Editor state and connections</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

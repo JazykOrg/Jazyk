@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagrams & views · Jazyk docs</title>
+<meta name="description" content="Use graph projections to inspect architecture, interactions, states, and instances.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/" aria-current="page">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Diagrams & views<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/" aria-current="page">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Diagrams & views</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">WORK WITH CHANGE</p>
+<h1>Read structure at the right level.</h1>
+<p class="lede">Use graph projections to inspect architecture, interactions, states, and instances.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#projection">A diagram is a view of the graph</a>
+<a href="#views">Choose the view for the question</a>
+<a href="#collapse">Read hidden detail carefully</a>
+<a href="#input">Diagrams can be input too</a>
+<a href="#files">Find the renderings</a>
+</nav>
+</details>
+<article>
+<section id="projection" class="article-section">
+<h2>A diagram is a view of the graph</h2>
+<p>The compiler renders diagrams from views. A view says which things to include, query, collapse, or exclude. It does not store their visual coordinates.</p>
+<p>Relationships come from requirement edges. State machines come from recorded transitions. Deleting a rendered diagram does not delete those facts. Fix the graph or its source prose when the meaning is wrong.</p>
+<figure class="diagram-figure">
+<img src="../../example/checkout-classes.svg" alt="Class view of the Checkout level, with Address, Funds, Receipt, Pricing, Order, Payment, and Selection">
+<figcaption>Checkout class view from the ledger example. A real rendering used on the Jazyk home page.</figcaption>
+</figure>
+</section>
+<section id="views" class="article-section">
+<h2>Choose the view for the question</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">View</th>
+<th scope="col">Question it helps answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Component</td>
+<td>What are the system’s larger parts and dependencies?</td>
+</tr>
+<tr>
+<td>Class</td>
+<td>What types and entities are inside this scope?</td>
+</tr>
+<tr>
+<td>Use case</td>
+<td>Which actors participate in the described flows?</td>
+</tr>
+<tr>
+<td>Sequence</td>
+<td>Who interacts with whom, and in what flow?</td>
+</tr>
+<tr>
+<td>State</td>
+<td>What states and transitions belong to this subject?</td>
+</tr>
+<tr>
+<td>Object</td>
+<td>What instances exist and how do they relate?</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Default views are derived from the graph. A curated view can focus a reader’s question without creating a second set of product facts.</p>
+</section>
+<section id="collapse" class="article-section">
+<h2>Read hidden detail carefully</h2>
+<p>A relationship touching a hidden descendant lifts to its nearest shown ancestor. Collapsed relationships are grouped by direction and type. A count can stand for several contributing edges.</p>
+<p>A top-level arrow is therefore a summary. Expand the level or inspect its requirements before interpreting it as one direct interaction. Over-limit views auto-collapse larger subtrees and carry a visible note.</p>
+</section>
+<section id="input" class="article-section">
+<h2>Diagrams can be input too</h2>
+<p>A PlantUML fence in a source document is parsed as a diagram section. It can state structure for reconciliation, alongside prose. An ordinary generated rendering under compiler state is output, not an independent source document.</p>
+<p>When the input diagram and prose disagree, resolve the obligation rather than editing a generated SVG. Keep the original statement you want the compiler to honor.</p>
+</section>
+<section id="files" class="article-section">
+<h2>Find the renderings</h2>
+<p>Native commits emit <code>.puml</code> and <code>.svg</code> beneath <code>.jazyk/&lt;set-id&gt;/diagrams/&lt;kind&gt;/</code>. A PNG can be rendered on demand. Browser-only backends may not render new SVGs; demos can ship renderings to inspect.</p>
+<p>Use <code>jazyk docsgen --set Main</code> for graph documentation and diagram pages, or <code>jazyk viewer --set Main</code> for an offline graph snapshot.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../graph/">Understand the underlying facts <span aria-hidden="true">→</span>
+</a>
+<a href="../structure/">Structure diagram input <span aria-hidden="true">→</span>
+</a>
+<a href="../project/">Locate project outputs <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../decisions/">
+<small>Previous</small>← Questions & provenance</a>
+<a href="../existing/">
+<small>Next</small>Existing projects →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#projection">A diagram is a view of the graph</a>
+<a href="#views">Choose the view for the question</a>
+<a href="#collapse">Read hidden detail carefully</a>
+<a href="#input">Diagrams can be input too</a>
+<a href="#files">Find the renderings</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

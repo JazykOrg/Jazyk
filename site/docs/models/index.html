@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Models & benchmarks · Jazyk docs</title>
+<meta name="description" content="Configure session execution, test capability, and inspect quality and cost on a small subject.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/" aria-current="page">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Models & benchmarks<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/" aria-current="page">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Models & benchmarks</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">REFERENCE</p>
+<h1>Choose AI you can evaluate.</h1>
+<p class="lede">Configure session execution, test capability, and inspect quality and cost on a small subject.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#choose">Choose who runs the sessions</a>
+<a href="#endpoint">Configure the embedded agent</a>
+<a href="#precedence">Understand which setting wins</a>
+<a href="#benchmark">Test session capability first</a>
+<a href="#quality">Separate capability from judgment</a>
+<a href="#cost">Control work with scope and visibility</a>
+</nav>
+</details>
+<article>
+<section id="choose" class="article-section">
+<h2>Choose who runs the sessions</h2>
+<p>The embedded agent calls an OpenAI-compatible endpoint. An external agent runs through an ACP profile and brings its own model and authentication.</p>
+<p>Choose an external agent if it is the coding tool you already trust and have configured. Choose the embedded agent when you want direct control over endpoint and model settings. Neither path requires a Cloud account for local work.</p>
+<p>Cloud uses its included AI and available service capabilities. Your local endpoint settings do not configure a Cloud project’s hosted worker.</p>
+</section>
+<section id="endpoint" class="article-section">
+<h2>Configure the embedded agent</h2>
+<p>Put machine defaults in <code>~/.jazyk/config.toml</code>. This is an example, not a recommended model ID:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · global configuration</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>[llm]
+base_url = &quot;http://localhost:11434/v1&quot;
+model = &quot;your-model-id&quot;
+api_key_env = &quot;JAZYK_API_KEY&quot;</code>
+</pre>
+</div>
+<p>Use the URL and model your server serves. For a hosted provider, set its compatible endpoint and keep the API key in the named environment variable. Do not track credentials in project files.</p>
+</section>
+<section id="precedence" class="article-section">
+<h2>Understand which setting wins</h2>
+<p>Resolution is per field, from highest to lowest priority:</p>
+<ol>
+<li>CLI flags.</li>
+<li>Environment variables such as <code>JAZYK_MODEL</code> and <code>JAZYK_LLM_BASE_URL</code>.</li>
+<li>The set’s settings.</li>
+<li>Project settings.</li>
+<li>Global machine settings.</li>
+<li>Built-in defaults.</li>
+</ol>
+<p>An environment variable can explain why changing the project’s model had no effect. External agents ignore embedded-agent model settings and use their own configuration.</p>
+</section>
+<section id="benchmark" class="article-section">
+<h2>Test session capability first</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk benchmark</code>
+</pre>
+</div>
+<p>Run this before trusting a new model. It grades whether the configured agent can use tools, obey contracts, and complete the tested sessions. It is not a guarantee of judgment quality on every project.</p>
+<p>The embedded agent is measured with native and text codecs. A model can pass one and fail the other. Native uses the endpoint’s tool-call support; text uses the text representation. External agents are measured through their own agent path.</p>
+<p>Inspect failures and recorded rounds, tokens, and checks. An endpoint that returns prose is not necessarily a model that can resolve compiler goals. Small local models can fail capability tests.</p>
+</section>
+<section id="quality" class="article-section">
+<h2>Separate capability from judgment</h2>
+<p>After the benchmark, try a small document set whose meaning you understand. Inspect extracted obligations, missing facts, contradictions, and criteria. A session that passes its gate can still make a weak judgment.</p>
+<p>Use the same input to compare models and inspect evidence rather than confidence in the reply. More capable models may be worth using for abstraction and cross-requirement judgment even when a cheaper one extracts simple facts adequately.</p>
+<p>Executor overrides can choose profiles by goal kind or class. Keep that an advanced tuning step until one configuration produces useful results.</p>
+</section>
+<section id="cost" class="article-section">
+<h2>Control work with scope and visibility</h2>
+<p>Start with a focused set and a bounded run. Read a preview before broad changes. Use <code>jazyk status --costs</code> and transcripts to understand where sessions and tokens went.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk compile --set Main --sessions 1</code>
+</pre>
+</div>
+<p>Compile sessions are sequential. A paused or incomplete run retains committed progress. Session and build budgets belong to the compiler’s limits registry, not arbitrary project tuning fields.</p>
+<p>A no-op rebuild makes no LLM calls. Repeated runs are not a substitute for resolving a failed goal, unavailable endpoint, or unstable decision.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../agents/">Configure a coding agent <span aria-hidden="true">→</span>
+</a>
+<a href="../changes/">Bound and inspect a change <span aria-hidden="true">→</span>
+</a>
+<a href="../troubleshooting/">Recover model or session failures <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../cli/">
+<small>Previous</small>← CLI reference</a>
+<a href="../project/">
+<small>Next</small>Project files →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#choose">Choose who runs the sessions</a>
+<a href="#endpoint">Configure the embedded agent</a>
+<a href="#precedence">Understand which setting wins</a>
+<a href="#benchmark">Test session capability first</a>
+<a href="#quality">Separate capability from judgment</a>
+<a href="#cost">Control work with scope and visibility</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

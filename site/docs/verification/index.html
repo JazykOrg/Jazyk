@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification & evidence · Jazyk docs</title>
+<meta name="description" content="Read criteria, test outcomes, and freshness together before deciding that a product is ready.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/" aria-current="page">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Verification & evidence<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/" aria-current="page">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Verification & evidence</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">LEARN THE COMPILER</p>
+<h1>Know what has been proved.</h1>
+<p class="lede">Read criteria, test outcomes, and freshness together before deciding that a product is ready.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#criterion">Start with an observable criterion</a>
+<a href="#kinds">Programmatic and model-based tests</a>
+<a href="#freshness">Read status with its freshness</a>
+<a href="#coverage">Three different questions about coverage</a>
+<a href="#audit">Audit bindings after artifact edits</a>
+</nav>
+</details>
+<article>
+<section id="criterion" class="article-section">
+<h2>Start with an observable criterion</h2>
+<p>A requirement is the obligation. A criterion is one condition and its observable outcome. A test is the artifact that evaluates that criterion.</p>
+<div class="semantic-example">
+<p class="eyebrow">ILLUSTRATION / ORDERLY</p>
+<dl>
+<dt>Requirement</dt>
+<dd>Orderly cancels an unpaid Order at the start of day 22.</dd>
+<dt>Criterion</dt>
+<dd>An Order placed on day 0 and unpaid at the start of day 22 is cancelled.</dd>
+<dt>Evidence</dt>
+<dd>A recorded evaluation of that condition against the current implementation.</dd>
+</dl>
+</div>
+<p>One rule may need several criteria: a positive case, a failure path, and boundary values. A test saying only “cancellation works” has lost the condition you need to evaluate.</p>
+</section>
+<section id="kinds" class="article-section">
+<h2>Programmatic and model-based tests</h2>
+<p>Programmatic tests execute a recorded command and evaluate its results. They fit deterministic behavior, structure, values, and interfaces that a runner can observe.</p>
+<p>Model-based tests judge an artifact against criteria that require interpretation. They can assess content and other qualitative obligations. They still need the actual artifact and recorded evidence. A model’s judgment is evidence of its evaluation, not certainty about every possible use.</p>
+<p>Use a reproducible check when one can express the criterion. Keep the judge’s reasons visible when interpretation is necessary.</p>
+</section>
+<section id="freshness" class="article-section">
+<h2>Read status with its freshness</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">State or finding</th>
+<th scope="col">Meaning</th>
+<th scope="col">Next step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Verified</td>
+<td>The recorded evaluation passed for its inputs and artifact state.</td>
+<td>Inspect the evidence and coverage.</td>
+</tr>
+<tr>
+<td>Failing</td>
+<td>An implementation exists but does not meet a criterion.</td>
+<td>Inspect the product, test, and docs; fix the right one.</td>
+</tr>
+<tr>
+<td>Unimplemented</td>
+<td>The requirement has no implementing files.</td>
+<td>Generate or supply the missing implementation.</td>
+</tr>
+<tr>
+<td>Stale code or test</td>
+<td>A recorded input changed after evaluation.</td>
+<td>Rerun verification.</td>
+</tr>
+<tr>
+<td>Missing evidence</td>
+<td>No qualifying result is recorded.</td>
+<td>Bind a test or evaluate the criterion.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Changing source or tests invalidates evidence. An old pass should not be read as a result for a new artifact. CI evidence is also tied to its project revision and criterion mapping; a green workflow without that mapping is not a pass for every requirement.</p>
+</section>
+<section id="coverage" class="article-section">
+<h2>Three different questions about coverage</h2>
+<ul>
+<li>
+<strong>Document coverage:</strong> has a section been reconciled or judged non-normative?</li>
+<li>
+<strong>Implementation coverage:</strong> which requirements are tied to product files?</li>
+<li>
+<strong>Verification coverage:</strong> which criteria have current evidence?</li>
+</ul>
+<p>These are different questions. Compiling every section does not establish that every obligation is implemented. A generated test file does not establish that it ran.</p>
+<aside class="note">
+<strong>Convergence is a compiler verdict</strong>
+<p>A converged build has no open or failed mandatory goals and passes its checks. Blocked and optional counts still travel with the verdict. Read the evidence before treating the product as ready.</p>
+</aside>
+</section>
+<section id="audit" class="article-section">
+<h2>Audit bindings after artifact edits</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk test --set Main --audit
+jazyk test --set Main</code>
+</pre>
+</div>
+<p><code>--audit</code> rebuilds the ledger from artifact markers without running tests. Use it to repair bindings after files or test artifacts have changed. An audit does not turn an edited artifact into a verified result. Run verification afterward to obtain fresh evidence. Independently review whether the tests observe the required outcome, medium, and values.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../writing/">Write stronger criteria <span aria-hidden="true">→</span>
+</a>
+<a href="../changes/">Understand stale evidence <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Evaluate your model <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../product/">
+<small>Previous</small>← From docs to product</a>
+<a href="../changes/">
+<small>Next</small>Changes & history →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#criterion">Start with an observable criterion</a>
+<a href="#kinds">Programmatic and model-based tests</a>
+<a href="#freshness">Read status with its freshness</a>
+<a href="#coverage">Three different questions about coverage</a>
+<a href="#audit">Audit bindings after artifact edits</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

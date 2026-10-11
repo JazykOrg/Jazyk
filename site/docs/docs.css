@@ -824,3 +824,256 @@ main:focus {
   }
 
 }
+
+/* Compiler documentation navigation and learning examples. */
+.docs-layout {
+  grid-template-columns: 225px minmax(0, 1fr) 180px;
+  gap: 40px;
+}
+.sidebar {
+  display: block;
+  padding-top: 29px;
+  padding-bottom: 30px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.sidebar nav.desktop-nav {
+  margin-top: 0;
+  gap: 25px;
+}
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav-group-title {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 1.15px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 9px 10px;
+}
+.sidebar nav a {
+  font-size: 12px;
+  padding: 5px 10px;
+  line-height: 1.65;
+  min-height: 30px;
+}
+.setup-nav {
+  border-left: 1px solid var(--line);
+  margin: 5px 0 7px 15px;
+  padding-left: 9px;
+}
+.sidebar nav .setup-nav-link {
+  font-size: 11px;
+}
+.learning-path {
+  border-top: 1px solid var(--line);
+  margin-top: 23px;
+}
+.learning-path > a {
+  display: flex;
+  gap: 19px;
+  align-items: center;
+  text-decoration: none;
+  padding: 19px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.lesson-number {
+  font: 12px var(--mono);
+  color: var(--green);
+  align-self: flex-start;
+  margin-top: 6px;
+}
+.learning-path h3 {
+  font-size: 16px;
+  margin: 0 0 3px;
+}
+.learning-path p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.learning-path > a > span:last-child {
+  margin-left: auto;
+}
+.learning-path > a:hover h3 {
+  color: var(--green);
+}
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 23px 0;
+}
+.setup-grid a {
+  padding: 17px 19px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-decoration: none;
+}
+.setup-grid a:hover {
+  border-color: #83b9a3;
+}
+.setup-grid h3 {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.setup-grid p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+.related {
+  border-top: 1px solid var(--line);
+  padding-top: 19px;
+  margin-top: 30px;
+}
+.related .eyebrow {
+  font-size: 9px;
+  margin: 0 0 12px;
+}
+.related a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 6px 0;
+  font-size: 12px;
+  text-decoration: none;
+}
+.semantic-example {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--soft);
+  padding: 22px;
+  margin: 23px 0;
+}
+.semantic-example .eyebrow {
+  margin: 0 0 17px;
+  font-size: 9px;
+}
+.semantic-example blockquote {
+  margin: 0 0 20px;
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.semantic-example dl {
+  display: grid;
+  grid-template-columns: 115px minmax(0, 1fr);
+  gap: 13px 19px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.semantic-example dt {
+  color: var(--green);
+  font-weight: 550;
+}
+.semantic-example dd {
+  margin: 0;
+}
+.diagram-figure {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 24px;
+  margin: 24px 0;
+}
+.diagram-figure img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+.diagram-figure figcaption {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 18px;
+}
+.change-lab {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 22px;
+  margin: 24px 0;
+}
+.change-lab label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  margin-bottom: 9px;
+}
+.change-lab select {
+  width: 100%;
+  padding: 11px 13px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  border: 1px solid #b7ccc0;
+  border-radius: 5px;
+  background: white;
+}
+.change-lab select:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+.change-result {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 2px;
+}
+.change-result p {
+  font-size: 13px;
+}
+.change-result .workflow {
+  background: var(--soft);
+  margin-bottom: 0;
+}
+@media (max-width: 1150px) {
+  .docs-layout {
+    grid-template-columns: 205px minmax(0, 1fr);
+    gap: 30px;
+  }
+}
+@media (max-width: 740px) {
+  .docs-layout {
+    display: block;
+  }
+  .sidebar {
+    padding: 12px 0;
+    overflow: visible;
+  }
+  .sidebar .mobile-nav nav {
+    gap: 21px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-top: 10px;
+  }
+  .sidebar nav a {
+    font-size: 13px;
+    min-height: 38px;
+  }
+  .sidebar nav .setup-nav-link {
+    font-size: 12px;
+  }
+  .setup-grid {
+    grid-template-columns: 1fr;
+  }
+  .semantic-example dl {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  .semantic-example dd {
+    margin-bottom: 14px;
+  }
+  .semantic-example dd:last-child {
+    margin-bottom: 0;
+  }
+  .learning-path > a {
+    gap: 12px;
+  }
+}

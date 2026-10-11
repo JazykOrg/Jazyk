@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding agents · Jazyk docs</title>
+<meta name="description" content="Connect Jazyk tools to your existing agent, or let Jazyk run that agent as its compiler worker.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+<div class="setup-nav">
+<a href="../gui/" class="setup-nav-link">Local GUI</a>
+<a href="../ide/" class="setup-nav-link">IDE setup</a>
+<a href="../agents/" aria-current="page" class="setup-nav-link">Coding agents</a>
+<a href="../cloud/" class="setup-nav-link">Cloud setup</a>
+</div>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Coding agents<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+<div class="setup-nav">
+<a href="../gui/" class="setup-nav-link">Local GUI</a>
+<a href="../ide/" class="setup-nav-link">IDE setup</a>
+<a href="../agents/" aria-current="page" class="setup-nav-link">Coding agents</a>
+<a href="../cloud/" class="setup-nav-link">Cloud setup</a>
+</div>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<a href="../installation/">Installation</a>
+<span aria-hidden="true">/</span>
+<span>Coding agents</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">SETUP</p>
+<h1>Use the agent you work with.</h1>
+<p class="lede">Connect Jazyk tools to your existing agent, or let Jazyk run that agent as its compiler worker.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#roles">Two ways to use a coding agent</a>
+<a href="#mcp">Give your existing agent Jazyk tools</a>
+<a href="#worker">Use an agent as the compiler worker</a>
+<a href="#intent">Give it intent and keep decisions visible</a>
+</nav>
+</details>
+<article>
+<section id="roles" class="article-section">
+<h2>Two ways to use a coding agent</h2>
+<p>An agent can be the tool you already talk to, or the worker Jazyk starts for compiler sessions. These are separate roles. Choose the one that matches how you want to work.</p>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Role</th>
+<th scope="col">How to connect</th>
+<th scope="col">Who starts the work</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Your existing agent uses Jazyk tools</td>
+<td>MCP server</td>
+<td>You ask the agent to inspect or compile a set.</td>
+</tr>
+<tr>
+<td>Jazyk runs an agent for its sessions</td>
+<td>ACP profile</td>
+<td>The compiler schedules a goal batch and starts the configured worker.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="mcp" class="article-section">
+<h2>Give your existing agent Jazyk tools</h2>
+<p>In your project folder, launch the tool you use:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · Claude Code</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk launch claude</code>
+</pre>
+</div>
+<p>The launcher also accepts <code>codex</code>, <code>cursor</code>, and <code>gemini</code>. The chosen tool must be installed. It checks setup and adds a Jazyk MCP entry without replacing unrelated configuration.</p>
+<p>For setup without launching, use <code>jazyk init --mcp cursor</code>, with your client’s name. For a client you configure by hand, give it this server command and the project as its working directory:</p>
+<div class="code-block">
+<div class="code-head">
+<span>MCP server command</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk mcp all</code>
+</pre>
+</div>
+<div class="code-block">
+<div class="code-head">
+<span>Example · request to your coding agent</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>List the document sets in this project. Inspect the Main set and show
+its open questions. Compile Main, then explain what still needs my decision.</code>
+</pre>
+</div>
+<p>The agent uses compiler tools to claim and resolve work. Name the document set so it does not have to guess your write target.</p>
+</section>
+<section id="worker" class="article-section">
+<h2>Use an agent as the compiler worker</h2>
+<p>Init offers <code>codex</code>, <code>claude</code>, and <code>opencode</code>. To choose a profile in an existing project:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk init --agent claude</code>
+</pre>
+</div>
+<p>The agent must already be installed and authenticated. Claude and Codex profiles use ACP adapters launched with <code>npx</code>, so Node.js and adapter network access are needed. The external agent brings its own model; embedded-agent endpoint settings do not choose that agent’s model.</p>
+<p>Run <code>jazyk benchmark</code> from the project before using a new agent. Then use <code>jazyk compile --set Main</code> or your GUI’s Build.</p>
+</section>
+<section id="intent" class="article-section">
+<h2>Give it intent and keep decisions visible</h2>
+<p>Ask the agent to clarify the docs and resolve compiler work. When an assumption changes the product, make it explicit in the prose or review its proposal. A freeform chat promise is not recorded verification evidence.</p>
+<p>The graph tools use loaded context and validated changesets. An agent resolving compiler goals cannot create or prioritize new goals; the harness derives those from the project state.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../decisions/">Review assumptions and proposals <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Choose and test a model <span aria-hidden="true">→</span>
+</a>
+<a href="../ide/">Use Jazyk as an IDE chat agent <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../installation/">
+<small>Back to setup</small>← Installation</a>
+<a href="../structure/">
+<small>Next: learn the compiler</small>Document structure →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#roles">Two ways to use a coding agent</a>
+<a href="#mcp">Give your existing agent Jazyk tools</a>
+<a href="#worker">Use an agent as the compiler worker</a>
+<a href="#intent">Give it intent and keep decisions visible</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

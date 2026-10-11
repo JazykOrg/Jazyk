@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Existing projects · Jazyk docs</title>
+<meta name="description" content="Document and bind a focused part of an existing project before expanding or generating.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/" aria-current="page">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Existing projects<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/" aria-current="page">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Existing projects</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">WORK WITH CHANGE</p>
+<h1>Start with what already works.</h1>
+<p class="lede">Document and bind a focused part of an existing project before expanding or generating.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#small">Adopt one part first</a>
+<a href="#draft">Draft docs from existing code</a>
+<a href="#review">Review description against intent</a>
+<a href="#grow">Expand when the first slice is useful</a>
+</nav>
+</details>
+<article>
+<section id="small" class="article-section">
+<h2>Adopt one part first</h2>
+<p>An existing project does not need to be regenerated. Pick one behavior or subsystem, add documents for it, and select the existing source paths it describes.</p>
+<p>Compile the documents and inspect the graph before asking for generation. Binding can connect the requirements to current files and tests. Start with evidence you already trust.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · a focused set</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk sets add Orders --docs &#x27;docs/orders/**/*.md&#x27; --source &#x27;src/orders/**&#x27; --source &#x27;tests/orders/**&#x27;</code>
+</pre>
+</div>
+</section>
+<section id="draft" class="article-section">
+<h2>Draft docs from existing code</h2>
+<p>Decompilation reads source and produces prose drafts. Tests are strong evidence because they already assert observable behavior. Implementation alone can show what happens without explaining whether it is intended.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · selected source scope</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk decompile src/orders --set Orders</code>
+</pre>
+</div>
+<p>Drafts distinguish observed behavior backed by tests from behavior inferred from code. They land in the docs selection and follow the normal compile path. Decompilation does not place code-derived requirements straight into the graph.</p>
+</section>
+<section id="review" class="article-section">
+<h2>Review description against intent</h2>
+<p>A bug faithfully described is still a bug. Review each draft for whether it states what the product should do, not merely what it happened to do.</p>
+<p>Draft documents remain provisional until human editing changes their recorded hash. Revise their statements, clarify assumptions, and compile. The docs become the source of the graph’s obligations.</p>
+<p>Do not broaden generation paths until you have checked the graph, bindings, and existing test evidence. A source selection grants write scope; it does not certify that generated replacements are needed.</p>
+</section>
+<section id="grow" class="article-section">
+<h2>Expand when the first slice is useful</h2>
+<p>The unclaimed report identifies source files with no recorded binding. Use it as a map of territory to investigate, not as proof that every unclaimed file is wrong.</p>
+<p>Add the next subsystem, or a separate set for another subject. Keep shared docs deliberate. Continue until the model and evidence cover the area you care about.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../structure/">Choose set boundaries <span aria-hidden="true">→</span>
+</a>
+<a href="../product/">Bind existing implementations <span aria-hidden="true">→</span>
+</a>
+<a href="../verification/">Review existing evidence <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../diagrams/">
+<small>Previous</small>← Diagrams & views</a>
+<a href="../cli/">
+<small>Next</small>CLI reference →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#small">Adopt one part first</a>
+<a href="#draft">Draft docs from existing code</a>
+<a href="#review">Review description against intent</a>
+<a href="#grow">Expand when the first slice is useful</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

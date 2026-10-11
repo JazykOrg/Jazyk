@@ -27,35 +27,68 @@
 </header>
 <div class="docs-layout">
 <aside class="sidebar">
-<span class="sidebar-label">DOCUMENTATION</span>
-<nav class="desktop-nav" aria-label="Guides">
-<a href="./" aria-current="page">
-<span class="nav-number">01</span>Start here</a>
-<a href="./cli/">
-<span class="nav-number">02</span>CLI</a>
-<a href="./ide/">
-<span class="nav-number">03</span>IDE</a>
-<a href="./cloud/">
-<span class="nav-number">04</span>Cloud</a>
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="./" aria-current="page">Start here</a>
+<a href="./installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="./structure/">Document structure</a>
+<a href="./writing/">Writing requirements</a>
+<a href="./graph/">Understanding the graph</a>
+<a href="./product/">From docs to product</a>
+<a href="./verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="./changes/">Changes & history</a>
+<a href="./decisions/">Questions & provenance</a>
+<a href="./diagrams/">Diagrams & views</a>
+<a href="./existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="./cli/">CLI reference</a>
+<a href="./models/">Models & benchmarks</a>
+<a href="./project/">Project files</a>
+<a href="./troubleshooting/">Troubleshooting</a>
+</div>
 </nav>
 <details class="mobile-nav">
-<summary>Start here<span>Browse guides</span>
+<summary>Start here<span>Browse docs</span>
 </summary>
-<nav aria-label="Guides">
-<a href="./" aria-current="page">
-<span class="nav-number">01</span>Start here</a>
-<a href="./cli/">
-<span class="nav-number">02</span>CLI</a>
-<a href="./ide/">
-<span class="nav-number">03</span>IDE</a>
-<a href="./cloud/">
-<span class="nav-number">04</span>Cloud</a>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="./" aria-current="page">Start here</a>
+<a href="./installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="./structure/">Document structure</a>
+<a href="./writing/">Writing requirements</a>
+<a href="./graph/">Understanding the graph</a>
+<a href="./product/">From docs to product</a>
+<a href="./verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="./changes/">Changes & history</a>
+<a href="./decisions/">Questions & provenance</a>
+<a href="./diagrams/">Diagrams & views</a>
+<a href="./existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="./cli/">CLI reference</a>
+<a href="./models/">Models & benchmarks</a>
+<a href="./project/">Project files</a>
+<a href="./troubleshooting/">Troubleshooting</a>
+</div>
 </nav>
 </details>
-<div class="sidebar-footer">
-<p>English as a<br>programming language.</p>
-<a href="https://jazyk.dev">Try a demo ↗</a>
-</div>
 </aside>
 <main id="main" tabindex="-1">
 <div class="breadcrumbs">
@@ -72,10 +105,9 @@
 <summary>On this page</summary>
 <nav aria-label="On this page">
 <a href="#choose">Choose where to work</a>
-<a href="#loop">The working loop</a>
-<a href="#first-document">Your first document</a>
-<a href="#sets">Document sets</a>
-<a href="#results">Read the results</a>
+<a href="#compiler">What you are learning</a>
+<a href="#path">A path through the compiler</a>
+<a href="#beyond">Then learn to change it</a>
 </nav>
 </details>
 <article>
@@ -84,37 +116,24 @@
 </span> New to Jazyk? <a href="https://jazyk.dev">Open a demo</a> to explore a compiled project. No account or setup.</div>
 <section id="choose" class="article-section">
 <h2>Choose where to work</h2>
-<p>Use the terminal, stay in your IDE, or work in the browser. Your documents are the starting point in each.</p>
+<p>Your documents are the source. Choose where to keep them and how to run the compiler.</p>
 <div class="path-cards">
-<a class="path-card" href="cli/">
-<span class="path-kicker">01 / YOUR COMPUTER</span>
-<h3>Command line <span aria-hidden="true">↗</span>
+<a class="path-card" href="installation/#local">
+<span class="path-kicker">ON YOUR COMPUTER</span>
+<h3>Work locally <span aria-hidden="true">↗</span>
 </h3>
-<p>Compile a local project. Inspect changes. Generate and verify from the terminal.</p>
+<p>Use the terminal, Jazyk GUI, or your IDE. Compile with your own coding agent or model.</p>
 <dl>
 <dt>Files</dt>
 <dd>Your folder</dd>
-<dt>AI</dt>
-<dd>Your agent or model</dd>
+<dt>Account</dt>
+<dd>Not required</dd>
 </dl>
-<span class="card-link">Set up the CLI →</span>
-</a>
-<a class="path-card" href="ide/">
-<span class="path-kicker">02 / YOUR WORKSPACE</span>
-<h3>In your IDE <span aria-hidden="true">↗</span>
-</h3>
-<p>Write with inline diagnostics. Follow a sentence to its requirements, code, and tests.</p>
-<dl>
-<dt>Files</dt>
-<dd>Your folder</dd>
-<dt>AI</dt>
-<dd>Your agent or model</dd>
-</dl>
-<span class="card-link">Connect your IDE →</span>
+<span class="card-link">Install Jazyk →</span>
 </a>
 <a class="path-card" href="cloud/">
-<span class="path-kicker">03 / IN THE BROWSER</span>
-<h3>Jazyk Cloud <span aria-hidden="true">↗</span>
+<span class="path-kicker">IN THE BROWSER</span>
+<h3>Use Cloud <span aria-hidden="true">↗</span>
 </h3>
 <p>Create a project or import from GitHub. Build with included AI at jazyk.dev.</p>
 <dl>
@@ -123,98 +142,97 @@
 <dt>Account</dt>
 <dd>GitHub sign-in</dd>
 </dl>
-<span class="card-link">Start in Cloud →</span>
+<span class="card-link">Cloud setup →</span>
+</a>
+<a class="path-card" href="agents/">
+<span class="path-kicker">WITH YOUR TOOLS</span>
+<h3>Bring your agent <span aria-hidden="true">↗</span>
+</h3>
+<p>Give your coding agent access to the graph, compiler work, and verification tools.</p>
+<dl>
+<dt>Files</dt>
+<dd>Your folder</dd>
+<dt>AI</dt>
+<dd>Your coding agent</dd>
+</dl>
+<span class="card-link">Connect an agent →</span>
 </a>
 </div>
 <aside class="note">
-<strong>Want a browser editor for local files?</strong>
-<p>Open a folder at <a href="https://jazyk.dev">jazyk.dev</a>, or run <a href="cli/#browser">
-<code>jazyk gui</code>
-</a> to connect the editor to your local compiler. Local use needs no Cloud account. A browser project needs a model configured before it can build.</p>
+<strong>Just exploring?</strong>
+<p>Start with a demo. You can inspect requirements and diagrams before installing anything. A local browser folder is also available in <a href="gui/">the editor</a>; building it needs a model.</p>
 </aside>
 </section>
-<section id="loop" class="article-section">
-<h2>From prose to something you can inspect</h2>
-<p>Describe what you want to create: a program, slide deck, organization, or story. Jazyk keeps a semantic graph behind the documents, with requirements, criteria, entities, and diagrams.</p>
-<div class="workflow" aria-label="Workflow">
-<span>Write</span>
+<section id="compiler" class="article-section">
+<h2>What you are learning</h2>
+<p>Jazyk is a natural language compiler. It keeps a persistent semantic graph behind your documents: the things you name, their obligations, observable criteria, and the relationships and flows they imply.</p>
+<p>A document can describe a program, a deck, an organization, or a story. Compilation gives you a model to inspect. Generation produces the artifact the model requires. Verification asks whether the artifact meets its criteria.</p>
+<div class="workflow">
+<span>Documents</span>
 <span aria-hidden="true">→</span>
-<span>Compile</span>
+<span>Graph</span>
 <span aria-hidden="true">→</span>
-<span>Review</span>
+<span>Product</span>
 <span aria-hidden="true">→</span>
-<span>Generate</span>
-<span aria-hidden="true">→</span>
-<span>Verify</span>
+<span>Evidence</span>
 </div>
-<ol class="steps">
-<li>
-<h3>Write the intent</h3>
-<p>Name the things involved, state what they do, and include concrete examples. Use ordinary prose. Link related documents so a reader can follow the subject.</p>
-</li>
-<li>
-<h3>Compile the documents</h3>
-<p>Jazyk reconciles the graph with your prose. Read the requirements and diagrams to check what it understood. Compilation itself does not mean a finished deliverable.</p>
-</li>
-<li>
-<h3>Make the decisions</h3>
-<p>Resolve contradictions and answer questions. Review proposed additions to the prose. Your decisions become part of the project, then another compile brings it up to date.</p>
-</li>
-<li>
-<h3>Generate and verify</h3>
-<p>Select the source files the document set describes before generating. Jazyk can produce code or another deliverable and verify it against the criteria. Inspect the result and its evidence.</p>
-</li>
-</ol>
 </section>
-<section id="first-document" class="article-section">
-<h2>Write a first document</h2>
-<p>Start with one small behavior and an example of its outcome. This excerpt is from the sort utility on the <a href="../">home page</a>.</p>
-<div class="code-block">
-<div class="code-head">
-<span>Document excerpt</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code># Main.ts
-
-This is a simple sorting algorithm CLI utility similar to the `sort` CLI command.
-
-## CLI args
-
-When invoked, `sort` allows the following CLI args:
-- `-r` reverses sorting order to descending</code></pre></div>
-<p>For a deck, name its audience and what each slide must communicate. For a story, name its characters and what happens. Concrete constraints give you something to review when Jazyk compiles.</p>
+<section id="path" class="article-section">
+<h2>A path through the compiler</h2>
+<div class="learning-path">
+<a href="installation/">
+<span class="lesson-number">01</span>
+<div>
+<h3>Get a workspace ready</h3>
+<p>Install locally or open Cloud. Choose your editor and AI.</p>
+</div>
+<span aria-hidden="true">→</span>
+</a>
+<a href="structure/">
+<span class="lesson-number">02</span>
+<div>
+<h3>Structure the documents</h3>
+<p>Give each subject a home. Connect it with headings, links, and sets.</p>
+</div>
+<span aria-hidden="true">→</span>
+</a>
+<a href="writing/">
+<span class="lesson-number">03</span>
+<div>
+<h3>Write the intent clearly</h3>
+<p>State obligations and concrete examples of success and failure.</p>
+</div>
+<span aria-hidden="true">→</span>
+</a>
+<a href="graph/">
+<span class="lesson-number">04</span>
+<div>
+<h3>Read what Jazyk understood</h3>
+<p>Follow prose to entities, requirements, criteria, and diagrams.</p>
+</div>
+<span aria-hidden="true">→</span>
+</a>
+<a href="product/">
+<span class="lesson-number">05</span>
+<div>
+<h3>Turn the graph into a product</h3>
+<p>Bind existing work or generate an artifact, then check its evidence.</p>
+</div>
+<span aria-hidden="true">→</span>
+</a>
+</div>
 </section>
-<section id="sets" class="article-section">
-<h2>Keep related documents together</h2>
-<p>A <strong>document set</strong> selects the documents about one subject and the source files they describe. Each set has its own graph, diagnostics, diagrams, and build state. Start with one set. Add more when your project has distinct subjects.</p>
-<p>In the editor, use <strong>Document sets</strong> to choose files. In the terminal, use <a href="cli/#project">
-<code>jazyk sets add</code>
-</a>. Choosing files does not start a build.</p>
-</section>
-<section id="results" class="article-section">
-<h2>Know what to look for</h2>
-<ul>
-<li>
-<strong>Requirements:</strong> do they say what you intended?</li>
-<li>
-<strong>Criteria:</strong> is the expected outcome observable and concrete?</li>
-<li>
-<strong>Diagrams:</strong> do the entities and flows fit your subject?</li>
-<li>
-<strong>Questions and proposals:</strong> what needs your judgment?</li>
-<li>
-<strong>Verification:</strong> which criteria passed, failed, or need fresh evidence?</li>
-</ul>
-<aside class="note">
-<strong>A clean compile is one checkpoint</strong>
-<p>A <code>converged</code> graph has no remaining mandatory work and passes the compiler checks. Human-blocked work can still be listed beside that verdict. It is not proof that every generated result has been verified.</p>
-</aside>
+<section id="beyond" class="article-section">
+<h2>Then learn to change it</h2>
+<p>Once the first result is useful, the next question is how it evolves. Learn <a href="changes/">what an edit makes stale</a>, <a href="decisions/">how a decision becomes part of the docs</a>, and <a href="existing/">how to start with something that already exists</a>.</p>
+<p>For command details and AI setup, use the <a href="cli/">CLI reference</a> and <a href="models/">models and benchmarks</a>. They support the workflow rather than define it.</p>
 </section>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
 <a href="../">
 <small>About Jazyk</small>← Home</a>
-<a href="./cli/">
-<small>Next guide</small>CLI →</a>
+<a href="./installation/">
+<small>Next</small>Installation →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -223,10 +241,9 @@ When invoked, `sort` allows the following CLI args:
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
 <a href="#choose">Choose where to work</a>
-<a href="#loop">The working loop</a>
-<a href="#first-document">Your first document</a>
-<a href="#sets">Document sets</a>
-<a href="#results">Read the results</a>
+<a href="#compiler">What you are learning</a>
+<a href="#path">A path through the compiler</a>
+<a href="#beyond">Then learn to change it</a>
 </nav>
 </aside>
 </div>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Questions & provenance · Jazyk docs</title>
+<meta name="description" content="Resolve ambiguity and trace whether a fact is stated, inferred, or decreed.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/" aria-current="page">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Questions & provenance<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/" aria-current="page">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Questions & provenance</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">WORK WITH CHANGE</p>
+<h1>Make the decisions visible.</h1>
+<p class="lede">Resolve ambiguity and trace whether a fact is stated, inferred, or decreed.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#findings">Questions are part of the compiler result</a>
+<a href="#origin">Ask where a fact came from</a>
+<a href="#answer">Answer at the point of uncertainty</a>
+<a href="#triage">Triage is not the same as fixing the docs</a>
+</nav>
+</details>
+<article>
+<section id="findings" class="article-section">
+<h2>Questions are part of the compiler result</h2>
+<p>Two docs may give different bounds. A requirement may omit the failure behavior. Generation may need a product choice that the prose never made. These are findings for the owner to judge.</p>
+<p>A diagnostic is a persistent record, not a temporary message. It retains identity across builds. Human triage survives recompilation.</p>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Finding</th>
+<th scope="col">Useful response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Contradiction</td>
+<td>Decide which rule holds, or name the distinct conditions that make both valid.</td>
+</tr>
+<tr>
+<td>Ambiguity</td>
+<td>Clarify the subject, condition, value, or expected outcome.</td>
+</tr>
+<tr>
+<td>Invented choice</td>
+<td>Review the choice made to fill missing intent and state the accepted rule.</td>
+</tr>
+<tr>
+<td>Pending proposal</td>
+<td>Accept the prose addition, revise it, or retract the fact.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="origin" class="article-section">
+<h2>Ask where a fact came from</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Provenance</th>
+<th scope="col">Origin</th>
+<th scope="col">What to review</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Quote</td>
+<td>Verbatim source text, located in a document section.</td>
+<td>Does the sentence support the fact as recorded?</td>
+</tr>
+<tr>
+<td>Derived</td>
+<td>Inference from named facts with reasoning.</td>
+<td>Is the inference valid, and should it become explicit prose?</td>
+</tr>
+<tr>
+<td>Decree</td>
+<td>A human write on the graph.</td>
+<td>Should the docs state this decision?</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Derived and decreed facts carry ratification proposals. Accepting one puts the sentence in the docs and changes the fact’s provenance to quote. Identity is preserved. A quote is evidence of what the docs state, not proof that the product implements it.</p>
+</section>
+<section id="answer" class="article-section">
+<h2>Answer at the point of uncertainty</h2>
+<p>Use Inbox in the GUI, diagnostic actions in your IDE, or <code>jazyk answer</code> in the terminal. Read the proposed edit before choosing it.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · replace the diagnostic ID</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk answer diag:your-id --set Main
+jazyk answer diag:your-id --set Main --text &#x27;The 21-day rule applies to retail Orders.&#x27;</code>
+</pre>
+</div>
+<p>An edit option applies a suggested prose and graph change. A freeform answer records your reply for an answer session to handle. Check its resulting state and inspect the affected docs.</p>
+<p>You can also edit the prose directly. Make the scope explicit if different Order kinds intentionally follow different rules. Then compile again.</p>
+</section>
+<section id="triage" class="article-section">
+<h2>Triage is not the same as fixing the docs</h2>
+<p>Acknowledging, suppressing, or marking a finding won’t-fix records your judgment. It does not rewrite the conflicting statements or establish verification evidence.</p>
+<p>Use triage deliberately and keep its context. If the stated obligation changed, revise the docs. If a fact should not exist, retract it rather than accepting wording you do not mean.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../writing/">Clarify the underlying prose <span aria-hidden="true">→</span>
+</a>
+<a href="../changes/">Trace what a decision opened <span aria-hidden="true">→</span>
+</a>
+<a href="../graph/">Read the graph and its provenance <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../changes/">
+<small>Previous</small>← Changes & history</a>
+<a href="../diagrams/">
+<small>Next</small>Diagrams & views →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#findings">Questions are part of the compiler result</a>
+<a href="#origin">Ask where a fact came from</a>
+<a href="#answer">Answer at the point of uncertainty</a>
+<a href="#triage">Triage is not the same as fixing the docs</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

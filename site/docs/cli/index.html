@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CLI · Jazyk docs</title>
-<meta name="description" content="Set up a local project, compile your documents, and follow the result through generation and verification.">
+<title>CLI reference · Jazyk docs</title>
+<meta name="description" content="Select the right set, run the next stage, and inspect what happened.">
 <link rel="icon" type="image/svg+xml" href="../../favicon.svg">
 <link rel="stylesheet" href="../docs.css">
 <script src="../docs.js" defer>
@@ -27,314 +27,362 @@
 </header>
 <div class="docs-layout">
 <aside class="sidebar">
-<span class="sidebar-label">DOCUMENTATION</span>
-<nav class="desktop-nav" aria-label="Guides">
-<a href="../">
-<span class="nav-number">01</span>Start here</a>
-<a href="../cli/" aria-current="page">
-<span class="nav-number">02</span>CLI</a>
-<a href="../ide/">
-<span class="nav-number">03</span>IDE</a>
-<a href="../cloud/">
-<span class="nav-number">04</span>Cloud</a>
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/" aria-current="page">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
 </nav>
 <details class="mobile-nav">
-<summary>CLI<span>Browse guides</span>
+<summary>CLI reference<span>Browse docs</span>
 </summary>
-<nav aria-label="Guides">
-<a href="../">
-<span class="nav-number">01</span>Start here</a>
-<a href="../cli/" aria-current="page">
-<span class="nav-number">02</span>CLI</a>
-<a href="../ide/">
-<span class="nav-number">03</span>IDE</a>
-<a href="../cloud/">
-<span class="nav-number">04</span>Cloud</a>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/" aria-current="page">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
 </nav>
 </details>
-<div class="sidebar-footer">
-<p>English as a<br>programming language.</p>
-<a href="https://jazyk.dev">Try a demo ↗</a>
-</div>
 </aside>
 <main id="main" tabindex="-1">
 <div class="breadcrumbs">
 <a href="../">Docs</a>
 <span aria-hidden="true">/</span>
-<span>CLI</span>
+<span>CLI reference</span>
 </div>
 <div class="article-header">
-<p class="eyebrow">USAGE GUIDE / CLI</p>
-<h1>Work from the terminal.</h1>
-<p class="lede">Set up a local project, compile your documents, and follow the result through generation and verification.</p>
+<p class="eyebrow">REFERENCE</p>
+<h1>Commands for compiler work.</h1>
+<p class="lede">Select the right set, run the next stage, and inspect what happened.</p>
 </div>
 <details class="mobile-toc">
 <summary>On this page</summary>
 <nav aria-label="On this page">
-<a href="#install">Install</a>
-<a href="#project">Create a project</a>
-<a href="#ai">Choose your AI</a>
-<a href="#compile">Compile and review</a>
-<a href="#generate">Generate and verify</a>
-<a href="#commands">Everyday commands</a>
-<a href="#browser">Browser editor</a>
-<a href="#files">Files and state</a>
+<a href="#scope">Select a project and document set</a>
+<a href="#commands">Commands by task</a>
+<a href="#inspect">Inspect without guessing</a>
+<a href="#options">Useful options</a>
+<a href="#automation">Bounded work and automation</a>
 </nav>
 </details>
 <article>
-<aside class="note">
-<strong>Before you start</strong>
-<p>You need Git, a current Rust toolchain, and an AI agent or model for compilation. The local compiler uses your own AI access. A Cloud account is not required.</p>
-</aside>
-<section id="install" class="article-section">
-<h2>1. Install the local compiler</h2>
-<p>Build the current compiler from the <a href="https://github.com/JazykOrg/Jazyk">public source repository</a>. Run these commands in the directory where you keep projects.</p>
+<section id="scope" class="article-section">
+<h2>Select a project and document set</h2>
+<p>Run commands inside a project folder. Discovery walks up to the nearest <code>.jazyk/jazyk.toml</code>. Aggregate reads show all sets. A graph operation targets a named set or its immutable ID.</p>
 <div class="code-block">
 <div class="code-head">
 <span>Terminal</span>
 <button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>git clone https://github.com/JazykOrg/Jazyk.git
-cd Jazyk/bootstrap
-cargo build --release
-export PATH=&quot;$PWD/target/release:$PATH&quot;
-jazyk --help</code></pre></div>
-<p>The <code>export</code> makes <code>jazyk</code> available in this terminal. For later sessions, add the absolute <code>Jazyk/bootstrap/target/release</code> path to your shell configuration. GUI editors also need that path, or an explicit binary setting.</p>
-</section>
-<section id="project" class="article-section">
-<h2>2. Create a project and select documents</h2>
-<p>In a new folder, initialize the project. Choose your installed coding agent when prompted, or keep the embedded agent and configure its model in the next step.</p>
-<div class="code-block">
-<div class="code-head">
-<span>Terminal</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>mkdir my-project
-cd my-project
-jazyk init
-mkdir -p docs</code></pre></div>
-<p>Create <code>docs/main.md</code> and <a href="../#first-document">write a small first document</a>. Then select it as a named document set.</p>
-<div class="code-block">
-<div class="code-head">
-<span>Terminal</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk sets add Main --docs &#x27;docs/**/*.md&#x27; --roots docs/main.md
-jazyk sets list</code></pre></div>
-<p>
-<code>jazyk init</code> creates <code>.jazyk/jazyk.toml</code> with no document sets. <code>sets add</code> records your selection. Quote globs so your shell passes the pattern to Jazyk.</p>
-<aside class="note">
-<strong>Already have documents?</strong>
-<p>Run <code>jazyk init</code> in the existing project folder, then add a set with the paths you use. Documents do not have to live in <code>docs/</code>.</p>
-</aside>
-</section>
-<section id="ai" class="article-section">
-<h2>3. Choose the AI that does the work</h2>
-<p>There are two paths. Use an installed coding agent through its ACP adapter, or let the embedded agent call an OpenAI-compatible model endpoint.</p>
-<h3>Use your coding agent</h3>
-<p>
-<code>jazyk init</code> offers <code>codex</code>, <code>claude</code>, and <code>opencode</code>. The agent must be installed and authenticated. Codex and Claude use ACP adapters launched through <code>npx</code>, so they also need Node.js and network access for the adapter.</p>
-<p>To choose an agent for an existing project, run:</p>
-<div class="code-block">
-<div class="code-head">
-<span>Terminal</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk init --agent claude</code></pre></div>
-<h3>Use the embedded agent</h3>
-<p>Put your endpoint and model in <code>~/.jazyk/config.toml</code>. This example uses a local OpenAI-compatible server. Replace the model name with one your endpoint actually serves.</p>
-<div class="code-block">
-<div class="code-head">
-<span>Example · ~/.jazyk/config.toml</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>[llm]
-base_url = &quot;http://localhost:11434/v1&quot;
-model = &quot;your-model-id&quot;
-api_key_env = &quot;JAZYK_API_KEY&quot;</code></pre></div>
-<p>For a hosted endpoint, change <code>base_url</code> and set <code>JAZYK_API_KEY</code> in your environment. Keep credentials out of tracked files. CLI flags and environment variables override set, project, and global settings.</p>
-<p>Check a new agent or model before trusting it with your project:</p>
-<div class="code-block">
-<div class="code-head">
-<span>Terminal</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk benchmark</code></pre></div>
-<p>The benchmark checks session capability. Small local models can fail it even when the server responds. Choose a model that passes before interpreting a poor result as a problem with your documents.</p>
-</section>
-<section id="compile" class="article-section">
-<h2>4. Compile, inspect, and decide</h2>
-<div class="code-block">
-<div class="code-head">
-<span>Terminal</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk compile --set Main
-jazyk status
-jazyk preview --set Main</code></pre></div>
-<p>The compile prints live work and a final verdict. <code>preview</code> shows the next session prompt so you can inspect what would be sent to the agent.</p>
-<div class="table-scroll">
-<table>
-<thead>
-<tr>
-<th scope="col">Result</th>
-<th scope="col">What to do</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Converged</td>
-<td>Read the graph and diagrams. Check any blocked or optional counts beside the verdict.</td>
-</tr>
-<tr>
-<td>Incomplete</td>
-<td>Read the remaining or failed work in <code>jazyk status</code>. Fix setup or docs, answer questions, then compile again.</td>
-</tr>
-<tr>
-<td>Needs your answer</td>
-<td>Use <code>jazyk answer</code> with the diagnostic ID to list its options. Review the question before replying.</td>
-</tr>
-</tbody>
-</table>
 </div>
-<div class="code-block">
-<div class="code-head">
-<span>Example · replace the diagnostic ID</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk answer diag:your-id --set Main
-jazyk answer diag:your-id --set Main --text &#x27;Your decision&#x27;
-jazyk compile --set Main</code></pre></div>
-<p>Answers can trigger agent work and proposed document edits. Read the affected prose and recompile after a decision. <code>jazyk explain</code> shows why a goal exists; <code>jazyk ripple</code> traces a change through the journal.</p>
-</section>
-<section id="generate" class="article-section">
-<h2>5. Generate and verify a deliverable</h2>
-<p>When you are ready to produce files, add their allowed paths to the set. The following example permits files under <code>src/</code> and <code>tests/</code>. Include other required files explicitly, such as a package manifest.</p>
-<div class="code-block">
-<div class="code-head">
-<span>Example · a software project</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk sets update Main --source &#x27;src/**&#x27; --source &#x27;tests/**&#x27; --source package.json
-jazyk gen --set Main
-jazyk test --set Main</code></pre></div>
-<p>
-<code>gen</code> binds requirements and generates into the selected source paths. <code>test</code> verifies the recorded criteria. Generation and verification can call your agent. Read the evidence; a generated test is not a passing test.</p>
-<p>A deck or another artifact uses its own source paths and verification criteria. The file selection defines where generation may write.</p>
+<pre>
+<code>jazyk sets list
+jazyk compile --set Main
+jazyk status</code>
+</pre>
+</div>
+<p>Bare <code>jazyk compile</code> runs dirty sets in configuration order. A mutation such as generation or answering a diagnostic needs a set selector unless there is exactly one set.</p>
 </section>
 <section id="commands" class="article-section">
-<h2>Commands for everyday work</h2>
+<h2>Commands by task</h2>
 <div class="table-scroll">
 <table>
 <thead>
 <tr>
-<th scope="col">When you want to…</th>
-<th scope="col">Run</th>
+<th scope="col">Task</th>
+<th scope="col">Command</th>
+<th scope="col">Effect</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Recompile after saved edits</td>
+<td>Initialize</td>
+<td>
+<code>jazyk init</code>
+</td>
+<td>Create project configuration and offer agent/editor setup.</td>
+</tr>
+<tr>
+<td>Select documents</td>
+<td>
+<code>jazyk sets add Main --docs 'docs/**/*.md'</code>
+</td>
+<td>Add a named set.</td>
+</tr>
+<tr>
+<td>Update a selection</td>
+<td>
+<code>jazyk sets update Main --source 'src/**'</code>
+</td>
+<td>Update the provided selection fields.</td>
+</tr>
+<tr>
+<td>Compile</td>
+<td>
+<code>jazyk compile --set Main</code>
+</td>
+<td>Reconcile docs and graph.</td>
+</tr>
+<tr>
+<td>Watch</td>
 <td>
 <code>jazyk watch --set Main</code>
 </td>
+<td>Recompile saved changes.</td>
 </tr>
 <tr>
-<td>Compile and check error diagnostics</td>
+<td>Check</td>
 <td>
 <code>jazyk check --set Main</code>
 </td>
+<td>Compile and fail on open error diagnostics or incomplete work.</td>
 </tr>
 <tr>
-<td>Find an entity</td>
+<td>Generate</td>
 <td>
-<code>jazyk query "Sort" --set Main</code>
+<code>jazyk gen --set Main</code>
 </td>
+<td>Bind and generate the deliverable.</td>
 </tr>
 <tr>
-<td>Inspect why work is open</td>
+<td>Verify</td>
 <td>
-<code>jazyk explain &lt;goal-or-target&gt; --set Main</code>
+<code>jazyk test --set Main</code>
 </td>
+<td>Evaluate recorded tests and criteria.</td>
 </tr>
 <tr>
-<td>Read generated graph documentation</td>
+<td>Audit</td>
 <td>
-<code>jazyk docsgen --set Main</code>
+<code>jazyk test --set Main --audit</code>
 </td>
+<td>Rebuild ledger bindings from artifact markers without running tests.</td>
 </tr>
 <tr>
-<td>Export an offline graph viewer</td>
+<td>Draft docs</td>
 <td>
-<code>jazyk viewer --set Main</code>
+<code>jazyk decompile src --set Main</code>
 </td>
+<td>Draft prose from selected unclaimed source.</td>
 </tr>
 <tr>
-<td>Read a command’s options</td>
+<td>Browse locally</td>
 <td>
-<code>jazyk &lt;command&gt; --help</code>
+<code>jazyk gui</code>
 </td>
+<td>Start the local API and open jazyk.dev.</td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Bare <code>jazyk compile</code> runs all dirty sets, one at a time. Use <code>--set</code> with the set name or ID for a specific graph operation. <code>check</code> runs compilation too; it can use AI.</p>
 </section>
-<section id="browser" class="article-section">
-<h2>Open the same project in a browser</h2>
-<div class="code-block">
-<div class="code-head">
-<span>Terminal</span>
-<button type="button" class="copy-button" hidden>Copy</button>
-</div><pre><code>jazyk gui</code></pre></div>
-<p>This starts the local API and opens jazyk.dev connected to your computer. Keep the process running. The project’s files and compiler stay local; no Cloud sign-in is needed.</p>
-<p>You can also <a href="../ide/">connect your IDE</a> and continue working in the same folder.</p>
-</section>
-<section id="files" class="article-section">
-<h2>Know where things are saved</h2>
+<section id="inspect" class="article-section">
+<h2>Inspect without guessing</h2>
 <div class="table-scroll">
 <table>
 <thead>
 <tr>
-<th scope="col">Location</th>
-<th scope="col">Contains</th>
+<th scope="col">Command</th>
+<th scope="col">What you learn</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>
-<code>docs/</code>, or your chosen paths</td>
-<td>Your authored documents.</td>
+<code>jazyk status --costs</code>
+</td>
+<td>Verdict, work counts, and recorded cost.</td>
 </tr>
 <tr>
 <td>
-<code>.jazyk/jazyk.toml</code>
+<code>jazyk preview --set Main</code>
 </td>
-<td>Named document sets and project settings. Track this in Git.</td>
+<td>The next session’s assembled prompt.</td>
 </tr>
 <tr>
 <td>
-<code>.jazyk/.gitignore</code>
+<code>jazyk explain &lt;goal-or-target&gt; --set Main</code>
 </td>
-<td>Ignore rules for generated state. Track this in Git too.</td>
+<td>Why work exists or what a target change opens.</td>
 </tr>
 <tr>
 <td>
-<code>.jazyk/&lt;set-id&gt;/</code>
+<code>jazyk ripple &lt;root&gt; --set Main [--back]</code>
 </td>
-<td>The graph, diagrams, diagnostics, journal, and transcripts. Keep generated state ignored.</td>
-</tr>
-<tr>
-<td>Selected source paths</td>
-<td>The files the set describes and may generate.</td>
+<td>The causal chain in the journal.</td>
 </tr>
 <tr>
 <td>
-<code>~/.jazyk/config.toml</code>
+<code>jazyk context &lt;target&gt; --set Main</code>
 </td>
-<td>Machine-level agent or model defaults.</td>
+<td>The context the load tool renders.</td>
+</tr>
+<tr>
+<td>
+<code>jazyk query &lt;text&gt; --set Main</code>
+</td>
+<td>Matching entities.</td>
+</tr>
+<tr>
+<td>
+<code>jazyk docsgen --set Main</code>
+</td>
+<td>Graph documentation and diagram pages.</td>
+</tr>
+<tr>
+<td>
+<code>jazyk viewer --set Main</code>
+</td>
+<td>An offline graph snapshot.</td>
 </tr>
 </tbody>
 </table>
 </div>
 </section>
+<section id="options" class="article-section">
+<h2>Useful options</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Option</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>--set NAME_OR_ID</code>
+</td>
+<td>Target one document set.</td>
+</tr>
+<tr>
+<td>
+<code>--sessions N</code> on compile</td>
+<td>Bound the run to N sessions. Zero derives work without LLM calls.</td>
+</tr>
+<tr>
+<td>
+<code>--verbose</code>, <code>-v</code>
+</td>
+<td>Include prompts, payloads, and the goal cascade.</td>
+</tr>
+<tr>
+<td>
+<code>--quiet</code>, <code>-q</code>
+</td>
+<td>Show board summary, GC burst lines, and verdict.</td>
+</tr>
+<tr>
+<td>
+<code>--agent NAME</code>
+</td>
+<td>Choose the worker profile for this run.</td>
+</tr>
+<tr>
+<td>
+<code>--model MODEL</code>
+</td>
+<td>Override the embedded agent’s model.</td>
+</tr>
+<tr>
+<td>
+<code>--llm-base-url URL</code>
+</td>
+<td>Override its endpoint.</td>
+</tr>
+<tr>
+<td>
+<code>--json</code> where supported</td>
+<td>Use structured output. Consult command help.</td>
+</tr>
+<tr>
+<td>
+<code>--help</code>, <code>-h</code>
+</td>
+<td>Show command-specific usage and exit codes.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Arguments shown in angle brackets are placeholders. Replace them before running. Options in square brackets are optional; do not type the brackets.</p>
+</section>
+<section id="automation" class="article-section">
+<h2>Bounded work and automation</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk compile --set Main --sessions 1
+jazyk compile --set Main --sessions 0
+jazyk compile --help</code>
+</pre>
+</div>
+<p>A bounded run can stop incomplete after committed progress. Compile exits zero when its selected work converges, one when incomplete, and two on usage or configuration errors. Check can call AI because it runs compilation.</p>
+<p>Use each command’s help for its exact argument and exit contract. Commands such as init have their own meanings for nonzero codes.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../installation/">Install and run the first project <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Endpoint settings and benchmarks <span aria-hidden="true">→</span>
+</a>
+<a href="../troubleshooting/">Diagnose incomplete work <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
 </article>
 <nav class="page-nav" aria-label="Previous and next">
-<a href="../">
-<small>Previous</small>← Start here</a>
-<a href="../ide/">
-<small>Next guide</small>IDE →</a>
+<a href="../existing/">
+<small>Previous</small>← Existing projects</a>
+<a href="../models/">
+<small>Next</small>Models & benchmarks →</a>
 </nav>
 <footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
 </footer>
@@ -342,14 +390,11 @@ jazyk test --set Main</code></pre></div>
 <aside class="toc">
 <p>ON THIS PAGE</p>
 <nav aria-label="On this page">
-<a href="#install">Install</a>
-<a href="#project">Create a project</a>
-<a href="#ai">Choose your AI</a>
-<a href="#compile">Compile and review</a>
-<a href="#generate">Generate and verify</a>
-<a href="#commands">Everyday commands</a>
-<a href="#browser">Browser editor</a>
-<a href="#files">Files and state</a>
+<a href="#scope">Select a project and document set</a>
+<a href="#commands">Commands by task</a>
+<a href="#inspect">Inspect without guessing</a>
+<a href="#options">Useful options</a>
+<a href="#automation">Bounded work and automation</a>
 </nav>
 </aside>
 </div>

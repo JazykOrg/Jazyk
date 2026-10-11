@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writing requirements · Jazyk docs</title>
+<meta name="description" content="Clear subjects, explicit obligations, and concrete examples give the compiler something you can judge.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/" aria-current="page">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Writing requirements<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/" aria-current="page">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Writing requirements</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">LEARN THE COMPILER</p>
+<h1>Write what you mean.</h1>
+<p class="lede">Clear subjects, explicit obligations, and concrete examples give the compiler something you can judge.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#obligations">State what must be true</a>
+<a href="#subjects">Name subjects consistently</a>
+<a href="#examples">Write criteria as concrete examples</a>
+<a href="#constraints">Describe the artifact as well as behavior</a>
+<a href="#review">Review your prose before expanding it</a>
+</nav>
+</details>
+<article>
+<section id="obligations" class="article-section">
+<h2>State what must be true</h2>
+<p>You do not need a special grammar or the word “shall.” A declarative sentence about the subject states an obligation. What a slide shows, what a service allows, and what a department owns can all be requirements.</p>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Vague prose</th>
+<th scope="col">More useful prose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Orders expire eventually.</td>
+<td>Orderly cancels an unpaid Order at the start of day 22 after placement.</td>
+</tr>
+<tr>
+<td>Only authorized people can change things.</td>
+<td>Only an Admin can change an Order’s delivery address after payment.</td>
+</tr>
+<tr>
+<td>The slide should look good.</td>
+<td>The Introduction slide shows the title “Jazyk” and a link to jazyk.org.</td>
+</tr>
+<tr>
+<td>Search is fast.</td>
+<td>For 10,000 Orders and 20 concurrent readers, search responds within 200 ms at the 95th percentile over a 5-minute run.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These are illustrative revisions. Choose values because they are your requirements. Do not add arbitrary numbers just to make a sentence measurable. If you have not decided a threshold, state the open question.</p>
+</section>
+<section id="subjects" class="article-section">
+<h2>Name subjects consistently</h2>
+<p>Introduce the real subject and its parts. Prefer “Orderly cancels the Order” when “it cancels it” could refer to several things. Keep a term stable across documents; if two names mean the same thing, say so.</p>
+<p>Name scope when a word is reused. Two modules can each have a Config without being the same entity. A relationship also needs direction: who sends, owns, contains, or depends on what?</p>
+<p>Keep separable obligations easy to see. “The gateway uses Go and exposes REST” carries two constraints that can fail independently.</p>
+</section>
+<section id="examples" class="article-section">
+<h2>Write criteria as concrete examples</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Example · author-written prose</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>## Cancellation
+
+Orderly cancels an unpaid Order at the start of day 22 after placement.
+
+## Examples
+
+An Order placed on day 0 and still unpaid on day 21 remains placed.
+An Order placed on day 0 and still unpaid at the start of day 22 is cancelled.
+An Order paid on day 5 is not cancelled for non-payment.</code>
+</pre>
+</div>
+<p>The rule states intent. The examples make it observable. Include the successful case, the failure case, and the boundary. A useful criterion has one condition and one outcome with the values intact.</p>
+<p>“The Order follows the cancellation rule” repeats the requirement. It does not say how to tell whether the rule is met. Avoid naming an internal function unless that interface itself is a constraint.</p>
+</section>
+<section id="constraints" class="article-section">
+<h2>Describe the artifact as well as behavior</h2>
+<p>For a deck, name the audience, slide content, file format, and constraints that matter. For a manuscript, state viewpoint, chapter obligations, and any length bounds. For software, state relevant interfaces, data, permissions, states, and failure behavior.</p>
+<p>If a toolchain, language, or format matters, write it down. If it is free to vary, leave that choice open and review what generation proposes.</p>
+<aside class="note">
+<strong>The artifact is the thing you asked for</strong>
+<p>A requirement for a PowerPoint deck means a deck, with its required content. A Markdown description saying that a deck should exist is not that deliverable.</p>
+</aside>
+</section>
+<section id="review" class="article-section">
+<h2>Review your prose before expanding it</h2>
+<ul>
+<li>Can a reader identify the subject of each obligation?</li>
+<li>Do two sections disagree about the same condition?</li>
+<li>Are thresholds, exceptions, and permissions explicit where they matter?</li>
+<li>Do examples prove outcomes rather than repeat the rule?</li>
+<li>Is old history clearly separate from current obligations?</li>
+<li>Does the requested medium match the artifact you expect?</li>
+</ul>
+<p>Compile one focused set and inspect what it understood. Fix the prose where the meaning is wrong. More text is useful only when it resolves something.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../graph/">Follow a sentence into the graph <span aria-hidden="true">→</span>
+</a>
+<a href="../verification/">Design observable evidence <span aria-hidden="true">→</span>
+</a>
+<a href="../decisions/">Handle unresolved choices <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../structure/">
+<small>Previous</small>← Document structure</a>
+<a href="../graph/">
+<small>Next</small>Understanding the graph →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#obligations">State what must be true</a>
+<a href="#subjects">Name subjects consistently</a>
+<a href="#examples">Write criteria as concrete examples</a>
+<a href="#constraints">Describe the artifact as well as behavior</a>
+<a href="#review">Review your prose before expanding it</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Understanding the graph · Jazyk docs</title>
+<meta name="description" content="Follow prose into a persistent model of entities, requirements, criteria, and derived structure.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/" aria-current="page">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Understanding the graph<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/" aria-current="page">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Understanding the graph</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">LEARN THE COMPILER</p>
+<h1>Read what Jazyk understood.</h1>
+<p class="lede">Follow prose into a persistent model of entities, requirements, criteria, and derived structure.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#meaning">A persistent model of meaning</a>
+<a href="#sentence">Follow one sentence through the model</a>
+<a href="#parts">The pieces you will inspect</a>
+<a href="#build">What a compile does</a>
+<a href="#inspect">Inspect meaning before generating</a>
+</nav>
+</details>
+<article>
+<section id="meaning" class="article-section">
+<h2>A persistent model of meaning</h2>
+<p>The graph is edited in place as the docs change. It is not a fresh summary regenerated on each run. Authored nodes keep their IDs through renames and updates; a merge leaves a redirect to the surviving node.</p>
+<p>Every fact has provenance: a quote from the documents, an inference with its reasoning, or a human decree. Inferences and decrees carry proposals toward prose so the docs can catch up.</p>
+</section>
+<section id="sentence" class="article-section">
+<h2>Follow one sentence through the model</h2>
+<div class="semantic-example">
+<p class="eyebrow">ILLUSTRATION / ORDERLY</p>
+<blockquote>Orderly cancels an unpaid Order at the start of day 22 after placement.</blockquote>
+<dl>
+<dt>Entities</dt>
+<dd>Orderly and Order, the named subjects.</dd>
+<dt>Requirement</dt>
+<dd>The cancellation obligation, linked to its verbatim source quote.</dd>
+<dt>Criterion</dt>
+<dd>An unpaid Order at the start of day 22 is cancelled, from a concrete example or a reviewed proposal.</dd>
+<dt>Transition</dt>
+<dd>The Order moves from placed to cancelled under the stated condition.</dd>
+<dt>State machine</dt>
+<dd>The transition contributes to the Order’s derived state machine.</dd>
+</dl>
+</div>
+<p>This illustrates the model; it is not output from a compiler run. Read your actual graph to see the facts its sessions recorded.</p>
+</section>
+<section id="parts" class="article-section">
+<h2>The pieces you will inspect</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Piece</th>
+<th scope="col">What it records</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Entity</td>
+<td>A thing the docs name, its attributes, and one containment parent.</td>
+</tr>
+<tr>
+<td>Requirement</td>
+<td>One freeform obligation, its entities, directional edges, transitions, and facets.</td>
+</tr>
+<tr>
+<td>Criterion</td>
+<td>Observable evidence for one requirement. Tests bind to criteria.</td>
+</tr>
+<tr>
+<td>Relationship</td>
+<td>Connections derived from requirement edges.</td>
+</tr>
+<tr>
+<td>State machine</td>
+<td>States and transitions derived for a subject entity.</td>
+</tr>
+<tr>
+<td>View</td>
+<td>Which members and query a diagram includes, not its visual layout.</td>
+</tr>
+<tr>
+<td>Section</td>
+<td>Document structure and coverage.</td>
+</tr>
+<tr>
+<td>Diagnostic</td>
+<td>A persistent finding, question, proposal, or judgment.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="build" class="article-section">
+<h2>What a compile does</h2>
+<ol class="steps">
+<li>
+<h3>Parse and align</h3>
+<p>The harness reads sections, compares them with stored state, and relocates anchors. Unchanged material does not need another extraction session.</p>
+</li>
+<li>
+<h3>Derive the work</h3>
+<p>The compiler derives goals from docs, graph, history, and evidence. It orders and groups ready work. The model resolves a goal; it does not invent the schedule.</p>
+</li>
+<li>
+<h3>Reconcile and judge</h3>
+<p>Agent sessions extract facts and compare meaning. Validated mutations commit as a changeset. Ambiguities and contradictions become findings rather than silently disappearing.</p>
+</li>
+<li>
+<h3>Derive and render</h3>
+<p>Commits recompute relationships, state machines, and default views. Native rendering projects those views into diagrams.</p>
+</li>
+<li>
+<h3>Check the result</h3>
+<p>Deterministic checks assess coverage, references, stale provenance, conformance, and other invariants. The final verdict reports mandatory work and human-blocked or optional counts.</p>
+</li>
+</ol>
+</section>
+<section id="inspect" class="article-section">
+<h2>Inspect meaning before generating</h2>
+<p>Check entity boundaries, requirement wording, and criteria. Follow a quote back to its sentence. Ask whether a diagram’s connection is supported by a requirement. Review any inferred facts that need to become explicit prose.</p>
+<p>The graph is also the contract consumed by generation, verification, docs generation, and agent retrieval. A mistake here can affect every downstream result.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../diagrams/">Read and curate diagrams <span aria-hidden="true">→</span>
+</a>
+<a href="../decisions/">Understand provenance <span aria-hidden="true">→</span>
+</a>
+<a href="../product/">Produce the deliverable <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../writing/">
+<small>Previous</small>← Writing requirements</a>
+<a href="../product/">
+<small>Next</small>From docs to product →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#meaning">A persistent model of meaning</a>
+<a href="#sentence">Follow one sentence through the model</a>
+<a href="#parts">The pieces you will inspect</a>
+<a href="#build">What a compile does</a>
+<a href="#inspect">Inspect meaning before generating</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

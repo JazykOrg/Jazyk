@@ -9,11 +9,13 @@ Documentation uses shared CSS and a small script. There is no build step. Specif
 | File | Route |
 | --- | --- |
 | `index.html` | `/`, the pitch and the sort example's snippets |
-| `docs/index.html` | `/docs/`, choose a workspace and learn the workflow |
-| `docs/cli/index.html` | `/docs/cli/`, local setup and command line usage |
-| `docs/ide/index.html` | `/docs/ide/`, language support, chat agents, and coding tools |
-| `docs/cloud/index.html` | `/docs/cloud/`, hosted projects, builds, and delivery |
-| `docs/docs.css`, `docs/docs.js` | shared docs styles, copying, and active section navigation |
+| `docs/index.html` | `/docs/`, workspace choices and the compiler learning path |
+| `docs/installation/index.html` | `/docs/installation/`, local and Cloud setup overview |
+| `docs/{gui,ide,agents,cloud}/index.html` | installation subpages for each workspace |
+| `docs/{structure,writing,graph,product,verification}/index.html` | learn the compiler, from authored intent to evidence |
+| `docs/{changes,decisions,diagrams,existing}/index.html` | ongoing work, provenance, views, and adoption |
+| `docs/{cli,models,project,troubleshooting}/index.html` | compiler reference and recovery |
+| `docs/docs.css`, `docs/docs.js` | shared styles, copying, section navigation, and a change illustration |
 | `example/*.svg` | the diagrams on the page |
 | `favicon.svg` | `/favicon.svg` |
 | `404.html` | served with status 404 for any path that has no object |

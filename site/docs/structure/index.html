@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document structure · Jazyk docs</title>
+<meta name="description" content="Organize documents so both a person and the compiler can follow what they describe.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/" aria-current="page">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Document structure<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/" aria-current="page">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Document structure</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">LEARN THE COMPILER</p>
+<h1>Give the subject a home.</h1>
+<p class="lede">Organize documents so both a person and the compiler can follow what they describe.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#subject">Organize around the subject</a>
+<a href="#headings">Use headings and links as structure</a>
+<a href="#sets">Choose the right document-set boundary</a>
+<a href="#roles">Keep documents and source files distinct</a>
+<a href="#formats">Pick an input format you can maintain</a>
+</nav>
+</details>
+<article>
+<section id="subject" class="article-section">
+<h2>Organize around the subject</h2>
+<p>A document set is a collection of documents about one subject. It may describe an application, a department, a story, or a deck. Headings divide that subject into sections the compiler can reconcile.</p>
+<p>Start with a front door that names the subject and links to its parts. Give each part a stable home. Split a file when a reader needs a focused explanation, not to meet a word count.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · document layout</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>docs/
+  main.md           What Orderly is, and links to its parts
+  orders.md         Order lifecycle and cancellation rules
+  payments.md       Payment behavior and failure cases
+  examples.md       Concrete cases with expected outcomes</code>
+</pre>
+</div>
+<p>Jazyk does not require these names or this folder. The chosen set’s patterns determine input.</p>
+</section>
+<section id="headings" class="article-section">
+<h2>Use headings and links as structure</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Example · docs/main.md</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code># Orderly
+
+Orderly accepts customer Orders and records their Payments.
+
+- [Order lifecycle](./orders.md)
+- [Payments](./payments.md)
+- [Examples](./examples.md)</code>
+</pre>
+</div>
+<p>Headings create a section tree. Body text before the first heading is read too. Lists and blockquotes stay in the surrounding section. Ordinary fenced code is read in that context; a PlantUML fence is a diagram input section.</p>
+<p>Relative document links connect the reading order and help the compiler ingest foundational documents first. Configure roots as entry points. A heading groups text; it does not automatically create an entity with that heading’s name.</p>
+</section>
+<section id="sets" class="article-section">
+<h2>Choose the right document-set boundary</h2>
+<p>Use one set for a coherent subject. Use separate sets for separate models, such as an application and its operating organization. Each has independent identities, graph, diagnostics, and history.</p>
+<p>Files can belong to several sets, but each set compiles them separately. Shared input is deliberate duplication of work, not one shared graph. Review overlaps when selecting paths.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk sets add Main --docs &#x27;docs/**/*.md&#x27; --roots docs/main.md</code>
+</pre>
+</div>
+<p>Quote shell patterns. Use exclusions for documents you do not want compiled, such as archival notes or model instruction payloads.</p>
+</section>
+<section id="roles" class="article-section">
+<h2>Keep documents and source files distinct</h2>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Role</th>
+<th scope="col">Purpose</th>
+<th scope="col">Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Documents</td>
+<td>State what the subject must be or do.</td>
+<td>
+<code>docs/orders.md</code>
+</td>
+</tr>
+<tr>
+<td>Source</td>
+<td>The implementation or artifact files the set describes and may generate.</td>
+<td>
+<code>src/**</code>, <code>slides/**</code>
+</td>
+</tr>
+<tr>
+<td>Compiler state</td>
+<td>Persistent graph, judgments, diagrams, history, and evidence metadata.</td>
+<td>
+<code>.jazyk/&lt;set-id&gt;/</code>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Selecting source files does not prove which requirement they implement. Binding records that evidence. Files selected as docs cannot be generation write targets, even if a broad source pattern also matches them.</p>
+</section>
+<section id="formats" class="article-section">
+<h2>Pick an input format you can maintain</h2>
+<p>Markdown is the simplest portable choice. Native builds also read plain text, DOCX, and PDF within their extraction profiles. The browser-only engine currently reads Markdown.</p>
+<p>Keep one obvious title and meaningful section headings. A PDF’s reading order and extracted text may need inspection. Unsupported or unreadable inputs produce diagnostics rather than silently becoming a successful compile.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../writing/">Write obligations and examples <span aria-hidden="true">→</span>
+</a>
+<a href="../project/">Reference: paths and selection rules <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../installation/">
+<small>Previous</small>← Installation</a>
+<a href="../writing/">
+<small>Next</small>Writing requirements →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#subject">Organize around the subject</a>
+<a href="#headings">Use headings and links as structure</a>
+<a href="#sets">Choose the right document-set boundary</a>
+<a href="#roles">Keep documents and source files distinct</a>
+<a href="#formats">Pick an input format you can maintain</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local GUI · Jazyk docs</title>
+<meta name="description" content="Connect jazyk.dev to your local compiler, or choose a browser folder and understand where it saves.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+<div class="setup-nav">
+<a href="../gui/" aria-current="page" class="setup-nav-link">Local GUI</a>
+<a href="../ide/" class="setup-nav-link">IDE setup</a>
+<a href="../agents/" class="setup-nav-link">Coding agents</a>
+<a href="../cloud/" class="setup-nav-link">Cloud setup</a>
+</div>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Local GUI<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+<div class="setup-nav">
+<a href="../gui/" aria-current="page" class="setup-nav-link">Local GUI</a>
+<a href="../ide/" class="setup-nav-link">IDE setup</a>
+<a href="../agents/" class="setup-nav-link">Coding agents</a>
+<a href="../cloud/" class="setup-nav-link">Cloud setup</a>
+</div>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<a href="../installation/">Installation</a>
+<span aria-hidden="true">/</span>
+<span>Local GUI</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">SETUP</p>
+<h1>Use the browser with local files.</h1>
+<p class="lede">Connect jazyk.dev to your local compiler, or choose a browser folder and understand where it saves.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#local">Use the GUI with a local compiler</a>
+<a href="#browser-folder">Open a folder directly in the browser</a>
+<a href="#connect">Connection and recovery</a>
+</nav>
+</details>
+<article>
+<section id="local" class="article-section">
+<h2>Use the GUI with a local compiler</h2>
+<p>From your configured project folder, run:</p>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk gui</code>
+</pre>
+</div>
+<p>Jazyk starts an API on your computer and opens jazyk.dev with its connection details. Keep the terminal process running. Files, graph state, and compilation stay on your computer. The browser page is the interface; a Cloud account is not required.</p>
+<p>Use Docs to edit the prose, Model to inspect the graph, and Inbox to review questions and proposals. Select the intended document set in Build. The editor’s Build groups compilation, generation, and review when those stages have work.</p>
+</section>
+<section id="browser-folder" class="article-section">
+<h2>Open a folder directly in the browser</h2>
+<p>At <a href="https://jazyk.dev">jazyk.dev</a>, choose Local folder. A compatible browser can ask you to select a directory. Other browser projects may use browser storage instead. Read the project menu’s saved-location message so you know where your edits go.</p>
+<p>A browser-only project runs the portable compiler in the tab. It needs a model before it can build. It does not gain your terminal agent simply because that agent is installed on your computer. Use the local API path above when you need the native compiler and its configured agent.</p>
+<aside class="note">
+<strong>Check capabilities before expecting a result</strong>
+<p>Demos include compiled state you can inspect. Browser and native backends differ in supported input formats, model access, and rendering. The editor shows unavailable actions with their reason.</p>
+</aside>
+</section>
+<section id="connect" class="article-section">
+<h2>Connection and recovery</h2>
+<p>If the local process stops, start <code>jazyk gui</code> again and use the link it opens. Allow the browser’s local-network access prompt if it appears. Check that the project shown is the folder you intended.</p>
+<p>
+<code>jazyk gui --no-open</code> prints the connection address without opening a tab. <code>--port N</code> selects a port; the normal startup finds an available port. For automatic local compilation after saved edits, use <code>jazyk gui --watch</code>. The default is an explicit build action.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../structure/">Choose documents and source files <span aria-hidden="true">→</span>
+</a>
+<a href="../models/">Configure local AI <span aria-hidden="true">→</span>
+</a>
+<a href="../troubleshooting/">Recover a connection or build <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../installation/">
+<small>Back to setup</small>← Installation</a>
+<a href="../structure/">
+<small>Next: learn the compiler</small>Document structure →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#local">Use the GUI with a local compiler</a>
+<a href="#browser-folder">Open a folder directly in the browser</a>
+<a href="#connect">Connection and recovery</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

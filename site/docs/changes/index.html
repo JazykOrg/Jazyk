@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changes & history · Jazyk docs</title>
+<meta name="description" content="Understand incremental builds, preserved identity, and the causal chain from prose to fresh evidence.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/" aria-current="page">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>Changes & history<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/" aria-current="page">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>Changes & history</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">WORK WITH CHANGE</p>
+<h1>Follow an edit through the project.</h1>
+<p class="lede">Understand incremental builds, preserved identity, and the causal chain from prose to fresh evidence.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#incremental">An edit updates a model that already exists</a>
+<a href="#effects">See what different edits affect</a>
+<a href="#history">Trace the cause instead of guessing</a>
+<a href="#preview">Look at the work before running it</a>
+<a href="#review">Review a change as a connected set</a>
+</nav>
+</details>
+<article>
+<section id="incremental" class="article-section">
+<h2>An edit updates a model that already exists</h2>
+<p>The compiler aligns the new section tree with its stored one and derives work from the change. It does not discard the graph and re-extract every document.</p>
+<p>Names can change without changing identities. A merge redirects the old ID. A moved section can retain its facts when alignment recognizes the move. A changed quote may need review before its anchor is trusted again.</p>
+</section>
+<section id="effects" class="article-section">
+<h2>See what different edits affect</h2>
+<p>This is an illustration of the contracts, not a compiler run. Choose a kind of edit to follow the likely work.</p>
+<div class="change-lab">
+<label for="change-kind">What changed?</label>
+<select id="change-kind" disabled>
+<option value="rule">The cancellation rule</option>
+<option value="move">A section moved unchanged</option>
+<option value="source">The implementation</option>
+<option value="proposal">An inferred fact was accepted</option>
+</select>
+<div class="change-result" id="change-result" aria-live="polite">
+<h3>The cancellation rule</h3>
+<p>Changing the cancellation day means reconciling the affected section and rejudging its requirements. Derived criteria may become stale. Bound tests and implementation evidence need review.</p>
+<div class="workflow">
+<span>Prose edit</span>
+<span aria-hidden="true">→</span>
+<span>Reconcile</span>
+<span aria-hidden="true">→</span>
+<span>Review evidence</span>
+</div>
+</div>
+<noscript>
+<p>Moving an unchanged section can relocate anchors without extraction. Editing source invalidates its evidence. Accepting a fact proposal inserts prose and updates provenance together.</p>
+</noscript>
+</div>
+</section>
+<section id="history" class="article-section">
+<h2>Trace the cause instead of guessing</h2>
+<p>Each committed changeset records a generation in the journal. Opened goals carry causes; resolved goals carry justifications. This gives you a path from an edit to its downstream work.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · replace angle-bracket placeholders</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk status
+jazyk explain &lt;goal-or-target&gt; --set Main
+jazyk ripple &lt;target-or-generation-or-doc&gt; --set Main
+jazyk ripple &lt;target-or-generation-or-doc&gt; --set Main --back</code>
+</pre>
+</div>
+<p>
+<code>explain</code> tells you why work exists. <code>ripple</code> follows the causal chain; <code>--back</code> walks toward the change that started it. You do not have to reconstruct the build from chat recollections.</p>
+</section>
+<section id="preview" class="article-section">
+<h2>Look at the work before running it</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk preview --set Main</code>
+</pre>
+</div>
+<p>Preview assembles the next session prompt. Read which goals, changes, and context the agent will receive. It is particularly useful when a small edit seems to open unexpectedly broad work.</p>
+<p>To bound a diagnostic run, use <code>jazyk compile --set Main --sessions 1</code>. An unfinished run reports incomplete honestly; later work continues from committed state.</p>
+</section>
+<section id="review" class="article-section">
+<h2>Review a change as a connected set</h2>
+<ul>
+<li>Did the prose change the intended obligation?</li>
+<li>Are the graph facts and diagrams consistent with it?</li>
+<li>Do the examples still express the boundary?</li>
+<li>Which tests and source files became stale?</li>
+<li>Did a proposal introduce a new product choice?</li>
+</ul>
+<p>A no-op rebuild derives no new goals and makes no LLM calls. If a supposedly unchanged project keeps opening work, inspect its change records, failed work, and unstable judgments rather than assuming more retries will settle it.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../decisions/">Review the human decisions <span aria-hidden="true">→</span>
+</a>
+<a href="../verification/">Interpret stale evidence <span aria-hidden="true">→</span>
+</a>
+<a href="../cli/">Inspection command reference <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../verification/">
+<small>Previous</small>← Verification & evidence</a>
+<a href="../decisions/">
+<small>Next</small>Questions & provenance →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#incremental">An edit updates a model that already exists</a>
+<a href="#effects">See what different edits affect</a>
+<a href="#history">Trace the cause instead of guessing</a>
+<a href="#preview">Look at the work before running it</a>
+<a href="#review">Review a change as a connected set</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

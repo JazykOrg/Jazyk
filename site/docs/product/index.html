@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From docs to product · Jazyk docs</title>
+<meta name="description" content="Bind requirements to files and tests, generate the missing work, and verify the actual artifact.">
+<link rel="icon" type="image/svg+xml" href="../../favicon.svg">
+<link rel="stylesheet" href="../docs.css">
+<script src="../docs.js" defer>
+</script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+<nav aria-label="Site">
+<a class="logo" href="../../">
+<img src="../../favicon.svg" alt="" width="27" height="27">Jazyk <span class="logo-divider">/</span>
+<span class="logo-docs">Docs</span>
+</a>
+<div class="header-links">
+<a href="../../">Home</a>
+<a href="https://jazyk.dev" class="editor-link">Open the editor <span aria-hidden="true">↗</span>
+</a>
+</div>
+</nav>
+</header>
+<div class="docs-layout">
+<aside class="sidebar">
+<nav class="desktop-nav" aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/" aria-current="page">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+<details class="mobile-nav">
+<summary>From docs to product<span>Browse docs</span>
+</summary>
+<nav aria-label="Documentation">
+<div class="nav-group">
+<p class="nav-group-title">Getting started</p>
+<a href="../">Start here</a>
+<a href="../installation/">Installation</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Learn the compiler</p>
+<a href="../structure/">Document structure</a>
+<a href="../writing/">Writing requirements</a>
+<a href="../graph/">Understanding the graph</a>
+<a href="../product/" aria-current="page">From docs to product</a>
+<a href="../verification/">Verification & evidence</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Work with change</p>
+<a href="../changes/">Changes & history</a>
+<a href="../decisions/">Questions & provenance</a>
+<a href="../diagrams/">Diagrams & views</a>
+<a href="../existing/">Existing projects</a>
+</div>
+<div class="nav-group">
+<p class="nav-group-title">Reference</p>
+<a href="../cli/">CLI reference</a>
+<a href="../models/">Models & benchmarks</a>
+<a href="../project/">Project files</a>
+<a href="../troubleshooting/">Troubleshooting</a>
+</div>
+</nav>
+</details>
+</aside>
+<main id="main" tabindex="-1">
+<div class="breadcrumbs">
+<a href="../">Docs</a>
+<span aria-hidden="true">/</span>
+<span>From docs to product</span>
+</div>
+<div class="article-header">
+<p class="eyebrow">LEARN THE COMPILER</p>
+<h1>Produce the thing you described.</h1>
+<p class="lede">Bind requirements to files and tests, generate the missing work, and verify the actual artifact.</p>
+</div>
+<details class="mobile-toc">
+<summary>On this page</summary>
+<nav aria-label="On this page">
+<a href="#pipeline">The graph is the generation contract</a>
+<a href="#scope">Choose where generation may write</a>
+<a href="#binding">Bind existing work before filling gaps</a>
+<a href="#medium">Make the medium explicit</a>
+<a href="#run">Generate, then read the evidence</a>
+</nav>
+</details>
+<article>
+<section id="pipeline" class="article-section">
+<h2>The graph is the generation contract</h2>
+<p>Compilation makes a semantic graph. Generation reads that graph as its specification. Requirements say what the product owes; criteria say how to recognize it.</p>
+<div class="workflow">
+<span>Compile</span>
+<span aria-hidden="true">→</span>
+<span>Bind</span>
+<span aria-hidden="true">→</span>
+<span>Generate</span>
+<span aria-hidden="true">→</span>
+<span>Verify</span>
+</div>
+<div class="table-scroll">
+<table>
+<thead>
+<tr>
+<th scope="col">Stage</th>
+<th scope="col">Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compile</td>
+<td>Facts and judgments reconciled against the docs.</td>
+</tr>
+<tr>
+<td>Bind</td>
+<td>Criteria tied to tests, and requirements tied to implementation files or missing implementations.</td>
+</tr>
+<tr>
+<td>Generate</td>
+<td>Files or build sources that implement the requirements.</td>
+</tr>
+<tr>
+<td>Verify</td>
+<td>Recorded outcomes and evidence for the criteria.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="scope" class="article-section">
+<h2>Choose where generation may write</h2>
+<p>The document set’s source selection defines its allowed product paths. Start narrow and include required support files explicitly.</p>
+<div class="code-block">
+<div class="code-head">
+<span>Example · a software project</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk sets update Main --source &#x27;src/**&#x27; --source &#x27;tests/**&#x27; --source package.json</code>
+</pre>
+</div>
+<p>A slide project could select <code>slides/**</code> and its build script instead. Source files can already exist. Choosing them does not prove their coverage and does not by itself release generation.</p>
+<p>Docs are excluded from generation write scopes. Keep generated state separate from the authored prose and selected product files.</p>
+</section>
+<section id="binding" class="article-section">
+<h2>Bind existing work before filling gaps</h2>
+<p>Binding looks for the implementation and establishes tests against the criteria. A requirement can already be satisfied by existing files. There is no need to replace working code simply because it was not generated by Jazyk.</p>
+<p>The ledger records implementing files, test artifacts, run commands, and evidence. Generation handles missing or changed obligations. Missing information becomes a decision to review rather than an invisible assumption.</p>
+</section>
+<section id="medium" class="article-section">
+<h2>Make the medium explicit</h2>
+<p>If the documents ask for a manuscript, the text files may be the artifact. If they ask for a deck, PDF, rendered site, or binary, sources must build the requested artifact and tests must inspect that result.</p>
+<p>The workflow records the medium and toolchain once and carries that decision into later sessions. State a required format or language in the docs; the project config selects paths and execution settings, not the product’s intent.</p>
+<aside class="note">
+<strong>Content must be present</strong>
+<p>A requirement for a title, definition, color, or behavior is satisfied only by the actual content or behavior. Placeholders and descriptions of future work do not meet it.</p>
+</aside>
+</section>
+<section id="run" class="article-section">
+<h2>Generate, then read the evidence</h2>
+<div class="code-block">
+<div class="code-head">
+<span>Terminal</span>
+<button type="button" class="copy-button" hidden>Copy</button>
+</div>
+<pre>
+<code>jazyk gen --set Main
+jazyk test --set Main</code>
+</pre>
+</div>
+<p>These commands can call your agent and write within the selected source paths. In the GUI, Build groups compile, generation, and review when work exists. In Cloud, delivery to GitHub is a separate confirmed action.</p>
+<p>Inspect the actual result, not just a success message. Follow its requirements to the current evidence. A complete graph and a verified artifact are different checkpoints.</p>
+<aside class="related">
+<p class="eyebrow">KEEP READING</p>
+<a href="../verification/">Understand test evidence <span aria-hidden="true">→</span>
+</a>
+<a href="../existing/">Start with existing code <span aria-hidden="true">→</span>
+</a>
+<a href="../cloud/">Deliver a hosted project <span aria-hidden="true">→</span>
+</a>
+</aside>
+</section>
+</article>
+<nav class="page-nav" aria-label="Previous and next">
+<a href="../graph/">
+<small>Previous</small>← Understanding the graph</a>
+<a href="../verification/">
+<small>Next</small>Verification & evidence →</a>
+</nav>
+<footer class="article-footer">Jazyk means tongue, in Slavic languages.<a href="https://jazyk.dev">jazyk.dev ↗</a>
+</footer>
+</main>
+<aside class="toc">
+<p>ON THIS PAGE</p>
+<nav aria-label="On this page">
+<a href="#pipeline">The graph is the generation contract</a>
+<a href="#scope">Choose where generation may write</a>
+<a href="#binding">Bind existing work before filling gaps</a>
+<a href="#medium">Make the medium explicit</a>
+<a href="#run">Generate, then read the evidence</a>
+</nav>
+</aside>
+</div>
+<span class="sr-only" id="copy-status" role="status" aria-live="polite">
+</span>
+</body>
+</html>

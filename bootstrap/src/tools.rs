@@ -10186,6 +10186,46 @@ mod tests {
         assert!(mark(&mut t, g, json!("merged")).is_ok());
     }
 
+    // Mirrors docs/compiler/goals/declare-edges.md#gate: an edge staged without a type
+    // and then staged again with one is judged as the changeset leaves it, so the
+    // repaired call clears the refusal (a local model once spent a whole session on a
+    // superseded op it could not unstage).
+    #[test]
+    fn a_repaired_edge_clears_the_untyped_refusal() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:operator".into(), plain("Operator"));
+        s.graph.entities.insert("ent:admin-cli".into(), plain("Admin CLI"));
+        s.graph.requirements.insert(
+            "req:admin-3".into(),
+            Requirement {
+                statement: "The Admin CLI lets an Operator run Orderly.".into(),
+                entities: vec!["ent:operator".into(), "ent:admin-cli".into()],
+                ..Default::default()
+            },
+        );
+        let goals = one_goal("declare-edges", "req:admin-3", Value::Null);
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let mark = |t: &mut ToolSession| {
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:declare-edges:req:admin-3", "justification": "The Operator uses the Admin CLI.", "evidence": "declared"}),
+            )
+        };
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": "req:admin-3", "edges": [{"a": "ent:operator", "b": "ent:admin-cli", "cardinality": "1"}]}),
+        )
+        .unwrap();
+        assert_eq!(mark(&mut t).unwrap_err().rule, "untyped-edge");
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": "req:admin-3", "edges": [{"a": "ent:operator", "b": "ent:admin-cli", "cardinality": "1", "type": "dependency"}]}),
+        )
+        .unwrap();
+        assert!(mark(&mut t).is_ok(), "the repaired edge stands");
+        assert!(t.dispatch("done", &json!({"summary": "Declared the edge."})).is_ok());
+    }
+
     // Mirrors docs/compiler/goals/curate-view.md#gate: every matched node is added or
     // excluded with a note, and a note naming another flow names one that lists it.
     #[test]

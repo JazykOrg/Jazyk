@@ -3510,12 +3510,25 @@ impl GoalKind for DeclareEdges {
     }
     fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation> {
         let mut out = Vec::new();
+        // The edges each requirement ends with: a later update on the same id replaces
+        // the edges an earlier one staged, so a repaired call is judged and the
+        // superseded one is not. Mirrors docs/compiler/goals/declare-edges.md#gate.
+        let mut effective: BTreeMap<&str, &Vec<ReqEdge>> = BTreeMap::new();
+        for op in staged {
+            if let Op::UpdateRequirement {
+                id,
+                edges: Some(edges),
+                ..
+            } = op
+            {
+                effective.insert(id.as_str(), edges);
+            }
+        }
         for op in staged {
             if let Op::UpdateRequirement {
                 id,
                 statement,
                 entities,
-                edges,
                 transition,
                 facets,
                 source,
@@ -3539,7 +3552,11 @@ impl GoalKind for DeclareEdges {
                         ));
                     }
                 }
-                if let Some(edges) = edges {
+            }
+        }
+        for (id, edges) in effective {
+            {
+                {
                     let listed: Vec<String> = store
                         .graph
                         .requirements

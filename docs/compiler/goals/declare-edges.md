@@ -66,6 +66,10 @@ anything else is `bad-evidence`), and the harness checks:
   `entities`; `cardinality`, when given, is one of `1`, `0..1`, `1..*`, `*`
   ([validation gates](../graph.md#validation-gates)). The call passes neither `section`
   nor `quote`: those re-anchor the provenance to another sentence.
+  The harness judges each requirement's edges as the changeset will leave them: a
+  later `update_requirement` on the same requirement replaces the edges an earlier
+  one staged, so the repaired call clears the refusal and the superseded one is not
+  judged again.
 - `not-structural`: no edges are staged on the target (`edges-staged` otherwise), and
   the justification names the sentence and why it relates no pair. The justification is recorded in the journal
   with the resolution ([journal](../graph.md#journal)) and is what stops the goal from

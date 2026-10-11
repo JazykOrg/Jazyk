@@ -808,6 +808,9 @@ The named errors a caller meets beyond the gates:
   ([workers and leases](./control-plane.md#workers-and-leases)).
 - `claimed`: `begin_goals` on a batch another worker holds; the error names the holder
   ([the control plane over MCP](../frontends/mcp.md#the-control-plane-over-mcp)).
+- `session-complete`: a write tool, goal tool, `done`, `abandon_goals`, or
+  `begin_goals` on a scoped serving whose batch already committed; the error names the
+  batch and says to end the turn ([`--only`](../frontends/mcp.md#mcp-into-acp-sessions)).
 - A write tool or goal tool outside an open batch: rejected toward `begin_goals`.
 - A tool outside the batch's toolset is not served; a call to it is an unknown tool.
 

@@ -96,7 +96,11 @@ this spawning path and are not for standalone servings:
 - `--only <batch|goal>`: `begin_goals` accepts only the named batch
   (`b<generation>-<n>`), or the batch the named goal (`g:...`) belongs to. A
   session's serving cannot claim work beyond its batch, so a session that finishes
-  early never wanders onto the rest of the board.
+  early never wanders onto the rest of the board. Once its batch commits, the serving
+  answers every write, goal tool, `done`, and `abandon_goals` with `session-complete`,
+  naming the batch and its generation: the session's work is done and the agent ends
+  its turn. A plain `no-open-batch` there would send the agent back to `begin_goals`
+  (a local model once re-marked goals of a committed batch eight times).
 - `--build-token <id>`: the serving is part of the running internal build. The
   build-lease refusal and the release gate do not apply to its batch; without this,
   a build's own sessions would deadlock against the build's own lease.

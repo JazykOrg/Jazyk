@@ -725,6 +725,27 @@ impl McpServer {
     // Opens the changeset and returns the assembled session prompt as `instructions`
     // and the initially loaded set as `package`.
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    // A scoped serving whose batch already committed: the session's work is done, and
+    // every later write, goal tool, done, or abandon says so instead of the
+    // `no-open-batch` refusal that sends an agent back to begin_goals.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    fn session_complete(&self) -> Option<Value> {
+        if self.open.lock().unwrap().is_some() {
+            return None;
+        }
+        self.session_complete_closed()
+    }
+
+    // The same answer for a caller that already holds the `open` lock and found no
+    // batch: locking it again would deadlock.
+    fn session_complete_closed(&self) -> Option<Value> {
+        self.bridge.only.as_ref()?;
+        let fin = self.finished.lock().unwrap().clone()?;
+        Some(json!({"error": {"rule": "session-complete", "message": format!(
+            "this session is complete: batch `{}` committed at generation {}. Nothing is left to stage, mark, or commit in this session; end your turn now",
+            fin, crate::store::read_generation(&self.out))}}))
+    }
+
     fn begin_goals(&self, params: &Value) -> Value {
         if let Some(o) = self.open.lock().unwrap().as_ref() {
             return json!({"error": {"rule": "batch-open", "message": format!(
@@ -966,6 +987,9 @@ impl McpServer {
     // and run the deterministic tail when the board empties.
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     fn done_batch(&self, params: &Value) -> Value {
+        if let Some(v) = self.session_complete() {
+            return v;
+        }
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else {
             return json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}});
@@ -1252,6 +1276,9 @@ impl McpServer {
     }
 
     fn abandon_goals(&self, params: &Value) -> Value {
+        if let Some(v) = self.session_complete() {
+            return v;
+        }
         let mut open = self.open.lock().unwrap();
         let Some(o) = open.take() else {
             return json!({"error": {"rule": "no-open-batch", "message": "no batch is open"}});
@@ -2160,6 +2187,9 @@ impl McpServer {
                         if self.modes.iter().any(|m| m == "compile" || m == "chat")
                             && self.bench.lock().unwrap().open.is_none() =>
                     {
+                        if let Some(v) = self.session_complete() {
+                            return Ok(text_result(v, true));
+                        }
                         if self.open.lock().unwrap().is_none() {
                             return Ok(text_result(
                                 json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}}),
@@ -2387,6 +2417,9 @@ impl McpServer {
                     };
                 }
                 if is_graph_write && self.modes.iter().any(|m| m == "compile") {
+                    if let Some(v) = self.session_complete_closed() {
+                        return Ok(text_result(v, true));
+                    }
                     // Binding and generation have no batch: a contradiction the tests
                     // expose reaches the author through the failing-binding check
                     // (docs/frontends/mcp.md#generation-and-verification-over-mcp).
@@ -3350,6 +3383,48 @@ mod tests {
             false,
             BridgeFlags::default(),
         )
+    }
+
+    // A scoped serving whose batch committed answers every later write, goal tool,
+    // done, and abandon with session-complete, naming the batch; an unscoped serving
+    // keeps the no-open-batch refusal. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    #[test]
+    fn a_committed_scoped_serving_says_the_session_is_complete() {
+        let dir = bare_dir("session-complete");
+        let project = crate::document_sets::Workspace::load(&dir)
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap();
+        let out = project.out.clone();
+        let flags = BridgeFlags {
+            only: Some("b7-1".into()),
+            ..BridgeFlags::default()
+        };
+        let s = McpServer::with_bridge(project.clone(), out.clone(), vec!["compile".to_string()], true, flags);
+        *s.finished.lock().unwrap() = Some("b7-1".into());
+        let call = |name: &str, args: Value| {
+            let r = s
+                .handle("tools/call", &json!({"name": name, "arguments": args}))
+                .unwrap();
+            let text = r["content"][0]["text"].as_str().unwrap_or_default().to_string();
+            (r["isError"].as_bool().unwrap_or(false), text)
+        };
+        for (name, args) in [
+            ("mark_goal_done", json!({"goal": "g:reconcile-section:docs/a.md#/a", "justification": "Done."})),
+            ("upsert_entity", json!({"name": "Order"})),
+            ("done", json!({"summary": "again"})),
+            ("abandon_goals", json!({})),
+        ] {
+            let (is_err, text) = call(name, args);
+            assert!(is_err, "{}: {}", name, text);
+            assert!(text.contains("session-complete") && text.contains("b7-1") && text.contains("end your turn"), "{}: {}", name, text);
+        }
+        let open = McpServer::with_bridge(project, out, vec!["compile".to_string()], true, BridgeFlags::default());
+        *open.finished.lock().unwrap() = Some("b7-1".into());
+        let r = open
+            .handle("tools/call", &json!({"name": "done", "arguments": {"summary": "x"}}))
+            .unwrap();
+        assert!(r["content"][0]["text"].as_str().unwrap_or_default().contains("no-open-batch"));
     }
 
     fn tool_names(s: &McpServer) -> Vec<String> {

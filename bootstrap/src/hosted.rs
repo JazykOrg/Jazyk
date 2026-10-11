@@ -490,6 +490,12 @@ mod tests {
         let text = w.request("GET", "/api/project/text?path=docs/main.md", "", &e).unwrap();
         assert_eq!(text.status, 200);
         assert!(String::from_utf8_lossy(&text.body).contains("The system shall respond."));
+        // The old paths come back as the first set's suggestion, and nothing is written.
+        let sets = w.request("GET", "/api/sets", "", &e).unwrap();
+        let v: Value = serde_json::from_slice(&sets.body).unwrap();
+        assert_eq!(v["suggested"]["docs"], json!(["docs/**/*.md"]), "{}", v);
+        assert_eq!(v["suggested"]["roots"], json!(["docs/main.md"]), "{}", v);
+        assert!(!w.snapshot().contains_key(".jazyk/jazyk.toml"));
     }
 
     #[test]

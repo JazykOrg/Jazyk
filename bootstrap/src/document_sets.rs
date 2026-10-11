@@ -190,8 +190,35 @@ impl Workspace {
             .filter(|set| !self.sets.iter().any(|s| s.id == set.id))
             .map(|set| json!(set))
             .collect();
-        json!({"sets": sets, "removed": removed, "hash": self.hash, "exists": self.exists, "root": self.root.to_string_lossy()})
+        let mut summary = json!({"sets": sets, "removed": removed, "hash": self.hash, "exists": self.exists, "root": self.root.to_string_lossy()});
+        if !self.exists {
+            if let Some(suggested) = legacy_suggestion(&self.root) {
+                summary["suggested"] = suggested;
+            }
+        }
+        summary
     }
+}
+
+// The paths a root jazyk.toml from before document sets still names, offered as the
+// first set's suggestion; never read as configuration.
+// Mirrors docs/compiler/document-sets.md#discovery-and-opening.
+pub fn legacy_suggestion(root: &Path) -> Option<Value> {
+    let text = crate::vfs::read_to_string(root.join("jazyk.toml")).ok()?;
+    let table: toml::Table = toml::from_str(&text).ok()?;
+    let strings = |section: &str, key: &str| -> Vec<String> {
+        table
+            .get(section)
+            .and_then(|s| s.get(key))
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    let docs = strings("docs", "glob");
+    if docs.is_empty() {
+        return None;
+    }
+    Some(json!({"name": "Main", "docs": docs, "roots": strings("roots", "files")}))
 }
 
 fn merge(base: &mut toml::Value, overrides: toml::Value) {

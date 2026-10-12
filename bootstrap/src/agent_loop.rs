@@ -414,6 +414,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 (a.emit)(AgentEvent::Usage { tokens: t.billed, cached: t.cached });
                 m
             }
+            Err(_) if (a.cancelled)() => return Stop::Cancelled,
             Err(e) if e.starts_with("tools-rejected:") && mode != 2 => {
                 llm::set_tools_mode(2);
                 mode = 2;

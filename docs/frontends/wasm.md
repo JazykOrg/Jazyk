@@ -451,3 +451,12 @@ to their canonical application specifications.
 A project chat lists all document sets. A writer can preview and save their
 selections and call `compile_document_sets`. Reader sessions keep read-only tools.
 The compile action accepts explicit set IDs or all dirty sets.
+
+## Stopping builds
+
+The page sets the shared cancellation flag for the selected running job and wakes an
+outstanding model request with cancellation. The compiler checks the flag before
+another request or tool call. Late model replies are ignored. Completed session
+commits remain; staged work and provisional display are discarded. The job ends
+`cancelled`. An explicit Build resets the flag and derives remaining work from saved
+documents. Stop suppresses automatic follow-up builds until an explicit Build.

@@ -2345,14 +2345,12 @@ pub(crate) fn run_sessions(
             })
         };
         let Some(batch) = next else { break };
-        if trace.is_cancelled()
-            || sessions as usize >= cap
+        if trace.is_cancelled() { break; }
+        if sessions as usize >= cap
             || dead_endpoint >= crate::limits::ENDPOINT_BREAKER
         {
             // Exhaustion parks every open goal the loop could still run.
-            let reason = if trace.is_cancelled() {
-                "the build was cancelled".to_string()
-            } else if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
+            let reason = if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
                 format!(
                     "the endpoint answers only errors ({}); the build stopped early",
                     endpoint_error
@@ -2439,7 +2437,7 @@ pub(crate) fn run_sessions(
                 endpoint_error = e.clone();
             }
         }
-        if let Some(e) = report.failed {
+        if let Some(e) = report.failed.filter(|_| !trace.is_cancelled()) {
             trace.event(TraceEvent::SessionFailed {
                 label: batch.id.clone(),
                 goals: batch.goals.clone(),
@@ -2538,6 +2536,7 @@ pub(crate) fn run_sessions(
             if endpoint_down {
                 continue;
             }
+            if trace.is_cancelled() { continue; }
             let n = attempts.entry(id.clone()).or_insert(0);
             *n += 1;
             if *n >= 2 {
@@ -2680,6 +2679,23 @@ pub fn finalize(
     costs: &Costs,
     trace: &Trace,
 ) -> BuildReport {
+    if trace.is_cancelled() {
+        let control = Control::load(proj, &s.out);
+        s.status.verdict = Board::derive(s, proj, &control).verdict();
+        s.status.verdict.state = "incomplete".into();
+        s.status.costs = costs.clone();
+        s.status.spent.tokens += crate::llm::take_tokens_delta();
+        s.save_status();
+        trace.line("build", "stopped; completed commits retained");
+        return BuildReport {
+            verdict: s.status.verdict.to_string(),
+            tokens: costs.tokens,
+            failed: s.status.verdict.failed as usize,
+            blocked: s.status.verdict.blocked as usize,
+            optional: s.status.verdict.optional as usize,
+            ..Default::default()
+        };
+    }
     let settled = s.settle_dangling_diags();
     if !settled.is_empty() {
         trace.line("build", &format!("settle: {}", settled.join("; ")));

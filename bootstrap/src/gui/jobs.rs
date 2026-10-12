@@ -158,6 +158,7 @@ impl Job {
             "id": self.id,
             "kind": self.kind.as_value(),
             "state": self.state,
+            "cancelRequested": self.cancel.load(Ordering::Relaxed),
             "queuedAt": self.queued_at,
             "startedAt": self.started_at,
             "finishedAt": self.finished_at,
@@ -213,6 +214,34 @@ impl JobManager {
 
     // Queue a job. A kind already waiting in the queue dedupes to the queued job's id.
     pub fn submit(&self, st: &SharedState, kind: JobKind) -> u64 {
+        self.submit_inner(st, kind, false).expect("explicit submission")
+    }
+
+    pub fn submit_auto(&self, st: &SharedState, kind: JobKind) -> Option<u64> {
+        self.submit_inner(st, kind, true)
+    }
+
+    fn stop_paths(st: &SharedState, kind: &JobKind) -> Vec<std::path::PathBuf> {
+        match kind {
+            JobKind::Scoped { set_id, .. } => vec![st
+                .proj()
+                .root
+                .join(".jazyk")
+                .join(set_id)
+                .join("jobs-stopped")],
+            JobKind::CompileSets { set_ids, .. } => set_ids
+                .iter()
+                .map(|id| st.proj().root.join(".jazyk").join(id).join("jobs-stopped"))
+                .collect(),
+            _ => vec![st.out.join("jobs-stopped")],
+        }
+    }
+
+    pub fn automatic_stopped(&self, st: &SharedState) -> bool {
+        crate::vfs::exists(&st.out.join("jobs-stopped"))
+    }
+
+    fn submit_inner(&self, st: &SharedState, kind: JobKind, automatic: bool) -> Option<u64> {
         let kind = if !matches!(
             kind,
             JobKind::Scoped { .. } | JobKind::CompileSets { .. } | JobKind::Benchmark { .. }
@@ -230,9 +259,22 @@ impl JobManager {
             kind
         };
         let mut inner = self.inner.lock().unwrap();
+        let paths = Self::stop_paths(st, &kind);
+        if automatic && paths.iter().any(|p| crate::vfs::exists(p)) {
+            return None;
+        }
+        let resumes_build = match &kind {
+            JobKind::Scoped { kind, .. } => matches!(kind.as_ref(), JobKind::Build | JobKind::Compile),
+            kind => matches!(kind, JobKind::Build | JobKind::Compile | JobKind::CompileSets { .. }),
+        };
+        if !automatic && resumes_build {
+            for p in paths {
+                let _ = crate::vfs::remove_file(p);
+            }
+        }
         for qid in &inner.queue {
             if inner.jobs.get(qid).map(|j| j.kind == kind).unwrap_or(false) {
-                return *qid;
+                return Some(*qid);
             }
         }
         inner.next_id += 1;
@@ -255,7 +297,7 @@ impl JobManager {
         drop(inner);
         st.events.emit("job.queued", json!({ "job": summary }));
         self.wake.notify_all();
-        id
+        Some(id)
     }
 
     pub fn list(&self) -> Vec<Value> {
@@ -272,27 +314,51 @@ impl JobManager {
         })
     }
 
-    // Best effort: a queued job cancels immediately, a running one stops at its next
-    // boundary (between sessions, entities, or rows). In-flight LLM calls finish.
+    // Fence automatic work and queued follow-ups before cancelling the active run.
     pub fn cancel(&self, st: &SharedState, id: u64) -> Option<Value> {
         let mut inner = self.inner.lock().unwrap();
         let job = inner.jobs.get(&id)?;
-        job.cancel.store(true, Ordering::Relaxed);
-        if job.state == "queued" {
-            inner.queue.retain(|q| *q != id);
-            let job = inner.jobs.get_mut(&id).unwrap();
-            job.state = "cancelled";
-            job.finished_at = Some(crate::verify::now_iso());
-            let summary = job.summary();
-            inner.prune();
-            drop(inner);
+        if !matches!(job.state, "running" | "queued") {
+            return Some(job.summary());
+        }
+        let paths = Self::stop_paths(st, &job.kind);
+        for p in &paths {
+            crate::vfs::create_dir_all(p.parent().unwrap()).ok()?;
+            crate::vfs::write(p, b"stopped").ok()?;
+        }
+        let ids: Vec<u64> = inner
+            .jobs
+            .values()
+            .filter(|j| {
+                j.id == id
+                    || (j.state == "queued"
+                        && Self::stop_paths(st, &j.kind)
+                            .iter()
+                            .any(|p| paths.contains(p)))
+            })
+            .map(|j| j.id)
+            .collect();
+        let mut finished = Vec::new();
+        for stopped in &ids {
+            let job = inner.jobs.get_mut(stopped).unwrap();
+            job.cancel.store(true, Ordering::Relaxed);
+            if job.state == "queued" {
+                job.state = "cancelled";
+                job.finished_at = Some(crate::verify::now_iso());
+                finished.push(*stopped);
+            }
+        }
+        inner.queue.retain(|qid| !ids.contains(qid));
+        let summary = inner.jobs[&id].summary();
+        inner.prune();
+        drop(inner);
+        for id in finished {
             st.events.emit(
                 "job.finished",
                 json!({ "jobId": id, "state": "cancelled", "result": Value::Null }),
             );
-            return Some(summary);
         }
-        Some(inner.jobs.get(&id).unwrap().summary())
+        Some(summary)
     }
 
     pub fn cancel_running(&self) {
@@ -332,7 +398,7 @@ impl JobManager {
 }
 
 // The single worker thread. Returns the join handle so shutdown can wait for a
-// cancelled job to reach a boundary and release the store lock.
+// cancelled job to discard its active session and release the store lock.
 pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || loop {
         let (id, kind, cancel) = {
@@ -417,7 +483,9 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         };
 
         let (state, result) = match result {
-            Ok(v) if cancel.load(Ordering::Relaxed) => ("cancelled", Some(v)),
+            result if cancel.load(Ordering::Relaxed) => ("cancelled", Some(match result {
+                Ok(v) => v, Err(e) => json!({"error": e}),
+            })),
             Ok(v) => ("done", Some(v)),
             Err(e) => ("failed", Some(json!({ "error": e }))),
         };
@@ -443,7 +511,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         );
         let st2 = st.clone();
         std::thread::spawn(move || super::events::recompute_pending(&st2));
-        super::jobs_hook_on_job_finished(&st, &kind);
+        if state == "done" { super::jobs_hook_on_job_finished(&st, &kind); }
     })
 }
 
@@ -462,7 +530,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
                 );
             }
             let result = execute(&scope, kind, trace);
-            super::jobs_hook_on_job_finished(&scope, kind);
+            if !trace.is_cancelled() { super::jobs_hook_on_job_finished(&scope, kind); }
             result
         }
         JobKind::CompileSets {

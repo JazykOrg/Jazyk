@@ -1113,4 +1113,85 @@ mod tests {
             .unwrap()
             .is_empty());
     }
+    #[test]
+    fn stop_discards_staged_coverage_and_late_done_without_retry_then_build_resumes() {
+        let mut w = workspace("Alpha");
+        let e = navigation_model("Alpha", Arc::new(AtomicUsize::new(0)), None);
+        value(&mut w, "POST", "/api/jobs", json!({"kind":"compile"}), &e);
+        let baseline = w.snapshot();
+        w.files.insert(
+            "docs/main.md".into(),
+            b"# Alpha\n\nUpdated navigation index.\n".to_vec(),
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let stopping = Execution {
+            cancel: cancel.clone(),
+            model: "Alpha".into(),
+            transport: Some(Arc::new(move |_| {
+                let n = seen.fetch_add(1, Ordering::SeqCst);
+                let actions = if n == 0 {
+                    vec![(
+                        "set_coverage",
+                        json!({"section":"docs/main.md#/alpha", "state":"non-normative", "note":"Navigation."}),
+                    )]
+                } else {
+                    flag.store(true, Ordering::SeqCst);
+                    vec![
+                        (
+                            "mark_goal_done",
+                            json!({"goal":"g:reconcile-section:docs/main.md#/alpha", "justification":"Done."}),
+                        ),
+                        ("done", json!({"summary":"late completion"})),
+                    ]
+                };
+                Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(i,(name,args))| json!({"id":format!("call-{i}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()}}]}).to_string())
+            })),
+            ..Default::default()
+        };
+        value(
+            &mut w,
+            "POST",
+            "/api/jobs",
+            json!({"kind":"compile"}),
+            &stopping,
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "stop must not retry or dispatch the late done"
+        );
+        for (path, bytes) in baseline.iter().filter(|(p, _)| p.contains("/journal/")) {
+            assert_eq!(
+                w.files.get(path),
+                Some(bytes),
+                "earlier commit changed: {path}"
+            );
+        }
+        let stopped = value(
+            &mut w,
+            "GET",
+            "/api/status",
+            Value::Null,
+            &Execution::default(),
+        );
+        assert_ne!(stopped["verdict"]["state"], "converged");
+        let resumed = Arc::new(AtomicUsize::new(0));
+        let e = navigation_model("Alpha", resumed.clone(), None);
+        value(&mut w, "POST", "/api/jobs", json!({"kind":"compile"}), &e);
+        assert!(
+            resumed.load(Ordering::SeqCst) > 0,
+            "staged coverage must have been discarded"
+        );
+        let before = resumed.load(Ordering::SeqCst);
+        value(&mut w, "POST", "/api/jobs", json!({"kind":"compile"}), &e);
+        assert_eq!(
+            resumed.load(Ordering::SeqCst),
+            before,
+            "completed resume must be a no-op"
+        );
+    }
+
 }

@@ -29,7 +29,7 @@ fn jobs_hook_on_docs_changed(st: &SharedState) {
     // A change resets the retry backoff, as it does for `jazyk watch`.
     st.backoff.lock().unwrap().remove(&st.set_key());
     if st.control().compile == "auto" {
-        st.jobs.submit(st, jobs::JobKind::Compile);
+        st.jobs.submit_auto(st, jobs::JobKind::Compile);
     }
 }
 
@@ -37,7 +37,7 @@ fn jobs_hook_on_docs_changed(st: &SharedState) {
 // endpoint outage) retries with backoff, the same loop `jazyk watch` runs. A document
 // change resets the backoff by queueing a fresh compile through the hook above.
 fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
-    if !matches!(kind, jobs::JobKind::Compile) {
+    if st.jobs.automatic_stopped(st) || !matches!(kind, jobs::JobKind::Compile) {
         return;
     }
     // Auto generation: a finished compile with a non-empty worklist queues a gen job
@@ -46,7 +46,7 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     if st.control().generate == "auto" {
         let store = crate::store::Store::load(&st.out);
         if !crate::gen::pending(&store, &st.gs()).is_empty() {
-            st.jobs.submit(
+            st.jobs.submit_auto(
                 st,
                 jobs::JobKind::Gen {
                     entities: vec![],
@@ -76,7 +76,7 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(secs));
         if st.control().compile == "auto" && st.jobs.running_job().is_none() {
-            st.jobs.submit(&st, jobs::JobKind::Compile);
+            st.jobs.submit_auto(&st, jobs::JobKind::Compile);
         }
     });
 }

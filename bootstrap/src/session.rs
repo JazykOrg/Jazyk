@@ -467,8 +467,8 @@ pub struct Trace {
     pub level: TraceLevel,
     // None renders to stderr. A sink receives the structured events instead.
     sink: Option<TraceSink>,
-    // Best-effort cancellation, checked between batches, entities, and rows. It rides
-    // in the trace because the trace is already threaded through every runner.
+    // Cancellation reaches model waits, session runners, and pipeline boundaries.
+    // It rides in the trace because every runner already carries the trace.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     transcript: Option<std::sync::Arc<std::sync::Mutex<Transcript>>>,
     // The run's transcript name under <out>/trace, when the run leaves one. Carried so
@@ -655,6 +655,8 @@ impl Trace {
         });
     }
     pub fn is_cancelled(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if crate::wasm::llm_bridge::cancel_requested() { return true; }
         self.cancel.load(std::sync::atomic::Ordering::Relaxed)
     }
 }

@@ -511,11 +511,16 @@ cancellation.
 - Submitting a `compile` while one is already queued returns the queued job's id.
 - A job whose run panics ends `failed` with the panic message as its result, and the
   worker goes on to the next job: nothing stays `running`.
-- Cancellation is best effort: a job stops at its next boundary (between sessions,
-  entities, or rows). An LLM call already in flight is not interrupted. A cancelled
-  compile parks its remaining goals
-  ([parked and failed](../compiler/reconciler.md#parked-and-failed)), and the next
-  build resumes them first.
+- Stop cancels the active session and discards its staged changes and model context.
+  Completed session commits remain. Cancellation prevents late replies and implicit
+  end-of-input finishes from committing the discarded session. A commit already
+  accepted remains atomic. The job reports `cancelRequested` while stopping and
+  `cancelled` after cleanup. The provider request is cancelled where supported;
+  otherwise its eventual reply is ignored.
+- Stop clears queued follow-up jobs for the same document set and suppresses automatic
+  builds and retries until an explicit Build. It does not change workflow settings or
+  discard document edits. The next Build reads saved documents and derives remaining
+  work from the retained graph. Cancellation does not consume a failed-session retry.
 - Job progress streams as [trace events](../compiler/sessions.md#trace-events) over
   the event stream, the same events the `compile` command renders as its live trace:
   `batchStart`, `sessionStart`, `sessionDone`, `sessionFailed`, `gcBurst`, the `goal`

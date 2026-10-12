@@ -152,6 +152,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--option",
     "--text",
     "--build-token",
+    "--cancel-file",
     "--edit-sink",
     "--cached",
 ];
@@ -189,6 +190,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
                 "--ephemeral",
                 "--only",
                 "--build-token",
+                "--cancel-file",
                 "--packaged",
                 "--serve-files",
                 "--edit-sink",
@@ -496,6 +498,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              --ephemeral          the serving belongs to one session\n  \
              --only ID            begin_goals accepts only this batch (or a goal, selecting its batch)\n  \
              --build-token ID     part of the running internal build\n  \
+             --cancel-file PATH   stop fence for this session, disables implicit finish\n  \
              --packaged           the prompt was already delivered; begin_goals acks instead of repeating it\n  \
              --serve-files        add the sandboxed file and command tools\n  \
              --edit-sink PATH     delegate document and settings writes to the spawning process\n\n\
@@ -619,6 +622,7 @@ pub fn run() {
                 "--option" => opts.option = number(arg, &v, &mut errors),
                 "--text" => opts.text = Some(v),
                 "--build-token" => opts.build_token = Some(v),
+                "--cancel-file" => opts.cancel_file = Some(v),
                 "--edit-sink" => opts.edit_sink = Some(v),
                 "--cached" => opts.cached = number(arg, &v, &mut errors),
                 _ => unreachable!("every value option is matched"),
@@ -810,6 +814,7 @@ pub fn run() {
                         ephemeral: opts.ephemeral,
                         only: opts.only.clone(),
                         build_token: opts.build_token.clone(),
+                        cancel_file: opts.cancel_file.as_ref().map(std::path::PathBuf::from),
                         serve_files: opts.serve_files,
                         edit_sink: opts.edit_sink.clone(),
                         packaged: opts.packaged,

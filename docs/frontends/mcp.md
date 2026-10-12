@@ -467,3 +467,10 @@ Readers do not lock. They read the generation counter, load shards, and retry if
 counter moved mid-read. Writers respect the store lock, so one changeset commits at a
 time even with a compile running next to the server. See
 [concurrency](../compiler/graph.md#concurrency).
+
+## Stop fence
+
+An internal worker serving accepts `--cancel-file PATH`. The runner creates this
+attempt-specific file before stopping the worker. Once it exists, tool calls are
+refused and end of input discards staged work. An ordinary session end still uses
+the implicit finish. A subsequent build uses new session fences.

@@ -350,6 +350,13 @@ diagnostic ([parked and failed](./reconciler.md#parked-and-failed)). The
 loop after three consecutive invalid rounds, so a stuck weak model fails fast instead of
 spending the budget.
 
+A user stop drops the active changeset and its model context. Completed commits remain.
+Late replies cannot stage mutations or commit. Cancellation does not retry the session.
+An ephemeral serving receives an internal `--cancel-file` fence. Once the file exists,
+it rejects calls and drops open work at end of input instead of committing implicitly.
+The runner creates the fence before cancelling or closing the agent. Each attempt uses
+its own fence, so rebuilding cannot reactivate a stopped session.
+
 ## Resolving, failing, parking
 
 Every goal in the batch ends in one of three states, and the session says which.

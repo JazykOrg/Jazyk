@@ -159,6 +159,7 @@ impl SessionRunner for InProcessRunner {
         }
 
         let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
+            if trace.is_cancelled() { return Err("the build was stopped".into()); }
             match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
                 Ok(v) => {
                     if let Some(preview) = server.live_preview() {
@@ -226,6 +227,9 @@ impl SessionRunner for InProcessRunner {
             Stop::EndTurn => None,
             other => Some(crate::runner::unlanded_reason(other, rounds)),
         };
+        if trace.is_cancelled() && !committed {
+            trace.event(TraceEvent::SessionEnded { label: label.clone(), goals: batch.goal_ids(), reason: "the build was cancelled".into() });
+        }
         if committed {
             // The batch landed: the store's word. A failure's terminal event is the
             // reconciler's, which knows the attempt number.
@@ -243,7 +247,7 @@ impl SessionRunner for InProcessRunner {
             rounds,
             tokens,
             cached,
-            failed: if committed || batch.is_ledger() {
+            failed: if committed || batch.is_ledger() || trace.is_cancelled() {
                 None
             } else {
                 Some(crate::runner::unlanded_reason(&stop, rounds))

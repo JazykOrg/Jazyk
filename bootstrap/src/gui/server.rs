@@ -944,4 +944,25 @@ mod tests {
         );
         std::fs::remove_dir_all(&st.root).unwrap();
     }
+    #[test]
+    fn stop_clears_followups_and_blocks_automatic_jobs_until_explicit_build() {
+        let st = state(None, "https://stop-jobs.test");
+        let first = st.jobs.submit(&st, jobs::JobKind::Compile);
+        let followup = st.jobs.submit(
+            &st,
+            jobs::JobKind::Gen {
+                entities: vec![],
+                force: false,
+            },
+        );
+        let stopped = st.jobs.cancel(&st, first).unwrap();
+        assert_eq!(stopped["state"], "cancelled");
+        assert_eq!(st.jobs.get(followup).unwrap()["state"], "cancelled");
+        assert!(st.jobs.submit_auto(&st, jobs::JobKind::Compile).is_none());
+        let next = st.jobs.submit(&st, jobs::JobKind::Compile);
+        assert_eq!(st.jobs.get(next).unwrap()["state"], "queued");
+        assert!(st.jobs.submit_auto(&st, jobs::JobKind::Compile).is_some());
+        std::fs::remove_dir_all(&st.root).unwrap();
+    }
+
 }

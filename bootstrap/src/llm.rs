@@ -419,6 +419,19 @@ impl Llm {
         label: &str,
         step: &str,
     ) -> Result<(Value, Spend), String> {
+        self.chat_messages_cancellable(messages, tools, label, step, &|| {
+            self.trace.as_ref().is_some_and(|t| t.is_cancelled())
+        })
+    }
+
+    pub fn chat_messages_cancellable(
+        &self,
+        messages: &[Value],
+        tools: Option<&[Value]>,
+        label: &str,
+        step: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(Value, Spend), String> {
         // A boosted cap serves this one call, retries included, whatever its outcome.
         struct ClearBoost;
         impl Drop for ClearBoost {
@@ -444,10 +457,15 @@ impl Llm {
         });
         let mut try_stream = false;
         for attempt in 0..=max {
-            if self.trace.as_ref().is_some_and(|t|t.is_cancelled()) { return Err("execution cancelled".into()); }
+            if cancelled() {
+                return Err("execution cancelled".into());
+            }
             let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream;
-            match self.chat_once(messages, tools, streaming) {
+            match self.chat_once(messages, tools, streaming, cancelled) {
                 Ok((msg, tokens)) => {
+                    if cancelled() {
+                        return Err("execution cancelled".into());
+                    }
                     // A streaming probe that succeeds after a non-streaming failure
                     // sticks for the run.
                     if try_stream && !STREAM_REQUIRED.swap(true, Ordering::Relaxed) {
@@ -474,6 +492,9 @@ impl Llm {
                     return Ok((msg, tokens));
                 }
                 Err(e) => {
+                    if cancelled() {
+                        return Err("execution cancelled".into());
+                    }
                     // An endpoint that only serves streaming responses says so; switch
                     // once, sticky for the run, and retry.
                     if e.to_lowercase().contains("stream must be set to true")
@@ -509,7 +530,8 @@ impl Llm {
                     }
                     // A model that rejects `temperature` answers 400 (often wrapped by a
                     // proxy). Drop the parameter once, sticky for the run, and retry.
-                    let looks_400 = e.contains("HTTP 400") || e.to_lowercase().contains("temperature");
+                    let looks_400 =
+                        e.contains("HTTP 400") || e.to_lowercase().contains("temperature");
                     if looks_400
                         && self.temperature.is_some()
                         && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed)
@@ -566,7 +588,12 @@ impl Llm {
                                 truncate(&last, 120)
                             ),
                         }
-                        crate::sys::sleep(Duration::from_secs(wait));
+                        for _ in 0..wait * 20 {
+                            if cancelled() {
+                                return Err("execution cancelled".into());
+                            }
+                            crate::sys::sleep(Duration::from_millis(50));
+                        }
                     } else {
                         break;
                     }
@@ -619,6 +646,7 @@ impl Llm {
         messages: &[Value],
         tools: Option<&[Value]>,
         streaming: bool,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<(Value, Spend), String> {
         // History goes out as-is, reasoning fields included, so a reasoning model keeps
         // its chain across rounds. Stripped only under the sticky rejection fallback.
@@ -663,7 +691,41 @@ impl Llm {
         // in-page model (docs/frontends/wasm.md#the-model).
         // A reply without usage is billed by estimate: what went out and what came back.
         let sent_estimate = (body.chars().count() as u64).div_ceil(4);
-        settle(self.transport(&body, streaming)?, sent_estimate)
+        settle(self.transport_cancellable(&body, streaming, cancelled)?, sent_estimate)
+    }
+
+    // Native HTTP waits hold only an owned request, never the session or its tools.
+    // A late response is dropped when the caller stops waiting. Hosted transports
+    // enforce cancellation themselves and must retain their thread-local scope.
+    fn transport_cancellable(
+        &self,
+        body: &str,
+        streaming: bool,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Transported, String> {
+        if cancelled() {
+            return Err("execution cancelled".into());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if !crate::vfs::is_scoped() {
+            let client = self.clone();
+            let body = body.to_owned();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(client.transport(&body, streaming));
+            });
+            loop {
+                if cancelled() {
+                    return Err("execution cancelled".into());
+                }
+                match rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(result) => return result,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (),
+                    Err(_) => return Err("model transport stopped".into()),
+                }
+            }
+        }
+        self.transport(body, streaming)
     }
 
     // The HTTP transport. Everything above it is protocol, shared by both targets.
@@ -1215,4 +1277,47 @@ mod tests {
         assert!(msg.get("reasoning_content").is_none());
         assert!(msg.get("reasoning").is_none());
     }
+    #[test]
+    fn stop_releases_a_waiting_model_request_before_the_provider_replies() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = cancel.clone();
+        let provider = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 8192];
+            stream.read(&mut request).unwrap();
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            wait.recv().unwrap();
+            let body = r#"{"choices":[{"message":{"role":"assistant","content":"late"}}]}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+        });
+        let llm = Llm {
+            base_url: format!("http://{address}"),
+            model: "test".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
+        let started = std::time::Instant::now();
+        let result = llm.chat_messages_cancellable(
+            &[json!({"role":"user","content":"test"})],
+            None,
+            "stop-test",
+            "r1",
+            &|| cancel.load(std::sync::atomic::Ordering::SeqCst),
+        );
+        assert_eq!(result.unwrap_err(), "execution cancelled");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        release.send(()).unwrap();
+        provider.join().unwrap();
+    }
+
 }

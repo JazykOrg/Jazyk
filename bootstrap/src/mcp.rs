@@ -68,6 +68,8 @@ pub struct BridgeFlags {
     // The serving is part of the running internal build: the build-lease refusal and
     // the release gate do not apply to its batch, and leases claim under this id.
     pub build_token: Option<String>,
+    // A runner-owned, attempt-specific fence. EOF must discard once it exists.
+    pub cancel_file: Option<PathBuf>,
     // Serve the file and command tools, for agents with no editor of their own.
     pub serve_files: bool,
     // Delegate document and settings writes to the spawning process (the IDE proxy).
@@ -630,7 +632,9 @@ impl McpServer {
         for child in self.children.lock().unwrap().values() {
             child.finish();
         }
-        if self.bridge.ephemeral {
+        if self.cancelled() {
+            self.abandon_goals(&json!({"arguments": {"reason": "the build was stopped"}}));
+        } else if self.bridge.ephemeral {
             self.eof_finish();
         }
         self.trace
@@ -1676,7 +1680,17 @@ impl McpServer {
     }
 
     // A user conversation multiplexes set-local sessions. There is no ambient selection.
+    fn cancelled(&self) -> bool {
+        self.bridge
+            .cancel_file
+            .as_ref()
+            .is_some_and(|p| crate::vfs::exists(p))
+    }
+
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        if self.cancelled() && method == "tools/call" && params["name"] != "abandon_goals" {
+            return Err((-32602, "the build was stopped; this session cannot commit".into()));
+        }
         if self.project.set_id.is_some()
             || self.bridge.only.is_some()
             || self.bridge.build_token.is_some()
@@ -4236,4 +4250,64 @@ mod tests {
         assert_eq!(r["error"]["rule"], "not-a-project");
         crate::vfs::remove_dir_all(&base).ok();
     }
+    #[test]
+    fn stop_fence_discards_implicit_finish_and_rejects_late_done() {
+        let dir = bare_dir("stop-fence");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir)
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap();
+        let out = project.out.clone();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.compile = "auto".into();
+        control.save(&out);
+        let fence = out.join("cancel-test");
+        let server = McpServer::with_bridge(
+            project,
+            out.clone(),
+            vec!["compile".into()],
+            true,
+            BridgeFlags {
+                ephemeral: true,
+                cancel_file: Some(fence.clone()),
+                ..Default::default()
+            },
+        );
+        let call = |name: &str, arguments: Value| {
+            let v = server
+                .handle("tools/call", &json!({"name":name, "arguments":arguments}))
+                .unwrap();
+            assert_ne!(v["isError"], true, "{v}");
+            serde_json::from_str::<Value>(v["content"][0]["text"].as_str().unwrap()).unwrap()
+        };
+        call("begin_goals", json!({}));
+        call(
+            "set_coverage",
+            json!({"section":"docs/a.md#/a", "state":"non-normative", "note":"Navigation."}),
+        );
+        let generation = crate::store::read_generation(&out);
+        assert!(!server
+            .open
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .session
+            .staged
+            .is_empty());
+        crate::vfs::write(&fence, "stopped").unwrap();
+        assert!(server
+            .handle("tools/call", &json!({"name":"done", "arguments":{}}))
+            .is_err());
+        server.finish();
+        assert!(server.open.lock().unwrap().is_none());
+        assert_eq!(
+            crate::store::read_generation(&out),
+            generation,
+            "EOF committed cancelled work"
+        );
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
 }

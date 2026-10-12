@@ -406,7 +406,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         let tools_param = codec.tools_param(a.tools);
         let msg = match a
             .llm
-            .chat_messages(a.history, tools_param.as_deref(), &a.label, &step)
+            .chat_messages_cancellable(a.history, tools_param.as_deref(), &a.label, &step, a.cancelled)
         {
             // The cost a session carries is what the endpoint bills, input and output
             // (docs/compiler/sessions.md#budgets).
@@ -437,6 +437,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             }
             Err(e) => return Stop::Error(e),
         };
+        if (a.cancelled)() { return Stop::Cancelled; }
         let mut actions = codec.parse(&msg);
         // First-round probe: a prose-only reply under the native codec, from a model
         // whose capability is still unknown, more often means "cannot drive tools"

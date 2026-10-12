@@ -334,6 +334,15 @@ impl SessionHandle {
     // Send one prompt and block until the turn ends. Updates stream through
     // `on_update` as they arrive.
     pub fn prompt(&self, text: &str, on_update: OnUpdate) -> Result<PromptOutcome, String> {
+        self.prompt_cancellable(text, on_update, &|| false)
+    }
+
+    pub fn prompt_cancellable(
+        &self,
+        text: &str,
+        on_update: OnUpdate,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<PromptOutcome, String> {
         let (reply, rx) = std::sync::mpsc::channel();
         self.cmd_tx
             .unbounded_send(Cmd::Prompt {
@@ -343,10 +352,30 @@ impl SessionHandle {
                 reply,
             })
             .map_err(|_| "acp host is gone".to_string())?;
-        rx.recv().map_err(|_| match self.ended.lock().unwrap().clone() {
-            Some(e) => format!("acp host for `{}` ended during the prompt: {}", self.agent, e),
-            None => "acp host dropped the prompt".to_string(),
-        })?
+        let mut stopping = None;
+        loop {
+            if cancelled() && stopping.is_none() {
+                self.cancel();
+                stopping = Some(std::time::Instant::now());
+            }
+            if stopping.is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(2)) {
+                let _ = self.cmd_tx.unbounded_send(Cmd::Shutdown);
+                return Err("acp host stopped after cancellation".into());
+            }
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(reply) => return reply,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (),
+                Err(_) => {
+                    return Err(match self.ended.lock().unwrap().clone() {
+                        Some(e) => format!(
+                            "acp host for `{}` ended during the prompt: {}",
+                            self.agent, e
+                        ),
+                        None => "acp host dropped the prompt".to_string(),
+                    })
+                }
+            }
+        }
     }
 
     pub fn cancel(&self) {

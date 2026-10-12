@@ -54,6 +54,7 @@ pub struct Options {
     pub ephemeral: bool,
     pub only: Option<String>,
     pub build_token: Option<String>,
+    pub cancel_file: Option<String>,
     pub serve_files: bool,
     pub edit_sink: Option<String>,
     pub packaged: bool,

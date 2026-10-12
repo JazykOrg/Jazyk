@@ -55,6 +55,9 @@ impl ServingPlan {
             args.push("--build-token".to_string());
             args.push(t.clone());
         }
+        if let Some(path) = &self.flags.cancel_file {
+            args.extend(["--cancel-file".into(), path.to_string_lossy().into_owned()]);
+        }
         if self.flags.serve_files {
             args.push("--serve-files".to_string());
         }
@@ -393,6 +396,7 @@ impl AcpRunner {
                 // with an ack.
                 packaged: true,
                 build_token: self.build_token.lock().unwrap().clone(),
+                cancel_file: None,
                 serve_files: mode == "generate" && agent.serve_files,
                 edit_sink: None,
                 reader: false,
@@ -504,7 +508,13 @@ impl AcpRunner {
             }
         };
         let gen_before = crate::store::read_generation(&self.out);
-        let opened = match self.session_on(&agent, &self.serving_plan(batch, &agent)) {
+        let mut plan = self.serving_plan(batch, &agent);
+        let mut nonce = [0u8; 16];
+        if let Err(e) = getrandom::fill(&mut nonce) { return failed_report(e.to_string(), 0, 0, 0); }
+        let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+        let cancel_file = self.out.join("sessions").join(format!("cancel-{name}"));
+        plan.flags.cancel_file = Some(cancel_file.clone());
+        let opened = match self.session_on(&agent, &plan) {
             Ok(s) => s,
             Err(e) => {
                 let e = format!("session: {}", e);
@@ -560,23 +570,30 @@ impl AcpRunner {
                 }
             }
         });
-        let mut outcome = session.prompt(&self.prompt_for(batch), on_update.clone());
+        let cancelled = || {
+            if !trace.is_cancelled() { return false; }
+            crate::vfs::create_dir_all(cancel_file.parent().unwrap()).expect("cancellation fence directory");
+            crate::vfs::write(&cancel_file, b"stopped").expect("cancellation fence");
+            true
+        };
+        let mut outcome = session.prompt_cancellable(&self.prompt_for(batch), on_update.clone(), &cancelled);
         // One reminder when the session ended in prose with the batch uncommitted:
         // the generic agent ends its turn on a plain answer by design, so the client
         // owns the "you are mid-batch" reminder. A second prose ending fails the
         // session through the board check below.
         // Mirrors docs/frontends/acp.md#worker-sessions.
-        if !batch.is_ledger() {
+        if !batch.is_ledger() && !cancelled() {
             if let Ok(o) = &outcome {
                 if o.stop == "end_turn" && !o.idled {
                     let board = crate::board::Board::compute(&self.project, &self.out);
                     if goal_ids.iter().any(|id| board.open(id)) {
-                        outcome = session.prompt(
+                        outcome = session.prompt_cancellable(
                             &format!(
                                 "The goals are not resolved: {}. Continue with the tool calls the instructions name, mark each goal with mark_goal_done or mark_goal_failed, then finish with done.",
                                 goal_ids.join(", ")
                             ),
                             on_update,
+                            &cancelled,
                         );
                     }
                 }
@@ -697,7 +714,7 @@ impl AcpRunner {
         let text: Arc<Mutex<String>> = Default::default();
         let sink = text.clone();
         let prompt = format!("{}\n\n{}", system, user);
-        let outcome = session.prompt(
+        let outcome = session.prompt_cancellable(
             &prompt,
             Arc::new(move |ev| {
                 if let super::host::HostEvent::Update(
@@ -709,6 +726,7 @@ impl AcpRunner {
                     }
                 }
             }),
+            &|| trace.is_some_and(|t| t.is_cancelled()),
         );
         session.close();
         let outcome = outcome?;

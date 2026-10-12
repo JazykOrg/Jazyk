@@ -60,6 +60,12 @@ makes zero LLM calls.
   [requirements documents](../consumers/docsgen.md) regenerate, and the
   [verdict](#convergence) lands in `status.yaml`. The tail needs no model.
 
+A user stop retains completed commits and drops the active session. It saves the
+incomplete verdict and spend, then releases the build lease. It runs no further
+checks, rendering, or docsgen. Remaining goals stay open. The next Build reads current
+saved documents, derives the board, and runs the ordinary lifecycle. Stop is not a
+failed session and creates no cancellation diagnostic.
+
 Sessions are sequential: one build at a time under the build lease, one session at a
 time within it ([sequential builds](./control-plane.md#sequential-builds)).
 

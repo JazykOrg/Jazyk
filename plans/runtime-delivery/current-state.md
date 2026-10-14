@@ -81,12 +81,13 @@ and versioned. Every use rechecks access. The new shortcut must preserve this.
 | Current behavior | Proposed behavior |
 | --- | --- |
 | Script delivery requires GitHub and a generated workflow. | Script delivery runs in the selected sandbox without a GitHub dependency. |
-| Hosted commands are unavailable. | Hosted commands dispatch through a capability supplied by the service. |
+| Hosted commands are unavailable. | Frozen finite actions dispatch through a capability supplied by the service. |
 | Hosted programmatic tests wait for delivery CI. | They execute directly in the same runtime used during generation. |
-| Commands return a short tail. | They also expose durable command IDs, paginated logs, search, and receipts. |
+| Commands return a short tail. | Runs expose durable IDs, paginated logs/search, retained file diffs, and receipts. |
 | Built binaries remain inside a full snapshot or CI archive. | Products have manifests, durable binary objects, and visible workspace paths. |
 | Delivery settings include criterion mappings. | Verification owns those bindings. Delivery may invoke verification. |
 | One GitHub-only delivery panel. | Small delivery definitions plus an integrated Runs view. |
+| External MCP generation relies on harness shell tools; ACP injects existing toolsets. | Shared action submission and observation are explicitly available through Cloud, MCP, and ACP. |
 
 Old Actions attempts stay readable as historical attempts. Removing a delivery
 does not delete remote workflows, repositories, retained products, or history.

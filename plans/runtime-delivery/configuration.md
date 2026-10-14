@@ -31,8 +31,9 @@ and upload artifacts, or perform several phases. There is no `book`, `app-store`
 Script paths and working directories are project-relative. The default interpreter
 is `/bin/sh`; `interpreter = ["python3"]`, for example, runs a Python script.
 Interpreter arguments and script arguments are structured arrays. Paths are never
-inserted into an unescaped shell string. `run_command` separately supports an
-explicit shell command for exploration and repair.
+inserted into an unescaped shell string. Investigation and repair checks use named
+script actions too. The model can create a focused diagnostic script and action,
+then submit it as a finite run; there is no separate arbitrary-exec tool.
 
 The requested image tag is resolved to a digest before starting. Record the digest,
 platform, script hash, configuration hash, and input revision with the attempt.
@@ -50,7 +51,7 @@ All actions use the same small execution fields. A delivery is one such action.
 | `cwd` | Project-relative working directory, default project root. |
 | `args`, `interpreter` | Literal argument arrays. |
 | `size` | Requested resource class, constrained by host policy. |
-| `timeout_seconds` | Requested command deadline, constrained by host policy. |
+| `timeout_seconds` | Fixed execution bound for the complete action, constrained by host policy. |
 | `products` | Paths or globs for durable outputs. |
 | `caches` | Names of disposable cache profiles to restore and possibly save. |
 | `env` | Non-secret environment values. |
@@ -90,7 +91,8 @@ task = "presentation"
 Generation's existing ledger build changes from a separate copied command to an
 action reference when this form is used. Its `produces` expectation still exists.
 The ledger records the resolved action hash as evidence, not a second editable
-definition. The project can retain a direct build command during transition.
+definition. The project can retain a direct build command during transition; the
+harness freezes it into a finite action rather than exposing arbitrary exec.
 
 Project settings span document sets. A ledger reference identifies its set and
 task. A delivery declares the relevant sets when evidence or generated inputs
@@ -132,10 +134,16 @@ discard a previously sealed build cache. A failed build does not save it. Cache
 storage failure is normally a warning, not a failed build.
 
 A single-script action saves requested caches only after script success. It does
-not guess where the build ended. A generated script can also be driven through
-separate agent command calls with a harness cache checkpoint between them. Prefer
-the ordered step form for repeatable named runs. Avoid requiring scripts to call a
-proprietary Jazyk command for routine cache control.
+not guess where the build ended. Use ordered steps when a cache must be saved
+before a later test failure. All steps and checkpoints are fixed before dispatch;
+the model cannot append commands or direct a checkpoint during the run. Avoid
+requiring scripts to call a proprietary Jazyk command for routine cache control.
+
+After the action ends, the host collects retained file changes, products, reports,
+and logs, then destroys the container. Repeating an action starts a fresh environment
+from its selected project revision and declared cache. A timeout or resource-size
+change applies only to the next run. A failed step normally skips the remaining
+execution steps and enters automatic collection/teardown.
 
 ## Test actions and selection
 
@@ -158,7 +166,7 @@ script translates these into its framework's arguments without shell evaluation
 of selectors. The harness does not learn every framework's command syntax.
 
 For a project with no suite adapter, retain the existing per-row `run` and `cwd`
-contract and execute each exact command through the runtime. Selection capabilities
+contract and freeze selected commands into a finite test action. Selection capabilities
 are explicit. A suite that only supports `all` must say so; do not claim a filter
 ran when it was ignored. See [verification](generation-testing.md#selection-and-results).
 

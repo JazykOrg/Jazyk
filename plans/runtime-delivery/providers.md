@@ -6,25 +6,27 @@ The owner favors managed isolation and low operational effort.
 
 ## Recommendation
 
-Run a small adapter experiment with Modal and E2B. Use AWS Fargate as the cost and
-infrastructure-control baseline. Prefer a managed agent sandbox for the initial
-interactive loop if its time limits, isolation, and cost controls pass the experiment.
-Do not choose solely on the lowest advertised CPU rate.
+Compare AWS Fargate and Modal first, retaining E2B as an alternative. The owner's
+finite-run decision changes the selection criteria: execute a frozen action,
+capture logs/files, and tear down. Interactive exec, reconnectable shells, and
+renewable development environments are no longer product requirements.
 
-Start the experiment with Modal because it offers a no-fixed-fee entry plan and
-custom-image sandbox APIs. Treat E2B as an equally serious candidate, particularly
-for explicit renewable timeouts. This is a test order, not a final provider choice.
-If strict funded lease behavior cannot be established cheaply on Modal, E2B may
-be the better initial fit despite its production plan fee.
+Fargate is therefore a direct contender, rather than only a cost baseline. This is
+our inference from the revised workload and the documented task model below. Its
+batch fit and lower indicative compute rate may outweigh sandbox conveniences.
+Modal may still reduce integration work. Measure startup, image handling, automatic
+result collection, enforceable deadlines, and total cost before choosing. A provider
+SDK offering exec is useful internally only if needed to run a fixed action; it
+does not become a live-exec API for agents or users.
 
 ## Shortlist
 
 | Option | Fit for Jazyk | Main issue to prove |
 | --- | --- | --- |
-| Modal Sandboxes | Exec/file APIs, configurable resources, registry images, managed isolation. | Strict resource bounds, renewal/orphan exposure, image compatibility, actual sandbox billing. |
-| E2B | Agent-oriented Linux microVMs, lifecycle/timeout APIs, commands and files. | Template/image preparation, fixed plan cost, storage and transfer costs. |
-| AWS ECS Fargate | OCI task execution, per-task isolation, AWS storage/network integration. | Interactive command transport, startup latency, enforceable lifetime and extra infrastructure. |
-| GitHub Actions | Existing adapter and mature batch execution. | Repository/workflow dependence and poor fit for an interactive repair loop. |
+| Modal Sandboxes | Run a fixed script/steps, configurable resources, registry images, managed isolation. | Hard bounds, automatic teardown, image compatibility, actual sandbox billing. |
+| E2B | Isolated Linux microVMs that can execute and retain a finite action. | Template/image preparation, fixed plan cost, storage and transfer costs. |
+| AWS ECS Fargate | OCI task entrypoint, per-task isolation, AWS storage/network integration. | Startup, result collection, enforceable lifetime/watchdog, extra infrastructure. |
+| GitHub Actions | Existing adapter and a matching finite-job model. | Repository/workflow dependence, queue latency, external storage/accounting. |
 | Dedicated worker VM | Predictable fixed bill, local adapter reuse. | Patching, isolation, capacity, cleanup, and operations become our responsibility. |
 | Existing API server | Lowest immediate extra infrastructure. | Shared blast radius and competition with the API; not recommended for customer execution. |
 
@@ -40,8 +42,8 @@ and required plan features rather than assuming every example is supported.
 
 Modal supports registry-based images and recommends preparing reusable images
 separately. Its documented default sandbox lifetime is five minutes, configurable
-up to 24 hours. Verify runtime extension semantics during the experiment; creation
-timeout support alone does not establish a renewable funded lease.
+up to 24 hours. Configure a fixed bound for each action and verify automatic
+teardown and bounded collection on every outcome.
 [Sandbox guide](https://modal.com/docs/guide/sandboxes).
 CPU and memory requests can be exceeded unless limits are set. Configure both
 requests and caps and compare actual billed usage.
@@ -49,10 +51,9 @@ requests and caps and compare actual billed usage.
 
 E2B states that each sandbox uses a Firecracker microVM with its own kernel.
 [E2B isolation](https://e2b.dev/security).
-Its lifecycle API supports changing the timeout of a running sandbox, with the
-new duration measured from the update. Hobby and Pro have different maximum
-continuous lifetimes. Explicitly select kill-on-expiry for disposable execution;
-automatic pause/resume is a different retention and billing decision.
+Hobby and Pro have different maximum continuous lifetimes. Choose the action's
+bound before creation and explicitly select kill-on-expiry. The provider also
+supports mutable timeouts and pause/resume, which this proposal does not expose.
 [Lifecycle](https://docs.e2b.dev/sandbox).
 Its template preparation is a separate build step that must be included in startup,
 cost, and arbitrary-image compatibility tests.
@@ -62,12 +63,23 @@ AWS states that Fargate tasks have hardware-virtualized isolation and do not sha
 their kernel or task resources with other tasks. Network and credential policy
 remain our responsibility.
 [AWS responsibility model](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/security-shared-model.html).
-ECS Exec provides shell access, but has agent/filesystem requirements and a fixed
-20-minute idle session timeout. It is not the complete Jazyk command protocol.
-[ECS Exec](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-exec.html).
-An AWS adapter would need a reliable command/log transport and separate cleanup
-control. Use SDKs and maintained process/transport libraries, not a new remote-shell
-protocol implemented from scratch.
+Run the complete action as a task entrypoint with a bounded collection wrapper and
+independent teardown supervision. ECS Exec is not required by the product contract.
+Use SDKs and maintained process/storage libraries. Verify how the adapter enforces
+maximum task lifetime during control-plane failure; do not infer a task TTL from
+per-second pricing. Avoid building a remote-shell service.
+
+Include AWS Batch on Fargate in that experiment. It runs container jobs without
+operating worker servers and provides managed job scheduling.
+[Batch Fargate environments](https://docs.aws.amazon.com/batch/latest/userguide/fargate.html).
+Batch supports an explicit `attemptDurationSeconds` timeout, absent by default,
+measured from the attempt's start. Termination is best effort, with a termination
+signal followed by a kill after a grace period. Configure a timeout explicitly,
+budget shutdown lag, and supervise setup separately. Disable automatic attempt
+retries for externally mutating actions; otherwise a failure may replay publication.
+[Batch timeout behavior](https://docs.aws.amazon.com/batch/latest/userguide/job_timeouts.html).
+Compare direct ECS tasks plus our supervision with Batch's queue/lifecycle overhead.
+Neither service's documentation should be described as an exact-time cost guarantee.
 
 ## Comparable indicative compute costs
 
@@ -94,10 +106,11 @@ Its entry plan has no fixed monthly fee; Team is $250/month plus compute. Region
 selection and other features can change the effective bill. Promotional credits
 are excluded. [Modal pricing](https://modal.com/pricing).
 
-These totals exclude startup, idle time, image preparation, persistent storage,
+These totals exclude startup, collection/teardown, image preparation, persistent storage,
 transfer, subscriptions, and Jazyk margin. At low volume, E2B Pro's fixed fee could
 matter more than the compute difference. At high volume, slower builds, cache
-transfer, or extra idle minutes can erase a cheaper nominal rate.
+transfer, or slow cleanup can erase a cheaper nominal rate. Fresh containers make
+cold-start and cache-restoration costs especially relevant to repeated repair runs.
 
 Runtime is often inexpensive per short run, but cannot be assumed to be a fixed
 fraction of LLM spend. A long build with a small model may cost more than inference.
@@ -108,7 +121,8 @@ Measure the actual project mix before setting customer multipliers.
 Ordinary Lambda functions have a 900-second timeout. AWS now documents a longer
 limit for specific Managed Instances invocation modes, so the universal statement
 that every Lambda execution is limited to 15 minutes is too broad. Neither is the
-first fit for reusable arbitrary-image command sessions.
+first fit for the intended range of arbitrary-image builds and potentially long
+actions. Revisit only if a particular finite workload fits its execution constraints.
 [AWS timeout documentation](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html).
 
 A dedicated disposable worker VM is a reasonable later optimization at sustained
@@ -135,12 +149,13 @@ Use identical fixtures on each candidate and the local adapter:
 - Node tests with one failing case and JUnit output.
 - A Java or Rust dependency/build cache with warm and cold runs.
 - A PDF or PPTX generator with a binary retained product.
-- A 30-minute command, timeout extension, cancellation, and background child process.
+- A 30-minute action, enforced fixed timeout, cancellation, and background child cleanup.
+- Automatic teardown after success/failure, with retained diffs readable afterward.
 - A large but bounded log stream and a partial upload interrupted by shutdown.
 - A custom public image plus a deliberately unsupported image requirement.
 
 Measure p50/p95 time to first command for warm and cold images, image-preparation
-latency, file transfer, repeat-command latency, complete billed lifetime, cache hit
+latency, file transfer, repeated fresh-run latency, complete billed lifetime, cache hit
 savings, and shutdown confirmation. Use benign policy checks to verify forbidden
 mounts/network destinations are denied. Arrange provider-approved testing for any
 intrusive security work; do not attempt to prove isolation by attacking a service.

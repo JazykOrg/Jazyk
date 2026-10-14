@@ -34,14 +34,16 @@ dependencies in the docs before adding the gate; do not rely on prompt text alon
    Add a runtime/script definition only when absent or inadequate.
 3. Write the implementation or test files through existing gated tools. Stage a
    settings patch for entrypoints, products, and caches when needed.
-4. Open a sandbox lazily. Upload the staged candidate and restore compatible caches.
-5. Run the smallest useful command: syntax check, linter, selected test, or build.
-   Inspect its exit status and logs. Repair the responsible files and repeat within
-   the session's action and spend budgets.
+4. Submit the smallest useful named action or test selection against the staged
+   candidate. Freeze its steps, image, size, timeout, and retention rules.
+5. The host creates the environment, restores caches, executes, collects results,
+   and tears down automatically. Inspect its status, logs, and retained file diff.
+   Repair the responsible files, then submit a fresh run within the session's
+   cumulative action and spend budgets.
 6. Run the required build and verification for completion. Collect expected products,
    confirm they exist, and retain evidence. Import changes through gates.
 7. Record generation with the original fact hash and runtime receipts. Close the
-   existing goal only if its gate holds. Stop or release the sandbox.
+   existing goal only if its gate holds. Teardown requires no model action.
 
 An action can fail while useful source changes remain staged. A failed test need
 not discard an already sealed build cache. It must not produce a passing verdict.
@@ -117,9 +119,13 @@ judgment with evidence pointing to the exact rendered artifact. If the model or
 host lacks an appropriate binary/image inspection capability, report the missing
 capability. File existence alone does not establish visual quality.
 
-LLM verification can request a bounded inspection command if its criteria require
-it and the host supports it. Keep this optional. Pure judgment tests should not
-pay for an idle environment while the model reads.
+LLM verification can submit a bounded inspection action if its criteria require
+it and the host supports it. Keep this optional. It reads retained results after
+the inspection run has shut down; no environment waits for the model's next command.
+
+This loop is identical in Cloud, through local MCP in a coding agent, and through
+ACP in an IDE. See [access paths](access-paths.md) for tool injection and result
+presentation. Native terminal access is not a prerequisite for generation or tests.
 
 ## Delivery and test delivery
 

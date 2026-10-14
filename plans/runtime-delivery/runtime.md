@@ -1,79 +1,94 @@
 # Shared execution runtime
 
-Status: proposal. See the [overview](README.md) and the
-[agent tools and prompts](agent-contract.md).
+Status: proposal incorporating the owner's finite-run decision. See the
+[overview](README.md) and the [agent tools and prompts](agent-contract.md).
 
-## Three records
+## One action per run
 
-- A run is a durable user or agent operation: generate, verify, deliver, or explore.
-  It owns input revisions, steps, logs, products, evidence, and usage references.
-- A sandbox is a disposable environment with a provider ID, image digest, resource
-  class, lease, and filesystem. A run may need replacement sandboxes after expiry.
-- A command is one invocation in that environment. It has a stable ID, literal
-  inputs, deadline, exit status, and output stream. Several commands can reuse one
-  sandbox while a run remains active.
+A run freezes one action, its input revision, test selection, image, resource size,
+timeout, retention rules, and grants. The host creates a fresh isolated container,
+executes the complete script or ordered steps, captures results, and destroys the
+container. A script may invoke any number of commands internally. Those commands
+are part of the action, not new instructions sent into a running environment.
 
-A GitHub sync run has no sandbox. A completed run stays visible after its sandbox
-is gone. Restart creates a new attempt and environment. It does not pretend that
-dead processes or unretained files still exist.
+The agent works between runs: inspect retained logs and file changes, repair files
+or scripts, then launch another finite run. It cannot attach a shell, append steps,
+extend a running deadline, or keep an environment alive while deciding what to do.
+A run may be cancelled. Finishing, failure, or cancellation always leads to bounded
+collection and teardown without another agent call.
+
+The durable records are:
+
+- A run: frozen action and candidate, state, logs, file changes, evidence, usage.
+- A sandbox allocation: provider identity, image digest, resources, hard deadline,
+  and confirmed termination. One allocation per execution attempt in v1.
+- A step: an invocation from the frozen action, with identity, status, and output.
+  A single-script action has one execution step. Arbitrary subprocesses are not
+  individually controllable user or agent operations.
+
+A GitHub sync run has no container. An LLM-only verification operation needs none
+when its artifacts already exist. A compiler session can link several finite runs.
+A retry creates another attempt with its own ID and environment; the previous
+attempt's files and process state are not a live machine to resume.
 
 ## One contract, several adapters
 
-Add a shared runtime capability supplied to the engine by its host. It covers
-capability discovery, opening an environment, starting commands, reading events,
-reading files, collecting outputs, cancellation, and termination. It uses serializable
-requests and receipts so MCP, CLI, ACP, and the editor observe the same work.
+The engine receives a runtime capability from its host: discover supported actions
+and environments, submit a frozen run, read state/events/logs/results, and cancel.
+Requests and receipts are serializable so MCP, CLI, ACP, and the editor observe the
+same work. There is no general-purpose remote exec or terminal endpoint.
 
 | Host | Adapter | Credentials and policy |
 | --- | --- | --- |
-| Local CLI or local GUI | Docker/Podman in a disposable project copy | Local host settings and credential grants. |
-| External coding agent over MCP | Same local adapter through Jazyk tools | Harness commands remain available, but runtime receipts establish Jazyk evidence. |
-| Cloud | Managed sandbox service | Server-held provider credentials, account admission, metering. |
-| Browser-only project | No execution adapter by default | Connect a local engine or explicitly use Cloud runtime service. |
-| Trusted local mode | Direct host process in a task directory | Explicitly weaker isolation, opt-in, never used as a silent fallback. |
+| Local CLI or local GUI | Docker/Podman, fresh container and project copy per run | Local host settings and credential grants. |
+| External coding agent over MCP | Same finite-run tools | Harness-native shell remains external to this contract; Jazyk evidence comes from recorded runs. |
+| IDE using ACP | Same tools injected through `jazyk acp` | Existing IDE/agent permission handling plus the run host's grants; no terminal needed. |
+| Cloud | Managed isolated batch execution | Server-held provider credentials, account admission, metering. |
+| Browser-only project | No execution adapter by default | Connect a local engine or explicitly use Cloud execution. |
+| Trusted local mode | Bounded host process in a fresh task directory | Explicitly weaker isolation, opt-in, never a silent fallback. |
 
-Provider configuration is not in portable project settings. A Cloud project that
-exports locally carries image and script intent without Cloud credentials. A local
-project uses the same script, working directory, file manifest, and report mapping.
-Record architecture differences such as local ARM versus hosted x86. Image equality
-does not guarantee byte-identical output across platforms.
+Provider selection belongs to host settings. Exported projects carry image and
+script intent without Cloud credentials. Local and remote runs use the same
+working-directory, manifest, report, and import contracts. Record platform
+information; local ARM and hosted x86 may produce different artifacts.
 
-The existing `SessionRunner` is the model-session interface, not the container
-interface. Keep that distinction. Hosted execution must never remove the guard in
-`sys::run_shell` and then call the API host shell. Dispatch through the supplied
-runtime capability instead. No capability means `runtime-unavailable`.
+Client transport and execution location are independent. Cloud, local MCP, and ACP
+share admission, operation IDs, receipts, and cancellation semantics. See
+[access paths](access-paths.md) for routing, IDE presentation, and disconnections.
 
-Long commands return IDs promptly. An engine session can await bounded status calls
-on its worker thread while retaining its session context. HTTP requests, database
-transactions, and event-stream permits are released normally. Runtime operations
-are durable jobs; process restart can recover their status. Do not promise model
-session continuation after a crash until its pending tool result and session state
-are persisted. The initial recovery can end that session and let the next compiler
-session inspect its completed command receipt.
+The existing `SessionRunner` runs model sessions, not containers. Hosted code keeps
+its direct subprocess guard in `sys::run_shell`. A run dispatches through the host
+capability, never through the API host shell. Missing capability is an explicit
+`runtime-unavailable` result.
+
+Submission returns a durable run ID promptly. Waiting is bounded and resumable by
+cursor. No HTTP request or database transaction stays open for the whole action.
+A compiler worker may await the result while retaining session context. After a
+service crash, recover the run independently. Until model-session persistence can
+resume a pending tool result, end that session and let the next one inspect the
+retained run. Never repeat execution just to reconstruct a lost tool response.
 
 ## Snapshot and import
 
-Opening a sandbox materializes a versioned project manifest: documentation, source,
-tests, scripts, required products, and a read-only projection of `.jazyk` state.
-Exclude credentials, Git internals, conversations, other projects, and provider
-state. A command that needs Git metadata must request an explicit checkout mode;
-do not copy a credential-bearing `.git/config` by default.
+Submission freezes documentation, source, tests, scripts, relevant binary assets,
+and a read-only projection of `.jazyk` state. Exclude credentials, Git internals,
+conversations, other projects, and provider state. A script requiring Git metadata
+uses an explicit checkout mode without copying credential-bearing local Git config.
 
-Compiler state has a read-only mount where supported, or a read-only export under
-`/jazyk/input` with paths recorded in the manifest. A mutable copy inside a sandbox
-is never accepted as authoritative graph or ledger state. The provider adapter
-must not expose a writable mount of the API server or the user's actual checkout.
+Mount compiler state read-only where supported, or export it under `/jazyk/input`.
+A mutable sandbox copy is never authoritative graph or ledger state. There is no
+writable bind mount of the API server or the user's actual checkout.
 
-Generation writes remain staged engine files. Before a command, the harness uploads
-the current staged revision. Afterward it computes a bounded diff against that
-revision. Source/test/support-file changes re-enter through their existing ownership
-and fact-hash gates. Settings changes use the restricted settings tool. Products use
-the retention contract. A shell script cannot bypass these gates by writing files.
+Generation edits staged engine files before submitting a run. The host materializes
+that candidate, restores allowed caches, then runs the frozen action. Afterward it
+captures a bounded file-change manifest relative to the input, retains eligible
+contents, and imports through existing ownership/fact-hash gates. Settings changes
+use the restricted settings tool between runs. A shell write cannot bypass gates.
 
-If edits happened elsewhere, import uses expected revision checks. A conflict retains
-the run's files as a reviewable result. It does not overwrite the editor's newer
-files. A delivery starts from a frozen committed candidate by default. Exploratory
-and generation runs can use staged candidates, labeled as such.
+A delivery normally uses a committed candidate. Generation can run a staged one,
+labeled as such. Concurrent editor changes do not alter a running snapshot. Import
+conflicts retain the result for review instead of overwriting newer source. Logs
+and file changes remain readable after container teardown.
 
 ## Lifecycle
 
@@ -81,124 +96,108 @@ and generation runs can use staged candidates, labeled as such.
 stateDiagram-v2
   [*] --> Queued
   Queued --> Provisioning: admitted and reserved
-  Provisioning --> Ready: inputs and cache restored
-  Ready --> Running: command starts
-  Running --> Ready: command finishes
-  Ready --> Collecting: finish or idle deadline
-  Running --> Stopping: cancel or deadline
-  Collecting --> Stopping: outputs sealed
+  Queued --> Cancelled: cancelled before dispatch
+  Provisioning --> Executing: inputs and cache restored
+  Provisioning --> Collecting: setup failed or cancelled
+  Executing --> Collecting: completed, failed, cancelled, or timed out
+  Collecting --> Stopping: results sealed or collection deadline reached
   Stopping --> Terminated: provider confirms
   Stopping --> Unknown: provider unreachable
   Unknown --> Terminated: reconciled
   Terminated --> [*]
+  Cancelled --> [*]
 ```
 
-Persist the intent before an external create, exec, or stop request. Use stable
-idempotency keys where supported. If a provider lacks idempotent creation, tag the
-resource with the operation ID and reconcile before retrying. Uncertain creation
-must not allocate another billable sandbox blindly. The same rule applies to an
-exec that might already have published externally.
+Execution outcome, collection outcome, and termination are separate fields. A
+successful script can have a failed product import. A failed test can retain a
+successful build-cache checkpoint. A process exit is not confirmed provider shutdown.
 
-Report terminal command outcomes separately: success, assertion failure, setup
-failure, timeout, OOM, cancellation, and infrastructure failure. `Unknown` is an
-operational state, not success or confirmed shutdown. Keep tracking exposure until
-termination is established or reconciled by an operator with provider evidence.
+Persist intent before dispatch and stop requests. Use stable operation IDs and
+provider idempotency where available. Otherwise tag resources and reconcile before
+retry. A lost create/start response must not launch a second potentially publishing
+run. Unknown external effects require inspection, not automatic script repetition.
 
-## Time limits and renewal
+The fixed executor runs declared steps sequentially without pausing for an LLM.
+By default, step failure skips dependent remaining execution, then collects logs,
+reports, and permitted failure artifacts. Declared cache saves occur at successful
+boundaries, e.g. between build and test. Teardown is always the host's responsibility,
+even if the script's own cleanup fails.
 
-Use three clocks. Proposed values are starting points to benchmark.
+## Fixed limits and teardown
 
-| Bound | Proposed default | Renewal |
-| --- | --- | --- |
-| Command deadline | 5 minutes; an admitted command may request 30 minutes | Agent explicitly extends a running command if policy and budget permit. |
-| Idle expiry | 2 minutes after the last command completes | Starting another command resets it. Reading logs or heartbeat traffic does not. |
-| Absolute sandbox lifetime | 2 hours, capped by provider capability | Cannot be reset by commands. A new sandbox restores retained state. |
+Proposed execution timeout: five minutes by default, with longer requests such as
+30 minutes chosen before submission. The host may permit up to two hours initially,
+subject to provider and account policy. These are values to benchmark, not decisions.
+Step timeouts may shorten the overall bound; they cannot reset or extend it.
 
-An active 30-minute command is not idle. It may run to its admitted command deadline
-even if the last user interaction was much earlier. An independent supervisor kills
-the process tree at the deadline. If descendants cannot be proven stopped, destroy
-the sandbox. A timeout defaults to terminating that sandbox, then collecting what
-is safely available; continuation in a contaminated process tree is not promised.
+Admission includes separate bounded setup, execution, collection, and shutdown
+allowances. On allocation, establish a provider-enforced maximum lifetime covering
+all admitted phases and a host watchdog for the stricter phase deadlines. Record
+effective deadlines in the run. Queue waiting has its own expiry and no allocation
+charge. The candidate remains frozen while queued.
 
-At command completion, capture the authorized source diff and declared successful
-checkpoints before starting the idle clock. A slow model response may outlast that
-clock. The next command then opens a replacement from retained state and cache.
-Unclassified scratch is intentionally lost. The tool response warns when a useful
-unretained file would disappear, so the agent can declare it before continuing.
+Neither the agent, a user, nor log polling can extend a running deadline or change
+its resource class. If a build needs more time or memory, finish/cancel this attempt,
+revise the next request, and submit a new run when retry is safe. The remaining
+session/account budget also bounds repeated attempts.
 
-Each command or extension reserves its worst-case additional cost before dispatch.
-The effective deadline is bounded by command policy, sandbox absolute lifetime,
-provider lifetime, and admitted spend. An agent sees the effective deadline in the
-tool response. Asking for more time is not permission to exceed any of these.
+On timeout or cancellation, stop the process tree, capture bounded available
+results, and terminate the environment. Detached children never keep it alive after
+the action ends. Reserve collection and shutdown time in advance. If the provider
+kills the container before collection, retained logs/checkpoints remain available
+and the final diff is explicitly incomplete.
 
-The user example becomes: open, run for at most five minutes, finish after one,
-inspect, start another command for five minutes, then stop. The second command's
-deadline starts now. It does not inherit four unused minutes or reset the absolute
-lifetime. A 30-minute command requests and reserves that duration explicitly.
-
-Provider-enforced lifetime is a final bound. A service watchdog renews short funded
-leases where supported and an independent reaper reconciles expired resources.
-For a provider whose maximum lifetime is fixed at creation, budget admission must
-cover the possible orphan exposure to that maximum or use short-lived replacements.
-Do not assume an application timer alone caps a provider bill after a service crash.
+Provider expiry is a final bound independent of API health. An external reaper
+reconciles resources and termination. A provider without a suitable enforced
+lifetime needs an independent watchdog with a measured worst-case exposure bound.
+An application timer alone is insufficient. Keep the usage reservation until
+termination or an evidence-backed reconciliation establishes the actual expense.
 
 ## Resources and concurrency
 
-Expose a small catalog, initially `small`, `medium`, and `large`, with exact CPU,
-RAM, disk, and estimated usage rate. The agent chooses the smallest credible class.
-There is no automatic paid escalation after an OOM. A replacement request names
-the evidence and revised bound, and policy determines whether it is admissible.
+Expose `small`, `medium`, and `large` with exact CPU, RAM, disk, and estimated rate.
+The agent chooses an admitted class before each run. Hard resource limits matter:
+a reservation that permits an unbounded burst is not a billing maximum. Unsupported
+shapes return explicit alternatives. OOM never silently increases paid resources.
 
-Define classes in portable vCPU and memory terms; adapters resolve provider units
-and enforce hard limits. A CPU reservation that can burst to an unbounded bill is
-not a cost ceiling. Unsupported shapes return available alternatives explicitly.
+Recommend one active execution run per project initially. Different projects can
+run concurrently within account/service limits. A compiler operation plus its child
+run counts as one user operation while consuming independent internal capacities;
+it must not deadlock waiting for a sandbox slot consumed by its own parent.
 
-Start with one live sandbox per project, one foreground command, and one controlling
-actor. This does not serialize all projects or change compiler session scheduling.
-Multiple tenants and projects have independent sandboxes. Parent compilation plus
-its sandbox counts as one user operation, while consuming separate internal model
-and runtime capacity. Avoid a concurrency deadlock where a job uses the only slot
-and cannot start the sandbox it needs.
+Multi-step actions share the one container until their fixed sequence ends. Builds
+can start test helper processes such as a database if the adapter supports them;
+the supervisor stops those processes with the run. Parallel runs and service groups
+remain later capabilities with isolated writable copies and aggregate admission.
 
-A separate publish environment can still respect the one-sandbox limit: seal the
-build outputs, terminate the build sandbox, then open the credentialed publisher.
-An interactive agent run does not silently prevent a user delivery forever; the
-UI offers queue, stop, or a controlled handoff.
-
-Tests may start bounded helper processes such as a database in their sandbox if
-supported. The supervisor owns their cleanup. Multi-container service groups and
-parallel independent runs are a later capability with aggregate cost accounting.
-When introduced, every run still gets its own writable snapshot and cache staging
-area, with one revision-checked import into the project.
+A separate credentialed publisher is another finite run over sealed outputs after
+the build run terminates. Cache and product objects may persist between runs. Live
+filesystems, processes, terminals, and sandbox snapshots are not project state.
 
 ## Isolation boundary
 
 Managed isolation is preferred. No boundary is literally bulletproof. Ordinary
 Docker on the API host is not an acceptable customer sandbox recommendation.
 [Docker documents](https://docs.docker.com/engine/security/) the consequences of
-daemon access and incomplete isolation. Rootless mode mitigates daemon privileges;
-it is one defense, not an escape-proof multi-tenant boundary.
+daemon access and incomplete isolation. Rootless mode is one defense, not an
+escape-proof multi-tenant boundary.
 
 The provider adapter must provide or enforce:
 
 - No host mounts, Docker socket, privileged mode, host network, or host namespaces.
 - CPU, memory, disk, process-count, output-size, upload, and network budgets.
 - No routes to the control plane, tenant databases, host metadata, or other tenants.
-- No inbound public service by default. Any preview tunnel is authenticated and
-  tied to the sandbox lease, not permanent hosting.
-- Project-scoped, expiring transfer credentials. Never give the project a general
-  object-store key or provider control-plane credential.
-- Separate uncredentialed build/test and credentialed publish environments, unless
-  the user deliberately grants a broader execution scope. A later shell must not
-  inherit publication secrets from an earlier command.
+- No inbound public access. Test services stay inside the run's permitted network.
+- Project-scoped expiring transfers, never general object-store/provider credentials.
+- Separate uncredentialed build/test and credentialed publish runs unless the user
+  deliberately grants broader scope. Teardown also removes those credentials.
 
-Dependency install scripts and selected images are untrusted execution too. Image
-preparation belongs in the isolated provider environment. Support ordinary public
-egress for dependency retrieval under policy, with private/metadata addresses
-blocked. Narrow publishing credentials and destinations separately. Arbitrary shell
-plus a broad token cannot be made harmless by a prompt or a label.
+Dependency installation and image preparation are untrusted execution too. Isolate
+preparation and include its bounds in admission. Allow dependency retrieval according
+to policy while blocking private/metadata routes. Narrow publication credentials
+separately. Arbitrary scripts with broad credentials cannot be made harmless by a
+prompt or label.
 
-Logs, test reports, filenames, and generated artifacts are untrusted model input.
-They cannot grant capabilities, change budget policy, or direct control-plane tools.
-Secret redaction reduces accidental leakage; it cannot guarantee a malicious script
-with a secret will not encode and export it.
+Logs, reports, filenames, and generated artifacts are untrusted model input. They
+cannot grant capabilities or change policy. Redaction reduces accidental leakage;
+it cannot guarantee that a malicious script given a secret will not export it.

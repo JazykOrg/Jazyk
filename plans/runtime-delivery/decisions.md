@@ -13,6 +13,12 @@ are not accepted decisions unless recorded as such here.
   is the commercial priority.
 - The owner selected managed isolated runtimes with little operational work as
   the preferred launch direction.
+- The owner selected Runs beside Files, using the existing tabs.
+- The owner selected finite actions: execute a specific script or step sequence,
+  collect logs/file changes, then shut down the container. No on-demand commands
+  in an open environment, manual consoles, or interactive shells.
+- Execution must be accessible through Cloud, local MCP inside a coding agent,
+  and ACP inside an IDE. These use the same action contract.
 - Delivery autonomy is undecided. The owner requested options.
 - This is a planning worktree. No runtime or UI implementation is requested yet.
 
@@ -55,7 +61,7 @@ arbitrary script publication initially uses per-delivery grants or a click?
 
 | Option | Tradeoff |
 | --- | --- |
-| Script only, plus products/caches | Smallest form. Cache can be saved only at whole-script success unless using agent checkpoints. |
+| Script only, plus products/caches | Smallest form. Cache can be saved only at whole-script success. |
 | Script by default, optional ordered steps | Supports build-cache-save-test with visible phases. Recommended. |
 | Full CI graph | Parallel jobs, matrices, expressions, dependencies. Powerful, substantially larger product. Defer. |
 
@@ -65,15 +71,14 @@ if the simpler form already solves most projects.
 
 ## Runtime count
 
-- One active sandbox per project: simplest file ownership, cost visibility, and
-  agent/human handoff. Recommended first release.
+- One active finite run per project: simplest file ownership and cost visibility.
+  Recommended first release.
 - Several isolated runs with one importer: enables parallel tests and independent
   deliveries. Costs more and needs revision conflicts in the UI.
-- One persistent development machine per project: convenient live files and shell,
-  but idle cost, state drift, and recovery become core concerns.
-
-The records support several runs eventually. Start with one active sandbox without
-making the canonical workspace equal to that sandbox's filesystem.
+The records support several concurrent finite runs eventually. Each gets a fresh
+environment; the canonical workspace is independent of its filesystem. Persistent
+development machines were considered in the first draft and are superseded by the
+owner's finite-run decision.
 
 ## Local execution
 
@@ -89,25 +94,26 @@ The draft recommends the former; either uses the same receipts and file contract
 
 ## Files and visible state
 
-Recommended: promote products into Files at successful checkpoints; inspect cache
-and scratch in the live run. Alternatives are a merged live filesystem view or
-continuous synchronization. Those make concurrent edits and partial products harder
-to reason about. A refreshed live run browser gives visibility without pretending
-every temporary file is durable.
+Show logs and retained file changes for each run. Products enter Files through
+successful checkpoints and revision-checked import. Cache checkpoints show metadata;
+scratch is discarded. There is no live container filesystem view. Preserve eligible
+source/test diffs even on failed runs so the agent can inspect them after teardown.
 
-Question for review: should failed-run partial products be retained automatically
-within a small quota, or only when the agent/user requests them? The draft favors
-logs/reports always and bounded explicit partial-product retention.
+Question for review: should declared partial products be retained on failure by
+default, or only under a policy selected before submission? The draft favors
+logs/reports/eligible diffs always and bounded opt-in partial-product retention.
+The choice must be made before the run; teardown prevents retroactive recovery.
 
-## UI and manual control
+## UI and action control
 
-Two questions have been presented for the owner's preference:
+Settled: Runs beside Files in the existing tabs, showing logs and retained changes.
+People and agents start defined actions and can cancel. The host executes the frozen
+sequence and shuts down automatically. There is no console, terminal, attach, or
+live timeout/resource change. To repair or investigate, edit the project/action and
+start a new attempt. This also applies through MCP and ACP, not just the editor.
 
-- Runs beside Files, a virtual Runs directory, or a bottom panel.
-- Bounded manual command console first, full PTY immediately, or agent-only execution.
-
-Until answered, the draft uses Runs beside Files and a bounded console. These are
-provisional defaults, not recorded approvals.
+Publication autonomy remains a separate decision. Finite execution does not decide
+whether an agent may publish to an external destination without a user click.
 
 ## Cost and retention
 
@@ -127,13 +133,14 @@ provisional defaults, not recorded approvals.
   with clearly separate billing and capabilities.
 - A delivery can create a product without publishing it anywhere. Downloading the
   PDF is a complete useful delivery.
-- A preview URL is a short-lived runtime capability, not an implicit hosting product.
+- A preview can be a retained rendered product. Live preview hosting is outside
+  this finite-run design and would need a separate explicit product decision.
 - A project can generate its own external CI workflow as an ordinary product while
   Jazyk still uses direct runtimes for fast repair/test loops.
 - Publication can use separate build and publish sandboxes, passing only sealed
   products between them. This reduces secret exposure without inventing product types.
-- Optional provider snapshots can accelerate return to a project, but must remain
-  disposable cache. Do not make them the only home of source or products.
+- Cache archives and prepared image layers can accelerate fresh attempts. Retaining
+  running processes or resuming whole environments is outside the selected model.
 
 ## Suggested review order
 

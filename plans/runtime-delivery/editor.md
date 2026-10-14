@@ -41,15 +41,15 @@ requested timeout/size when they differ.
 
 ## Runs alongside Files
 
-Recommended layout, using the existing sidebar and tabs:
+The owner selected Runs beside Files, using existing tabs:
 
 ```text
 Sidebar                         Tabs
 Files                           main.md | Create presentation #42
-  docs/                         Overview  Logs  Files  Products  Tests
+  docs/                         Overview  Logs  Changes  Products  Tests
   scripts/                      Building · medium · 03:12 elapsed
   dist/                         Stops in 01:48 · usage reserved …
-    slides.pdf  [generated]      [Stop] [Run command]
+    slides.pdf  [generated]      [Cancel run]
 Runs (1 active)
   ● Create presentation #42     Steps
   ✓ Unit tests #41               ✓ Restore cache
@@ -62,9 +62,9 @@ non-container GitHub sync and LLM-only verification. This avoids making users le
 that a stopped container and a retained delivery attempt are different histories.
 Runtime details remain available inside a run.
 
-Alternative: a virtual directory inside Files reduces sidebar groups but risks
-implying these are project paths. A bottom execution panel preserves more sidebar
-space but makes many runs harder to browse. These remain open layout options.
+The sidebar is execution history, not a container explorer. A run opens logs and
+retained file changes in the existing tabs. This layout choice is settled for the
+first release.
 
 ## Run tab
 
@@ -76,51 +76,51 @@ Logs stream with pause/follow, search, copy/download, stream and step filters, a
 links from a test failure to its output. Reconnect by cursor after a network drop.
 Historical logs use the same viewer. Missing or expired output is labeled.
 
-Files shows the live sandbox tree while it exists, on refresh or bounded polling.
-Mark input, modified, product, cache, and scratch roles. Large cache directories
-are collapsed and paginated. Preview/diff works without importing into the project.
-After shutdown show only retained manifests/products/reports, with a clear note
-that scratch files are gone.
+Changes lists added, modified, and deleted project paths against the frozen input.
+Text files open a diff; binary outputs offer a retained preview/download and metadata.
+Show imported, awaiting import, conflict, and excluded states separately. Collection
+at a declared checkpoint or run completion populates this view. While executing,
+show the latest completed checkpoint or `File changes available when the run finishes`.
+There is no live container file browser.
+
+Retained changes remain inspectable after teardown, even when a test failed. Cache
+contents and unretained scratch are not a durable project diff. Excluded-path summaries
+can explain what was discarded. If timeout/provider loss interrupted collection,
+show the diff as incomplete, never as evidence that no files changed.
 
 Products provides download and supported preview. Files receives promoted products
 at their real project paths after a checkpoint. Mark generated ownership and source
 revision. A cached dependency is never added to canonical Files merely because it
-exists in a sandbox. `Clear cache` is in run/runtime settings, not `Delete product`.
+exists during a run. `Clear cache` is in execution settings, not `Delete product`.
 
 Tests shows selected cases and passed/failed/skipped/missing results, with stale
 evidence called out. A build/setup failure gets one clear cause. Pure LLM judgments
 show their evidence and use no container status badge.
 
-## Human commands
+## Action controls
 
-Recommended v1: a bounded command console in a run tab. The user chooses working
-directory and timeout, submits a command, and gets the same streamed logs and stop
-control as the agent. Commands run through the same admission and retention path.
+People and agents start defined tasks, tests, and deliveries. Each run has a frozen
+script/step sequence, input revision, image, size, and timeout. The user can inspect
+progress or cancel. There is no start-empty-container action, command console, shell,
+terminal, attach, manual command submission, or live deadline/resource change.
 
-`Start environment` is an advanced action, with image, size, and estimated usage.
-It can default to opening a task-bound sandbox with a short idle limit. A terminal
-tab left open does not keep resources alive indefinitely.
-
-Only one actor submits foreground commands at a time. The user can pause agent
-control or stop a command, then take over. Manual shell changes mark the sandbox
-revision dirty. Before the agent resumes, it reads the diff; verification receipts
-continue to refer to the exact inputs they tested.
-
-A full interactive PTY is an alternative for v1 or a later enhancement. It needs
-stdin/resize/reconnect handling, shell ownership, recording, and lease semantics.
-It must use the same provider adapter and budget. Do not expose provider credentials
-or SSH access to the API host. Line-command support is not advertised as a full PTY.
+To investigate a failure, edit a script or define a focused diagnostic task, then
+start another run. The run preview names its inputs and maximum usage. Edits affect
+future attempts only. Scripts may contain multiple commands and declared steps may
+checkpoint caches/products, but the executor proceeds without asking the model for
+the next command.
 
 ## History and control
 
 History filters by purpose, action, actor, outcome, and date. Keep links from chat,
 compiler sessions, generation failures, and verification rows to the run. Show a
-parent run with its command steps, rather than a sidebar item for every shell call.
+parent run with its declared steps, rather than an item for every internal command.
 
-`Stop` remains available after allowance exhaustion. Distinguish stopping from
-confirmed stopped. `Run again` creates a new attempt on a selected revision and
-shows changed inputs. It never blindly repeats an unknown publication. `Start from
-retained inputs` starts a new sandbox; it does not resurrect a dead one.
+`Cancel run` remains available after allowance exhaustion. Distinguish requested
+cancellation from confirmed shutdown. Completion always triggers collection and
+teardown automatically. `Run again` creates a new attempt with a fresh container
+and shows its selected revision/configuration. It never blindly repeats an unknown
+publication. Inspecting historical results allocates no runtime.
 
 Show queue reason and position when practical, including `Waiting for the project's
 active run`. The user can cancel or stop the current run. Do not allow a queued run
@@ -133,13 +133,13 @@ pending separately. Add a breakdown for models and runtimes, resource/time histo
 and active runtime reservations. The main run view can say `Small · 10-minute limit`
 and show an estimated percentage. Keep internal credits and supplier keys out.
 
-A resource/time increase shows the revised maximum use before a user confirms it,
-or appears in the activity log when an agent is already allowed to choose it.
-Expired idle environments read `Stopped after inactivity`. Failed tests, OOM,
-unavailable runtime, exhausted allowance, and failed product import have distinct
+A resource/time increase applies to a new attempt and shows its maximum use before
+submission, or appears in the activity log under an existing agent grant. Timed-out
+runs show the fixed bound they reached. Failed tests, OOM, unavailable runtime,
+exhausted allowance, and failed product import have distinct
 messages with the action that can resolve them.
 
-## Local and browser use
+## Cloud, local MCP, ACP, and browser use
 
 Local GUI uses the same run UI against the local API. It says `Runs on this machine`
 and does not show Cloud billing for local compute. Missing Docker/Podman gives setup
@@ -147,6 +147,13 @@ instructions and explicit alternatives; it never silently executes on the host.
 Browser-only projects show runtime capability as unavailable until connected to a
 local engine or hosted execution. Reading files and LLM-only verification continue
 where their existing capabilities permit.
+
+Local MCP clients and ACP IDE sessions can launch and inspect the same runs without
+the Cloud editor. MCP returns IDs, bounded logs, and retained file/diff handles. ACP
+surfaces action progress and results through the existing tool-call update stream,
+with text/path fallbacks when the IDE lacks a rich diff viewer. Neither requires a
+terminal. See [access contracts](access-paths.md) for authentication, cancellation,
+reconnect, and local/hosted routing.
 
 Proposed CLI equivalents are `jazyk run <task>`, `jazyk deliver <name>`,
 `jazyk runs`, `jazyk logs <run>`, and `jazyk stop <run>`. Existing `jazyk gen` and

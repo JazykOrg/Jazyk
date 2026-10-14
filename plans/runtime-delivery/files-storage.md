@@ -12,8 +12,8 @@ glob matched them.
 | Class | Examples | Retention and UI |
 | --- | --- | --- |
 | Product | PDF, EPUB, PPTX, binary, rendered site | Durable object with a project path, visible in Files after promotion. |
-| Cache | Maven dependencies, npm cache, Cargo target | Disposable, quota-bound, restored opportunistically; browse under the run or cache inspector. |
-| Scratch | Temporary extraction, sockets, intermediate files | Dies with the sandbox; optionally inspect while live. |
+| Cache | Maven dependencies, npm cache, Cargo target | Disposable, quota-bound, restored opportunistically; show checkpoint metadata and size. |
+| Scratch | Temporary extraction, sockets, intermediate files | Discarded when the finite run ends; no live browser. |
 
 Source and test edits made by commands form a separate import diff. They can become
 canonical only through normal ownership and revision gates. A lockfile such as
@@ -40,8 +40,10 @@ real project needs them. Use maintained archive and filesystem libraries.
 Existing canonical files cannot be overwritten by restoring a cache. Restores go
 only into declared cache roots and must not overlap source, script, or protected
 state paths. A broad cache pattern cannot capture the whole project by accident.
-Unmatched new files remain scratch. Report them in the run diff so the agent can
-notice a missing product rule before terminating.
+Unmatched new files remain scratch. Retain a bounded excluded-path summary so the
+agent can notice a missing product rule and fix the next run's definition. The
+container has already shut down; undeclared contents cannot be recovered by
+attaching later. Do not imply that every listed path has retained bytes.
 
 ## Input manifests and delta transfer
 
@@ -49,9 +51,10 @@ A frozen input manifest maps normalized paths to content digests, sizes, roles,
 and bytes or object references. Materialize all relevant canonical project files,
 including binary assets. Mount the selected `.jazyk` projection read-only.
 
-Use content hashes to transfer only changed files after the initial upload. The
-manifest records exactly what the command could read. Source saves during a run
-do not mutate that snapshot. For large retained products, the engine's filesystem
+Use content hashes to avoid redundant transfers of retained input objects. Every
+run still materializes a fresh filesystem. The manifest records exactly what the
+action could read. Source saves during a run do not mutate that snapshot. For large
+retained products, the engine's filesystem
 adapter must be able to load referenced bytes on demand; simply replacing file
 contents with a URL would break existing reads and model inspection.
 
@@ -62,10 +65,12 @@ files the script might need. Excluded sensitive/operational files are explicit.
 ## Product checkpoints
 
 Default: collect declared products after a successful action. On failure, retain
-logs and reports, with a bounded option to retain partial products as failed-run
-artifacts. Never overwrite the latest successful product with a partial build.
+logs, reports, and eligible source/test/support-file changes for inspection, with a
+bounded option to retain partial products as failed-run artifacts. Never overwrite
+the latest successful product with a partial build.
 
-Collection happens at a quiescent command or step boundary. Seal file digests,
+Collection happens automatically at declared step boundaries and action completion,
+after relevant writers have stopped. Seal file digests,
 upload bytes, verify the object manifest, then commit the project references with
 the expected workspace revision. A product required by the build but absent after
 exit zero is a failed build. Optional glob matches can be empty only when declared
@@ -81,6 +86,33 @@ the current product.
 Individual projects can request checkpoints after earlier steps. A PDF built before
 an upload failure can remain a valid local product while external delivery failed.
 The UI presents those two outcomes separately.
+
+## Retained file changes
+
+Every run produces a bounded change manifest against its frozen input, covering
+added, modified, and deleted eligible project files. Record before/after hashes,
+role, size, content references, and import status. Eligible contents include declared
+products and changes within the generation task's authorized source/test/support
+scope. Newly created source files need that scope too; arbitrary new paths do not
+become canonical merely because a script wrote them.
+
+Preserve before/after text or retrievable objects for diffs. Binary changes get
+metadata and retained artifact handles. Deleted files retain their before reference.
+Failed runs can have useful diffs; retaining one does not apply it or mark tests
+passing. Apply permitted changes only through normal ownership and revision gates.
+An authored-file deletion needs its existing authorization, not just a run receipt.
+
+Cache/scratch contents are excluded from durable diffs. Their bounded path/count/size
+summaries explain exclusions. Mark quota-limited or interrupted collection as partial
+and identify missing paths where known. No changes and no captured changes are
+different states. Text diffs are computed from retained objects, never by shelling
+into a still-running container.
+
+During execution, logs stream and completed checkpoints can expose sealed results.
+The final Changes view appears after collection. Teardown proceeds under a fixed
+deadline even if the model or user never opens the view. Retain diffs under the
+same default 30-day policy as logs/reports; referenced canonical files and products
+have their separate lifetime. Reading history allocates no execution environment.
 
 ## Cache semantics
 
@@ -126,10 +158,11 @@ right platform/toolchain inputs. Let generation choose with evidence from timing
 
 | Data | Local adapter | Cloud adapter |
 | --- | --- | --- |
-| Run, step, command state | Small durable records under `.jazyk/runtime/` | PostgreSQL rows, linked to jobs and account/project IDs. |
+| Run and step state | Small durable records under `.jazyk/runtime/` | PostgreSQL rows, linked to jobs and account/project IDs. |
 | Input and product manifests | Content-addressed manifests | PostgreSQL manifest references and object metadata. |
 | Products and binary input objects | Project files plus retained object store | Private S3-compatible object storage. |
 | Compressed logs and reports | Run files | Object storage; small indexed metadata in PostgreSQL. |
+| Retained file changes | Manifests and before/after object references | PostgreSQL manifest references and private content objects. |
 | Cache generations | Local disposable cache directory | Object storage or measured provider volume adapter. |
 | Live scratch filesystem | Sandbox disk | Provider sandbox disk. |
 | Financial receipts | No hosted charge for local execution | Existing durable billing ledger, independently retained. |
@@ -154,7 +187,7 @@ their separate existing lifetime without retaining project payloads unnecessaril
 ## Logs readable by users and agents
 
 Capture stdout/stderr from process start, including image preparation, dependency
-restoration, commands, collection, and shutdown. Each record has run/command/step
+restoration, commands, collection, and shutdown. Each record has run/step
 IDs, stream, timestamp, and monotonic sequence. Preserve bytes where needed and
 provide a sanitized text view. Do not claim perfect ordering between separate OS
 streams; sequence describes arrival at the collector.
@@ -181,7 +214,8 @@ known remote publication; retain that distinct outcome for recovery.
 - Current canonical products stay until replaced or deleted under storage quota.
 - Prior product versions stay for 30 days by default, unless explicitly pinned.
   Pinning consumes durable storage allowance.
-- Logs and test reports stay for 30 days by default, with a visible expiry date.
+- Logs, test reports, and retained run diffs stay for 30 days by default, with a
+  visible expiry date.
 - Run summaries, input digests, outcomes, and object tombstones stay for 90 days.
   Referenced publication checkpoints can outlive ordinary history.
 - Caches use their shorter disposable quota and TTL. Scratch has no retention.

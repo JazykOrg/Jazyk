@@ -1,5 +1,10 @@
 # Delivery design proposal
 
+The [2026-10-14 runtime and delivery draft](../runtime-delivery/README.md) proposes
+replacing the GitHub Actions-only execution direction below with a shared local
+and hosted runtime for generation, tests, and generic scripted deliveries. It is
+the active discussion draft. This directory retains the earlier reasoning.
+
 The private [Cloud and delivery plan](https://github.com/JazykOrg/jazyk-cloud/blob/master/plans/cloud/README.md),
 dated 2026-10-03, integrates this design with named TOML deliveries, Git publishing,
 script entrypoints, GitHub Actions, and PostgreSQL-backed cloud operation. It records

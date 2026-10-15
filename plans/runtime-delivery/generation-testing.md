@@ -1,150 +1,192 @@
 # Generation and verification
 
-Status: proposal for the [shared runtime](runtime.md). Prompt and tool details are
-in [Agent contract](agent-contract.md).
+Status: revised for one flat task list. See [configuration](configuration.md) and
+[agent prompts](agent-contract.md).
 
-## Keep the existing compiler responsibilities
+## Existing responsibilities stay in place
 
-Compilation derives graph and ledger work. Binding generates or identifies tests.
-Generation implements the product against those tests. Verification records
-evidence against requirements and criteria. Delivery runs a named action against a
-selected candidate. Runtime execution is a capability used by those operations.
+Compilation reconciles prose and derives graph/ledger work. Binding identifies or
+generates tests. Generation implements requirements. Verification records evidence.
+Tasks give those operations a common way to execute a shell command.
 
-Do not create a container-management goal kind, let the model schedule goals, or
-make every documentation change start a container. Pure extraction and graph
-judgment need no shell by default. Build/test obligations can use the existing
-generation and verification gates.
+A task is not a compiler goal. The model chooses a task from its name and description
+while resolving the goal the harness assigned. It does not create, route, or
+prioritize goals. Pure extraction and graph judgment need no runtime by default.
 
-Delivery obligations in prose use the existing graph node kinds and provenance.
-Generated scripts are support files shared by the deliverable. An incidental entity
-must not become the sole owner of a whole-project build or publishing script.
+Build and delivery obligations use existing graph node kinds and provenance. Keep
+requirement-to-task/support-file references in generation metadata. Changes to those
+requirements, commands, scripts, or environments invalidate affected evidence through
+the existing binding/generation machinery. Shared support files belong to the
+whole deliverable, not an arbitrary incidental entity.
 
-Record requirement-to-entrypoint/settings references in generation metadata. A
-change to those requirements, their scripts, or the selected runtime invalidates
-the corresponding generated support evidence and verification. The harness derives
-that work through the existing generation/binding machinery. The model does not
-have to remember to revisit delivery after an unrelated source edit. Define these
-dependencies in the docs before adding the gate; do not rely on prompt text alone.
+## Source and test generation loop
 
-## The source and test generation loop
+1. Read the assigned goal, relevant prose, bound tests, flat task list, and effective
+   runtime capabilities. Choose by name and description, not a required task type.
+2. Reuse existing commands and toolchain conventions. Write source/tests, and create
+   or update a task only if the needed operation is missing. A short command does
+   not need a wrapper script.
+3. Submit `run_task` with the task ID and staged input revision. Optional selection
+   identifies the criteria/cases whose evidence is sought.
+4. The host snapshots inputs, restores disposable cache, runs the command, collects
+   available logs/reports/changes, and destroys the container.
+5. Inspect the results. Repair owned files and run another task if useful and within
+   the cumulative budget. Every attempt uses a fresh container.
+6. Satisfy the existing generation/verification gate with actual evidence and inspect
+   retained products where required. Record generation with the original fact hash.
 
-1. Load the task package, bound tests, delivery requirements, current action
-   definitions, and effective runtime capabilities.
-2. Reuse the established language, dependencies, build, and test conventions.
-   Add a runtime/script definition only when absent or inadequate.
-3. Write the implementation or test files through existing gated tools. Stage a
-   settings patch for entrypoints, products, and caches when needed.
-4. Submit the smallest useful named action or test selection against the staged
-   candidate. Freeze its steps, image, size, timeout, and retention rules.
-5. The host creates the environment, restores caches, executes, collects results,
-   and tears down automatically. Inspect its status, logs, and retained file diff.
-   Repair the responsible files, then submit a fresh run within the session's
-   cumulative action and spend budgets.
-6. Run the required build and verification for completion. Collect expected products,
-   confirm they exist, and retain evidence. Import changes through gates.
-7. Record generation with the original fact hash and runtime receipts. Close the
-   existing goal only if its gate holds. Teardown requires no model action.
+An expected assertion failure can be useful during test binding. Do not change the
+product just to make a newly written test green in that phase. A failed run can
+retain useful changes and valid completed test results. It saves no new cache.
 
-An action can fail while useful source changes remain staged. A failed test need
-not discard an already sealed build cache. It must not produce a passing verdict.
-The agent receives enough logs to fix a failure and links to the complete bounded
-record; repeated failures reach the existing retry/park limits plus a runtime spend
-limit. Infinite build-and-repair loops are not an acceptable completion strategy.
+## Existing status belongs to the ledger
+
+Jazyk already has requirement rows and per-criterion tests in its
+[generation ledger](../../docs/consumers/gen.md#status-is-derived-never-stored).
+Bindings record test kind, artifact, exact name, criterion hash, and command today.
+Verdicts are `none`, `pass`, or `fail`. Requirement status is derived from those
+verdicts, artifact existence, and requirement/test/source hashes.
+
+Feed runtime results through this ledger API. The graph and editor consume the
+derived status; do not add authored graph facts saying "this test passed". Add
+run references and execution reasons to evidence, preserving the existing graph
+identity and provenance model.
+
+Generated programmatic bindings additionally reference a task ID and exact reported
+case identity. The task contains the command once. The ledger contains the criterion
+mapping once. An optional exact selector remains binding metadata, not another
+suite/test configuration table. Legacy per-row commands can become ordinary tasks
+or use a temporary compatibility adapter while the recorded binding is updated.
 
 ## Selection and results
 
-Preserve today's entity, requirement, kind, all, and force selectors. Extend them
-to criterion IDs, named suites, and explicit bound subtest selectors. The compiler
-resolves semantic targets into exact ledger rows before starting execution.
+Any task can emit test reports. `reports` supplies project-relative globs for JUnit
+XML in the first release. No `type = test`, suite definition, or separate delivery
+wrapper is required. A task invoked from generation, the picker, MCP, ACP, or a
+publication workflow imports results the same way.
 
-| Request | Execution |
+Before dispatch, freeze the expected bound cases and their requirement/criterion,
+source, test, and task hashes. Default expectations come from programmatic bindings
+that reference that task. Existing semantic selectors for entity, requirement,
+criterion, kind, all, and force resolve into ledger rows.
+
+The default task runs its declared command unchanged. A request for one criterion
+may execute a broader suite. State that clearly; do not claim the command filtered
+execution. All unambiguously mapped, current cases actually reported may receive
+fresh evidence. Report extra unbound cases in the run without assigning graph IDs.
+
+For efficient filtering, a generated command or script may read the host's optional
+`JAZYK_TEST_SELECTION` JSON file. It contains literal case IDs/selectors and whether
+the request is all. It is input data, not shell text to evaluate. The host does not
+append framework-specific arguments to arbitrary commands. Otherwise the agent
+can define a focused task such as `mvn -Dtest=CatalogTest test` and bind it to those
+cases. These are ordinary tasks; filtering never requires a task-composition DSL.
+
+`jazyk test` and the existing semantic verification API can select the bound tasks,
+execute each once for the candidate, and collect evidence. They are convenience
+orchestration over the same `run_task` contract, not another runner or task type.
+LLM verification packages remain a separate judgment operation.
+
+Match report identities exactly to ledger bindings, using a qualified identity such
+as JUnit `classname::name` and explicit parameterized-case identities where needed.
+Never fuzzy-match a display name to a criterion. Duplicate or ambiguous identities
+need rebinding/runner repair. Frameworks whose reports cannot distinguish the bound
+cases need a generated adapter before they can establish those verdicts.
+
+If several cases or parameterized subtests jointly cover one criterion, keep their
+expected identities in binding metadata and aggregate only when every required
+member has current evidence. Running one subtest cannot mark the entire criterion
+passed. For dynamically discovered cases, require a complete runner enumeration
+before claiming complete coverage; a partial report cannot define its own smaller
+expected set.
+
+| Observed result | Ledger and UI behavior |
 | --- | --- |
-| One criterion | Its bound case, or its suite with a selection manifest. |
-| Several requirements | Union of their cases, deduplicating shared commands. |
-| One entity | Its selected requirement and criterion rows. |
-| A suite | The suite's declared cases and any reported extra cases. |
-| All tests | All selected programmatic rows plus LLM verification packages. |
-| One subtest | Exact framework selector mapped to a bound test identity. |
+| Bound case passed | `pass`, with the producing run and exact tested hashes. |
+| Bound case assertion failed | `fail`, with assertion evidence. |
+| Explicitly skipped case | `none`, reason `skipped`; never a pass. |
+| Proven not started, e.g. setup failed or queued run cancelled | `none`, reason `not-run`. |
+| Expected case absent from a partial/missing report | `none`, reason `no-result`; do not assert it never executed. |
+| Case interrupted by timeout/cancellation | `none`, reason `interrupted`, unless a valid completed result was already sealed. |
+| Ambiguous, malformed, or stale evidence | `none` for affected expected cases, with the import error. |
+| Unselected and unreported case | Keep its previous evidence, subject to normal staleness checks. |
 
-Run the recorded prerequisite build once for the selected candidate before tests.
-If already built in the same run, reuse it only when input/configuration hashes and
-required outputs still match. Do not assume a cache hit proves a build or test.
+These reasons describe the latest attempt. `Never ran` means there is no prior
+execution evidence, not that the case is absent from this report. Keep prior history
+visible, but do not carry yesterday's passing verdict forward as the result of an
+inconclusive attempt that explicitly expected this case. Proven completed results
+from a cancelled run can survive as individual evidence. The run still says cancelled.
 
-Initially support the existing exact-command exit-code contract and JUnit import.
-A direct command with an explicit binding can establish its bound test's verdict,
-under the current runner failure rules. A bulk suite needs unambiguous case mappings.
-A suite's exit code alone does not prove every requested criterion ran.
+A build/setup failure is one runner failure, not a failing assertion for every
+requirement. Zero collected tests cannot verify the requested criteria. A successful
+command with missing reports says `Command succeeded; verification incomplete`.
+A nonzero suite exit may still contain some valid passes and assertion failures.
 
-Map `passed`, `failed`, `skipped`, `missing`, and `ambiguous` to distinct evidence.
-Skipped, missing, duplicate ambiguous results, filtered-out cases, and zero tests
-executed do not pass. Unknown extra test cases can be shown but cannot silently
-claim an unrelated criterion. Report parsing uses existing libraries and limits.
+Retain the existing exact-command verdict contract for legacy bindings that execute
+one known test, with current runner-failure rules. It cannot be used to fan a bulk
+command's exit code out into passing verdicts for a suite. New generated framework
+tests should emit per-case reports; when available, use runner counts to reject
+zero-test selections even for an exact command.
 
-Setup errors, OOM, timeout, cancellation, unavailable images, and transport loss
-leave affected tests unverified. A build failure is a build failure, not N failed
-requirements. A completed assertion failure is failing evidence. Retain the current
-command-not-found and common-runner-failure distinctions when adapting legacy rows.
+## Fresh evidence and aggregation
 
-## Evidence envelope
+Collect reports even after a failed command or cancellation, within a bounded
+collection window. Reports are operational evidence, not products or cache. Clear
+previous generated report outputs in the sandbox before execution and never restore
+them from cache. Reject broad report patterns that overlap authored input/test files.
+Seal the fresh report with the host's run/input manifest; a timestamp alone does
+not establish freshness. Validate parsers, byte/case limits, and archive/XML handling.
 
-Every accepted runtime receipt contains:
+A partial valid report can establish completed cases but cannot make the entire
+selection pass. Truncated/unparseable evidence leaves affected cases unknown.
+A requirement with criteria becomes verified only when all required bound criteria
+have current passing evidence. A passing headline cannot hide skipped or unknown
+criteria. Preserve the existing stale, failing, partial, and unimplemented precedence,
+then add an incomplete-evidence guard before any aggregate `verified` result.
 
-- Project and document-set identity, workspace revision, and graph generation.
-- Input manifest digest, relevant requirement/criterion hashes, source/test hashes.
-- Resolved image/platform, action definition, entrypoint hash, and command identity.
-- Requested selection, actual mapped cases, exit status, and outcome classification.
-- Log/report object references and hashes, timestamps, and producing run ID.
+The existing implementation aggregates pass/fail counts and a headline verdict.
+The new all-required-criteria guard must be specified in docs and tested explicitly;
+it is a required change, not an assumption about today's behavior.
 
-The host produces the envelope from observed execution. A project-produced JUnit
-file supplies case results, not its own trusted revision identity. A report is
-evidence from project tests, not cryptographic proof that those tests are honest.
-Existing test binding and test-quality judgment still matter.
+Each accepted receipt records project/set, input revision/digest, graph generation,
+requirement/criterion hashes, source/test hashes, task/command/image digest, expected
+and observed cases, outcomes, logs/reports, and run timestamps. The host stamps this
+envelope. Project reports cannot claim their own trusted revision identity.
 
-Changed inputs make old evidence stale. Retaining an artifact or importing a report
-must not refresh test/requirement hashes to the current version. Commit verdicts
-through the existing ledger API, with current fact-hash checks. Runtime bookkeeping
-does not write graph shards or verification rows directly.
+A run can rebaseline test/source hashes only to the bytes actually exercised, under
+the existing ledger rules. It never rewrites requirement or criterion statement
+hashes. If the project changed meanwhile, retain old evidence as historical/stale;
+do not stamp newer files as tested. If the command changes source or tests, a final
+diff alone does not prove which version was exercised. Withhold a current pass for
+changed inputs until a fresh run over the resulting candidate establishes it.
 
 ## LLM verification
 
-An LLM test receives its criteria file, relevant requirements, fact hash, and
-implementing artifacts. It judges and calls `record_verdict` through the existing
-contract. It uses model usage only when the required files already exist. It does
-not allocate a sandbox just to read source or prose.
+LLM tests keep their criteria files, `begin_verification`, and `record_verdict`
+contract. Judge exact requirements and retained artifacts with their fact hashes.
+Reading source or prose requires no container. If a PDF, presentation, or rendered
+page must be built first, choose its ordinary task, retain the output, and inspect
+it after teardown. Lack of a binary/image inspection capability is explicit;
+file existence is not proof of visual quality.
 
-A PDF or slide deck may need a build before it can be inspected. A presentation
-criterion may also require rendered pages. That prerequisite can use the shared
-runtime, retain its products and previews, then stop. The verdict remains an LLM
-judgment with evidence pointing to the exact rendered artifact. If the model or
-host lacks an appropriate binary/image inspection capability, report the missing
-capability. File existence alone does not establish visual quality.
+The two test kinds remain in the ledger because their evidence differs. They do
+not become two task-definition kinds. Changing a runtime report cannot forge an
+LLM verdict, and an LLM summary of logs cannot forge a programmatic pass.
 
-LLM verification can submit a bounded inspection action if its criteria require
-it and the host supports it. Keep this optional. It reads retained results after
-the inspection run has shut down; no environment waits for the model's next command.
+## Tasks that publish
 
-This loop is identical in Cloud, through local MCP in a coding agent, and through
-ACP in an IDE. See [access paths](access-paths.md) for tool injection and result
-presentation. Native terminal access is not a prerequisite for generation or tests.
+A task may build, test, and publish in one command, or the agent may run separate
+tasks based on their descriptions and documented obligations. There is no task
+DAG. Rebuild needed outputs or consume explicitly retained products in a later run;
+never assume the previous container still exists or its cache will be available.
 
-## Delivery and test delivery
+Which tests must pass before publication comes from prose and granted user policy.
+Do not invent a universal release gate. Where enforced, check current ledger
+evidence against the frozen candidate before releasing publication credentials.
+A command with credentials from startup cannot enforce a protected prepublication
+gate by its description alone; use a separate publication task for that policy.
 
-Delivery can invoke the project's build and verification actions before publishing.
-Which tests must pass comes from documented obligations and any user policy. Do
-not require all tests for every delivery by inventing a universal release process.
-Do not skip a documented gate merely because the script exited zero.
-
-Tests produce retained reports and evidence, whether started from the Test button,
-an agent, or a delivery. They need not be disguised as GitHub deliveries. A project
-can still expose `Run acceptance suite` as a named delivery if that is useful.
-
-The agent can draft and run local product creation with no external publication.
-Publication receives a frozen candidate, destination grants, and a fresh credential
-scope. Record any project-defined release URL, digest, remote revision, or other
-receipt. A success without a receipt is shown as `Script succeeded`, with the
-known facts; it is not proof of destination correctness.
-
-If publication may have happened but the response was lost, retain `outcome unknown`.
-The next step is inspection/reconciliation using the script's documented procedure.
-Do not rerun migrations, uploads, or notifications automatically. The earlier
-[delivery workflow](../delivery/workflow.md) has the recovery rationale.
+Record any release URL, remote revision, or digest available. Command success is
+not proof of destination correctness. Cancellation stops remaining work but cannot
+undo an already completed external write. Preserve `outcome unknown` when the
+response was lost, and inspect the destination before any retry.

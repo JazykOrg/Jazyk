@@ -1,161 +1,135 @@
 # Editor and command-line experience
 
-Status: proposal for the existing jazyk.dev editor, whose implementation remains
-in `jazyk-cloud`. No replacement UI is proposed.
+Status: proposal for the existing jazyk.dev editor in `jazyk-cloud`.
 
-## Delivery split button
+## One task picker
 
-- Zero deliveries: show `Set up delivery` in the delivery slot, or a quiet disabled
-  `Deliver` with a setup entry. Do not invent a default destination.
-- One delivery: use its label as the main action, e.g. `Create presentation` or
-  `Sync to GitHub`. A menu contains settings and history.
-- Several deliveries: the main action executes the last selected delivery. Its
-  label matches that selection. The arrow menu lists the other named actions and
-  `Manage deliveries`.
+Use the existing split-button area for the flat task list. Build, test, render,
+and publish all appear together. There is no second delivery list to maintain.
 
-Store selection per project, not globally. Renaming/removing an action updates the
-selection safely. Long labels truncate accessibly with the full label available.
-While executing, show state and a link to the run. Disable duplicate execution of
-the same active action; other work follows the project's runtime queue policy.
+- Zero tasks: show a quiet `Set up tasks` entry.
+- One task: show its name as the action, e.g. `Create presentation`.
+- Several tasks: execute the last selected task; the arrow lists task names with
+  descriptions and a `Manage tasks` entry.
 
-Clicking a build-only action starts the admitted run. External publishing behavior
-depends on the chosen [autonomy policy](decisions.md#delivery-autonomy). A required
-approval presents the concrete candidate, destination, script, and maximum usage.
-Do not ask repeatedly when an existing grant already authorizes that operation.
+Store selection by stable task ID per project. Renaming changes the displayed name.
+Removing a task clears an invalid selection. The optional managed `Sync to GitHub`
+row uses the same picker, backed by the GitHub connection settings.
 
-## Small settings form
+A click starts the admitted task. Publication follows the chosen
+[autonomy policy](decisions.md#delivery-autonomy). Where approval is required, show
+the concrete command/candidate, effective destination/grants, and maximum usage.
+Do not ask repeatedly when existing authority covers it.
 
-The normal form contains name/label, script picker, and environment. The environment
-defaults to the project image. Products, cache, timeout, size, environment variables,
-and secret references sit in an advanced section. Selecting an existing task is
-an optional reuse control. The TOML editor remains available.
+Keep the existing semantic Test control if useful: it chooses bound cases and
+uses their task references. It does not introduce another task definition form.
 
-GitHub sync substitutes repository and branch plus an include/exclude preview.
-Show GitHub App access separately from sign-in. A project with a script delivery
-never has to fill in a repository. Do not place test-case mappings in this form.
+## Task settings
 
-Agent changes appear as normal project settings/script diffs with their originating
-requirements. Validation names missing scripts, bad globs, unsupported runtimes,
-or missing grants before execution. The form shows effective host caps alongside
-requested timeout/size when they differ.
+Show a simple list with ID, name, description, and command. The command is a text
+field supporting multiline shell text, not a mandatory file picker. A script path
+can be suggested inside the command. An ID is generated on creation and stays stable.
+Descriptions explain purpose and when a person or model should use the task.
 
-## Runs alongside Files
+Optional globs are Products, Cache, and Test reports. Image, size, timeout, working
+directory, non-secret environment, and granted credential references sit under
+advanced controls. Show effective defaults. There are no task types, runtime/cache
+profile editors, wrappers, step lists, or dependency graphs.
 
-The owner selected Runs beside Files, using existing tabs:
+Agent task edits appear as normal settings diffs with originating requirements.
+Validate empty commands, duplicate IDs, globs, paths, and unsupported capabilities.
+Do not report a missing script just because the command is `mvn test`.
+
+The managed GitHub row links to repository/branch and include/exclude settings. Its
+trusted handler is not editable shell text. Sign-in and repository write access
+are distinct. Ordinary task configuration requires no GitHub connection.
+
+## Runs beside Files
+
+The accepted layout uses a collapsible Runs group and existing tabs:
 
 ```text
 Sidebar                         Tabs
-Files                           main.md | Create presentation #42
+Files                           main.md | Run tests #42
   docs/                         Overview  Logs  Changes  Products  Tests
-  scripts/                      Building · medium · 03:12 elapsed
-  dist/                         Stops in 01:48 · usage reserved …
-    slides.pdf  [generated]      [Cancel run]
-Runs (1 active)
-  ● Create presentation #42     Steps
-  ✓ Unit tests #41               ✓ Restore cache
-  × Generate source #40          ● Build
-  Show history…                 ○ Retain products
+  src/                          Running · small · 03:12 elapsed
+  tests/                        Stops in 01:48 · usage reserved …
+Runs (1 active)                  [Cancel run]
+  ● Run tests #42               Command: mvn test
+  ✓ Create presentation #41     14 passed · 1 failed · 3 awaiting result
+  × Build #40
+  Show history…
 ```
 
-`Runs` is a collapsible peer of Files, not a fake disk directory. It includes
-non-container GitHub sync and LLM-only verification. This avoids making users learn
-that a stopped container and a retained delivery attempt are different histories.
-Runtime details remain available inside a run.
+This is run history, not a container explorer or fake directory. Include managed
+GitHub sync and LLM-only verification history with appropriate execution details.
 
-The sidebar is execution history, not a container explorer. A run opens logs and
-retained file changes in the existing tabs. This layout choice is settled for the
-first release.
+## Logs, changes, and results
 
-## Run tab
+The overview shows task/name, actor, frozen revision, state, timing, effective
+limits, resource size, environment, cache summary, and usage. Setup, command,
+collection, and shutdown are lifecycle phases, not user-authored steps. Provider
+IDs stay in expanded details.
 
-The overview shows purpose, actor, candidate revision, action label, state, started
-time, effective deadline, resource size, environment, cache hits, and usage. Show
-provider details in an expanded technical section, not as the primary product label.
+Logs stream with follow/pause, search, download, stream filters, and failure links.
+Reconnect by cursor. Historical logs use the same viewer; label gaps and expiry.
 
-Logs stream with pause/follow, search, copy/download, stream and step filters, and
-links from a test failure to its output. Reconnect by cursor after a network drop.
-Historical logs use the same viewer. Missing or expired output is labeled.
+Changes becomes available after collection. It lists retained additions, modifications,
+and deletions relative to frozen input. Text opens a diff; binary files offer
+preview/download and metadata. Distinguish imported, pending, conflict, and excluded
+paths. During execution say `File changes available when the run finishes`.
+There is no live filesystem browser.
 
-Changes lists added, modified, and deleted project paths against the frozen input.
-Text files open a diff; binary outputs offer a retained preview/download and metadata.
-Show imported, awaiting import, conflict, and excluded states separately. Collection
-at a declared checkpoint or run completion populates this view. While executing,
-show the latest completed checkpoint or `File changes available when the run finishes`.
-There is no live container file browser.
+Failed and cancelled runs can retain useful diffs. Interrupted collection says
+`Partial changes captured`, never `No changes`. Cache/scratch show only bounded
+exclusion metadata; their bytes are not promised in history. Products enter Files
+at their real paths after successful collection and revision-checked promotion.
+Partial failed outputs do not replace the latest successful product.
 
-Retained changes remain inspectable after teardown, even when a test failed. Cache
-contents and unretained scratch are not a durable project diff. Excluded-path summaries
-can explain what was discarded. If timeout/provider loss interrupted collection,
-show the diff as incomplete, never as evidence that no files changed.
+Tests shows individual passed, failed, skipped, not-run, interrupted, and unknown
+results, with current/stale evidence. A missing report is not proof that no case
+ran. `Never ran` refers to absence of execution history. Show command success and
+verification completeness separately. LLM judgments show their evidence without a
+container badge. Linking a case opens its criterion and producing run.
 
-Products provides download and supported preview. Files receives promoted products
-at their real project paths after a checkpoint. Mark generated ownership and source
-revision. A cached dependency is never added to canonical Files merely because it
-exists during a run. `Clear cache` is in execution settings, not `Delete product`.
+## Cancellation and history
 
-Tests shows selected cases and passed/failed/skipped/missing results, with stale
-evidence called out. A build/setup failure gets one clear cause. Pure LLM judgments
-show their evidence and use no container status badge.
+`Cancel run` is available while queued, provisioning, executing, collecting, or
+stopping, including after allowance exhaustion. It sends stop intent immediately,
+then shows `Cancelling` until termination is confirmed. Disable duplicate button
+submissions while keeping status visible. A failed stop remains `Shutdown unknown`
+with ongoing reconciliation; do not present a stopped badge prematurely.
 
-## Action controls
+The user can stop a running command without waiting for it to return. The supervisor
+terminates children and ultimately the allocation. Logs and any completed results
+remain inspectable. Explain a known published result or uncertain external write
+when cancellation raced with it; cancellation does not undo publication.
 
-People and agents start defined tasks, tests, and deliveries. Each run has a frozen
-script/step sequence, input revision, image, size, and timeout. The user can inspect
-progress or cancel. There is no start-empty-container action, command console, shell,
-terminal, attach, manual command submission, or live deadline/resource change.
+Task edits apply to future runs. There is no manual console, attach action, live
+command submission, or live resource/deadline change. To investigate, edit or add
+a diagnostic task and start a fresh run.
 
-To investigate a failure, edit a script or define a focused diagnostic task, then
-start another run. The run preview names its inputs and maximum usage. Edits affect
-future attempts only. Scripts may contain multiple commands and declared steps may
-checkpoint caches/products, but the executor proceeds without asking the model for
-the next command.
+History filters by task, actor, outcome, and date. Link compiler sessions, chat,
+verification, and generation failures to runs. `Run again` creates a new attempt
+with its selected revision/definition and admission; do not repeat an uncertain
+external write automatically. Reading history allocates no runtime.
 
-## History and control
+## Usage and access paths
 
-History filters by purpose, action, actor, outcome, and date. Keep links from chat,
-compiler sessions, generation failures, and verification rows to the run. Show a
-parent run with its declared steps, rather than an item for every internal command.
+Keep monthly, five-hour, and seven-day usage meters with used/reserved amounts.
+Add model/runtime breakdowns and active run reservations. Show a size, fixed time
+limit, and estimate before submission or in authorized agent activity. Differentiate
+assertion failures, OOM, timeout, missing runtime, allowance exhaustion, and import
+conflict with actionable messages.
 
-`Cancel run` remains available after allowance exhaustion. Distinguish requested
-cancellation from confirmed shutdown. Completion always triggers collection and
-teardown automatically. `Run again` creates a new attempt with a fresh container
-and shows its selected revision/configuration. It never blindly repeats an unknown
-publication. Inspecting historical results allocates no runtime.
+Local GUI uses the same view and says `Runs on this machine`, with no Cloud compute
+charge. Missing Docker/Podman offers explicit setup/alternatives; do not silently
+execute on the host. Browser projects connect to local or hosted execution.
 
-Show queue reason and position when practical, including `Waiting for the project's
-active run`. The user can cancel or stop the current run. Do not allow a queued run
-to become stale and silently execute a different candidate.
+MCP returns durable IDs and bounded logs/diff/artifact handles. ACP surfaces the same
+work through tool-call updates, with text/path fallbacks for minimal IDE clients.
+No terminal capability is required. See [access paths](access-paths.md).
 
-## Usage and failure presentation
-
-Plan & usage keeps its existing monthly, five-hour, and seven-day meters, used and
-pending separately. Add a breakdown for models and runtimes, resource/time history,
-and active runtime reservations. The main run view can say `Small · 10-minute limit`
-and show an estimated percentage. Keep internal credits and supplier keys out.
-
-A resource/time increase applies to a new attempt and shows its maximum use before
-submission, or appears in the activity log under an existing agent grant. Timed-out
-runs show the fixed bound they reached. Failed tests, OOM, unavailable runtime,
-exhausted allowance, and failed product import have distinct
-messages with the action that can resolve them.
-
-## Cloud, local MCP, ACP, and browser use
-
-Local GUI uses the same run UI against the local API. It says `Runs on this machine`
-and does not show Cloud billing for local compute. Missing Docker/Podman gives setup
-instructions and explicit alternatives; it never silently executes on the host.
-Browser-only projects show runtime capability as unavailable until connected to a
-local engine or hosted execution. Reading files and LLM-only verification continue
-where their existing capabilities permit.
-
-Local MCP clients and ACP IDE sessions can launch and inspect the same runs without
-the Cloud editor. MCP returns IDs, bounded logs, and retained file/diff handles. ACP
-surfaces action progress and results through the existing tool-call update stream,
-with text/path fallbacks when the IDE lacks a rich diff viewer. Neither requires a
-terminal. See [access contracts](access-paths.md) for authentication, cancellation,
-reconnect, and local/hosted routing.
-
-Proposed CLI equivalents are `jazyk run <task>`, `jazyk deliver <name>`,
-`jazyk runs`, `jazyk logs <run>`, and `jazyk stop <run>`. Existing `jazyk gen` and
-`jazyk test` keep their role. Exact naming should be checked against the CLI before
-adoption. MCP exposes the same durable operations and evidence.
+Proposed CLI commands: `jazyk run <task-id>`, `jazyk runs`, `jazyk logs <run-id>`,
+and `jazyk stop <run-id>`. Existing `jazyk gen` and `jazyk test` remain semantic
+entrypoints. A separate `jazyk deliver` namespace is unnecessary for the new model.

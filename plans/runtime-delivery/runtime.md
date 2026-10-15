@@ -1,94 +1,72 @@
 # Shared execution runtime
 
-Status: proposal incorporating the owner's finite-run decision. See the
-[overview](README.md) and the [agent tools and prompts](agent-contract.md).
+Status: proposal for the [task model](configuration.md). Runtime internals are
+host responsibilities, not extra project configuration objects.
 
-## One action per run
+## One task per run
 
-A run freezes one action, its input revision, test selection, image, resource size,
-timeout, retention rules, and grants. The host creates a fresh isolated container,
-executes the complete script or ordered steps, captures results, and destroys the
-container. A script may invoke any number of commands internally. Those commands
-are part of the action, not new instructions sent into a running environment.
+A run freezes the task ID, command, definition, input revision, image, size, timeout,
+file globs, test expectations, and grants. The host creates a fresh isolated
+container, executes the command, collects results, and destroys the container.
+An ordinary shell command or project script can perform several operations internally.
+There are no user-defined step records, dependencies, or paused agent decisions.
 
-The agent works between runs: inspect retained logs and file changes, repair files
-or scripts, then launch another finite run. It cannot attach a shell, append steps,
-extend a running deadline, or keep an environment alive while deciding what to do.
-A run may be cancelled. Finishing, failure, or cancellation always leads to bounded
-collection and teardown without another agent call.
+The agent works between runs. It inspects logs and retained changes, repairs files
+or task settings, and starts another finite attempt. It cannot attach, append
+commands, extend a deadline, or keep an environment alive while reasoning.
 
-The durable records are:
-
-- A run: frozen action and candidate, state, logs, file changes, evidence, usage.
-- A sandbox allocation: provider identity, image digest, resources, hard deadline,
-  and confirmed termination. One allocation per execution attempt in v1.
-- A step: an invocation from the frozen action, with identity, status, and output.
-  A single-script action has one execution step. Arbitrary subprocesses are not
-  individually controllable user or agent operations.
-
-A GitHub sync run has no container. An LLM-only verification operation needs none
-when its artifacts already exist. A compiler session can link several finite runs.
-A retry creates another attempt with its own ID and environment; the previous
-attempt's files and process state are not a live machine to resume.
+Internal durable records include the run and its sandbox allocation. Lifecycle
+phases such as setup, command, collection, and shutdown help observation; they are
+not configurable workflow steps. Retry means a new run ID and fresh filesystem.
+GitHub sync uses a trusted handler without a container. File-only LLM verification
+uses no container either. Compiler sessions can link several runs.
 
 ## One contract, several adapters
 
-The engine receives a runtime capability from its host: discover supported actions
-and environments, submit a frozen run, read state/events/logs/results, and cancel.
-Requests and receipts are serializable so MCP, CLI, ACP, and the editor observe the
-same work. There is no general-purpose remote exec or terminal endpoint.
+The host injects capabilities to discover supported environments, submit a frozen
+run, read state/logs/results, and cancel. Requests and receipts are serializable.
 
-| Host | Adapter | Credentials and policy |
-| --- | --- | --- |
-| Local CLI or local GUI | Docker/Podman, fresh container and project copy per run | Local host settings and credential grants. |
-| External coding agent over MCP | Same finite-run tools | Harness-native shell remains external to this contract; Jazyk evidence comes from recorded runs. |
-| IDE using ACP | Same tools injected through `jazyk acp` | Existing IDE/agent permission handling plus the run host's grants; no terminal needed. |
-| Cloud | Managed isolated batch execution | Server-held provider credentials, account admission, metering. |
-| Browser-only project | No execution adapter by default | Connect a local engine or explicitly use Cloud execution. |
-| Trusted local mode | Bounded host process in a fresh task directory | Explicitly weaker isolation, opt-in, never a silent fallback. |
+| Entry point | Execution |
+| --- | --- |
+| Local CLI/GUI | Local Docker/Podman with a project copy by default. |
+| Coding agent using MCP | Same task tools and local adapter, or explicitly selected hosted execution. |
+| IDE using ACP | Same tools injected through `jazyk acp`; no IDE terminal required. |
+| Cloud | Managed isolated execution with service-held credentials and account admission. |
+| Browser-only project | No executor until connected to a local engine or hosted service. |
+| Explicit trusted native mode | Bounded process in a fresh directory, with host privileges and weaker isolation shown. |
 
-Provider selection belongs to host settings. Exported projects carry image and
-script intent without Cloud credentials. Local and remote runs use the same
-working-directory, manifest, report, and import contracts. Record platform
-information; local ARM and hosted x86 may produce different artifacts.
+Client transport and execution location are independent. Local use needs no Cloud
+account. Cloud compute requires authentication and allowance through any client.
+Provider choice is host configuration; projects carry command/image intent. Record
+platform differences, including local ARM versus hosted x86. See [access](access-paths.md).
 
-Client transport and execution location are independent. Cloud, local MCP, and ACP
-share admission, operation IDs, receipts, and cancellation semantics. See
-[access paths](access-paths.md) for routing, IDE presentation, and disconnections.
+`SessionRunner` runs model sessions, not containers. Keep hosted subprocess denial
+in `sys::run_shell`. Dispatch through the injected capability, never the API host's
+shell. A missing adapter returns `runtime-unavailable`.
 
-The existing `SessionRunner` runs model sessions, not containers. Hosted code keeps
-its direct subprocess guard in `sys::run_shell`. A run dispatches through the host
-capability, never through the API host shell. Missing capability is an explicit
-`runtime-unavailable` result.
-
-Submission returns a durable run ID promptly. Waiting is bounded and resumable by
-cursor. No HTTP request or database transaction stays open for the whole action.
-A compiler worker may await the result while retaining session context. After a
-service crash, recover the run independently. Until model-session persistence can
-resume a pending tool result, end that session and let the next one inspect the
-retained run. Never repeat execution just to reconstruct a lost tool response.
+Submission returns a durable run ID promptly. Waiting uses bounded cursor reads.
+Do not hold an HTTP request, database transaction, or MCP/ACP tool invocation open
+for a whole build. Supervisors survive client/session loss. Recover an existing run
+by ID after a crash instead of rerunning a lost tool response.
 
 ## Snapshot and import
 
-Submission freezes documentation, source, tests, scripts, relevant binary assets,
-and a read-only projection of `.jazyk` state. Exclude credentials, Git internals,
-conversations, other projects, and provider state. A script requiring Git metadata
-uses an explicit checkout mode without copying credential-bearing local Git config.
+Freeze documentation, source, tests, optional scripts, assets, settings, and a
+read-only projection of relevant `.jazyk` data. Exclude credentials, Git internals,
+conversations, other projects, and provider state. Git-dependent commands use an
+explicit supported checkout capability without inherited credential-bearing config.
+A bare snapshot plus the command `git push` does not imply a working Git checkout.
 
-Mount compiler state read-only where supported, or export it under `/jazyk/input`.
-A mutable sandbox copy is never authoritative graph or ledger state. There is no
-writable bind mount of the API server or the user's actual checkout.
+Compiler state is read-only or exported under `/jazyk/input`. The sandbox never
+writes authoritative graph shards or ledger state. Do not bind-mount the API server
+or actual user checkout as writable. Materialize staged generation edits when the
+run targets a staged revision.
 
-Generation edits staged engine files before submitting a run. The host materializes
-that candidate, restores allowed caches, then runs the frozen action. Afterward it
-captures a bounded file-change manifest relative to the input, retains eligible
-contents, and imports through existing ownership/fact-hash gates. Settings changes
-use the restricted settings tool between runs. A shell write cannot bypass gates.
-
-A delivery normally uses a committed candidate. Generation can run a staged one,
-labeled as such. Concurrent editor changes do not alter a running snapshot. Import
-conflicts retain the result for review instead of overwriting newer source. Logs
-and file changes remain readable after container teardown.
+Restore permitted disposable cache, then execute the exact command. Collect a
+bounded change manifest and reports afterward. Import through existing ownership,
+fact-hash, and revision gates. Concurrent edits cannot mutate the frozen input or
+be overwritten by stale results. A shell-written settings file cannot bypass the
+restricted task-settings tool. Logs and retained changes survive container teardown.
 
 ## Lifecycle
 
@@ -96,108 +74,123 @@ and file changes remain readable after container teardown.
 stateDiagram-v2
   [*] --> Queued
   Queued --> Provisioning: admitted and reserved
-  Queued --> Cancelled: cancelled before dispatch
-  Provisioning --> Executing: inputs and cache restored
-  Provisioning --> Collecting: setup failed or cancelled
-  Executing --> Collecting: completed, failed, cancelled, or timed out
-  Collecting --> Stopping: results sealed or collection deadline reached
+  Provisioning --> Executing: ready
+  Executing --> Collecting: command finished
+  Provisioning --> Collecting: setup failed
+  Queued --> Cancelling: cancel
+  Provisioning --> Cancelling: cancel
+  Executing --> Cancelling: cancel or timeout
+  Collecting --> Cancelling: cancel
+  Cancelling --> Stopping: bounded result capture
+  Collecting --> Stopping: collected or collection limit
   Stopping --> Terminated: provider confirms
   Stopping --> Unknown: provider unreachable
   Unknown --> Terminated: reconciled
   Terminated --> [*]
-  Cancelled --> [*]
 ```
 
-Execution outcome, collection outcome, and termination are separate fields. A
-successful script can have a failed product import. A failed test can retain a
-successful build-cache checkpoint. A process exit is not confirmed provider shutdown.
+Execution outcome, collection completeness, and confirmed termination are distinct.
+Queue cancellation without an allocation can terminate immediately. During stopping
+or unknown shutdown, another cancel call reasserts stop intent and returns current
+state. Terminal outcomes include succeeded, failed, cancelled, and timed out.
 
-Persist intent before dispatch and stop requests. Use stable operation IDs and
-provider idempotency where available. Otherwise tag resources and reconcile before
-retry. A lost create/start response must not launch a second potentially publishing
-run. Unknown external effects require inspection, not automatic script repetition.
+Persist intent before dispatch/stop. Use operation IDs and provider idempotency;
+where unavailable, tag resources and reconcile before retrying. A lost start response
+must not allocate twice. Unknown publication is inspected, not automatically repeated.
 
-The fixed executor runs declared steps sequentially without pausing for an LLM.
-By default, step failure skips dependent remaining execution, then collects logs,
-reports, and permitted failure artifacts. Declared cache saves occur at successful
-boundaries, e.g. between build and test. Teardown is always the host's responsibility,
-even if the script's own cleanup fails.
+## Cancellation
 
-## Fixed limits and teardown
+Users and authorized agents can cancel at any time while a run is active. This
+includes image pulls/setup, executing commands, result collection, and shutdown.
+Cancellation does not depend on the command returning or model responding.
 
-Proposed execution timeout: five minutes by default, with longer requests such as
-30 minutes chosen before submission. The host may permit up to two hours initially,
-subject to provider and account policy. These are values to benchmark, not decisions.
-Step timeouts may shorten the overall bound; they cannot reset or extend it.
+1. Persist stop intent atomically. A queued run becomes undispatchable. A concurrent
+   allocator that returns late sees the intent and terminates its allocation.
+2. Stop accepting further command work. Signal the entire process group/tree and
+   allow a short bounded grace period, then force-terminate the container/allocation.
+   Shell traps and detached children cannot veto shutdown. Abort image preparation
+   when supported; reconcile and stop resources created during the race otherwise.
+3. Retain already streamed logs and a bounded best effort of reports/eligible diffs.
+   Result capture must not extend the shutdown bound. Mark incomplete collection;
+   cancellation during collection stops further promotion. No new cache is saved.
+4. Confirm provider termination and reconcile billing. Keep `cancelling` or
+   `shutdown unknown` visible until evidence supports completion. Never claim zero
+   remaining cost just because the application sent a stop request.
 
-Admission includes separate bounded setup, execution, collection, and shutdown
-allowances. On allocation, establish a provider-enforced maximum lifetime covering
-all admitted phases and a host watchdog for the stricter phase deadlines. Record
-effective deadlines in the run. Queue waiting has its own expiry and no allocation
-charge. The candidate remains frozen while queued.
+Cancellation is idempotent, allowed after usage exhaustion, and available separately
+from submitting work. Cancelling an already completed run returns its final state.
+The completion/cancel race has one atomic finalization point: a prior committed
+completion wins; otherwise accepted cancellation prevents successful finalization
+and further product promotion. Already committed files or external writes remain.
 
-Neither the agent, a user, nor log polling can extend a running deadline or change
-its resource class. If a build needs more time or memory, finish/cancel this attempt,
-revise the next request, and submit a new run when retry is safe. The remaining
-session/account budget also bounds repeated attempts.
+Cancellation cannot roll back a push, upload, publication, or notification already
+performed. Track a known external receipt or an unknown outcome separately from the
+cancelled run. Never automatically retry such an operation. A no-container GitHub
+sync also checks stop intent before starting each external request; an in-flight
+remote write may still complete and must be reconciled.
 
-On timeout or cancellation, stop the process tree, capture bounded available
-results, and terminate the environment. Detached children never keep it alive after
-the action ends. Reserve collection and shutdown time in advance. If the provider
-kills the container before collection, retained logs/checkpoints remain available
-and the final diff is explicitly incomplete.
+Valid completed test cases can retain their evidence. Interrupted or absent cases
+do not pass. Keep historical results distinct from this attempt's missing evidence.
+See [verification](generation-testing.md#selection-and-results).
 
-Provider expiry is a final bound independent of API health. An external reaper
-reconciles resources and termination. A provider without a suitable enforced
-lifetime needs an independent watchdog with a measured worst-case exposure bound.
-An application timer alone is insufficient. Keep the usage reservation until
-termination or an evidence-backed reconciliation establishes the actual expense.
+Cloud UI, MCP `cancel_run`, ACP-owned session cancellation, and CLI stop all route
+to this supervisor. Disconnect alone does not cancel unrelated work. Parent
+ownership determines which child runs an explicit session/job cancellation stops.
+
+## Fixed bounds and cleanup
+
+Proposed default execution timeout is five minutes. Longer requests such as 30
+minutes are chosen before submission; a provisional host cap is two hours. These
+values need measurements. No log poll, command subprocess, or agent call resets
+the fixed deadline or increases resources mid-run.
+
+Admission bounds queueing, setup, command, collection, and shutdown separately.
+Queue waiting consumes no sandbox allocation charge. Reserve supplier-billable
+setup/collection/shutdown as well as command time. On allocation, use a provider
+maximum lifetime and a stricter host phase watchdog where supported.
+
+Where the provider has no enforced total lifetime, use an independent watchdog with
+measured worst-case exposure. An API-process timer alone is insufficient. An
+external reaper reconciles allocations and shutdown. Retain reservations until
+confirmed termination or evidence-backed billing reconciliation.
+
+Success, failure, timeout, cancellation, agent disconnect, and collection errors
+all reach teardown. A script's cleanup hook cannot hold a container indefinitely.
+If the provider kills it before final collection, label retained changes incomplete.
 
 ## Resources and concurrency
 
-Expose `small`, `medium`, and `large` with exact CPU, RAM, disk, and estimated rate.
-The agent chooses an admitted class before each run. Hard resource limits matter:
-a reservation that permits an unbounded burst is not a billing maximum. Unsupported
-shapes return explicit alternatives. OOM never silently increases paid resources.
+Expose a few resource classes with exact CPU, memory, disk, and estimated rates.
+The model requests an admitted class before starting. Hard limits, including burst
+behavior, must support the stated cost bound. OOM does not silently resize a run.
 
-Recommend one active execution run per project initially. Different projects can
-run concurrently within account/service limits. A compiler operation plus its child
-run counts as one user operation while consuming independent internal capacities;
-it must not deadlock waiting for a sandbox slot consumed by its own parent.
+Recommend one active run per project initially. Different projects can run in
+parallel within service/account limits. A compiler worker awaiting its child run
+must not occupy the runtime slot the child needs. Future concurrent runs keep
+separate writable copies and revision-checked imports.
 
-Multi-step actions share the one container until their fixed sequence ends. Builds
-can start test helper processes such as a database if the adapter supports them;
-the supervisor stops those processes with the run. Parallel runs and service groups
-remain later capabilities with isolated writable copies and aggregate admission.
-
-A separate credentialed publisher is another finite run over sealed outputs after
-the build run terminates. Cache and product objects may persist between runs. Live
-filesystems, processes, terminals, and sandbox snapshots are not project state.
+A command can start test helper processes inside its permitted environment. The
+supervisor terminates them when the command ends. Live filesystems and processes
+never become canonical project state. Later tasks rebuild or use durable products
+and disposable cache; they cannot resume a previous process.
 
 ## Isolation boundary
 
 Managed isolation is preferred. No boundary is literally bulletproof. Ordinary
-Docker on the API host is not an acceptable customer sandbox recommendation.
-[Docker documents](https://docs.docker.com/engine/security/) the consequences of
-daemon access and incomplete isolation. Rootless mode is one defense, not an
-escape-proof multi-tenant boundary.
+Docker on the API server is not an acceptable untrusted customer sandbox.
+[Docker security guidance](https://docs.docker.com/engine/security/) describes daemon
+privileges and isolation limits. Rootless mode alone is not an escape-proof boundary.
 
-The provider adapter must provide or enforce:
+The adapter must enforce no host mounts/socket, privileged mode, host networking,
+or routes to metadata, the control plane, tenant databases, or other tenants.
+Bound CPU, memory, disk, processes, logs, uploads, and network use. Test services
+stay private. Transfers use project-scoped expiring grants, not provider credentials.
 
-- No host mounts, Docker socket, privileged mode, host network, or host namespaces.
-- CPU, memory, disk, process-count, output-size, upload, and network budgets.
-- No routes to the control plane, tenant databases, host metadata, or other tenants.
-- No inbound public access. Test services stay inside the run's permitted network.
-- Project-scoped expiring transfers, never general object-store/provider credentials.
-- Separate uncredentialed build/test and credentialed publish runs unless the user
-  deliberately grants broader scope. Teardown also removes those credentials.
+Dependency installation and image preparation are untrusted too. Isolate and meter
+them. Publication credentials are absent unless granted; narrow their scope and
+lifetime. Separate publication tasks are useful when build code should have none.
+A description cannot constrain what arbitrary shell code does with a broad secret.
 
-Dependency installation and image preparation are untrusted execution too. Isolate
-preparation and include its bounds in admission. Allow dependency retrieval according
-to policy while blocking private/metadata routes. Narrow publication credentials
-separately. Arbitrary scripts with broad credentials cannot be made harmless by a
-prompt or label.
-
-Logs, reports, filenames, and generated artifacts are untrusted model input. They
-cannot grant capabilities or change policy. Redaction reduces accidental leakage;
-it cannot guarantee that a malicious script given a secret will not export it.
+Logs, reports, filenames, and artifacts are untrusted data. They cannot expand
+permissions. Redaction reduces accidental leakage but cannot prevent a malicious
+command with a credential from exporting it.

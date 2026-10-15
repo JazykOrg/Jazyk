@@ -12,7 +12,7 @@ glob matched them.
 | Class | Examples | Retention and UI |
 | --- | --- | --- |
 | Product | PDF, EPUB, PPTX, binary, rendered site | Durable object with a project path, visible in Files after promotion. |
-| Cache | Maven dependencies, npm cache, Cargo target | Disposable, quota-bound, restored opportunistically; show checkpoint metadata and size. |
+| Cache | Maven dependencies, npm cache, Cargo target | Disposable, quota-bound, restored opportunistically; show hit/save status and size. |
 | Scratch | Temporary extraction, sockets, intermediate files | Discarded when the finite run ends; no live browser. |
 
 Source and test edits made by commands form a separate import diff. They can become
@@ -26,8 +26,8 @@ They survive failed commands independently of user product/cache globs.
 ## Classification and extraction
 
 Use project-relative glob patterns with documented syntax, exclusions, and case
-behavior. Preview concrete matches before a configured action runs when possible.
-Resolve new matches after execution. Reject overlapping product and cache paths
+behavior. Preview concrete matches before a configured task runs when possible.
+Resolve new matches after execution. Reject overlapping product, cache, and report paths
 instead of letting ordering decide. Exclusions narrow a class, never override
 protected-path rules. A product glob cannot import `.jazyk` graph shards or secrets.
 
@@ -38,7 +38,7 @@ reject symlinks in retained outputs, or preserve only validated in-root links if
 real project needs them. Use maintained archive and filesystem libraries.
 
 Existing canonical files cannot be overwritten by restoring a cache. Restores go
-only into declared cache roots and must not overlap source, script, or protected
+only into declared cache roots and must not overlap source, command input, report, or protected
 state paths. A broad cache pattern cannot capture the whole project by accident.
 Unmatched new files remain scratch. Retain a bounded excluded-path summary so the
 agent can notice a missing product rule and fix the next run's definition. The
@@ -53,39 +53,42 @@ including binary assets. Mount the selected `.jazyk` projection read-only.
 
 Use content hashes to avoid redundant transfers of retained input objects. Every
 run still materializes a fresh filesystem. The manifest records exactly what the
-action could read. Source saves during a run do not mutate that snapshot. For large
+command could read. Source saves during a run do not mutate that snapshot. For large
 retained products, the engine's filesystem
 adapter must be able to load referenced bytes on demand; simply replacing file
 contents with a URL would break existing reads and model inspection.
 
-A product-only delivery can reference the complete input manifest even when it
+A product-producing task can reference the complete input manifest even when it
 uses a small subset. Do not invent a lossy delivery projection that excludes source
-files the script might need. Excluded sensitive/operational files are explicit.
+files the command might need. Excluded sensitive/operational files are explicit.
 
-## Product checkpoints
+## Product collection
 
-Default: collect declared products after a successful action. On failure, retain
-logs, reports, and eligible source/test/support-file changes for inspection, with a
-bounded option to retain partial products as failed-run artifacts. Never overwrite
-the latest successful product with a partial build.
+Collect declared products at the end, after stopping their writers. Successful
+commands can promote retained outputs into Files. Failed/cancelled attempts retain
+logs, reports, and eligible source/test/support-file changes. The host may also
+retain bounded partial products under that run, clearly marked incomplete, without
+replacing the latest successful product. This policy is fixed before dispatch.
 
-Collection happens automatically at declared step boundaries and action completion,
-after relevant writers have stopped. Seal file digests,
-upload bytes, verify the object manifest, then commit the project references with
-the expected workspace revision. A product required by the build but absent after
-exit zero is a failed build. Optional glob matches can be empty only when declared
-optional; the UI shows that no product was produced.
+There are no intermediate product/cache checkpoints or task steps. A product built
+before a later command failure is only a partial run artifact in this first model.
+The agent can inspect and explicitly promote a valid retained artifact through the
+normal ownership/revision gate, but command failure never silently publishes it.
 
-Promotion into Files is an atomic metadata update after uploads complete. It
-creates or replaces generated-owned paths and advances a workspace revision. It
-does not overwrite authored files merely because the output used the same name.
-Keep the previous version until the new manifest is complete. If source changed,
-keep the result under its run and offer a compare/promote operation; do not call it
-the current product.
+Seal file digests, upload bytes, verify the manifest, then atomically update project
+references with the expected revision. Outputs required by documented build/ledger
+obligations must exist even after exit zero. Optional glob patterns can match no
+files; the UI says no product was produced. Do not add a required/optional workflow
+language just to express file collection.
 
-Individual projects can request checkpoints after earlier steps. A PDF built before
-an upload failure can remain a valid local product while external delivery failed.
-The UI presents those two outcomes separately.
+Promotion creates/replaces generated-owned paths. It cannot overwrite an authored
+file merely because a command used its name. Keep previous versions until the new
+manifest is complete. On concurrent source edits, retain results under their run and
+offer compare/promote; do not claim they are the current product.
+
+Cancellation prevents further promotion after stop intent is accepted. An atomic
+promotion completed earlier is not rolled back. Execution outcome and import status
+remain separate, including a successful command with an import conflict.
 
 ## Retained file changes
 
@@ -108,57 +111,59 @@ and identify missing paths where known. No changes and no captured changes are
 different states. Text diffs are computed from retained objects, never by shelling
 into a still-running container.
 
-During execution, logs stream and completed checkpoints can expose sealed results.
-The final Changes view appears after collection. Teardown proceeds under a fixed
+During execution, logs stream. The Changes view appears after final collection. Teardown proceeds under a fixed
 deadline even if the model or user never opens the view. Retain diffs under the
 same default 30-day policy as logs/reports; referenced canonical files and products
 have their separate lifetime. Reading history allocates no execution environment.
 
 ## Cache semantics
 
-GitHub's combined cache action saves a new cache on a cache miss only if the job
-completes successfully. Existing keys are immutable. Keys and ordered restore keys
-control reuse. Its documented retention includes eviction of unused entries.
-[GitHub cache reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
-GitHub also provides a standalone save action, allowing a checkpoint before a later
-test step. [Save action](https://github.com/actions/cache/blob/main/save/README.md).
+The task declares only `cache` globs. Restore before execution. Save an immutable
+new generation only after command exit zero, with no accepted cancellation or
+timeout. Failed attempts keep the prior cache. Cache storage failure is a warning;
+missing cache must never prevent a correct build from scratch.
 
-Adopt those ideas without requiring an Actions YAML file:
+GitHub's combined cache action saves a new cache on a miss only after a successful
+job. Its standalone save action can save earlier. We deliberately choose the
+whole-command rule here; there is no early-save syntax in the task list.
+[GitHub cache reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching),
+[standalone save](https://github.com/actions/cache/blob/main/save/README.md).
 
-- Namespace by account, project, execution trust scope, runtime image/platform,
-  cache profile version, and hashes of declared key files.
-- Default to exact restore. Optional compatible restore may relax selected
-  dependency-key components, never tenant, trust scope, OS, architecture, or image
-  compatibility. The build tool must validate reused material.
-- Publish an immutable cache generation only at a declared successful checkpoint.
-  Upload to a new object, then atomically make that generation discoverable.
-- A restored exact-key dependency cache normally needs no rewrite. For evolving
-  build caches, append a generation under the compatibility key and choose the
-  latest successfully sealed generation. Keep this distinction explicit.
-- Snapshot when the relevant writer is stopped or paused. Do not archive a `target`
-  directory while a background compiler is changing it.
-- Missing, corrupt, evicted, or incompatible cache means rebuild. A cache never
-  becomes the sole source of a required product or verification verdict.
-- No shared writable cache between sandboxes. Concurrent attempts use private
-  restores and separate generations. No cross-tenant deduplication that exposes
-  cache presence or contents.
-- Keep publish-credential scopes separate from less trusted exploratory caches.
-  Cached executable code can run later. A successful exit does not certify it safe.
+The host handles the following internally, without exposed profiles or restore-key
+expressions:
 
-Proposed initial policy: up to 2 GiB cache per project, 7 days since last access,
-LRU eviction when the quota is reached. These are adjustable launch values, not
-compiler constants. Larger plans may differ. Show cache size and offer `Clear cache`.
-Artifact deletion and cache clearing are separate actions.
+- Namespace by account, project, trust/credential scope, task ID/definition, image
+  digest, platform, and cache globs. Keep immutable generations and select the latest
+  compatible completed generation. Different tasks initially have separate caches.
+- Restore only into declared cache paths. Never overwrite canonical input, compiler
+  state, or test reports. Validate archives, sizes, permissions, and paths on restore.
+- Stop writers before capture. Upload privately, verify digests, then publish the
+  cache reference atomically. Cancellation must win before publication if accepted.
+- Build tools remain responsible for invalidating stale dependency/build entries.
+  A cache is untrusted acceleration, never evidence that a build or test passed.
+  Toolchains unable to validate their cached outputs should use download-only cache
+  or omit cache. Changes to task/image create a fresh namespace.
+- Missing, corrupt, evicted, or incompatible cache means rebuild. No shared writable
+  directory between sandboxes and no cross-tenant cache-presence/content leaks.
+- A successful command does not certify cached executables as safe. Keep publication
+  credential scopes separate from less trusted exploratory runs.
 
-Prefer package-manager download caches over copying every installed dependency
-tree. `node_modules` and build output caches can still be useful when keyed by the
-right platform/toolchain inputs. Let generation choose with evidence from timings.
+Do not expose cache sharing/composition to optimize a build-then-test chain in v1.
+Each task can warm its own cache after success. Reusing caches across source changes
+is useful when the build tool validates them. Explicit task/image changes invalidate
+reuse; dependency manifests remain inputs the tool must respect.
+
+Proposed initial policy: 2 GiB per project, 7 days since last access, LRU eviction
+under quota. These are host/product values to measure, not compiler constants.
+Show cache size and `Clear cache`, separately from deleting products. Package-manager
+download caches are a useful starting point; larger installed/build trees need
+measured benefit and correct toolchain invalidation.
 
 ## Durable storage layout
 
 | Data | Local adapter | Cloud adapter |
 | --- | --- | --- |
-| Run and step state | Small durable records under `.jazyk/runtime/` | PostgreSQL rows, linked to jobs and account/project IDs. |
+| Run and allocation state | Small durable records under `.jazyk/runtime/` | PostgreSQL rows, linked to jobs and account/project IDs. |
 | Input and product manifests | Content-addressed manifests | PostgreSQL manifest references and object metadata. |
 | Products and binary input objects | Project files plus retained object store | Private S3-compatible object storage. |
 | Compressed logs and reports | Run files | Object storage; small indexed metadata in PostgreSQL. |
@@ -187,8 +192,8 @@ their separate existing lifetime without retaining project payloads unnecessaril
 ## Logs readable by users and agents
 
 Capture stdout/stderr from process start, including image preparation, dependency
-restoration, commands, collection, and shutdown. Each record has run/step
-IDs, stream, timestamp, and monotonic sequence. Preserve bytes where needed and
+restoration, commands, collection, and shutdown. Each record has run ID, lifecycle
+phase, stream, timestamp, and monotonic sequence. Preserve bytes where needed and
 provide a sanitized text view. Do not claim perfect ordering between separate OS
 streams; sequence describes arrival at the collector.
 
@@ -217,7 +222,7 @@ known remote publication; retain that distinct outcome for recovery.
 - Logs, test reports, and retained run diffs stay for 30 days by default, with a
   visible expiry date.
 - Run summaries, input digests, outcomes, and object tombstones stay for 90 days.
-  Referenced publication checkpoints can outlive ordinary history.
+  Referenced publication records can outlive ordinary history.
 - Caches use their shorter disposable quota and TTL. Scratch has no retention.
 - Billing receipts survive operational history deletion under existing policy.
 

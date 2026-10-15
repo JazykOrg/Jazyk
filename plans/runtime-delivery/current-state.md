@@ -80,16 +80,17 @@ and versioned. Every use rechecks access. The new shortcut must preserve this.
 
 | Current behavior | Proposed behavior |
 | --- | --- |
-| Script delivery requires GitHub and a generated workflow. | Script delivery runs in the selected sandbox without a GitHub dependency. |
-| Hosted commands are unavailable. | Frozen finite actions dispatch through a capability supplied by the service. |
+| Script delivery requires GitHub and a generated workflow. | Ordinary task commands run in the selected sandbox without a GitHub dependency. |
+| Hosted commands are unavailable. | Frozen task commands dispatch through a capability supplied by the service. |
 | Hosted programmatic tests wait for delivery CI. | They execute directly in the same runtime used during generation. |
 | Commands return a short tail. | Runs expose durable IDs, paginated logs/search, retained file diffs, and receipts. |
 | Built binaries remain inside a full snapshot or CI archive. | Products have manifests, durable binary objects, and visible workspace paths. |
-| Delivery settings include criterion mappings. | Verification owns those bindings. Delivery may invoke verification. |
-| One GitHub-only delivery panel. | Small delivery definitions plus an integrated Runs view. |
-| External MCP generation relies on harness shell tools; ACP injects existing toolsets. | Shared action submission and observation are explicitly available through Cloud, MCP, and ACP. |
+| Delivery settings include criterion mappings. | The ledger owns bindings. Any task can emit reports that update their evidence. |
+| One GitHub-only delivery panel. | One flat task list plus an integrated Runs view. |
+| External MCP generation relies on harness shell tools; ACP injects existing toolsets. | Shared task submission, cancellation, and observation are explicitly available through Cloud, MCP, and ACP. |
 
 Old Actions attempts stay readable as historical attempts. Removing a delivery
 does not delete remote workflows, repositories, retained products, or history.
-Conversion of an old inline command into a script is an explicit settings change.
+Convert an old inline command directly into a task command through an explicit
+settings change. A wrapper script is not required.
 Do not silently execute old workflows through a new provider.

@@ -20,8 +20,8 @@ Cloud authentication and allowance regardless of the client.
 
 ## Common request and evidence contract
 
-A submitted action resolves project/set identity, staged or committed revision,
-script/configuration/image hashes, selection, retention rules, resource size, timeout,
+A submitted task resolves project/set identity, staged or committed revision,
+command/definition/image hashes, selection, file globs, resource size, timeout,
 actor, grant scope, and operation ID. All transports return the same durable run ID.
 Observe, log/search, read changes, and cancel address that run rather than a live
 process handle owned by the transport.
@@ -57,7 +57,7 @@ Use the existing [ACP proxy and tool injection](../../docs/frontends/acp.md#role
 tools, commonly injected through MCP. A second ACP-specific runtime or prompt set
 is unnecessary. The IDE does not itself need MCP support.
 
-Report run submission, queued/running steps, and completion using existing
+Report run submission, lifecycle phases, and completion using existing
 `tool_call`/`tool_call_update` handling. Bounded `wait_run` responses avoid current
 tool transport idle limits. Reconnect reads durable state by run ID. IDE support
 for rich diffs or resource links is optional; provide a bounded text diff and stable
@@ -79,11 +79,15 @@ surfaces a reviewable diff on conflict instead.
 Submitting a run gives its full fixed instructions to a supervisor independent
 of UI/model transport. Closing a browser tab or dropping MCP/ACP connectivity does
 not wait for a future model command and cannot leave an idle environment. The run
-finishes or reaches its deadline, collects available results, and shuts down.
+finishes, is explicitly cancelled, or reaches its deadline. It collects available
+results and shuts down.
 
 Explicit cancellation is different from a lost connection. `cancel_run` always
 targets one authorized run. An ACP `session/cancel` or compiler-job stop cancels
-active child runs owned by that operation. An independently submitted user delivery
+active child runs owned by that operation, including commands executing right now.
+Cancellation is idempotent and not dependent on a model response or remaining
+allowance. Confirm teardown separately from stop intent. See the
+[cancellation contract](runtime.md#cancellation). An independently submitted task
 is not cancelled merely because an observing chat/IDE session stops. Record parent
 ownership so the choice is deterministic. Historical state survives either case.
 

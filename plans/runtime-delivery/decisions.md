@@ -1,150 +1,127 @@
 # Decisions and alternatives
 
-Status: review list for the [runtime and delivery plan](README.md). Recommendations
-are not accepted decisions unless recorded as such here.
+Status: discussion record, revised 2026-10-15. Recommendations remain proposals
+unless explicitly accepted below.
 
-## Recorded from this discussion
+## Accepted from this discussion
 
-- The owner wants generic document-defined delivery, with ordinary generated
-  scripts and simple environment settings.
-- The runtime must serve generation, test generation, programmatic tests, and
-  delivery, with enough agent tools and prompting to manage execution autonomously.
-- Local and hosted use should share one path as far as practical. Cloud execution
-  is the commercial priority.
-- The owner selected managed isolated runtimes with little operational work as
-  the preferred launch direction.
-- The owner selected Runs beside Files, using the existing tabs.
-- The owner selected finite actions: execute a specific script or step sequence,
-  collect logs/file changes, then shut down the container. No on-demand commands
-  in an open environment, manual consoles, or interactive shells.
-- Execution must be accessible through Cloud, local MCP inside a coding agent,
-  and ACP inside an IDE. These use the same action contract.
-- Delivery autonomy is undecided. The owner requested options.
-- This is a planning worktree. No runtime or UI implementation is requested yet.
+- One flat list of tasks with IDs, names, descriptions, and shell commands. A command
+  may invoke a script, but no script file is required.
+- Build, test, delivery, and other purposes share this list. The model chooses by
+  meaning. Remove separate runtime/cache profiles, test/delivery wrappers, task
+  references, and ordered step configuration from the draft.
+- Optional file globs classify retained products, disposable cache, and test reports.
+  Existing bound tests still need individual passed/failed/not-run evidence.
+- Finite runs execute a frozen command, collect results, and shut down. No interactive
+  environment, live shell, command appending, or deadline extension.
+- Users and authorized agents can cancel at any time, including during execution.
+- Cloud, local MCP in a coding agent, and ACP in an IDE use the same tools/contracts.
+- Managed isolated runtimes with little operational work are the preferred Cloud
+  launch direction. Cloud is the commercial priority; local remains accountless.
+- Runs belongs beside Files, using existing tabs for logs and retained changes.
+- Publication autonomy is undecided; the owner requested options.
+- Planning only. The files belong under `./plans/runtime-delivery/` in the repository
+  checkout, not a temporary directory. No implementation is requested yet.
+
+## Simplification tradeoffs
+
+A task is the definition. A run is one execution. Delivery is a task's purpose,
+not a separate object. Programmatic versus LLM remains a distinction in verification
+evidence, not in task configuration. Short commands such as `mvn test` are first-class.
+
+The earlier recommendation for optional ordered steps is superseded. Command exit
+zero is the cache-save boundary. If `mvn install` builds successfully and then fails
+tests, no new cache is saved. This reduces configuration and orchestration complexity.
+The existing cache survives. A project can use separate ordinary tasks when useful,
+without task references or automatic dependency composition.
+
+Use report globs plus existing ledger mappings for individual test results. Missing
+reports and proven not-run cases remain distinct. Update aggregate verification so
+an old/headline pass cannot hide currently inconclusive required criteria.
+
+Keep the optional no-container GitHub sync as a managed row in the same task picker,
+backed by connection settings. This is a narrow implementation exception, not a
+second user-authored task language. An ordinary `git push` stays a shell command.
 
 ## Delivery autonomy
 
-All options let an agent inspect logs, repair its own files, run ordinary builds
-and tests, choose an admitted size, and stop work within budget. The difference is
-who may initiate an external write and how broadly that authority persists.
+All options let the agent choose tasks, repair owned files, inspect logs, and cancel
+within granted budgets. The decision is who authorizes external writes.
 
-| Option | Example | Benefit | Cost or risk |
-| --- | --- | --- | --- |
-| A. Click for each external publication | Agent builds the EPUB; user clicks Publish for that candidate. | Simple, precise control of externally visible changes. | Interrupts unattended publishing and frequent sync. |
-| B. Saved publication scope | User enables this project's push to repository X/branch Y; later agent pushes within that scope. | Good autonomy after setup, without repeat confirmations. | Needs real credential/destination enforcement and clear grant invalidation rules. |
-| C. Broad project publishing authority | User grants a project its chosen credentials and lets docs drive all runs within budget. | Maximum autonomy for trusted workflows. | Arbitrary generated scripts can use all granted privileges; prose is not an enforcement boundary. |
-| D. Per-delivery mixture | Automatic GitHub sync and preview builds; click-to-publish for production or App Store. | Matches different consequences inside one project. | More settings, though defaults can keep the common path small. |
+| Option | Example | Tradeoff |
+| --- | --- | --- |
+| A. Click for each publication | Agent builds the EPUB; user publishes that candidate. | Precise control; interrupts unattended work. |
+| B. Saved destination scope | Authorize this project's pushes to a repository/branch. | Autonomous within a durable grant; needs enforceable scopes. |
+| C. Broad project authority | Trusted project gets chosen credentials and runs within budget. | Maximum flexibility; arbitrary code can exercise those full privileges. |
+| D. Different grants per task | Automatic sync, click-to-publish production. | Matches different consequences; adds some policy settings. |
 
-Recommendation for review: B as the underlying mechanism, with D exposed as a
-simple per-delivery policy. A remains available for sensitive publication. C is a
-deliberate trusted-project mode, not an accidental consequence of changing TOML.
+Recommendation: B as the mechanism, with optional D when a project needs it. A
+remains useful for sensitive publication; C is explicit trusted-project authority.
+These are account/host grants, not task kinds or values an agent grants itself.
 
-There are two variants of B:
+A grant can pin definition/input hashes, requiring renewal when behavior changes,
+or bound capabilities/destinations while allowing command edits. The former is
+precise but interrupts iteration. The latter supports autonomy, but is only as
+narrow as the real credentials and network controls enforce.
 
-- Definition-pinned approval: permission names script/configuration hashes. Changes
-  that alter execution require renewal. Precise but potentially noisy during work.
-- Capability-scoped approval: permission names destinations, secret scopes, resource
-  bounds, and allowed action purposes. Script changes within that envelope can run
-  automatically. Better for an active generation loop, but only as narrow as the
-  credentials and network mechanisms can actually enforce.
+A task description saying "test" cannot make a broadly privileged command safe.
+Use narrow/short-lived credentials when available. The managed GitHub handler can
+enforce repository/branch without exposing a token to project shell code.
 
-A token that can modify an entire account does not become repo-scoped because the
-UI says so. Use narrowly scoped or short-lived credentials where available. Where
-that is impossible, explain the effective scope and let the user choose A or C.
-Build/test sandboxes have no publication credentials by default. The GitHub shortcut
-can enforce repository and branch in its host adapter without giving a token to shell.
+Review question: begin with saved GitHub scopes and explicit publication for other
+destinations, or allow saved arbitrary credential scopes from launch?
 
-Question for review: should automatic GitHub sync be the first saved scope, while
-arbitrary script publication initially uses per-delivery grants or a click?
+## Runtime count and local execution
 
-## Configuration breadth
+Recommend one active run per project initially. It simplifies import conflicts and
+cost visibility. Separate projects can run concurrently. Later parallel runs need
+independent filesystems and one revision-checked importer.
 
-| Option | Tradeoff |
-| --- | --- |
-| Script only, plus products/caches | Smallest form. Cache can be saved only at whole-script success. |
-| Script by default, optional ordered steps | Supports build-cache-save-test with visible phases. Recommended. |
-| Full CI graph | Parallel jobs, matrices, expressions, dependencies. Powerful, substantially larger product. Defer. |
+Recommend Docker/Podman for the default local adapter. It gives useful Linux parity
+and file isolation. Native execution remains an explicit trusted alternative for
+existing agents and platform-specific tools. Cloud-only execution would reduce
+adapter work but conflict with accountless open source use.
 
-The plan uses the middle option. A project sees only name, image, and script until
-it needs more. Consider shipping reusable tasks/steps after the first vertical slice
-if the simpler form already solves most projects.
-
-## Runtime count
-
-- One active finite run per project: simplest file ownership and cost visibility.
-  Recommended first release.
-- Several isolated runs with one importer: enables parallel tests and independent
-  deliveries. Costs more and needs revision conflicts in the UI.
-The records support several concurrent finite runs eventually. Each gets a fresh
-environment; the canonical workspace is independent of its filesystem. Persistent
-development machines were considered in the first draft and are superseded by the
-owner's finite-run decision.
-
-## Local execution
-
-- Docker/Podman by default gives the closest Linux parity and file isolation.
-- Native execution is easier for existing coding agents and platform-specific tools,
-  but has host privileges and different dependencies. Keep it an explicit trusted mode.
-- Cloud-only execution would reduce adapter work, but weakens accountless local use
-  and makes the open source workflow depend on a paid service. Do not recommend it.
-
-Question for review: require a local container engine for the default path, with
-native execution an explicit fallback, or initially keep native as the local default?
-The draft recommends the former; either uses the same receipts and file contracts.
+Review question: ship both local adapters initially, or prioritize containers and
+add trusted native execution after the first release?
 
 ## Files and visible state
 
-Show logs and retained file changes for each run. Products enter Files through
-successful checkpoints and revision-checked import. Cache checkpoints show metadata;
-scratch is discarded. There is no live container filesystem view. Preserve eligible
-source/test diffs even on failed runs so the agent can inspect them after teardown.
+Logs and eligible source/test diffs survive failures. Successful products enter
+Files after collection and checked import. Cache and scratch do not appear as
+canonical files. There is no live filesystem or intermediate checkpoint view.
 
-Question for review: should declared partial products be retained on failure by
-default, or only under a policy selected before submission? The draft favors
-logs/reports/eligible diffs always and bounded opt-in partial-product retention.
-The choice must be made before the run; teardown prevents retroactive recovery.
-
-## UI and action control
-
-Settled: Runs beside Files in the existing tabs, showing logs and retained changes.
-People and agents start defined actions and can cancel. The host executes the frozen
-sequence and shuts down automatically. There is no console, terminal, attach, or
-live timeout/resource change. To repair or investigate, edit the project/action and
-start a new attempt. This also applies through MCP and ACP, not just the editor.
-
-Publication autonomy remains a separate decision. Finite execution does not decide
-whether an agent may publish to an external destination without a user click.
+Partial product retention remains a small policy choice: retain bounded failed
+outputs under the run by default, or require an opt-in set before dispatch. The
+draft allows the host to select this policy, always labeling incomplete outputs
+and never replacing a successful product automatically. Teardown prevents later
+recovery of unretained bytes.
 
 ## Cost and retention
 
-- Unified usage allowance is recommended, with model/runtime breakdowns. Separate
-  included runtime minutes are easier to market but add a second exhaustion model.
-- Cost-based classes are recommended. A flat per-minute rate is simpler but invites
-  poor margins when sizes differ.
-- Include modest storage quotas initially. Storage billing can follow measured use.
-- Proposed 30-day logs and 7-day cache expiry are review values. Product retention
-  is independent. The current product should survive cache eviction.
-- Keep the existing trial token cap and add bounded runtime use under the supplier
-  ceiling, or adopt a unified cost-only trial as a separate product decision.
+Recommend a common usage allowance with model/runtime breakdowns and cost-based
+resource classes. Separate included runtime minutes are easier to market but add
+another exhaustion rule. Flat prices across sizes create margin risk.
 
-## Other ideas worth keeping open
+Proposed 30-day logs and 7-day cache expiry need measurement. Current products have
+a separate durable lifetime and storage quota. Preserve the trial token cap plus
+a bounded supplier-cost runtime allowance, or change to a unified cost trial as
+an explicit product decision.
 
-- A user can use their own Cloud provider account later through the same adapter,
-  with clearly separate billing and capabilities.
-- A delivery can create a product without publishing it anywhere. Downloading the
-  PDF is a complete useful delivery.
-- A preview can be a retained rendered product. Live preview hosting is outside
-  this finite-run design and would need a separate explicit product decision.
-- A project can generate its own external CI workflow as an ordinary product while
-  Jazyk still uses direct runtimes for fast repair/test loops.
-- Publication can use separate build and publish sandboxes, passing only sealed
-  products between them. This reduces secret exposure without inventing product types.
-- Cache archives and prepared image layers can accelerate fresh attempts. Retaining
-  running processes or resuming whole environments is outside the selected model.
+## Ideas to preserve without growing the first schema
+
+- Customer-owned provider accounts through the same adapter later.
+- Downloadable products as complete deliverables without external publication.
+- Ordinary tasks that generate external CI workflows as retained products.
+- Separate build and publish tasks when credentials should see only sealed outputs.
+- Image preparation and dependency caching to reduce fresh-container startup cost.
+
+Live preview hosting, full CI graphs, interactive containers, matrices, automatic
+task dependencies, and continuous two-way sync remain outside the first release.
 
 ## Suggested review order
 
-First settle autonomy, configuration breadth, and the one-sandbox default. Then
-review the concrete agent sequences and UI. Choose a provider after the small
-experiment measures real costs and lifetime guarantees. Tune quotas and retention
-from those measurements rather than treating this draft's numbers as commitments.
+The simple task model and cancellation are settled directions. Next decide publication
+autonomy and the local launch adapter. Review the concrete agent loop and test result
+semantics, then choose a provider after the bounded experiment. Tune sizes, costs,
+and retention from measurements rather than treating draft values as promises.

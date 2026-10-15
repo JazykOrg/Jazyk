@@ -53,7 +53,7 @@ action estimate.
 
 1. Resolve account entitlement, project ownership, execution policy, resource class,
    provider health, current rates, and independent runtime concurrency capacity.
-2. Reserve a conservative maximum for the complete frozen action, including bounded
+2. Reserve a conservative maximum for the complete frozen task run, including bounded
    setup/image preparation, execution, collection/transfer, and shutdown lag.
 3. Serialize admission with model reservations and all applicable customer/global
    caps. A model call and a sandbox must not spend the same remaining allowance.
@@ -71,7 +71,7 @@ or open-ended allocations; size and timeout changes apply to a new attempt.
 ## Settle as time passes
 
 Meter active billable resources in short intervals, proposed 15 to 30 seconds.
-Use provider receipts or reconciled resource observations, never the project script's
+Use provider receipts or reconciled resource observations, never the task command's
 claim about CPU time. Allocation-based providers bill allocated elapsed time,
 including setup and collection. Containers terminate before the agent reviews the
 final result, so no runtime remains allocated between repair iterations.
@@ -88,8 +88,11 @@ but have independent usage receipts.
 
 If budget runs out, reject the next run. Let an already reserved action finish
 within its funded deadline; terminate at that bound. Cancel and read
-operations remain available even without an allowance. Reserve cleanup capacity
-before execution so collection and termination do not require more admission.
+operations remain available even without an allowance. Cancellation must interrupt
+active execution, not wait for command completion. A stop request releases no
+reservation until teardown is confirmed, including provider setup/cancellation
+races. Reserve cleanup capacity before execution so collection and termination
+do not require more admission.
 
 Confirmed provider termination releases unused funds. A lost create/stop response
 keeps unresolved exposure pending. A reaper polls by resource/operation ID, marks

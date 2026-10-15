@@ -24,8 +24,8 @@ and exact default limits provisional until the vertical slice proves them.
 
 Run the [provider experiment](providers.md#provider-selection-experiment) when
 implementation is authorized, using bounded test credentials and budget. Record
-measured costs, latency, compatibility, fixed lifetime enforcement, and invoice evidence. Choose
-one hosted adapter for launch. Avoid implementing three production backends first.
+measured costs, latency, compatibility, fixed lifetime enforcement, and invoice
+evidence. Choose one hosted adapter for launch. Avoid implementing three production backends first.
 
 Exit: selected provider with a documented fallback, accepted publication policy,
 and an agreed minimal configuration/tool surface.
@@ -33,14 +33,14 @@ and an agreed minimal configuration/tool surface.
 ## Phase 1 Shared runtime and file contracts
 
 Update engine documentation for project settings, hosted execution, tools, sessions,
-generation, verification, and CLI/MCP/ACP/API capability responses. Add frozen action,
-run/step, manifest, diff, receipt, lifecycle, and error schemas. Update prompt payloads in
-the same docs-first change sequence.
+generation, verification, and CLI/MCP/ACP/API capability responses. Add flat task,
+frozen run, allocation, manifest, diff, receipt, lifecycle, and error schemas.
+Update prompt payloads in the same docs-first change sequence.
 
 Implement a fake provider and one real local isolated adapter using maintained
 container/process/archive libraries. Add async run IDs, bounded events/log reads,
 fixed timeouts, cancellation, automatic collection/teardown, and retained file diffs.
-Route recorded native commands through finite actions while preserving an explicit
+Route recorded native commands through finite task runs while preserving an explicit
 trusted native adapter. Remove arbitrary live-exec tools from participating toolsets.
 
 Do not remove hosted subprocess denial. Add the injected dispatch seam, with no
@@ -53,7 +53,7 @@ shutdown, and revision conflicts. Inspecting results never requires a live conta
 
 ## Phase 2 Cloud vertical slice with cost bounds
 
-Document and implement durable run/allocation/step rows, admission, provider
+Document and implement durable run/allocation rows, admission, provider
 dispatch, log chunks, private object storage, and the reaper. Add provider credentials
 only to the service. Separate compiler worker slots and runtime capacity.
 
@@ -70,7 +70,7 @@ exposure and recoverable records. A stopped environment is actually confirmed st
 
 ## Phase 3 Agent loop and verification
 
-Implement restricted execution-settings mutation and staged support-file scopes.
+Implement restricted flat task-list mutation and staged support-file scopes.
 Integrate the [prompt/tool matrix](agent-contract.md#tool-assignment-by-phase) into
 native/text codecs, hosted sessions, local MCP toolsets, and the ACP IDE proxy's
 tool injection. Implement the [access contracts](access-paths.md): routing independent
@@ -78,27 +78,31 @@ of client transport, structured progress/diffs, explicit cancellation ownership,
 and durable result reads after disconnect. Capability blocks include effective
 bounds and current grants. Update payloads, never duplicate them in Cloud or ACP.
 
-Route binding checks, generation actions, ledger builds, and programmatic tests
-through the shared finite-run adapter. Add suite/criterion selection and immutable report
-envelopes. Keep LLM verdicts and programmatic evidence separate. Add artifact
-inspection support or explicit capability errors for built non-text products.
+Route binding checks, generation, ledger builds, and programmatic tests through
+ordinary task IDs and the shared run adapter. Add optional report globs and immutable
+report envelopes. Bind exact case identities in the existing ledger; no separate
+suite/test settings. Distinguish completed passes/failures, skipped, proven not-run,
+and unknown cases. Guard aggregate verification against missing required evidence.
+Keep LLM verdicts separate. Add artifact inspection or clear capability errors.
 
-Implement cache restore/save checkpoints and a small optional sequential step form.
-Measure dependency cache versus build cache behavior. A failing test must not lose
-a previously sealed build cache or become a pass through bulk workflow success.
+Restore task-local disposable cache before commands; save only on whole-command
+success with no cancellation. Keep the prior cache on failure. There are no custom
+cache keys, profiles, step lists, or intermediate save checkpoints in the first UI.
 
-Exit: a model creates a useful script/configuration from prose, runs it, diagnoses a
-failure, repairs owned files, verifies, and retains the product within bounds. Pure
+Exit: a model creates a useful task command/configuration from prose, runs it,
+diagnoses a failure, repairs owned files, verifies, and retains the product within
+bounds. Pure
 LLM tests allocate no sandbox unnecessarily. The model diagnoses and repairs from
 retained results between attempts, with no container kept for its next command.
 
-## Phase 4 Deliveries and existing editor
+## Phase 4 Task picker and existing editor
 
-Replace the GitHub-only settings form with generic script/task definitions and the
-GitHub sync shortcut. Add the split button, Runs beside Files, history, logs,
-retained Changes, products, and test evidence to the existing tabs. People start
-actions and cancel runs; there is no command console or live file browser. Implement
-local and Cloud responses through the same presentation path, and plain-text/path
+Replace the GitHub-only settings form with a flat task list and command editor.
+Expose GitHub sync as a managed task backed by connection settings. Add the split
+button, Runs beside Files, history, logs, retained Changes, products, and test
+evidence to the existing tabs. People start tasks and cancel runs at any time;
+there is no command console or live file browser. Implement local and Cloud
+responses through the same presentation path, and plain-text/path
 result fallbacks for MCP/ACP clients without the Cloud UI.
 
 Preserve GitHub ownership checks, expected heads, unknown-outcome reconciliation,
@@ -106,12 +110,13 @@ and retained attempts. Extend binary handling deliberately. Bind publication gra
 to the accepted policy; do not let generated settings enable themselves.
 
 Keep existing Actions attempts and their logs/evidence readable. Offer a deliberate
-conversion of inline commands into scripts and runtime definitions. Historical
-definitions retain their original backend. Do not delete existing remote workflows
+conversion of inline commands directly into task commands, with optional image
+overrides. Do not require creating script files. Historical definitions retain their
+original backend. Do not delete existing remote workflows
 or silently reinterpret them. A retained Actions adapter can stay explicitly legacy
 until an intentional removal decision.
 
-Exit: zero/one/many deliveries behave correctly, generic delivery works without
+Exit: zero/one/many tasks behave correctly, generic command execution works without
 GitHub, sync needs no sandbox, and users can inspect and stop work from existing tabs.
 
 ## Phase 5 Launch gates and operational handoff
@@ -137,11 +142,16 @@ Planning changes alone require no compiler rebuild or deployment.
 | --- | --- |
 | Book with PDF and EPUB | Both retained and downloadable after sandbox deletion. |
 | Presentation generation | Model inspects available rendered output against criteria, not just path existence. |
-| Single selected unit test | Only requested binding receives fresh evidence; skipped/missing cases do not pass. |
-| Test-suite failure after build | Build cache retained at checkpoint; failed cases remain failed. |
+| Single selected unit test | State whether the command filters or runs a broader suite; only actually reported mapped cases receive conclusive new evidence. |
+| Test-suite failure after build | No new cache saved; previous cache preserved; reported cases retain their individual outcomes. |
+| Command succeeds with zero tests or a missing report | Command success does not verify the selected criteria. |
+| Cancellation after some cases completed | Completed valid evidence retained; interrupted/unreported cases do not pass. |
+| Old report left among generated inputs | Cleared before execution; cannot establish fresh passing evidence. |
+| Passing headline with an unknown required criterion | Requirement remains unverified; no aggregate false pass. |
+| Task changes source/tests while executing | Diff retained; rerun resulting candidate before claiming it verified. |
 | File-only LLM test | No runtime allocated; verdict keeps artifact/fact hashes. |
 | Local MCP coding agent | Same execution and evidence contract as hosted generation. |
-| ACP IDE with no terminal capability | Submit the same action, observe updates, inspect retained logs/diffs, and cancel. |
+| ACP IDE with no terminal capability | Submit the same task, observe updates, inspect retained logs/diffs, and cancel. |
 | MCP/ACP client selects hosted execution | Same account admission and billing as the Cloud editor. |
 | Client disconnects during execution | Action still finishes or times out and tears down; reconnect reads its durable result. |
 | ACP session or compiler operation explicitly cancelled | Its child runs cancel; independently owned deliveries remain separate. |
@@ -151,12 +161,15 @@ Planning changes alone require no compiler rebuild or deployment.
 | Malicious log instructions | Agent treats them as data; capabilities cannot expand. |
 | Infinite process or detached child | Fixed deadline and supervisor terminate it; reserved usage bounds exposure. |
 | Successful or failed finite action | Logs and eligible diffs collected, environment torn down without another model call. |
-| Request to append steps, attach shell, or extend deadline | Rejected; edits and changed limits apply only to a new attempt. |
-| Cancellation with spawned children | No surviving billable process tree. |
+| Request to append commands, attach shell, or extend deadline | Rejected; edits and changed limits apply only to a new attempt. |
+| Cancellation during an executing command with children | Signal/kill whole tree, confirm allocation termination, settle actual use. |
+| Cancellation while queued, provisioning, or collecting | Stop intent prevents new work/promotion; late allocations terminated; partial results labeled. |
+| Cancellation races completion or promotion | Atomic finalization decides result; committed files and external writes are not rolled back. |
+| Cancel called twice or after allowance exhaustion | Idempotent and permitted; never starts work or incurs a second reservation. |
 | Provider dispatch/start response lost | Reconcile existing operation before any repeat. |
 | Provider stop response lost | `Stopping`/`Unknown`, pending exposure, eventual reconciliation. |
 | GitHub remote edited concurrently | Conflict; no force-push or remote-only deletion. |
-| Two differently targeted sync actions | Separate repository/branch grants and checkpoints. |
+| Two managed GitHub sync tasks | Separate repository/branch grants and external outcome records. |
 | Project deletion while running | Revoke transfers, stop execution, clean content, retain financial receipts. |
 | Log/report/artifact/diff quota reached | Bounded resource use and explicit missing evidence or partial diff, no silent success. |
 | Different tenants use the same cache key | No content or existence leak across namespaces. |
@@ -166,15 +179,14 @@ Planning changes alone require no compiler rebuild or deployment.
 Use deterministic tests for contracts and accounting; provider-mocked integration
 tests for failures; bounded real sandbox smoke tests for actual behavior; editor
 tests for interaction; Cloud/MCP/ACP conformance tests; model benchmarks for tool use
-and product quality. Passing
-one category does not establish the others.
+and product quality. Passing one category does not establish the others.
 
 ## Work deliberately left open
 
 Provider and size selection, exact pricing/retention, autonomy defaults,
 parallel runtimes, private images, native Apple/Windows builds, image-building
 services, continuous Git sync, and custom customer providers remain decisions or
-later capabilities. Mark unsupported requirements explicitly. The generic script
+later capabilities. Mark unsupported requirements explicitly. The flat task/command
 contract should survive their later addition.
 
 Persistent environments, interactive terminals, live exec, and deadline extensions

@@ -23,7 +23,7 @@ does not become a live-exec API for agents or users.
 
 | Option | Fit for Jazyk | Main issue to prove |
 | --- | --- | --- |
-| Modal Sandboxes | Run a fixed script/steps, configurable resources, registry images, managed isolation. | Hard bounds, automatic teardown, image compatibility, actual sandbox billing. |
+| Modal Sandboxes | Run a fixed task command, configurable resources, registry images, managed isolation. | Hard bounds, automatic teardown, image compatibility, actual sandbox billing. |
 | E2B | Isolated Linux microVMs that can execute and retain a finite action. | Template/image preparation, fixed plan cost, storage and transfer costs. |
 | AWS ECS Fargate | OCI task entrypoint, per-task isolation, AWS storage/network integration. | Startup, result collection, enforceable lifetime/watchdog, extra infrastructure. |
 | GitHub Actions | Existing adapter and a matching finite-job model. | Repository/workflow dependence, queue latency, external storage/accounting. |
@@ -149,7 +149,9 @@ Use identical fixtures on each candidate and the local adapter:
 - Node tests with one failing case and JUnit output.
 - A Java or Rust dependency/build cache with warm and cold runs.
 - A PDF or PPTX generator with a binary retained product.
-- A 30-minute action, enforced fixed timeout, cancellation, and background child cleanup.
+- A 30-minute task, enforced fixed timeout, cancellation during execution, and
+  background child cleanup. Also cancel during provisioning and collection; measure
+  stop latency and reconcile lost stop acknowledgements.
 - Automatic teardown after success/failure, with retained diffs readable afterward.
 - A large but bounded log stream and a partial upload interrupted by shutdown.
 - A custom public image plus a deliberately unsupported image requirement.

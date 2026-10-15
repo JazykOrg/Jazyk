@@ -460,11 +460,17 @@ harness enforces:
   legacy command. A task imports that case's verdict from its fresh test reports.
   A legacy command's exit code is its verdict, so that command must propagate
   assertion failures. A successful task exit alone proves no individual case passed.
-- `llm`: a test that requires judgment, or a deliverable that is not executable
-  software. No programmatic definition exists; the harness gives an agent the
+- `llm`: a test that requires judgment an executable assertion cannot establish.
+  Non-software artifacts can still have programmatic checks for their contents,
+  structure, or format. When no programmatic definition exists, the harness gives an agent the
   requirement, its context, and the location of the implementing files, and asks it to
   confirm the behavior. The verdict is the test. See
   [criteria files](#criteria-files-for-llm-tests).
+
+Command output, exit status, API responses, and automatically inspectable artifact
+contents use programmatic tests. A suggested `criteriaPath` supplies a path for
+judgment; it does not select the test kind. A missing runner is setup work. Define
+or reuse a task with fresh JUnit reports instead of writing a passing verdict.
 
 A test inspects the artifact the requirement is about, never a document that describes
 it. Asserting that a manifest names a format, that a plan lists a feature, or that a

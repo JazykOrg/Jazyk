@@ -44,6 +44,7 @@ def main():
     p.add_argument('--model', default='gemma4:31b-mlx')
     p.add_argument('--codec', choices=['native', 'text'], default='native')
     p.add_argument('--engine', choices=['podman', 'docker'], default='podman')
+    p.add_argument('--chat', action='store_true', help='Use chat tools with a manual release and binding prerequisite')
     a = p.parse_args()
     evidence = Path(a.evidence).resolve()
     evidence.mkdir(parents=True, exist_ok=False)
@@ -69,32 +70,36 @@ image="docker.io/library/python:3.12-alpine"
 timeout_seconds=30
 reports=["reports/*.xml"]
 ''')
-    (out / 'status.yaml').write_text(json.dumps({'version': 2}))
+    (out / 'status.yaml').write_text(json.dumps({'version': 2, 'generation': 1 if a.chat else 0}))
     (out / 'graph/entities.yaml').write_text(json.dumps({'ent:greeter': {'name': 'Greeter'}}))
     statement = 'The Python module greet.py provides greeting(), which returns exactly "Hello, Jazyk!".'
     (out / 'graph/requirements.yaml').write_text(json.dumps({'req:greeting': {'statement': statement, 'entities': ['ent:greeter']}}))
     binary = str(Path(a.binary).resolve())
-    env = environment(a.env_file, a.engine, a.model, a.codec, 16)
+    env = environment(a.env_file, a.engine, a.model, a.codec, 32 if a.chat else 16)
     env.update(JAZYK_CALL_TIMEOUT='600', JAZYK_READ_TIMEOUT='600')
     agent = ACP(binary, root, env, evidence, False)
     mcp = None
     sid = None
     started = time.monotonic()
-    result = dict(model=a.model, codec=a.codec, engine=a.engine, passed=False)
+    result = dict(model=a.model, codec=a.codec, engine=a.engine, chat=a.chat, passed=False)
     try:
         agent.receive(agent.send('initialize', {'protocolVersion': 1, 'clientCapabilities': {},
                        'clientInfo': {'name': 'generation-acceptance', 'version': '1'}}), 30)
         sid = agent.receive(agent.send('session/new', {'cwd': str(root), 'mcpServers': [{
             'name': 'jazyk', 'command': binary,
-            'args': ['mcp', 'generate,verify', '--ephemeral', '--serve-files'], 'env': []}]}), 30)['sessionId']
+            'args': ['mcp', 'chat', '--ephemeral'] if a.chat else ['mcp', 'generate,verify', '--ephemeral', '--serve-files'], 'env': []}]}), 30)['sessionId']
         def prompt(text):
             reply = agent.receive(agent.send('session/prompt', {'sessionId': sid,
-                                  'prompt': [{'type': 'text', 'text': text}]}), 1200)
+                                  'prompt': [{'type': 'text', 'text': text}]}), 2400 if a.chat else 1200)
             assert reply.get('stopReason') == 'end_turn', reply
-        prompt('Generate ent:greeter from its begin_generation package. Write greet.py and a small falsifiable unittest under tests/. Reuse the existing check task and preserve runner.py. Record the medium if needed, the complete generation manifest with its factHash and task:check test binding, then run_tests and inspect the actual result. Keep this tiny: one function and one behavioral test. Finish with a short evidence summary.')
+        initial = 'Generate the implementation, tests, and run this project. Keep it tiny: one function and one behavioral test. Reuse the existing check task and preserve runner.py. Inspect actual execution results and finish with a short evidence summary.' if a.chat else 'Generate ent:greeter from its begin_generation package. Write greet.py and a small falsifiable unittest under tests/. Reuse the existing check task and preserve runner.py. Record the medium if needed, the complete generation manifest with its factHash and task:check test binding, then run_tests and inspect the actual result. Keep this tiny: one function and one behavioral test. Finish with a short evidence summary.'
+        prompt(initial)
         names = [c.get('title') for c in agent.calls]
         for name in ['begin_generation', 'write_text_file', 'record_generation', 'run_tests']:
             assert name in names, names
+        if a.chat:
+            for name in ['binding_tasks', 'release_work', 'begin_binding', 'record_binding']:
+                assert name in names, names
         assert (root / 'runner.py').read_text() == RUNNER
         tests = {str(p.relative_to(root)): p.read_bytes() for p in (root / 'tests').glob('*.py')}
         assert tests, 'No tests generated'

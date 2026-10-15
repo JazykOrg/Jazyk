@@ -24,3 +24,16 @@ and pause presentation. Reproduce changes in disposable fixtures.
 
 Keep production evidence in private storage. Use disposable projects for execution
 and preserve existing projects and model policies.
+
+## Real model follow-up
+
+Exercise chat without `--serve-files`, starting with an unbound requirement behind
+a manual generation release. Ask for implementation, tests, and execution. Require
+binding and release tools, a falsifiable programmatic test, a passing isolated run,
+then a deliberately failing run and an implementation-only repair. Run through ACP
+and MCP with Podman first. Repeat a focused execution with Docker.
+
+The repeated generation benchmark exposed an incorrect test choice: executable
+output checks became LLM criteria files. Clarify that the suggested criteria path
+does not select the test kind, and missing runner setup does not justify replacing
+a behavioral check with a written verdict. Re-run both tool codecs.

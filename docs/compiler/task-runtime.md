@@ -135,6 +135,9 @@ ambiguous selector records `none` with the observed execution state as evidence.
 Several criterion bindings can share one task. `run_tests` runs each referenced
 task once and imports all of its matching cases. Legacy command bindings remain
 local compatibility paths and cannot execute on a Cloud API host.
+Single-row reruns and benchmark checks use the same task adapter. They judge the
+selected case, not the whole command's exit code. A skipped, missing, ambiguous, or
+incomplete result cannot count as a successful test or a falsifiable failure.
 
 Successful products and per-case evidence enter the workspace only when its
 eligible input still matches the frozen snapshot. An intervening edit leaves the

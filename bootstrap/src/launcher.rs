@@ -60,7 +60,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("viewer [--out FILE]", "render the graph to a self-contained HTML page"),
     ]),
     ("run by IDEs and agents, not by hand", &[
-        ("mcp <toolsets>", "the MCP server: all, compile,generate,verify,decompile,benchmark,chat,graph"),
+        ("mcp <toolsets>", "the MCP server: all, compile,generate,verify,runtime,decompile,benchmark,chat,graph"),
         ("acp [install --ide CLIENT]", "the IDE-facing ACP proxy; `install` registers it with an editor"),
         ("lsp", "language server over stdio (read-only; compile or watch rebuilds)"),
         ("agent", "the embedded ACP agent over stdio (spawned by the bridge)"),
@@ -783,6 +783,7 @@ pub fn run() {
                     }
                 }
                 let known = [
+                    "runtime",
                     "compile",
                     "generate",
                     "verify",

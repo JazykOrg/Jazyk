@@ -978,7 +978,7 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
         crate::sys::sleep(std::time::Duration::from_millis(1000));
     }
 }
-fn case_verdict(result: &Value, name: &str) -> (&'static str, String) {
+pub(crate) fn case_verdict(result: &Value, name: &str) -> (&'static str, String) {
     let found: Vec<_> = result["tests"]
         .as_array()
         .into_iter()

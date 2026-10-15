@@ -33,6 +33,10 @@ separated; each adds its tools to the union:
   and writes the deliverable with its own editor and shell; jazyk holds the ledger.
 - `jazyk mcp verify`: the [verification tools](../compiler/tools.md#verification-tools).
   Small enough to hand a subagent whose only job is judging one row.
+- `jazyk mcp runtime`: the nine [task runtime tools](../compiler/task-runtime.md).
+  This serving needs project settings but no compiled graph. It carries the execution
+  instructions and no document-set or graph tools. Combine it with another toolset
+  when the agent also needs that workflow.
 - `jazyk mcp decompile`: the
   [decompilation tools](../compiler/tools.md#decompilation-tools). The agent reads
   the code with its own tools and submits prose drafts; jazyk validates and lands

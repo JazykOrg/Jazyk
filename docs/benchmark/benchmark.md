@@ -47,6 +47,10 @@ field. See [cases](./cases.md#case-format).
   items, and every `unload` of them bounced). Only the store and the
   fixture differ from a build.
 - Cases never touch the project graph. See [execution](./cases.md#execution).
+- Each runnable fixture has project settings and its input documents on disk. Its
+  graph and ledger live under `.jazyk/ds_main`, and generated files live under
+  `deliverable`. Task discovery, task edits, and container snapshots use this
+  sandbox project. They cannot fall back to the project running the benchmark.
 - A case passes only when its session completes. An aborted session (endpoint error,
   a rejected-call streak, an exhausted round budget) fails the case with the abort
   reason. Its checks are skipped and count as failed in the score: an aborted session

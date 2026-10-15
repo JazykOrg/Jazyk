@@ -131,6 +131,9 @@ const WRITER_BUILD_NOTE: &str = "Use compile_document_sets to compile named set 
 
 // The instructions for a serving, `tab` saying it runs in a browser tab.
 fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) -> String {
+    if modes.len() == 1 && modes[0] == "runtime" {
+        return crate::task_runtime::PROMPT.to_owned();
+    }
     let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and requirements \
          reconciled from prose documentation, consumed by generation and verification. ",
@@ -241,7 +244,7 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
          estimate).",
     );
     #[cfg(not(target_arch = "wasm32"))]
-    if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "chat")) {
+    if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "chat" | "runtime")) {
         s.push_str("\n\n");
         s.push_str(crate::task_runtime::PROMPT);
     }
@@ -506,9 +509,13 @@ impl McpServer {
         if self.bridge.reader {
             return crate::tools::READ_TOOLS.to_vec();
         }
+        if self.modes.len() == 1 && self.modes[0] == "runtime" {
+            return crate::task_runtime::TOOLS.to_vec();
+        }
         let mut v: Vec<&'static str> = Vec::new();
         for m in &self.modes {
             let set = match m.as_str() {
+                "runtime" => crate::task_runtime::TOOLS.to_vec(),
                 "compile" => {
                     let mut t = toolset("mcp-compile");
                     t.extend(LIFECYCLE);
@@ -1397,6 +1404,9 @@ impl McpServer {
                 }
             }
         } else {
+            if let Err(error) = crate::benchmark::prepare_runtime_fixture(case, &tmp) {
+                return json!({"error": {"rule": "fixture", "message": error}});
+            }
             crate::benchmark::sandbox(case, &tmp)
         };
         let gs = crate::gen::GenSettings {
@@ -1716,6 +1726,9 @@ impl McpServer {
         if method == "tools/call" && crate::task_runtime::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
             return self.handle_local(method, params);
         }
+        if self.modes.len() == 1 && self.modes[0] == "runtime" {
+            return self.handle_local(method, params);
+        }
         let w =
             crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
         if method == "initialize" {
@@ -1952,6 +1965,9 @@ impl McpServer {
                     .filter(|t| enabled.contains(&t.name))
                     .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}))
                     .collect();
+                if self.modes.len() == 1 && self.modes[0] == "runtime" {
+                    return Ok(json!({"tools": tools}));
+                }
                 // The compilation lifecycle: the compile serving's own, and the chat
                 // serving carries it too (docs/compiler/tools.md#toolsets). The
                 // catalog's own `done` (the goal tools) yields to the lifecycle entry:
@@ -3467,6 +3483,23 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or_default().to_string())
             .collect()
+    }
+
+    #[test]
+    fn runtime_serving_needs_no_graph_and_exposes_only_execution_tools() {
+        let dir = bare_dir("runtime-only");
+        let project = crate::project::Project::load(&dir);
+        let server = McpServer::with_bridge(project, dir.join("state"), vec!["runtime".into()], false, BridgeFlags::default());
+        let names = tool_names(&server);
+        assert_eq!(names.len(), crate::task_runtime::TOOLS.len());
+        for name in crate::task_runtime::TOOLS {
+            assert!(names.iter().any(|n| n == name));
+        }
+        let init = server.handle("initialize", &json!({})).unwrap();
+        assert_eq!(init["instructions"], crate::task_runtime::PROMPT);
+        let tools = server.handle("tools/list", &json!({})).unwrap();
+        assert!(tools["tools"].as_array().unwrap().iter().all(|t| t["inputSchema"]["properties"]["setId"].is_null()));
+        crate::vfs::remove_dir_all(dir).ok();
     }
 
     // A reader conversation (a small model in a tab) gets the read tools alone and

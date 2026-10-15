@@ -365,7 +365,7 @@ fn view_of(v: &Value) -> Result<View, String> {
 // A sandbox store holding the fixture's documents and coverage, no graph nodes yet.
 pub fn sandbox_docs(case: &Case, tmp: &std::path::Path) -> Store {
     let mut s = Store {
-        out: tmp.to_path_buf(),
+        out: tmp.join(".jazyk/ds_main"),
         ..Default::default()
     };
     for (doc, text) in &case.docs {
@@ -482,8 +482,29 @@ fn fixture_ops(case: &Case) -> Result<Vec<crate::store::Op>, String> {
 // the commit writes the change records the fixture implies, and the goal carries the
 // change and hints a build would give it. A fixture the commit refuses, or one that
 // derives no such goal, is a fixture error. Mirrors docs/benchmark/cases.md#derived-goals.
+pub fn prepare_runtime_fixture(case: &Case, tmp: &std::path::Path) -> Result<(), String> {
+    crate::vfs::create_dir_all(tmp.join(".jazyk")).map_err(|e| e.to_string())?;
+    let docs: Vec<_> = case.docs.keys().collect();
+    let config = format!(
+        "version=1\n[[sets]]\nid=\"ds_main\"\nname=\"Benchmark\"\ndocs={}\n[gen]\ndeliverable=\"deliverable\"\n",
+        serde_json::to_string(&docs).map_err(|e| e.to_string())?
+    );
+    crate::vfs::write(tmp.join(".jazyk/jazyk.toml"), config).map_err(|e| e.to_string())?;
+    for (path, text) in &case.docs {
+        if !crate::document_sets::safe_relative(tmp, path) || crate::task_runtime::protected(path) {
+            return Err(format!("Unsafe fixture document path: {path}"));
+        }
+        let path = tmp.join(path);
+        if let Some(parent) = path.parent() {
+            crate::vfs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        crate::vfs::write(path, text).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal), String> {
-    crate::vfs::create_dir_all(tmp).map_err(|e| e.to_string())?;
+    prepare_runtime_fixture(case, tmp)?;
     let mut store = sandbox_docs(case, tmp);
     let ops = fixture_ops(case)?;
     let report = store.apply(ops, &crate::store::Commit::store("edit"));
@@ -1354,6 +1375,7 @@ pub fn eval_workflow_check(
                     "{}'s test still passes with the product broken; not falsifiable",
                     rid
                 )),
+                Ok(r) if r.runner_failed() => Some(format!("broken-product rerun did not complete: {}", r.evidence)),
                 Ok(_) => None,
                 Err(e) => Some(format!("broken-product rerun errored: {}", e)),
             }
@@ -1407,13 +1429,14 @@ pub fn eval_workflow_check(
                 if t.run.trim().is_empty() {
                     return Some(format!("test `{}` has no run command", t.name));
                 }
-                match crate::sys::run_shell(&t.run, &gs.deliverable.join(&t.cwd)) {
-                    Ok(out) if out.success => {
+                match crate::verify::run_test_ref(gs, t) {
+                    Ok(out) if out.pass => {
                         return Some(format!(
                             "test `{}` passes as recorded (`{}`); the case expects it to fail",
                             t.name, t.run
                         ))
                     }
+                    Ok(out) if out.runner_failed() => return Some(format!("test `{}` did not complete: {}", t.name, out.evidence)),
                     Ok(_) => {}
                     Err(e) => return Some(format!("test `{}` did not run: {}", t.name, e)),
                 }
@@ -2030,6 +2053,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                     }
                 }
             } else {
+                fixture_error = prepare_runtime_fixture(case, &tmp).err();
                 sandbox(case, &tmp)
             };
             let dirty = case_dirty_sections(&store, case);
@@ -2533,6 +2557,25 @@ fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_fixture_is_a_real_project_with_private_state() {
+        let cases = parse_cases();
+        let case = cases.iter().find(|c| c.name == "gen-basic").unwrap();
+        let root = own_dir("runtime-project");
+        prepare_runtime_fixture(case, &root).unwrap();
+        let store = sandbox(case, &root);
+        crate::vfs::create_dir_all(&store.out).unwrap();
+        crate::vfs::write(store.out.join("private.yaml"), "state").unwrap();
+        assert_eq!(crate::task_runtime::project_root(&store.out).unwrap(), root);
+        let workspace = crate::document_sets::Workspace::load(&root).unwrap();
+        assert_eq!(workspace.resolve(Some("ds_main")).unwrap().out, store.out);
+        let inputs = crate::task_runtime::snapshot(&root).unwrap();
+        assert!(inputs.contains_key(".jazyk/jazyk.toml"));
+        assert!(inputs.contains_key("docs/greeter.md"));
+        assert!(!inputs.contains_key(".jazyk/ds_main/private.yaml"));
+        crate::vfs::remove_dir_all(root).ok();
+    }
 
     // A case session runs in process with its batch open and no begin_goals among its
     // tools, so its prompt never tells the model to claim it

@@ -1,12 +1,21 @@
 Read task_context and choose tasks by name and description. Reuse existing tasks.
+Follow the requested scope: inspection alone does not authorize a run or an edit.
 A task has an ID, name, description, and command. Short commands need no script file.
 Declare product, cache, and test-report globs only when needed. A saved task grants
 no new authority. Use an allowed image, size, and fixed timeout before submission.
 
-Call run_task against the intended project revision. Inspect its status, logs,
+When the request needs execution, call run_task with task_id,
+expected_revision from task_context, and a fresh
+operation_key for a new run. Reuse that key only when retrying the same submission.
+Task settings and globs are project-relative; the task cwd is project-relative too.
+update_tasks replaces the whole list, so retain unrelated tasks and use the returned
+revision on the next call. Inspect the run's status, logs,
 retained changes, products, and per-case results. Repair owned files and start a
 fresh run when useful. Every run shuts down. No live shell or deadline extension
 exists. Cancel obsolete or runaway work with cancel_run, including during execution.
+Use wait_run while work is pending. Confirm terminated before claiming shutdown.
+The command can have state succeeded while cleanup is still running. If terminated
+is false, wait again before ending the execution request.
 
 A failed command saves no new cache. Exit zero is not proof every test passed.
 Skipped, interrupted, missing, ambiguous, and stale cases are not passes. The host

@@ -403,6 +403,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     let mut cut_nudges = 0u32;
     let mut intent_nudges = 0u32;
     let mut malformed_streak = 0u32;
+    let mut failed_calls = 0u32;
     while rounds < a.max_rounds {
         if (a.cancelled)() {
             return Stop::Cancelled;
@@ -632,10 +633,16 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     // The repeated-call guard lives in the tool serving, keyed per
                     // open batch, so every agent gets the same contract
                     // (docs/compiler/sessions.md#repeated-calls).
-                    let (result, ok) = match (a.dispatch)(&name, &args) {
+                    let dispatched = if failed_calls >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
+                        Err("Skipped: the turn stopped after five consecutive tool errors.".into())
+                    } else {
+                        (a.dispatch)(&name, &args)
+                    };
+                    let (result, ok) = match dispatched {
                         Ok(v) => (v, true),
                         Err(e) => (e, false),
                     };
+                    failed_calls = if ok { 0 } else { failed_calls.saturating_add(1) };
                     (a.emit)(AgentEvent::ToolCallEnd {
                         id: call_id,
                         result: result.clone(),
@@ -645,6 +652,9 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     a.history.push(codec.result_msg(&id, &name, &value));
                 }
             }
+        }
+        if failed_calls >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
+            return Stop::Error("Stopped after five consecutive tool errors; inspect the failed calls before retrying.".into());
         }
     }
     Stop::MaxRounds
@@ -714,6 +724,49 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn consecutive_tool_errors_bound_a_batch_without_dangling_results() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let _scope = crate::scoped_state::Scope::enter();
+        crate::llm::set_tools_mode(1);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let provider = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" { break; }
+                if let Some((key, value)) = line.split_once(':') {
+                    if key.eq_ignore_ascii_case("content-length") { length = value.trim().parse().unwrap(); }
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            let calls: Vec<_> = (0..12).map(|i| json!({"id":format!("c{i}"),"type":"function","function":{"name":"fixture","arguments":json!({"index":i}).to_string()}})).collect();
+            let body = json!({"choices":[{"message":{"role":"assistant","content":"","tool_calls":calls},"finish_reason":"tool_calls"}],"usage":{"total_tokens":1}}).to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let llm = Llm {base_url:format!("http://{address}"),model:"fixture".into(),api_key:String::new(),temperature:None,trace:None};
+        let mut history = vec![json!({"role":"user","content":"test"})];
+        let mut dispatched = 0;
+        let stop = run_loop(LoopArgs {
+            llm: &llm, history: &mut history, tools: &[],
+            dispatch: &mut |_, args| { dispatched += 1; if args["index"] == 2 { Ok("{}".into()) } else { Err("bad argument".into()) } },
+            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 1,
+            label: "error-budget".into(), conversation: false,
+        });
+        provider.join().unwrap();
+        assert!(matches!(stop, Stop::Error(_)));
+        assert_eq!(dispatched, 8, "a successful call resets the failure count");
+        let results: Vec<_> = history.iter().filter(|m| m["role"] == "tool").collect();
+        assert_eq!(results.len(), 12);
+        for (i, result) in results.iter().enumerate() { assert_eq!(result["tool_call_id"], format!("c{i}")); }
+        assert!(results[11]["content"].as_str().unwrap().contains("Skipped"));
+    }
 
     #[test]
     fn tool_results_have_one_json_layer_and_preserve_plain_text() {

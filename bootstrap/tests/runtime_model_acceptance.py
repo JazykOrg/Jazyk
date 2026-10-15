@@ -162,6 +162,7 @@ def main():
     parser.add_argument("--codec", choices=["native", "text"], default="native")
     parser.add_argument("--case", choices=list(PROMPTS), required=True)
     parser.add_argument("--entry", choices=["acp", "mcp"], default="acp")
+    parser.add_argument("--toolsets", default="runtime")
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--deadline", type=int, default=360)
@@ -187,7 +188,7 @@ def main():
                     "clientInfo": {"name": "runtime-model-acceptance", "version": "1"}}), 30)
         servers = [] if args.entry == "acp" or args.case == "ping" else [{
             "name": "jazyk", "command": binary,
-            "args": ["mcp", "generate,verify", "--ephemeral", "--serve-files"], "env": []}]
+            "args": ["mcp", args.toolsets, "--ephemeral", "--serve-files"], "env": []}]
         sid = acp.receive(acp.send("session/new", {"cwd": str(root), "mcpServers": servers}), 30)["sessionId"]
         for index in range(2 if args.repeat else 1):
             prompt = PROMPTS[args.case] if index == 0 else "Run it once more in a fresh container. Inspect the new receipt and log and confirm the cache was reused."
@@ -206,9 +207,23 @@ def main():
         if args.case in ("ping", "discover"):
             assert "run_task" not in names and "update_tasks" not in names, names
         else:
-            assert "run_task" in names and "read_run_log" in names, names
+            observed_logs = []
+            observed_termination = set()
+            for update in acp.updates:
+                if update.get("sessionUpdate") == "tool_call_update":
+                    try:
+                        value = json.loads(update.get("rawOutput", ""))
+                    except (ValueError, TypeError):
+                        continue
+                    if isinstance(value, dict) and value.get("log"):
+                        observed_logs.append(value["log"])
+                    if isinstance(value, dict) and value.get("terminated"):
+                        observed_termination.add(value.get("id"))
+            assert "run_task" in names, names
+            assert "read_run_log" in names or observed_logs, "No run log was observed"
             assert runs, context
             assert all(run.get("terminated") for run in runs), runs
+            assert {run["id"] for run in runs} <= observed_termination, "Model ended without observing termination"
             if args.case in ("run", "create", "repair"):
                 receipt = json.loads((root / "products/receipt.json").read_text())
                 assert receipt == {"input": "violet", "count": 2 if args.repeat else 1}, receipt

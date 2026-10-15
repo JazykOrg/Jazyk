@@ -10,13 +10,13 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | --- | --- | --- |
 | Endpoint and minimal model/tool calls | In progress | LocalRouter completion through the production agent passed with Qwen 27B and Llama 8B. |
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
-| Model discovery, submission, observation | Pending | |
+| Model discovery, submission, observation | In progress | Gemma runtime discovery passed. Two model-controlled Podman runs produced correct receipts and reused cache. Shutdown observation is being tightened. |
 | Model task creation and repair | Pending | |
 | Generation and runtime/LLM verification | Pending | |
-| Cancellation, timeout, failure recovery | Pending | |
+| Cancellation, timeout, failure recovery | Passed, deterministic | Expanded lifecycle fixture passed on Podman and Docker. Model-driven cases remain. |
 | MCP and ACP entry points | Pending | |
-| Docker parity | Pending | |
-| Regression suite and release build | Pending | |
+| Docker parity | Passed, deterministic | Same expanded lifecycle cases as Podman. |
+| Regression suite and release build | In progress | 668 compiler tests passed, 3 ignored after the second fixes. Final release build remains. |
 
 ## First investigation
 
@@ -33,3 +33,33 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   Gemma `gemma4:31b-mlx` discovery hit the 90 second provider read timeout. These are
   provider failures, not successful or failed task decisions.
 - Llama `llama3.1:8b` answered the tiny request in 6 seconds. Larger turns are next.
+
+## Second investigation
+
+- Gemma passed runtime discovery in 78 seconds through LocalRouter and the actual
+  embedded agent/MCP stack. It only inspected the task as requested.
+- The first two Gemma-controlled Podman runs produced receipt counts 1 and 2.
+  The initial test incorrectly required a separate log-read call even though
+  `wait_run` already returned the log. That assertion is corrected. The second run
+  also exposed a real observation gap: the model ended after command success while
+  its last observed `terminated` flag was false. The prompt now distinguishes command
+  success from completed cleanup. The driver requires observed termination.
+- The small `runtime` MCP toolset uses the same nine tools and dispatch as the other
+  entry points. It permits focused model tests without graph tools or document-set
+  schemas. Full ACP coverage still remains a separate requirement.
+- Llama generated a long batch of invalid calls. The generic loop now stops after
+  five consecutive tool failures, including calls outside graph batches, and records
+  skipped results for the remaining calls. A regression checks the dispatch count,
+  reset after success, and complete native tool history.
+- Runtime-aware benchmark fixtures now include real project settings and documents;
+  graph state lives under `.jazyk/ds_main`. Single-row and falsifiability checks now
+  execute `task:<id>` through the runtime and judge the selected report case. Missing,
+  skipped, ambiguous, and incomplete cases cannot count as falsifiable failures.
+- `runtime_lifecycle_acceptance.py` passed on both engines: successful cache promotion,
+  no promotion after failure, restored cache, stale definition rejection, idempotent
+  submission, immediate and executing cancellation, cancellation with invalid TOML,
+  product conflict retention, timeout, searchable failed logs, and invalid image.
+- Podman needed a persistent test supervisor. The VM exited when its launching command
+  session was cleaned up; keeping its supervisor alive restored cross-call availability.
+- A temporary Qwen alias with a 16K context was created to investigate the MLX error.
+  LocalRouter did not recognize the alias. No owner model or endpoint setting changed.

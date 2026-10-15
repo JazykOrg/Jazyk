@@ -460,7 +460,12 @@ pub struct ProgRun {
 }
 
 // Run one programmatic test reference under the deliverable.
-fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
+pub(crate) fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
+    if let Some(task) = t.run.strip_prefix("task:") {
+        let root = crate::task_runtime::project_root(&gs.deliverable)?;
+        let (id, result) = crate::task_runtime::execute(&root, task)?;
+        return task_case_outcome(&result, &t.name, &id);
+    }
     let cwd = gs.deliverable.join(&t.cwd);
     let out = crate::sys::run_shell(&t.run, &cwd)
         .map_err(|e| format!("failed to run `{}` in {}: {}", t.run, cwd.display(), e))?;
@@ -482,6 +487,22 @@ fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, St
         code: out.code,
         evidence: format!("{}: {}", t.run, tail),
         tail,
+    })
+}
+
+fn task_case_outcome(result: &Value, name: &str, run_id: &str) -> Result<ProgRun, String> {
+    if result["complete"] != true {
+        return Err(format!("run {run_id}: incomplete collection; no test verdict"));
+    }
+    let (verdict, observed) = crate::task_runtime::case_verdict(result, name);
+    if verdict == "none" {
+        return Err(format!("run {run_id}: {name}: {observed}; no test verdict"));
+    }
+    Ok(ProgRun {
+        pass: verdict == "pass",
+        code: result["exit_code"].as_i64().unwrap_or(1) as i32,
+        tail: format!("{name}: {observed}"),
+        evidence: format!("run {run_id}: {name}: {observed}"),
     })
 }
 
@@ -560,6 +581,9 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
             artifact.display(),
             repair_for("missing", "artifact-gone", &rid, &row.entity)
         ));
+    }
+    if row.test.run.starts_with("task:") {
+        return run_test_ref(gs, &row.test);
     }
     let cwd = gs.deliverable.join(&row.test.cwd);
     let out = crate::sys::run_shell(&row.test.run, &cwd)
@@ -1026,6 +1050,22 @@ pub fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn task_reruns_require_a_unique_completed_case_verdict() {
+        let result = serde_json::json!({"complete":true,"exit_code":1,"tests":[
+            {"identity":"A::same","status":"passed"},
+            {"identity":"B::same","status":"failed"},
+            {"identity":"A::skipped","status":"skipped"}
+        ]});
+        assert!(super::task_case_outcome(&result, "A::same", "r1").unwrap().pass);
+        assert!(!super::task_case_outcome(&result, "B::same", "r1").unwrap().pass);
+        for selector in ["same", "A::skipped", "missing"] {
+            assert!(super::task_case_outcome(&result, selector, "r1").is_err());
+        }
+        let mut incomplete = result.clone();
+        incomplete["complete"] = serde_json::json!(false);
+        assert!(super::task_case_outcome(&incomplete, "A::same", "r1").is_err());
+    }
     // The judge contract puts the verdict on the first line; a reasoning-first reply
     // is read from its conclusion. Mirrors docs/compiler/goals/verify.md#the-one-shot-form.
     #[test]

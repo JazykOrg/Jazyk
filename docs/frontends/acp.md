@@ -153,7 +153,10 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   send the messages and the MCP tools, dispatch the calls the model makes, append the
   results, repeat until the model stops calling tools. JSON tool results remain
   structured JSON in both codecs, without another layer of string escaping. Plain
-  text results remain text. It streams thought chunks,
+  text results remain text. Five consecutive failed tool calls stop the turn. A
+  successful call resets the count. Remaining calls in the same reply receive a
+  skipped result without executing, so the next prompt has complete tool history.
+  This bound also applies to MCP tools outside a graph batch. It streams thought chunks,
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
   usage. A prose reply in a prompt that already made tool calls gets one nudge before
   the prompt ends: weak models forget they are mid-goal more often than they finish

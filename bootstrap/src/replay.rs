@@ -174,6 +174,10 @@ pub fn run_case(case: &Case) -> ReplayReport {
             }
         }
     } else {
+        if let Err(error) = benchmark::prepare_runtime_fixture(case, &tmp) {
+            report.fixture_error = Some(error);
+            return report;
+        }
         benchmark::sandbox(case, &tmp)
     };
     let dirty = benchmark::case_dirty_sections(&store, case);

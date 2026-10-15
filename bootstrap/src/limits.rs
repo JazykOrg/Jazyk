@@ -121,6 +121,8 @@ pub const SESSION_ROUNDS: u32 = 24;
 // The embedded agent's flat runaway stop, in model round-trips (one may carry
 // several tool calls). `JAZYK_AGENT_MAX_ROUNDS` overrides.
 pub const AGENT_MAX_ROUNDS: u32 = 48;
+// Also bounds a single reply containing many invalid calls outside a graph batch.
+pub const AGENT_TOOL_ERROR_LIMIT: u32 = 5;
 pub const SESSION_MUTATIONS: usize = 64;
 pub const CONTEXT_BUDGET: usize = 24_000;
 pub const ROUNDS_PER_SECTION: u32 = 8;

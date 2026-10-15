@@ -197,10 +197,13 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
 The codecs live here: `native` (OpenAI-style `tools` and `tool_calls`, with the
 calls for one step batched into a single reply) and `text` (tools described in the
 system prompt, one JSON action object per reply, because small models cannot
-reliably emit several). The one-per-reply line is the ask, not the parse: a reply
-that packs several action objects executes them all in order, one result each,
-because executing the first and dropping the rest leaves the model believing work
-happened that never did. A text reply that reads as a JSON action but does not parse
+reliably emit several). A text reply containing several action objects is rejected
+without executing any of them. The repair asks for one action and its real result
+before the next action. This prevents a model from submitting a whole simulated
+interaction with invented revisions or run IDs. Native batches remain available
+for independent calls. The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md)
+and [text protocol](../compiler/goals/prompts/text-tool-protocol.md) are embedded
+payload files. A text reply that reads as a JSON action but does not parse
 is answered with a repair message naming the error, three strikes before the prompt
 fails: a dropped brace is a resend, not an answer. A native tool call whose
 `arguments` string does not parse is the same broken action: it is repaired the same

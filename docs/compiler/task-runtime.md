@@ -92,6 +92,9 @@ Partial results remain attached to the run and cannot replace a successful produ
 
 ## Tools and access
 
+A host without an attached runtime reports execution unavailable. Discovery does
+not panic when a portable workspace has no execution adapter.
+
 Cloud, local MCP, and ACP use `task_context`, `update_tasks`, `run_task`,
 `inspect_run`, `wait_run`, `cancel_run`, `read_run_log`, `search_run_log`, and
 `read_run_changes`. Tool availability does not depend on native file-tool support.

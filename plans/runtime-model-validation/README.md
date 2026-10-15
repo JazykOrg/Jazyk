@@ -26,3 +26,26 @@ Exercise the actual Jazyk prompts and tools through the owner's LocalRouter and 
 The results file records measured outcomes, defects, reruns, and remaining limits. An unexecuted case stays unexecuted; a deterministic adapter test does not count as a successful model test.
 
 See [results](./results.md).
+
+## Reproduce
+
+Run from the repository root with a built binary and a running local engine. The
+environment file supplies the existing LocalRouter connection without copying its
+credentials into the fixture. Use a new evidence directory for each attempt.
+
+```sh
+python3 bootstrap/tests/runtime_model_acceptance.py \
+  --binary bootstrap/target/release/jazyk --env-file .env \
+  --model gemma4:31b-mlx --engine podman --entry mcp --codec native \
+  --case create --repeat --evidence .local/model-validation/create-1
+
+python3 bootstrap/tests/runtime_lifecycle_acceptance.py \
+  --binary bootstrap/target/release/jazyk --engine podman \
+  --evidence .local/model-validation/lifecycle-1
+```
+
+Model cases include discovery, execution, definition creation, repair, cancellation,
+timeout, and log inspection. `--entry acp` uses the full IDE proxy with no IDE terminal
+or file capabilities. `--entry mcp` gives the production embedded agent the focused
+runtime serving; `--toolsets generate,verify` selects the larger ledger serving.
+`--codec text` exercises the text protocol, and `--engine docker` repeats engine parity.

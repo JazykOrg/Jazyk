@@ -1835,9 +1835,7 @@ pub fn mark(
                 ));
             }
             if kind == "programmatic"
-                && !crate::vfs::read_to_string(&path)
-                    .map(|c| c.contains(&test.name))
-                    .unwrap_or(false)
+                && !crate::verify::artifact_names(&path, &test.name)
             {
                 return Err(format!(
                     "test row for {} declares test `{}` but `{}` does not contain that name; name the test as it is written in the file, or declare the row llm",
@@ -3488,6 +3486,27 @@ mod tests {
         crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
         mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap();
         crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn qualified_report_selectors_record_and_stay_bound() {
+        let out = std::env::temp_dir().join(format!("jazyk-qualified-report-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (store, gs) = fixture(&out);
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn qualified_case() {}\n").unwrap();
+        let mut manifest = json!({"files":["cart.rs"],"tests":[{
+            "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs",
+            "name":"Suite::qualified_case","run":"task:check"
+        }]});
+        mark(&store, "ent:cart", None, &manifest, &gs).unwrap();
+        assert!(crate::bind::pending(&store, &gs).is_empty());
+        manifest["tests"][0]["name"] = json!("Suite::");
+        assert!(mark(&store, "ent:cart", None, &manifest, &gs).is_err());
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn renamed_case() {}\n").unwrap();
+        assert_eq!(crate::bind::pending(&store, &gs)[0]["reason"], "artifact-gone");
+        crate::vfs::remove_dir_all(out).ok();
     }
 
     // A path that starts with the deliverable directory's own name restates the root

@@ -258,10 +258,14 @@ render is fresh. `done`, `mark_goal_done`, and
 re-sent verbatim after it was accepted is marked on the second send and refused on the
 third, while a rejected entry can be repaired and re-sent. The guard lives in the
 serving, not in any agent, so every agent gets the same contract.
+Task runtime calls are exempt. Their answers can change outside the graph session,
+and repeated submission with the same operation key is an intentional retry.
+Fixed run deadlines and the embedded agent's failed-call bound still apply.
 
-A refusal is not an invalid call: the call was well-formed, the model is stuck. It never
-feeds the abort streak, because aborting discards staged work and a stuck model usually
-holds good work from before it stuck. Refusals are cheap (a refused call never
+A refusal is not an invalid mutation: the call was well-formed, the model is stuck.
+The serving does not add it to its invalid-mutation count. The embedded agent also
+has a separate bound of five consecutive failed tool calls, including refusals
+([embedded agent](../frontends/acp.md#the-embedded-agent)). Refusals are cheap (a refused call never
 dispatches) and counted: past eight in one batch, the serving finishes the session
 implicitly, committing the staged work under the same gates the [budget path](#budgets)
 uses. A weak model that loops keeps what it earned; the guard only stops it paying for

@@ -38,9 +38,7 @@ fn bind_reason(
         return Some("artifact-gone");
     }
     if row.test.kind == "programmatic"
-        && !crate::vfs::read_to_string(&artifact)
-            .map(|c| !row.test.name.trim().is_empty() && c.contains(&row.test.name))
-            .unwrap_or(false)
+        && !crate::verify::artifact_names(&artifact, &row.test.name)
     {
         return Some("artifact-gone");
     }
@@ -357,9 +355,8 @@ fn parse_test_ref(
         ));
     }
     if kind == "programmatic" {
-        let content = crate::vfs::read_to_string(&path).unwrap_or_default();
         let bare = name.rsplit("::").next().unwrap_or(&name);
-        if !content.contains(bare) {
+        if !crate::verify::artifact_names(&path, &name) {
             return Err(format!(
                 "test artifact `{}` does not contain the test name `{}`",
                 tref.artifact, bare
@@ -492,9 +489,8 @@ pub fn record(
         // The name a runner addresses may carry a module path (`tests::req_x` for a
         // Rust test inside `mod tests`); the artifact holds the function, so the last
         // path segment is what must be found. Mirrors docs/compiler/goals/generate.md#gate.
-        let content = crate::vfs::read_to_string(&path).unwrap_or_default();
         let bare = name.rsplit("::").next().unwrap_or(&name);
-        if !content.contains(bare) {
+        if !crate::verify::artifact_names(&path, &name) {
             return Err(format!(
                 "test artifact `{}` does not contain the test name `{}`",
                 tref.artifact, bare

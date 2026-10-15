@@ -48,9 +48,7 @@ pub enum Stop {
 
 // The generic system preamble. Deliberately thin: the real instructions arrive as
 // prompt content from whoever drives the session.
-const SYSTEM: &str = "You are a focused agent. Work with the tools available to you. \
-When the work is complete (or no tool applies), reply with a short summary and no tool calls; \
-that ends the turn.";
+const SYSTEM: &str = include_str!("../../docs/compiler/goals/prompts/embedded-agent.md");
 
 // ---- codecs (moved from the turn harness, generic wording) ----
 
@@ -83,7 +81,7 @@ fn result_text(result: &Value) -> String {
 
 impl Codec for NativeCodec {
     fn system_suffix(&self, _tools: &[GenericTool]) -> String {
-        "\n\nYou may batch several related tool calls into one reply.".to_string()
+        "\n\nYou may batch independent tool calls into one reply.".to_string()
     }
     fn tools_param(&self, tools: &[GenericTool]) -> Option<Vec<Value>> {
         if tools.is_empty() {
@@ -271,9 +269,7 @@ impl Codec for TextCodec {
         if tools.is_empty() {
             return String::new();
         }
-        let mut s = String::from(
-            "\n\nTOOL PROTOCOL: you have no native tool support. To call a tool, reply with EXACTLY ONE JSON object per message, nothing else:\n{\"tool\": \"<name>\", \"args\": { ... }}\nThe result comes back as a message starting with RESULT:. Then reply with your next action. A reply that is not a JSON action ends the turn. Available tools:\n",
-        );
+        let mut s = format!("\n\n{}", include_str!("../../docs/compiler/goals/prompts/text-tool-protocol.md"));
         for t in tools {
             s.push_str(&format!(
                 "- {}: {} args schema: {}\n",
@@ -311,6 +307,9 @@ impl Codec for TextCodec {
                     }
                 }
             }
+        }
+        if calls.len() > 1 {
+            return vec![Action::Malformed("multiple tool actions in one reply; none executed. Send only the first needed action, then wait for its real RESULT before choosing another".into())];
         }
         if !calls.is_empty() {
             return calls;
@@ -796,20 +795,12 @@ mod tests {
     }
 
     #[test]
-    fn text_codec_executes_every_action_object() {
+    fn text_codec_rejects_simulated_multistep_interactions_without_executing_them() {
         let c = TextCodec;
         let msg = json!({"role": "assistant", "content": "Marking both.\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:a\"}}\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:b\"}}"});
         let actions = c.parse(&msg);
-        assert_eq!(actions.len(), 2);
-        for (a, g) in actions.iter().zip(["g:a", "g:b"]) {
-            match a {
-                Action::Call { name, args, .. } => {
-                    assert_eq!(name, "mark_goal_done");
-                    assert_eq!(args["goal"], g);
-                }
-                _ => panic!("expected calls"),
-            }
-        }
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], Action::Malformed(message) if message.contains("none executed")));
     }
 
     #[test]

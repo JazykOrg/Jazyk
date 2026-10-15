@@ -95,6 +95,9 @@ ledger, not the model's word:
   row whose artifact does not exist, or a programmatic row whose artifact does not
   contain the declared test name (its last path segment: `tests::req_x`, the name a
   Rust runner addresses inside `mod tests`, is found by `req_x`), is rejected naming
+  the row. A JUnit selector such as `Suite::req_x` follows the same rule during
+  generation, binding, and later binding checks. A selector ending in `::` is invalid.
+  Missing artifacts are rejected naming
   the row and the file (the same
   gate `record_binding` applies; the pipeline worker gets one corrective retry before
   it records, and a row still wrong after it falls back to `llm`); a path that

@@ -297,7 +297,8 @@ fn execution() -> Execution {
 }
 
 pub fn runtime(request: &Value) -> Result<Value, String> {
-    execution().runtime.ok_or("Hosted task runtime is not configured")?(request)
+    let transport = EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.runtime.clone()));
+    transport.ok_or("Hosted task runtime is not configured")?(request)
 }
 
 pub fn root() -> PathBuf {

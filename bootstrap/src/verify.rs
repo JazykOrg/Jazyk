@@ -88,10 +88,11 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
 
 // Whether a test artifact carries the declared test name. An empty name matches
 // nothing: a row without one names no test.
-fn artifact_names(artifact: &std::path::Path, name: &str) -> bool {
+pub(crate) fn artifact_names(artifact: &std::path::Path, name: &str) -> bool {
     !name.trim().is_empty()
+        && !name.ends_with("::")
         && crate::vfs::read_to_string(artifact)
-            .map(|c| c.contains(name) || name.rsplit_once("::").is_some_and(|(_,case)|c.contains(case)))
+            .map(|c| c.contains(name) || name.rsplit_once("::").is_some_and(|(_,case)| !case.trim().is_empty() && c.contains(case)))
             .unwrap_or(false)
 }
 

@@ -5363,7 +5363,7 @@ impl ToolSession {
         let exempt = matches!(
             name,
             "done" | "mark_goal_done" | "mark_goal_failed" | PAIR_SETTLE_TOOL
-        );
+        ) || crate::task_runtime::TOOLS.contains(&name);
         if !exempt {
             let key = if name == "load" {
                 format!("load|{}", args["target"].as_str().unwrap_or_default())
@@ -11214,6 +11214,23 @@ mod tests {
             for name in GEN_TOOLS {
                 assert!(toolset(task).contains(&name), "{task} lacks {name}");
             }
+        }
+    }
+
+    #[test]
+    fn runtime_observation_is_not_a_repeated_graph_mutation() {
+        let files = std::collections::BTreeMap::from([
+            (".jazyk/jazyk.toml".into(), b"version=1\nsets=[]\n".to_vec()),
+        ]);
+        let _scope = crate::vfs::Scope::enter(&files);
+        let mut tool = session();
+        tool.gen.deliverable = "/project".into();
+        tool.snapshot.out = "/project/.jazyk/ds_main".into();
+        for _ in 0..5 {
+            let result = tool.dispatch("task_context", &json!({})).unwrap();
+            assert!(result["tasks"].is_array());
+            let error = tool.dispatch("wait_run", &json!({"run_id":"pending","wait_ms":1})).unwrap_err();
+            assert_ne!(error.rule, "repeated-call");
         }
     }
 

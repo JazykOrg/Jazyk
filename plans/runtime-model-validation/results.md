@@ -11,12 +11,12 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | Endpoint and minimal model/tool calls | In progress | LocalRouter completion through the production agent passed with Qwen 27B and Llama 8B. |
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
 | Model discovery, submission, observation | In progress | Gemma runtime discovery passed. Two model-controlled Podman runs produced correct receipts and reused cache. Shutdown observation is being tightened. |
-| Model task creation and repair | Pending | |
+| Model task creation and repair | Passed | Gemma native/MCP created and ran a task twice (166 seconds), observed shutdown, and reused cache. A separate failed-command repair passed (144 seconds). |
 | Generation and runtime/LLM verification | Pending | |
 | Cancellation, timeout, failure recovery | Passed, deterministic | Expanded lifecycle fixture passed on Podman and Docker. Model-driven cases remain. |
-| MCP and ACP entry points | Pending | |
+| MCP and ACP entry points | In progress | Real model MCP cases passed. Deterministic ACP cancellation and subsequent run passed on both engines. Full model ACP cases remain. |
 | Docker parity | Passed, deterministic | Same expanded lifecycle cases as Podman. |
-| Regression suite and release build | In progress | 668 compiler tests passed, 3 ignored after the second fixes. Final release build remains. |
+| Regression suite and release build | In progress | 670 compiler tests passed, 3 ignored after the third fixes. Go worker tests passed. Final release build remains. |
 
 ## First investigation
 
@@ -63,3 +63,29 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   session was cleaned up; keeping its supervisor alive restored cross-call availability.
 - A temporary Qwen alias with a 16K context was created to investigate the MLX error.
   LocalRouter did not recognize the alias. No owner model or endpoint setting changed.
+  The temporary alias was removed afterward.
+
+## Third investigation
+
+- Gemma created the entire task definition from the request, ran it twice, inspected
+  products, observed actual termination, and correctly reported cache reuse. The
+  independent assertions checked receipt counts, discarded transient files, and
+  absence of cache files in the project.
+- Gemma repaired a task after an actual exit 7, preserving its settings, then observed
+  a successful run and inspected its retained product.
+- The text cancellation case emitted six calls in one model response, with revision
+  `1` and an invented run ID. No run started. The failure bound stopped the bad batch.
+  The text protocol now rejects multiple actions without executing any; its repair
+  asks for one call and a real result. Generic instructions now live in embedded
+  Markdown payloads and explicitly prohibit simulated results.
+- Review found runtime polling inherited the graph's repeated-call guard. Runtime
+  calls are now exempt so unchanged pending status does not prevent a later poll.
+- Generation and binding prompts still described legacy single-test exit-code
+  commands as mandatory. They now explain shared tasks with per-case JUnit evidence
+  and distinguish project-relative task paths from deliverable-relative manifests.
+- Qualified JUnit selectors could bind successfully but later appear missing, or be
+  rejected by generation. All these gates now share one artifact-name check. A
+  regression records a qualified selector, checks that it remains bound, then checks
+  rejection of an empty selector and detection of a removed test.
+- Portable runtime discovery without an execution adapter now returns unavailable
+  instead of panicking. The polling regression exposed that missing-context path.

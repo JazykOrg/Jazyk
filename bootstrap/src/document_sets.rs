@@ -361,6 +361,16 @@ pub struct ProjectLock {
     #[cfg(not(target_arch = "wasm32"))]
     _file: Option<std::fs::File>,
 }
+impl Drop for ProjectLock {
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file) = &self._file {
+            // Closing only this descriptor can leave the lock held by a concurrent
+            // fork until the child execs. End the operation's lock explicitly.
+            let _ = fs2::FileExt::unlock(file);
+        }
+    }
+}
 impl ProjectLock {
     pub fn acquire(root: &Path, name: &str) -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -604,6 +614,23 @@ pub fn safe_relative(root: &Path, relative: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn project_lock_ends_with_its_guard_even_with_a_duplicate_descriptor() {
+        let f = Fixture::new();
+        let lock = ProjectLock::acquire(&f.0, "documents.lock").unwrap();
+        // A concurrently forked child can temporarily retain the same descriptor.
+        let duplicate = lock._file.as_ref().unwrap().try_clone().unwrap();
+        assert!(ProjectLock::acquire(&f.0, "documents.lock").is_err());
+        drop(lock);
+        let next = ProjectLock::acquire(&f.0, "documents.lock").unwrap();
+        drop(duplicate);
+        assert!(ProjectLock::acquire(&f.0, "documents.lock").is_err());
+        drop(next);
+        assert!(ProjectLock::acquire(&f.0, "documents.lock").is_ok());
+    }
+
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {

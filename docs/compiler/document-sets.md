@@ -133,6 +133,8 @@ affected bindings and checks. They never silently preserve a clean verdict.
   and its worker session history. Set IDs require the `ds_` prefix, keeping them
   distinct from project directories such as `sessions`, `runs`, and `removed-sets`.
   The project owns conversations that discuss several sets and records grouping jobs.
+- A native project operation explicitly unlocks when its guard ends. A duplicated
+  descriptor inherited by a concurrently starting child cannot prolong that lock.
 - A set rename changes only `name`. It preserves IDs, paths, graph, history, and
   bindings. Copying a set definition mints an ID and starts an empty graph.
 - Project-level references carry `setId` and `localId`. JSON graph identifiers use

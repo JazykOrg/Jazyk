@@ -8,15 +8,15 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Endpoint and minimal model/tool calls | In progress | LocalRouter completion through the production agent passed with Qwen 27B and Llama 8B. |
+| Endpoint and minimal model/tool calls | Passed with limits | LocalRouter completion passed with Qwen 27B and Llama 8B; Gemma completed real tool workflows. Qwen tool discovery hit an MLX provider error. |
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
 | Model discovery, submission, observation | Passed | Gemma discovery and repeated task creation/runs passed, including observed shutdown and cache reuse. |
 | Model task creation and repair | Passed | Gemma native/MCP created and ran a task twice (166 seconds), observed shutdown, and reused cache. A separate failed-command repair passed (144 seconds). |
-| Generation and runtime/LLM verification | Pending | |
+| Generation and runtime/LLM verification | Passed focused loop; full worker pending | Gemma generated source and its test, passed, detected deliberate breakage, repaired only the source, and passed again in Podman. Native paired LLM judgment and both-engine report-to-graph checks passed. |
 | Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
 | MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
 | Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
-| Regression suite and release build | In progress | 670 compiler tests passed, 3 ignored after the third fixes. Go worker tests passed. Final release build remains. |
+| Regression suite and release build | In progress | 674 compiler tests passed, 3 ignored before the final review fixes. Go worker tests and WASM check passed. Final suite and release build remain. |
 
 ## First investigation
 
@@ -188,3 +188,25 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - The test-kind documentation now distinguishes saved-task report verdicts from
   legacy command exit codes. This removes an older blanket exit-code statement
   that contradicted the runtime report contract.
+
+## Successful generation loop and lock review
+
+- `gemma-small-generation-2` passed in 559 seconds. The real model wrote the Python
+  function and its exact-output unittest, recorded the medium and manifest, and
+  verified through the saved Podman task. The fixture broke the implementation;
+  both the independent observer and the model saw a failing case. The model claimed
+  the entity again, repaired only the source, refreshed the manifest, and verified.
+  The generated test and supplied runner stayed unchanged. All four runs terminated.
+- Qualified markers were stripped into graph anchors in that live run, and the
+  repair no longer hit the former `file-owned` refusal.
+- The WASM check passed with the installed rustup compiler explicitly selected.
+  Earlier attempts selected Homebrew's compiler, which has no WASM standard library.
+  No compiler defaults or model settings were changed.
+- A later full suite exposed an intermittent document-import lock conflict. The
+  isolated import test passed. A deterministic descriptor-duplication regression
+  then failed: closing the guard's descriptor did not end its lock while a duplicate
+  remained open. This matches [flock descriptor semantics](https://man7.org/linux/man-pages/man2/flock.2.html).
+  Project guards now explicitly unlock on drop; concurrent child startup can no
+  longer prolong the completed operation's lock through an inherited descriptor.
+  The fresh full suite passed: 676 tests, 3 ignored. Descriptor inheritance is the suspected cause of
+  the original intermittent conflict, not a traced observation of that failed run.

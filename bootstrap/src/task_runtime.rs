@@ -122,7 +122,7 @@ impl Task {
             return Err("Invalid image reference.".into());
         }
         if self.cwd != "." && (!safe_path(&self.cwd) || protected(&self.cwd)) {
-            return Err("Task cwd must be a project-relative directory.".into());
+            return Err(format!("Task {} cwd {:?} must be a project-relative directory; use \".\" for the project root, not an absolute deliverable path.", self.id, self.cwd));
         }
         if !matches!(self.size.as_str(), "small" | "medium" | "large")
             || !(1..=7200).contains(&self.timeout_seconds)
@@ -146,8 +146,8 @@ impl Task {
                 return Err("Invalid or reserved environment variable.".into());
             }
         }
-        let mut seen = BTreeSet::new();
-        for patterns in [&self.products, &self.cache, &self.reports] {
+        let mut seen = BTreeMap::new();
+        for (field, patterns) in [("products", &self.products), ("cache", &self.cache), ("reports", &self.reports)] {
             if patterns.len() > 40 {
                 return Err("Too many file patterns.".into());
             }
@@ -155,17 +155,16 @@ impl Task {
                 if !safe_path(pattern)
                     || protected(pattern)
                     || pattern.starts_with('!')
-                    || !seen.insert(pattern)
                 {
-                    return Err(
-                        "File patterns must be distinct, unprotected, project-relative globs."
-                            .into(),
-                    );
+                    return Err(format!("Task {} {field} pattern {pattern:?} must be an unprotected, project-relative glob.", self.id));
+                }
+                if let Some(previous) = seen.insert(pattern, field) {
+                    return Err(format!("Task {} {field} pattern {pattern:?} repeats a pattern in {previous}. Keep each pattern in only one field; put test report patterns in reports.", self.id));
                 }
                 globset::GlobBuilder::new(pattern)
                     .literal_separator(true)
                     .build()
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("Task {} {field} pattern {pattern:?}: {e}", self.id))?;
             }
         }
         Ok(())
@@ -554,6 +553,24 @@ mod tests {
             "target/surefire/a.xml"
         ));
         assert!(!matches(&["target/*.xml".into()], "target/surefire/a.xml"));
+    }
+
+    #[test]
+    fn invalid_task_fields_identify_the_repair_without_relaxing_validation() {
+        let mut task = definitions(CONFIG).unwrap().remove(0);
+        task.cwd = "/project".into();
+        let error = task.validate().unwrap_err();
+        assert!(error.contains("cwd") && error.contains("/project") && error.contains("\".\""));
+        task.cwd = ".".into();
+        task.products = vec!["reports/*.xml".into()];
+        task.reports = task.products.clone();
+        let error = task.validate().unwrap_err();
+        assert!(error.contains("reports/*.xml") && error.contains("in products") && error.contains("put test report patterns in reports"));
+        task.products.clear();
+        assert!(task.validate().is_ok());
+        task.cache = vec!["../outside".into()];
+        let error = task.validate().unwrap_err();
+        assert!(error.contains("cache") && error.contains("../outside"));
     }
 }
 
@@ -1225,12 +1242,12 @@ mod result_tests {
 pub fn task_schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["id","name","description","command"],"properties":{
         "id":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"command":{"type":"string"},
-        "image":{"type":"string","description":"Linux OCI image with /bin/sh; defaults to python:3.12-slim"},"cwd":{"type":"string"},
+        "image":{"type":"string","description":"Linux OCI image with /bin/sh; defaults to python:3.12-slim"},"cwd":{"type":"string","description":"Project-relative directory; use . for the project root, never an absolute host path"},
         "size":{"type":"string","enum":["small","medium","large"]},"timeout_seconds":{"type":"integer","minimum":1,"maximum":7200},
         "env":{"type":"object","additionalProperties":{"type":"string"},"description":"Non-secret environment values"},
         "products":{"type":"array","items":{"type":"string"},"description":"Project-relative globs for generated files to retain"},
         "cache":{"type":"array","items":{"type":"string"},"description":"Disposable files restored before the command and saved only after success"},
-        "reports":{"type":"array","items":{"type":"string"},"description":"Fresh JUnit XML output globs for per-case evidence"}
+        "reports":{"type":"array","items":{"type":"string"},"description":"Fresh JUnit XML output globs for per-case evidence; do not repeat a pattern in products or cache"}
     }})
 }
 

@@ -37,6 +37,10 @@ disposable files restored before execution and saved only after command success.
 to existing eligible project files are retained independently. New unmatched files
 are transient. Protected compiler state, secrets, symlinks, traversal paths, device
 files, and conflicting classifications are refused. Cache never overwrites input.
+Use `cwd = "."` for the project root. An identical pattern cannot appear twice,
+including across `products`, `cache`, and `reports`. Put test report patterns in
+`reports`. Validation errors name the offending task, field, and pattern, including
+both fields when a pattern is repeated.
 
 ## Runs
 

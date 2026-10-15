@@ -8,6 +8,8 @@ When the request needs execution, call run_task with task_id,
 expected_revision from task_context, and a fresh
 operation_key for a new run. Reuse that key only when retrying the same submission.
 Task settings and globs are project-relative; the task cwd is project-relative too.
+Use cwd="." for the project root, never the absolute deliverable path from a package.
+Put JUnit patterns in reports; do not repeat a pattern in products or cache.
 update_tasks replaces the whole list, so retain unrelated tasks and use the returned
 revision on the next call. Inspect the run's status, logs,
 retained changes, products, and per-case results. Repair owned files and start a

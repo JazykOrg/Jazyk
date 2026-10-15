@@ -12,7 +12,7 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
 | Model discovery, submission, observation | Passed | Gemma discovery and repeated task creation/runs passed, including observed shutdown and cache reuse. |
 | Model task creation and repair | Passed | Gemma native/MCP created and ran a task twice (166 seconds), observed shutdown, and reused cache. A separate failed-command repair passed (144 seconds). |
-| Generation and runtime/LLM verification | Passed focused loop; full worker pending | Gemma generated source and its test, passed, detected deliberate breakage, repaired only the source, and passed again in Podman. Native paired LLM judgment and both-engine report-to-graph checks passed. |
+| Generation and runtime/LLM verification | Passed native worker and focused loop; full text worker pending | Gemma passed all four native generation benchmark checks, including falsification. The focused repair loop, paired native LLM judgment, and both-engine report-to-graph checks passed. |
 | Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
 | MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
 | Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
@@ -210,3 +210,27 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   longer prolong the completed operation's lock through an inherited descriptor.
   The fresh full suite passed: 676 tests, 3 ignored. Descriptor inheritance is the suspected cause of
   the original intermittent conflict, not a traced observation of that failed run.
+
+## Full worker and release smoke
+
+- The corrected native `gen-basic` benchmark passed all four checks in 975 seconds:
+  honest generation record, one test row per requirement, passing tests, and a test
+  that fails when the required output is replaced in the product. It used 13 rounds
+  and 7,007 reported tokens. This is the full worker contract, with no supplied task
+  or test adapter. The model wrote the shell source and three Python tests, selected
+  `python:3.12-slim`, and configured pytest with fresh JUnit output.
+- The first test run passed but its selectors did not match the report identities.
+  The graph stayed unverified. The model used the returned identities to correct the
+  manifest, ran the task again, and passed the generation gate. The benchmark then
+  independently reran the tests and falsified the product. Evidence is under
+  `gemma-worker-generation-3`; its full text-codec attempt is still running.
+- Three definition retries exposed vague validation feedback: the model supplied an
+  absolute `cwd`, then repeated a report pattern under `products` and `reports`.
+  Errors now name the value and conflicting fields. The schema and execution prompt
+  say to use `cwd="."` for the project root and list JUnit patterns only in `reports`.
+  No path or classification restriction is relaxed.
+- The release build passed. Fresh release smoke tests passed on Docker and Podman:
+  selected Python/Alpine image, project docs/source/tests/settings, fresh containers,
+  restored cache nonce and counter, binary products, JUnit reports, logs, process-tree
+  cancellation, and shutdown. Their disposable fixtures were copied to durable local
+  evidence directories `release-docker-smoke` and `release-podman-smoke`.

@@ -104,8 +104,14 @@ reports=["reports/*.xml"]
         tests = {str(p.relative_to(root)): p.read_bytes() for p in (root / 'tests').glob('*.py')}
         assert tests, 'No tests generated'
         mcp = MCP(binary, root, a.engine, 'generate,verify', timeout=120)
+        # Chat can reconcile the seeded requirement with its quoted document fact.
+        # Verify the surviving identity instead of requiring a deleted fixture ID.
+        requirements = mcp.tool('get_entity', id='ent:greeter')['requirements']
+        assert len(requirements) == 1, requirements
+        requirement = requirements[0]['id']
+        result['requirement'] = requirement
         def status():
-            return mcp.tool('begin_verification', requirement='req:greeting')['status']
+            return mcp.tool('begin_verification', requirement=requirement)['status']
         assert status() == 'verified'
         result['generated_and_verified'] = True
         (root / 'greet.py').write_text('def greeting():\n    return "BROKEN"\n')

@@ -224,6 +224,13 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
 
 ## The control plane over MCP
 
+Writable native and hosted `chat` servings expose
+`release_work({stage: "compile" | "generate", setId?})`. The tool records approval
+for the selected set's current work and leaves workflow modes unchanged. The agent
+uses it only for an explicit user request covering that stage. It refuses while
+another build or an open graph batch holds the project. Other servings retain the
+CLI and GUI release paths. A read-only chat cannot release work.
+
 The serving is a worker among workers, and says so:
 
 - `initialize` registers the serving in the
@@ -385,6 +392,9 @@ another worker's live claim. Successful recording releases the claim and clears 
 target; a rejected record keeps it available for repair. Editing a recorded entity
 again starts with `begin_generation`, including a repair a human requested when no
 generation goal is owed. A serving pinned to a goal keeps that goal's ownership scope.
+Writable native and hosted chat enable these file tools by default. Reads and writes
+remain inside the selected project's file and ownership guards. Execution uses saved
+tasks; no host shell is exposed. Browser and read-only chat keep their smaller toolsets.
 The `bind`, `generate`, and `verify` goals on the board are the same rows these
 lifecycles claim: resolving a row resolves its goal. Each task row carries the goal's
 `ready` flag and, when it is not ready, `blockedBy` with the board's reason; when every
@@ -394,7 +404,10 @@ from the refusal that followed; `generation_tasks` carries a `staleNote` when ro
 went stale since their last run (a shared test file or implementation file changed
 under a generation), since their generate goals return only after `run_tests`
 re-baselines them and a Codex session saw entities appear in the list it had read as
-complete; and
+complete. An empty generation list does not assert that a deliverable exists. When
+binding goals remain, `prerequisites.binding` gives their count and `next` directs
+the agent to `binding_tasks`. Discovery lists the work currently derived by the board.
+It never substitutes for file inspection or verification. Also,
 `begin_generation` refuses an entity whose goal is not ready (`not-ready`, the same
 reason), since a Codex session bound one requirement of an entity and generated the
 whole entity next while its other requirements still owed a binding; generation waits

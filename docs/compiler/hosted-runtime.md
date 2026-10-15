@@ -60,6 +60,11 @@ provider authentication, accounting, call deadlines, and cancellation of an
 in-flight transport. It must bound every call. The compiler checks cancellation
 before and after calls and between agent turns.
 
+The host can set `Execution.pause_reason` before raising the cancellation flag to
+stop work for a provider or resource failure. Chat records `turn_end` with
+`stop: paused` and that reason. A user cancellation without a pause reason stays
+`cancelled`. The distinction survives snapshot storage and reopening the conversation.
+
 Model capability fallbacks, token meters, and completion limits are private to an
 execution. Hosted execution never reads the machine owner's provider settings or
 environment credentials. A missing transport refuses model work. Read-only API
@@ -72,16 +77,18 @@ Compilation uses the in-process session runner shared with the browser. It invok
 the existing MCP tools directly and preserves their gates, identities, and journal.
 Ledger sessions receive the same assembled batch prompt as native ACP sessions.
 Their `begin_goals` acknowledgement is not the session prompt.
-It never starts an ACP process or a customer command. Project executor settings
-cannot enable subprocesses. Shell execution is unavailable. Programmatic tests
-require delivery CI; they are not executed by this runtime. LLM verification can
-use the supplied model transport. `POST /api/jobs` supports `compile`, `gen`,
-`verify`, and `audit`. A hosted verification run skips the build command and returns
-programmatic rows in `pendingCi` without recording a pass or fail. LLM rows judge
-files already present in the snapshot. Source and test generation can edit virtual
-files through the same tool gates; a command remains unavailable until delivery.
+It never starts an ACP process or a customer command on the host. Project executor
+settings cannot enable host subprocesses. An injected task runtime runs saved finite
+tasks in isolated containers. Programmatic tests and builds use `task:<id>` and the
+same report and product import rules as local execution. Without an injected runtime,
+programmatic rows remain in `pendingCi` without a pass or fail. LLM verification uses
+the supplied model transport and files in the snapshot. `POST /api/jobs` supports
+`compile`, `gen`, `verify`, and `audit`. Source and test generation edit virtual files
+through the same tool gates. See [task runtimes](./task-runtime.md).
 
-Hosted conversations use the existing in-process chat loop and MCP chat tools.
+Hosted conversations use the existing in-process chat loop and MCP chat tools,
+including guarded project file tools and the scoped `release_work` action for
+explicitly requested compilation or generation.
 The snapshot stores their history and numbered updates in
 `.jazyk/conversations.json`. Each new request reopens the loaded graph context and
 instructs the model to reload handles. Conversation ids belong to the workspace.

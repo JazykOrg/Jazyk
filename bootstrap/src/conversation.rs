@@ -416,6 +416,12 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             "failed",
         ),
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (update, state) = if let Some(reason) = crate::hosted::pause_reason() {
+        (json!({"sessionUpdate":"turn_end","stop":"paused","error":reason}), "paused")
+    } else {
+        (update, state)
+    };
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
             c.history = history;

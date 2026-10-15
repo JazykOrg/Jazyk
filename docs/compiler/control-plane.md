@@ -64,7 +64,15 @@ A release records the approval: `jazyk release [compile|generate]` from the CLI,
 compile and generate actions in the [GUI](../frontends/gui.md#workflow-modes), or an
 explicit `jazyk compile` or `jazyk gen` (a typed command is an approval; `manual`
 means nothing acts unprompted, not that prompts need a second prompt). The approval
-covers the command's own work: its sessions carry the run's build token, and a release
+covers an explicit chat request too. A writable native or hosted chat uses
+`release_work` for the requested stage and document set. It records the current
+release without changing workflow modes. The agent only calls it for work the user
+requested, never to act on unrelated pending goals. Binding commits can advance
+the graph; the same requested workflow can release its generation phase again.
+Ratification, diagnostic answers, publishing credentials, and external publication
+keep their separate authorization rules.
+
+A typed command approval covers the command's own work: its sessions carry the run's build token, and a release
 gate never refuses a session holding one, only real readiness does; `jazyk gen` also
 stamps the release again after its bind phase. An erp run bound all 34 requirements and
 then every generate session read "awaiting release" against a release stamped before

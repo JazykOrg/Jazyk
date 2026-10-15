@@ -224,6 +224,7 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
                     "The compilation, binding, generation, and verification lifecycles are \
                      available for explicit requests. ",
                 );
+                s.push_str(include_str!("../../docs/compiler/goals/prompts/chat-workflow.md"));
             }
         }
     }
@@ -574,6 +575,7 @@ impl McpServer {
                         t.extend(crate::tools::BIND_TOOLS);
                         t.extend(crate::tools::VERIFY_TOOLS);
                         t.extend(crate::task_runtime::TOOLS);
+                        t.extend(crate::tools::FILE_TOOLS.into_iter().filter(|t| *t != "run_command"));
                     }
                     t
                 }
@@ -1969,6 +1971,14 @@ impl McpServer {
                 if self.modes.len() == 1 && self.modes[0] == "runtime" {
                     return Ok(json!({"tools": tools}));
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if !self.bridge.reader && self.modes.iter().any(|m| m == "chat") {
+                    tools.push(json!({
+                        "name": "release_work",
+                        "description": "Approve the selected set's current compile or generate stage only when the user explicitly requested that work. Leaves manual workflow settings unchanged. Does not approve human decisions, credentials, or publication.",
+                        "inputSchema": {"type":"object","properties":{"stage":{"type":"string","enum":["compile","generate"]}},"required":["stage"],"additionalProperties":false}
+                    }));
+                }
                 // The compilation lifecycle: the compile serving's own, and the chat
                 // serving carries it too (docs/compiler/tools.md#toolsets). The
                 // catalog's own `done` (the goal tools) yields to the lifecycle entry:
@@ -2193,6 +2203,20 @@ impl McpServer {
             {
                 let name = name.to_string();
                 match name.as_str() {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    "release_work" if !self.bridge.reader && self.modes.iter().any(|m| m == "chat") => {
+                        let stage = params["arguments"]["stage"].as_str().unwrap_or_default();
+                        if !matches!(stage, "compile" | "generate") {
+                            return Ok(text_result(json!({"error":{"rule":"bad-argument","message":"stage must be compile or generate"}}), true));
+                        }
+                        if self.open.lock().unwrap().is_some() || crate::control::build_lease(&self.out).is_some() {
+                            return Ok(text_result(json!({"error":{"rule":"work-running","message":"Finish the open batch or wait for the running build before releasing work."}}), true));
+                        }
+                        let _lock = crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock")
+                            .map_err(|e| (-32602, e.1))?;
+                        crate::control::release(&self.project, &self.out, Some(stage));
+                        return Ok(text_result(json!({"released":stage,"generation":Store::load(&self.out).status.generation,"next":if stage == "generate" {"binding_tasks, then generation_tasks and verification_tasks"} else {"goals"}}), false));
+                    }
                     "await_changes" => {
                         // Waiting makes no sense mid-task, and on an ephemeral
                         // serving there is no between-task to wait for.
@@ -2548,10 +2572,13 @@ impl McpServer {
                     } else {
                         None
                     };
+                    let binding = if kind == "generate" { board.goals.iter().filter(|g| g.kind == "bind").count() } else { 0 };
                     let mut reply = json!({
                         "tasks": rows,
                         "count": rows.len(),
-                        "next": if rows.is_empty() {
+                        "next": if rows.is_empty() && binding > 0 {
+                            format!("{} binding goal(s) remain; call binding_tasks first. No generation goal is currently derived. This does not mean the deliverable exists or is verified.", binding)
+                        } else if rows.is_empty() {
                             "nothing owed".to_string()
                         } else if rows.iter().all(|r| r["gated"] == json!(true)) {
                             format!("every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {} claims one", begin)
@@ -2559,6 +2586,9 @@ impl McpServer {
                             format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
                         },
                     });
+                    if kind == "generate" {
+                        reply["prerequisites"] = json!({"binding":binding});
+                    }
                     if let Some(n) = stale_note {
                         reply["staleNote"] = json!(n);
                     }
@@ -3923,6 +3953,10 @@ mod tests {
             "begin_binding",
             "begin_generation",
             "begin_verification",
+            "release_work",
+            "read_text_file",
+            "write_text_file",
+            "list_files",
         ] {
             assert!(
                 names.iter().any(|n| n == t),
@@ -3932,7 +3966,44 @@ mod tests {
             );
         }
         assert!(!names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
+        assert!(!names.iter().any(|n| n == "run_command"), "{:?}", names);
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn chat_release_unblocks_binding_and_empty_generation_names_prerequisites() {
+        let dir = bare_dir("chat-release");
+        crate::vfs::write(dir.join("docs/main.md"), "# Greeter\n\nThe greeter says hello.\n").unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let mut store = Store::load(&out);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        store.sync_docs(&parsed);
+        store.graph.entities.insert("ent:greeter".into(), crate::model::Entity { name:"Greeter".into(), ..Default::default() });
+        store.graph.requirements.insert("req:greet".into(), crate::model::Requirement { statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default() });
+        store.save();
+        let server = chat_server(&dir);
+        let call = |name, args| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+        let decode = |reply: Value| serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        let generation = decode(call("generation_tasks", json!({})));
+        assert_eq!(generation["count"], 0, "{generation}");
+        assert_eq!(generation["prerequisites"]["binding"], 1, "{generation}");
+        assert!(generation["next"].as_str().unwrap().contains("binding_tasks"));
+        assert_eq!(call("begin_binding", json!({"requirement":"req:greet"}))["isError"], true);
+        let config = crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap();
+        assert_eq!(call("release_work", json!({"stage":"publish"}))["isError"], true);
+        crate::control::claim(&out, crate::control::BUILD_LEASE, "another-worker").unwrap();
+        assert!(call("release_work", json!({"stage":"generate"})).to_string().contains("work-running"));
+        crate::control::release_lease(&out, crate::control::BUILD_LEASE);
+        assert_ne!(call("release_work", json!({"stage":"generate"}))["isError"], true);
+        assert_eq!(crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap(), config);
+        let binding = call("begin_binding", json!({"requirement":"req:greet"}));
+        assert_ne!(binding["isError"], true, "{binding}");
+        let reader = McpServer::with_bridge(project, out, vec!["graph".into()], false, BridgeFlags { reader:true, ..Default::default() });
+        assert!(!tool_names(&reader).iter().any(|n| n == "release_work" || n == "write_text_file"));
+        let denied = reader.handle("tools/call", &json!({"name":"release_work","arguments":{"stage":"generate"}}));
+        assert!(denied.is_err() || denied.unwrap()["isError"] == true);
+        crate::vfs::remove_dir_all(dir).ok();
     }
 
     // The chat serving carries the two decree tools beside edit_fact: bump_limit

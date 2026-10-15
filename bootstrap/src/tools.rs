@@ -439,7 +439,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "generation_tasks",
-            description: "Entities whose facts differ from the ledger, each with the requirement ids added, removed, or reworded since the entity was last generated. Zero tasks means generation is current. Next: begin_generation on one entity.",
+            description: "Generation work currently derived for entities. Bind their requirements first: an empty list can mean binding or verification is still owed, not that an artifact exists or passed. Follow next and prerequisites, then begin_generation on one ready entity.",
             parameters: obj(json!({}), &[]),
         },
         ToolDef {
@@ -7408,7 +7408,7 @@ impl ToolSession {
                 let tasks = crate::gen::pending(&self.snapshot, &gs);
                 if tasks.is_empty() {
                     return Ok(
-                        json!({"tasks": [], "note": "generation is current; nothing to do"}),
+                        json!({"tasks": [], "note": "no generation work is currently derived; inspect binding_tasks and verification_tasks before concluding the deliverable is complete"}),
                     );
                 }
                 Ok(json!({"tasks": tasks, "next": "begin_generation on one entity"}))

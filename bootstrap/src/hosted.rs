@@ -33,6 +33,7 @@ pub struct Execution {
     pub trace: Option<TraceSink>,
     pub events: Option<EventSink>,
     pub cancel: Arc<AtomicBool>,
+    pub pause_reason: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 #[derive(Debug)]
@@ -313,6 +314,9 @@ pub fn cancelled() -> bool {
             .as_ref()
             .is_some_and(|e| e.cancel.load(Ordering::Relaxed))
     })
+}
+pub fn pause_reason() -> Option<String> {
+    EXECUTION.with(|e| e.borrow().as_ref().and_then(|execution| execution.pause_reason.lock().unwrap().clone()))
 }
 pub fn trace() -> Trace {
     let e = execution();
@@ -909,6 +913,40 @@ mod tests {
             json!({"text":"recover"}),
             &fresh,
         );
+    }
+
+    #[test]
+    fn no_hosted_execution_has_no_pause_reason() {
+        assert!(pause_reason().is_none());
+    }
+
+    #[test]
+    fn chat_provider_pause_keeps_its_reason_after_reopening() {
+        let mut workspace = workspace("Pause");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let pause_reason = Arc::new(std::sync::Mutex::new(None));
+        let reason = pause_reason.clone();
+        let execution = Execution {
+            cancel, pause_reason,
+            transport: Some(Arc::new(move |body| {
+                let request: Value = serde_json::from_str(body).unwrap();
+                let names: Vec<_> = request["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
+                for tool in ["write_text_file", "read_text_file", "list_files", "release_work"] { assert!(names.contains(&tool), "{tool}: {names:?}"); }
+                assert!(!names.contains(&"run_command"));
+                *reason.lock().unwrap() = Some("Provider deadline reached.".into());
+                flag.store(true, Ordering::Relaxed);
+                Err("Provider deadline reached.".into())
+            })),
+            ..Default::default()
+        };
+        value(&mut workspace, "POST", "/api/chat/sessions", json!({}), &execution);
+        value(&mut workspace, "POST", "/api/chat/sessions/chat-1/prompt", json!({"text":"Generate and test this project."}), &execution);
+        let mut restored = Workspace::new(workspace.snapshot()).unwrap();
+        let chat = value(&mut restored, "GET", "/api/chat/sessions/chat-1", Value::Null, &Execution::default());
+        let terminal = &chat["updates"].as_array().unwrap().last().unwrap()["update"];
+        assert_eq!(terminal["stop"], "paused", "{chat}");
+        assert_eq!(terminal["error"], "Provider deadline reached.");
     }
 
     #[test]

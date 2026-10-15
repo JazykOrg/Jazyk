@@ -27,6 +27,21 @@ The results file records measured outcomes, defects, reruns, and remaining limit
 
 See [results](./results.md).
 
+## Text protocol retry loop
+
+The next pass repeats the unfinished Gemma text protocol workflow through the same
+LocalRouter route. Keep provider configuration unchanged.
+
+1. Confirm a short text tool round trip and the dedicated Podman engine.
+2. Run the small source/test generation, falsification, and repair fixture in text
+   mode. Inspect actual tool calls, graph verdicts, and container termination.
+3. Repeat the full `gen-basic` worker benchmark. Inspect each failed model response
+   before changing a prompt or tool. Separate upstream failures from Jazyk defects.
+4. Fix demonstrated defects, rerun their focused cases, then repeat generation with
+   fresh state. Repeat the relevant workflow on Docker when Podman passes.
+5. Commit measured results and any fixes. Rebuild the release after binary changes,
+   verify cleanup, and stop the dedicated Podman VM.
+
 ## Reproduce
 
 Run from the repository root with a built binary and a running local engine. The

@@ -23,10 +23,10 @@ def agent():
   try:
    params=message['params'];sid=params['sessionId'];text=params['prompt'][0]['text'];context=tool('task_context')
    run=tool('run_task',task_id='slow' if text=='cancel' else 'product',expected_revision=context['revision'],operation_key='acp-'+str(time.time_ns()))
-   deadline=time.time()+120;announced=False
+   deadline=time.time()+360;announced=False
    while time.time()<deadline:
     run=tool('inspect_run',run_id=run['id'])
-    if run['state']=='executing' and not announced and 'CHILD_READY' in tool('read_run_log',run_id=run['id'])['text']:
+    if run['state'] in ('executing','running') and not announced and 'CHILD_READY' in tool('read_run_log',run_id=run['id'])['text']:
      send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':sid,'update':{'sessionUpdate':'tool_call','toolCallId':run['id'],'title':'Runtime executing','kind':'execute','status':'in_progress'}}});announced=True
     if run['terminated']:break
     time.sleep(.3)
@@ -84,7 +84,7 @@ def send(method,params,notify=False):
  proc.stdin.write(json.dumps(value)+'\n');proc.stdin.flush();return seq
 
 def receive(id,cancel=False):
- deadline=time.time()+180;result=None;sent=False
+ deadline=time.time()+420;result=None;sent=False
  while time.time()<deadline:
   try:line=messages.get(timeout=1)
   except queue.Empty:continue

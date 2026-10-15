@@ -1,6 +1,6 @@
 # Runtime completion
 
-Status: implementation in progress, 2026-10-15.
+Status: implementation and review complete; final deployment verification in progress, 2026-10-15.
 
 The owner authorized completing the remaining first-release gaps, review, testing,
 and the existing merge/deployment scope. Saved per-task credential grants are the
@@ -43,3 +43,50 @@ agent changes cannot extend it.
 
 These are protocol and runtime checks. They do not establish live model judgment
 or AWS invoice reconciliation. Those are recorded separately.
+
+
+## Completion evidence
+
+The release now includes Docker/Podman selection, authenticated native Cloud
+execution, ACP-owned cancellation, definition-pinned publishing/private-registry
+grants, environment editing, explicit legacy conversion, paged history, log search,
+before/after file previews, and usage split between models and containers.
+
+- Final compiler suite: 659 passed, 3 optional tests ignored.
+- Cloud suite: 95 passed, 3 optional tests ignored; storage integration passed.
+- Editor unit suite: 417 passed.
+- Cloud browser suite: 92 passed. Its four runtime cases passed again after fixes.
+- Final general browser suite: 136 passed, 7 optional cases skipped.
+- Real Docker and Podman roundtrips passed. The final Docker test also changed
+  settings into invalid TOML during execution and successfully cancelled the run.
+- Real ACP proxy with no IDE terminal passed Docker submission, ownership
+  cancellation, subsequent execution, and product import.
+- Native MCP to production Fargate passed two PDF/EPUB builds, cached dependency
+  reuse, fresh JUnit reports, product import, and command cancellation. Run IDs:
+  `28dc7b2c-b9cf-4711-a700-4d4a8ca6bda1`,
+  `4a143da3-3823-4825-a922-3bc480f89bf0`, and
+  `20befd09-86da-43a0-bfc1-579cf241cabf`.
+- The first remote submission response was deliberately dropped. Retrying the
+  same operation returned the same run. An API restart during that allocation
+  preserved the provider task and the successful result.
+- Direct native HTTPS passed. A changed command was refused the old grant.
+  Revoking the synthetic grant cancelled run
+  `6f7129ba-995b-48a3-ba2a-0a1963a259cc` and withheld new products.
+- Secret injection and split-write log masking passed with a synthetic secret.
+  The PDF was rendered and visually checked. EPUB structure was inspected.
+
+## Evidence that remains external
+
+The configured `qwen3.8:27b-mlx` model through the owner's LocalRouter failed
+`gen-basic` in both native and text codecs. Neither run recorded generation,
+scoring 0/4 checks. This is not a passed live-model generation/repair benchmark.
+The prompt and tool protocol checks above passed with a deterministic ACP agent.
+
+The AWS runtime cost tag was inactive and is now active. The read-only cost report
+returns `pending_usage_data`, with an estimated empty AWS period. Actual invoice
+comparison awaits provider data. No zero-cost conclusion is drawn.
+
+Private-registry credential wiring is implemented. An authenticated pull from an
+external private registry was not exercised with a real customer credential.
+Native Apple/Windows execution, interactive shells, parallel project runs, and
+additional providers remain outside this finite-container release.

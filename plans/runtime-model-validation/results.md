@@ -177,3 +177,14 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   is running with those fixes.
 - Full compiler regression suite: 674 passed, 3 ignored. Relative links and anchors
   in all 20 changed documentation files resolve, with no em dashes.
+
+## Verification review
+
+- Review found that the legacy criterion runner could keep a previous passing
+  verdict after a failed launch, or mark a missing command as an assertion failure.
+  Both paths now clear the criterion verdict and retain the runner error. A native
+  regression starts from verified evidence, then exercises a missing executable
+  and a missing working directory. Both finish unverified and the regression passes.
+- The test-kind documentation now distinguishes saved-task report verdicts from
+  legacy command exit codes. This removes an older blanket exit-code statement
+  that contradicted the runtime report contract.

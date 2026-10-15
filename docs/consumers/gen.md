@@ -456,9 +456,10 @@ integration, and cucumber are prompting examples of the first kind, not a taxono
 harness enforces:
 
 - `programmatic`: any test a command can run. The generator writes the test artifact
-  into the deliverable and records the exact command that runs it. The command's exit
-  code is the verdict, so the artifact must propagate failure: a harness that prints a
-  failure and still exits zero verifies nothing.
+  into the deliverable and records `task:<id>` with a report case selector, or a
+  legacy command. A task imports that case's verdict from its fresh test reports.
+  A legacy command's exit code is its verdict, so that command must propagate
+  assertion failures. A successful task exit alone proves no individual case passed.
 - `llm`: a test that requires judgment, or a deliverable that is not executable
   software. No programmatic definition exists; the harness gives an agent the
   requirement, its context, and the location of the implementing files, and asks it to
@@ -793,6 +794,10 @@ clears any previous verdict: it moved the row's `lastRun` and learned nothing, s
 honest state is unknown, not yesterday's answer restated with today's timestamp.
 Recording it as `failing` would blame the deliverable for a broken machine, and the two
 are indistinguishable in a status table.
+
+The same rule applies to a criterion test. A failed launch or a runner failure
+clears that criterion's previous verdict and retains the error as evidence. A
+passing headline cannot hide the now unverified criterion.
 
 The harness cannot read a runner's mind, so it uses two signals that need no knowledge
 of the tool:

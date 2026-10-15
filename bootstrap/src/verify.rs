@@ -544,6 +544,14 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
             continue;
         }
         match run_test_ref(gs, &t.test) {
+            Ok(r) if r.runner_failed() => {
+                t.verdict = "none".into();
+                t.exit_code = Some(r.code);
+                t.last_run = Some(now_iso());
+                t.evidence = Some(crate::llm::truncate(&r.evidence, 400).to_string());
+                t.test_hash = hash_file(&artifact_path(&store.out, gs, &t.test));
+                lines.push(json!({"requirement":rid,"criterion":cid,"verdict":"none","exitCode":r.code,"reason":"runner-failed","evidence":r.tail}));
+            }
             Ok(r) => {
                 t.verdict = if r.pass { "pass".into() } else { "fail".into() };
                 t.exit_code = Some(r.code);
@@ -553,7 +561,14 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
                 any_fail |= !r.pass;
                 lines.push(json!({"requirement": rid, "criterion": cid, "verdict": t.verdict, "exitCode": r.code, "evidence": r.tail}));
             }
-            Err(e) => lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": e})),
+            Err(e) => {
+                t.verdict = "none".into();
+                t.exit_code = None;
+                t.last_run = Some(now_iso());
+                t.evidence = Some(crate::llm::truncate(&e, 400).to_string());
+                t.test_hash = hash_file(&artifact_path(&store.out, gs, &t.test));
+                lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": e}));
+            }
         }
     }
     if any_fail && row.verdict == "pass" {
@@ -1417,6 +1432,46 @@ mod tests {
         assert_eq!(row.verdict, "none");
         assert_eq!(row.exit_code, Some(127));
         assert_eq!(status_of(&s, "req:shop-1", row, &gs).1, "runner-failed");
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn criterion_runner_failures_clear_previous_passing_evidence() {
+        let out = std::env::temp_dir().join(format!("jazyk-criterion-runner-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut store, gs) = fixture(&out);
+        store.graph.criteria.insert("c:check".into(), Criterion {
+            requirement: "req:shop-1".into(), statement: "Check items".into(),
+            ..Default::default()
+        });
+        for (command, cwd, exit_code) in [
+            ("jazyk-absent-criterion-runner", ".", Some(127)),
+            ("printf checked", "missing-directory", None),
+        ] {
+            let mut ledger = Ledger::load(&out);
+            let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+            row.verdict = "pass".into();
+            let mut test = row.test.clone();
+            test.run = command.into();
+            test.cwd = cwd.into();
+            row.tests.insert("c:check".into(), crate::gen::CritTest {
+                test, criterion_hash: hash_hex("Check items"),
+                test_hash: row.hashes.test.clone(), verdict: "pass".into(),
+                last_run: None, exit_code: Some(0), evidence: Some("earlier pass".into()),
+            });
+            assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
+            ledger.save(&out);
+            let reply = run_criterion_tests(&store, "req:shop-1", &gs);
+            assert_eq!(reply[0]["verdict"], "none", "{reply:?}");
+            let ledger = Ledger::load(&out);
+            let row = &ledger.requirements["req:shop-1"];
+            let test = &row.tests["c:check"];
+            assert_eq!(test.verdict, "none");
+            assert_eq!(test.exit_code, exit_code);
+            assert!(test.last_run.is_some());
+            assert_ne!(test.evidence.as_deref(), Some("earlier pass"));
+            assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "unverified");
+        }
         crate::vfs::remove_dir_all(&out).ok();
     }
 

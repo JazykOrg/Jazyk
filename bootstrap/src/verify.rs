@@ -1121,6 +1121,75 @@ mod tests {
     }
 
     #[test]
+    fn task_reports_update_each_criterion_without_refreshing_its_statement() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (mut store, gs) = fixture(out);
+        let mut ledger = Ledger::load(out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        row.test.run = "task:check".into();
+        let name = row.test.name.clone();
+        for (id, selector) in [
+            ("c:pass", name.as_str()),
+            ("c:skip", "skipped"),
+            ("c:missing", "missing"),
+        ] {
+            store.graph.criteria.insert(
+                id.into(),
+                Criterion {
+                    requirement: "req:shop-1".into(),
+                    statement: id.into(),
+                    ..Default::default()
+                },
+            );
+            let mut test = row.test.clone();
+            test.name = selector.into();
+            row.tests.insert(
+                id.into(),
+                crate::gen::CritTest {
+                    test,
+                    criterion_hash: hash_hex(id),
+                    test_hash: row.hashes.test.clone(),
+                    verdict: "pass".into(),
+                    last_run: None,
+                    exit_code: None,
+                    evidence: None,
+                },
+            );
+        }
+        ledger.save(out);
+        let task: crate::task_runtime::Task = serde_json::from_value(json!({"id":"check","name":"Check","description":"Check all cases","command":"mvn test"})).unwrap();
+        let result = json!({"exit_code":0,"tests":[{"identity":format!("Suite::{name}"),"status":"passed"},{"identity":"Suite::skipped","status":"skipped"}]});
+        crate::task_runtime::import_evidence(&store, &gs, &task, &result, "first");
+        let ledger = Ledger::load(out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.verdict, "pass");
+        assert_eq!(row.tests["c:skip"].verdict, "none");
+        assert_eq!(row.tests["c:missing"].verdict, "none");
+        assert_eq!(
+            status_of(&store, "req:shop-1", row, &gs).1,
+            "criteria-incomplete"
+        );
+        store.graph.criteria.get_mut("c:pass").unwrap().statement = "Changed obligation".into();
+        crate::task_runtime::import_evidence(&store, &gs, &task, &result, "second");
+        let ledger = Ledger::load(out);
+        assert_eq!(
+            ledger.requirements["req:shop-1"].tests["c:pass"].criterion_hash,
+            hash_hex("c:pass")
+        );
+        assert_eq!(
+            status_of(
+                &store,
+                "req:shop-1",
+                &ledger.requirements["req:shop-1"],
+                &gs
+            )
+            .0,
+            "stale-requirement"
+        );
+    }
+
+    #[test]
     fn hosted_programmatic_tests_remain_pending_ci_without_false_verdicts() {
         let _scope = crate::vfs::Scope::enter(&Default::default());
         let out = std::path::Path::new("/project/.jazyk");

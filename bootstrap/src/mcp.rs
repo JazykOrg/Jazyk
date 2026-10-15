@@ -515,7 +515,7 @@ impl McpServer {
                     // command tools (the embedded agent's profile sets serve_files).
                     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
                     if self.bridge.serve_files {
-                        t.extend(crate::tools::FILE_TOOLS);
+                        t.extend(crate::tools::FILE_TOOLS.into_iter().filter(|t| *t != "run_command"));
                     }
                     t
                 }
@@ -541,7 +541,7 @@ impl McpServer {
                             crate::tools::FILE_TOOLS
                                 .iter()
                                 .copied()
-                                .filter(|t| *t != "write_text_file"),
+                                .filter(|t| !matches!(*t, "write_text_file" | "run_command")),
                         );
                     }
                     t
@@ -3670,10 +3670,10 @@ mod tests {
             )
         };
         let with = tool_names(&serve(true));
-        for t in ["read_text_file", "list_files", "run_command", "run_tests"] {
+        for t in ["read_text_file", "list_files", "run_task", "run_tests", "cancel_run", "read_run_log"] {
             assert!(with.iter().any(|n| n == t), "{} missing from {:?}", t, with);
         }
-        assert!(!with.iter().any(|n| n == "write_text_file"), "{:?}", with);
+        assert!(!with.iter().any(|n| matches!(n.as_str(), "write_text_file" | "run_command")), "{:?}", with);
         let without = tool_names(&serve(false));
         assert!(
             !without.iter().any(|n| n == "read_text_file"),

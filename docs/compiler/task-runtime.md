@@ -73,7 +73,9 @@ completed external write or an already committed artifact. Unknown publication
 outcomes require inspection before retry.
 
 Setup, command, collection, and shutdown have separate bounds. Allocation and
-cleanup have independent host supervision. Logs and transfers have size limits.
+cleanup have independent host supervision. Local Docker has a separate deadline
+watchdog process. It removes overdue containers even if the run supervisor exits.
+Logs and transfers have size limits.
 Missing cache causes rebuilding. Failed and cancelled commands save no new cache.
 Partial results remain attached to the run and cannot replace a successful product.
 

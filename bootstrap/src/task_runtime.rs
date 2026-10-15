@@ -400,6 +400,10 @@ fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
 pub fn supervise(path: &Path) -> Result<(), String> {
     local::supervise(path)
 }
+#[cfg(not(target_arch = "wasm32"))]
+pub fn watchdog(path: &Path) -> Result<(), String> {
+    local::watchdog(path)
+}
 
 #[cfg(test)]
 mod tests {
@@ -923,7 +927,11 @@ pub fn apply_result(
                 && !matches(&task.reports, p)
                 && !matches(&task.products, p)
         });
-    let deleted_input = result["deleted"].as_array().is_some_and(|v| !v.is_empty());
+    let deleted_input = result["deleted"].as_array().is_some_and(|v| {
+        v.iter()
+            .filter_map(Value::as_str)
+            .any(|p| !matches(&task.reports, p) && !matches(&task.products, p))
+    });
     let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
     let mut cases = 0;
     if !changed_input && !deleted_input {

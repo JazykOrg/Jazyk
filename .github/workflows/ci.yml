@@ -5,15 +5,27 @@ on:
     branches: [master]
     paths:
       - 'bootstrap/**'
+      - 'runtime-worker/**'
       - 'docs/benchmark/cases/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'bootstrap/**'
+      - 'runtime-worker/**'
       - 'docs/benchmark/cases/**'
       - '.github/workflows/ci.yml'
 
 jobs:
+  runtime-helper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: runtime-worker/go.mod
+          cache-dependency-path: runtime-worker/go.sum
+      - run: go test ./...
+        working-directory: runtime-worker
   test:
     runs-on: ubuntu-latest
     steps:

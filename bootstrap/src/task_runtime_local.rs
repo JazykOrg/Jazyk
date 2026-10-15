@@ -73,6 +73,13 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
             .open(dir.parent().unwrap().join(".admission"))
             .map_err(|e| e.to_string())?;
         lock.lock_exclusive().map_err(|e| e.to_string())?;
+        if dir.exists() {
+            let old = read(&dir.join("request.json"))?;
+            if old["input_digest"] != args["input_digest"] || old["task"] != args["task"] {
+                return Err("Operation key already refers to a different run.".into());
+            }
+            return read(&dir.join("state.json"));
+        }
         for entry in fs::read_dir(dir.parent().unwrap())
             .map_err(|e| e.to_string())?
             .flatten()
@@ -90,6 +97,25 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
         let state = json!({"id":id,"task":args["task"],"input_digest":args["input_digest"],"state":"queued","terminated":false,"created_at":crate::sys::now_unix(),"location":"local"});
         write(&dir.join("state.json"), &state)?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut watcher = Command::new(&exe);
+        watcher
+            .arg("__task_watchdog")
+            .arg(&dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            watcher.process_group(0);
+        }
+        if let Err(error) = watcher.spawn() {
+            let mut failed = state.clone();
+            failed["state"] = json!("failed");
+            failed["terminated"] = json!(true);
+            write(&dir.join("state.json"), &failed)?;
+            return Err(format!("Cannot start deadline watchdog: {error}"));
+        }
         let mut command = Command::new(exe);
         command
             .arg("__task_supervise")
@@ -128,9 +154,10 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
         ));
         state = read(&dir.join("state.json"))?;
     }
-    if matches!(operation,"read_run_log"|"search_run_log") && state["terminated"] != true {
-        let token=digest(dir.to_string_lossy().as_bytes());
-        state["log"]=json!(docker(&["logs",&format!("jazyk-run-{}",&token[..20])]).unwrap_or_default());
+    if matches!(operation, "read_run_log" | "search_run_log") && state["terminated"] != true {
+        let token = digest(dir.to_string_lossy().as_bytes());
+        state["log"] =
+            json!(docker(&["logs", &format!("jazyk-run-{}", &token[..20])]).unwrap_or_default());
     }
     let result = if state["terminated"] == true {
         read(&dir.join("validated.json")).unwrap_or(Value::Null)
@@ -224,6 +251,46 @@ fn helper(dir: &Path) -> Result<(), String> {
         context.to_str().ok_or("Invalid helper path")?,
     ])?;
     Ok(())
+}
+pub fn watchdog(dir: &Path) -> Result<(), String> {
+    let initial = read(&dir.join("state.json"))?;
+    let timeout = initial["task"]["timeout_seconds"].as_u64().unwrap_or(300);
+    let deadline = initial["created_at"].as_u64().unwrap_or(0) + timeout + 720;
+    loop {
+        let state = read(&dir.join("state.json"))?;
+        if state["terminated"] == true {
+            return Ok(());
+        }
+        if crate::sys::now_unix() as u64 >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    let token = digest(dir.to_string_lossy().as_bytes());
+    let name = format!("jazyk-run-{}", &token[..20]);
+    loop {
+        let _ = docker(&["rm", "-f", &name]);
+        let _ = docker(&["rm", "-f", &format!("{name}-init")]);
+        let _ = docker(&["volume", "rm", &format!("{name}-helper")]);
+        let gone = docker(&["inspect", "--format", "{{.State.Running}}", &name])
+            .map(|v| v == "false")
+            .unwrap_or_else(|e| e.contains("No such") || e.contains("not found"));
+        if gone {
+            let mut state = read(&dir.join("state.json"))?;
+            if state["terminated"] != true {
+                state["state"] = json!(if dir.join("cancel").exists() {
+                    "cancelled"
+                } else {
+                    "timed_out"
+                });
+                state["terminated"] = json!(true);
+                state["error"] = json!("The independent deadline watchdog stopped this run.");
+                write(&dir.join("state.json"), &state)?;
+            }
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    }
 }
 pub fn supervise(dir: &Path) -> Result<(), String> {
     SUPERVISOR.with(|s| *s.borrow_mut() = Some((dir.to_path_buf(), Instant::now())));

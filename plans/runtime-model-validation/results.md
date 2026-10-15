@@ -275,3 +275,19 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   with an upstream HTTP 502. These are recorded failures, not passing coverage.
   The measured native Gemma worker, focused text runtime workflows, and direct
   LLM judgments passed. This pass did not grade every unrelated compiler goal.
+
+## Text protocol retry
+
+- Reused `gemma4:31b-mlx` through the configured LocalRouter endpoint. No provider
+  settings changed. The dedicated rootless Podman VM was restarted for this pass.
+- `retry-text-discover-1` passed in 69 seconds. The model read the saved receipt task,
+  identified its Python image, and confirmed local execution availability.
+- `retry-text-generation-1` passed in 1,032 seconds. Using the text protocol through
+  MCP, the model wrote the Python source and behavioral unittest, recorded its
+  manifest, and passed the saved Podman task. The driver broke the implementation
+  and observed one assertion failure with no runner failure. The model reclaimed
+  its entity, repaired the source, refreshed the manifest, and passed again. The
+  test and supplied report adapter stayed unchanged. All three runs terminated.
+- No Jazyk fix was needed for those repeats. Responses were slow during observed
+  high host load. The larger worker benchmark, which supplies no task or report
+  adapter, is being repeated separately.

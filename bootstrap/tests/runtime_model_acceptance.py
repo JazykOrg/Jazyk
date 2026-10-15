@@ -169,6 +169,7 @@ def main():
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--deadline", type=int, default=360)
+    parser.add_argument("--call-timeout", type=int, default=90)
     parser.add_argument("--repeat", action="store_true")
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
@@ -177,6 +178,7 @@ def main():
     root = evidence / "project"
     fixture(root, args.case)
     env = environment(args.env_file, args.engine, args.model, args.codec, args.rounds)
+    env.update(JAZYK_CALL_TIMEOUT=str(args.call_timeout), JAZYK_READ_TIMEOUT=str(args.call_timeout))
     acp = ACP(binary, root, env, evidence, args.entry == "acp")
     sid = None
     started = time.monotonic()

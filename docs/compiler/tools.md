@@ -742,6 +742,8 @@ only the ledger, never the graph.
 - `begin_verification({requirement})`: the package for one row: the statement, quote,
   and hash; the loaded set; the manifest files; and either the run command
   (`programmatic`) or the criteria and confirm-steps (`llm`).
+  A saved-task reference includes instructions to use `run_tests` and inspect
+  per-case evidence, not infer a verdict from the container's exit code.
 - `run_tests({requirements?, all?})`: execute the recorded programmatic tests: the
   [build](../consumers/gen.md#the-build) first, once, then each selected row's command.
   `requirements` selects rows (requirement or entity ids); empty runs every
@@ -750,6 +752,9 @@ only the ledger, never the graph.
   recorded as a side effect and returned. `llm` rows are
   skipped here; they go through `record_verdict`. This is how a worker verifies without
   hand-rolling the harness, and it serves in the generation toolset too.
+  Shared `task:<id>` references execute once per selection, after the build. Mixed
+  selections also run their legacy commands locally; hosted responses list those
+  commands as pending. Task criteria reuse the imported case evidence.
 - `record_verdict({requirement, verdict, factHash?, evidence?})`: record a `pass` or
   `fail` verdict with its evidence, rebaselining the test and files hashes. A stale
   `factHash` is recorded but the row stays pending, the same protection

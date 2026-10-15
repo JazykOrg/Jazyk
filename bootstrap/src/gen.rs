@@ -313,8 +313,11 @@ pub fn run_build(
         let root = crate::task_runtime::project_root(out)?;
         let (_, result) = crate::task_runtime::execute(&root,id)?;
         let success = result["status"] == "succeeded" && result["complete"] == true;
-        record_build_run(out,success,result["log"].as_str().unwrap_or("No log output"));
-        return if success { Ok(()) } else { Err("Build task did not complete successfully. Inspect its run log.".into()) };
+        if !success {
+            record_build_run(out, false, result["log"].as_str().unwrap_or("No log output"));
+            return Err("Build task did not complete successfully. Inspect its run log.".into());
+        }
+        return check_build_products(out, gs, &b);
     }
     let cwd = gs.deliverable.join(&b.cwd);
     trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
@@ -340,6 +343,10 @@ pub fn run_build(
             crate::llm::truncate(evidence.trim(), 2000)
         ));
     }
+    check_build_products(out, gs, &b)
+}
+
+fn check_build_products(out: &Path, gs: &GenSettings, b: &Build) -> Result<(), String> {
     let missing: Vec<&String> = b
         .produces
         .iter()
@@ -2669,6 +2676,23 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_build_requires_promised_products() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = Path::new("/project/.jazyk");
+        let (_, gs) = fixture(out);
+        let build = Build { run: "task:build".into(), cwd: ".".into(),
+            produces: vec!["product.txt".into()], last_run: None };
+        let mut ledger = Ledger::load(out);
+        ledger.build = Some(build.clone());
+        ledger.save(out);
+        assert!(check_build_products(out, &gs, &build).unwrap_err().contains("did not produce product.txt"));
+        assert!(!Ledger::load(out).build.unwrap().last_run.unwrap().ok);
+        crate::vfs::write(gs.deliverable.join("product.txt"), "ready").unwrap();
+        check_build_products(out, &gs, &build).unwrap();
+        assert!(Ledger::load(out).build.unwrap().last_run.unwrap().ok);
+    }
 
     // The one-pass requirement index answers what the per-entity scan answers, for
     // every entity, and the fact hash over it is the fact hash.

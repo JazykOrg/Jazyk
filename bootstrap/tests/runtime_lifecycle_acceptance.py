@@ -10,12 +10,13 @@ import time
 
 
 class MCP:
-    def __init__(self, binary, root, engine):
+    def __init__(self, binary, root, engine, toolsets="runtime", timeout=40):
+        self.timeout = timeout
         env = {**os.environ, "JAZYK_CONTAINER_ENGINE": engine}
         for key in ("JAZYK_RUNTIME_URL", "JAZYK_RUNTIME_TOKEN_FILE"):
             env.pop(key, None)
         self.stderr = (root.parent / "mcp-stderr.log").open("w")
-        self.proc = subprocess.Popen([binary, "mcp", "runtime", "--ephemeral"], cwd=root,
+        self.proc = subprocess.Popen([binary, "mcp", toolsets, "--ephemeral"], cwd=root,
                                     env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=self.stderr, text=True, bufsize=1)
         self.queue = queue.Queue()
@@ -32,9 +33,9 @@ class MCP:
         self.seq += 1
         self.proc.stdin.write(json.dumps(dict(jsonrpc="2.0", id=self.seq, method=method, params=params)) + "\n")
         self.proc.stdin.flush()
-        deadline = time.monotonic() + 40
+        deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
-            response = self.queue.get(timeout=40)
+            response = self.queue.get(timeout=max(0.01, deadline - time.monotonic()))
             if response is None:
                 raise RuntimeError("MCP exited")
             if response.get("id") == self.seq:

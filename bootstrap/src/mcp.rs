@@ -1411,7 +1411,7 @@ impl McpServer {
         };
         let gs = crate::gen::GenSettings {
             configured: true,
-            deliverable: tmp.join("deliverable"),
+            deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
             code: Vec::new(),
         };

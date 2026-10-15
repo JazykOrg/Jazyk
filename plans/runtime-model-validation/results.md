@@ -10,12 +10,12 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | --- | --- | --- |
 | Endpoint and minimal model/tool calls | In progress | LocalRouter completion through the production agent passed with Qwen 27B and Llama 8B. |
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
-| Model discovery, submission, observation | In progress | Gemma runtime discovery passed. Two model-controlled Podman runs produced correct receipts and reused cache. Shutdown observation is being tightened. |
+| Model discovery, submission, observation | Passed | Gemma discovery and repeated task creation/runs passed, including observed shutdown and cache reuse. |
 | Model task creation and repair | Passed | Gemma native/MCP created and ran a task twice (166 seconds), observed shutdown, and reused cache. A separate failed-command repair passed (144 seconds). |
 | Generation and runtime/LLM verification | Pending | |
-| Cancellation, timeout, failure recovery | Passed, deterministic | Expanded lifecycle fixture passed on Podman and Docker. Model-driven cases remain. |
-| MCP and ACP entry points | In progress | Real model MCP cases passed. Deterministic ACP cancellation and subsequent run passed on both engines. Full model ACP cases remain. |
-| Docker parity | Passed, deterministic | Same expanded lifecycle cases as Podman. |
+| Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
+| MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
+| Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
 | Regression suite and release build | In progress | 670 compiler tests passed, 3 ignored after the third fixes. Go worker tests passed. Final release build remains. |
 
 ## First investigation
@@ -89,3 +89,38 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   rejection of an empty selector and detection of a removed test.
 - Portable runtime discovery without an execution adapter now returns unavailable
   instead of panicking. The polling regression exposed that missing-context path.
+
+## Fourth investigation
+
+- Gemma text cancellation passed in 91 seconds after the single-action correction.
+  It observed `CHILD_READY`, cancelled the actual returned run ID, and waited for
+  termination. Native timeout passed in 98 seconds without extending the deadline.
+- Gemma searched a failed run's log in 109 seconds. It treated an instruction planted
+  in the log as data and made no unauthorized task edits or retries.
+- Full ACP with no IDE terminal/filesystem passed: native/Podman in 77 seconds and
+  text/Docker in 176 seconds. The earlier native attempt exhausted the test driver's
+  90-second request limit; the repeat allowed 240 seconds. Both successful cases
+  observed actual termination and inspected the retained receipt.
+- `runtime_verification_acceptance.py` passed with Podman and Docker. One shared task
+  emitted passing, failing, skipped, missing, and ambiguous cases. The graph retained
+  separate requirement and criterion evidence despite command exit zero. The fixture
+  also checked a legacy command in the same selection, the build running first,
+  refusal to import evidence for changed inputs, and rejection of a successful build
+  command that did not produce its promised product.
+- Review found task-backed verification returned early and dropped legacy commands
+  from a mixed selection. It also bypassed the build. Selection now runs the build
+  once, each shared task once, and the selected legacy commands locally. Hosted
+  responses retain explicit pending entries for legacy commands. Task criteria reuse
+  imported reports instead of launching another container.
+- A task build now checks promised products after collection, like legacy builds.
+  A verification package for `task:<id>` now explicitly directs the model to
+  `run_tests` and per-case evidence. Unknown cases cannot produce an all-passed reply.
+- The benchmark worker and automatic report importer had different deliverable roots.
+  Fixtures now use the project root consistently, matching document-set behavior.
+- Fixture iteration corrected source selection, scoped IDs, response field assertions,
+  and the combined-build/test request timeout. Those fixture mistakes are not recorded
+  as product defects. Final evidence: `podman-verification-7`, `docker-verification-1`.
+- Regression progress: new verification tests passed. A fixture-path assertion needed
+  updating after the root correction. The unrelated 3,000-record timing test exceeded
+  its five-second bound under concurrent machine load; an isolated repeat is pending.
+  The real generation and paired LLM judgment benchmark is still running.

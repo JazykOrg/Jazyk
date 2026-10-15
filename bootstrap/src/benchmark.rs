@@ -486,7 +486,7 @@ pub fn prepare_runtime_fixture(case: &Case, tmp: &std::path::Path) -> Result<(),
     crate::vfs::create_dir_all(tmp.join(".jazyk")).map_err(|e| e.to_string())?;
     let docs: Vec<_> = case.docs.keys().collect();
     let config = format!(
-        "version=1\n[[sets]]\nid=\"ds_main\"\nname=\"Benchmark\"\ndocs={}\n[gen]\ndeliverable=\"deliverable\"\n",
+        "version=1\n[[sets]]\nid=\"ds_main\"\nname=\"Benchmark\"\ndocs={}\nsource=[\"**\"]\n",
         serde_json::to_string(&docs).map_err(|e| e.to_string())?
     );
     crate::vfs::write(tmp.join(".jazyk/jazyk.toml"), config).map_err(|e| e.to_string())?;
@@ -516,11 +516,11 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
     }
     // A deliverable is configured so the ledger-tier kinds derive, holding the
     // fixture's files (docs/benchmark/cases.md#case-format).
-    write_deliverable(case, &tmp.join("deliverable"))?;
+    write_deliverable(case, tmp)?;
     let proj = crate::project::Project {
         root: tmp.to_path_buf(),
         out: store.out.clone(),
-        gen_deliverable: Some("deliverable".into()),
+        gen_deliverable: Some(".".into()),
         ..Default::default()
     };
     let control = crate::control::Control::load(&proj, &proj.out);
@@ -2069,10 +2069,10 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             };
             let case_start = std::time::Instant::now();
             let case_tokens_before = llm::tokens_spent();
-            // The generation turn writes into a temp deliverable beside the sandbox.
+            // The generation turn writes into the disposable project root.
             let gs = crate::gen::GenSettings {
                 configured: true,
-                deliverable: tmp.join("deliverable"),
+                deliverable: tmp.to_path_buf(),
                 worker: "agentic".into(),
                 code: Vec::new(),
             };
@@ -2569,7 +2569,9 @@ mod tests {
         crate::vfs::write(store.out.join("private.yaml"), "state").unwrap();
         assert_eq!(crate::task_runtime::project_root(&store.out).unwrap(), root);
         let workspace = crate::document_sets::Workspace::load(&root).unwrap();
-        assert_eq!(workspace.resolve(Some("ds_main")).unwrap().out, store.out);
+        let project = workspace.resolve(Some("ds_main")).unwrap();
+        assert_eq!(project.out, store.out);
+        assert_eq!(crate::gen::GenSettings::resolve(&project).deliverable, root);
         let inputs = crate::task_runtime::snapshot(&root).unwrap();
         assert!(inputs.contains_key(".jazyk/jazyk.toml"));
         assert!(inputs.contains_key("docs/greeter.md"));
@@ -2599,7 +2601,7 @@ mod tests {
         };
         let gs = crate::gen::GenSettings {
             configured: true,
-            deliverable: tmp.join("deliverable"),
+            deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
             code: Vec::new(),
         };
@@ -2755,7 +2757,7 @@ mod tests {
         });
         let gs = crate::gen::GenSettings {
             configured: true,
-            deliverable: tmp.join("deliverable"),
+            deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
             code: Vec::new(),
         };
@@ -2823,7 +2825,7 @@ mod tests {
         };
         let gs = crate::gen::GenSettings {
             configured: true,
-            deliverable: tmp.join("deliverable"),
+            deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
             code: Vec::new(),
         };
@@ -3064,16 +3066,16 @@ mod tests {
                     // The self-reporting server and its passing test sit in the
                     // deliverable, with the seeded criterion to bind.
                     assert_eq!(goal.change["criteria"], 1, "{:?}", goal.change);
-                    assert!(tmp.join("deliverable/src/server.js").vexists());
-                    assert!(tmp.join("deliverable/test/backend.test.js").vexists());
+                    assert!(tmp.join("src/server.js").vexists());
+                    assert!(tmp.join("test/backend.test.js").vexists());
                 }
                 "bind-descriptor" => {
                     // The seeded criterion is what the test binds to, and the
                     // descriptor and its passing test sit in the deliverable.
                     assert_eq!(goal.change["criteria"], 1, "{:?}", goal.change);
                     assert_eq!(goal.change["reason"], "unbound");
-                    assert!(tmp.join("deliverable/src/backend.js").vexists());
-                    assert!(tmp.join("deliverable/test/backend.test.js").vexists());
+                    assert!(tmp.join("src/backend.js").vexists());
+                    assert!(tmp.join("test/backend.test.js").vexists());
                 }
                 _ => {}
             }

@@ -49,3 +49,14 @@ timeout, and log inspection. `--entry acp` uses the full IDE proxy with no IDE t
 or file capabilities. `--entry mcp` gives the production embedded agent the focused
 runtime serving; `--toolsets generate,verify` selects the larger ledger serving.
 `--codec text` exercises the text protocol, and `--engine docker` repeats engine parity.
+
+For report-to-graph, mixed runner, and build-output checks:
+
+```sh
+python3 bootstrap/tests/runtime_verification_acceptance.py \
+  --binary bootstrap/target/release/jazyk --engine podman \
+  --evidence .local/model-validation/verification-1
+```
+
+For larger ACP prompts, `--call-timeout 240 --deadline 900` raises the model driver's
+per-call and per-turn test budgets. It does not change the product defaults.

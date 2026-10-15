@@ -349,6 +349,8 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "context": pack,
         "instructions": if row.test.kind == "llm" {
             "Confirm the requirement is satisfied by the implementing files. Follow the criteria's confirm steps using the deliverable paths. Report verdict pass only if every criterion is met; state what you inspected or executed and what you observed."
+        } else if row.test.run.starts_with("task:") {
+            include_str!("../../docs/compiler/goals/prompts/verify-task-contract.md")
         } else {
             "Execute the run command in the test's cwd under the deliverable. Exit code 0 is a pass. Report the verdict with the command output tail as evidence."
         },
@@ -523,13 +525,22 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
     let mut lines = Vec::new();
     let mut any_fail = false;
     for (cid, t) in row.tests.iter_mut() {
-        if t.test.name == headline_name {
+        if t.test.kind == "programmatic" && t.test.run.starts_with("task:") {
+            any_fail |= t.verdict == "fail";
+            lines.push(json!({"requirement":rid,"criterion":cid,"verdict":t.verdict,"evidence":t.evidence,"source":"task report"}));
+            continue;
+        }
+        if t.test.name == headline_name && t.test.run == headline_run {
             // The headline is this criterion's test: its verdict is the row's, and
             // the list says so instead of leaving the criterion out.
             lines.push(json!({"requirement": rid, "criterion": cid, "verdict": headline_verdict, "note": "the row's headline test"}));
             continue;
         }
         if t.test.kind != "programmatic" || t.test.run == headline_run {
+            continue;
+        }
+        if crate::vfs::is_scoped() {
+            lines.push(json!({"requirement":rid,"criterion":cid,"verdict":"none","note":"Legacy command requires a native runner.","pendingCi":true}));
             continue;
         }
         match run_test_ref(gs, &t.test) {
@@ -622,28 +633,13 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
 // are listed as skipped and go through record_verdict.
 // Mirrors docs/compiler/tools.md#verification-tools.
 pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
-    let ledger = Ledger::load(&store.out);
-    let mut tasks = std::collections::BTreeSet::new();
-    for (rid,row) in &ledger.requirements {
-        if !targets.is_empty() && !targets.iter().any(|t|store.resolve_id(t)==rid||store.resolve_id(t)==row.entity) {continue;}
-        for test in std::iter::once(&row.test).chain(row.tests.values().map(|t|&t.test)) {
-            if test.kind=="programmatic" {if let Some(id)=test.run.strip_prefix("task:"){tasks.insert(id.to_string());}}
-        }
-    }
-    if !tasks.is_empty() {
-        let root=crate::task_runtime::project_root(&store.out)?;let mut runs=Vec::new();
-        for id in tasks {
-            let (run_id,result)=crate::task_runtime::execute(&root,&id)?;
-            runs.push(json!({"id":run_id,"task":id,"state":result["status"],"tests":result["tests"]}));
-        }
-        return Ok(json!({"runs":runs,"note":"Per-case evidence is imported only for unchanged tested inputs. LLM criteria require record_verdict."}));
-    }
     let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
-    if crate::vfs::is_scoped() {
-        return Ok(json!({"passed":0,"failed":0,"rows":[],"pendingCi":true,"pending":select_rows(store,gs,targets,Some("programmatic"),true),"reason":"programmatic tests run through delivery CI"}));
-    }
     crate::gen::run_build(&store.out, gs, &quiet, "run_tests")
         .map_err(|e| format!("{}; nothing was verified", e))?;
+    run_selected_after_build(store, gs, targets)
+}
+
+fn run_selected_after_build(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
     let ledger = Ledger::load(&store.out);
     // Explicit targets (requirement or entity ids), or every non-verified row, the
     // failing ones included: an explicit run is a rerun a worker asked for.
@@ -668,6 +664,27 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
         }
         v
     };
+    let mut tasks = std::collections::BTreeSet::new();
+    for rid in &selected {
+        let Some(row) = ledger.requirements.get(rid) else { continue; };
+        let (status, _) = status_of(store, rid, row, gs);
+        if status == "missing" || status == "stale-requirement" { continue; }
+        for test in std::iter::once(&row.test).chain(row.tests.values().map(|t| &t.test)) {
+            if test.kind == "programmatic" {
+                if let Some(id) = test.run.strip_prefix("task:") { tasks.insert(id.to_owned()); }
+            }
+        }
+    }
+    let mut runs = Vec::new();
+    if !tasks.is_empty() {
+        let root = crate::task_runtime::project_root(&store.out)?;
+        for id in tasks {
+            let (run_id, result) = crate::task_runtime::execute(&root, &id)?;
+            runs.push(json!({"id":run_id,"task":id,"state":result["status"],"tests":result["tests"]}));
+        }
+    }
+    // Runs import independent case evidence. Reload before observing their rows.
+    let ledger = Ledger::load(&store.out);
     let (mut passed, mut failed) = (0u64, 0u64);
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
@@ -686,8 +703,9 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             let ran: Vec<&Value> = crit_rows.iter().filter(|c| c.get("note").is_none()).collect();
             if !ran.is_empty() {
                 let crit_failed = ran.iter().any(|c| c["verdict"] == "fail");
-                if crit_failed { failed += 1 } else { passed += 1 }
-                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else { "pass" }, "note": "the headline is an llm test (judge it with record_verdict); its programmatic criterion tests ran", "criteria": crit_rows}));
+                let crit_unknown = ran.iter().any(|c| c["verdict"] == "none");
+                if crit_failed { failed += 1 } else if !crit_unknown { passed += 1 }
+                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else if crit_unknown { "none" } else { "pass" }, "note": "the headline is an llm test (judge it with record_verdict); its programmatic criterion tests ran", "criteria": crit_rows}));
             } else {
                 skipped.push(
                     json!({"requirement": rid, "reason": "llm row with no programmatic criterion test; judge it and record_verdict"}),
@@ -709,6 +727,23 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             }));
             continue;
         }
+        if row.test.run.starts_with("task:") {
+            let criteria = run_criterion_tests(store, rid, gs);
+            let current = Ledger::load(&store.out);
+            let (status, reason) = status_of(store, rid, &current.requirements[rid], gs);
+            let verdict = match status.as_str() {
+                "verified" => { passed += 1; "pass" }
+                "failing" | "partial" | "unimplemented" => { failed += 1; "fail" }
+                _ => "none",
+            };
+            rows.push(json!({"requirement":rid,"verdict":verdict,"status":status,"reason":reason,"criteria":criteria}));
+            continue;
+        }
+        if crate::vfs::is_scoped() {
+            let criteria = run_criterion_tests(store, rid, gs);
+            skipped.push(json!({"requirement":rid,"reason":"Legacy command requires a native runner; use a saved task for hosted execution.","pendingCi":true,"criteria":criteria}));
+            continue;
+        }
         match run_programmatic(store, rid, gs) {
             Ok(r) if r.pass => {
                 mark(
@@ -724,12 +759,13 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
                 // The criteria's own tests ride behind the headline.
                 let crit_rows = run_criterion_tests(store, rid, gs);
                 let crit_failed = crit_rows.iter().any(|c| c["verdict"] == "fail");
+                let crit_unknown = crit_rows.iter().any(|c| c["verdict"] == "none");
                 if crit_failed {
                     failed += 1;
-                } else {
+                } else if !crit_unknown {
                     passed += 1;
                 }
-                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else { "pass" }, "exitCode": r.code, "evidence": r.tail, "criteria": crit_rows}));
+                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else if crit_unknown { "none" } else { "pass" }, "exitCode": r.code, "evidence": r.tail, "criteria": crit_rows}));
             }
             // A failure waits: whether it is the deliverable's or the machine's is
             // decided once, when the run knows how the other rows went
@@ -791,6 +827,7 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
         })
         .collect();
     let mut reply = json!({
+        "runs": runs,
         "passed": passed,
         "failed": failed,
         "runnerFailed": runner_failed,
@@ -802,12 +839,18 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             "a failing row names its requirement; when its status reads failing (implementing files exist), it is a finding for the author that the failing-binding check files, not a row to regenerate; otherwise fix the deliverable or the test, then run_tests again"
         } else if runner_failed > 0 {
             "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
+        } else if rows.iter().any(|row| row["verdict"] == "none") {
+            "some cases remain unverified; inspect their report evidence before retrying"
         } else if !skipped.is_empty() {
             "skipped rows say why; llm rows need begin_verification and record_verdict"
         } else {
             "all selected rows pass"
         }
     });
+    if skipped.iter().any(|r| r["pendingCi"] == true) {
+        reply["pendingCi"] = json!(true);
+        reply["pending"] = json!(skipped.iter().filter(|r| r["pendingCi"] == true).collect::<Vec<_>>());
+    }
     if !doc_diags.is_empty() {
         reply["openDiagnosticsOnFailingRows"] = json!(doc_diags);
     }
@@ -1051,6 +1094,19 @@ pub fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn task_verification_package_uses_report_evidence() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = fixture(out);
+        let mut ledger = Ledger::load(out);
+        ledger.requirements.get_mut("req:shop-1").unwrap().test.run = "task:check".into();
+        ledger.save(out);
+        let package = task(&store, "req:shop-1", &gs).unwrap();
+        assert!(package["instructions"].as_str().unwrap().contains("run_tests"));
+        assert!(!package["instructions"].as_str().unwrap().contains("Exit code 0 is a pass"));
+    }
+
     #[test]
     fn task_reruns_require_a_unique_completed_case_verdict() {
         let result = serde_json::json!({"complete":true,"exit_code":1,"tests":[
@@ -1671,12 +1727,10 @@ pub fn run_all(
     // artifact that was never produced, so a broken build stops the run instead of
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
-    if !crate::vfs::is_scoped() {
-        crate::gen::run_build(&store.out, gs, trace, "verify")
-            .map_err(|e| format!("{}; nothing was verified", e))?;
-    }
+    crate::gen::run_build(&store.out, gs, trace, "verify")
+        .map_err(|e| format!("{}; nothing was verified", e))?;
     let task_rows:Vec<String>=selected.iter().filter_map(|r|r["requirement"].as_str()).filter(|rid|Ledger::load(&store.out).requirements.get(*rid).is_some_and(|row|row.test.run.starts_with("task:")||row.tests.values().any(|t|t.test.run.starts_with("task:")))).map(String::from).collect();
-    if !task_rows.is_empty() {run_selected(store,gs,&task_rows)?;}
+    if !task_rows.is_empty() {run_selected_after_build(store,gs,&task_rows)?;}
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     // Failed programmatic runs, judged together at the end of the run.
     let mut held: Vec<(String, ProgRun, String)> = Vec::new();

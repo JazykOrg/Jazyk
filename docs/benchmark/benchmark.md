@@ -102,6 +102,10 @@ claiming a result it never measured.
 Before grading, one tiny completion probes the endpoint: a dead or misrouted
 endpoint fails one probe, not every case under both codecs.
 
+Runtime fixtures use the sandbox project root as their deliverable, matching document
+sets. The worker and report importer resolve the same artifact paths and source
+selection. Private graph state stays under `.jazyk/ds_main`.
+
 Every case session writes its full message transcript to
 `<out>/benchmark/trace/<codec>-<case>.json`, so a failed check is diagnosed from
 what the model actually saw and said, not from the score line.

@@ -189,6 +189,9 @@ build:
 - `jazyk test` runs the build once, before any row is judged. A non-zero exit, or a
   missing path in `produces`, fails the run and reports the build, since there is
   nothing to verify when the artifact was not produced. See [runners](#runners).
+- A `task:<id>` build follows the saved task's project-relative working directory.
+  Its `produces` paths remain deliverable-relative. Command success alone does not
+  satisfy the build: each promised product must be present after collection.
 - A failed build is recorded, not just printed. The ledger keeps the last run's
   outcome under `build.lastRun` (when, whether it succeeded, and the tail of what it
   said), and every goal package carries the failure while it stands, together with
@@ -763,6 +766,13 @@ would name the wrong culprit.
   test `name`; if absent the row is `missing` (reason `artifact-gone`), not `failing`,
   nothing executes, and the row is bind work. The row records the exit code beside the
   output, so a verdict can be read back without rerunning it.
+- A `task:<id>` reference runs through the task runtime. The verification package
+  directs the agent to `run_tests`, not to a shell command named `task:<id>`.
+  Each selected saved task runs once after the build. Its JUnit cases supply separate
+  verdicts by test name; an exit-zero suite can contain failing cases. Skipped,
+  missing, ambiguous, and uncollected cases remain unverified. A selection may mix
+  saved tasks and legacy commands. Native runners execute both; hosted runners
+  return legacy commands as pending. Neither silently drops the other.
 - `llm`: two harnesses, one contract. `jazyk test` packages the criteria file and the
   requirement's loaded set in-process and asks the configured model for a verdict
   ([the verify goal](../compiler/goals/verify.md)). An external agent connected to

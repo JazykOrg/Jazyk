@@ -19,7 +19,9 @@ unless explicitly accepted below.
 - Managed isolated runtimes with little operational work are the preferred Cloud
   launch direction. Cloud is the commercial priority; local remains accountless.
 - Runs belongs beside Files, using existing tabs for logs and retained changes.
-- Publication autonomy is undecided; the owner requested options.
+- The owner delegated the publication policy decision. Use saved per-task grants
+  bound to the exact task definition, including its command and image. A person
+  creates the grant. Editing the definition requires a new grant.
 - Implementation, merge to master, and production deployment were authorized on
   2026-10-15. AWS Fargate is selected for hosted execution. Plans remain under
   `./plans/runtime-delivery/` in the repository checkout.
@@ -56,9 +58,12 @@ within granted budgets. The decision is who authorizes external writes.
 | C. Broad project authority | Trusted project gets chosen credentials and runs within budget. | Maximum flexibility; arbitrary code can exercise those full privileges. |
 | D. Different grants per task | Automatic sync, click-to-publish production. | Matches different consequences; adds some policy settings. |
 
-Recommendation: B as the mechanism, with optional D when a project needs it. A
-remains useful for sensitive publication; C is explicit trusted-project authority.
-These are account/host grants, not task kinds or values an agent grants itself.
+Selected for this release: saved credentials per task, bound to the exact definition
+hash. This combines B with D without adding task kinds. The agent may run the saved
+task repeatedly within account limits. It cannot create a grant. A definition edit
+invalidates the old grant, and revocation cancels active runs using it. Project
+source edits do not invalidate a grant. The selected credentials still define the
+actual external privileges available to the command.
 
 A grant can pin definition/input hashes, requiring renewal when behavior changes,
 or bound capabilities/destinations while allowing command edits. The former is
@@ -69,8 +74,9 @@ A task description saying "test" cannot make a broadly privileged command safe.
 Use narrow/short-lived credentials when available. The managed GitHub handler can
 enforce repository/branch without exposing a token to project shell code.
 
-Review question: begin with saved GitHub scopes and explicit publication for other
-destinations, or allow saved arbitrary credential scopes from launch?
+Saved environment secrets and private-registry credentials are included. Managed
+GitHub sync keeps its existing repository and branch authorization. Per-run human
+approval and broader project credentials remain alternatives, not the default.
 
 ## Runtime count and local execution
 

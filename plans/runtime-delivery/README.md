@@ -2,7 +2,8 @@
 
 Status: the first implementation is merged to master and deployed to jazyk.dev on
 2026-10-15. See the [release status](implementation.md#first-release) and the
-[implemented contract](../../docs/compiler/task-runtime.md). The remaining sections
+[implemented contract](../../docs/compiler/task-runtime.md). The follow-up work and
+its measured checks are in [completion](completion.md). The remaining sections
 preserve the design discussion and alternatives. These plans live in
 `plans/runtime-delivery/` in the repository checkout.
 
@@ -39,8 +40,8 @@ building first.
 
 ## Selected direction and remaining choices
 
-- Managed isolated runtimes with little operational work are the preferred Cloud
-  launch direction. Compare Fargate, Modal, and E2B with a bounded experiment.
+- AWS Fargate is selected for Cloud. The provider comparison remains a record of
+  alternatives, not a requirement to launch three providers.
 - Cloud, local MCP coding agents, and ACP IDE sessions use the same task/run tools.
   Client transport and execution location are independent.
 - Runs sits beside Files. Existing tabs show logs, retained changes, products, and
@@ -54,8 +55,9 @@ building first.
   usage limits. Show used and reserved usage; do not invent LLM token charges.
 - Keep the optional no-container GitHub sync shortcut in the same task picker,
   backed by a connection setting and trusted handler.
-- Publication autonomy remains open. Names and descriptions guide the model;
-  capabilities and grants enforce authority. [Options](decisions.md#delivery-autonomy).
+- Publication uses saved per-task credential grants bound to the exact task
+  definition. The agent can execute within a grant but cannot authorize or extend
+  it. [Decision and alternatives](decisions.md#delivery-autonomy).
 
 The minimum product surface is tasks, runs, and their results. Isolation, storage,
 provider, and billing details below are implementation responsibilities, not more

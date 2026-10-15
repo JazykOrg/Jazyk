@@ -1,11 +1,15 @@
 # Implementation sequence
 
 Status: first implementation is merged to master and deployed on 2026-10-15.
-The phases below remain the original work breakdown. The implemented contract is
+The [completion record](completion.md) supersedes the original first-release gaps
+and test counts below. The phases remain the original work breakdown. The implemented contract is
 [task execution](../../docs/compiler/task-runtime.md).
 Each accepted behavior enters the owning repository's `docs/` before code.
 
 ## First release
+
+This section records the initial deployment. Follow-up implementation and checks
+are in [completion](completion.md).
 
 - One flat task list, shell commands, optional images/resources/timeouts, and
   product/cache/JUnit globs are implemented.

@@ -1,7 +1,7 @@
 # Runtime and delivery plan
 
-Status: discussion draft, revised 2026-10-15. No implementation is authorized by
-this document. Accepted behavior enters `docs/` before code. These plans live in
+Status: implementation authorized by the owner on 2026-10-15, including merging
+to master and deploying jazyk.dev. Accepted behavior enters `docs/` before code. These plans live in
 `plans/runtime-delivery/` in the repository checkout.
 
 ## Start with tasks and runs

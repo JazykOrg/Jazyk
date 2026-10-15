@@ -838,3 +838,11 @@ found above the working directory is a boundary, not a capture: discovery stops 
 and the command runs ad hoc at the working directory. Explicit `[path...]` arguments
 skip discovery and run ad hoc on those files. The out directory defaults to
 `<root>/.jazyk/`.
+
+## Project task commands
+
+`jazyk tasks` lists task definitions and runtime availability. `jazyk runs` includes
+the recent run history. `jazyk run <task-id>` submits a finite task and returns its
+durable run ID. `jazyk run-status <run-id>`, `jazyk run-log <run-id>`, and
+`jazyk run-cancel <run-id>` inspect, read, and cancel it. These commands use local
+Docker without a Cloud account. See [Task execution](../compiler/task-runtime.md).

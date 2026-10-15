@@ -250,7 +250,8 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     ) || route.starts_with("/chat/")
         || route.starts_with("/jobs/")
         || route.starts_with("/trace/");
-    if route == "/sets"
+    if route == "/tasks" || route == "/runs" || route.starts_with("/runs/")
+        || route == "/sets"
         || route == "/sets/preview"
         || (parts.method == Method::GET
             && routed.selector.is_none()

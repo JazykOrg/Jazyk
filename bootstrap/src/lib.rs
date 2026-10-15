@@ -47,6 +47,7 @@ pub mod session;
 pub mod store;
 pub mod sys;
 pub mod tools;
+pub mod task_runtime;
 pub mod verify;
 pub mod vfs;
 pub mod webapi;

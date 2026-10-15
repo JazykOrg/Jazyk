@@ -575,6 +575,51 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"path": {"type": "string"}}), &[]),
         },
         ToolDef {
+            name: "task_context",
+            description: "Read the flat task list, descriptions, configuration revision, execution capabilities and recent runs.",
+            parameters: obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "update_tasks",
+            description: "Replace the flat task list using its expected revision. Preserves unrelated project settings.",
+            parameters: obj(json!({"expected_revision": {"type": "string"}, "tasks": {"type": "array", "items": crate::task_runtime::task_schema()}}), &["expected_revision", "tasks"]),
+        },
+        ToolDef {
+            name: "run_task",
+            description: "Run one task in a fresh isolated environment. Returns a durable run ID immediately. The command and fixed timeout cannot change mid-run.",
+            parameters: obj(json!({"task_id": {"type": "string"}, "expected_revision": {"type": "string"}, "operation_key": {"type": "string"}, "size": {"type": "string", "enum": ["small", "medium", "large"]}, "timeout_seconds": {"type": "integer"}}), &["task_id", "expected_revision", "operation_key"]),
+        },
+        ToolDef {
+            name: "inspect_run",
+            description: "Inspect lifecycle, command outcome, retained results and confirmed termination.",
+            parameters: obj(json!({"run_id": {"type": "string"}}), &["run_id"]),
+        },
+        ToolDef {
+            name: "wait_run",
+            description: "Wait briefly for a run update, then return its durable status. Repeating does not extend its deadline.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "wait_ms": {"type": "integer"}}), &["run_id"]),
+        },
+        ToolDef {
+            name: "cancel_run",
+            description: "Cancel queued or executing work immediately. Stops children and the container. Idempotent; available after budget exhaustion. Cancellation cannot undo external writes.",
+            parameters: obj(json!({"run_id": {"type": "string"}}), &["run_id"]),
+        },
+        ToolDef {
+            name: "read_run_log",
+            description: "Read a bounded run log slice, including after container teardown.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}), &["run_id"]),
+        },
+        ToolDef {
+            name: "search_run_log",
+            description: "Search retained run logs for literal text. Returns bounded matching lines.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "query": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}), &["run_id", "query"]),
+        },
+        ToolDef {
+            name: "read_run_changes",
+            description: "List retained file changes or read one retained path. Missing contents and partial collection are explicit.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}}), &["run_id"]),
+        },
+        ToolDef {
             name: "run_command",
             description: "Execute a shell command under the deliverable directory (cwd is deliverable-relative, default .). Returns the exit code and output tail. Use it to run the build you wrote and read its failures; record the final commands in the manifest.",
             parameters: obj(json!({"command": {"type": "string"}, "cwd": {"type": "string"}}), &["command"]),
@@ -708,10 +753,11 @@ pub fn toolset_for_kinds(kinds: &[&str]) -> Vec<&'static str> {
         }
     }
     for t in GOAL_TOOLS {
-        if !v.contains(&t) {
+        if t != "run_command" && !v.contains(&t) {
             v.push(t);
         }
     }
+    if kinds.iter().any(|k| matches!(*k, "bind" | "generate" | "verify")) { v.extend(crate::task_runtime::TOOLS); }
     v.push(FEEDBACK_TOOL);
     v.push(SPEND_TOOL);
     v
@@ -734,7 +780,7 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         // The in-process ledger workers get the file and command tools.
         if matches!(task, "generate-entity" | "bind-requirement") {
             for t in FILE_TOOLS {
-                if !v.contains(&t) {
+                if t != "run_command" && !v.contains(&t) {
                     v.push(t);
                 }
             }
@@ -797,6 +843,8 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             .collect(),
         _ => READ_TOOLS.to_vec(),
     };
+    if matches!(task, "mcp-generate" | "mcp-verify") { v.extend(crate::task_runtime::TOOLS); }
+    if task=="mcp-read" {v.extend(crate::task_runtime::TOOLS.into_iter().filter(|t|!matches!(*t,"update_tasks"|"run_task"|"cancel_run")));}
     if !v.contains(&FEEDBACK_TOOL) {
         v.push(FEEDBACK_TOOL);
     }
@@ -7562,6 +7610,13 @@ impl ToolSession {
                     &gs,
                 )
                 .map_err(|e| ToolError::new("bad-argument", e))
+            }
+            name if crate::task_runtime::TOOLS.contains(&name) => {
+                let root = crate::project::find_root(&self.gen.deliverable)
+                    .or_else(|| crate::project::find_root(&self.snapshot.out))
+                    .ok_or_else(|| ToolError::new("runtime-unavailable", "Project root not found".into()))?;
+                crate::task_runtime::call(&root, name, args)
+                    .map_err(|e| ToolError::new("task-runtime", e))
             }
             "read_text_file" | "write_text_file" | "list_files" | "run_command" => {
                 self.file_tool(name, args)

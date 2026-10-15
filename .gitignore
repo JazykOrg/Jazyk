@@ -26,3 +26,6 @@ project2/
 
 # Build caches left by checkouts from before the editor moved to jazyk-cloud/web.
 /bootstrap/app/
+
+# Persistent development worktrees.
+/.worktrees/

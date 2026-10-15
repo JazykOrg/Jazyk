@@ -365,3 +365,8 @@ They bound the endpoint and the process; session and build budgets are
   renderer behind the render seam for the process
   ([the renderer](./diagrams.md#the-renderer)). Unset, the in-process renderer draws
   every view.
+
+## Tasks
+
+The project-level `[[tasks]]` list defines finite command execution. See
+[task execution](task-runtime.md) for fields, file globs, and host limits.

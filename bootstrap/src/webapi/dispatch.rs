@@ -84,6 +84,9 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
     };
     let path = &routed.path;
     let route = path.split('?').next().unwrap_or(path);
+    if let Some(result) = crate::task_runtime::api(root, method, route, &routed.body, &routed.path) {
+        return match result { Ok(value) => ok(value), Err(message) => err(400, message) };
+    }
     let workspace = match crate::document_sets::Workspace::load(root) {
         Ok(w) => w,
         Err((status, error)) => {

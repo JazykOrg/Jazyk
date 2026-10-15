@@ -20,8 +20,9 @@ unless explicitly accepted below.
   launch direction. Cloud is the commercial priority; local remains accountless.
 - Runs belongs beside Files, using existing tabs for logs and retained changes.
 - Publication autonomy is undecided; the owner requested options.
-- Planning only. The files belong under `./plans/runtime-delivery/` in the repository
-  checkout, not a temporary directory. No implementation is requested yet.
+- Implementation, merge to master, and production deployment were authorized on
+  2026-10-15. AWS Fargate is selected for hosted execution. Plans remain under
+  `./plans/runtime-delivery/` in the repository checkout.
 
 ## Simplification tradeoffs
 

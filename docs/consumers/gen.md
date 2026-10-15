@@ -646,7 +646,9 @@ the files on disk, recomputed at every read. First match wins:
    `criteria-failing-after-generation`), a finding for the author, not more generation
    work. Without the rule a criterion that contradicts its neighbors (sort's example
    that lists unsorted output) regenerated its entity on every build.
-6. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
+6. A passing headline with any bound criterion lacking a passing verdict reads
+   `unverified` (reason `criteria-incomplete`). A headline cannot hide an unrun,
+   skipped, or interrupted case. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
    → `unimplemented` (the requirement is [bound](./bind.md) but nothing implements it:
    generation work, and the bound test is its acceptance gate; after a generation over
    the current facts it reads `failing` by the same rule); `fail` with

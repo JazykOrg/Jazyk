@@ -309,6 +309,13 @@ pub fn run_build(
     let Some(b) = Ledger::load(out).build.clone() else {
         return Ok(());
     };
+    if let Some(id) = b.run.strip_prefix("task:") {
+        let root = crate::task_runtime::project_root(out)?;
+        let (_, result) = crate::task_runtime::execute(&root,id)?;
+        let success = result["status"] == "succeeded" && result["complete"] == true;
+        record_build_run(out,success,result["log"].as_str().unwrap_or("No log output"));
+        return if success { Ok(()) } else { Err("Build task did not complete successfully. Inspect its run log.".into()) };
+    }
     let cwd = gs.deliverable.join(&b.cwd);
     trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
     let done = crate::sys::run_shell(&b.run, &cwd)
@@ -1217,7 +1224,7 @@ pub fn decide_medium(
 // carried by the context pack.
 pub fn instructions() -> String {
     include_str!("../../docs/compiler/goals/prompts/generate-contract.md")
-        .replace("{GROUP}", &GROUP.to_string())
+        .replace("{GROUP}", &GROUP.to_string()) + "\n\n" + crate::task_runtime::PROMPT
 }
 
 // The change diff for one entity versus the ledger.

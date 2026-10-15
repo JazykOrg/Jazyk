@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [features]
 default = ["native-documents"]
-native-documents = ["dep:docx-rs", "dep:pdfium-render", "dep:sha2", "dep:tempfile", "dep:zip"]
+native-documents = ["dep:docx-rs", "dep:pdfium-render", "dep:tempfile", "dep:zip"]
 document-proof = ["native-documents"]
 
 [[example]]
@@ -29,6 +29,8 @@ serde_json = "1"
 toml = "0.8.23"
 toml_edit = "0.22.27"
 globset = "0.4"
+sha2 = "0.10"
+quick-xml = "0.38"
 base64 = "0.22"
 serde_norway = "0.9"
 regex = "1.12.4"
@@ -66,7 +68,6 @@ jsonc-parser = { version = "0.33.1", features = ["serde", "serde_json"] }
 # Native format readers. Minimal builds can disable the default feature.
 docx-rs = { version = "=0.4.22", default-features = false, optional = true }
 pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"], optional = true }
-sha2 = { version = "0.10", optional = true }
 tempfile = { version = "3", optional = true }
 zip = { version = "8.6", default-features = false, features = ["deflate"], optional = true }
 # Diagram renderer (docs/compiler/diagrams.md): PlantUML reimplemented in Rust, Graphviz

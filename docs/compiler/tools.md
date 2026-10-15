@@ -899,3 +899,8 @@ serving carries the read tools, `report_feedback`, and `await_changes`
   write tools: a chat edit moves the prose and the graph together or not at all.
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).
+
+## Task runtime tools
+
+[Task execution](task-runtime.md#tools-and-access) supplies the shared task and run
+tools to generation, binding, verification, writable MCP, and ACP sessions.

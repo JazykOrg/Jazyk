@@ -16,7 +16,7 @@ use std::path::Path;
 // The bind contract, served as begin_binding instructions and as the internal
 // session's package preamble. Mirrors docs/consumers/bind.md#the-bind-goal.
 pub fn instructions() -> String {
-    include_str!("../../docs/compiler/goals/prompts/bind-contract.md").into()
+    format!("{}\n\n{}",include_str!("../../docs/compiler/goals/prompts/bind-contract.md"),crate::task_runtime::PROMPT)
 }
 
 // Why an existing row owes a bind, or None when it is current: the statement moved

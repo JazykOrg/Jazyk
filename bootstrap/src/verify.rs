@@ -37,6 +37,11 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if crate::gen::hash_implementing(&store.out, gs, &row.files) != row.hashes.files {
         return ("stale-code".into(), "code-changed".into());
     }
+    for cid in store.criteria_of(rid) {
+        let Some(test)=row.tests.get(&cid) else{return ("unverified".into(),"criterion-unbound".into())};
+        if store.graph.criteria.get(&cid).is_some_and(|c|hash_hex(&c.statement)!=test.criterion_hash) {return ("stale-requirement".into(),"criterion-changed".into());}
+        if hash_file(&artifact_path(&store.out,gs,&test.test))!=test.test_hash {return ("stale-test".into(),"criterion-test-changed".into());}
+    }
     // Criteria judged one by one: files present with some criterion tests green and
     // some red is a partly implemented requirement, generation work like an
     // unimplemented one, never a contradiction
@@ -61,6 +66,11 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if !row.files.is_empty() && crit_pass > 0 && crit_fail > 0 {
         return ("partial".into(), "criteria-failing".into());
     }
+    // Every required criterion needs conclusive current evidence. A passing
+    // headline must not hide skipped or unexecuted members of a suite.
+    if row.verdict == "pass" && row.tests.values().any(|test| test.verdict != "pass") {
+        return ("unverified".into(), "criteria-incomplete".into());
+    }
     match row.verdict.as_str() {
         "pass" => ("verified".into(), "passed".into()),
         // A failing test with nothing implementing it is not a defect, it is a bound
@@ -81,7 +91,7 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
 fn artifact_names(artifact: &std::path::Path, name: &str) -> bool {
     !name.trim().is_empty()
         && crate::vfs::read_to_string(artifact)
-            .map(|c| c.contains(name))
+            .map(|c| c.contains(name) || name.rsplit_once("::").is_some_and(|(_,case)|c.contains(case)))
             .unwrap_or(false)
 }
 
@@ -587,6 +597,22 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
 // are listed as skipped and go through record_verdict.
 // Mirrors docs/compiler/tools.md#verification-tools.
 pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
+    let ledger = Ledger::load(&store.out);
+    let mut tasks = std::collections::BTreeSet::new();
+    for (rid,row) in &ledger.requirements {
+        if !targets.is_empty() && !targets.iter().any(|t|store.resolve_id(t)==rid||store.resolve_id(t)==row.entity) {continue;}
+        for test in std::iter::once(&row.test).chain(row.tests.values().map(|t|&t.test)) {
+            if test.kind=="programmatic" {if let Some(id)=test.run.strip_prefix("task:"){tasks.insert(id.to_string());}}
+        }
+    }
+    if !tasks.is_empty() {
+        let root=crate::task_runtime::project_root(&store.out)?;let mut runs=Vec::new();
+        for id in tasks {
+            let (run_id,result)=crate::task_runtime::execute(&root,&id)?;
+            runs.push(json!({"id":run_id,"task":id,"state":result["status"],"tests":result["tests"]}));
+        }
+        return Ok(json!({"runs":runs,"note":"Per-case evidence is imported only for unchanged tested inputs. LLM criteria require record_verdict."}));
+    }
     let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
     if crate::vfs::is_scoped() {
         return Ok(json!({"passed":0,"failed":0,"rows":[],"pendingCi":true,"pending":select_rows(store,gs,targets,Some("programmatic"),true),"reason":"programmatic tests run through delivery CI"}));
@@ -1539,6 +1565,8 @@ pub fn run_all(
         crate::gen::run_build(&store.out, gs, trace, "verify")
             .map_err(|e| format!("{}; nothing was verified", e))?;
     }
+    let task_rows:Vec<String>=selected.iter().filter_map(|r|r["requirement"].as_str()).filter(|rid|Ledger::load(&store.out).requirements.get(*rid).is_some_and(|row|row.test.run.starts_with("task:")||row.tests.values().any(|t|t.test.run.starts_with("task:")))).map(String::from).collect();
+    if !task_rows.is_empty() {run_selected(store,gs,&task_rows)?;}
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     // Failed programmatic runs, judged together at the end of the run.
     let mut held: Vec<(String, ProgRun, String)> = Vec::new();
@@ -1559,6 +1587,12 @@ pub fn run_all(
             continue;
         }
         let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
+        if row_kind!="llm" && task_rows.contains(&rid) {
+            let ledger=Ledger::load(&store.out);
+            let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);
+            match status.as_str(){"verified"=>verified+=1,"failing"|"partial"=>failing+=1,_=>skipped+=1}
+            continue;
+        }
         if crate::vfs::is_scoped() && row_kind != "llm" {
             skipped += 1;
             continue;
@@ -1726,7 +1760,7 @@ pub fn run_all(
         .count();
     Ok(json!({
         "rows": selected.len(),
-        "pendingCi": if crate::vfs::is_scoped() { selected.iter().filter(|r| r["test"]["kind"] != "llm").cloned().collect::<Vec<_>>() } else { Vec::new() },
+        "pendingCi": if crate::vfs::is_scoped() { selected.iter().filter(|r| r["test"]["kind"] != "llm" && !task_rows.iter().any(|id| r["requirement"]==*id)).cloned().collect::<Vec<_>>() } else { Vec::new() },
         "verified": verified,
         "failing": failing,
         "runnerFailed": runner_failed,

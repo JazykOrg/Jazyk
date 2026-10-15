@@ -1214,6 +1214,10 @@ pub fn session_prompt_elided(
     }
     s.push('\n');
     s.push_str(&project_block.render());
+    if batch.iter().any(|g| matches!(g.kind.as_str(), "bind" | "generate" | "verify")) {
+        s.push_str("\n## Task execution\n");
+        s.push_str(crate::task_runtime::PROMPT);
+    }
     s.push_str("\n## Goals\n");
     // The contract paragraph renders once per kind, under the first goal of that kind;
     // later goals of the kind point at it. Mirrors docs/compiler/sessions.md#the-prompt.

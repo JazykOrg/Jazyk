@@ -12,6 +12,7 @@ use std::sync::{
 pub type Snapshot = BTreeMap<String, Vec<u8>>;
 pub type ModelTransport = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 pub use crate::session::TraceSink;
+pub type RuntimeTransport = Arc<dyn Fn(&Value) -> Result<Value, String> + Send + Sync>;
 pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
 
 /// Text projections for authored revisions and delivery, not a verification verdict.
@@ -28,6 +29,7 @@ pub struct Projection {
 pub struct Execution {
     pub model: String,
     pub transport: Option<ModelTransport>,
+    pub runtime: Option<RuntimeTransport>,
     pub trace: Option<TraceSink>,
     pub events: Option<EventSink>,
     pub cancel: Arc<AtomicBool>,
@@ -73,6 +75,14 @@ impl Workspace {
             }
         }
         Ok(Self { files })
+    }
+
+    /// Apply retained task outputs through the same isolated workspace filesystem.
+    pub fn apply_task_result(&mut self, task: &crate::task_runtime::Task, input: &std::collections::BTreeMap<String,String>, result: &Value, id: &str) -> Result<Value,String> {
+        let fs = crate::vfs::Scope::enter(&self.files);
+        let value = crate::task_runtime::apply_result(&crate::portable::root(),task,input,result,id)?;
+        self.files = fs.snapshot();
+        Ok(value)
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -284,6 +294,10 @@ impl Drop for ExecutionScope {
 }
 fn execution() -> Execution {
     EXECUTION.with(|e| e.borrow().clone().expect("hosted execution context"))
+}
+
+pub fn runtime(request: &Value) -> Result<Value, String> {
+    execution().runtime.ok_or("Hosted task runtime is not configured")?(request)
 }
 
 pub fn root() -> PathBuf {

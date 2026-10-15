@@ -13,6 +13,11 @@ revision on the next call. Inspect the run's status, logs,
 retained changes, products, and per-case results. Repair owned files and start a
 fresh run when useful. Every run shuts down. No live shell or deadline extension
 exists. Cancel obsolete or runaway work with cancel_run, including during execution.
+When repairing generated files through Jazyk's file tools, call begin_generation
+for their owning entity before writing. Recording ends that claim; a later repair
+claims the entity again, even if generation_tasks lists no new work.
+After changing generated files, refresh the manifest with record_generation, then
+run_tests again so the final evidence describes the recorded files.
 Use wait_run while work is pending. Confirm terminated before claiming shutdown.
 The command can have state succeeded while cleanup is still running. If terminated
 is false, wait again before ending the execution request.

@@ -367,7 +367,7 @@ serving; what it claims is a batch:
 
 ## Generation and verification over MCP
 
-Binding and generation are stateless on the server: `begin_binding` and
+Binding and generation keep no staged graph batch: `begin_binding` and
 `begin_generation` return the package, the agent searches, edits files, and runs
 commands with its own tools, `record_binding` records the row and
 `record_generation` the manifest. The binding package carries the requirement's
@@ -376,10 +376,15 @@ and `record_medium` records the agent's decision before anything is written
 ([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)). There is no batch in these lifecycles, so a graph write outside one is refused with a
 note that names the channel: a contradiction the tests expose reaches the author
 through the `failing-binding` check once the row is recorded, since a Codex session
-generating a handbook tried `report_diagnostic` for one. Jazyk deliberately serves no
-file-editing tools here; a
-coding agent brings its own, and the in-process worker's file tools
-([generation tools](../compiler/goals/generate.md#tools)) are not served over MCP.
+generating a handbook tried `report_diagnostic` for one. A coding agent can bring its
+own file tools. With `--serve-files`, the serving exposes the
+[generation file tools](../compiler/goals/generate.md#file-and-command-tools).
+The latest successful `begin_generation` or `begin_binding` sets their ownership
+target within that document set. A write renews that target's claim and refuses
+another worker's live claim. Successful recording releases the claim and clears the
+target; a rejected record keeps it available for repair. Editing a recorded entity
+again starts with `begin_generation`, including a repair a human requested when no
+generation goal is owed. A serving pinned to a goal keeps that goal's ownership scope.
 The `bind`, `generate`, and `verify` goals on the board are the same rows these
 lifecycles claim: resolving a row resolves its goal. Each task row carries the goal's
 `ready` flag and, when it is not ready, `blockedBy` with the board's reason; when every

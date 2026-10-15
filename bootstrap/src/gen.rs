@@ -513,9 +513,13 @@ pub struct RawSite {
 // carrying other alphanumeric content is left alone: the harness never mangles code.
 // Mirrors docs/consumers/gen.md#traceability.
 pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
+    strip_markers_in(text, None)
+}
+
+fn strip_markers_in(text: &str, set_id: Option<&str>) -> (String, Vec<RawSite>) {
     // `(?:req:)+` folds a doubled prefix (`req:req:orders-1`, a model pasting the
     // full id after a template's literal `req:`) into one clean site.
-    let re = regex::Regex::new(r"(?:req:)+([A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})")
+    let re = regex::Regex::new(r"(?:req:)+((?:ds_[A-Za-z0-9_-]+::)?[A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})")
         .unwrap();
     let mut clean: Vec<&str> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
@@ -523,8 +527,11 @@ pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
     for line in text.lines() {
         if let Some(c) = re.captures(line) {
             let rest = line.replacen(c.get(0).unwrap().as_str(), "", 1);
-            if !rest.chars().any(|ch| ch.is_alphanumeric()) {
-                pending.push(format!("req:{}", &c[1]));
+            let rid = format!("req:{}", &c[1]);
+            let (scope, local) = crate::webapi::sets::unqualify(&rid);
+            let matches_set = set_id.is_none() || scope.is_none() || scope.as_deref() == set_id;
+            if matches_set && !rest.chars().any(|ch| ch.is_alphanumeric()) {
+                pending.push(if set_id.is_some() { local } else { rid });
                 continue;
             }
         }
@@ -1945,14 +1952,14 @@ pub fn mark(
     // never reads green over a broken wire format.
     // Mirrors docs/consumers/gen.md#traceability.
     let malformed_re =
-        regex::Regex::new(r"req:[A-Za-z0-9][A-Za-z0-9_-]*\s+hash:[0-9a-fA-F]{4,}").unwrap();
+        regex::Regex::new(r"req:(?:ds_[A-Za-z0-9_-]+::)?[A-Za-z0-9][A-Za-z0-9_-]*\s+hash:[0-9a-fA-F]{4,}").unwrap();
     let mut marker_warnings: Vec<String> = Vec::new();
     for f in &files {
         let path = gs.deliverable.join(f);
         let Ok(text) = crate::vfs::read_to_string(&path) else {
             continue;
         };
-        let (clean, raw) = strip_markers(&text);
+        let (clean, raw) = strip_markers_in(&text, store.out.file_name().and_then(|s| s.to_str()));
         for (i, line) in clean.lines().enumerate() {
             if marker_warnings.len() >= 20 {
                 break;
@@ -2866,6 +2873,29 @@ mod tests {
         let moved = "a\nb\nc\nd\nfunction trim(line) {\n";
         assert_eq!(locate_head(moved, &sites[0].head, 3), Some((5, false)));
         assert_eq!(locate_head("nothing here\n", &sites[0].head, 3), None);
+    }
+
+    #[test]
+    fn qualified_source_markers_anchor_only_their_document_set() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = Path::new("/project/.jazyk/ds_main");
+        let (store, gs) = fixture(out);
+        let path = gs.deliverable.join("src/cart.rs");
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(&path, "// req:ds_main::shop-1 hash:deadbeef\nfn cart() {}\n// req:ds_other::shop-1 hash:deadbeef\nfn other() {}\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn checks_cart() {}\n").unwrap();
+        mark(&store, "ent:cart", None, &serde_json::json!({"files":["src/cart.rs"],"tests":[{
+            "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs","name":"checks_cart","run":"true"
+        }]}), &gs).unwrap();
+        let ledger = Ledger::load(out);
+        let sites = &ledger.requirements["req:shop-1"].sites;
+        assert_eq!(sites.len(), 1);
+        assert_eq!(sites[0].head, "fn cart() {}");
+        assert_eq!(sites[0].line, 1);
+        let source = crate::vfs::read_to_string(path).unwrap();
+        assert!(!source.contains("req:ds_main::"));
+        assert!(source.contains("req:ds_other::shop-1"));
     }
 
     #[test]

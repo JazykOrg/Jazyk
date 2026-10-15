@@ -504,6 +504,10 @@ two carriers:
   cannot parse (trailing text after the hash, a mangled id) stays in the file, anchors
   nothing, and the record reply names it under `markerWarnings`. The deliverable
   carries no Jazyk metadata; the binding lives in the out directory.
+- A marker may use a local requirement ID or the current document set's qualified
+  ID, e.g. `req:ds_main::catalog-3`. Recording resolves the latter to the local
+  requirement. A marker naming another document set remains unchanged and anchors
+  nothing in this set.
 
 The division of labor: the worker owns localization (it knows where each requirement
 lands while it writes), the harness owns anchoring (recording, locating, healing).

@@ -4305,6 +4305,11 @@ impl ToolSession {
                 if let Some(owner) =
                     crate::gen::file_owner(&self.snapshot, &ledger, &self.scope.gen_target(), &rel)
                 {
+                    if self.scope.gen_target().is_empty() {
+                        return Err(ToolError::new("file-owned", format!(
+                            "`{rel}` is recorded for entity `ent:{owner}`. Call begin_generation for that entity before repairing its files; successful record_generation ends the previous claim."
+                        )));
+                    }
                     return Err(ToolError::new(
                         "file-owned",
                         format!(

@@ -48,6 +48,8 @@ pub struct McpServer {
     // for more work afterwards is told the session is complete instead of bouncing
     // between wrong-target and stale-batch refusals.
     finished: std::sync::Mutex<Option<String>>,
+    // Ownership for optional file tools between a ledger begin and successful record.
+    ledger_target: std::sync::Mutex<Option<String>>,
 }
 
 #[derive(Default)]
@@ -380,6 +382,7 @@ impl McpServer {
             bridge,
             delivered: std::sync::Mutex::new(Delivered::default()),
             finished: std::sync::Mutex::new(None),
+            ledger_target: std::sync::Mutex::new(None),
         }
     }
 
@@ -2626,11 +2629,6 @@ impl McpServer {
                         }
                     }
                 }
-                if name == "record_generation" {
-                    if let Some(ent) = args["entity"].as_str() {
-                        crate::control::release_lease(&self.out, ent);
-                    }
-                }
                 // Binding rides the same control plane: it writes test files into the
                 // deliverable, so the generate release gates it, and the requirement
                 // lease makes the claim exclusive.
@@ -2667,12 +2665,16 @@ impl McpServer {
                         }
                     }
                 }
-                if name == "record_binding" {
-                    if let Some(rid) = args["requirement"].as_str() {
-                        crate::control::release_lease(&self.out, rid);
+
+                if matches!(name.as_str(), "record_generation" | "record_binding") {
+                    if let Some(target) = args[if name == "record_generation" { "entity" } else { "requirement" }].as_str() {
+                        if let Some(lease) = crate::control::leases(&self.out).get(target) {
+                            if lease.worker != self.worker_id() {
+                                return Ok(text_result(json!({"error":{"rule":"claimed","message":format!("{target} is claimed by worker {}; wait for that claim to finish.", lease.worker)}}), true));
+                            }
+                        }
                     }
                 }
-
                 if crate::task_runtime::TOOLS.contains(&name.as_str()) {
                     return match crate::task_runtime::call(&self.project.root,&name,&args) {
                         Ok(value)=>Ok(text_result(value,false)),
@@ -2703,6 +2705,13 @@ impl McpServer {
                     .and_then(crate::goals::parse_goal_id)
                 {
                     scope.target = target.to_string();
+                } else if let Some(target) = self.ledger_target.lock().unwrap().clone() {
+                    if name == "write_text_file" {
+                        if let Err(holder) = crate::control::claim(&self.out, &target, &self.worker_id()) {
+                            return Ok(text_result(json!({"error":{"rule":"claimed","message":format!("{target} is claimed by worker {holder}; wait or begin another entity.")}}), true));
+                        }
+                    }
+                    scope.target = target;
                 }
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
@@ -2712,6 +2721,20 @@ impl McpServer {
                     self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
                 match session.dispatch(&name, &args) {
                     Ok(v) => {
+                        if matches!(name.as_str(), "begin_generation" | "begin_binding") {
+                            if let Some(target) = args[if name == "begin_generation" { "entity" } else { "requirement" }].as_str() {
+                                let previous = self.ledger_target.lock().unwrap().replace(target.to_owned());
+                                if let Some(previous) = previous.filter(|p| p != target) {
+                                    self.release_own_ledger_claim(&previous);
+                                }
+                            }
+                        } else if matches!(name.as_str(), "record_generation" | "record_binding") {
+                            if let Some(target) = args[if name == "record_generation" { "entity" } else { "requirement" }].as_str() {
+                                self.release_own_ledger_claim(target);
+                                let mut current = self.ledger_target.lock().unwrap();
+                                if current.as_deref() == Some(target) { *current = None; }
+                            }
+                        }
                         if is_graph_write && !session.staged.is_empty() {
                             // graph --write: each call commits as its own changeset.
                             // The commit writes its change records, so the next
@@ -2730,7 +2753,14 @@ impl McpServer {
                         }
                         Ok(text_result(v, false))
                     }
-                    Err(e) => Ok(text_result(e.to_value(), true)),
+                    Err(e) => {
+                        if matches!(name.as_str(), "begin_generation" | "begin_binding") {
+                            if let Some(target) = args[if name == "begin_generation" { "entity" } else { "requirement" }].as_str() {
+                                self.release_own_ledger_claim(target);
+                            }
+                        }
+                        Ok(text_result(e.to_value(), true))
+                    }
                 }
             }
         }
@@ -2742,6 +2772,12 @@ impl McpServer {
 // one atomic commit. Mirrors docs/compiler/tools.md#chat-tools and
 // docs/frontends/acp.md#dual-write-tools.
 impl McpServer {
+    fn release_own_ledger_claim(&self, target: &str) {
+        if crate::control::leases(&self.out).get(target).is_some_and(|lease| lease.worker == self.worker_id()) {
+            crate::control::release_lease(&self.out, target);
+        }
+    }
+
     // Write a document (or jazyk.toml) edit: through the delegating sink when the
     // spawning proxy listens, straight to disk otherwise.
     // Mirrors docs/frontends/acp.md#doc-edit-delegation.
@@ -3804,6 +3840,35 @@ mod tests {
         let r = write(&serving("g:generate:ent:tool"));
         assert!(r["isError"].as_bool().unwrap_or(false), "{}", r);
         assert!(r.to_string().contains("file-owned"), "{}", r);
+
+        // A general MCP serving has no pinned goal. Its begin establishes the
+        // file owner until a successful record, including a later explicit repair.
+        let server = McpServer::with_bridge(
+            project.clone(), out.clone(), vec!["generate".into()], false,
+            BridgeFlags { serve_files: true, ..Default::default() },
+        );
+        let call = |name: &str, args: Value| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+        let begun = call("begin_generation", json!({"entity":"ent:receipt"}));
+        assert!(!begun["isError"].as_bool().unwrap_or(false), "{begun}");
+        let package: Value = serde_json::from_str(begun["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(!write(&server)["isError"].as_bool().unwrap_or(false));
+        let bad = call("record_generation", json!({"entity":"ent:receipt","factHash":package["factHash"]}));
+        assert_eq!(bad["isError"], true);
+        assert!(crate::control::leases(&out).contains_key("ent:receipt"));
+        assert!(!write(&server)["isError"].as_bool().unwrap_or(false));
+        let args = json!({"entity":"ent:receipt","factHash":package["factHash"],"manifest":{"files":["handbook/claim.md"],"tests":[]}});
+        let recorded = call("record_generation", args.clone());
+        assert!(!recorded["isError"].as_bool().unwrap_or(false), "{recorded}");
+        assert!(!crate::control::leases(&out).contains_key("ent:receipt"));
+        assert!(write(&server).to_string().contains("begin_generation"));
+        let begun = call("begin_generation", json!({"entity":"ent:receipt"}));
+        assert!(!begun["isError"].as_bool().unwrap_or(false), "{begun}");
+        assert!(!write(&server)["isError"].as_bool().unwrap_or(false));
+        crate::control::release_lease(&out, "ent:receipt");
+        crate::control::claim(&out, "ent:receipt", "another-worker").unwrap();
+        assert!(write(&server).to_string().contains("claimed"));
+        assert!(call("record_generation", args).to_string().contains("claimed"));
+        assert_eq!(crate::control::leases(&out)["ent:receipt"].worker, "another-worker");
         crate::vfs::remove_dir_all(&dir).ok();
     }
 

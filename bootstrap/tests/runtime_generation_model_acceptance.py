@@ -100,15 +100,14 @@ reports=["reports/*.xml"]
         assert tests, 'No tests generated'
         mcp = MCP(binary, root, a.engine, 'generate,verify', timeout=120)
         def status():
-            package = mcp.tool('begin_generation', entity='ent:greeter')
-            rows = package['boundTests']
-            assert len(rows) == 1, rows
-            return rows[0]['status']
+            return mcp.tool('begin_verification', requirement='req:greeting')['status']
         assert status() == 'verified'
+        result['generated_and_verified'] = True
         (root / 'greet.py').write_text('def greeting():\n    return "BROKEN"\n')
         broken = mcp.tool('run_tests', all=True)
         (evidence / 'falsification.json').write_text(json.dumps(broken, indent=2))
         assert status() == 'failing', broken
+        result['falsified'] = True
         prompt('The test now fails because greet.py was deliberately broken. Inspect the failure and repair the implementation to satisfy the documented requirement. Preserve the generated test and runner.py. Run the bound check again and report its actual verdict.')
         assert status() == 'verified'
         assert (root / 'runner.py').read_text() == RUNNER
@@ -118,8 +117,8 @@ reports=["reports/*.xml"]
         assert {'succeeded', 'failed'} <= {r['state'] for r in runs}, runs
         result.update(passed=True, seconds=round(time.monotonic()-started, 2), calls=[c.get('title') for c in agent.calls], runs=len(runs))
         print('PASS', json.dumps(result), flush=True)
-    except Exception as error:
-        result.update(error=str(error), seconds=round(time.monotonic()-started, 2), calls=[c.get('title') for c in agent.calls])
+    except (Exception, KeyboardInterrupt) as error:
+        result.update(error=str(error) or type(error).__name__, seconds=round(time.monotonic()-started, 2), calls=[c.get('title') for c in agent.calls])
         raise
     finally:
         (evidence / 'result.json').write_text(json.dumps(result, indent=2))

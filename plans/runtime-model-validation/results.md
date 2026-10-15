@@ -152,3 +152,28 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - A smaller live generation fixture is now running through MCP: one Python function,
   one generated test, the supplied unittest-to-JUnit adapter, actual Podman execution,
   deliberate source falsification, and model repair while preserving the test.
+
+## Sixth investigation
+
+- The small Gemma fixture generated working Python source and a behavioral test,
+  recorded its qualified JUnit binding, and passed in Podman. Deliberately replacing
+  the implementation made that test fail. Repair then exposed a real MCP defect:
+  an unpinned serving lost its file ownership target between calls, so even a fresh
+  `begin_generation` could not edit its own previously recorded source.
+- Optional MCP file tools now retain the successful begin's target until recording
+  succeeds. Rejected records retain the claim. Writes renew it, and another worker's
+  live claim blocks both writes and recording. A regression covers initial writes,
+  rejected recording, successful recording, later repair, and competing ownership.
+- The generated source also used a document-set-qualified requirement marker. The
+  recorder now accepts the current set's qualified IDs, strips their markers, and
+  stores local anchors. Markers for another set remain untouched. The targeted
+  source-anchoring regression passed.
+- The independent fixture observer now reads `begin_verification` instead of taking
+  a generation lease just to inspect status. Interrupted fixtures retain an explicit
+  failure and completed phase flags. The first repair attempt was stopped after the
+  reproduced ownership refusal; it is not a complete generation-and-repair pass.
+- The execution contract now explains claiming an existing entity for repair and
+  recording the refreshed manifest before rerunning bound tests. A fresh full loop
+  is running with those fixes.
+- Full compiler regression suite: 674 passed, 3 ignored. Relative links and anchors
+  in all 20 changed documentation files resolve, with no em dashes.

@@ -456,7 +456,7 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     let host = dispatch(root, &request);
     if name == "task_context" {
         return Ok(
-            json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"size":"small","timeout_seconds":300}}),
+            json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}}),
         );
     }
     host

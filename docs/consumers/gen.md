@@ -122,7 +122,8 @@ medium:
   follow it.
 - `produced: written` means the generated files are the deliverable. `produced: built`
   means they are the source that produces `artifact`, and [the build](#the-build) runs
-  it.
+  it. If a written medium names an `artifact`, that file remains implementation.
+  It belongs in the generation manifest and participates in code-change detection.
 - Every goal package carries the decision, and every goal's instructions state it as a
   fact rather than asking again. A session that generates under `produced: built` writes
   source, never the artifact itself and never prose about it.
@@ -644,7 +645,7 @@ the files on disk, recomputed at every read. First match wins:
    `jazyk test` refuses to run the row and says so.
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
 4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun. The hash
-   covers the implementing files alone: the medium's `artifact` and every path the
+   covers the implementing files alone: a built medium's `artifact` and every path the
    build `produces` are output the tests inspect, rebuilt with fresh bytes on every run
    (a deck's zip carries new timestamps), so a row listing them would read `stale-code`
    after each run and its verify goal would never close, which the slides example did

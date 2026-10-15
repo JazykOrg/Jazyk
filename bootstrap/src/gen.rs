@@ -697,14 +697,14 @@ pub fn hash_files(gs: &GenSettings, files: &[String]) -> String {
     hash_hex(&acc)
 }
 
-// Output is never implementation: the medium's artifact and every path the build
+// Output is never implementation: a built medium's artifact and every path the build
 // produces are rebuilt on every run (a deck's zip carries fresh timestamps), so a row
 // listing them would read stale-code after each run and its verify goal would never
 // close. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
 pub fn build_outputs(ledger: &Ledger) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::new();
     if let Some(m) = &ledger.medium {
-        if !m.artifact.trim().is_empty() {
+        if m.produced == "built" && !m.artifact.trim().is_empty() {
             out.insert(m.artifact.trim().trim_start_matches("./").to_string());
         }
     }
@@ -3232,6 +3232,35 @@ mod tests {
     }
 
     #[test]
+    fn written_artifact_is_implementation_and_detects_code_changes() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = Path::new("/project/.jazyk/ds_main");
+        let (store, gs) = fixture(out);
+        let mut ledger = Ledger::load(out);
+        ledger.medium = Some(Medium {
+            form: "POSIX shell script".into(),
+            produced: "written".into(),
+            toolchain: "sh".into(),
+            artifact: "hello.sh".into(),
+        });
+        ledger.save(out);
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(gs.deliverable.join("hello.sh"), "printf 'hello\\n'\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/hello.sh"), "# checks_hello\nsh hello.sh\n").unwrap();
+        mark(&store, "ent:cart", None, &serde_json::json!({
+            "files": ["hello.sh"],
+            "tests": [{"requirement": "req:shop-1", "kind": "programmatic",
+                "artifact": "tests/hello.sh", "name": "checks_hello", "run": "sh tests/hello.sh"}]
+        }), &gs).unwrap();
+        let ledger = Ledger::load(out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.files, vec!["hello.sh"]);
+        assert_eq!(crate::verify::status_of(&store, "req:shop-1", row, &gs).0, "unverified");
+        crate::vfs::write(gs.deliverable.join("hello.sh"), "printf 'changed\\n'\n").unwrap();
+        assert_eq!(crate::verify::status_of(&store, "req:shop-1", row, &gs).0, "stale-code");
+    }
+
+    #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
@@ -3244,6 +3273,7 @@ mod tests {
             artifact: "jazyk.pptx".into(),
         });
         ledger.save(&out);
+        assert!(build_outputs(&ledger).contains("jazyk.pptx"));
         // The decision reaches the task package.
         let task = task_package(&s, "ent:cart", &gs).unwrap();
         assert_eq!(task["medium"]["produced"], "built");

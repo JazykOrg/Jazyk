@@ -306,8 +306,26 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - The repeated native generation benchmark chose LLM criteria for executable output
   assertions and scored 2/4. The prompts now distinguish a suggested criteria path from
   choosing judgment, and require executable tests for runtime behavior. Its paired
-  text benchmark is still running. A real chat release/bind/generate/test/repair case
-  is queued behind it, with one local model request active at a time.
+  text benchmark scored 0/4 after 22 rounds. It exposed the written-artifact bug
+  described below. A real chat release/bind/generate/test/repair case follows it,
+  with one local model request active at a time.
 - `cargo fmt --check` still reports pre-existing formatting differences across the
   repository. This change does not reformat unrelated code. Changed documentation
   links and anchors resolve, and changed docs contain no em dashes.
+
+## Written-artifact regression
+
+- The full text worker chose a written POSIX shell deliverable and named `hello.sh`
+  as its artifact. Its generation manifest repeatedly failed because the harness
+  incorrectly excluded every medium artifact as build output, including written
+  files. The failure was in the compiler, not just the model's retries.
+- Only a built medium's artifact is excluded now. The regression records a written
+  artifact successfully and confirms that editing it produces `stale-code`.
+  Built artifact exclusion remains covered. All 36 generation unit tests passed.
+- The same transcript guessed the project's directory name as a task cwd prefix.
+  `task_context` now supplies `projectRoot` and default cwd `.`. The execution
+  contract explains how to convert the package's deliverable path and keep globs
+  rooted at the project. Fresh model evidence is still required for these fixes.
+- The full compiler suite passed 681 tests with 3 optional tests ignored and one
+  timing failure: pruning took 5.73 seconds against a 5-second bound under load.
+  That unchanged timing test passed when rerun alone. No threshold was relaxed.

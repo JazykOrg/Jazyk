@@ -105,6 +105,11 @@ Cloud, local MCP, and ACP use `task_context`, `update_tasks`, `run_task`,
 Task definitions and execution do not require a compiled graph or a selected
 document set. Read-only clients cannot edit or execute. Client transport does not choose the
 execution location. All reads are bounded and historical reads allocate no runtime.
+`task_context` includes `projectRoot` and the default `cwd` of `.`. A generation
+package's absolute deliverable path is made relative to `projectRoot` for a task's
+`cwd`. When those paths are equal, `cwd` is `.`. The project directory's own name
+is not a path prefix inside the snapshot. Product, cache, and report globs remain
+relative to that root even when the command uses another `cwd`.
 
 Generation and binding receive the execution prompt and task descriptions. They
 reuse tasks, repair owned files, and run focused checks within a cumulative budget.

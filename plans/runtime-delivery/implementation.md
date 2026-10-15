@@ -23,6 +23,11 @@ Each accepted behavior enters the owning repository's `docs/` before code.
   charged runtime usage, and confirmed cancellation. No test containers remain.
 - The release preserved existing production project content. Live Chrome verified
   settings persistence, Runs, Files, and accountless offline reopening.
+- An additional two-run production check used a digest-pinned Alpine Python image.
+  Both fresh containers verified project documentation, source, tests, and settings.
+  The second restored the first container's random cache data and read its imported
+  product. Text and binary products matched retained downloads byte-for-byte.
+  Scratch files did not persist. Both commands exited zero and both containers stopped.
 - Engine verification passed 655 tests. The ARM API passed 91 tests and its
   PostgreSQL integration test. Editor verification included 417 unit tests and
   browser suites. A compatible previous API binary is installed for rollback.

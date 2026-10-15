@@ -252,8 +252,11 @@ Identity is the tool name plus its arguments verbatim, counted per open batch. A
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
 see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its
-render is fresh. `done`, `mark_goal_done`, and
-`mark_goal_failed` are exempt; repairing a rejected claim legitimately repeats it.
+render is fresh. `done`, `mark_goal_done`, `mark_goal_failed`, `record_generation`,
+and `record_binding` are exempt. Repairing files after a rejected record legitimately
+repeats the same manifest or binding, even after several earlier refusals. Recording
+still checks the current files, hashes, ownership, and evidence. The embedded agent's
+failed-call bound still stops consecutive failures.
 `settle_pairs` is exempt as a whole and counts its accepted entries instead: an entry
 re-sent verbatim after it was accepted is marked on the second send and refused on the
 third, while a rejected entry can be repaired and re-sent. The guard lives in the
@@ -313,15 +316,17 @@ served more than the graph tools and finish through the ledger:
 - The toolset adds the kind's ledger tools, `record_binding`, `record_generation`,
   `record_verdict`, and `run_tests` ([binding](./tools.md#binding-tools),
   [generation](./tools.md#generation-tools), [verification](./tools.md#verification-tools)),
-  and the [file and command tools](./goals/generate.md#file-and-command-tools)
-  `read_text_file`, `write_text_file`, `list_files`, `run_command`.
-- The file and command tools are served only when the agent's profile sets
+  and the [file tools](./goals/generate.md#file-and-command-tools)
+  `read_text_file`, `write_text_file`, and `list_files`.
+- The file tools are served when the agent's profile sets
   [`serve_files`](./project-settings.md#acp): the
   [embedded agent](../frontends/acp.md#the-embedded-agent) has no editor or shell, a
   coding agent brings its own. A `verify` session gets the read-only subset, no
   `write_text_file`; a `bind` session writes test and criteria files only.
-- The tools are sandboxed to the deliverable directory: paths are relative to it, a
-  path that escapes it is rejected, and `run_command` runs under it with a timeout.
+- The file tools are sandboxed to the deliverable directory: paths are relative to
+  it, and a path that escapes it is rejected. The
+  [task tools](./tools.md#task-runtime-tools) run saved commands in finite containers,
+  with project-relative paths and fixed timeouts. `run_command` is not advertised.
 - The names and shapes follow the Agent Client Protocol's client-provided tools (its
   file-system and terminal methods), served through the injected MCP serving like every
   other jazyk tool ([MCP into sessions](../frontends/mcp.md#mcp-into-acp-sessions)).
@@ -373,7 +378,7 @@ Every goal in the batch ends in one of three states, and the session says which.
   what a kind's gate reads (a `rejudge-pair` verdict, the mutation or diagnostic that
   carried it). The journal records the resolution with its justification
   (`resolved_goals`), [`jazyk ripple`](../frontends/cli.md#jazyk-ripple) shows it beside
-  each step, and the [board](../frontends/gui.md#board) shows it on the card. An
+  each step, and the [board](../frontends/gui.md#editor-specification) shows it on the card. An
   accepted claim emits a `goal` trace event. A `rejudge-pair` batch also sees
   `settle_pairs`, one claim for several pairs: each entry is validated like a
   `mark_goal_done` claim and records one resolution with its own justification
@@ -525,7 +530,7 @@ directory freely.
 The runner translates a session's update stream into structured events: the tool call
 with condensed arguments, the condensed result, and any message or thought text the
 agent produced, emitted as model text. The `compile` command renders these live, the
-[GUI](../frontends/gui.md#runs) streams them to the browser, and `jazyk watch`
+[GUI](../frontends/gui.md#events) streams them to the browser, and `jazyk watch`
 prints one line per goal opened or resolved. The generation and verification workers
 emit their own kinds per entity and per ledger row. The committed changeset with the
 same information persists in the [journal](./graph.md#journal).
@@ -610,7 +615,7 @@ Every session prompt is assembled deterministically, so it can be shown before i
 spent. [`jazyk preview`](../frontends/cli.md#jazyk-preview) renders the next session's
 prompt exactly as the model would receive it; `jazyk preview <goal|target>` renders the
 batch that goal would join, or the batch of the first ready goal on that target. The
-[GUI](../frontends/gui.md#preview) shows the same pane before a release in `manual`
+[GUI](../frontends/gui.md#editor-specification) shows the same pane before a release in `manual`
 mode, and from a board card. The rendering is the same code that runs the session, it
 makes no LLM call, and it writes nothing.
 

@@ -462,7 +462,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_generation",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written for this entity; manifest.supportFiles lists deliverable-wide files ownership never applies to (Cargo.toml, a crate root such as src/lib.rs); manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run before any test. A task:<id> reference uses the saved task's project-relative cwd; legacy commands use the deliverable directory. produces paths remain deliverable-relative; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: run_tests to verify.",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written for this entity; manifest.supportFiles lists deliverable-wide files ownership never applies to (Cargo.toml, a crate root such as src/lib.rs); manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. A programmatic artifact is the test source containing name, never the generated JUnit report; report paths belong in the saved task. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run before any test. A task:<id> reference uses the saved task's project-relative cwd; legacy commands use the deliverable directory. produces paths remain deliverable-relative; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: run_tests to verify.",
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},
@@ -470,7 +470,16 @@ pub fn catalog() -> Vec<ToolDef> {
                     "manifest": {"type": "object", "properties": {
                         "files": {"type": "array", "items": {"type": "string"}},
                         "supportFiles": {"type": "array", "items": {"type": "string"}},
-                        "tests": {"type": "array", "items": {"type": "object"}},
+                        "tests": {"type": "array", "items": {"type": "object", "properties": {
+                            "requirement": {"type": "string"},
+                            "kind": {"type": "string", "enum": ["programmatic", "llm"]},
+                            "label": {"type": "string"},
+                            "artifact": {"type": "string", "description": "Deliverable-relative test source containing name, or an LLM criteria file. Never a generated JUnit report."},
+                            "name": {"type": "string"},
+                            "run": {"type": "string"},
+                            "cwd": {"type": "string"},
+                            "files": {"type": "array", "items": {"type": "string"}}
+                        }, "required": ["requirement", "kind", "label", "artifact", "name", "run"]}},
                         "build": {"type": "object", "properties": {
                             "run": {"type": "string"},
                             "cwd": {"type": "string"},
@@ -494,7 +503,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_binding",
-            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement; a file that only restates the statement is not one, list the files a criterion test inspects); tests is one entry per criterion of the requirement, {criterion, kind: programmatic|llm, label, artifact, name, run, cwd?, verdict: pass|fail, evidence?} (the package lists the criteria with suggested test names; a requirement with criteria is refused without them); test is the requirement-level {kind, label, artifact, name, run, cwd?} for a requirement without criteria (with criteria it may be omitted, the first criterion's test stands in); verdict is the outcome (pass|fail) with evidence. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the tests are its acceptance gate), partial (files exist and the criterion tests split, some passing and some failing: generation work for the failing criteria), failing (every test fails with files present: the deliverable contradicts the statement, a finding the failing-binding check files for the author). Never rewrite implementation files during binding.",
+            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement; a file that only restates the statement is not one, list the files a criterion test inspects); tests is one entry per criterion of the requirement, {criterion, kind: programmatic|llm, label, artifact, name, run, cwd?, verdict: pass|fail, evidence?} (the package lists the criteria with suggested test names; a requirement with criteria is refused without them); test is the requirement-level {kind, label, artifact, name, run, cwd?} for a requirement without criteria (with criteria it may be omitted, the first criterion's test stands in); verdict is the outcome (pass|fail) with evidence. A programmatic artifact is the test source containing name, never the generated JUnit report. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the tests are its acceptance gate), partial (files exist and the criterion tests split, some passing and some failing: generation work for the failing criteria), failing (every test fails with files present: the deliverable contradicts the statement, a finding the failing-binding check files for the author). Never rewrite implementation files during binding.",
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -5361,13 +5370,14 @@ impl ToolSession {
         }
         // The repeated-call guard, keyed per open batch: the second identical call
         // answers with a repeat marker, the third is refused. done, mark_goal_done,
-        // and mark_goal_failed are exempt: repairing a rejected claim legitimately
-        // repeats it. A load of an already loaded target counts as a repeat whatever
+        // mark_goal_failed, record_generation, and record_binding are exempt: repairing
+        // files after a rejected claim legitimately repeats its arguments. A load of an already loaded target counts as a repeat whatever
         // its depth. settle_pairs is exempt as a whole and guards per entry.
         // Mirrors docs/compiler/sessions.md#repeated-calls.
         let exempt = matches!(
             name,
-            "done" | "mark_goal_done" | "mark_goal_failed" | PAIR_SETTLE_TOOL
+            "done" | "mark_goal_done" | "mark_goal_failed"
+                | "record_generation" | "record_binding" | PAIR_SETTLE_TOOL
         ) || crate::task_runtime::TOOLS.contains(&name);
         if !exempt {
             let key = if name == "load" {
@@ -11800,6 +11810,50 @@ mod tests {
         t.snapshot.graph.entities.insert("ent:wishlist".into(), plain("Wishlist"));
         assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+    }
+
+    #[test]
+    fn rejected_ledger_records_can_retry_after_test_source_repair() {
+        for name in ["record_generation", "record_binding"] {
+            let files = BTreeMap::from([
+                ("hello.sh".into(), b"echo hello\n".to_vec()),
+                ("tests/check.sh".into(), b"# wrong_selector\nexit 0\n".to_vec()),
+            ]);
+            let _scope = crate::vfs::Scope::enter(&files);
+            let mut snapshot = Store { out: "/project/.jazyk/ds_main".into(), ..Default::default() };
+            snapshot.graph.entities.insert("ent:greeter".into(), plain("Greeter"));
+            snapshot.graph.requirements.insert("req:hello".into(), Requirement {
+                statement: "The Greeter prints hello.".into(),
+                entities: vec!["ent:greeter".into()],
+                ..Default::default()
+            });
+            let goals = [Goal { id: "g:generate:ent:greeter".into(), kind: "generate".into(),
+                target: "ent:greeter".into(), mandatory: true, ..Default::default() },
+                Goal { id: "g:bind:req:hello".into(), kind: "bind".into(),
+                target: "req:hello".into(), mandatory: true, ..Default::default() }];
+            let mut t = ToolSession::new(snapshot, WorkScope::for_batch("b-retry", &goals), 64, 24_000);
+            t.gen.deliverable = "/project".into();
+            let package = t.dispatch("begin_generation", &json!({"entity":"ent:greeter"})).unwrap();
+            let test = json!({"requirement":"req:hello", "kind":"programmatic", "label":"Greeting",
+                "artifact":"tests/check.sh", "name":"test_greeting", "run":"sh tests/check.sh test_greeting"});
+            let args = if name == "record_generation" {
+                json!({"entity":"ent:greeter", "factHash":package["factHash"],
+                    "manifest":{"files":["hello.sh"], "tests":[test]}})
+            } else {
+                json!({"requirement":"req:hello", "files":["hello.sh"], "test":test,
+                    "verdict":"fail", "evidence":"Awaiting a passing execution."})
+            };
+            for _ in 0..3 {
+                let err = t.dispatch(name, &args).unwrap_err();
+                assert_ne!(err.rule, "repeated-call", "{name}: {err:?}");
+                assert!(err.message.contains("does not contain"), "{name}: {err:?}");
+            }
+            assert!(crate::gen::Ledger::load(&t.snapshot.out).requirements.is_empty());
+            crate::vfs::write("/project/tests/check.sh", "test_greeting() { [ \"$(sh hello.sh)\" = hello ]; }\ntest_greeting\n").unwrap();
+            let result = t.dispatch(name, &args).unwrap();
+            assert!(result.get("repeat").is_none(), "{name}: {result}");
+            assert!(!crate::gen::Ledger::load(&t.snapshot.out).requirements.is_empty());
+        }
     }
 
     // A requirement quotes one sentence; a fact line of short fragments and a numbered

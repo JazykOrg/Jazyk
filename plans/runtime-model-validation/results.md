@@ -370,3 +370,28 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   alternative tool path ran in one session. The complete worker benchmark, without
   a supplied task or report adapter, is being repeated under both codecs in
   `retry-full-generation-3`.
+
+## Manifest retry and test-source guidance
+
+- The native `retry-full-generation-3` benchmark passed 4/4 checks in 24 rounds and
+  1,441 seconds. The model created a task and JUnit adapter from an empty project,
+  corrected an XML serialization error, and ran it in Podman. Independent execution
+  passed the tests and falsification made the greeting test fail.
+- Reviewing its trace still found avoidable mistakes. The model put a generated
+  report in the binding's `artifact` field, then wrote report XML to satisfy file
+  validation. The passing grade came from fresh runtime reports, not those written
+  cases. The contract and schema now identify `artifact` as test source, put report
+  paths only in task `reports`, and prohibit writing report cases for a manifest.
+  Validation messages direct source and selector repairs instead of suggesting an
+  `llm` test for a metadata mismatch. Saved task IDs are bare; `task:` belongs in
+  ledger run references.
+- The same trace reproduced a guard defect: after two rejected manifests, a repaired
+  file could not be recorded with the same arguments. `record_generation` and
+  `record_binding` now share the finish tools' retry exemption. File, ownership,
+  freshness, and evidence gates still run. A regression refuses three invalid
+  records without changing the ledger, repairs the test source, then accepts the
+  unchanged record for both tools. The ordinary repeated-call guard stays covered.
+- All 95 tool, 36 generation, and 13 binding regressions passed. Changed documentation
+  links and anchors resolve, including repaired obsolete editor links. The full text
+  benchmark is still running on the preceding binary; it does not validate these
+  newer prompt changes.

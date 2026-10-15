@@ -1,6 +1,8 @@
 Read task_context and choose tasks by name and description. Reuse existing tasks.
 Follow the requested scope: inspection alone does not authorize a run or an edit.
 A task has an ID, name, description, and command. Short commands need no script file.
+Save a bare ID such as "check" and pass that ID to run_task. The "task:check"
+prefix belongs only in a generation or binding run reference.
 Declare product, cache, and test-report globs only when needed. A saved task grants
 no new authority. Use an allowed image, size, and fixed timeout before submission.
 
@@ -35,6 +37,8 @@ uncertain external write before retrying. Stay within the cumulative session bud
 
 Bind programmatic checks with run="task:<id>" and an exact classname::name
 JUnit case selector (or a unique case name). Give the task fresh report globs.
+The binding's artifact is the test source containing that name, not the generated
+JUnit report. Never write report cases as a substitute for running the tests.
 Use run_tests for bound checks so the harness imports case evidence. Build bindings
 may also use task:<id>. LLM criteria remain direct judgments of their artifacts.
 

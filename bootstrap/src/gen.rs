@@ -1807,13 +1807,13 @@ pub fn mark(
             if kind == "programmatic" {
                 if artifact_raw.is_empty() {
                     return Err(format!(
-                        "test row for {} has an empty artifact; name the tests file the row's run command executes, or declare the row llm",
+                        "test row for {} has an empty artifact; name the test source the row's run command executes, not its generated JUnit report",
                         rid
                     ));
                 }
                 if run.is_empty() {
                     return Err(format!(
-                        "test row for {} has an empty run command; record task:<id> with its case selector, a legacy command selecting that test, or declare the row llm",
+                        "test row for {} has an empty run command; record task:<id> with its case selector, or a legacy command selecting that test",
                         rid
                     ));
                 }
@@ -1842,7 +1842,7 @@ pub fn mark(
             let path = artifact_path(&store.out, gs, &test);
             if !path.vis_file() {
                 return Err(format!(
-                    "test row for {} names artifact `{}` but no such file exists under the deliverable{}; write it before recording, or fix the path",
+                    "test row for {} names artifact `{}` but no such file exists under the deliverable{}; write its test source or criteria file before recording, or fix the path. Generated JUnit reports belong in task reports, not artifact",
                     rid,
                     test.artifact,
                     if kind == "llm" { " or the out directory's gen/" } else { "" }
@@ -1852,7 +1852,7 @@ pub fn mark(
                 && !crate::verify::artifact_names(&path, &test.name)
             {
                 return Err(format!(
-                    "test row for {} declares test `{}` but `{}` does not contain that name; name the test as it is written in the file, or declare the row llm",
+                    "test row for {} declares test `{}` but `{}` does not contain that name; artifact must name the test source, not the generated JUnit report; match name to the test in that source and the emitted report case",
                     rid, test.name, test.artifact
                 ));
             }

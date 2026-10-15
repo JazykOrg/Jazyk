@@ -473,6 +473,13 @@ contents use programmatic tests. A suggested `criteriaPath` supplies a path for
 judgment; it does not select the test kind. A missing runner is setup work. Define
 or reuse a task with fresh JUnit reports instead of writing a passing verdict.
 
+A programmatic test row's `artifact` names the test source, such as
+`tests/test_greeter.py`, relative to the deliverable. It contains the declared test
+name. The generated JUnit XML belongs in the task's `reports` globs, not in that
+field. Do not write report cases to satisfy a manifest gate. A missing test name is
+a source or selector mismatch to repair, not a reason to change the test to `llm`.
+Every generation test row also names its `requirement` explicitly.
+
 A test inspects the artifact the requirement is about, never a document that describes
 it. Asserting that a manifest names a format, that a plan lists a feature, or that a
 comment restates the statement is circular: both sides are the generator's own prose,
@@ -878,7 +885,7 @@ are stable ([identifiers](../compiler/model.md#identifiers)):
 Before a run rewrites or removes a deliverable file, the previous content is
 snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per
 run per file. The snapshot is the diff baseline for frontends: the
-[GUI](../frontends/gui.md#product-file-viewer) shows what the last generation changed
+[GUI](../frontends/gui.md#editor-specification) shows what the last generation changed
 against it. A file the run creates fresh has no baseline.
 
 ## Command

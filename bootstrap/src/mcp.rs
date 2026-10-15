@@ -563,9 +563,9 @@ impl McpServer {
                     t
                 }
                 // The chat serving: reads, every lifecycle, and the server-implemented
-                // chat tools; no raw write tools (docs/frontends/mcp.md#toolsets).
+                // chat tools; compiler writes require a batch (docs/frontends/mcp.md#toolsets).
                 "chat" => {
-                    let mut t = toolset("mcp-read");
+                    let mut t = toolset("mcp-compile");
                     t.extend(LIFECYCLE);
                     // A tab has no shell, so binding, generation, and verification
                     // are not served there (docs/frontends/wasm.md#chat).
@@ -2483,7 +2483,7 @@ impl McpServer {
                         Err(e) => Ok(text_result(e.to_value(), true)),
                     };
                 }
-                if is_graph_write && self.modes.iter().any(|m| m == "compile") {
+                if is_graph_write && self.modes.iter().any(|m| m == "compile" || m == "chat") {
                     if let Some(v) = self.session_complete_closed() {
                         return Ok(text_result(v, true));
                     }
@@ -3965,7 +3965,7 @@ mod tests {
                 names
             );
         }
-        assert!(!names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
+        assert!(names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
         assert!(!names.iter().any(|n| n == "run_command"), "{:?}", names);
         crate::vfs::remove_dir_all(&dir).ok();
     }
@@ -4371,6 +4371,48 @@ mod tests {
             text
         );
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // Chat can complete the batches it claims, without enabling direct graph surgery.
+    #[test]
+    fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
+        let dir = bare_dir("chat-compiler-tools");
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::create_dir_all(dir.join(".jazyk")).unwrap();
+        crate::vfs::write(dir.join(".jazyk/jazyk.toml"),
+            "version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**/*.md']\n").unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe Greeter returns hello.\n").unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        crate::vfs::create_dir_all(&out).unwrap();
+        crate::control::Control { compile: "auto".into(), ..Default::default() }.save(&out);
+        let server = McpServer::new(project, out.clone(), vec!["chat".into()], false);
+        let names = tool_names(&server);
+        for name in toolset("mcp-compile") {
+            assert!(names.iter().any(|n| n == name), "missing {name}");
+        }
+        let call = |name: &str, args: Value| {
+            server.handle_local("tools/call", &json!({"name":name,"arguments":args})).unwrap()
+        };
+        let args = json!({"name":"Greeter", "mention":{
+            "section":"docs/a.md#/a", "quote":"The Greeter returns hello."}});
+        let rejected = call("upsert_entity", args.clone());
+        assert_eq!(rejected["isError"], true);
+        assert!(rejected["content"][0]["text"].as_str().unwrap().contains("no-open-batch"));
+        assert!(Store::load(&out).graph.entities.is_empty());
+        let batch = server.begin_goals(&json!({"arguments":{}}));
+        assert!(batch["error"].is_null(), "{batch}");
+        let staged = call("upsert_entity", args);
+        assert_ne!(staged["isError"], true, "{staged}");
+        assert!(!server.open.lock().unwrap().as_ref().unwrap().session.staged.is_empty());
+        assert!(Store::load(&out).graph.entities.is_empty(), "writes must remain staged");
+        let wrong = call("report_diagnostic", json!({"rule":"contradiction", "message":"test"}));
+        assert_eq!(wrong["isError"], true);
+        assert!(wrong["content"][0]["text"].as_str().unwrap().contains("wrong-toolset"), "{wrong}");
+        server.abandon_goals(&json!({"arguments":{"reason":"test cleanup"}}));
+        assert!(Store::load(&out).graph.entities.is_empty());
+        assert!(crate::control::leases(&out).is_empty());
+        crate::vfs::remove_dir_all(dir).unwrap();
     }
 
     // A project tool is offered only where it can do something: scaffolding in a bare

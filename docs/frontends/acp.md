@@ -277,7 +277,7 @@ Three session kinds, all the same protocol:
   IDE through the proxy. The agent gets the `chat` toolset: the read tools, the
   compilation, binding, generation, and verification lifecycles, the
   [dual-write tools](#dual-write-tools), `update_diagnostic`, `answer_diagnostic`,
-  and the [project tools](#project-tools). No raw write tools.
+  and the [project tools](#project-tools). Compiler writes require an open goal batch.
 - Follow sessions: read-only mirrors of worker sessions, so a person can watch
   automated work as it happens. In the GUI they appear in the chat pane beside chat
   sessions. Toward IDEs they are served through [session list mirroring](#mirroring-into-ides).
@@ -417,8 +417,9 @@ A chat session is an open conversation with the agent about the project. The inj
 `chat` serving carries the read tools, the compilation, binding, generation, and
 verification lifecycles, the [dual-write tools](#dual-write-tools),
 `update_diagnostic`, `answer_diagnostic`, and the [project tools](#project-tools),
-and no raw write tools, so "tighten this requirement and recompile" is a sentence,
-not a workflow.
+and compiler write tools guarded by an open goal batch. Conversational edits use
+the dual-write tools. Explicit compilation resolves the scheduled batches with
+their write tools, goal gates, and atomic commit.
 
 ### Dual-write tools
 

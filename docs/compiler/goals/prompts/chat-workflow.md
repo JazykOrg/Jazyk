@@ -10,6 +10,11 @@ the stage the user requested. Binding can advance the graph; release generation
 again when continuing that same requested workflow. Do not bypass readiness, another
 worker's claim, ratification, human answers, or publishing credential grants.
 
+If alignment or compilation blocks binding, resolve the ready compiler batches
+first. begin_goals supplies the batch's instructions and allowed writes. Stage only
+that work, mark each goal done or failed, then call done to commit. Outside a batch,
+use the conversational dual-write tools to edit prose and graph together.
+
 Use the available guarded file tools to inspect and write project files. Follow the
 begin_binding and begin_generation packages. Use saved tasks for container execution
 and run_tests for bound checks. No host shell is available. Inspect tool results,

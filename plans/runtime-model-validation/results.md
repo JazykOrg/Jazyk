@@ -329,3 +329,19 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - The full compiler suite passed 681 tests with 3 optional tests ignored and one
   timing failure: pruning took 5.73 seconds against a 5-second bound under load.
   That unchanged timing test passed when rerun alone. No threshold was relaxed.
+
+## Chat compiler tool availability
+
+- The first native chat acceptance passed stage release and claimed an alignment
+  batch. It then tried `upsert_requirement`, `set_coverage`, and `mark_goal_done`.
+  All were missing from chat's advertised tools. `done` correctly refused the
+  incomplete batch. The run was stopped after this concrete reproduction, with
+  its trace retained as failed evidence.
+- Chat now serves compiler write and goal tools alongside its lifecycle. The same
+  batch toolset, provenance checks, and commit gates still apply. A write without
+  an open batch returns `no-open-batch`; conversational edits keep the dual-write
+  path. Eighteen MCP tests passed, including real staging, rejected out-of-batch
+  writes, rejected out-of-scope writes, abandonment, and unchanged reader access.
+- Retry the same fresh chat fixture before treating the complete workflow as
+  validated. It intentionally starts with an unaligned document as well as an
+  unbound requirement, so it covers compiler prerequisites before generation.

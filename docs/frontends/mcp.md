@@ -65,8 +65,10 @@ separated; each adds its tools to the union:
   [dual-write tools](./acp.md#dual-write-tools), the decree tools `retract_decree`
   and `bump_limit` ([chat tools](../compiler/tools.md#chat-tools)), `update_diagnostic` and
   `answer_diagnostic` ([questions in chat](./acp.md#questions-in-chat)), and the
-  [project tools](./acp.md#project-tools). No raw write tools: a chat edit moves the
-  prose and the graph together or not at all. In a browser tab the serving leaves
+  [project tools](./acp.md#project-tools). Compiler write and goal tools are available
+  for a claimed batch. Writes stage under that batch's toolset and gates. Outside a
+  batch they are refused. A conversational edit uses the dual-write tools, moving
+  prose and graph together. In a browser tab the serving leaves
   out the binding, generation, and verification lifecycles, which need a shell
   ([chat in a tab](./wasm.md#chat)).
 

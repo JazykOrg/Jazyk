@@ -291,3 +291,23 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - No Jazyk fix was needed for those repeats. Responses were slow during observed
   high host load. The larger worker benchmark, which supplies no task or report
   adapter, is being repeated separately.
+
+## Chat workflow regressions and container rerun
+
+- Writable native and hosted chat now explain binding prerequisites, expose guarded
+  file tools by default, and offer a scoped release action for explicitly requested
+  work. Manual workflow settings stay unchanged. Provider pauses retain their reason
+  through conversation reopening; ordinary cancellation remains distinct.
+- Compiler regressions passed: 681 tests, 3 optional tests ignored. The final release
+  guard test also passed. The release binary rebuilt successfully and WASM checked.
+- Fresh acceptance with that binary passed on Docker and rootless Podman. Each engine
+  verified the Python 3.12 Alpine image, project documentation/source/tests, cache reuse
+  across fresh containers, binary products, reports, logs, cancellation, and shutdown.
+- The repeated native generation benchmark chose LLM criteria for executable output
+  assertions and scored 2/4. The prompts now distinguish a suggested criteria path from
+  choosing judgment, and require executable tests for runtime behavior. Its paired
+  text benchmark is still running. A real chat release/bind/generate/test/repair case
+  is queued behind it, with one local model request active at a time.
+- `cargo fmt --check` still reports pre-existing formatting differences across the
+  repository. This change does not reformat unrelated code. Changed documentation
+  links and anchors resolve, and changed docs contain no em dashes.

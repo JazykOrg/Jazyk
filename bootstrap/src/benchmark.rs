@@ -1973,6 +1973,20 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
     run_traced_filtered(llm, out, progress, &[])
 }
 
+fn judge_completion_trace(base: &Trace) -> (Trace, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+    use std::sync::{atomic::{AtomicU32, Ordering}, Arc};
+    let replies = Arc::new(AtomicU32::new(0));
+    let observed = replies.clone();
+    let base = base.clone();
+    let trace = Trace::to_sink(TraceLevel::Normal, Arc::new(move |event| {
+        if matches!(event, crate::session::TraceEvent::ModelText { text, .. } if !text.trim().is_empty()) {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }
+        base.event(event.clone());
+    }), Default::default());
+    (trace, replies)
+}
+
 fn run_traced_filtered(
     llm: &Llm,
     out: &std::path::Path,
@@ -2087,6 +2101,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             let (rounds, staged) = if case.task_type == "verify-requirement" {
                 // The llm-judge path: no turn, one judgment over a planted row. The
                 // judgment runs through a throwaway runner against the sandbox.
+                let (judge_trace, replies) = judge_completion_trace(&trace);
                 match seed_verification(case, &store, &gs) {
                     Ok(()) => {
                         let sandbox_proj = crate::project::Project {
@@ -2103,7 +2118,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                                     std::slice::from_ref(&case.target),
                                     None,
                                     true,
-                                    &trace,
+                                    &judge_trace,
                                 ) {
                                     fail = Some(format!("judge run failed: {}", e));
                                 }
@@ -2113,7 +2128,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                     }
                     Err(e) => fail = Some(format!("fixture: {}", e)),
                 }
-                (1u32, 0usize)
+                (replies.load(std::sync::atomic::Ordering::Relaxed), 0usize)
             } else if let Some(e) = fixture_error.take() {
                 // A fixture the harness cannot seed measures nothing: no turn runs,
                 // and the checks count as failed like an abort's.
@@ -2173,7 +2188,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                 (rounds_n, staged)
             };
             let case_tokens = llm::tokens_spent() - case_tokens_before;
-            any_completion |= case_tokens > 0;
+            any_completion |= rounds > 0;
             let mut case_passed = 0usize;
             checks_total += case.checks.len();
             if !aborted {
@@ -2562,6 +2577,21 @@ fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn judge_measurement_uses_replies_without_parent_token_accounting() {
+        use crate::session::TraceEvent;
+        use std::sync::atomic::Ordering;
+        let (trace, replies) = judge_completion_trace(&Trace::stderr(TraceLevel::Quiet));
+        trace.event(TraceEvent::VerifyRowError {
+            requirement: "req:test".into(), message: "provider unavailable".into(),
+        });
+        assert_eq!(replies.load(Ordering::Relaxed), 0);
+        trace.event(TraceEvent::ModelText { label: "judge".into(), text: "FAIL: wrong output".into() });
+        assert_eq!(replies.load(Ordering::Relaxed), 1);
+        trace.event(TraceEvent::ModelText { label: "judge".into(), text: "not a parseable verdict".into() });
+        assert_eq!(replies.load(Ordering::Relaxed), 2, "an invalid judgment was still received");
+    }
 
     #[test]
     fn runtime_fixture_is_a_real_project_with_private_state() {

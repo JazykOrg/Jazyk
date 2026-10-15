@@ -12,7 +12,7 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
 | Model discovery, submission, observation | Passed | Gemma discovery and repeated task creation/runs passed, including observed shutdown and cache reuse. |
 | Model task creation and repair | Passed | Gemma native/MCP created and ran a task twice (166 seconds), observed shutdown, and reused cache. A separate failed-command repair passed (144 seconds). |
-| Generation and runtime/LLM verification | Passed native worker and focused loop; full text worker pending | Gemma passed all four native generation benchmark checks, including falsification. The focused repair loop, paired native LLM judgment, and both-engine report-to-graph checks passed. |
+| Generation and runtime/LLM verification | Passed native worker and focused loop; full text worker hit a provider error | Gemma passed all four native generation benchmark checks, including falsification. The focused repair loop, paired LLM judgments, and both-engine report-to-graph checks passed. |
 | Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
 | MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
 | Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
@@ -234,3 +234,22 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   restored cache nonce and counter, binary products, JUnit reports, logs, process-tree
   cancellation, and shutdown. Their disposable fixtures were copied to durable local
   evidence directories `release-docker-smoke` and `release-podman-smoke`.
+
+## Final validation follow-up
+
+- The full text `gen-basic` attempt made three valid calls (`begin_generation`,
+  `record_medium`, `task_context`). Its fourth request returned HTTP 502 from
+  LocalRouter after 300 seconds, naming the Ollama-compatible upstream on port 11435.
+  Jazyk allowed 600 seconds. The timing suggests an upstream request limit; no
+  provider setting was changed. The full text generation path remains unvalidated,
+  although the focused text cancellation and full ACP runtime workflow passed.
+- The full suite after the task feedback edit had 676 passes, one timing failure,
+  and 3 ignored tests. The unchanged five-second scorer test took 7.38 seconds under
+  parallel load. A serial rerun passed all 677 tests, with 3 ignored, in 238 seconds.
+  No timing threshold was relaxed. The five targeted task-definition tests passed.
+- Gemma's planted LLM pass and fail cases passed in both codecs (23/18 seconds native,
+  15/16 seconds text). Their benchmark then incorrectly reported no completions:
+  judging runs in an ACP child and did not update the parent's completion-token
+  counter. Measurement now uses completed worker rounds or received judge replies.
+  An invalid judgment still counts as a received reply; a transport error does not.
+  Its targeted regression passed; a fresh real-model report check is pending.

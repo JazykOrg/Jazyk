@@ -148,6 +148,10 @@ difference. Per codec, the benchmark reports:
   every call) is reported as `unmeasured`, not `not capable`. Nothing was graded, so
   the codec gets no verdict and no results entry. When both codecs are unmeasured the
   run writes no results and exits non-zero.
+- Completed worker rounds and received judge replies establish that a case was
+  measured. Token accounting is not proof of receipt: an ACP child can return a
+  judgment without updating the parent's token counter. An unparseable judgment
+  is still a received reply and is graded as a failure, not as an absent completion.
 
 A local endpoint's grade varies run to run: a loaded server starts truncating or
 answering prose, and a codec that scored high an hour earlier collapses to aborts. A

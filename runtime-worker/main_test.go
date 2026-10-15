@@ -72,3 +72,16 @@ func TestBackgroundChildDoesNotHoldResultOpen(t *testing.T) {
 		t.Fatalf("background child held result: %+v", result)
 	}
 }
+
+func TestOversizedCacheCannotHideProductsOrInputChanges(t *testing.T) {
+	input := task("mkdir -p .cache dist; truncate -s 60000000 .cache/large; echo product > dist/book.pdf; echo changed > source.txt")
+	input.Task.Cache = append(input.Task.Cache, "source.txt")
+	input.Files["source.txt"] = encoded("original")
+	result := execute(input, t.TempDir(), nil, make(chan os.Signal))
+	if result.Status != "succeeded" || !result.Complete || !result.CacheSkipped || len(result.Cache) != 0 {
+		t.Fatalf("oversized disposable cache invalidated output: %+v", result)
+	}
+	if result.Files["dist/book.pdf"] != encoded("product\n") || result.Files["source.txt"] != encoded("changed\n") {
+		t.Fatal("cache hid products or an input mutation")
+	}
+}

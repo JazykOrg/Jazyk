@@ -1,6 +1,8 @@
 # Implementation sequence
 
-Status: proposed work breakdown. This planning task does not implement these phases.
+Status: first implementation is in progress under the later production release authorization.
+The phases below remain the original work breakdown. The implemented contract is
+[task execution](../../docs/compiler/task-runtime.md).
 Each accepted behavior enters the owning repository's `docs/` before code.
 
 ## Repository ownership

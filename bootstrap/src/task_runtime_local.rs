@@ -12,7 +12,8 @@ fn helper_image() -> String {
             concat!(
                 include_str!("../../runtime-worker/main.go"),
                 include_str!("../../runtime-worker/Dockerfile"),
-                include_str!("../../runtime-worker/go.sum")
+                include_str!("../../runtime-worker/go.sum"),
+                include_str!("../../runtime-worker/go.mod")
             )
             .as_bytes()
         )[..16]
@@ -420,7 +421,10 @@ pub fn supervise(dir: &Path) -> Result<(), String> {
         } else {
             result["status"].clone()
         };
-        if state["state"] == "succeeded" && result["complete"] == true {
+        if state["state"] == "succeeded"
+            && result["complete"] == true
+            && result["cache_skipped"] != true
+        {
             fs::create_dir_all(cache_path.parent().unwrap()).map_err(|e| e.to_string())?;
             write(&cache_path, &result["cache"])?;
         }

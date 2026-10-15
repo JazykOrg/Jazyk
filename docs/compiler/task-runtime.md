@@ -76,7 +76,9 @@ Setup, command, collection, and shutdown have separate bounds. Allocation and
 cleanup have independent host supervision. Local Docker has a separate deadline
 watchdog process. It removes overdue containers even if the run supervisor exits.
 Logs and transfers have size limits.
-Missing cache causes rebuilding. Failed and cancelled commands save no new cache.
+Missing cache causes rebuilding. Oversized cache is omitted without making product
+collection incomplete. Changed input files remain reviewable even if a cache glob
+also matches their paths. Retained output has priority over disposable cache. Failed and cancelled commands save no new cache.
 Partial results remain attached to the run and cannot replace a successful product.
 
 ## Tools and access

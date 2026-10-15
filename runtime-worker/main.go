@@ -45,18 +45,19 @@ type Input struct {
 	Cache map[string]string `json:"cache"`
 }
 type Result struct {
-	Status   string            `json:"status"`
-	ExitCode *int              `json:"exit_code"`
-	Started  int64             `json:"started_at"`
-	Finished int64             `json:"finished_at"`
-	Log      string            `json:"log"`
-	Complete bool              `json:"complete"`
-	Error    string            `json:"error,omitempty"`
-	Files    map[string]string `json:"files"`
-	Deleted  []string          `json:"deleted"`
-	Products []string          `json:"products"`
-	Reports  map[string]string `json:"reports"`
-	Cache    map[string]string `json:"cache"`
+	CacheSkipped bool              `json:"cache_skipped,omitempty"`
+	Status       string            `json:"status"`
+	ExitCode     *int              `json:"exit_code"`
+	Started      int64             `json:"started_at"`
+	Finished     int64             `json:"finished_at"`
+	Log          string            `json:"log"`
+	Complete     bool              `json:"complete"`
+	Error        string            `json:"error,omitempty"`
+	Files        map[string]string `json:"files"`
+	Deleted      []string          `json:"deleted"`
+	Products     []string          `json:"products"`
+	Reports      map[string]string `json:"reports"`
+	Cache        map[string]string `json:"cache"`
 }
 
 func safe(path string) bool {
@@ -242,10 +243,31 @@ func execute(input Input, root string, stream io.Writer, cancel <-chan os.Signal
 	r.Finished = time.Now().Unix()
 	return r
 }
+func readRetained(path string, limit int64) ([]byte, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("output changed during capture")
+	}
+	if info.Size() > limit {
+		return nil, errors.New("retained byte limit reached")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if int64(len(data)) > limit {
+		return nil, errors.New("retained byte limit reached")
+	}
+	return data, err
+}
 func collect(input Input, root string, r *Result) error {
 	total, count := 0, 0
 	deadline := time.Now().Add(30 * time.Second)
 	seen := map[string]bool{}
+	cachePaths := []string{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -271,10 +293,7 @@ func collect(input Input, root string, r *Result) error {
 		if count > maxFiles*8 {
 			return errors.New("file scan limit reached")
 		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
+		if d.IsDir() || d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		info, e := d.Info()
@@ -290,50 +309,57 @@ func collect(input Input, root string, r *Result) error {
 		if (product && cache) || (report && cache) || (product && report) {
 			return errors.New("file matches conflicting output classes")
 		}
-		if !exists && !product && !report && !(cache && r.Status == "succeeded") {
+		// Canonical inputs remain inputs even if an overbroad cache pattern matches.
+		if cache && !exists {
+			if r.Status == "succeeded" {
+				cachePaths = append(cachePaths, name)
+			}
 			return nil
 		}
-		if info.Size() > maxBytes-int64(total) {
-			return errors.New("retained byte limit reached")
+		if !exists && !product && !report {
+			return nil
 		}
-		// O_NOFOLLOW avoids a last-component symlink changed after directory scanning.
-		fd, e := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		data, e := readRetained(path, maxBytes)
 		if e != nil {
 			return e
-		}
-		f := os.NewFile(uintptr(fd), path)
-		opened, e := f.Stat()
-		if e != nil || !opened.Mode().IsRegular() {
-			f.Close()
-			return errors.New("output changed during capture")
-		}
-		data, e := io.ReadAll(io.LimitReader(f, int64(maxBytes-total)+1))
-		f.Close()
-		if e != nil {
-			return e
-		}
-		total += len(data)
-		if total > maxBytes {
-			return errors.New("retained byte limit reached")
 		}
 		encoded := base64.StdEncoding.EncodeToString(data)
+		if !report && !product && encoded == input.Files[name] {
+			return nil
+		}
+		if total+len(data) > maxBytes || len(r.Files)+len(r.Reports) >= maxFiles {
+			return errors.New("retained output limit reached")
+		}
+		total += len(data)
 		if report {
 			r.Reports[name] = encoded
-		} else if cache {
-			if !exists && r.Status == "succeeded" {
-				r.Cache[name] = encoded
-			}
-		} else if product || encoded != input.Files[name] {
+		} else {
 			r.Files[name] = encoded
 			if product {
 				r.Products = append(r.Products, name)
 			}
 		}
-		if len(r.Files)+len(r.Reports)+len(r.Cache) > maxFiles {
-			return errors.New("retained file limit reached")
-		}
 		return nil
 	})
+	// Cache cannot consume the product budget or turn successful output into a partial run.
+	if err == nil {
+		for _, name := range cachePaths {
+			if time.Now().After(deadline) || len(r.Files)+len(r.Reports)+len(r.Cache) >= maxFiles {
+				r.CacheSkipped = true
+				break
+			}
+			data, e := readRetained(filepath.Join(root, filepath.FromSlash(name)), int64(maxBytes-total))
+			if e != nil {
+				r.CacheSkipped = true
+				break
+			}
+			total += len(data)
+			r.Cache[name] = base64.StdEncoding.EncodeToString(data)
+		}
+	}
+	if r.CacheSkipped {
+		r.Cache = map[string]string{}
+	}
 	for name := range input.Files {
 		if !seen[name] && !protected(name) && !matches(input.Task.Reports, name) {
 			r.Deleted = append(r.Deleted, name)

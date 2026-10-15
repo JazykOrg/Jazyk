@@ -450,7 +450,7 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
     if matches!(operation, "inspect_run" | "wait_run") {
         let mut value = state.clone();
         if !result.is_null() {
-            value["result"] = json!({"status":result["status"],"exit_code":result["exit_code"],"complete":result["complete"],"error":result["error"],"products":result["products"],"tests":result["tests"],"file_count":result["files"].as_object().map(|v|v.len()).unwrap_or(0)});
+            value["result"] = json!({"status":result["status"],"exit_code":result["exit_code"],"complete":result["complete"],"error":result["error"],"products":result["products"],"tests":result["tests"],"cache_skipped":result["cache_skipped"]==true,"report_errors":result["report_errors"],"file_count":result["files"].as_object().map(|v|v.len()).unwrap_or(0)});
         }
         return Ok(value);
     }
@@ -507,7 +507,18 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
                 }
             });
         }
-        let paths:Vec<_>=result["files"].as_object().into_iter().flat_map(|m|m.iter()).map(|(path,bytes)|json!({"path":path,"size":bytes.as_str().map(|s|s.len()*3/4),"change":"written"})).chain(result["deleted"].as_array().into_iter().flatten().map(|p|json!({"path":p,"change":"deleted"}))).skip(args["offset"].as_u64().unwrap_or(0)as usize).take(200).collect();
+        let retained: BTreeMap<_, _> = result["files"]
+            .as_object()
+            .into_iter()
+            .flat_map(|m| m.iter())
+            .chain(
+                result["reports"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|m| m.iter()),
+            )
+            .collect();
+        let paths:Vec<_>=retained.into_iter().map(|(path,bytes)|json!({"path":path,"size":bytes.as_str().map(|s|s.len()*3/4),"change":"written"})).chain(result["deleted"].as_array().into_iter().flatten().map(|p|json!({"path":p,"change":"deleted"}))).skip(args["offset"].as_u64().unwrap_or(0)as usize).take(200).collect();
         Ok(json!({"files":paths,"complete":result["complete"]}))
     } else {
         Err("Unsupported runtime operation.".into())

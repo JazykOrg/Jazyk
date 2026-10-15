@@ -12,7 +12,7 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | Podman container baseline | Passed | Existing acceptance: two fresh containers, Python/Alpine image, inputs, binary products, cache reuse, reports, cancellation, shutdown. |
 | Model discovery, submission, observation | Passed | Gemma discovery and repeated task creation/runs passed, including observed shutdown and cache reuse. |
 | Model task creation and repair | Passed | Gemma native/MCP created and ran a task twice (166 seconds), observed shutdown, and reused cache. A separate failed-command repair passed (144 seconds). |
-| Generation and runtime/LLM verification | Passed native worker and focused loop; full text worker hit a provider error | Gemma passed all four native generation benchmark checks, including falsification. The focused repair loop, paired LLM judgments, and both-engine report-to-graph checks passed. |
+| Generation and runtime/LLM verification | Passed native and text workers, focused loop, and chat repair | Gemma passed all four generation benchmark checks under both codecs, including falsification. The focused repair loop, paired LLM judgments, and both-engine report-to-graph checks passed. |
 | Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
 | MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
 | Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
@@ -393,5 +393,24 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   unchanged record for both tools. The ordinary repeated-call guard stays covered.
 - All 95 tool, 36 generation, and 13 binding regressions passed. Changed documentation
   links and anchors resolve, including repaired obsolete editor links. The full text
-  benchmark is still running on the preceding binary; it does not validate these
-  newer prompt changes.
+  benchmark used the preceding binary; it does not validate these newer prompt
+  changes. The updated release build and WASM check passed.
+
+## Full text generation completed
+
+- `retry-full-generation-3` passed the full `gen-basic` benchmark under both codecs:
+  native 4/4 in 24 rounds (1,441 seconds), text 4/4 in 13 rounds (700 seconds).
+  The model was `gemma4:31b-mlx` through LocalRouter, with rootless Podman execution.
+  The benchmark records `generation: capable` for each codec. This resolves the
+  earlier unvalidated full text-generation case for this model and fixture.
+- The text worker chose a written `hello.sh` artifact, generated unittest source,
+  saved a task with project-relative cwd `.`, and bound the actual test source.
+  Its first command emitted no JUnit report. After the tool returned missing-case
+  evidence, the model changed the task to run pytest with `--junitxml`, reran it,
+  and completed the goal. Independent grader execution passed all tests, then a
+  deliberately broken greeting failed its selected assertion.
+- The native trace's handwritten-report detour remains a quality finding even
+  though fresh execution passed its grade. The newer retry and source-guidance
+  changes are being checked by a fresh Docker generation, falsification, and repair
+  case. Passing one benchmark does not establish reliability for every project or
+  model; these local model workflows remain slow.

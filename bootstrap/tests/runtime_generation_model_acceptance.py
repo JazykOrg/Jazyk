@@ -115,6 +115,8 @@ reports=["reports/*.xml"]
         def status():
             row = mcp.tool('begin_verification', requirement=requirement)
             assert row['test']['kind'] == 'programmatic' and row['test']['run'] == 'task:check', row
+            assert row['test']['artifact'] in tests, 'Binding must name the generated test source: ' + str(row['test'])
+            result['test_source'] = row['test']['artifact']
             return row['status']
         assert status() == 'verified'
         result['generated_and_verified'] = True

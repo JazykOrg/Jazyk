@@ -153,8 +153,8 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
              run it, then record_binding. The verdict classifies the requirement: verified, \
              unimplemented (generation work), or failing (a contradiction for the author). \
              GENERATION LOOP: call generation_tasks; for each entity, begin_generation, write the \
-             deliverable files and any build with YOUR OWN file and shell tools (this server serves \
-             none), making the bound tests pass, then record_generation with the manifest, then \
+             deliverable files using available file tools, and execute builds and tests through \
+             Jazyk tasks, making the bound tests pass, then record_generation with the manifest, then \
              run_tests. ",
         );
     }
@@ -240,6 +240,11 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
          report_spend records it on the batch's journal entry (your own figure, never an \
          estimate).",
     );
+    #[cfg(not(target_arch = "wasm32"))]
+    if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "chat")) {
+        s.push_str("\n\n");
+        s.push_str(crate::task_runtime::PROMPT);
+    }
     s
 }
 
@@ -558,6 +563,7 @@ impl McpServer {
                         t.extend(crate::tools::GEN_TOOLS);
                         t.extend(crate::tools::BIND_TOOLS);
                         t.extend(crate::tools::VERIFY_TOOLS);
+                        t.extend(crate::task_runtime::TOOLS);
                     }
                     t
                 }
@@ -1688,7 +1694,8 @@ impl McpServer {
     }
 
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
-        if self.cancelled() && method == "tools/call" && params["name"] != "abandon_goals" {
+        let _runtime_owner = crate::task_runtime::CancellationScope::enter(self.bridge.cancel_file.as_deref());
+        if self.cancelled() && method == "tools/call" && !matches!(params["name"].as_str(), Some("abandon_goals" | "cancel_run" | "inspect_run" | "wait_run" | "read_run_log" | "search_run_log" | "read_run_changes" | "task_context")) {
             return Err((-32602, "the build was stopped; this session cannot commit".into()));
         }
         if self.project.set_id.is_some()
@@ -1746,6 +1753,7 @@ impl McpServer {
             return self.handle_local(method, params);
         }
         let name = params["name"].as_str().unwrap_or_default();
+        if crate::task_runtime::TOOLS.contains(&name) { return self.handle_local(method,params); }
         if name == "list_document_sets" {
             return Ok(result_value(w.summary()));
         }
@@ -2377,7 +2385,8 @@ impl McpServer {
                     && !crate::tools::GEN_TOOLS.contains(&name.as_str())
                     && !crate::tools::BIND_TOOLS.contains(&name.as_str())
                     && !crate::tools::VERIFY_TOOLS.contains(&name.as_str())
-                    && !crate::tools::FILE_TOOLS.contains(&name.as_str());
+                    && !crate::tools::FILE_TOOLS.contains(&name.as_str())
+                    && !crate::task_runtime::TOOLS.contains(&name.as_str());
 
                 // An open benchmark case takes every call first: the sandbox is the
                 // world under test. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
@@ -2647,6 +2656,12 @@ impl McpServer {
                     }
                 }
 
+                if crate::task_runtime::TOOLS.contains(&name.as_str()) {
+                    return match crate::task_runtime::call(&self.project.root,&name,&args) {
+                        Ok(value)=>Ok(text_result(value,false)),
+                        Err(error)=>Ok(text_result(json!({"error":{"rule":"task-runtime","message":error}}),true)),
+                    };
+                }
                 let store = Store::load(&self.out);
                 if store.docs.is_empty()
                     && store.graph.entities.is_empty()

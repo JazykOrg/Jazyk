@@ -29,3 +29,6 @@ project2/
 
 # Persistent development worktrees.
 /.worktrees/
+
+# Local acceptance evidence and development overrides.
+/.local/

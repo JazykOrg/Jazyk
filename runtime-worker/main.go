@@ -122,6 +122,66 @@ func writeFiles(root string, files map[string]string, cache bool, input Input) e
 	return nil
 }
 
+// Redact exact credential values before streaming, including split writes.
+type secretWriter struct {
+	target  io.Writer
+	secrets []string
+	pending []byte
+	keep    int
+}
+
+func (w *secretWriter) Write(p []byte) (int, error) {
+	w.pending = append(w.pending, p...)
+	w.flush(false)
+	return len(p), nil
+}
+func (w *secretWriter) flush(final bool) {
+	safe := len(w.pending) - w.keep + 1
+	if final {
+		safe = len(w.pending)
+	}
+	var out bytes.Buffer
+	i := 0
+	for i < safe && i < len(w.pending) {
+		matched := false
+		for _, s := range w.secrets {
+			if bytes.HasPrefix(w.pending[i:], []byte(s)) {
+				out.WriteString("[REDACTED]")
+				i += len(s)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out.WriteByte(w.pending[i])
+			i++
+		}
+	}
+	if i > 0 {
+		_, _ = w.target.Write(out.Bytes())
+		w.pending = append([]byte(nil), w.pending[i:]...)
+	}
+}
+func runtimeSecrets() (map[string]bool, []string) {
+	var keys []string
+	_ = json.Unmarshal([]byte(os.Getenv("JAZYK_SECRET_KEYS")), &keys)
+	names := map[string]bool{}
+	values := []string{}
+	if len(keys) > 20 {
+		return names, values
+	}
+	for _, key := range keys {
+		if key != "" && !strings.HasPrefix(key, "JAZYK_") {
+			if value := os.Getenv(key); value != "" && len(value) <= 4096 {
+				names[key] = true
+				values = append(values, value)
+			}
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	return names, values
+}
+
 type logWriter struct {
 	mu       sync.Mutex
 	buf      bytes.Buffer
@@ -171,13 +231,23 @@ func execute(input Input, root string, stream io.Writer, cancel <-chan os.Signal
 			_ = os.Remove(filepath.Join(root, filepath.FromSlash(name)))
 		}
 	}
-	log := &logWriter{overflow: make(chan struct{}), stream: stream}
+	secretNames, secretValues := runtimeSecrets()
+	masked := &secretWriter{target: stream, secrets: secretValues, keep: 1}
+	for _, value := range secretValues {
+		if len(value) > masked.keep {
+			masked.keep = len(value)
+		}
+	}
+	if stream == nil {
+		masked.target = io.Discard
+	}
+	log := &logWriter{overflow: make(chan struct{}), stream: masked}
 	cmd := exec.Command("/bin/sh", "-c", input.Task.Command)
 	cmd.Dir = filepath.Join(root, input.Task.Cwd)
 	cmd.Env = []string{}
 	for _, v := range os.Environ() {
 		key, _, _ := strings.Cut(v, "=")
-		if !strings.HasPrefix(key, "JAZYK_") && !strings.HasPrefix(key, "AWS_") {
+		if !strings.HasPrefix(key, "JAZYK_") && (!strings.HasPrefix(key, "AWS_") || secretNames[key]) {
 			cmd.Env = append(cmd.Env, v)
 		}
 	}
@@ -235,6 +305,10 @@ func execute(input Input, root string, stream io.Writer, cancel <-chan os.Signal
 	r.ExitCode = &code
 	log.mu.Lock()
 	r.Log = log.buf.String()
+	for _, value := range secretValues {
+		r.Log = strings.ReplaceAll(r.Log, value, "[REDACTED]")
+	}
+	masked.flush(true)
 	log.mu.Unlock()
 	if err := collect(input, root, &r); err != nil {
 		r.Complete = false

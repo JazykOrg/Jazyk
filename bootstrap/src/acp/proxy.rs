@@ -40,6 +40,7 @@ struct ProxyState {
     building: std::sync::atomic::AtomicBool,
     // The last plan pushed or recorded, so the watcher republishes only on change.
     plan_seen: Mutex<String>,
+    runtime_fences: Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
     out: std::path::PathBuf,
 }
 
@@ -154,6 +155,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         llm: Mutex::new(llm),
         building: std::sync::atomic::AtomicBool::new(false),
         plan_seen: Mutex::new(String::new()),
+        runtime_fences: Mutex::new(Default::default()),
         out,
     });
     if state.in_project() {
@@ -210,7 +212,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 async move |mut req: NewSessionRequest, responder, _cx| {
                     // Inside a jazyk project, the session gains the chat serving; the
                     // dropdown entry stays inert everywhere else.
-                    let servers = with_jazyk_serving(&st_new, req.mcp_servers.clone());
+                    let fence = runtime_fence(&st_new);
+                    let servers = with_jazyk_serving(&st_new, req.mcp_servers.clone(), &fence);
                     req = req.mcp_servers(servers);
                     let down = st_new.down.get().cloned().ok_or_else(not_initialized)?;
                     let st = st_new.clone();
@@ -218,6 +221,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     down.send_request(req).on_receiving_result(async move |result| {
                         let sid = result.as_ref().ok().map(|r| r.session_id.to_string());
                         if let Some(sid) = &sid {
+                            st.runtime_fences.lock().unwrap().insert(sid.clone(), fence.clone());
                             *st.last_session.lock().unwrap() = Some(sid.clone());
                             // A conversation in a project is recorded from its first
                             // moment, so it can be listed and reopened later.
@@ -256,6 +260,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             .on_receive_request(
                 async move |req: PromptRequest, responder, cx: ConnectionTo<Client>| {
                     *st_prompt.last_session.lock().unwrap() = Some(req.session_id.to_string());
+                    if let Some(fence)=st_prompt.runtime_fences.lock().unwrap().get(&req.session_id.to_string()) { let _=std::fs::remove_file(fence); }
                     // A mirrored run has no agent behind it; a prompt typed into one
                     // is answered here, never forwarded.
                     // Mirrors docs/frontends/acp.md#mirroring-into-ides.
@@ -405,6 +410,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         );
                     }
                     *st_load.last_session.lock().unwrap() = Some(sid.clone());
+                    let fence=runtime_fence(&st_load);
+                    st_load.runtime_fences.lock().unwrap().insert(sid.clone(),fence.clone());
                     let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
                     // An agent that keeps its own sessions owns the replay: its
                     // history is the real one, and replaying jazyk's copy too would
@@ -413,7 +420,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     // Mirrors docs/frontends/acp.md#session-store.
                     if *st_load.down_loads.lock().unwrap() {
                         let mut req = req;
-                        let servers = with_jazyk_serving(&st_load, req.mcp_servers.clone());
+                        let servers = with_jazyk_serving(&st_load, req.mcp_servers.clone(), &fence);
                         req = req.mcp_servers(servers);
                         let st = st_load.clone();
                         let up = cx.clone();
@@ -433,7 +440,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     let new_req = agent_client_protocol::schema::v1::NewSessionRequest::new(
                         req.cwd.clone(),
                     )
-                    .mcp_servers(with_jazyk_serving(&st_load, req.mcp_servers.clone()));
+                    .mcp_servers(with_jazyk_serving(&st_load, req.mcp_servers.clone(), &fence));
                     let st = st_load.clone();
                     let up = cx.clone();
                     let cwd = req.cwd.clone();
@@ -507,6 +514,12 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             )
             .on_receive_notification(
                 async move |mut n: CancelNotification, _cx| {
+                    let fence=st_cancel.runtime_fences.lock().unwrap().get(&n.session_id.to_string()).cloned();
+                    let project=st_cancel.project.lock().unwrap().clone();
+                    if let (Some(fence),Some(project))=(fence,project) {
+                        // Persist ownership cancellation before forwarding. Observers do not own runs.
+                        if let Err(error)=crate::task_runtime::cancel_owned(&project.root,&fence) { eprintln!("jazyk: child run cancellation failed: {error}"); }
+                    }
                     if let Some(down) = st_cancel.down.get() {
                         n.session_id = sid_of(&st_cancel.route_down(&n.session_id.to_string()));
                         let _ = down.send_notification(n);
@@ -533,9 +546,14 @@ fn sid_of(s: &str) -> SessionId {
 // Inside a project, every session the downstream agent opens carries the jazyk chat
 // serving, whether it came from session/new or session/load.
 // Mirrors docs/frontends/acp.md#session-store.
+fn runtime_fence(st: &Arc<ProxyState>) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+    st.out.join("sessions").join(format!("runtime-cancel-{}-{}-{}",crate::sys::process_id(),crate::sys::now_millis(),NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed)))
+}
 fn with_jazyk_serving(
     st: &Arc<ProxyState>,
     mut servers: Vec<agent_client_protocol::schema::v1::McpServer>,
+    fence: &std::path::Path,
 ) -> Vec<agent_client_protocol::schema::v1::McpServer> {
     if !st.in_project() {
         return servers;
@@ -548,6 +566,8 @@ fn with_jazyk_serving(
         "mcp".to_string(),
         "chat".to_string(),
         "--ephemeral".to_string(),
+        "--cancel-file".to_string(),
+        fence.to_string_lossy().into_owned(),
     ];
     if let Some(sink) = st.sink_path.lock().unwrap().as_ref() {
         args.push("--edit-sink".to_string());

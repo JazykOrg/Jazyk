@@ -576,8 +576,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "task_context",
-            description: "Read the flat task list, descriptions, configuration revision, execution capabilities and recent runs.",
-            parameters: obj(json!({}), &[]),
+            description: "Read the flat task list, descriptions, configuration revision, execution capabilities and recent runs. Pass next_cursor as before for older runs.",
+            parameters: obj(json!({"before":{"type":"string"}}), &[]),
         },
         ToolDef {
             name: "update_tasks",

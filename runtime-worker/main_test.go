@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"os"
 	"syscall"
@@ -83,5 +84,17 @@ func TestOversizedCacheCannotHideProductsOrInputChanges(t *testing.T) {
 	}
 	if result.Files["dist/book.pdf"] != encoded("product\n") || result.Files["source.txt"] != encoded("changed\n") {
 		t.Fatal("cache hid products or an input mutation")
+	}
+}
+
+func TestSecretWriterMasksSplitAndOverlappingValues(t *testing.T) {
+	var out bytes.Buffer
+	w := &secretWriter{target: &out, secrets: []string{"secret-long", "secret"}, keep: 11}
+	for _, p := range []string{"before se", "cret-lo", "ng and sec", "ret after"} {
+		_, _ = w.Write([]byte(p))
+	}
+	w.flush(true)
+	if got := out.String(); got != "before [REDACTED] and [REDACTED] after" {
+		t.Fatal(got)
 	}
 }

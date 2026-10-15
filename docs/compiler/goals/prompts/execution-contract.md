@@ -18,3 +18,9 @@ Bind programmatic checks with run="task:<id>" and an exact classname::name
 JUnit case selector (or a unique case name). Give the task fresh report globs.
 Use run_tests for bound checks so the harness imports case evidence. Build bindings
 may also use task:<id>. LLM criteria remain direct judgments of their artifacts.
+
+Task credentials require a human-owned grant for the exact saved definition.
+Changing that definition invalidates its grant. Never copy credentials into task
+commands, environment settings, source, or products. Request a grant through the
+project settings when publication or a private image needs credentials. A runtime
+access token selects hosted execution; it does not authorize new secret access.

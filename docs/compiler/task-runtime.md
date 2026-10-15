@@ -50,13 +50,22 @@ Inputs include documentation, source, tests, assets, and project settings with c
 and other projects. The command runs through `/bin/sh -c`. Arguments and environment
 are passed as data. Concurrent source edits do not change the input snapshot.
 
-Local Docker execution and hosted execution share task, manifest, result, and
+Local Docker, Podman, and hosted execution share task, manifest, result, and
 cancellation contracts. Browser-only execution returns unavailable. Local execution
 requires no Cloud account. A project command never runs on the hosted API server.
 The runtime helper is an independent static Linux executable. An initialization
 container supplies it to the selected image; customer images need no Python, curl,
 or provider SDK. The helper is built from `runtime-worker/` with the Go toolchain.
 Its container image can be built locally without a Cloud account.
+
+`JAZYK_CONTAINER_ENGINE` selects `docker` (default) or `podman`. This is a host
+setting, never a project command or executable path. Discovery probes the selected
+engine with a short deadline and reports unavailable daemons accurately. Submission
+freezes the selected engine in the run record. Later reads, cancellation, and the
+watchdog use that engine even if the environment changes. Inputs and outputs copy
+through the engine API. No host directory is mounted into the project container.
+Local images use the engine platform. Private images use the operator's existing
+engine registry authentication. Registry credentials never enter project files.
 
 ## Cancellation and limits
 
@@ -86,7 +95,8 @@ Partial results remain attached to the run and cannot replace a successful produ
 Cloud, local MCP, and ACP use `task_context`, `update_tasks`, `run_task`,
 `inspect_run`, `wait_run`, `cancel_run`, `read_run_log`, `search_run_log`, and
 `read_run_changes`. Tool availability does not depend on native file-tool support.
-Read-only clients cannot edit or execute. Client transport does not choose the
+Task definitions and execution do not require a compiled graph or a selected
+document set. Read-only clients cannot edit or execute. Client transport does not choose the
 execution location. All reads are bounded and historical reads allocate no runtime.
 
 Generation and binding receive the execution prompt and task descriptions. They
@@ -131,3 +141,43 @@ eligible input still matches the frozen snapshot. An intervening edit leaves the
 result in run history. Source changes from a command remain reviewable changes;
 they do not silently overwrite source. Existing files outside `products` stay as
 run output until an agent or person applies them through ordinary file edits.
+
+## Local supervision and ownership
+
+A local run stores its owning operation separately from its observer. MCP build
+cancellation and ACP session cancellation stop active child runs. Independent runs
+keep running when another session is cancelled. Connection loss alone does not
+cancel a run. The supervisor observes cancellation without a further tool call.
+Publication and cache promotion share a finalization lock with cancellation. Once
+finalization commits, later cancellation cannot change its outcome.
+
+## Remote execution from a local engine
+
+`JAZYK_RUNTIME_URL` selects a Cloud project's runtime endpoint.
+`JAZYK_RUNTIME_TOKEN_FILE` names a private host file holding its runtime access
+token. These are host settings. They are not project TOML or model tools. HTTPS is
+required except for loopback development servers. Redirects are refused.
+
+The Cloud project owner creates a project-scoped token in Tasks settings. The token
+permits execution and retained run reads, not project editing, account operations,
+or credential grants. It expires after 30 days and can be revoked. Cloud limits and
+billing apply. The local snapshot is the run input; retained products return to the
+local project with revision checks. The Cloud project's source is not replaced.
+MCP and ACP use this adapter through the same runtime tools. No Cloud account is
+needed when no remote endpoint is selected. Remote failure never selects a local
+shell or another provider automatically.
+
+## Granted credentials
+
+A Cloud grant belongs to the account and exact task definition, outside project
+TOML. It can supply named secret environment values and private registry credentials.
+Changing the task requires a new grant. Revocation prevents new dispatch and cancels
+active uses. Runtime tokens and model tools cannot create or replace a grant.
+The helper masks exact secret values in retained and streamed logs, including values
+split across writes. This is accidental-disclosure protection, not a restriction on
+what an authorized command can publish. Generated files can contain command output.
+
+Remote submission records ownership before making the network request. A cancel
+notification marks pending submissions as well as accepted runs. Starting another
+prompt cannot clear cancellation of a request still in flight. Lost responses
+leave the Cloud operation bounded by its original deadline and operation key.

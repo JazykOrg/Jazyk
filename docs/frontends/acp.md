@@ -717,3 +717,12 @@ The `[acp]` section of `jazyk.toml`, the global `~/.jazyk/config.toml`, the
 the [LLM settings](../compiler/project-settings.md#llm) do. The `[executors]`
 section overrides the profile per goal kind or class ([executors](#executors)). See
 [project settings](../compiler/project-settings.md#acp).
+
+## Finite task execution
+
+The native IDE proxy injects the shared task tools into its chat serving. Tasks
+can run before graph compilation. Each session owns a separate cancellation fence.
+`session/cancel` persists stop intent for its child runs before forwarding the
+notification to the downstream agent. A later prompt does not revive cancelled runs.
+Independent runs and other sessions remain separate. Remote observers carry the
+same ownership and finish importing eligible products after the client disconnects.

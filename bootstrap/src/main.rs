@@ -2,6 +2,12 @@
 // serves the wasm backend (docs/frontends/wasm.md).
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("__task_remote_watch") {
+        if let (Some(root), Some(id)) = (args.get(2), args.get(3)) {
+            let _ = jazyk::task_runtime::remote_watch(std::path::Path::new(root), id);
+        }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("__task_watchdog") {
         if let Some(path) = args.get(2) {
             let _ = jazyk::task_runtime::watchdog(std::path::Path::new(path));

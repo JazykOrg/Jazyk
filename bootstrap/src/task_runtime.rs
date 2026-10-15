@@ -12,6 +12,42 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "task_runtime_local.rs"]
 mod local;
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "task_runtime_remote.rs"]
+mod remote;
+
+thread_local! { static CANCEL_FILE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) }; }
+pub struct CancellationScope(Option<std::path::PathBuf>);
+impl CancellationScope {
+    pub fn enter(path: Option<&Path>) -> Self {
+        Self(CANCEL_FILE.with(|p| {
+            let old = p.borrow().clone();
+            if let Some(path) = path {
+                *p.borrow_mut() = Some(path.to_owned());
+            }
+            old
+        }))
+    }
+}
+impl Drop for CancellationScope {
+    fn drop(&mut self) {
+        CANCEL_FILE.with(|p| *p.borrow_mut() = self.0.take());
+    }
+}
+fn cancellation_file() -> Option<std::path::PathBuf> {
+    CANCEL_FILE.with(|p| p.borrow().clone())
+}
+fn operation_cancelled() -> bool {
+    cancellation_file().is_some_and(|p| crate::vfs::exists(&p))
+}
+#[cfg(not(target_arch = "wasm32"))]
+pub fn cancel_owned(root: &Path, fence: &Path) -> Result<(), String> {
+    local::cancel_owned(root, fence)?;
+    if std::env::var_os("JAZYK_RUNTIME_URL").is_some() {
+        remote::cancel_owned(root, fence)?;
+    }
+    Ok(())
+}
 
 pub const PROMPT: &str = include_str!("../../docs/compiler/goals/prompts/execution-contract.md");
 pub const TOOLS: [&str; 9] = [
@@ -325,6 +361,16 @@ pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
 pub fn input_hash(files: &BTreeMap<String, String>) -> String {
     digest(&serde_json::to_vec(files).unwrap())
 }
+fn legacy_tasks(source: &str) -> Vec<Task> {
+    let Ok(value) = toml::from_str::<toml::Value>(source) else {
+        return Vec::new();
+    };
+    value.get("deliveries").and_then(|v|v.as_table()).into_iter().flat_map(|v|v.iter()).filter_map(|(id,value)|{
+        if value.get("kind").and_then(|v|v.as_str())!=Some("script"){return None;}
+        let command=value.get("command")?.as_str()?;
+        serde_json::from_value(json!({"id":id,"name":id,"description":format!("Converted legacy delivery {id}. Review its image and report bindings before running."),"command":command,"reports":value.get("reports").cloned().unwrap_or(toml::Value::Array(vec![]))})).ok()
+    }).collect()
+}
 pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     if !TOOLS.contains(&name) {
         return Err("Unknown runtime operation.".into());
@@ -346,6 +392,12 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     }
     request["operation"] = json!(name);
     if name == "run_task" {
+        if operation_cancelled() {
+            return Err("The owning operation was cancelled.".into());
+        }
+        if let Some(path) = cancellation_file() {
+            request["cancel_file"] = json!(path);
+        }
         let id = args["task_id"].as_str().ok_or("task_id is required")?;
         let mut task = tasks
             .iter()
@@ -368,6 +420,10 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
         if !valid_id(key) {
             return Err("Invalid operation key.".into());
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        if !crate::vfs::is_scoped() && std::env::var_os("JAZYK_RUNTIME_URL").is_some() {
+            remote::validate_host(root)?;
+        }
         let files = snapshot(root)?;
         request["input_digest"] = json!(input_hash(&files));
         request["files"] = json!(files);
@@ -376,7 +432,7 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     let host = dispatch(root, &request);
     if name == "task_context" {
         return Ok(
-            json!({"tasks":tasks,"revision":digest(source.as_bytes()),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"size":"small","timeout_seconds":300}}),
+            json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"size":"small","timeout_seconds":300}}),
         );
     }
     host
@@ -386,6 +442,8 @@ fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
     {
         if crate::vfs::is_scoped() {
             crate::hosted::runtime(request)
+        } else if std::env::var_os("JAZYK_RUNTIME_URL").is_some() {
+            remote::request(root, request)
         } else {
             local::request(root, request)
         }
@@ -395,6 +453,10 @@ fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
         let _ = (root, request);
         Err("Connect a local engine or Cloud to execute tasks.".into())
     }
+}
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remote_watch(root: &Path, id: &str) -> Result<(), String> {
+    remote::watch(root, id)
 }
 #[cfg(not(target_arch = "wasm32"))]
 pub fn supervise(path: &Path) -> Result<(), String> {
@@ -487,25 +549,50 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
             }
             let content = result["files"][path]
                 .as_str()
-                .or_else(|| result["reports"][path].as_str())
-                .ok_or("Retained file not found")?;
-            let bytes = STANDARD.decode(content).map_err(|e| e.to_string())?;
+                .or_else(|| result["reports"][path].as_str());
+            let before = result["input_files"][path]
+                .as_str()
+                .and_then(|s| STANDARD.decode(s).ok());
+            let deleted = result["deleted"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|p| p == path));
+            if content.is_none() && !deleted {
+                return Err("Retained file not found".into());
+            }
             if args["download"] == "1" {
                 return Ok(
-                    json!({"path":path,"encoding":"base64","content":STANDARD.encode(&bytes)}),
+                    json!({"path":path,"encoding":"base64","content":content.ok_or("Deleted file has no current contents")?}),
                 );
             }
-            if bytes.len() > 64 * 1024 {
-                return Ok(
-                    json!({"path":path,"size":bytes.len(),"encoding":"binary","download":true}),
-                );
-            }
-            return Ok(match String::from_utf8(bytes) {
-                Ok(s) => json!({"path":path,"encoding":"utf8","content":s}),
-                Err(e) => {
-                    json!({"path":path,"encoding":"base64","content":STANDARD.encode(e.into_bytes())})
+            let bytes = content
+                .map(|s| STANDARD.decode(s))
+                .transpose()
+                .map_err(|e| e.to_string())?;
+            let preview = |bytes: Option<Vec<u8>>| -> Value {
+                match bytes {
+                    None => json!({"encoding":"absent"}),
+                    Some(bytes) if bytes.len() > 65536 => {
+                        json!({"encoding":"binary","size":bytes.len(),"download":true})
+                    }
+                    Some(bytes) => match String::from_utf8(bytes) {
+                        Ok(text) => json!({"encoding":"utf8","content":text}),
+                        Err(error) => {
+                            json!({"encoding":"binary","size":error.as_bytes().len(),"download":true})
+                        }
+                    },
                 }
+            };
+            let mut value = preview(bytes);
+            value["path"] = json!(path);
+            value["before"] = preview(before);
+            value["change"] = json!(if deleted {
+                "deleted"
+            } else if result["input_files"].get(path).is_some() {
+                "modified"
+            } else {
+                "created"
             });
+            return Ok(value);
         }
         let retained: BTreeMap<_, _> = result["files"]
             .as_object()
@@ -518,8 +605,13 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
                     .flat_map(|m| m.iter()),
             )
             .collect();
-        let paths:Vec<_>=retained.into_iter().map(|(path,bytes)|json!({"path":path,"size":bytes.as_str().map(|s|s.len()*3/4),"change":"written"})).chain(result["deleted"].as_array().into_iter().flatten().map(|p|json!({"path":p,"change":"deleted"}))).skip(args["offset"].as_u64().unwrap_or(0)as usize).take(200).collect();
-        Ok(json!({"files":paths,"complete":result["complete"]}))
+        let paths:Vec<_>=retained.into_iter().map(|(path,bytes)|json!({"path":path,"size":bytes.as_str().map(|s|s.len()*3/4),"change":if result["input_files"].get(path).is_some(){"modified"}else{"created"}})).chain(result["deleted"].as_array().into_iter().flatten().map(|p|json!({"path":p,"change":"deleted"}))).skip(args["offset"].as_u64().unwrap_or(0)as usize).take(200).collect();
+        let next = if paths.len() == 200 {
+            Some(args["offset"].as_u64().unwrap_or(0) + 200)
+        } else {
+            None
+        };
+        Ok(json!({"files":paths,"complete":result["complete"],"next_offset":next}))
     } else {
         Err("Unsupported runtime operation.".into())
     }
@@ -806,7 +898,7 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
     let deadline = crate::sys::now_unix() + 8100;
     loop {
         #[cfg(not(target_arch = "wasm32"))]
-        if crate::hosted::cancelled() {
+        if crate::hosted::cancelled() || operation_cancelled() {
             let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
             return Err(format!("Execution cancelled; run {run_id} is stopping."));
         }

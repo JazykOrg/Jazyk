@@ -16,7 +16,7 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
 | MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
 | Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
-| Regression suite and release build | In progress | 674 compiler tests passed, 3 ignored before the final review fixes. Go worker tests and WASM check passed. Final suite and release build remain. |
+| Regression suite and release build | Passed | 677 compiler tests passed, 3 ignored. All 22 benchmark-module tests passed after the last reporting fix. Go worker tests, final WASM check, and final release build passed. Release smoke passed on both engines. |
 
 ## First investigation
 
@@ -252,4 +252,26 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   judging runs in an ACP child and did not update the parent's completion-token
   counter. Measurement now uses completed worker rounds or received judge replies.
   An invalid judgment still counts as a received reply; a transport error does not.
-  Its targeted regression passed; a fresh real-model report check is pending.
+  Its targeted regression passed. A fresh real-model repeat passed in both codecs
+  and saved `verification: capable` results (27/19 seconds native, 14/16 seconds
+  text). Evidence: `gemma-judgments-corrected`. Child token counts remain unavailable
+  to that parent counter; this change does not fabricate token usage or claim to
+  repair billing.
+
+## Completion
+
+- All 22 benchmark-module regressions passed after the final reporting fix. The
+  final release build and WASM check passed. The final release binary then passed
+  the full Podman image/files/cache/products/report/cancellation smoke again.
+- No Jazyk test containers remained running on Docker or Podman. All 50 run records
+  in the durable model and lifecycle fixture projects reported termination. The
+  dedicated `jazyk-runtime-test` Podman VM was stopped. Its cached images remain
+  available for later local tests.
+- Plans, reusable drivers, contracts, and fixes are committed on
+  `test/runtime-model-validation` for merging into public `master`. Raw evidence is
+  retained under this worktree's ignored `.local/model-validation` directory.
+- Remaining model/provider limits: Qwen's tool discovery hit an MLX GPU error;
+  Llama 8B did not complete generation; Gemma's full text-generation attempt ended
+  with an upstream HTTP 502. These are recorded failures, not passing coverage.
+  The measured native Gemma worker, focused text runtime workflows, and direct
+  LLM judgments passed. This pass did not grade every unrelated compiler goal.

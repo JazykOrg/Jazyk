@@ -1,6 +1,6 @@
 # Runtime and delivery plan
 
-Status: the first implementation is merged to master and deployed to jazyk.dev on
+Status: the implementation and completion work are merged to master and deployed to jazyk.dev on
 2026-10-15. See the [release status](implementation.md#first-release) and the
 [implemented contract](../../docs/compiler/task-runtime.md). The follow-up work and
 its measured checks are in [completion](completion.md). The remaining sections

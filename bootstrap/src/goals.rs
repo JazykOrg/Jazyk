@@ -2933,6 +2933,7 @@ impl GoalKind for Bind {
             "generation_tasks",
             "begin_generation",
             "record_generation",
+            "record_medium",
             "run_tests",
         ]
     }
@@ -3041,6 +3042,7 @@ impl GoalKind for Generate {
             "generation_tasks",
             "begin_generation",
             "record_generation",
+            "record_medium",
             "binding_tasks",
             "begin_binding",
             "record_binding",

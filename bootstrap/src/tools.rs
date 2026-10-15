@@ -11208,6 +11208,15 @@ mod tests {
         assert!(!toolset("no-such-task").contains(&"mark_goal_done"));
     }
 
+    #[test]
+    fn generation_workers_can_resolve_an_undecided_medium() {
+        for task in ["generate", "bind", "generate-entity", "bind-requirement", "mcp-generate"] {
+            for name in GEN_TOOLS {
+                assert!(toolset(task).contains(&name), "{task} lacks {name}");
+            }
+        }
+    }
+
     // The batch claim rides in the pair slice only, and the compile serving lists it
     // so an MCP client sees it. Mirrors docs/compiler/tools.md#toolsets.
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp: the compile serving exposes

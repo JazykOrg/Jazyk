@@ -75,6 +75,12 @@ trait Codec {
 
 struct NativeCodec;
 
+fn result_text(result: &Value) -> String {
+    result.as_str().map(str::to_owned).unwrap_or_else(|| {
+        serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
+    })
+}
+
 impl Codec for NativeCodec {
     fn system_suffix(&self, _tools: &[GenericTool]) -> String {
         "\n\nYou may batch several related tool calls into one reply.".to_string()
@@ -133,7 +139,7 @@ impl Codec for NativeCodec {
     // The reply pretty-printed (docs/compiler/tools.md): the model and the person
     // reading the transcript see one field per line.
     fn result_msg(&self, call_id: &Option<String>, name: &str, result: &Value) -> Value {
-        let content = serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
+        let content = result_text(result);
         json!({
             "role": "tool",
             "tool_call_id": call_id.clone().unwrap_or_else(|| name.to_string()),
@@ -330,7 +336,7 @@ impl Codec for TextCodec {
         }
     }
     fn result_msg(&self, _call_id: &Option<String>, _name: &str, result: &Value) -> Value {
-        json!({"role": "user", "content": format!("RESULT: {}", result)})
+        json!({"role": "user", "content": format!("RESULT: {}", result_text(result))})
     }
 }
 
@@ -635,7 +641,8 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                         result: result.clone(),
                         ok,
                     });
-                    a.history.push(codec.result_msg(&id, &name, &json!(result)));
+                    let value = serde_json::from_str(&result).unwrap_or_else(|_| json!(result));
+                    a.history.push(codec.result_msg(&id, &name, &value));
                 }
             }
         }
@@ -707,6 +714,18 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn tool_results_have_one_json_layer_and_preserve_plain_text() {
+        let object = json!({"tasks": [{"id": "receipt"}], "revision": "abc"});
+        for codec in [&NativeCodec as &dyn Codec, &TextCodec as &dyn Codec] {
+            let message = codec.result_msg(&Some("call-1".into()), "task_context", &object);
+            let content = message["content"].as_str().unwrap().trim_start_matches("RESULT: ");
+            assert_eq!(serde_json::from_str::<Value>(content).unwrap(), object);
+            let message = codec.result_msg(&None, "log", &json!("line one\nline two"));
+            assert!(message["content"].as_str().unwrap().ends_with("line one\nline two"));
+        }
+    }
 
     #[test]
     fn text_codec_parses_single_action() {

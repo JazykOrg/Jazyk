@@ -164,7 +164,7 @@ The session's serving runs in `generate` mode ([toolsets](../tools.md#toolsets))
 - The [binding tools](../tools.md#binding-tools): `binding_tasks`, `begin_binding`,
   `record_binding({requirement, files, test, verdict, evidence?})`.
 - The [generation tools](../tools.md#generation-tools) `generation_tasks`,
-  `begin_generation`, `record_generation`, and `run_tests`: binding and
+  `begin_generation`, `record_medium`, `record_generation`, and `run_tests`: binding and
   generation share the serving because they share the worker persona.
 - [`report_feedback`](../tools.md#feedback-tool).
 - The [file and command tools](./generate.md#file-and-command-tools) when the agent's

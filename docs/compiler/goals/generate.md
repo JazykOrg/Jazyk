@@ -239,7 +239,9 @@ The session's serving runs in `generate` mode ([toolsets](../tools.md#toolsets))
 - The [goal tools](../tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
   `load_skill`, `done`.
 - The [generation tools](../tools.md#generation-tools): `generation_tasks`,
-  `begin_generation`, `record_generation({entity, factHash, manifest, choices?})`.
+  `begin_generation`, `record_medium`,
+  `record_generation({entity, factHash, manifest, choices?})`. A session whose package
+  reports an undecided medium can record that decision before writing files.
 - The [binding tools](../tools.md#binding-tools) `binding_tasks`, `begin_binding`,
   `record_binding`, and `run_tests`.
 - [`report_feedback`](../tools.md#feedback-tool).

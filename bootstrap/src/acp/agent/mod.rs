@@ -150,6 +150,12 @@ pub fn run() -> i32 {
                         }
                     }
                     let tools: Vec<GenericTool> = conns.iter().flat_map(|c| c.tools.clone()).collect();
+                    let history = conns.iter().filter_map(|c| {
+                        c.instructions.as_ref().map(|instructions| json!({
+                            "role": "user",
+                            "content": format!("MCP server `{}` instructions:\n{}", c.name, instructions)
+                        }))
+                    }).collect();
                     let model = new_llm.model.clone();
                     new_sessions.lock().unwrap().insert(
                         id.clone(),
@@ -157,7 +163,7 @@ pub fn run() -> i32 {
                             state: Arc::new(Mutex::new(SessionState {
                                 conns,
                                 tools,
-                                history: Vec::new(),
+                                history,
                                 cwd,
                                 model: model.clone(),
                             })),

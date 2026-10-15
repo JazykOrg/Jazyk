@@ -141,14 +141,19 @@ rules it obeys:
 with no external agent installed, and it is deliberately ignorant of jazyk:
 
 - It answers `initialize` with protocol version 1 and stdio MCP support.
-- On `session/new` it spawns the listed MCP servers and collects their tools. Every
+- On `session/new` it spawns the listed MCP servers and collects their tools and
+  initialization instructions. Each server's instructions enter the session history
+  once, before the first user prompt, labelled with the server name. These carry the
+  server's tool workflow, including task execution and result inspection. Every
   call to a server waits at most the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`) for its
   answer; a server that stays silent fails that call with a message naming the wait,
   so a wedged server never pins the turn.
 - On `session/prompt` it runs a plain agentic loop against the configured
   OpenAI-compatible endpoint ([LLM settings](../compiler/project-settings.md#llm)):
   send the messages and the MCP tools, dispatch the calls the model makes, append the
-  results, repeat until the model stops calling tools. It streams thought chunks,
+  results, repeat until the model stops calling tools. JSON tool results remain
+  structured JSON in both codecs, without another layer of string escaping. Plain
+  text results remain text. It streams thought chunks,
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
   usage. A prose reply in a prompt that already made tool calls gets one nudge before
   the prompt ends: weak models forget they are mid-goal more often than they finish

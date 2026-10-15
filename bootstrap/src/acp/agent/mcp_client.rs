@@ -19,6 +19,7 @@ pub struct McpServerConn {
     lines: std::sync::mpsc::Receiver<String>,
     next_id: u64,
     pub tools: Vec<GenericTool>,
+    pub instructions: Option<String>,
 }
 
 impl McpServerConn {
@@ -65,8 +66,9 @@ impl McpServerConn {
             lines,
             next_id: 0,
             tools: Vec::new(),
+            instructions: None,
         };
-        conn.request(
+        let initialized = conn.request(
             "initialize",
             json!({
                 "protocolVersion": "2024-11-05",
@@ -74,6 +76,10 @@ impl McpServerConn {
                 "clientInfo": {"name": "jazyk-agent", "version": env!("CARGO_PKG_VERSION")}
             }),
         )?;
+        conn.instructions = initialized["instructions"]
+            .as_str()
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned);
         conn.notify("notifications/initialized", json!({}))?;
         let listed = conn.request("tools/list", json!({}))?;
         conn.tools = listed["tools"]
@@ -190,5 +196,27 @@ impl Drop for McpServerConn {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialization_keeps_server_instructions_beside_tools() {
+        let script = r#"import json,sys
+for line in sys.stdin:
+ m=json.loads(line)
+ if 'id' not in m: continue
+ r={'instructions':'Read task_context before run_task.'} if m['method']=='initialize' else {'tools':[]}
+ print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':r}),flush=True)
+"#;
+        let conn = McpServerConn::spawn(
+            "fixture", "python3", &["-c".into(), script.into()], &[],
+            &std::env::temp_dir(),
+        ).unwrap();
+        assert_eq!(conn.instructions.as_deref(), Some("Read task_context before run_task."));
+        assert!(conn.tools.is_empty());
     }
 }

@@ -1,7 +1,7 @@
 # Results
 
-Work started on 2026-10-15. Raw local evidence is under this worktree's ignored
-`.local/model-validation/` directory. The reusable model driver is
+Work started on 2026-10-15. Raw local evidence is retained under the main checkout's
+ignored `.worktrees/runtime-model-validation/.local/model-validation/` directory. The reusable model driver is
 `bootstrap/tests/runtime_model_acceptance.py`.
 
 Prior release evidence includes real Docker, Podman, Fargate, and deterministic ACP/MCP acceptance. Its `gen-basic` model benchmark failed in both codecs. This pass will inspect those traces before choosing corrections.
@@ -267,9 +267,9 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   in the durable model and lifecycle fixture projects reported termination. The
   dedicated `jazyk-runtime-test` Podman VM was stopped. Its cached images remain
   available for later local tests.
-- Plans, reusable drivers, contracts, and fixes are committed on
-  `test/runtime-model-validation` for merging into public `master`. Raw evidence is
-  retained under this worktree's ignored `.local/model-validation` directory.
+- Plans, reusable drivers, contracts, and fixes were integrated into public `master`
+  by fast-forwarding `test/runtime-model-validation` through `2bb86db`. Raw evidence
+  remains in the validation worktree at the path above.
 - Remaining model/provider limits: Qwen's tool discovery hit an MLX GPU error;
   Llama 8B did not complete generation; Gemma's full text-generation attempt ended
   with an upstream HTTP 502. These are recorded failures, not passing coverage.

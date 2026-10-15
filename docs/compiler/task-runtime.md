@@ -181,3 +181,7 @@ Remote submission records ownership before making the network request. A cancel
 notification marks pending submissions as well as accepted runs. Starting another
 prompt cannot clear cancellation of a request still in flight. Lost responses
 leave the Cloud operation bounded by its original deadline and operation key.
+
+Inspecting or cancelling an existing run does not parse the current task settings.
+An invalid edit after submission cannot prevent stopping that run. Its frozen
+request remains the authority for execution and retained results.

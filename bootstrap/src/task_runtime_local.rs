@@ -612,6 +612,28 @@ pub fn supervise(dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn existing_run_control_survives_invalid_task_settings() {
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-runtime-invalid-{}",
+            crate::sys::now_millis()
+        ));
+        let dir = root.join(".jazyk/runtime/runs/existing");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(root.join(".jazyk/jazyk.toml"), "[[tasks]]\ninvalid = [").unwrap();
+        write(
+            &dir.join("state.json"),
+            &json!({"id":"existing","state":"executing","terminated":false,"provider":"docker"}),
+        )
+        .unwrap();
+        assert!(super::super::load(&root).is_err());
+        let stopped =
+            super::super::call(&root, "cancel_run", &json!({"run_id":"existing"})).unwrap();
+        assert_eq!(stopped["state"], "cancelling");
+        assert!(dir.join("cancel").exists());
+        assert!(super::super::call(&root, "inspect_run", &json!({"run_id":"existing"})).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn engine_selection_is_fixed_and_not_an_executable_path() {
         assert!(select_engine("podman").is_ok());
         assert_eq!(engine_name(), "podman");

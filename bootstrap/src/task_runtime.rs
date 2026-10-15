@@ -375,6 +375,14 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     if !TOOLS.contains(&name) {
         return Err("Unknown runtime operation.".into());
     }
+    if !matches!(name, "task_context" | "update_tasks" | "run_task") {
+        let mut request = args.clone();
+        if !request.is_object() {
+            request = json!({});
+        }
+        request["operation"] = json!(name);
+        return dispatch(root, &request);
+    }
     let (source, tasks) = load(root)?;
     if name == "update_tasks" {
         if args["expected_revision"].as_str() != Some(digest(source.as_bytes()).as_str()) {

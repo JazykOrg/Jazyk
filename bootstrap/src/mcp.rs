@@ -1713,6 +1713,9 @@ impl McpServer {
             }
             return self.handle_local(method, params);
         }
+        if method == "tools/call" && crate::task_runtime::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
+            return self.handle_local(method, params);
+        }
         let w =
             crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
         if method == "initialize" {

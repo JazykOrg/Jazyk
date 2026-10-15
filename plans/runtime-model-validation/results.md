@@ -15,8 +15,8 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 | Generation and runtime/LLM verification | Passed native and text workers, focused loop, and chat repair | Gemma passed all four generation benchmark checks under both codecs, including falsification. The focused repair loop, paired LLM judgments, and both-engine report-to-graph checks passed. |
 | Cancellation, timeout, failure recovery | Passed | Deterministic lifecycle fixture passed on both engines. Gemma cancellation, timeout, failed-command repair, and adversarial-log cases passed. |
 | MCP and ACP entry points | Passed | Real model MCP cases passed. Full ACP passed with native/Podman and text/Docker. Deterministic ACP cancellation passed on both engines. |
-| Docker parity | Passed | Expanded lifecycle, report-to-graph verification, and the real model full ACP workflow passed. |
-| Regression suite and release build | Passed | 677 compiler tests passed, 3 ignored. All 22 benchmark-module tests passed after the last reporting fix. Go worker tests, final WASM check, and final release build passed. Release smoke passed on both engines. |
+| Docker parity | Earlier lifecycle passed; latest model retry hit a host failure | Expanded lifecycle, report-to-graph verification, release smoke, and a real model full ACP workflow passed. The latest retry could not create a volume on Docker's read-only filesystem. |
+| Regression suite and release build | Affected checks passed; full-suite timing flake recorded | Latest 144 affected compiler regressions, WASM check, and release build passed. The preceding full suite passed 681 tests with 3 ignored; its unchanged timing test failed under load and passed alone. |
 
 ## First investigation
 
@@ -414,3 +414,26 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   changes are being checked by a fresh Docker generation, falsification, and repair
   case. Passing one benchmark does not establish reliability for every project or
   model; these local model workflows remain slow.
+
+## Final current-binary acceptance
+
+- `final-generation-docker` reached generation and recorded a binding to the actual
+  Python test source. Both execution attempts failed before running the command:
+  Docker could not create its helper volume because its internal filesystem was
+  read-only. The desktop reported `stopping`, with an unrelated workload still
+  present. The owned test driver was stopped, the failure trace retained, and both
+  run records confirmed terminated. Docker was not restarted or pruned.
+- `final-generation-podman` repeated the complete fixture with compiler `cc9179a`
+  and passed in 493 seconds. It recorded the test source and a qualified JUnit
+  selector, passed the task, detected deliberate source falsification with one
+  assertion failure and zero runner failures, then repaired only the implementation
+  and passed again. The test and supplied runner stayed byte-for-byte unchanged.
+  All four runs terminated, including the model's extra confirmation of the failure.
+- This pass leaves 84 retained run records, all marked terminated. These include
+  copied evidence projects, not 84 distinct newly created containers. Podman had
+  no running containers, and its dedicated `jazyk-runtime-test` VM was stopped.
+  The unrelated Docker workload was left alone. LocalRouter configuration and the
+  selected owner model were not changed.
+- The tested compiler fix and measured evidence are committed and merged to master.
+  The Cloud pin and deployment evidence live in the private repository's
+  `plans/chat-runtime-validation/README.md`.

@@ -21,45 +21,29 @@ agent changes cannot extend it.
 - Build releases, merge, deploy, and verify production. Record measured results
   and any evidence dependent on an external billing cycle.
 
-## Validation record
-
-- Docker Desktop and rootless Podman 6.1.4 passed actual MCP execution with
-  Python 3.12 Alpine, exact project inputs, two fresh allocations, cache reuse,
-  binary product import, reports, logs, cancellation, and cleanup. Podman uses a
-  dedicated local VM, stopped after validation.
-- The ACP proxy passed an IDE fixture without terminal/filesystem capabilities.
-  The injected MCP can execute tasks before compilation. Session cancellation
-  stops its child, and a subsequent prompt can create a retained product.
-- Full compiler suite: 657 passed, 3 optional tests ignored before the last
-  remote cancellation regression test. Release binary rebuilt.
-- Cloud API/PostgreSQL: 95 passed, 3 optional tests ignored, plus the separate
-  storage integration test passed. Scoped tokens, revocation, definition grants,
-  cross-account denial, and 65-entry history paging are covered.
-- Editor: 417 unit tests passed. Run history, paging, cost, diff previews, and log
-  search passed in Chrome. Expanded settings/credential UI tests are in progress.
-- Added durable pending remote-submission ownership after review found a
-  cancel/new-prompt race. Revoked-secret cleanup treats already missing secrets
-  as complete. Cloud deployment and live credential checks are still pending.
-
-These are protocol and runtime checks. They do not establish live model judgment
-or AWS invoice reconciliation. Those are recorded separately.
-
-
 ## Completion evidence
 
 The release now includes Docker/Podman selection, authenticated native Cloud
 execution, ACP-owned cancellation, definition-pinned publishing/private-registry
 grants, environment editing, explicit legacy conversion, paged history, log search,
-before/after file previews, and usage split between models and containers.
+before/after file previews, and usage split between models and containers. The
+shared prompt covers task selection, finite execution, logs, repairs, test evidence,
+budgets, and credentials in compilation and generation sessions.
 
-- Final compiler suite: 659 passed, 3 optional tests ignored.
+The owner delegated the autonomy choice. A person saves a credential grant for the
+exact task definition. An agent can execute it within the account limits. It cannot
+create a grant or carry one across a definition change. Revoking a grant cancels its
+active runs. Project source changes do not invalidate the grant.
+
+- Final compiler suite: 661 passed, 3 optional tests ignored.
 - Cloud suite: 95 passed, 3 optional tests ignored; storage integration passed.
 - Editor unit suite: 417 passed.
 - Cloud browser suite: 92 passed. Its four runtime cases passed again after fixes.
 - Final general browser suite: 136 passed, 7 optional cases skipped.
-- Real Docker and Podman roundtrips passed. The final Docker test also changed
+- Real Docker and Podman roundtrips passed. Both include declared products
+  under `target/`. Both also changed
   settings into invalid TOML during execution and successfully cancelled the run.
-- Real ACP proxy with no IDE terminal passed Docker submission, ownership
+- Real ACP proxy with no IDE terminal passed Docker and Fargate submission, ownership
   cancellation, subsequent execution, and product import.
 - Native MCP to production Fargate passed two PDF/EPUB builds, cached dependency
   reuse, fresh JUnit reports, product import, and command cancellation. Run IDs:
@@ -72,6 +56,9 @@ before/after file previews, and usage split between models and containers.
 - Direct native HTTPS passed. A changed command was refused the old grant.
   Revoking the synthetic grant cancelled run
   `6f7129ba-995b-48a3-ba2a-0a1963a259cc` and withheld new products.
+- The final Files regression covers native and virtual filesystems plus Chrome.
+  Explicit products in build directories are visible and readable. Ordinary cache,
+  secrets, and symlinks to secret paths remain hidden.
 - Secret injection and split-write log masking passed with a synthetic secret.
   The PDF was rendered and visually checked. EPUB structure was inspected.
 

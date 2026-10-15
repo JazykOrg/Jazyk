@@ -100,7 +100,7 @@ medium:
   form: Microsoft PowerPoint deck            # what the deliverable is, in the model's words
   produced: built                            # written | built
   toolchain: python3 with python-pptx        # what writes or builds it
-  artifact: jazyk.pptx                       # deliverable-relative; only when built
+  artifact: jazyk.pptx                       # deliverable-relative; required when built
 ```
 
 - The input is the requirements that say what the deliverable is: the same graph every
@@ -565,7 +565,7 @@ medium:                                   # decided once, carried by every goal 
   form: Microsoft PowerPoint deck
   produced: built                         # written | built
   toolchain: python3 with python-pptx
-  artifact: jazyk.pptx                    # deliverable-relative; only when built
+  artifact: jazyk.pptx                    # deliverable-relative; required when built
 
 build:                                    # optional; absent when the files are the output
   run: python build_deck.py               # runs once, before any row is judged

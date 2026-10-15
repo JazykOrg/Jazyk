@@ -17,7 +17,10 @@ assert Path('docs/main.md').exists() and Path('.jazyk/jazyk.toml').exists()
 assert not Path('scratch.txt').exists()
 c=Path('.cache/state.json'); old=json.loads(c.read_text()) if c.exists() else None
 state={'count': old['count']+1 if old else 1,'nonce':old['nonce'] if old else secrets.token_hex(16),'arch':platform.machine()}
-if old: assert json.loads(Path('products/result.json').read_text())['nonce']==old['nonce']
+if old:
+ assert json.loads(Path('products/result.json').read_text())['nonce']==old['nonce']
+ assert Path('target/retained.bin').read_text()==old['nonce']
+Path('target').mkdir(exist_ok=True);Path('target/retained.bin').write_text(state['nonce'])
 c.parent.mkdir(exist_ok=True);c.write_text(json.dumps(state))
 Path('products').mkdir(exist_ok=True);Path('products/result.json').write_text(json.dumps(state));Path('products/binary.bin').write_bytes(bytes(range(256))*4)
 Path('reports').mkdir(exist_ok=True);Path('reports/tests.xml').write_text('<testsuite><testcase classname="runtime" name="files"/><testcase classname="runtime" name="cache"/></testsuite>')
@@ -36,7 +39,7 @@ name = "Roundtrip"
 description = "Verify image, files, products, cache, and reports."
 command = "python check.py"
 image = "docker.io/library/python:3.12-alpine"
-products = ["products/**"]
+products = ["products/**", "target/*.bin"]
 cache = [".cache/**"]
 reports = ["reports/*.xml"]
 [[tasks]]

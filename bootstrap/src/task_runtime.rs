@@ -276,11 +276,23 @@ pub fn load(root: &Path) -> Result<(String, Vec<Task>), String> {
     Ok((source, tasks))
 }
 pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    let products: Vec<String> = load(root)?.1.into_iter().flat_map(|t| t.products).collect();
+    fn may_contain_product(products: &[String], dir: &str) -> bool {
+        let dir = format!("{dir}/");
+        products.iter().any(|pattern| {
+            let prefix = &pattern[..pattern
+                .find(|c: char| matches!(c, '*' | '?' | '[' | '{'))
+                .unwrap_or(pattern.len())];
+            prefix.starts_with(&dir) || dir.starts_with(prefix)
+        })
+    }
     fn walk(
         root: &Path,
         dir: &Path,
         files: &mut BTreeMap<String, String>,
         bytes: &mut usize,
+        products: &[String],
+        product_only: bool,
     ) -> Result<(), String> {
         for entry in crate::vfs::read_dir(dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -303,14 +315,19 @@ pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
                 continue;
             }
             if entry.is_dir() {
-                if matches!(
-                    entry.file_name().to_str(),
-                    Some("node_modules" | "target" | ".cache")
-                ) {
+                let product_only = product_only
+                    || matches!(
+                        entry.file_name().to_str(),
+                        Some("node_modules" | "target" | ".cache")
+                    );
+                if product_only && !may_contain_product(products, &relative) {
                     continue;
                 }
-                walk(root, &path, files, bytes)?;
+                walk(root, &path, files, bytes, products, product_only)?;
             } else {
+                if product_only && !matches(products, &relative) {
+                    continue;
+                }
                 let mut data = crate::vfs::read(&path).map_err(|e| e.to_string())?;
                 if relative == ".jazyk/jazyk.toml" {
                     let mut config: toml::Value = toml::from_str(&String::from_utf8_lossy(&data))
@@ -355,7 +372,7 @@ pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
         Ok(())
     }
     let mut files = BTreeMap::new();
-    walk(root, root, &mut files, &mut 0)?;
+    walk(root, root, &mut files, &mut 0, &products, false)?;
     Ok(files)
 }
 pub fn input_hash(files: &BTreeMap<String, String>) -> String {
@@ -479,6 +496,33 @@ pub fn watchdog(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     const CONFIG:&str="[llm]\nmodel='existing'\n# retained comment\n[[tasks]]\nid='test'\nname='Tests'\ndescription='Run unit tests'\ncommand='mvn test'\nreports=['target/*.xml']\n";
+    #[test]
+    fn explicit_products_survive_default_build_directory_omissions() {
+        let root =
+            std::env::temp_dir().join(format!("jazyk-product-input-{}", crate::sys::now_millis()));
+        for dir in [".jazyk", "target", "node_modules", "nested/target"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::write(
+            root.join(".jazyk/jazyk.toml"),
+            format!("{CONFIG}products=['target/*.jar','**/target/*.pdf']\n"),
+        )
+        .unwrap();
+        for path in [
+            "target/book.jar",
+            "target/disposable.bin",
+            "node_modules/dependency.js",
+            "nested/target/book.pdf",
+        ] {
+            std::fs::write(root.join(path), b"artifact").unwrap();
+        }
+        let files = snapshot(&root).unwrap();
+        assert!(files.contains_key("target/book.jar"));
+        assert!(files.contains_key("nested/target/book.pdf"));
+        assert!(!files.contains_key("target/disposable.bin"));
+        assert!(!files.contains_key("node_modules/dependency.js"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn command_not_script_and_roundtrip() {
         let tasks = definitions(CONFIG).unwrap();

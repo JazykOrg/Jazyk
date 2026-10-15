@@ -185,3 +185,8 @@ leave the Cloud operation bounded by its original deadline and operation key.
 Inspecting or cancelling an existing run does not parse the current task settings.
 An invalid edit after submission cannot prevent stopping that run. Its frozen
 request remains the authority for execution and retained results.
+
+Declared product globs override the default omission of `target`, `node_modules`,
+and `.cache` input directories. Matching retained products are available to later
+tasks. Other files in these directories remain omitted from project input and use
+the disposable cache when configured. Protected paths and symlinks stay excluded.

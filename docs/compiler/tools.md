@@ -445,6 +445,11 @@ The [chat serving](../frontends/mcp.md#toolsets) carries tools built for a conve
 about the project. They are not in any session's toolset: they stage the human paths
 (dual write, decree, ratification, answer) that sessions never take.
 
+Native and hosted chat expose `release_work({stage, setId?})` for an explicit user
+request to compile or generate. It records approval for the current stage without
+changing manual modes. It does not approve ratification, diagnostic answers,
+credentials, or publication. See [release handling](../frontends/mcp.md#the-control-plane-over-mcp).
+
 Dual-write tools (see [ACP](../frontends/acp.md#dual-write-tools) and
 [edit paths](./compilation.md#edit-paths)): a quote-provenanced fact lives in the prose,
 so a chat edit moves the prose and the graph together, or not at all:
@@ -902,8 +907,10 @@ serving carries the read tools, `report_feedback`, and `await_changes`
   tools, each call committing as its own changeset with its change records written, so
   the next build derives the goals the write opened.
 - `jazyk mcp chat`: the compilation, binding, generation, and verification lifecycles,
-  the [chat tools](#chat-tools), `update_diagnostic`, and `answer_diagnostic`. No raw
-  write tools: a chat edit moves the prose and the graph together or not at all.
+  the [chat tools](#chat-tools), `update_diagnostic`, and `answer_diagnostic`. Native
+  and hosted chat also expose scoped `release_work` and guarded project file tools.
+  There are no raw graph write tools outside an open batch. Prose edits use the dual
+  write path. Deliverable writes use the binding and generation ownership gates.
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).
 

@@ -1350,6 +1350,21 @@ definitions:
       reason:
         type: string
     additionalProperties: false
+  releaseWork:
+    description: >-
+      Request payload of release_work (writable native or hosted chat).
+      Approves explicitly requested work without changing manual workflow modes
+    type: object
+    required:
+      - stage
+    properties:
+      stage:
+        type: string
+        enum: [compile, generate]
+      setId:
+        type: string
+        description: Document set id, required when the project has multiple sets
+    additionalProperties: false
   bumpLimit:
     description: >-
       Request payload of bump_limit (chat). Sets one node's own threshold above the

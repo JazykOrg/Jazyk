@@ -105,6 +105,20 @@ try:
  else:raise TimeoutError('Did not start cancellation fixture')
  fence.write_text('cancelled')
  result=wait(run['id']);assert result['state']=='cancelled',result;active.remove(run['id'])
+ fence.unlink()
+ run=tool('run_task',task_id='cancel',expected_revision=context['revision'],operation_key='cancel-invalid-settings');active.append(run['id'])
+ deadline=time.time()+120
+ while time.time()<deadline:
+  state=tool('inspect_run',run_id=run['id'])
+  if state['state']=='executing' and 'CHILD_READY' in tool('read_run_log',run_id=run['id'])['text']:break
+  assert not state['terminated'],state;time.sleep(1)
+ else:raise TimeoutError('Did not start invalid-settings fixture')
+ config=root/'.jazyk/jazyk.toml';original=config.read_text()
+ try:
+  config.write_text('[[tasks]]\ninvalid = [')
+  tool('cancel_run',run_id=run['id'])
+  result=wait(run['id']);assert result['state']=='cancelled',result;active.remove(run['id'])
+ finally:config.write_text(original)
  print('PASS '+a.engine+': MCP submission, fresh containers, image, project inputs, cache, binary products, reports, logs, ownership cancellation, and shutdown.',flush=True)
 finally:
  for id in active:

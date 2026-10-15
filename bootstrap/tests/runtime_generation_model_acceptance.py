@@ -121,6 +121,7 @@ reports=["reports/*.xml"]
         (root / 'greet.py').write_text('def greeting():\n    return "BROKEN"\n')
         broken = mcp.tool('run_tests', all=True)
         (evidence / 'falsification.json').write_text(json.dumps(broken, indent=2))
+        assert broken['failed'] > 0 and broken['runnerFailed'] == 0, broken
         assert status() == 'failing', broken
         result['falsified'] = True
         prompt('The test now fails because greet.py was deliberately broken. Inspect the failure and repair the implementation to satisfy the documented requirement. Preserve the generated test and runner.py. Run the bound check again and report its actual verdict.')

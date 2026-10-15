@@ -8,8 +8,8 @@ use crate::vfs::VPathExt;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-// Folders the tree never walks: version control and build caches, which are not
-// the project's content and can hold hundreds of thousands of files.
+// Version control is hidden. Build caches are hidden except for declared products.
+// Prune unrelated cache directories before walking their contents.
 const SKIP: &[&str] = &[".git", "node_modules", "target"];
 
 // The most files the tree lists; a bigger project lists its first ones.
@@ -28,7 +28,11 @@ fn redact_api_keys(text: &str) -> String {
     re.replace_all(text, "${1}\"<redacted>\"").into_owned()
 }
 
-fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::collections::BTreeSet<PathBuf>) {
+fn product_patterns(root: &Path) -> Vec<String> {
+    crate::task_runtime::load(root).map(|(_, tasks)| tasks.into_iter().flat_map(|t| t.products).collect()).unwrap_or_default()
+}
+
+fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::collections::BTreeSet<PathBuf>, products: &[String], product_only: bool) {
     let Ok(canonical)=dir.vcanonicalize() else {return;};
     if !canonical.starts_with(base.vcanonicalize().unwrap_or_else(|_|base.into())) || !seen.insert(canonical) {return;}
     let Ok(rd) = crate::vfs::read_dir(dir) else {
@@ -42,16 +46,21 @@ fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::c
         }
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
-        if SKIP.contains(&name.as_str()) {
+        if name == ".git" {
             continue;
         }
         if is_env_file(&name) && !p.vis_dir() {
             continue;
         }
         if p.vis_dir() {
-            walk(&p, base, acc, seen);
+            let product_only = product_only || SKIP.contains(&name.as_str());
+            let relative = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            if product_only && !crate::task_runtime::may_contain_product(products, &relative) { continue; }
+            walk(&p, base, acc, seen, products, product_only);
         } else if let Ok(rel) = p.strip_prefix(base) {
             if !p.vcanonicalize().is_ok_and(|p|p.starts_with(base.vcanonicalize().unwrap_or_else(|_|base.into()))) {continue;}
+            let relative = rel.to_string_lossy().replace('\\', "/");
+            if product_only && (!crate::task_runtime::matches(products, &relative) || !product_readable(base, &relative, &p)) { continue; }
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
             acc.push((rel.to_string_lossy().replace('\\', "/"), size));
         }
@@ -69,7 +78,7 @@ fn rel_dir(root: &Path, dir: &Path) -> Option<String> {
 // and where the product and the out directory sit in it.
 pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[String]) -> Value {
     let mut acc = Vec::new();
-    walk(root, root, &mut acc, &mut Default::default());
+    walk(root, root, &mut acc, &mut Default::default(), &product_patterns(root), false);
     let workspace=crate::document_sets::Workspace::load(root).ok();
     let files: Vec<Value> = acc.into_iter().map(|(path, size)| {
         let memberships=workspace.as_ref().map(|w|w.memberships(&path)).unwrap_or_default();
@@ -86,16 +95,29 @@ pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[S
 // A path relative to the project directory: no absolute, no empty or `.`/`..`
 // component, no backslash, nothing under a skipped folder, no `.env` file.
 // Dot-named folders (the out directory) are allowed.
-fn rel_ok(rel: &str) -> bool {
+fn product_readable(root: &Path, rel: &str, path: &Path) -> bool {
+    if crate::task_runtime::protected(rel) { return false; }
+    let Ok(base) = root.vcanonicalize() else { return false; };
+    let Ok(canonical) = path.vcanonicalize() else { return false; };
+    canonical.strip_prefix(base).is_ok_and(|p| {
+        let p = p.to_string_lossy().replace('\\', "/");
+        !crate::task_runtime::protected(&p) && !p.rsplit('/').next().is_some_and(is_env_file)
+    })
+}
+
+fn rel_ok(root: &Path, rel: &str) -> bool {
     !rel.is_empty()
         && !rel.starts_with('/')
         && !rel.contains('\\')
-        && !rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || SKIP.contains(&c))
+        && !rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c == ".git")
         && !rel.rsplit('/').next().is_some_and(is_env_file)
+        && (!rel.split('/').any(|c| SKIP.contains(&c))
+            || (crate::task_runtime::matches(&product_patterns(root), rel)
+                && product_readable(root, rel, &root.join(rel))))
 }
 
 fn safe(root: &Path, rel: &str) -> Option<PathBuf> {
-    if !rel_ok(rel) {
+    if !rel_ok(root, rel) {
         return None;
     }
     let base = root.vcanonicalize().ok()?;
@@ -110,7 +132,7 @@ fn safe(root: &Path, rel: &str) -> Option<PathBuf> {
 // path that leaves it is 400; a path that names nothing (or a folder) is 404.
 pub fn project_file(root: &Path, rel: &str) -> Result<Vec<u8>, Refusal> {
     let Some(abs) = safe(root, rel) else {
-        if !rel_ok(rel) {
+        if !rel_ok(root, rel) {
             return Err((400, format!("invalid project path {}", rel)));
         }
         return Err((404, format!("no file {}", rel)));
@@ -266,6 +288,46 @@ mod tests {
         std::fs::write(dir.join("img.bin"), [0xff, 0xfe]).unwrap();
         assert_eq!(project_text(&dir, "img.bin").unwrap_err().0, 415);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retained_build_products_are_listed_and_read_without_exposing_cache_or_secrets() {
+        let config = "version=1\n[[tasks]]\nid='build'\nname='Build'\ndescription='Retain products'\ncommand='true'\nproducts=['target/*.txt','**/target/*.pdf']\n";
+        let files: std::collections::BTreeMap<String, Vec<u8>> = [
+            (".jazyk/jazyk.toml", config), ("target/book.txt", "product"),
+            ("target/disposable.bin", "cache"), ("nested/target/book.pdf", "pdf"),
+            ("node_modules/dependency.js", "dependency"), ("target/.env.txt", "secret"),
+            (".env.local", "secret"),
+        ].into_iter().map(|(p, v)| (p.into(), v.as_bytes().to_vec())).collect();
+        let check = |root: &Path| {
+            let listing = project_files(root, root, &root.join(".jazyk"), &[]);
+            let paths: Vec<_> = listing["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+            assert!(paths.contains(&"target/book.txt"));
+            assert!(paths.contains(&"nested/target/book.pdf"));
+            assert!(!paths.iter().any(|p| p.contains("disposable") || p.contains("dependency") || p.contains(".env") || p.contains("link")));
+            assert_eq!(project_file(root, "target/book.txt").unwrap(), b"product");
+            assert_eq!(project_file(root, "nested/target/book.pdf").unwrap(), b"pdf");
+            for path in ["target/disposable.bin", "target/.env.txt", "node_modules/dependency.js"] {
+                assert_eq!(project_file(root, path).unwrap_err().0, 400, "{path}");
+            }
+            assert!(writable_path(root, &root.join(".jazyk"), "target/book.txt").is_err());
+        };
+        {
+            let _scope = crate::vfs::Scope::enter(&files);
+            check(Path::new("/project"));
+        }
+        let root = std::env::temp_dir().join(format!("jazyk-product-tree-{}", crate::sys::now_millis()));
+        for (path, data) in &files {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, data).unwrap();
+        }
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink("../.env.local", root.join("target/link.txt")).unwrap();
+            assert_eq!(project_file(&root, "target/link.txt").unwrap_err().0, 400);
+        }
+        check(&root);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

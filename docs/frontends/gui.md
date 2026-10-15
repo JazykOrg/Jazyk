@@ -404,8 +404,11 @@ Diagnostics:
 
 - `GET /api/project/files`: every file under the project directory (the folder of
   `jazyk.toml`), recursively, each `{path, size}` relative to it, dot-folders and the
-  out directory included; `.git`, `node_modules`, and `target` are left out, and so
-  is every file whose name starts with `.env` (they hold secrets). Beside
+  out directory included. `.git` and files whose names start with `.env` are left
+  out. `node_modules` and `target` are omitted except for files matching a saved
+  task's `products` globs. These retained products can be read, but the ordinary
+  restrictions on editing build folders still apply. Secret paths and symlinks
+  to secret paths cannot be exposed through product globs. Beside
   the list: `deliverable` and `out`, the product and out directories relative to the
   project directory (absent when outside it), and `docsGlob`. The
   [navigator](#workspace) draws its tree from it.

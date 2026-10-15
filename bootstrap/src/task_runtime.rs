@@ -275,17 +275,17 @@ pub fn load(root: &Path) -> Result<(String, Vec<Task>), String> {
     let tasks = definitions(&source)?;
     Ok((source, tasks))
 }
+pub(crate) fn may_contain_product(products: &[String], dir: &str) -> bool {
+    let dir = format!("{dir}/");
+    products.iter().any(|pattern| {
+        let prefix = &pattern[..pattern
+            .find(|c: char| matches!(c, '*' | '?' | '[' | '{'))
+            .unwrap_or(pattern.len())];
+        prefix.starts_with(&dir) || dir.starts_with(prefix)
+    })
+}
 pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let products: Vec<String> = load(root)?.1.into_iter().flat_map(|t| t.products).collect();
-    fn may_contain_product(products: &[String], dir: &str) -> bool {
-        let dir = format!("{dir}/");
-        products.iter().any(|pattern| {
-            let prefix = &pattern[..pattern
-                .find(|c: char| matches!(c, '*' | '?' | '[' | '{'))
-                .unwrap_or(pattern.len())];
-            prefix.starts_with(&dir) || dir.starts_with(prefix)
-        })
-    }
     fn walk(
         root: &Path,
         dir: &Path,

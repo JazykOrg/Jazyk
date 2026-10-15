@@ -345,3 +345,28 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - Retry the same fresh chat fixture before treating the complete workflow as
   validated. It intentionally starts with an unaligned document as well as an
   unbound requirement, so it covers compiler prerequisites before generation.
+
+## Live chat generation and repair
+
+- `chat-model-podman-2` used the corrected native chat tools through LocalRouter.
+  It released requested stages, reconciled the document, committed compiler batches,
+  resolved a duplicate requirement, opened binding, generated a Python function and
+  behavioral unittest, and recorded a programmatic `task:check` binding in its
+  generation manifest. It submitted the saved Podman task and waited for termination.
+  The task passed and its JUnit case entered the requirement ledger.
+- The original driver reported failure because it demanded `run_tests` even though
+  the model used the supported `run_task` path, which imported the same evidence.
+  It also assumed a fixture requirement ID would survive legitimate deduplication.
+  The driver now discovers the surviving requirement and checks the actual
+  programmatic binding and evidence. It accepts either execution entry point and
+  records which binding tool ran. The original failure trace is retained unchanged.
+- Independent postflight checked the generated result, deliberately broke the
+  function, and observed one assertion failure with zero runner failures. A fresh
+  chat session then reclaimed the entity, repaired only its source, refreshed the
+  manifest, and used `run_tests` successfully. The test and supplied runner stayed
+  byte-for-byte unchanged. All three Podman runs terminated. Postflight and repair
+  passed in 470 seconds; the initial chat took 1,274 seconds.
+- This is measured generation plus a separate repair session, not a claim that every
+  alternative tool path ran in one session. The complete worker benchmark, without
+  a supplied task or report adapter, is being repeated under both codecs in
+  `retry-full-generation-3`.

@@ -95,11 +95,13 @@ reports=["reports/*.xml"]
         initial = 'Generate the implementation, tests, and run this project. Keep it tiny: one function and one behavioral test. Reuse the existing check task and preserve runner.py. Inspect actual execution results and finish with a short evidence summary.' if a.chat else 'Generate ent:greeter from its begin_generation package. Write greet.py and a small falsifiable unittest under tests/. Reuse the existing check task and preserve runner.py. Record the medium if needed, the complete generation manifest with its factHash and task:check test binding, then run_tests and inspect the actual result. Keep this tiny: one function and one behavioral test. Finish with a short evidence summary.'
         prompt(initial)
         names = [c.get('title') for c in agent.calls]
-        for name in ['begin_generation', 'write_text_file', 'record_generation', 'run_tests']:
+        for name in ['begin_generation', 'write_text_file', 'record_generation']:
             assert name in names, names
+        assert {'run_tests', 'run_task'}.intersection(names), names
         if a.chat:
-            for name in ['binding_tasks', 'release_work', 'begin_binding', 'record_binding']:
+            for name in ['binding_tasks', 'release_work', 'begin_binding']:
                 assert name in names, names
+        result['binding_recorded_with'] = 'record_binding' if 'record_binding' in names else 'record_generation'
         assert (root / 'runner.py').read_text() == RUNNER
         tests = {str(p.relative_to(root)): p.read_bytes() for p in (root / 'tests').glob('*.py')}
         assert tests, 'No tests generated'
@@ -111,7 +113,9 @@ reports=["reports/*.xml"]
         requirement = requirements[0]['id']
         result['requirement'] = requirement
         def status():
-            return mcp.tool('begin_verification', requirement=requirement)['status']
+            row = mcp.tool('begin_verification', requirement=requirement)
+            assert row['test']['kind'] == 'programmatic' and row['test']['run'] == 'task:check', row
+            return row['status']
         assert status() == 'verified'
         result['generated_and_verified'] = True
         (root / 'greet.py').write_text('def greeting():\n    return "BROKEN"\n')

@@ -88,3 +88,7 @@ python3 bootstrap/tests/runtime_generation_model_acceptance.py \
 This fixture supplies the runtime and report adapter. The model writes the product
 and its assertion. The driver deliberately breaks the product, confirms the generated
 test fails, then asks the model to repair only the implementation.
+Acceptance checks the resulting programmatic binding and current run evidence.
+`record_generation` can record the binding as part of its manifest. Both `run_tests`
+and a direct `run_task` that imports matching reports are valid execution paths.
+The trace records which tools ran; success does not claim every alternative ran.

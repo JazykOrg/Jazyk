@@ -1,9 +1,43 @@
 # Implementation sequence
 
-Status: first implementation is in progress under the later production release authorization.
+Status: first implementation is merged to master and deployed on 2026-10-15.
 The phases below remain the original work breakdown. The implemented contract is
 [task execution](../../docs/compiler/task-runtime.md).
 Each accepted behavior enters the owning repository's `docs/` before code.
+
+## First release
+
+- One flat task list, shell commands, optional images/resources/timeouts, and
+  product/cache/JUnit globs are implemented.
+- The shared engine exposes task tools to generation, binding, verification, MCP,
+  and ACP. LLM tests retain their direct verdict path. Programmatic results map
+  individual cases to existing criterion bindings and tested-input hashes.
+- Local Docker and hosted Fargate use finite isolated runs, retained logs and
+  changes, fixed deadlines, cancellation, and confirmed shutdown. Cloud adds an
+  independent watchdog, durable reconciliation, admission, and runtime metering.
+- Project Settings includes Tasks. The header selects a task; Runs sits beside
+  Files and opens logs, changed files, and test results in existing tabs. Managed
+  GitHub sync remains separate from container allocation.
+- Cloud execution passed real success, failure, skipped-case, cancellation, and
+  watchdog checks. Production execution retained a file and passing test report,
+  charged runtime usage, and confirmed cancellation. No test containers remain.
+- The release preserved existing production project content. Live Chrome verified
+  settings persistence, Runs, Files, and accountless offline reopening.
+- Engine verification passed 655 tests. The ARM API passed 91 tests and its
+  PostgreSQL integration test. Editor verification included 417 unit tests and
+  browser suites. A compatible previous API binary is installed for rollback.
+
+The public implementation pin is `43d7fb7b405aa9e5a1d12510ca4e37d412df9fd8`.
+The private service records exact releases, infrastructure, backup, checksums, and
+run IDs in `docs/operations/task-runtime.md`. GitHub Actions runner allocation was
+blocked by account billing, so the ARM release used isolated AWS CodeBuild.
+
+Initial limits and remaining work are explicit. Private images, arbitrary publishing
+credential grants, additional platforms, and parallel runs within one project are
+not included. Local execution requires Docker; an actual local container smoke was
+blocked by the operator's unavailable daemon. No live LLM benchmark or AWS invoice
+reconciliation was performed. The phases and acceptance table below preserve the
+broader plan, including follow-up scenarios beyond this first release.
 
 ## Repository ownership
 
@@ -185,7 +219,7 @@ and product quality. Passing one category does not establish the others.
 
 ## Work deliberately left open
 
-Provider and size selection, exact pricing/retention, autonomy defaults,
+Additional providers and sizes, pricing/retention tuning, publication autonomy,
 parallel runtimes, private images, native Apple/Windows builds, image-building
 services, continuous Git sync, and custom customer providers remain decisions or
 later capabilities. Mark unsupported requirements explicitly. The flat task/command

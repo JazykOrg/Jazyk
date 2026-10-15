@@ -1,8 +1,10 @@
 # Current state and replacement boundary
 
-Status: repository inspection for the [discussion draft](README.md). Engine base:
+Status: historical inspection before implementation. See the
+[first release](implementation.md#first-release) for current status. Engine base:
 `b093014`. Cloud checkout inspected at
-`05de0e08bc62c99808f75ef9f2a115a95057573c`. No runtime experiment was performed.
+`05de0e08bc62c99808f75ef9f2a115a95057573c`. No runtime experiment had been performed
+at this baseline.
 
 ## Engine
 

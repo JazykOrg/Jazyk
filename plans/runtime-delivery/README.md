@@ -1,7 +1,9 @@
 # Runtime and delivery plan
 
-Status: implementation authorized by the owner on 2026-10-15, including merging
-to master and deploying jazyk.dev. Accepted behavior enters `docs/` before code. These plans live in
+Status: the first implementation is merged to master and deployed to jazyk.dev on
+2026-10-15. See the [release status](implementation.md#first-release) and the
+[implemented contract](../../docs/compiler/task-runtime.md). The remaining sections
+preserve the design discussion and alternatives. These plans live in
 `plans/runtime-delivery/` in the repository checkout.
 
 ## Start with tasks and runs

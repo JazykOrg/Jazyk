@@ -277,9 +277,10 @@ serves these:
   cut at the model's output cap, the endpoint rejected the unclosed JSON, and every
   generation session after the first two died the same way.
 - `list_files({path?})`: the deliverable tree.
-- `run_command({command, cwd?})`: execute a shell command under the deliverable,
-  bounded by a timeout; the exit code and output tail come back. This is how the
-  session runs the build it wrote, reads the traceback, and fixes its own work.
+- The [task tools](../tools.md#task-runtime-tools) execute saved commands in finite
+  isolated runs. The session inspects status, logs, retained changes, and test reports,
+  then repairs its source and submits another run when needed. `run_command` is not
+  exposed to workers.
 - `run_tests({requirements?})` and `record_generation({...})`: the same tools the
   generation toolset serves over MCP.
 
@@ -288,7 +289,7 @@ methods; the tools ride the injected MCP serving like every other jazyk tool. Pa
 that escape the deliverable are rejected. Command execution during generation is the
 same trust decision as `jazyk test` running recorded commands, made at generation
 time. A [`verify`](./verify.md) session is served the read-only subset
-(`read_text_file`, `list_files`, `run_command`) and no `write_text_file`.
+(`read_text_file`, `list_files`) and the task tools, with no `write_text_file`.
 
 ### The finish contract
 

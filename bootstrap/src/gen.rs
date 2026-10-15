@@ -1806,7 +1806,7 @@ pub fn mark(
                 }
                 if run.is_empty() {
                     return Err(format!(
-                        "test row for {} has an empty run command; record the exact command that runs only that test, or declare the row llm",
+                        "test row for {} has an empty run command; record task:<id> with its case selector, a legacy command selecting that test, or declare the row llm",
                         rid
                     ));
                 }

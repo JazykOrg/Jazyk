@@ -11215,6 +11215,14 @@ mod tests {
                 assert!(toolset(task).contains(&name), "{task} lacks {name}");
             }
         }
+        for kind in ["generate", "verify"] {
+            let prompt = crate::goals::kind(kind).unwrap().prompt();
+            assert!(!prompt.contains("run_command"), "{kind} advertises an unavailable command tool");
+            assert!(!toolset(kind).contains(&"run_command"));
+            for name in crate::task_runtime::TOOLS {
+                assert!(toolset(kind).contains(&name), "{kind} lacks {name}");
+            }
+        }
     }
 
     #[test]

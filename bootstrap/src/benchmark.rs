@@ -503,6 +503,12 @@ pub fn prepare_runtime_fixture(case: &Case, tmp: &std::path::Path) -> Result<(),
     Ok(())
 }
 
+pub fn fixture_gen_settings(tmp: &std::path::Path) -> Result<crate::gen::GenSettings, String> {
+    let workspace = crate::document_sets::Workspace::load(tmp).map_err(|e| e.1)?;
+    let project = workspace.resolve(Some("ds_main")).map_err(|e| e.1)?;
+    Ok(crate::gen::GenSettings::resolve(&project))
+}
+
 pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal), String> {
     prepare_runtime_fixture(case, tmp)?;
     let mut store = sandbox_docs(case, tmp);
@@ -521,6 +527,7 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
         root: tmp.to_path_buf(),
         out: store.out.clone(),
         gen_deliverable: Some(".".into()),
+        gen_code: vec!["**".into()],
         ..Default::default()
     };
     let control = crate::control::Control::load(&proj, &proj.out);
@@ -2070,12 +2077,10 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             let case_start = std::time::Instant::now();
             let case_tokens_before = llm::tokens_spent();
             // The generation turn writes into the disposable project root.
-            let gs = crate::gen::GenSettings {
-                configured: true,
-                deliverable: tmp.to_path_buf(),
-                worker: "agentic".into(),
-                code: Vec::new(),
-            };
+            let gs = fixture_gen_settings(&tmp).unwrap_or_else(|error| {
+                fixture_error = Some(error);
+                crate::gen::GenSettings::from_out(&store.out)
+            });
             crate::vfs::create_dir_all(&gs.deliverable).ok();
             let mut fail: Option<String> = None;
             let mut aborted = false;
@@ -2572,6 +2577,16 @@ mod tests {
         let project = workspace.resolve(Some("ds_main")).unwrap();
         assert_eq!(project.out, store.out);
         assert_eq!(crate::gen::GenSettings::resolve(&project).deliverable, root);
+        let gs = fixture_gen_settings(&root).unwrap();
+        let item = crate::model::WorkItem {
+            task: case.task_type.clone(), target: case.target.clone(),
+            dirty_sections: Vec::new(), stale_anchors: Vec::new(), proposals: Vec::new(),
+        };
+        let mut worker = case_session(store.clone(), &item, &case.lint, &gs, None).session;
+        worker.dispatch("begin_generation", &serde_json::json!({"entity":"ent:greeter"})).unwrap();
+        worker.dispatch("write_text_file", &serde_json::json!({"path":"hello.sh","content":"echo hello"})).unwrap();
+        assert!(root.join("hello.sh").exists());
+        assert!(worker.dispatch("write_text_file", &serde_json::json!({"path":"docs/greeter.md","content":"replace docs"})).is_err());
         let inputs = crate::task_runtime::snapshot(&root).unwrap();
         assert!(inputs.contains_key(".jazyk/jazyk.toml"));
         assert!(inputs.contains_key("docs/greeter.md"));
@@ -2603,7 +2618,7 @@ mod tests {
             configured: true,
             deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
-            code: Vec::new(),
+            code: vec!["**".into()],
         };
         let cs = case_session(store, &item, &case.lint, &gs, None);
         assert!(cs.prompt.contains("which is already open"), "{}", cs.prompt);
@@ -2759,7 +2774,7 @@ mod tests {
             configured: true,
             deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
-            code: Vec::new(),
+            code: vec!["**".into()],
         };
         crate::vfs::create_dir_all(gs.deliverable.join("test")).unwrap();
         crate::vfs::write(gs.deliverable.join("test/b.sh"), "# req-b-1\nexit 0\n").unwrap();
@@ -2827,7 +2842,7 @@ mod tests {
             configured: true,
             deliverable: tmp.to_path_buf(),
             worker: "agentic".into(),
-            code: Vec::new(),
+            code: vec!["**".into()],
         };
         let write = |rel: &str, text: &str| {
             let p = gs.deliverable.join(rel);

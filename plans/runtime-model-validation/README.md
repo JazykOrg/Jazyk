@@ -60,3 +60,16 @@ python3 bootstrap/tests/runtime_verification_acceptance.py \
 
 For larger ACP prompts, `--call-timeout 240 --deadline 900` raises the model driver's
 per-call and per-turn test budgets. It does not change the product defaults.
+
+For the small live source-generation, falsification, and repair loop:
+
+```sh
+python3 bootstrap/tests/runtime_generation_model_acceptance.py \
+  --binary bootstrap/target/release/jazyk --env-file .env \
+  --model gemma4:31b-mlx --engine podman \
+  --evidence .local/model-validation/generation-1
+```
+
+This fixture supplies the runtime and report adapter. The model writes the product
+and its assertion. The driver deliberately breaks the product, confirms the generated
+test fails, then asks the model to repair only the implementation.

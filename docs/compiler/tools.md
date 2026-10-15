@@ -755,6 +755,8 @@ only the ledger, never the graph.
   Shared `task:<id>` references execute once per selection, after the build. Mixed
   selections also run their legacy commands locally; hosted responses list those
   commands as pending. Task criteria reuse the imported case evidence.
+  An explicitly selected unbound requirement is returned as skipped with binding
+  guidance. An empty execution cannot be reported as passing that requirement.
 - `record_verdict({requirement, verdict, factHash?, evidence?})`: record a `pass` or
   `fail` verdict with its evidence, rebaselining the test and files hashes. A stale
   `factHash` is recorded but the row stays pending, the same protection

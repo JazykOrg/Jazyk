@@ -124,3 +124,31 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   updating after the root correction. The unrelated 3,000-record timing test exceeded
   its five-second bound under concurrent machine load; an isolated repeat is pending.
   The real generation and paired LLM judgment benchmark is still running.
+
+## Fifth investigation
+
+- The native Gemma `gen-basic` worker reached `begin_generation`, `record_medium`,
+  and `task_context`, then hit the 240-second provider read timeout. Its trace is
+  retained. Both native LLM judgment cases passed. The text generation attempt was
+  interrupted after about ten minutes without source files; it remains unmeasured.
+- Worker goal text still advertised the removed `run_command` tool. Generation and
+  verification now direct workers to saved tasks. The generation goal is shorter
+  and leaves detailed rules in the returned package. Medium instructions now explain
+  the undecided case instead of contradicting the package.
+- Llama 8B failed `gen-basic` in both codecs. Native stopped at the five-error bound
+  after 66 seconds. Text exhausted 24 rounds in 121 seconds, inventing manifest
+  values and reporting its own mistakes as feedback. No generation record landed.
+- That trace exposed an actual false-success response: explicitly selecting an
+  unbound requirement could produce an empty all-passed reply. Requirements selected
+  directly or through their entity now retain binding guidance; an empty execution
+  makes no passing claim.
+- The benchmark fixture's worker source glob was still empty despite its saved
+  project having a source selection. Workers now resolve actual fixture settings,
+  matching the importer. A regression writes a generated file and rejects a document
+  overwrite through the real tool session.
+- Compiler regressions: 673 passed, 3 ignored. A further small selection-response
+  assertion is being rerun. The isolated timing test passed, and its later full-suite
+  run passed too; no timing threshold was relaxed.
+- A smaller live generation fixture is now running through MCP: one Python function,
+  one generated test, the supplied unittest-to-JUnit adapter, actual Podman execution,
+  deliberate source falsification, and model repair while preserving the test.

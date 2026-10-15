@@ -652,9 +652,16 @@ fn run_selected_after_build(store: &Store, gs: &GenSettings, targets: &[String])
         let mut v: Vec<String> = Vec::new();
         for t in targets {
             let id = store.resolve_id(t).to_string();
-            if ledger.requirements.contains_key(&id) {
+            if ledger.requirements.contains_key(&id) || store.graph.requirements.contains_key(&id) {
                 v.push(id);
             } else {
+                for (rid, requirement) in &store.graph.requirements {
+                    if requirement.entities.iter().any(|entity| store.resolve_id(entity) == id)
+                        && !v.contains(rid)
+                    {
+                        v.push(rid.clone());
+                    }
+                }
                 for (rid, row) in &ledger.requirements {
                     if store.resolve_id(&row.entity) == id && !v.contains(rid) {
                         v.push(rid.clone());
@@ -843,6 +850,8 @@ fn run_selected_after_build(store: &Store, gs: &GenSettings, targets: &[String])
             "some cases remain unverified; inspect their report evidence before retrying"
         } else if !skipped.is_empty() {
             "skipped rows say why; llm rows need begin_verification and record_verdict"
+        } else if rows.is_empty() {
+            "no selected tests ran; inspect the target and its bindings"
         } else {
             "all selected rows pass"
         }
@@ -1094,6 +1103,24 @@ pub fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explicitly_selected_unbound_requirement_cannot_report_all_passed() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = fixture(out);
+        let mut ledger = Ledger::load(out);
+        ledger.requirements.clear();
+        ledger.save(out);
+        for target in ["req:shop-1", "ent:cart"] {
+            let result = run_selected(&store, &gs, &[target.into()]).unwrap();
+            assert_eq!(result["passed"], 0);
+            assert_eq!(result["skipped"][0]["requirement"], "req:shop-1");
+            assert_ne!(result["next"], "all selected rows pass");
+        }
+        let empty = run_selected(&store, &gs, &["unknown".into()]).unwrap();
+        assert_ne!(empty["next"], "all selected rows pass");
+    }
+
     #[test]
     fn task_verification_package_uses_report_evidence() {
         let _scope = crate::vfs::Scope::enter(&Default::default());

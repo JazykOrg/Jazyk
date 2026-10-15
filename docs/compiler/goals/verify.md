@@ -151,8 +151,11 @@ An `llm` session's serving runs in `verify` mode ([toolsets](../tools.md#toolset
   `begin_verification`, `run_tests`, `record_verdict`.
 - [`report_feedback`](../tools.md#feedback-tool).
 - The read-only [file tools](./generate.md#file-and-command-tools)
-  (`read_text_file`, `list_files`, `run_command`) when the profile sets
+  (`read_text_file`, `list_files`) when the profile sets
   [`serve_files`](../project-settings.md#acp). A verify session writes no file.
+- The [task tools](../tools.md#task-runtime-tools) for finite checks that require
+  execution. The model observes results and records its judgment without editing
+  implementation or criteria files.
 
 An external agent on the same serving runs the goal through `verification_tasks`,
 `begin_verification`, and `record_verdict`, with `run_tests` covering the

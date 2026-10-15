@@ -1409,11 +1409,9 @@ impl McpServer {
             }
             crate::benchmark::sandbox(case, &tmp)
         };
-        let gs = crate::gen::GenSettings {
-            configured: true,
-            deliverable: tmp.to_path_buf(),
-            worker: "agentic".into(),
-            code: Vec::new(),
+        let gs = match crate::benchmark::fixture_gen_settings(&tmp) {
+            Ok(gs) => gs,
+            Err(error) => return json!({"error":{"rule":"fixture","message":error}}),
         };
         crate::vfs::create_dir_all(&gs.deliverable).ok();
         let item = match &derived {

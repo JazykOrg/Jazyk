@@ -140,8 +140,10 @@ uses no container unless a task must first produce an artifact.
 Results include logs, file changes, products, test cases, frozen input identity, and
 termination. Imports compare revisions and preserve newer edits. Binary products
 remain binary files. Historical results remain readable after container teardown.
-`inspect_run` and `wait_run` omit log text from status replies, including during
-cleanup. `read_run_log` and `search_run_log` read the retained log in bounded parts.
+`task_context` history and the `run_task`, `inspect_run`, `wait_run`, and
+`cancel_run` replies omit log text, including idempotent starts and cleanup.
+Repeated context requests do not reload historical logs into the model context.
+`read_run_log` and `search_run_log` read the retained log in bounded parts.
 
 A programmatic binding uses `run = "task:<id>"`. Its `name` is an exact
 `classname::name` JUnit selector, or a unique unqualified case name. A missing or

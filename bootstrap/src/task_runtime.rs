@@ -398,7 +398,7 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
             request = json!({});
         }
         request["operation"] = json!(name);
-        return dispatch(root, &request);
+        return dispatch(root, &request).map(|value| metadata_response(name, value));
     }
     let (source, tasks) = load(root)?;
     if name == "update_tasks" {
@@ -454,13 +454,40 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
         request["files"] = json!(files);
         request["task"] = json!(task);
     }
-    let host = dispatch(root, &request);
+    let host = dispatch(root, &request).map(|value| metadata_response(name, value));
     if name == "task_context" {
         return Ok(
             json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}}),
         );
     }
     host
+}
+// Enforce the response contract at the common boundary, including adapters that
+// return saved state directly for history, idempotent starts, or cancellation.
+fn metadata_response(operation: &str, mut value: Value) -> Value {
+    fn omit_log(value: &mut Value) {
+        if let Some(fields) = value.as_object_mut() {
+            fields.remove("log");
+            for key in ["result", "summary"] {
+                if let Some(nested) = fields.get_mut(key).and_then(Value::as_object_mut) {
+                    nested.remove("log");
+                }
+            }
+        }
+    }
+    if operation == "task_context" {
+        if let Some(runs) = value.get_mut("runs").and_then(Value::as_array_mut) {
+            for run in runs {
+                omit_log(run);
+            }
+        }
+    } else if matches!(
+        operation,
+        "run_task" | "inspect_run" | "wait_run" | "cancel_run"
+    ) {
+        omit_log(&mut value);
+    }
+    value
 }
 fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -1169,6 +1196,40 @@ pub fn apply_result(
 #[cfg(test)]
 mod result_tests {
     use super::*;
+    #[test]
+    fn historical_and_retried_run_metadata_cannot_reload_saved_logs() {
+        let log = "dependency installed\n".repeat(10000);
+        let state = json!({"id":"saved-run","terminated":true,"log":log,
+            "result":{"status":"succeeded","log":log},
+            "summary":{"exit_code":0,"log":log}});
+        let context = metadata_response(
+            "task_context",
+            json!({
+                "available":true,"runs":[state.clone(),state.clone()],"next_cursor":"older-run"
+            }),
+        );
+        assert!(context.to_string().len() < 1024);
+        assert_eq!(context["runs"].as_array().unwrap().len(), 2);
+        assert_eq!(context["next_cursor"], "older-run");
+        for operation in ["run_task", "inspect_run", "wait_run", "cancel_run"] {
+            let value = metadata_response(operation, state.clone());
+            assert!(value.to_string().len() < 1024);
+            assert_eq!(value["id"], "saved-run");
+            assert_eq!(value["result"]["status"], "succeeded");
+            assert_eq!(value["summary"]["exit_code"], 0);
+        }
+        let page = present(
+            &state,
+            &Value::Null,
+            &json!({"operation":"read_run_log","limit":31}),
+        )
+        .unwrap();
+        assert_eq!(
+            metadata_response("read_run_log", page)["text"],
+            log.chars().take(31).collect::<String>()
+        );
+        assert_eq!(state["log"], log);
+    }
     #[test]
     fn status_polls_omit_logs_but_explicit_reads_preserve_them() {
         let log = "dependency installed\n".repeat(10000);

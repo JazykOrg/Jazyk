@@ -1,5 +1,26 @@
 # Results
 
+## Historical log context, 2026-10-16
+
+The sixth presentation retry exposed a remaining log leak in `task_context`.
+Seven saved runs produced a 40,177-byte response in an isolated checkpoint copy.
+The shared tool boundary now removes log text from run history, idempotent starts,
+polling, and cancellation replies. Explicit bounded log tools retain the logs.
+The same real MCP query is 6,153 bytes after the fix, with all seven history rows
+preserved. Explicit log reads and cancellation of an already completed run passed.
+
+The retry was stopped after 1,307.52 seconds and 15 calls. It saved a source
+readability improvement, recovered from one truncated write, then mistyped a task
+revision. No new container was admitted; all seven historical runs were terminated.
+The checkpoint is preserved for the next local Ollama/Podman attempt. This is not
+a completed presentation validation.
+
+Validation: 14 runtime tests, then 703 library tests passed with three existing
+ignored tests. The owner's release binary rebuilt successfully. No model call was
+needed for the response-size regression.
+
+## Earlier evidence
+
 Work started on 2026-10-15. Raw local evidence is retained under the main checkout's
 ignored `.worktrees/runtime-model-validation/.local/model-validation/` directory. The reusable model driver is
 `bootstrap/tests/runtime_model_acceptance.py`.

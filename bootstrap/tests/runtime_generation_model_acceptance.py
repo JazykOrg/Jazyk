@@ -129,13 +129,17 @@ reports=["reports/*.xml"]
             return row['status']
         assert status() == 'verified'
         result['generated_and_verified'] = True
-        (root / 'greet.py').write_text('def greeting():\n    return "BROKEN"\n')
+        implementations = [p for p in root.rglob('greet.py') if '.jazyk' not in p.relative_to(root).parts]
+        assert len(implementations) == 1, implementations
+        implementation = implementations[0]
+        result['implementation_source'] = str(implementation.relative_to(root))
+        implementation.write_text('def greeting():\n    return "BROKEN"\n')
         broken = mcp.tool('run_tests', all=True)
         (evidence / 'falsification.json').write_text(json.dumps(broken, indent=2))
         assert broken['failed'] > 0 and broken['runnerFailed'] == 0, broken
         assert status() == 'failing', broken
         result['falsified'] = True
-        prompt('The test now fails because greet.py was deliberately broken. Inspect the failure and repair the implementation to satisfy the documented requirement. Preserve the generated test and runner.py. Run the bound check again and report its actual verdict.')
+        prompt('The test now fails because ' + result['implementation_source'] + ' was deliberately broken. Inspect the failure and repair the implementation to satisfy the documented requirement. Preserve the generated test and runner.py. Run the bound check again and report its actual verdict.')
         assert status() == 'verified'
         assert (root / 'runner.py').read_text() == RUNNER
         assert {str(p.relative_to(root)): p.read_bytes() for p in (root / 'tests').glob('*.py')} == tests

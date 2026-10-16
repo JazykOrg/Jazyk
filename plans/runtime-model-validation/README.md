@@ -98,3 +98,6 @@ The agent must configure narrow source selections through the document-set tools
 then complete generation and runtime verification. Inspect live attempts at least
 every 15 minutes. Stop demonstrated loops, retain their traces, fix the cause, and
 retry from fresh state.
+The agent may place the implementation at the root or under a source directory.
+Falsification locates its single generated `greet.py` and changes that file, rather
+than creating a second module at an assumed path.

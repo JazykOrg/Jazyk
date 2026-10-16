@@ -341,7 +341,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     } else if row.test.run.starts_with("task:") {
         include_str!("../../docs/compiler/goals/prompts/verify-task-contract.md").to_owned()
     } else {
-        "Execute the run command in the test's cwd under the deliverable. Exit code 0 is a pass. Report the verdict with the command output tail as evidence.".to_owned()
+        include_str!("../../docs/compiler/goals/prompts/verify-legacy-contract.md").to_owned()
     };
     if row.test.kind != "llm" && row.tests.values().any(|test| test.test.kind == "llm") {
         instructions.push('\n');
@@ -1665,6 +1665,16 @@ mod tests {
         let instructions = package["instructions"].as_str().unwrap();
         assert!(instructions.contains("Run `run_tests`"));
         assert!(instructions.contains("Inspect every LLM entry"));
+        // Legacy commands need the same harness-owned evidence, plus LLM guidance.
+        let mut legacy = Ledger::load(out);
+        legacy.requirements.get_mut("req:shop-1").unwrap().test.run = "pytest -k case".into();
+        legacy.save(out);
+        let package = task(&store, "req:shop-1", &gs).unwrap();
+        let instructions = package["instructions"].as_str().unwrap();
+        assert!(instructions.contains("Run `run_tests`"));
+        assert!(instructions.contains("cannot execute the legacy command"));
+        assert!(instructions.contains("Inspect every LLM entry"));
+        ledger.save(out);
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed source").unwrap();
         let judgments = json!([criterion_judgments(&store, ["pass", "pass"])[0]]);
         mark_llm(&store, "req:shop-1", "pass", None, None, Some(&judgments), &gs).unwrap();

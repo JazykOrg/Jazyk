@@ -461,6 +461,8 @@ harness enforces:
   legacy command. A task imports that case's verdict from its fresh test reports.
   A legacy command's exit code is its verdict, so that command must propagate
   assertion failures. A successful task exit alone proves no individual case passed.
+  Verification packages direct both forms through `run_tests`. An unavailable
+  legacy runner leaves the test unverified; a model verdict cannot replace it.
 - `llm`: a test that requires judgment an executable assertion cannot establish.
   Non-software artifacts can still have programmatic checks for their contents,
   structure, or format. When no programmatic definition exists, the harness gives an agent the

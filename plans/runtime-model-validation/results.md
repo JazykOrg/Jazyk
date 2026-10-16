@@ -669,3 +669,11 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   unrun programmatic case unknown; a fresh matching report then verifies the row.
   This fifth regression and the full suite passed: 708 tests, three existing
   ignored tests. The owner's release binary was rebuilt.
+- The final prompt review also found a legacy-command package still inviting a
+  manual model verdict. It now directs the agent through `run_tests` and keeps
+  unavailable commands unverified. The mixed-case regression checks both legacy
+  and saved-task guidance. An initial full-suite run had 707 passes and one
+  fixture socket timeout. That cancellation case passed alone in 0.52 seconds.
+  The full suite then passed all 708 tests with four test threads in 20.01 seconds,
+  with three existing ignored tests. No timeout or assertion was relaxed. All
+  102 relative links and anchors in the changed design pages resolve.

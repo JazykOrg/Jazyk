@@ -182,6 +182,7 @@ fn api_router(st: SharedState) -> Router {
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
         .route("/project/files", get(projfiles::list))
         .route("/project/file", get(projfiles::file).put(projfiles::create).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
+        .route("/project/raw", get(projfiles::file))
         .route("/project/text", get(projfiles::text).put(projfiles::write_text))
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
@@ -233,6 +234,7 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             | "/project"
             | "/project/files"
             | "/project/file"
+            | "/project/raw"
             | "/project/text"
             | "/deliverable/raw"
             | "/docs/content"
@@ -284,7 +286,7 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     // global LLM config): resolve them off the runtime, once per request.
     let tolerant = matches!(
         route,
-        "/ping" | "/settings" | "/project/files" | "/project/file"
+        "/ping" | "/settings" | "/project/files" | "/project/file" | "/project/raw"
     );
     let resolved = {
         let st = st.clone();

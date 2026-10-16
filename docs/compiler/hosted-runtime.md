@@ -30,8 +30,8 @@ changes still pass the existing commit gates before they enter a snapshot.
 
 A hosted workspace keeps no per-batch replay state. A batch writes no
 [graph snapshot](./sessions.md#snapshots) and no trace transcript. Every request
-removes `<out>/snapshots/` for each document set, so a workspace that an earlier
-version grew shrinks on its next request.
+removes `<out>/snapshots/` for each document set, so a workspace holding snapshots
+sheds them on its next request.
 
 ## Source and delivery projections
 

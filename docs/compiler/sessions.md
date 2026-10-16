@@ -527,8 +527,7 @@ directory freely.
 
 The [hosted runtime](./hosted-runtime.md#workspace-snapshots) writes no snapshots: nothing
 prunes a hosted workspace, so a copy per batch would grow it without bound. A hosted
-request also removes any `snapshots/` directory an earlier version left under a set's
-out directory. A local build keeps writing them.
+request also removes any `snapshots/` directory under a set's out directory. A local build keeps writing them.
 
 ## Trace events
 

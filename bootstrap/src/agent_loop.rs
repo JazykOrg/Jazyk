@@ -549,12 +549,43 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         // Some providers report tool_calls rather than length after exhausting
         // the cap, replacing unfinished arguments with {}. Diagnose the reported
         // cap and missing fields together; valid calls at the cap remain usable.
-        let capped_incomplete = cap_reached && actions.iter().any(|action| {
-            matches!(action, Action::Call { name, args, .. } if !missing_required_args(a.tools, name, args).is_empty())
-        });
-        if capped_incomplete && cut_nudges < 2 {
-            cut_nudges += 1;
-            llm::boost_next_completion();
+        let incomplete: std::collections::BTreeSet<String> = actions.iter().filter_map(|action| {
+            if let Action::Call { name, args, .. } = action {
+                let missing = missing_required_args(a.tools, name, args);
+                if !missing.is_empty() {
+                    return Some(format!("{name}: {}", missing.join(", ")));
+                }
+            }
+            None
+        }).collect();
+        if !incomplete.is_empty() {
+            let fields = incomplete.into_iter().collect::<Vec<_>>().join("; ");
+            let mut error = format!("Required arguments are missing ({fields}). Nothing ran from this reply. Resend complete calls after repairing these fields.");
+            if cap_reached {
+                error.push_str(" Completion allowance exhausted. Use smaller calls and brief reasoning. Write long files in parts: write_text_file for the head, then append: true for the rest, a few thousand characters per call.");
+                if cut_nudges < 2 {
+                    cut_nudges += 1;
+                    llm::boost_next_completion();
+                }
+            }
+            for (index, action) in actions.iter().enumerate() {
+                if let Action::Call { id, name, args } = action {
+                    let call_id = id.clone().unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, index + 1));
+                    (a.emit)(AgentEvent::ToolCallStart {
+                        id: call_id.clone(), name: name.clone(), args: args.clone(),
+                    });
+                    (a.emit)(AgentEvent::ToolCallEnd {
+                        id: call_id, result: error.clone(), ok: false,
+                    });
+                    a.history.push(codec.result_msg(id, name, &json!({"error":error})));
+                }
+            }
+            called_any = true;
+            failed_calls += 1;
+            if failed_calls >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
+                return Stop::Error("Stopped after five consecutive tool errors; inspect the failed calls before retrying.".into());
+            }
+            continue;
         }
 
         // No tool calls: the model is answering, and that ends the turn. A model
@@ -640,6 +671,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         }
 
         let mut call_n = 0u32;
+        let mut reply_failed = false;
         for action in actions.drain(..) {
             match action {
                 // Filtered above; a mixed reply's other actions still run.
@@ -667,11 +699,8 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     // The repeated-call guard lives in the tool serving, keyed per
                     // open batch, so every agent gets the same contract
                     // (docs/compiler/sessions.md#repeated-calls).
-                    let missing = missing_required_args(a.tools, &name, &args);
-                    let dispatched = if failed_calls >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
-                        Err("Skipped: the turn stopped after five consecutive tool errors.".into())
-                    } else if cap_reached && !missing.is_empty() {
-                        Err(format!("Completion allowance exhausted and required arguments are missing: {}. Nothing ran for this call. Reply with a smaller complete call and brief reasoning. Write long files in parts: write_text_file for the head, then append: true for the rest, a few thousand characters per call.", missing.join(", ")))
+                    let dispatched = if reply_failed {
+                        Err("Skipped: an earlier call in this reply failed. Inspect its error before resubmitting this call; this call did not execute.".into())
                     } else {
                         (a.dispatch)(&name, &args)
                     };
@@ -679,7 +708,10 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                         Ok(v) => (v, true),
                         Err(e) => (e, false),
                     };
-                    failed_calls = if ok { 0 } else { failed_calls.saturating_add(1) };
+                    if !reply_failed {
+                        failed_calls = if ok { 0 } else { failed_calls.saturating_add(1) };
+                    }
+                    reply_failed |= !ok;
                     (a.emit)(AgentEvent::ToolCallEnd {
                         id: call_id,
                         result: result.clone(),
@@ -912,7 +944,63 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_tool_errors_bound_a_batch_without_dangling_results() {
+    fn incomplete_batch_gets_feedback_before_exhausting_error_budget() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(1);
+        llm::set_max_completion_tokens(256);
+        let mut calls: Vec<_> = (0..7)
+            .map(|i| native_call(&format!("binding-{i}"), "record_binding", r#"{"requirement":"req:one"}"#))
+            .collect();
+        calls.push(native_call("write", "write_text_file", r#"{"path":"a.py","content":"not yet"}"#));
+        let (llm, provider) = scripted_provider(vec![
+            native_reply(calls, 20),
+            native_reply(vec![native_call("fixed", "record_binding", r#"{"requirement":"req:one","verdict":"fail"}"#)], 20),
+            json!({"choices":[{"message":{"role":"assistant","content":"Recorded."},"finish_reason":"stop"}],"usage":{"completion_tokens":3}}),
+        ]);
+        let tools = [write_tool(), GenericTool {
+            name: "record_binding".into(), description: String::new(),
+            parameters: json!({"type":"object","properties":{"requirement":{"type":"string"},"verdict":{"type":"string"}},"required":["requirement","verdict"]}),
+        }];
+        let mut history = vec![];
+        let mut dispatched = Vec::new();
+        let stop = run_loop(LoopArgs {
+            llm: &llm, history: &mut history, tools: &tools,
+            dispatch: &mut |name, args| { dispatched.push((name.to_string(), args.clone())); Ok("{}".into()) },
+            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 3, label: "batch-repair".into(), conversation: true,
+        });
+        let requests = provider.join().unwrap();
+        assert!(matches!(stop, Stop::EndTurn));
+        assert_eq!(dispatched, vec![("record_binding".into(), json!({"requirement":"req:one","verdict":"fail"}))]);
+        assert!(requests.iter().all(|r| r["max_tokens"] == 256), "ordinary schema repair must not increase the budget");
+        let results: Vec<_> = requests[1]["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").collect();
+        assert_eq!(results.len(), 8);
+        for (i, result) in results.iter().enumerate() {
+            assert_eq!(result["tool_call_id"], if i == 7 { "write".into() } else { format!("binding-{i}") });
+            let error = result["content"].as_str().unwrap();
+            assert!(error.contains("record_binding: verdict") && error.contains("Nothing ran from this reply"));
+        }
+    }
+
+    #[test]
+    fn incomplete_batches_still_stop_after_five_replies() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(1);
+        let (llm, provider) = scripted_provider((0..5).map(|round| {
+            native_reply((0..7).map(|i| native_call(&format!("{round}-{i}"), "write_text_file", "{}")).collect(), 20)
+        }).collect());
+        let mut history = vec![];
+        let stop = run_loop(LoopArgs {
+            llm: &llm, history: &mut history, tools: &[write_tool()],
+            dispatch: &mut |_, _| panic!("incomplete batch dispatched"),
+            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 10, label: "batch-bound".into(), conversation: true,
+        });
+        assert!(matches!(stop, Stop::Error(e) if e.contains("five consecutive")));
+        assert_eq!(provider.join().unwrap().len(), 5);
+        assert_eq!(history.iter().filter(|m| m["role"] == "tool").count(), 35);
+    }
+
+    #[test]
+    fn failed_call_skips_later_calls_without_dangling_results() {
         use std::io::{BufRead, BufReader, Read, Write};
         let _scope = crate::scoped_state::Scope::enter();
         crate::llm::set_tools_mode(1);
@@ -946,12 +1034,32 @@ mod tests {
             label: "error-budget".into(), conversation: false,
         });
         provider.join().unwrap();
-        assert!(matches!(stop, Stop::Error(_)));
-        assert_eq!(dispatched, 8, "a successful call resets the failure count");
+        assert!(matches!(stop, Stop::MaxRounds));
+        assert_eq!(dispatched, 1, "the model sees the failure before more work runs");
         let results: Vec<_> = history.iter().filter(|m| m["role"] == "tool").collect();
         assert_eq!(results.len(), 12);
         for (i, result) in results.iter().enumerate() { assert_eq!(result["tool_call_id"], format!("c{i}")); }
         assert!(results[11]["content"].as_str().unwrap().contains("Skipped"));
+    }
+
+    #[test]
+    fn repeated_dispatch_failures_stop_after_five_replies() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(1);
+        let (llm, provider) = scripted_provider((0..5).map(|round| {
+            native_reply((0..7).map(|i| native_call(&format!("{round}-{i}"), "fixture", "{}")).collect(), 20)
+        }).collect());
+        let mut history = vec![];
+        let mut dispatched = 0;
+        let stop = run_loop(LoopArgs {
+            llm: &llm, history: &mut history, tools: &[],
+            dispatch: &mut |_, _| { dispatched += 1; Err("Invalid criterion".into()) },
+            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 10, label: "dispatch-bound".into(), conversation: true,
+        });
+        assert!(matches!(stop, Stop::Error(e) if e.contains("five consecutive")));
+        assert_eq!(dispatched, 5);
+        assert_eq!(provider.join().unwrap().len(), 5);
+        assert_eq!(history.iter().filter(|m| m["role"] == "tool").count(), 35);
     }
 
     #[test]

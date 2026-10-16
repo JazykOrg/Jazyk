@@ -154,12 +154,19 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   results, repeat until the model stops calling tools. JSON tool results remain
   structured JSON in both codecs, without another layer of string escaping. Plain
   text results remain text. Five consecutive failed tool calls stop the turn. A
-  successful call resets the count. Remaining calls in the same reply receive a
-  skipped result without executing, so the next prompt has complete tool history.
+  successful call resets the count. After any failed call, remaining calls in that
+  reply receive a skipped result without executing. The model sees the error before
+  more work runs, and the next prompt has complete tool history. Skipped calls do
+  not consume further failure allowance.
+  Before dispatch, the loop checks required schema fields for every call. If any
+  are absent, no call from that reply executes. Every call receives a paired result
+  naming the missing fields. This rejected reply counts as one failure, even when
+  several calls omit the same field. The model can repair its arguments after
+  seeing the result. Five consecutive rejected replies still stop the turn.
   A reply can exhaust its completion allowance yet report `tool_calls` with empty
-  arguments. When reported completion usage reaches the requested cap and a call
-  lacks required schema fields, that call is not dispatched. Its paired tool
-  result names the missing fields and asks for a smaller complete call with brief
+  arguments. When reported completion usage reaches the requested cap and the
+  reply lacks required schema fields, its paired tool results also ask for smaller
+  complete calls with brief
   reasoning. Long files use a first write followed by `append` writes. At most two
   such replies per turn receive a one-request completion boost. A complete call
   at the cap and a valid zero-argument tool still execute normally.

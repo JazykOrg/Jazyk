@@ -534,3 +534,21 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   batched, and unlisted-title view-search cases. The edited documentation's links
   and anchors resolve. Repository-wide `cargo fmt --check` still reports existing
   formatting differences across many files; unrelated formatting was preserved.
+- The first local presentation attempt stopped after 1,082.31 seconds. It launched
+  two Python 3.12 containers. The first exposed a missing slide title placeholder;
+  the attempted repair introduced extra escaping and the second returned a Python
+  syntax error. Both terminated. The next model reply contained seven binding
+  calls without a top-level verdict, followed by a source repair. Five repeated
+  schema failures in that single reply exhausted the tool-error allowance before
+  the model could see the feedback. The repair was skipped. No successful PPTX or
+  verified requirement is claimed.
+- Required-field validation now rejects the whole reply before dispatch and counts
+  it as one failure. All calls receive paired skipped results. After a dispatched
+  call fails, later calls in that reply are also skipped without consuming more
+  allowance. Five repeated failures still stop the turn. Ordinary schema repair
+  does not increase completion budgets. The chat prompt names `begin_binding`,
+  package-provided criterion IDs, and the top-level binding verdict explicitly.
+- The final library suite passed 693 tests, with three existing ignored tests.
+  Provider-loop regressions cover a seven-call malformed batch followed by repair,
+  bounded repeated schema failures, and bounded execution failures with complete
+  native tool history. The real presentation retry remains local Ollama and Podman.

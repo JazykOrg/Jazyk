@@ -672,20 +672,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
 
         let mut call_n = 0u32;
         let mut reply_failed = false;
+        let mut reply_cancelled = false;
         for action in actions.drain(..) {
+            reply_cancelled |= (a.cancelled)();
             match action {
                 // Filtered above; a mixed reply's other actions still run.
                 Action::Malformed(_) => {}
                 Action::Text(t) => {
                     let t = t.trim();
-                    if !t.is_empty() {
+                    if !reply_cancelled && !t.is_empty() {
                         (a.emit)(AgentEvent::Message(t.to_string()));
                     }
                 }
                 Action::Call { id, name, args } => {
-                    if (a.cancelled)() {
-                        return Stop::Cancelled;
-                    }
                     called_any = true;
                     call_n += 1;
                     let call_id = id
@@ -696,10 +695,13 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                         name: name.clone(),
                         args: args.clone(),
                     });
+                    reply_cancelled |= (a.cancelled)();
                     // The repeated-call guard lives in the tool serving, keyed per
                     // open batch, so every agent gets the same contract
                     // (docs/compiler/sessions.md#repeated-calls).
-                    let dispatched = if reply_failed {
+                    let dispatched = if reply_cancelled {
+                        Err("Skipped: the session was cancelled before this call started; this call did not execute.".into())
+                    } else if reply_failed {
                         Err("Skipped: an earlier call in this reply failed. Inspect its error before resubmitting this call; this call did not execute.".into())
                     } else {
                         (a.dispatch)(&name, &args)
@@ -721,6 +723,9 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     a.history.push(codec.result_msg(&id, &name, &value));
                 }
             }
+        }
+        if reply_cancelled || (a.cancelled)() {
+            return Stop::Cancelled;
         }
         if failed_calls >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
             return Stop::Error("Stopped after five consecutive tool errors; inspect the failed calls before retrying.".into());
@@ -1060,6 +1065,89 @@ mod tests {
         assert_eq!(dispatched, 5);
         assert_eq!(provider.join().unwrap().len(), 5);
         assert_eq!(history.iter().filter(|m| m["role"] == "tool").count(), 35);
+    }
+
+    #[test]
+    fn cancellation_pairs_remaining_calls_and_history_resumes() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(1);
+        let (llm, provider) = scripted_provider(vec![
+            native_reply((0..3).map(|i| native_call(&format!("c{i}"), "fixture", "{}")).collect(), 20),
+            json!({"choices":[{"message":{"role":"assistant","content":"Resumed."},"finish_reason":"stop"}]}),
+        ]);
+        let cancelled = std::cell::Cell::new(false);
+        let mut history = vec![];
+        let mut dispatched = 0;
+        let stop = run_loop(LoopArgs {
+            llm: &llm, history: &mut history, tools: &[],
+            dispatch: &mut |_, _| {
+                dispatched += 1;
+                cancelled.set(true);
+                Ok(r#"{"completed":true}"#.into())
+            },
+            emit: &mut |_| {}, cancelled: &|| cancelled.get(), max_rounds: 1,
+            label: "cancel-batch".into(), conversation: true,
+        });
+        assert!(matches!(stop, Stop::Cancelled));
+        assert_eq!(dispatched, 1);
+        let results: Vec<_> = history.iter().filter(|m| m["role"] == "tool").collect();
+        assert_eq!(results.len(), 3);
+        assert_eq!(serde_json::from_str::<Value>(results[0]["content"].as_str().unwrap()).unwrap(), json!({"completed":true}));
+        for (i, result) in results.iter().enumerate().skip(1) {
+            assert_eq!(result["tool_call_id"], format!("c{i}"));
+            assert!(result["content"].as_str().unwrap().contains("cancelled"));
+        }
+        cancelled.set(false);
+        history.push(json!({"role":"user","content":"Continue."}));
+        let stop = run_loop(LoopArgs {
+            llm: &llm, history: &mut history, tools: &[],
+            dispatch: &mut |_, _| panic!("unexpected dispatch"),
+            emit: &mut |_| {}, cancelled: &|| cancelled.get(), max_rounds: 1,
+            label: "resume-batch".into(), conversation: true,
+        });
+        assert!(matches!(stop, Stop::EndTurn));
+        let requests = provider.join().unwrap();
+        let resumed = requests[1]["messages"].as_array().unwrap();
+        assert_eq!(resumed.iter().filter(|m| m["role"] == "tool").count(), 3);
+    }
+
+    #[test]
+    fn cancellation_at_last_call_returns_cancelled_before_round_limit() {
+        for before_dispatch in [true, false] {
+            let _scope = crate::scoped_state::Scope::enter();
+            llm::set_tools_mode(1);
+            let (llm, provider) = scripted_provider(vec![
+                native_reply(vec![native_call("last", "fixture", "{}")], 20),
+            ]);
+            let cancelled = std::cell::Cell::new(false);
+            let mut history = vec![];
+            let mut dispatched = 0;
+            let stop = run_loop(LoopArgs {
+                llm: &llm, history: &mut history, tools: &[],
+                dispatch: &mut |_, _| {
+                    dispatched += 1;
+                    cancelled.set(true);
+                    Ok(r#"{"completed":true}"#.into())
+                },
+                emit: &mut |event| {
+                    if before_dispatch && matches!(event, AgentEvent::ToolCallStart { .. }) {
+                        cancelled.set(true);
+                    }
+                },
+                cancelled: &|| cancelled.get(), max_rounds: 1,
+                label: "cancel-last".into(), conversation: true,
+            });
+            assert!(matches!(stop, Stop::Cancelled));
+            assert_eq!(dispatched, usize::from(!before_dispatch));
+            let result = history.last().unwrap();
+            assert_eq!(result["tool_call_id"], "last");
+            if before_dispatch {
+                assert!(result["content"].as_str().unwrap().contains("cancelled"));
+            } else {
+                assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(), json!({"completed":true}));
+            }
+            assert_eq!(provider.join().unwrap().len(), 1);
+        }
     }
 
     #[test]

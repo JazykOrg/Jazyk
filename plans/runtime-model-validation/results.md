@@ -552,3 +552,15 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   Provider-loop regressions cover a seven-call malformed batch followed by repair,
   bounded repeated schema failures, and bounded execution failures with complete
   native tool history. The real presentation retry remains local Ollama and Podman.
+- Review found that cancellation between native calls left later calls unanswered
+  in the saved history. A local scripted regression reproduced one result for a
+  three-call reply. The loop now preserves a dispatched call's actual result and
+  records the rest as skipped, without dispatch. A subsequent prompt can reuse the
+  history. Cancellation before dispatch and during the final call both return
+  `cancelled`, even on the last permitted round.
+- All 20 agent-loop tests passed. The library suite passed 697 tests, with three
+  existing ignored tests. The 71 relative links and anchors in the changed ACP
+  page resolve, and it contains no em dashes. These transport regressions use local
+  scripted HTTP responses, not a paid model provider.
+- The local release binary rebuilt successfully in 62 seconds. The ongoing
+  presentation attempt uses its immutable earlier executable snapshot.

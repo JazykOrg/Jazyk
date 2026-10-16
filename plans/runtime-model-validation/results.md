@@ -564,3 +564,22 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   scripted HTTP responses, not a paid model provider.
 - The local release binary rebuilt successfully in 62 seconds. The ongoing
   presentation attempt uses its immutable earlier executable snapshot.
+- The third presentation attempt repaired its tests, passed three fresh JUnit
+  cases, and retained its PPTX in a second successful Podman run. Both containers
+  terminated. The model then fetched ten binding packages together. Ollama saw a
+  73,095-token prompt with 28,536 uncached tokens. LocalRouter returned HTTP 502
+  after 300,011 ms while Ollama was still processing the prompt. Eleven binding
+  packages over the turn repeated 101,893 characters of instructions. The turn
+  ended after 1,468.05 seconds without completed bindings. It did not pass the
+  full presentation acceptance gate.
+- The agent loop now shares identical top-level instruction blocks from the same
+  tool within a prompt turn. The first and every changed block remain complete;
+  later identical blocks refer to the last complete block. Requirement fields and
+  full audit events remain intact. Native and text-codec regressions verify both
+  changed instructions and unchanged per-call data. All 21 loop tests and 698
+  library tests passed, with three existing ignored library tests. The release
+  build passed in 53.17 seconds. All 71 ACP documentation links resolve.
+- An independent copy replaced all cat jokes with plain statements and still
+  passed the three unchanged tests. That outcome is a coverage finding, not
+  completed semantic verification. The next checkpoint retry receives this
+  finding and the rendered deck's contrast findings as explicit review feedback.

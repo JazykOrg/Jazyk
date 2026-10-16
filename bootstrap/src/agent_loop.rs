@@ -415,6 +415,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     let mut intent_nudges = 0u32;
     let mut malformed_streak = 0u32;
     let mut failed_calls = 0u32;
+    let mut tool_instructions = std::collections::BTreeMap::<String, String>::new();
     while rounds < a.max_rounds {
         if (a.cancelled)() {
             return Stop::Cancelled;
@@ -719,7 +720,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                         result: result.clone(),
                         ok,
                     });
-                    let value = serde_json::from_str(&result).unwrap_or_else(|_| json!(result));
+                    let mut value = serde_json::from_str(&result).unwrap_or_else(|_| json!(result));
+                    // Keep the full outward transcript, but avoid sending the same
+                    // large contract once per package in the model's history.
+                    // A changed contract is always preserved, as are all facts.
+                    if ok {
+                        if let Some(instructions) = value["instructions"].as_str().filter(|s| s.chars().count() >= 1024) {
+                            if tool_instructions.get(&name).is_some_and(|previous| previous == instructions) {
+                                value["instructions"] = json!(format!("Unchanged. Follow the most recent full instructions returned by `{name}` earlier in this turn."));
+                            } else {
+                                tool_instructions.insert(name.clone(), instructions.to_string());
+                            }
+                        }
+                    }
                     a.history.push(codec.result_msg(&id, &name, &value));
                 }
             }
@@ -1147,6 +1160,62 @@ mod tests {
                 assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(), json!({"completed":true}));
             }
             assert_eq!(provider.join().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn repeated_tool_instructions_are_shared_in_history_with_full_audit_events() {
+        for mode in [1, 2] {
+            let _scope = crate::scoped_state::Scope::enter();
+            llm::set_tools_mode(mode);
+            let mut replies: Vec<_> = (0..4).map(|i| {
+                if mode == 1 {
+                    native_reply(vec![native_call(&format!("c{i}"), "package", "{}")], 20)
+                } else {
+                    json!({"choices":[{"message":{"role":"assistant","content":r#"{"tool":"package","args":{}}"#},"finish_reason":"stop"}]})
+                }
+            }).collect();
+            replies.push(json!({"choices":[{"message":{"role":"assistant","content":"Done."},"finish_reason":"stop"}]}));
+            let (llm, provider) = scripted_provider(replies);
+            let mut history = vec![];
+            let original = "Follow this fixture contract. ".repeat(100);
+            let revised = format!("{original}The contract changed.");
+            let mut dispatched = 0;
+            let mut observed = Vec::new();
+            let stop = run_loop(LoopArgs {
+                llm: &llm, history: &mut history, tools: &[],
+                dispatch: &mut |_, _| {
+                    let i = dispatched;
+                    dispatched += 1;
+                    Ok(json!({"instructions":if i < 2 { &original } else { &revised },"requirement":i,"context":{"instructions":"a fact, not a contract"}}).to_string())
+                },
+                emit: &mut |event| {
+                    if let AgentEvent::ToolCallEnd { result, .. } = event {
+                        observed.push(serde_json::from_str::<Value>(&result).unwrap());
+                    }
+                },
+                cancelled: &|| false, max_rounds: 5,
+                label: "shared-contract".into(), conversation: true,
+            });
+            assert!(matches!(stop, Stop::EndTurn));
+            let requests = provider.join().unwrap();
+            assert_eq!(observed.len(), 4);
+            for i in 0..4 {
+                let expected = if i < 2 { &original } else { &revised };
+                assert_eq!(observed[i]["instructions"], *expected);
+                let result = requests[i+1]["messages"].as_array().unwrap().last().unwrap();
+                let text = result["content"].as_str().unwrap().trim_start_matches("RESULT: ");
+                let value: Value = serde_json::from_str(text).unwrap();
+                assert_eq!(value["requirement"], i);
+                assert_eq!(value["context"], observed[i]["context"]);
+                if i % 2 == 0 {
+                    assert_eq!(value["instructions"], *expected);
+                } else {
+                    let note = value["instructions"].as_str().unwrap();
+                    assert!(note.contains("package") && note.contains("most recent full instructions"));
+                    assert!(note.len() < 200);
+                }
+            }
         }
     }
 

@@ -1333,6 +1333,11 @@ impl Store {
         gone.extend(save_nodes(&g.join("redirects"), &redirects));
         gone.extend(save_nodes(&g.join("relationships"), &self.graph.relationships));
         gone.extend(save_nodes(&g.join("state-machines"), &self.graph.state_machines));
+        // A derived directory exists once saved, even empty, so a load recomputes the
+        // derived kinds only on a checkout that lacks them.
+        for kind in DERIVED_KINDS {
+            crate::vfs::create_dir_all(g.join(kind)).ok();
+        }
         for (doc, rec) in &self.docs {
             let p = self.out.join("docs").join(format!("{}.yaml", doc));
             report_write(&p, write_yaml(&p, rec));

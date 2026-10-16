@@ -140,9 +140,9 @@ Everything else is local: rebuilt on demand, or a log of what ran.
   - `graph/` except the derived kinds: entities, requirements, criteria, views,
     diagnostics, redirects.
   - `docs/`: the section trees and content hashes alignment compares against.
-  - `gen/ledger.yaml` and `gen/criteria/`: the accepted generation and verification
-    evidence ([the ledger](../consumers/gen.md#the-ledger)) and the criteria files its
-    `llm` rows name.
+  - `gen/`: the accepted generation and verification evidence
+    ([the ledger](../consumers/gen.md#the-ledger)) and the criteria files its `llm`
+    rows name.
 - Local, per set:
   - `graph/relationships/` and `graph/state-machines/`: derived, recomputed at load
     when missing and on every commit.

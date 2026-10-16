@@ -189,9 +189,7 @@ The generated file ignores everything, then keeps the committed paths:
 !/ds_*/graph/redirects/
 !/ds_*/graph/redirects/*.yaml
 !/ds_*/gen/
-!/ds_*/gen/ledger.yaml
-!/ds_*/gen/criteria/
-!/ds_*/gen/criteria/**
+!/ds_*/gen/**
 .*.tmp
 ```
 

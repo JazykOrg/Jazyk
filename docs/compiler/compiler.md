@@ -222,8 +222,8 @@ Everything lives in the out directory (default `.jazyk/`). See
 - `control.yaml`, `workers/`, `leases/`: the control plane. `feedback.jsonl`: what
   sessions reported through `report_feedback`. `.lock`: the store lock.
 
-A repository commits `status.yaml`, the non-derived node files, `docs/`, and the
-ledger, and ignores the rest
+A repository commits `status.yaml`, the non-derived node files, `docs/`, and `gen/`,
+and ignores the rest
 ([committed and local state](./graph.md#committed-and-local-state)).
 
 `jazyk check` exits non-zero when open diagnostics of severity `error` exist. See

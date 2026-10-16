@@ -49,7 +49,7 @@ The host records new authored membership when a person imports or creates a file
 programmatic test artifacts to `source`. It also adds each set's committed compiler
 state: the files the generated `.jazyk/.gitignore` keeps
 ([committed and local state](./graph.md#committed-and-local-state)), the LLM judgment
-criteria under `gen/criteria/` among them. A repository that receives `files` can be
+criteria under `gen/` among them. A repository that receives `files` can be
 checked out and compiled incrementally. Built artifacts and local compiler state
 (logs, diagrams, derived kinds, the journal, the control plane) stay in the full
 snapshot. Unrecorded output does not enter a delivery merely because it exists. A ledger record identifies

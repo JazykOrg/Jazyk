@@ -677,3 +677,9 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   The full suite then passed all 708 tests with four test threads in 20.01 seconds,
   with three existing ignored tests. No timeout or assertion was relaxed. All
   102 relative links and anchors in the changed design pages resolve.
+- Compiler `86daa56` is now pinned by the deployed Cloud API and editor. A fresh
+  Fargate test of the retained presentation passed all three report cases and
+  preserved all ten verified requirements. ECS independently confirmed shutdown.
+  The retained binary PPTX and project backup preserved their reviewed bytes.
+  This used no Cloud model calls; model validation remained local Ollama through
+  LocalRouter. The dedicated Podman VM and owned build containers are stopped.

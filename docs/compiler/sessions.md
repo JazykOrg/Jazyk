@@ -525,6 +525,11 @@ against the state the model actually saw, not the state the run ended in. Snapsh
 never read by the compiler and cost the size of the shards per batch; delete the
 directory freely.
 
+The [hosted runtime](./hosted-runtime.md#workspace-snapshots) writes no snapshots: nothing
+prunes a hosted workspace, so a copy per batch would grow it without bound. A hosted
+request also removes any `snapshots/` directory an earlier version left under a set's
+out directory. A local build keeps writing them.
+
 ## Trace events
 
 The runner translates a session's update stream into structured events: the tool call

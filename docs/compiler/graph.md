@@ -106,6 +106,14 @@ sees a half-written file. `save` writes `status.yaml` last: its generation is th
 point a reader checks. A write that fails is reported with its path and the error,
 never dropped.
 
+A YAML write skips a file whose serialized bytes already equal the file on disk. A save
+rewrites only the shards and doc records that changed, so a commit that touches one
+shard leaves the others in place, and a save with nothing changed writes nothing. The
+order holds: changed shards and records first, then `status.yaml`. A commit always
+changes `status.yaml` (its generation moves), so the commit point is always written
+after the files it covers. A reader's generation check stays sound: an unchanged file
+reads the same before and after the commit.
+
 A file that exists but does not parse makes the store read-only. The load reports the
 file and the parse error, reads continue with what did parse, and every writer
 (`apply`, the sweep, record clearing, a persisting alignment) refuses with

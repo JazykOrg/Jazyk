@@ -4,7 +4,7 @@
 self-contained HTML file, by default `<out>/graph.html`. No server, no external assets.
 The file works offline and can be attached to a review or a ticket as-is.
 
-The viewer reads the same shards every frontend reads. See
+The viewer reads the same node files every frontend reads. See
 [storage layout](../compiler/graph.md#storage-layout). It renders what is on disk; it
 never compiles.
 

@@ -71,7 +71,7 @@ On every commit, after the changeset lands:
 - Every entry in every requirement's `edges` contributes one edge `{a, b, type,
   cardinality?}`, an untyped edge as `dependency`.
 - Edges group by unordered pair into one relationship node, then by `(a, b, type)` into
-  contributions. Contributions and their `requirements` are ordered by id, so the shard
+  contributions. Contributions and their `requirements` are ordered by id, so the file
   diffs cleanly.
 - A group whose last contributing edge disappears (requirement deleted, edges changed,
   entity merged) is removed. A relationship with no group is removed. A merge redirects

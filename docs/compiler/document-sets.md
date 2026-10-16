@@ -158,8 +158,46 @@ affected bindings and checks. They never silently preserve a clean verdict.
   operation spanning sets is several identified commits, not a cross-store atomic
   transaction. Its result reports partial completion honestly.
 
-Track `.jazyk/jazyk.toml` and `.jazyk/.gitignore`. Generated state stays ignored.
-The generated ignore file can contain `*`, `!jazyk.toml`, and `!.gitignore`.
+Track `.jazyk/jazyk.toml`, `.jazyk/.gitignore`, and each set's committed state
+([committed and local state](./graph.md#committed-and-local-state)). A checkout of any
+commit then compiles incrementally from the graph that commit carries. Logs and
+rebuildable output stay ignored. Jazyk writes `.jazyk/.gitignore` when it is absent or
+still holds an ignore file an earlier Jazyk generated; a file with any other content is
+the owner's and stays as it is. Setup, configuration saves, and every build write it.
+The generated file ignores everything, then keeps the committed paths:
+
+```
+*
+!/jazyk.toml
+!/.gitignore
+!/ds_*/
+/ds_*.bak/
+!/ds_*/status.yaml
+!/ds_*/docs/
+!/ds_*/docs/**
+!/ds_*/graph/
+!/ds_*/graph/entities/
+!/ds_*/graph/entities/*.yaml
+!/ds_*/graph/requirements/
+!/ds_*/graph/requirements/*.yaml
+!/ds_*/graph/criteria/
+!/ds_*/graph/criteria/*.yaml
+!/ds_*/graph/views/
+!/ds_*/graph/views/*.yaml
+!/ds_*/graph/diagnostics/
+!/ds_*/graph/diagnostics/*.yaml
+!/ds_*/graph/redirects/
+!/ds_*/graph/redirects/*.yaml
+!/ds_*/gen/
+!/ds_*/gen/ledger.yaml
+!/ds_*/gen/criteria/
+!/ds_*/gen/criteria/**
+.*.tmp
+```
+
+A path the file does not name is local, so a new kind of output never enters a commit
+by accident.
+
 Existing repository rules that ignore `.jazyk` itself must be removed or narrowed;
 an ignore file inside an ignored parent cannot make config trackable. Setup reports
 that conflict. The repository conversion fixes its own rules and verifies with

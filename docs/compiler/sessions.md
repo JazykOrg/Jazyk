@@ -516,13 +516,13 @@ the spend ([status](../frontends/cli.md#jazyk-status)).
 
 ## Snapshots
 
-Every batch a session opens leaves a snapshot of the graph as it stood: the shards under
-`<out>/graph/` and `status.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
+Every batch a session opens leaves a snapshot of the graph as it stood: the node files
+under `<out>/graph/` and `status.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
 starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
 what makes a session reproducible after the fact: `jazyk replay extract` seeds a
 [replay](../benchmark/replays.md) from it, so the harness answers the recorded calls
 against the state the model actually saw, not the state the run ended in. Snapshots are
-never read by the compiler and cost the size of the shards per batch; delete the
+never read by the compiler and cost the size of the graph per batch; delete the
 directory freely.
 
 The [hosted runtime](./hosted-runtime.md#workspace-snapshots) writes no snapshots: nothing

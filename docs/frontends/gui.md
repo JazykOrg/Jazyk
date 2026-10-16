@@ -143,7 +143,7 @@ Project and store reads:
 - `GET /api/overview`: the same summary without the board counts, plus verification
   counts by [derived status](../consumers/gen.md#status-is-derived-never-stored).
   The viewer-style rollup, served live.
-- `GET /api/graph`: every shard (entities, requirements, criteria, views, relationships, state
+- `GET /api/graph`: every node kind (entities, requirements, criteria, views, relationships, state
   machines, diagnostics, redirects) plus the generation counter.
 - `GET /api/entities/{id}`: the entity, its parent and children, its attributes, the
   requirements referencing it, its relationships, the views it belongs to, its derived

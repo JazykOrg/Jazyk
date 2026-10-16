@@ -3,13 +3,16 @@ $id: https://jazyk.org/schemas/graph.json
 title: Jazyk Graph Store
 description: |-
   Definitions for the graph store files in the out directory:
-  - graph/entities.yaml is a map of id to entity
-  - graph/requirements.yaml is a map of id to requirement
-  - graph/views.yaml is a map of id to view (curated views and the defaults the store derives)
-  - graph/diagnostics.yaml is a map of id to diagnostic
-  - graph/redirects.yaml is a map of absorbed id to surviving id (plain strings)
-  - graph/relationships.yaml is a map of id to relationship (derived, rewritten on every commit)
-  - graph/state-machines.yaml is a map of id to stateMachine (derived, rewritten on every commit)
+  - graph/entities/<file id>.yaml is one entity
+  - graph/requirements/<file id>.yaml is one requirement
+  - graph/criteria/<file id>.yaml is one criterion
+  - graph/views/<file id>.yaml is one view (curated or a default the store derives)
+  - graph/diagnostics/<file id>.yaml is one diagnostic
+  - graph/redirects/<file id>.yaml is one object, `to` the surviving id
+  - graph/relationships/<file id>.yaml is one relationship (derived, rewritten on every commit)
+  - graph/state-machines/<file id>.yaml is one stateMachine (derived, rewritten on every commit)
+  A file id is the node id, `:` written as `~` and `/` as `+`, every byte outside
+  lowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.
   - docs/<mirrored doc path>.yaml is one docRecord per source document
   - journal/g<generation>.yaml is one journalEntry per generation
   - status.yaml is one status object

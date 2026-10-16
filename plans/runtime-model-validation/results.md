@@ -489,3 +489,13 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - The unchanged large-store pruning regression passed in 2.08 seconds under its
   existing five-second assertion. This confirms the isolated case; it does not
   establish a portable wall-clock limit under unrelated host load.
+- `source-setup-chat-2` passed the full cycle in 1,539.06 seconds with 38 model
+  tool calls. The model configured source selections, compiled, generated and
+  bound `src/greet.py` and `tests/test_greet.py`, and passed the check. Independent
+  source falsification produced one assertion failure, zero runner failures, and
+  a failing graph verdict. The model confirmed the failure, reopened generation,
+  repaired the implementation, refreshed the manifest, and passed again. Test
+  and supplied runner bytes stayed unchanged. All four Podman runs terminated.
+- The full compiler library suite passed: 685 tests, zero failures, three existing
+  ignored tests. The Docker lifecycle fixture's nine runs all terminated. The
+  dedicated Podman VM was stopped after verifying no test containers remained.

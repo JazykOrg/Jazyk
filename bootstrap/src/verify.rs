@@ -336,6 +336,17 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     } else {
         String::new()
     };
+    let mut instructions = if row.test.kind == "llm" {
+        include_str!("../../docs/compiler/goals/prompts/verify-llm-contract.md").to_owned()
+    } else if row.test.run.starts_with("task:") {
+        include_str!("../../docs/compiler/goals/prompts/verify-task-contract.md").to_owned()
+    } else {
+        "Execute the run command in the test's cwd under the deliverable. Exit code 0 is a pass. Report the verdict with the command output tail as evidence.".to_owned()
+    };
+    if row.test.kind != "llm" && row.tests.values().any(|test| test.test.kind == "llm") {
+        instructions.push('\n');
+        instructions.push_str(include_str!("../../docs/compiler/goals/prompts/verify-llm-contract.md"));
+    }
     Ok(json!({
         "requirement": rid,
         "entity": row.entity,
@@ -357,13 +368,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
                 "criteria":if test.test.kind=="llm"{crate::vfs::read_to_string(&artifact).unwrap_or_default()}else{String::new()}})
         }).collect::<Vec<_>>(),
         "context": pack,
-        "instructions": if row.test.kind == "llm" {
-            include_str!("../../docs/compiler/goals/prompts/verify-llm-contract.md")
-        } else if row.test.run.starts_with("task:") {
-            include_str!("../../docs/compiler/goals/prompts/verify-task-contract.md")
-        } else {
-            "Execute the run command in the test's cwd under the deliverable. Exit code 0 is a pass. Report the verdict with the command output tail as evidence."
-        },
+        "instructions": instructions,
     }))
 }
 
@@ -1637,6 +1642,41 @@ mod tests {
             .unwrap()["status"],
             "verified"
         );
+    }
+
+    #[test]
+    fn mixed_programmatic_headline_keeps_both_guides_and_independent_evidence() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = multi_llm_fixture(out);
+        let mut ledger = Ledger::load(out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        let test = row.tests.get_mut("crit:second").unwrap();
+        test.test.kind = "programmatic".into();
+        test.test.run = "task:check".into();
+        test.test.name = "case".into();
+        test.test.artifact = "tests/cart.rs".into();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn case() {}\n").unwrap();
+        test.test_hash = hash_file(&artifact_path(out, &gs, &test.test));
+        row.test = test.test.clone();
+        row.hashes.test = test.test_hash.clone();
+        ledger.save(out);
+        let package = task(&store, "req:shop-1", &gs).unwrap();
+        let instructions = package["instructions"].as_str().unwrap();
+        assert!(instructions.contains("Run `run_tests`"));
+        assert!(instructions.contains("Inspect every LLM entry"));
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed source").unwrap();
+        let judgments = json!([criterion_judgments(&store, ["pass", "pass"])[0]]);
+        mark_llm(&store, "req:shop-1", "pass", None, None, Some(&judgments), &gs).unwrap();
+        let row = Ledger::load(out).requirements["req:shop-1"].clone();
+        assert_eq!(row.verdict, "none");
+        assert_eq!(row.tests["crit:first"].verdict, "pass");
+        assert_eq!(row.tests["crit:second"].verdict, "none");
+        assert_eq!(status_of(&store, "req:shop-1", &row, &gs).0, "unverified");
+        let task = serde_json::from_value(json!({"id":"check","name":"Check","description":"Run cases","command":"pytest"})).unwrap();
+        crate::task_runtime::import_evidence(&store, &gs, &task, &json!({"exit_code":0,"tests":[{"identity":"Suite::case","status":"passed"}]}), "fresh");
+        let row = Ledger::load(out).requirements["req:shop-1"].clone();
+        assert_eq!(status_of(&store, "req:shop-1", &row, &gs).0, "verified");
     }
 
     #[test]

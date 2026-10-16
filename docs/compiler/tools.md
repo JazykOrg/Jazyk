@@ -755,6 +755,7 @@ only the ledger, never the graph.
   per-case evidence, not infer a verdict from the container's exit code.
   `criterionTests` lists every bound test with its criterion id, statement hash,
   kind, artifact, and current verdict. LLM entries include the criteria text.
+  A mixed row includes both execution guidance and LLM judgment guidance.
 - `run_tests({requirements?, all?})`: execute the recorded programmatic tests: the
   [build](../consumers/gen.md#the-build) first, once, then each selected row's command.
   `requirements` selects rows (requirement or entity ids); empty runs every

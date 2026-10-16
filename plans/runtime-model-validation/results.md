@@ -656,5 +656,16 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   with inconclusive-output handling. The full library suite passed 707 tests,
   with three existing ignored tests. The release binary was rebuilt. All 290
   relative links and anchors in the changed design pages resolve.
-- A fresh local-model retry of the semantic negative control is in progress.
-  The grader now requires both criterion verdicts to fail independently.
+- The fresh local-model negative control passed in 182.11 seconds with three
+  calls: `begin_verification`, `read_text_file`, and `record_verdict`. Both LLM
+  criteria recorded fail independently, the requirement became failing, the
+  source stayed unchanged, and no runtime container was used. The previous
+  attempt took 283.58 seconds and exposed the stale second verdict.
+- The positive presentation was independently replayed once more with the fixed
+  binary. Its fresh Podman test run passed, all ten requirements stayed verified,
+  and the PPTX matched the reviewed bytes.
+- Final review also covers a programmatic headline with an LLM criterion. Its
+  package includes both execution and judgment guidance. An LLM pass leaves an
+  unrun programmatic case unknown; a fresh matching report then verifies the row.
+  This fifth regression and the full suite passed: 708 tests, three existing
+  ignored tests. The owner's release binary was rebuilt.

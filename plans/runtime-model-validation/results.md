@@ -583,3 +583,9 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   passed the three unchanged tests. That outcome is a coverage finding, not
   completed semantic verification. The next checkpoint retry receives this
   finding and the rendered deck's contrast findings as explicit review feedback.
+- The fifth local presentation retry exposed repeated full logs in `wait_run`
+  status replies while completed commands were still cleaning up. Status polls now
+  omit the log field. Explicit bounded log reads and searches remain available
+  during cleanup and after termination. The regression failed before the fix and
+  passed afterward. All 13 runtime module tests passed. The changed runtime design
+  page contains no em dashes and has no relative links to check.

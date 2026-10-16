@@ -654,7 +654,7 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
     run_selected_after_build(store, gs, targets)
 }
 
-fn run_selected_after_build(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
+pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
     let ledger = Ledger::load(&store.out);
     // Explicit targets (requirement or entity ids), or every non-verified row, the
     // failing ones included: an explicit run is a rerun a worker asked for.
@@ -1795,6 +1795,14 @@ pub fn run_all(
     force: bool,
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
+    run_without_build(store, runner, gs, targets, kind, force, trace, true)
+}
+
+pub(crate) fn run_without_build(
+    store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
+    targets: &[String], kind: Option<&str>, force: bool, trace: &crate::session::Trace,
+    build_product: bool,
+) -> Result<Value, String> {
     use crate::session::TraceEvent;
     // Every prompt this run sends reports under the requirement it is judging.
 
@@ -1809,8 +1817,10 @@ pub fn run_all(
     // artifact that was never produced, so a broken build stops the run instead of
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
-    crate::gen::run_build(&store.out, gs, trace, "verify")
-        .map_err(|e| format!("{}; nothing was verified", e))?;
+    if build_product {
+        crate::gen::run_build(&store.out, gs, trace, "verify")
+            .map_err(|e| format!("{}; nothing was verified", e))?;
+    }
     let task_rows:Vec<String>=selected.iter().filter_map(|r|r["requirement"].as_str()).filter(|rid|Ledger::load(&store.out).requirements.get(*rid).is_some_and(|row|row.test.run.starts_with("task:")||row.tests.values().any(|t|t.test.run.starts_with("task:")))).map(String::from).collect();
     if !task_rows.is_empty() {run_selected_after_build(store,gs,&task_rows)?;}
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);

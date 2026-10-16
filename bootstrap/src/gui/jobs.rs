@@ -63,6 +63,7 @@ pub(crate) fn elide(v: &Value) -> Value {
 pub enum JobKind {
     // The whole pipeline for one set: compile, generate, review (docs/frontends/gui.md#jobs).
     Build,
+    Workflow { steps: Vec<crate::workflow::Step>, config_hash: String },
     Scoped {
         set_id: String,
         config_hash: String,
@@ -100,6 +101,7 @@ impl JobKind {
             JobKind::Scoped { kind, .. } => kind.name(),
             JobKind::CompileSets { .. } => "compile",
             JobKind::Build => "build",
+            JobKind::Workflow { .. } => "workflow",
             JobKind::Compile => "compile",
             JobKind::Gen { .. } => "gen",
             JobKind::Verify { .. } => "verify",
@@ -117,6 +119,7 @@ impl JobKind {
             }
             JobKind::CompileSets { set_ids, .. } => json!({"kind":"compile", "setIds":set_ids}),
             JobKind::Build => json!({ "kind": "build" }),
+            JobKind::Workflow { steps, .. } => json!({"kind":"workflow", "steps":steps}),
             JobKind::Compile => json!({ "kind": "compile" }),
             JobKind::Gen { entities, force } => {
                 json!({ "kind": "gen", "entities": entities, "force": force })
@@ -342,6 +345,9 @@ impl JobManager {
         for stopped in &ids {
             let job = inner.jobs.get_mut(stopped).unwrap();
             job.cancel.store(true, Ordering::Relaxed);
+            let fence = st.root.join(".jazyk/job-cancellation").join(stopped.to_string());
+            let _ = crate::vfs::create_dir_all(fence.parent().unwrap());
+            let _ = crate::vfs::write(&fence, b"cancelled");
             if job.state == "queued" {
                 job.state = "cancelled";
                 job.finished_at = Some(crate::verify::now_iso());
@@ -472,6 +478,9 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         // A panic inside the run fails this job and leaves the worker standing;
         // otherwise the thread would die with the job marked running forever.
         // Mirrors docs/frontends/gui.md#jobs.
+        let fence = st.root.join(".jazyk/job-cancellation").join(id.to_string());
+        let _ = crate::vfs::remove_file(&fence);
+        let _runtime_owner = crate::task_runtime::CancellationScope::enter(Some(&fence));
         let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             execute(&st, &kind, &trace)
         })) {
@@ -486,6 +495,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             result if cancel.load(Ordering::Relaxed) => ("cancelled", Some(match result {
                 Ok(v) => v, Err(e) => json!({"error": e}),
             })),
+            Ok(v) if v["state"] == "failed" => ("failed", Some(v)),
             Ok(v) => ("done", Some(v)),
             Err(e) => ("failed", Some(json!({ "error": e }))),
         };
@@ -559,6 +569,11 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             }
             Ok(json!({"sets":results}))
         }
+        JobKind::Workflow { steps, config_hash } => {
+            let workspace = crate::document_sets::Workspace::load(&st.root).map_err(|e| e.1)?;
+            if &workspace.hash != config_hash { return Err("Project settings changed while the workflow was queued. Review and start it again.".into()); }
+            crate::workflow::run(&st.proj(), &st.llm(), steps, trace)
+        },
         JobKind::Build => {
             let mut steps = Vec::new();
             trace.line("build", "compile");
@@ -687,7 +702,9 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
         );
         return (StatusCode::ACCEPTED, Json(json!({"jobId":id}))).into_response();
     }
-    if st.proj().set_id.is_none() && body["kind"] != "benchmark" {
+    let tasks_only = body["kind"] == "workflow" && crate::workflow::parse(&body["steps"])
+        .is_ok_and(|steps| steps.iter().all(|s| matches!(s, crate::workflow::Step::Task { .. })));
+    if st.proj().set_id.is_none() && body["kind"] != "benchmark" && !tasks_only {
         return super::api::err(
             StatusCode::BAD_REQUEST,
             "select a document set for this job",
@@ -744,6 +761,13 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
         }
     }
     let kind = match body["kind"].as_str() {
+        Some("workflow") => match crate::workflow::parse(&body["steps"]) {
+            Ok(steps) => match crate::document_sets::Workspace::load(&st.root) {
+                Ok(w) => JobKind::Workflow { steps, config_hash: w.hash },
+                Err((_, e)) => return super::api::err(StatusCode::BAD_REQUEST, e),
+            },
+            Err(e) => return super::api::err(StatusCode::BAD_REQUEST, e),
+        },
         Some("build") => JobKind::Build,
         Some("compile") => JobKind::Compile,
         Some("benchmark") => JobKind::Benchmark {

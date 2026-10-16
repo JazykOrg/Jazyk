@@ -689,3 +689,27 @@ for existing links. They are application behavior, not a compiler build dependen
 - <a id="feedback"></a>[Feedback](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#feedback).
 - <a id="empty-states-and-failure"></a>[Empty states and failure](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#empty-states-and-failure).
 - <a id="frontend"></a>[Frontend](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/editor.md#frontend).
+
+
+## Product file markings
+
+`GET /api/project/files` includes `product: true | false` for each file. Task
+`products` patterns identify retained outputs. Files under `[gen].deliverable`
+are also products, except documents, project configuration, hidden files, and
+compiler state. The default deliverable `.` does not mark those excluded inputs.
+The engine performs matching. Frontends do not reinterpret task glob syntax.
+Product markings are independent of document-set source membership.
+
+
+## Workflow jobs
+
+`POST /api/jobs` accepts `kind: workflow` with `steps` and a document set selector.
+Each step is an object with `action`, and `taskId` for `task` actions. The shared
+[workflow contract](../compiler/workflows.md) defines action boundaries. The job
+uses the existing trace, history, and cancellation endpoints. The capability
+`workflow` means this contract is available; an older engine cannot emulate it by
+calling its combined Build command.
+
+The portable browser response to `GET /api/project/file?binary=true&path=...`
+contains `base64` and `contentType`. Native and hosted servers return raw bytes.
+Text reads without `binary=true` retain their existing response shape.

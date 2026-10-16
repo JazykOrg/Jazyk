@@ -2317,7 +2317,10 @@ pub(crate) fn run_sessions(
         derived_ids.extend(board.open_goals().iter().map(|g| g.id.clone()));
         let cap = cap_for(derived_ids.len());
         // The batches the serving can run: none of their goals parked this build.
-        let runnable = |b: &crate::board::Batch| !b.goals.iter().any(|id| parked_ids.contains(id));
+        let runnable = |b: &crate::board::Batch| !b.goals.iter().any(|id| parked_ids.contains(id))
+            && (!crate::workflow::graph_only() || b.goals.iter().all(|id|
+                board.goals.iter().find(|g| &g.id == id).is_some_and(|g|
+                    !crate::board::LEDGER_KINDS.contains(&g.kind.as_str()))));
         let compile_batches: Vec<crate::board::Batch> = board
             .batches
             .iter()

@@ -767,9 +767,14 @@ fn shard<T: serde::de::DeserializeOwned + Default>(path: &Path, errors: &mut Vec
     }
 }
 
+// A file whose bytes already match is left in place, so a save rewrites only what
+// changed. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
 fn write_yaml<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     let text = serde_norway::to_string(value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    if crate::vfs::read(path).is_ok_and(|on_disk| on_disk == text.as_bytes()) {
+        return Ok(());
+    }
     write_atomic(path, text.as_bytes())
 }
 
@@ -963,8 +968,12 @@ impl Dirt {
 
 // The graph as a batch saw it: the shards and status.yaml copied under
 // <out>/snapshots/<label>/ once per batch, for replays to seed from.
-// Mirrors docs/compiler/sessions.md#snapshots.
+// Mirrors docs/compiler/sessions.md#snapshots. A hosted workspace keeps none
+// (docs/compiler/hosted-runtime.md#workspace-snapshots).
 pub fn snapshot_graph(out: &Path, label: &str) {
+    if crate::vfs::is_scoped() {
+        return;
+    }
     let dir = out.join("snapshots").join(label.replace(['/', ':'], "_"));
     if dir.vexists() {
         return;
@@ -6540,6 +6549,54 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).ok();
         dir
+    }
+
+    // A save rewrites only the files whose bytes changed: a second save with nothing
+    // new replaces no file, and a commit leaves untouched shards in place while
+    // status.yaml, the commit point, is rewritten. A rewrite renames a new file into
+    // place, so an unchanged inode means no write.
+    // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+    #[cfg(unix)]
+    #[test]
+    fn save_leaves_files_with_unchanged_bytes_in_place() {
+        use std::os::unix::fs::MetadataExt;
+        let out = own_dir("unchanged-save");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        let r = s.apply(vec![create("ent:a", "A")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let inodes = |dir: &Path| -> BTreeMap<PathBuf, u64> {
+            let mut all = BTreeMap::new();
+            for sub in ["graph", "docs", ""] {
+                let Ok(rd) = std::fs::read_dir(dir.join(sub)) else { continue };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
+                        all.insert(p.clone(), std::fs::metadata(&p).unwrap().ino());
+                    }
+                }
+            }
+            all
+        };
+        let before = inodes(&out);
+        assert!(before.contains_key(&out.join("status.yaml")));
+        assert!(before.contains_key(&out.join("graph").join("entities.yaml")));
+        let again = Store::load(&out);
+        again.save();
+        assert_eq!(inodes(&out), before, "a save with no change writes nothing");
+
+        let mut s = Store::load(&out);
+        let r = s.apply(vec![create("ent:b", "B")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let after = inodes(&out);
+        let entities = out.join("graph").join("entities.yaml");
+        assert_ne!(after[&entities], before[&entities], "the changed shard is rewritten");
+        assert_ne!(after[&out.join("status.yaml")], before[&out.join("status.yaml")]);
+        let diagnostics = out.join("graph").join("diagnostics.yaml");
+        assert_eq!(after[&diagnostics], before[&diagnostics], "an unchanged shard stays");
+        assert_eq!(Store::load(&out).status.generation, 2);
     }
 
     #[test]

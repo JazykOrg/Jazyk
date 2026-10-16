@@ -437,3 +437,32 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - The tested compiler fix and measured evidence are committed and merged to master.
   The Cloud pin and deployment evidence live in the private repository's
   `plans/chat-runtime-validation/README.md`.
+
+## Docker recovery and current-binary retry
+
+- After owner approval, Docker Desktop was restarted. Its CLI was unresponsive;
+  quitting the app stopped the VM but left the backend hung. The remaining backend
+  was stopped and the app relaunched. Docker 29.7.2 responded, and the previously
+  running unrelated container was started again. No images, volumes, or project
+  data were pruned.
+- `docker-restart-baseline` passed with compiler `cc9179a`. Two fresh Python 3.12
+  Alpine containers saw the documentation, source, tests, and project settings.
+  The second restored the first run's cache. Binary products were imported and
+  downloaded intact; JUnit reports and logs were retained; transient files were
+  absent from the next run. Owner cancellation and cancellation with invalid
+  project settings both stopped running work. All four runs terminated.
+- `docker-restart-generation-1` passed in 470.67 seconds using `gemma4:31b-mlx`
+  through LocalRouter, native codec, and the same compiler. The model generated
+  `greet.py` and `tests/test_greet.py`, bound the actual test source to `task:check`,
+  and passed `TestGreeter::test_greeting` in Docker. Independent source falsification
+  produced one assertion failure and zero runner failures, with a failing graph
+  verdict. The model confirmed the failure, read its log, reopened generation,
+  repaired only the implementation, refreshed the manifest, and passed again.
+  Test and supplied runner bytes stayed unchanged. All four runs terminated;
+  all 15 model tool calls completed without tool errors.
+- The previous Docker host failure remains preserved as failed evidence. The fresh
+  pass resolves the current-binary Docker generation gap for this fixture. No
+  prompt or implementation change was needed for the retry. Docker has no remaining
+  test containers or named helper volumes, the unrelated workload is running, and
+  the dedicated Podman VM remains stopped. This evidence-only update needs no
+  production redeployment.

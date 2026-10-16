@@ -16,6 +16,7 @@ pub type Result<T> = std::result::Result<T, (u16, String)>;
 pub struct DocumentSet {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub docs: Vec<String>,
     #[serde(default)]
     pub roots: Vec<String>,
@@ -66,10 +67,10 @@ impl Workspace {
             if set.name.trim().is_empty() || !names.insert(set.name.trim().to_lowercase()) {
                 return Err((400, format!("empty or duplicate set name: {}", set.name)));
             }
-            if set.docs.is_empty() || !set.docs.iter().any(|p| !p.starts_with('!')) {
+            if !set.docs.is_empty() && !set.docs.iter().any(|p| !p.starts_with('!')) {
                 return Err((
                     400,
-                    format!("{} needs at least one document selection", set.name),
+                    format!("{} excludes documents but selects none", set.name),
                 ));
             }
             for pattern in set.docs.iter().chain(&set.roots).chain(&set.source) {
@@ -672,6 +673,17 @@ mod tests {
         .unwrap();
         assert_eq!(preview["sets"][0]["documents"], json!(["docs/a.md"]));
         assert!(!f.0.join(".jazyk").vexists());
+    }
+
+    #[test]
+    fn a_set_can_start_with_no_documents() {
+        let f = Fixture::new();
+        let hash = Workspace::load(&f.0).unwrap().hash;
+        let saved = edit(&f.0, &json!({"baseHash":hash,"set":{"id":"ds_a","name":"Later","docs":[]}}), false).unwrap();
+        assert_eq!(saved["sets"][0]["documents"], json!([]));
+        assert_eq!(saved["sets"][0]["state"], "empty");
+        let hash = Workspace::load(&f.0).unwrap().hash;
+        assert!(edit(&f.0, &json!({"baseHash":hash,"set":{"id":"ds_b","name":"Only exclusions","docs":["!docs/a.md"]}}), false).is_err());
     }
 
     #[test]

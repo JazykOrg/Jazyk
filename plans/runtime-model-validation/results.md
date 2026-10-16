@@ -19,6 +19,13 @@ Validation: 14 runtime tests, then 703 library tests passed with three existing
 ignored tests. The owner's release binary rebuilt successfully. No model call was
 needed for the response-size regression.
 
+The seventh retry configured a Markdown source selection, then reused the previous
+task-settings revision. After refreshing it, the agent tried two task starts
+together. Both guards refused the invalid requests and the agent began waiting
+for the admitted build. Execution guidance now explicitly requires a fresh context
+after any project/document-set settings save and confirmed termination before the
+next task start. The active attempt retains its original binary for clear evidence.
+
 ## Earlier evidence
 
 Work started on 2026-10-15. Raw local evidence is retained under the main checkout's

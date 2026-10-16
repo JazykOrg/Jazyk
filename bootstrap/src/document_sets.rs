@@ -718,7 +718,7 @@ mod tests {
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), "*\n!jazyk.toml\n");
     }
 
-    const CHECKOUT_PATHS: [(&str, bool); 34] = [
+    const CHECKOUT_PATHS: [(&str, bool); 35] = [
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
         (".jazyk/ds_main/status.yaml", true),
@@ -745,6 +745,7 @@ mod tests {
         (".jazyk/ds_main/sessions/s.jsonl", false),
         (".jazyk/ds_main/snapshots/b_1/status.yaml", false),
         (".jazyk/ds_main/control.yaml", false),
+        (".jazyk/ds_main/build.yaml", false),
         (".jazyk/ds_main/workers/w.yaml", false),
         (".jazyk/ds_main/leases/build.yaml", false),
         (".jazyk/ds_main/.lock", false),

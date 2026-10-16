@@ -558,9 +558,11 @@ impl ProseEdit {
     }
 }
 
-// Cheap generation read: one line of status.yaml, no shard parsing.
+// Cheap generation read: one line of build.yaml, no node parsing. A checkout without
+// build.yaml reads 0 here until its first commit writes the floor
+// (docs/compiler/graph.md#the-generation).
 pub fn read_generation(out: &Path) -> u64 {
-    crate::vfs::read_to_string(out.join("status.yaml"))
+    crate::vfs::read_to_string(out.join(BUILD_FILE))
         .ok()
         .and_then(|t| {
             t.lines()
@@ -569,6 +571,63 @@ pub fn read_generation(out: &Path) -> u64 {
                 .and_then(|v| v.trim().parse::<u64>().ok())
         })
         .unwrap_or(0)
+}
+
+// build.yaml: the local half of the status, what one checkout's runs leave behind.
+// Mirrors docs/compiler/graph.md#storage-layout and #committed-and-local-state.
+pub const BUILD_FILE: &str = "build.yaml";
+
+// The status fields that live in build.yaml, never in the committed status.yaml.
+const LOCAL_STATUS_KEYS: [&str; 5] = ["generation", "verdict", "costs", "spent", "diagnostics"];
+
+#[derive(Serialize, Deserialize, Default)]
+struct BuildFile {
+    #[serde(default)]
+    generation: u64,
+    #[serde(default, skip_serializing_if = "Verdict::is_empty")]
+    verdict: Verdict,
+    #[serde(default, skip_serializing_if = "Costs::is_empty")]
+    costs: Costs,
+    #[serde(default)]
+    spent: Spent,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    diagnostics: BTreeMap<String, u64>,
+}
+
+// The highest generation the committed status names: change records and lookalike
+// verdicts. A load never starts below it, so ids minted from the generation never
+// repeat ones a merged branch committed. Mirrors docs/compiler/graph.md#the-generation.
+pub fn generation_floor(status: &Status) -> u64 {
+    status
+        .changes
+        .iter()
+        .map(|c| c.generation)
+        .chain(status.lookalikes.iter().map(|l| l.generation))
+        .max()
+        .unwrap_or(0)
+}
+
+// The committed status.yaml: the status without its local fields.
+fn committed_status(status: &Status) -> serde_norway::Value {
+    let mut v = serde_norway::to_value(status).unwrap_or(serde_norway::Value::Null);
+    if let serde_norway::Value::Mapping(m) = &mut v {
+        for k in LOCAL_STATUS_KEYS {
+            m.remove(k);
+        }
+    }
+    v
+}
+
+// The generation on disk as a load computes it: build.yaml raised to the floor of
+// status.yaml; None for a directory holding neither. Errors name a file that exists
+// and does not parse.
+fn disk_generation(out: &Path) -> Result<Option<u64>, String> {
+    let local = yaml_read::<BuildFile>(&out.join(BUILD_FILE))?.map(|b| b.generation);
+    let floor = yaml_read::<Status>(&out.join("status.yaml"))?.map(|s| generation_floor(&s));
+    Ok(match (local, floor) {
+        (None, None) => None,
+        (l, f) => Some(l.unwrap_or(0).max(f.unwrap_or(0))),
+    })
 }
 
 #[derive(Clone, Default)]
@@ -827,14 +886,57 @@ pub fn id_from_file(stem: &str) -> Option<String> {
     (!id.is_empty() && file_id(&id) == stem).then_some(id)
 }
 
+// The longest file id written whole; a longer one is shortened to a prefix, `%~`, and
+// a hash, and its file carries the full id under `id`.
+pub const FILE_ID_MAX: usize = 180;
+const FILE_ID_PREFIX: usize = 160;
+
+// 64-bit FNV-1a: fixed by the docs, so a name never changes between builds.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+// The file stem of a node: its file id, or the shortened form past FILE_ID_MAX.
+// The second value says whether the file must carry its id.
+// Mirrors docs/compiler/graph.md#node-files.
+pub fn node_stem(id: &str) -> (String, bool) {
+    let full = file_id(id);
+    if full.len() <= FILE_ID_MAX {
+        return (full, false);
+    }
+    let b = full.as_bytes();
+    let mut cut = FILE_ID_PREFIX;
+    if b[cut - 1] == b'%' {
+        cut -= 1;
+    } else if b[cut - 2] == b'%' {
+        cut -= 2;
+    }
+    (format!("{}%~{:016x}", &full[..cut], fnv1a64(id.as_bytes())), true)
+}
+
 // The content of one redirect file.
 #[derive(Serialize, Deserialize)]
 struct RedirectFile {
     to: String,
 }
 
-// The node files of one kind directory, `(id, path)` in id order. A name that does not
-// decode is an error naming the file. Temporary and hidden files are skipped.
+// The id a shortened file carries, read from its content.
+fn carried_id(path: &Path) -> Result<String, String> {
+    let v: serde_norway::Value = yaml_read(path)?.ok_or_else(|| format!("{}: missing", path.display()))?;
+    v.get("id")
+        .and_then(|i| i.as_str())
+        .map(String::from)
+        .ok_or_else(|| format!("{}: a shortened file name carries no id", path.display()))
+}
+
+// The node files of one kind directory, `(id, path)` in id order. A plain name decodes
+// to its id; a shortened one (`%~`) carries it inside and must match its own name. Any
+// other name is an error naming the file. Temporary and hidden files are skipped.
 fn node_files(dir: &Path, errors: &mut Vec<String>) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     let Ok(rd) = crate::vfs::read_dir(dir) else {
@@ -848,13 +950,26 @@ fn node_files(dir: &Path, errors: &mut Vec<String>) -> Vec<(String, PathBuf)> {
         let Some(stem) = name.strip_suffix(".yaml") else {
             continue;
         };
-        match id_from_file(stem) {
-            Some(id) => out.push((id, e.path())),
-            None => errors.push(format!(
-                "{}: the file name spells no node id",
-                e.path().display()
-            )),
+        if let Some(id) = id_from_file(stem) {
+            out.push((id, e.path()));
+            continue;
         }
+        if stem.contains("%~") {
+            match carried_id(&e.path()) {
+                Ok(id) if node_stem(&id).0 == stem => out.push((id, e.path())),
+                Ok(id) => errors.push(format!(
+                    "{}: carries id {} whose file name differs",
+                    e.path().display(),
+                    id
+                )),
+                Err(err) => errors.push(err),
+            }
+            continue;
+        }
+        errors.push(format!(
+            "{}: the file name spells no node id",
+            e.path().display()
+        ));
     }
     out.sort();
     out
@@ -868,6 +983,23 @@ fn load_nodes<T: serde::de::DeserializeOwned>(
 ) -> BTreeMap<String, T> {
     let mut nodes = BTreeMap::new();
     for (id, path) in node_files(dir, errors) {
+        if node_stem(&id).1 {
+            // A shortened file: the node is the content without its carried id.
+            let read = yaml_read::<serde_norway::Value>(&path).and_then(|v| {
+                let mut v = v.unwrap_or(serde_norway::Value::Null);
+                if let serde_norway::Value::Mapping(m) = &mut v {
+                    m.remove("id");
+                }
+                serde_norway::from_value::<T>(v).map_err(|e| format!("{}: {}", path.display(), e))
+            });
+            match read {
+                Ok(v) => {
+                    nodes.insert(id, v);
+                }
+                Err(e) => errors.push(e),
+            }
+            continue;
+        }
         match yaml_read::<T>(&path) {
             Ok(Some(v)) => {
                 nodes.insert(id, v);
@@ -892,8 +1024,19 @@ pub fn read_node_values(dir: &Path) -> serde_json::Map<String, serde_json::Value
 // left the graph, for the caller to delete after every write landed.
 fn save_nodes<T: Serialize>(dir: &Path, nodes: &BTreeMap<String, T>) -> Vec<PathBuf> {
     for (id, node) in nodes {
-        let path = dir.join(format!("{}.yaml", file_id(id)));
-        report_write(&path, write_yaml(&path, node));
+        let (stem, carries) = node_stem(id);
+        let path = dir.join(format!("{}.yaml", stem));
+        if carries {
+            // The full id first, then the node's own fields.
+            let mut m = serde_norway::Mapping::new();
+            m.insert("id".into(), id.as_str().into());
+            if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(node) {
+                m.extend(fields);
+            }
+            report_write(&path, write_yaml(&path, &m));
+        } else {
+            report_write(&path, write_yaml(&path, node));
+        }
     }
     node_files(dir, &mut Vec::new())
         .into_iter()
@@ -1127,6 +1270,7 @@ pub fn snapshot_graph(out: &Path, label: &str) {
     }
     copy_tree(&g, &dir.join("graph"));
     crate::vfs::copy(out.join("status.yaml"), dir.join("status.yaml")).ok();
+    crate::vfs::copy(out.join(BUILD_FILE), dir.join(BUILD_FILE)).ok();
 }
 
 impl Store {
@@ -1135,11 +1279,7 @@ impl Store {
         // and retry if the counter moved mid-read (a commit landed between shards).
         // A store of another version reads as empty; only a build archives it.
         // Mirrors docs/compiler/graph.md#concurrency and #store-version.
-        let counter = || {
-            yaml_to::<Status>(&out.join("status.yaml"))
-                .map(|s| s.generation)
-                .unwrap_or(0)
-        };
+        let counter = || read_generation(out);
         let mut attempts = 0;
         let store = loop {
             let before = counter();
@@ -1248,6 +1388,14 @@ impl Store {
                 }
             }
         }
+        // The local half of the status, raised to the committed floor.
+        // Mirrors docs/compiler/graph.md#the-generation.
+        let build: BuildFile = shard(&out.join(BUILD_FILE), &mut errors);
+        store.status.generation = build.generation.max(generation_floor(&store.status));
+        store.status.verdict = build.verdict;
+        store.status.costs = build.costs;
+        store.status.spent = build.spent;
+        store.status.diagnostics = build.diagnostics;
         // The derived kinds are local: a checkout carries none, so a load that finds
         // either directory missing recomputes both in memory and the next commit
         // writes them. Mirrors docs/compiler/graph.md#a-fresh-checkout.
@@ -1284,17 +1432,23 @@ impl Store {
                 disk.version,
                 STORE_VERSION
             )),
-            Ok(Some(disk)) if disk.generation != self.status.generation => Some(format!(
-                "store-moved: {} is at g{} on disk and g{} in memory; reload and restage",
-                self.out.display(),
-                disk.generation,
-                self.status.generation
-            )),
             Err(e) => Some(format!(
                 "store-unreadable: {} (repair or remove the file, then retry)",
                 e
             )),
-            _ => None,
+            _ => match disk_generation(&self.out) {
+                Ok(Some(g)) if g != self.status.generation => Some(format!(
+                    "store-moved: {} is at g{} on disk and g{} in memory; reload and restage",
+                    self.out.display(),
+                    g,
+                    self.status.generation
+                )),
+                Ok(_) => None,
+                Err(e) => Some(format!(
+                    "store-unreadable: {} (repair or remove the file, then retry)",
+                    e
+                )),
+            },
         }
     }
 
@@ -1362,10 +1516,21 @@ impl Store {
             );
             return;
         }
+        // status.yaml, then build.yaml: the generation there is the commit point.
+        // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
         let mut status = self.status.clone();
         status.version = STORE_VERSION;
         let path = self.out.join("status.yaml");
-        report_write(&path, write_yaml(&path, &status));
+        report_write(&path, write_yaml(&path, &committed_status(&status)));
+        let build = BuildFile {
+            generation: status.generation,
+            verdict: status.verdict,
+            costs: status.costs,
+            spent: status.spent,
+            diagnostics: status.diagnostics,
+        };
+        let path = self.out.join(BUILD_FILE);
+        report_write(&path, write_yaml(&path, &build));
     }
 
     // The journal entry for one commit. Mirrors docs/compiler/graph.md#journal.
@@ -7045,6 +7210,7 @@ mod tests {
             crate::vfs::remove_dir_all(out.join(local)).ok();
         }
         crate::vfs::remove_file(out.join(".lock")).ok();
+        crate::vfs::remove_file(out.join(BUILD_FILE)).ok();
         let committed: Vec<String> = tree_bytes(&out).into_keys().collect();
         assert!(committed
             .iter()
@@ -7072,6 +7238,170 @@ mod tests {
         assert_eq!(opened.status.generation, generation + 1);
         assert!(out.join("graph/relationships/rel~order%7Epayment.yaml").vexists());
         assert!(out.join("graph/state-machines/sm~order.yaml").vexists());
+    }
+
+    // Ids past the cap shorten to a prefix and a hash, carry the full id inside, load
+    // back whole, and never share a name. Mirrors docs/compiler/graph.md#node-files.
+    #[test]
+    fn long_ids_shorten_carry_their_id_and_never_collide() {
+        let long = |tail: &str| format!("ent:{}{}", "č".repeat(40), tail);
+        let ids: Vec<String> = (0..200).map(|n| long(&format!("-{n}"))).collect();
+        let mut names = BTreeSet::new();
+        for id in &ids {
+            let (stem, carries) = node_stem(id);
+            assert!(carries && stem.len() <= FILE_ID_MAX, "{stem}");
+            assert!(stem.contains("%~") && id_from_file(&stem).is_none());
+            assert!(names.insert(stem.to_lowercase()), "collision on {id}");
+        }
+        // An id just at the cap stays plain; one byte more shortens.
+        let at = format!("ent:{}", "a".repeat(FILE_ID_MAX - 4));
+        assert_eq!(node_stem(&at), (file_id(&at), false));
+        let over = format!("{at}a");
+        assert!(node_stem(&over).1);
+        // A cut never splits an escape.
+        for pad in 0..3 {
+            let id = format!("ent:{}{}", "a".repeat(pad), "č".repeat(80));
+            let stem = node_stem(&id).0;
+            let prefix = stem.split("%~").next().unwrap();
+            assert!(!prefix.ends_with('%') && prefix.as_bytes()[prefix.len() - 2] != b'%', "{stem}");
+        }
+
+        let out = own_dir("long-ids");
+        let mut s = every_kind_graph();
+        s.out = out.clone();
+        for id in &ids {
+            s.graph.entities.insert(id.clone(), entity("Long"));
+        }
+        s.graph.redirects.insert(long("-old"), "ent:order".into());
+        s.save();
+        let stem = node_stem(&ids[0]).0;
+        let text = crate::vfs::read_to_string(out.join(format!("graph/entities/{stem}.yaml"))).unwrap();
+        assert!(text.starts_with(&format!("id: {}\n", ids[0])), "{text}");
+        let back = Store::load(&out);
+        assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
+        let json = |g: &Graph| serde_json::to_value(g).unwrap();
+        assert_eq!(json(&back.graph), json(&s.graph));
+        // Removing a long node removes its file.
+        let mut s = back;
+        s.graph.entities.remove(&ids[0]);
+        s.save();
+        assert!(!out.join(format!("graph/entities/{stem}.yaml")).vexists());
+        // A shortened name whose carried id spells another name is unreadable.
+        crate::vfs::write(
+            out.join(format!("graph/entities/{stem}.yaml")),
+            format!("id: {}\nname: Wrong\n", ids[1]),
+        )
+        .unwrap();
+        assert!(!Store::load(&out).load_errors.is_empty());
+    }
+
+    // The generation is local: a load raises build.yaml to the highest generation the
+    // committed status names. Mirrors docs/compiler/graph.md#the-generation.
+    #[test]
+    fn the_generation_starts_at_the_committed_floor() {
+        let out = own_dir("generation-floor");
+        let mut s = every_kind_graph();
+        s.out = out.clone();
+        s.status.generation = 12;
+        s.status.changes.push(ChangeRecord::new(12, 1, 1, CHANGE_ENTITY, "ent:order", "name"));
+        s.save();
+        let status = crate::vfs::read_to_string(out.join("status.yaml")).unwrap();
+        for key in ["generation:", "verdict:", "costs:", "spent:"] {
+            assert!(!status.lines().any(|l| l.starts_with(key)), "{key} in {status}");
+        }
+        assert_eq!(read_generation(&out), 12);
+        crate::vfs::remove_file(out.join(BUILD_FILE)).unwrap();
+        assert_eq!(Store::load(&out).status.generation, 12, "a checkout starts at the floor");
+        crate::vfs::write(out.join(BUILD_FILE), "generation: 3\n").unwrap();
+        let mut low = Store::load(&out);
+        assert_eq!(low.status.generation, 12, "a stale local counter rises to the floor");
+        let r = low.apply(vec![create("ent:refund", "Refund")], &session());
+        assert_eq!((r.applied, r.generation), (1, 13), "{:?}", r.skipped);
+        assert_eq!(read_generation(&out), low.status.generation, "the commit wrote the raised counter");
+        crate::vfs::write(out.join(BUILD_FILE), "generation: 20\n").unwrap();
+        assert_eq!(Store::load(&out).status.generation, 20);
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                copy_dir(&p, &to.join(e.file_name()));
+            } else {
+                std::fs::copy(&p, to.join(e.file_name())).unwrap();
+            }
+        }
+    }
+
+    // Two branches from one base each commit and build. The committed status.yaml
+    // merges as text with no conflict, where the local build.yaml (both bumped the
+    // generation) would conflict. A run that changes nothing in the graph leaves the
+    // committed status.yaml bytes alone. Mirrors docs/compiler/graph.md#the-generation.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_branches_merge_status_without_conflict() {
+        let root = own_dir("status-merge");
+        let (base, a, b) = (root.join("base"), root.join("a"), root.join("b"));
+        let mut s = every_kind_graph();
+        s.out = base.clone();
+        s.save();
+        let base_status = std::fs::read(base.join("status.yaml")).unwrap();
+        // A run that only spends and judges convergence.
+        let mut run = Store::load(&base);
+        run.status.costs.sessions = 3;
+        run.status.costs.tokens = 9000;
+        run.status.spent.rounds = 7;
+        run.status.verdict.state = "converged".into();
+        run.save_status();
+        assert_eq!(std::fs::read(base.join("status.yaml")).unwrap(), base_status);
+        copy_dir(&base, &a);
+        copy_dir(&base, &b);
+        // Branch a commits once and keeps its open change records.
+        let mut sa = Store::load(&a);
+        assert_eq!(sa.apply(vec![create("ent:alpha", "Alpha")], &session()).applied, 1);
+        sa.status.costs.tokens = 111;
+        sa.save_status();
+        // Branch b commits twice, then converges: its records clear.
+        let mut sb = Store::load(&b);
+        assert_eq!(sb.apply(vec![create("ent:beta", "Beta")], &session()).applied, 1);
+        assert_eq!(sb.apply(vec![create("ent:gamma", "Gamma")], &session()).applied, 1);
+        let ids: Vec<String> = sb.status.changes.iter().map(|c| c.id.clone()).collect();
+        sb.clear_changes(&ids);
+        sb.status.costs.tokens = 222;
+        sb.save_status();
+        let merge = |file: &str| {
+            std::process::Command::new("git")
+                .args(["merge-file", "-p"])
+                .arg(a.join(file))
+                .arg(base.join(file))
+                .arg(b.join(file))
+                .output()
+        };
+        let Ok(merged) = merge("status.yaml") else {
+            eprintln!("no git binary; the status split was checked without a text merge");
+            return;
+        };
+        assert!(
+            merged.status.success(),
+            "status.yaml conflicts:\n{}",
+            String::from_utf8_lossy(&merged.stdout)
+        );
+        // b ended where the base was, so the merge is a's status.
+        assert_eq!(merged.stdout, std::fs::read(a.join("status.yaml")).unwrap());
+        assert_eq!(std::fs::read(b.join("status.yaml")).unwrap(), base_status);
+        // The local half both branches bumped is exactly what would have conflicted.
+        let local = merge(BUILD_FILE).unwrap();
+        assert!(!local.status.success(), "build.yaml merged cleanly");
+        // The merged checkout: a's tree, b's nodes, the merged status, a's local file.
+        copy_dir(&b.join("graph"), &a.join("graph"));
+        std::fs::write(a.join("status.yaml"), &merged.stdout).unwrap();
+        let m = Store::load(&a);
+        assert!(m.load_errors.is_empty(), "{:?}", m.load_errors);
+        for id in ["ent:alpha", "ent:beta", "ent:gamma"] {
+            assert!(m.graph.entities.contains_key(id), "{id}");
+        }
+        assert!(m.status.generation >= generation_floor(&m.status));
     }
 
     fn wi() -> WorkItem {

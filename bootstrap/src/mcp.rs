@@ -2589,6 +2589,12 @@ impl McpServer {
                     if kind == "generate" {
                         reply["prerequisites"] = json!({"binding":binding});
                     }
+                    if matches!(kind, "bind" | "generate")
+                        && !crate::gen::GenSettings::resolve(&self.project).configured
+                    {
+                        reply["prerequisites"]["sourceMapping"] = json!(false);
+                        reply["next"] = json!("The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then binding_tasks. An empty generation list is not a completed deliverable.");
+                    }
                     if let Some(n) = stale_note {
                         reply["staleNote"] = json!(n);
                     }
@@ -3968,6 +3974,44 @@ mod tests {
         assert!(names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
         assert!(!names.iter().any(|n| n == "run_command"), "{:?}", names);
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn chat_generation_configures_source_before_deriving_criteria() {
+        let dir = bare_dir("chat-source-setup");
+        let project = crate::project::Project::load(&dir);
+        let mut store = Store::load(&project.out);
+        store.graph.entities.insert("ent:deck".into(), crate::model::Entity { name:"Deck".into(), ..Default::default() });
+        store.graph.requirements.insert("req:deck".into(), crate::model::Requirement { statement:"The deck contains three slides.".into(), entities:vec!["ent:deck".into()], ..Default::default() });
+        store.save();
+        let workspace = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let server = McpServer::with_bridge(workspace.clone(), workspace.out, vec!["chat".into()], false, BridgeFlags::default());
+        let call = |name, args| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+        let decode = |reply: Value| serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        for name in ["binding_tasks", "generation_tasks"] {
+            let reply = decode(call(name, json!({})));
+            assert_eq!(reply["prerequisites"]["sourceMapping"], false, "{reply}");
+            assert!(reply["next"].as_str().unwrap().contains("update_document_set"), "{reply}");
+        }
+        let board = crate::board::Board::compute(&project, &project.out);
+        assert!(!board.goals.iter().any(|g| g.kind == "derive-criteria"));
+        let bind = board.goals.iter().find(|g| g.kind == "bind").unwrap();
+        assert_eq!(bind.change["sourceConfigured"], false);
+        let before = decode(call("list_document_sets", json!({})));
+        let updated = call("update_document_set", json!({"baseHash":before["hash"],"set":{"id":"ds_main","source":["src/**","tests/**","build.py"]}}));
+        assert_ne!(updated["isError"], true, "{updated}");
+        let after = decode(call("list_document_sets", json!({})));
+        for key in ["id", "name", "docs", "roots"] {
+            assert_eq!(before["sets"][0][key], after["sets"][0][key], "{key}");
+        }
+        assert_eq!(after["sets"][0]["source"], json!(["src/**","tests/**","build.py"]));
+        let reply = decode(call("binding_tasks", json!({})));
+        assert!(reply["prerequisites"]["sourceMapping"].is_null(), "{reply}");
+        let project = crate::project::Project::load(&dir);
+        let board = crate::board::Board::compute(&project, &project.out);
+        assert!(board.goals.iter().any(|g| g.kind == "derive-criteria" && g.target == "ent:deck"));
+        assert!(!dir.join("src").vexists(), "Patterns may select future files");
+        crate::vfs::remove_dir_all(dir).ok();
     }
 
     #[test]

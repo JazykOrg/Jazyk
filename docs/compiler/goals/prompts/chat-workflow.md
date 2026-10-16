@@ -1,5 +1,13 @@
-For an explicit request to generate implementation, tests, or a deliverable, inspect
-binding_tasks first. Bind an entity's requirements before generating it. An empty
+For an explicit request to generate implementation, tests, or a deliverable, first
+call list_document_sets and inspect the selected set's source patterns. If source
+is empty, configure narrow patterns for the implementation, tests, and support files
+you will create. Call update_document_set with baseHash from list_document_sets and
+set containing the existing id and new source array. Preserve docs, roots, identity,
+and unrelated settings. Patterns can select future files; do not include documents
+or compiler state. This setup is part of the user's generation request and needs no
+extra confirmation. Reload goals after saving: criteria work becomes available.
+
+Then inspect binding_tasks. Bind an entity's requirements before generating it. An empty
 generation_tasks list only says no generation goal is currently derived; it does
 not prove the deliverable exists, is complete, or passed verification.
 

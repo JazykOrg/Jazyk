@@ -9,7 +9,7 @@ statement changed since their criteria were written, and completes them.
 ## Created when
 
 One goal per entity in the generation scope, `g:derive-criteria:<entity id>`, derived
-when the project configures a `[gen]` deliverable
+when the selected document set has a nonempty `source` selection
 ([project settings](../project-settings.md)) and the entity has a requirement that:
 
 - carries no criterion, or
@@ -31,7 +31,7 @@ the changeset's mutation budget grows by three per listed requirement
 ([budgets](../sessions.md#budgets)). A batch that packed twelve entities' goals
 against one budget once failed three of them unstaged; one goal per batch then cost a
 session per entity, seventeen sessions for seven entities on one build, most of them
-spent on the same fixed opening. A project without a deliverable derives none:
+spent on the same fixed opening. A set without source mapping derives none:
 stated criteria still enter through extraction, and the `criterion-missing` check
 reports the gaps as information ([checks](../compilation.md#checks)).
 

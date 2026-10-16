@@ -2885,7 +2885,7 @@ impl GoalKind for Bind {
                     self,
                     &rid,
                     true,
-                    json!({"goal": "bind", "reason": reason, "entity": entity, "criteria": criteria.len()}),
+                    json!({"goal": "bind", "reason": reason, "entity": entity, "criteria": criteria.len(), "sourceConfigured": gen.configured}),
                     Some(ledger_cause(store, &rid)),
                     hints,
                 ))
@@ -2898,6 +2898,11 @@ impl GoalKind for Bind {
         }
         // The evidence exists before a test encodes it
         // (docs/compiler/reconciler.md#tiers).
+        if goal.change["sourceConfigured"] == json!(false) {
+            return Ready::Blocked(
+                "source mapping: configure the document set's source patterns with list_document_sets and update_document_set; then criteria goals can derive".into(),
+            );
+        }
         let entity = goal.change["entity"].as_str().unwrap_or("");
         if board.open_kind_on("derive-criteria", entity) {
             return Ready::Blocked(format!(

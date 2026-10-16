@@ -255,6 +255,12 @@ The serving is a worker among workers, and says so:
 
 ## Compilation over MCP
 
+Binding and generation discovery report a missing document-set `source` selection
+as setup work. They direct an explicitly requested generation workflow to
+`list_document_sets`, then `update_document_set` with its configuration hash, then
+the newly derived criteria goals. An empty source selection is not a finished
+deliverable or a request for a nonexistent criteria batch.
+
 Goal batches mutate the graph, so the serving holds an open changeset between calls,
 exactly one at a time. The lifecycle has the same begin and done shape as every other
 serving; what it claims is a batch:

@@ -92,3 +92,9 @@ Acceptance checks the resulting programmatic binding and current run evidence.
 `record_generation` can record the binding as part of its manifest. Both `run_tests`
 and a direct `run_task` that imports matching reports are valid execution paths.
 The trace records which tools ran; success does not claim every alternative ran.
+
+Add `--chat --unconfigured-source` to start with documents and no source mapping.
+The agent must configure narrow source selections through the document-set tools,
+then complete generation and runtime verification. Inspect live attempts at least
+every 15 minutes. Stop demonstrated loops, retain their traces, fix the cause, and
+retry from fresh state.

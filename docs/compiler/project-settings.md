@@ -39,6 +39,14 @@ are ordered pattern lists. `source` is optional. Empty means no source mapping.
 Project settings are defaults; `[sets.llm]`, `[sets.acp]`, `[sets.executors]`,
 `[sets.workflow]`, and `[sets.gen]` override them for one set.
 
+Generation needs a nonempty `source` selection for its implementation and test
+files. An explicit generation request authorizes the agent to configure that
+selection with the document-set tools. It preserves the set ID, document selection,
+and unrelated settings. Patterns may select files that do not exist yet. They must
+not include the input documents. Binding discovery names missing source mapping
+before criteria prerequisites. After saving the selection, the agent reloads the
+board and resolves criteria work before binding.
+
 ## Redirect
 
 Root `jazyk.toml` redirects are no longer read. Define the document paths relative

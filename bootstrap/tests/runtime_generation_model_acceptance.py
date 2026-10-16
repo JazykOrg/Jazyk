@@ -45,7 +45,10 @@ def main():
     p.add_argument('--codec', choices=['native', 'text'], default='native')
     p.add_argument('--engine', choices=['podman', 'docker'], default='podman')
     p.add_argument('--chat', action='store_true', help='Use chat tools with a manual release and binding prerequisite')
+    p.add_argument('--unconfigured-source', action='store_true', help='Require chat to configure initially empty source selections')
     a = p.parse_args()
+    if a.unconfigured_source and not a.chat:
+        p.error('--unconfigured-source requires --chat')
     evidence = Path(a.evidence).resolve()
     evidence.mkdir(parents=True, exist_ok=False)
     root = evidence / 'project'
@@ -55,7 +58,7 @@ def main():
     (root / 'docs').mkdir()
     (root / 'docs/main.md').write_text('# Greeter\n\nThe Python module greet.py provides greeting(), which returns exactly "Hello, Jazyk!".\n')
     (root / 'runner.py').write_text(RUNNER)
-    (root / '.jazyk/jazyk.toml').write_text('''version=1
+    config = '''version=1
 [[sets]]
 id="ds_main"
 name="Main"
@@ -69,7 +72,10 @@ command="python runner.py"
 image="docker.io/library/python:3.12-alpine"
 timeout_seconds=30
 reports=["reports/*.xml"]
-''')
+'''
+    if a.unconfigured_source:
+        config = config.replace('source=["greet.py", "tests/**", "runner.py"]', 'source=[]')
+    (root / '.jazyk/jazyk.toml').write_text(config)
     (out / 'status.yaml').write_text(json.dumps({'version': 2, 'generation': 1 if a.chat else 0}))
     (out / 'graph/entities.yaml').write_text(json.dumps({'ent:greeter': {'name': 'Greeter'}}))
     statement = 'The Python module greet.py provides greeting(), which returns exactly "Hello, Jazyk!".'
@@ -81,7 +87,8 @@ reports=["reports/*.xml"]
     mcp = None
     sid = None
     started = time.monotonic()
-    result = dict(model=a.model, codec=a.codec, engine=a.engine, chat=a.chat, passed=False)
+    result = dict(model=a.model, codec=a.codec, engine=a.engine, chat=a.chat,
+                  unconfigured_source=a.unconfigured_source, passed=False)
     try:
         agent.receive(agent.send('initialize', {'protocolVersion': 1, 'clientCapabilities': {},
                        'clientInfo': {'name': 'generation-acceptance', 'version': '1'}}), 30)
@@ -101,6 +108,8 @@ reports=["reports/*.xml"]
         if a.chat:
             for name in ['binding_tasks', 'release_work', 'begin_binding']:
                 assert name in names, names
+        if a.unconfigured_source:
+            assert {'update_document_set', 'save_document_set'}.intersection(names), names
         result['binding_recorded_with'] = 'record_binding' if 'record_binding' in names else 'record_generation'
         assert (root / 'runner.py').read_text() == RUNNER
         tests = {str(p.relative_to(root)): p.read_bytes() for p in (root / 'tests').glob('*.py')}

@@ -1,5 +1,10 @@
 # The bind goal
 
+A document set with no `source` selection waits for source mapping before criteria
+or binding. `list_document_sets` exposes the selection and configuration hash;
+`update_document_set` saves the generated implementation and test paths without
+changing the set's identity or documents. The next board derives criteria work.
+
 `bind` ties one requirement to the deliverable: the files that carry it (possibly
 none), the test that judges it, and the first verdict. The session observes and
 judges; it never changes implementation files. What it records is the requirement's

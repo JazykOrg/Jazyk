@@ -113,6 +113,7 @@ impl Workspace {
             let fs = crate::vfs::Scope::enter(&self.files);
             let _state = crate::scoped_state::Scope::enter();
             let _execution = ExecutionScope::enter(execution.clone());
+            drop_graph_snapshots();
             let conversations = crate::conversation::Scope::enter()?;
             let reply = dispatch(method, path, body)?;
             if path.contains("/chat/") && method != "GET" {
@@ -127,6 +128,19 @@ impl Workspace {
             }
             Ok(Err(error)) => Err(error),
             Err(_) => Err("hosted compiler panicked; request snapshot was rolled back".into()),
+        }
+    }
+}
+
+// A hosted workspace keeps no replay snapshots; remove what an earlier version left.
+// Mirrors docs/compiler/hosted-runtime.md#workspace-snapshots.
+fn drop_graph_snapshots() {
+    let Ok(w) = crate::document_sets::Workspace::load(&root()) else { return };
+    for set in &w.sets {
+        let Ok(p) = w.resolve(Some(&set.id)) else { continue };
+        let dir = p.out.join("snapshots");
+        if crate::vfs::is_dir(&dir) {
+            crate::vfs::remove_dir_all(&dir).ok();
         }
     }
 }
@@ -1053,6 +1067,37 @@ mod tests {
         assert!(crate::render::render_png("<svg />").is_err());
     }
 
+    // A hosted workspace keeps no replay snapshots: a batch in the scope copies
+    // nothing, and a request drops a directory an earlier version left behind.
+    // Mirrors docs/compiler/hosted-runtime.md#workspace-snapshots.
+    #[test]
+    fn hosted_requests_write_no_graph_snapshots_and_drop_old_ones() {
+        let mut w = workspace("Alpha");
+        w.files.insert(".jazyk/ds_main/graph/entities.yaml".into(), b"{}\n".to_vec());
+        w.files.insert(".jazyk/ds_main/status.yaml".into(), b"version: 2\n".to_vec());
+        {
+            let fs = crate::vfs::Scope::enter(&w.files);
+            crate::store::snapshot_graph(&root().join(".jazyk/ds_main"), "b:one");
+            assert!(!fs.snapshot().keys().any(|p| p.contains("/snapshots/")));
+        }
+        w.files.insert(
+            ".jazyk/ds_main/snapshots/b_old/graph/entities.yaml".into(),
+            b"{}\n".to_vec(),
+        );
+        w.files.insert(
+            ".jazyk/ds_main/snapshots/b_old/status.yaml".into(),
+            b"version: 2\n".to_vec(),
+        );
+        let reply = w
+            .request("GET", "/api/capabilities", "", &Execution::default())
+            .unwrap();
+        assert_eq!(reply.status, 200);
+        let files = w.snapshot();
+        assert!(!files.keys().any(|p| p.contains("/snapshots/")), "{:?}", files.keys());
+        assert!(files.contains_key(".jazyk/ds_main/graph/entities.yaml"));
+        assert!(files.contains_key(".jazyk/ds_main/status.yaml"));
+    }
+
     #[test]
     fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
         let mut w = workspace("Alpha");
@@ -1136,6 +1181,10 @@ mod tests {
         assert!(!snapshot
             .keys()
             .any(|p| p.starts_with(".jazyk/ds_main/preview/")));
+        assert!(
+            !snapshot.keys().any(|p| p.contains("/snapshots/")),
+            "a hosted batch writes no graph snapshot"
+        );
         assert!(snapshot
             .keys()
             .any(|p| p.starts_with(".jazyk/ds_main/journal/")));

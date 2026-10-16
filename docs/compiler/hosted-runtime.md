@@ -28,6 +28,11 @@ changes. The host saves that snapshot and reports the compiler verdict. A panic
 rolls back the entire request snapshot and returns a distinct failure. Staged
 changes still pass the existing commit gates before they enter a snapshot.
 
+A hosted workspace keeps no per-batch replay state. A batch writes no
+[graph snapshot](./sessions.md#snapshots) and no trace transcript. Every request
+removes `<out>/snapshots/` for each document set, so a workspace holding snapshots
+sheds them on its next request.
+
 ## Source and delivery projections
 
 `Workspace::projection` takes the previous authored file paths. It returns `source`,

@@ -91,7 +91,8 @@ entity's implementing file is rejected with the owner named
 
 `record_binding` is the gate. The goal resolves when a current row is recorded (its
 `hashes.requirement` equals the live statement hash, and the test artifact exists and
-contains the declared name; for an `llm` row, the criteria file exists), never on the
+contains the declared name; for an `llm` row, the criteria file has valid YAML IDs,
+a current statement hash, and a verdict contract), never on the
 model's word: `mark_goal_done` is validated against the row and rejected naming the gate
 otherwise, and a session that recorded the row and ended without marking still resolves
 the goal at the next derivation. The verdict is not part of the gate: a failing test on
@@ -147,6 +148,11 @@ the requirement:
   [check](../compiler/compilation.md#checks) since the binding loop has no batch of
   its own to file into, never a silent regeneration: rewriting existing code because a
   sentence disagrees with it is a decision, not a default.
+
+The package supplies `criteriaFrontMatter` for each criterion and the requirement,
+and `sourceSelection` for allowed deliverable paths. A rejected criteria write must
+be repaired before recording. `list_document_sets` shows the source globs;
+`update_document_set` can include the intended criteria path without adding docs.
 
 ## When binding runs
 

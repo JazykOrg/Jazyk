@@ -4,3 +4,12 @@ For a programmatic test, artifact is the deliverable-relative test source contai
 the declared name, such as tests/test_greeter.py. The JUnit XML path belongs in the
 saved task's reports globs. Never write report cases to satisfy a binding gate.
 Repair a source or selector mismatch without changing executable checks to llm.
+
+For an llm test, create a separate Markdown criteria file. Copy the package's
+criteriaFrontMatter exactly, then add the criterion, implementation paths, concrete
+inspection steps, and explicit PASS and FAIL outcomes. Read the actual deliverable
+before recording a verdict. A Python test file cannot stand in for these criteria.
+The package's sourceSelection lists allowed deliverable paths. If no pattern allows
+your criteria file, inspect list_document_sets and update_document_set to include
+its Markdown path in sources, then write it. Keep documentation out of sources.
+Never record a binding after a rejected file write until its criteria file exists.

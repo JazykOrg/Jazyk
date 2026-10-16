@@ -32,6 +32,9 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if hash_file(&artifact) != row.hashes.test {
         return ("stale-test".into(), "test-changed".into());
     }
+    if row.test.kind == "llm" && crate::gen::validate_criteria_file(store, store.resolve_id(rid), None, &artifact).is_err() {
+        return ("missing".into(), "artifact-gone".into());
+    }
     // Implementing files alone: a rebuilt artifact among the files is not a code change
     // (docs/consumers/gen.md#status-is-derived-never-stored).
     if crate::gen::hash_implementing(&store.out, gs, &row.files) != row.hashes.files {
@@ -40,6 +43,7 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     for cid in store.criteria_of(rid) {
         let Some(test)=row.tests.get(&cid) else{return ("unverified".into(),"criterion-unbound".into())};
         if store.graph.criteria.get(&cid).is_some_and(|c|hash_hex(&c.statement)!=test.criterion_hash) {return ("stale-requirement".into(),"criterion-changed".into());}
+        if test.test.kind == "llm" && crate::gen::validate_criteria_file(store, store.resolve_id(rid), Some(&cid), &artifact_path(&store.out, gs, &test.test)).is_err() {return ("missing".into(), "artifact-gone".into());}
         if hash_file(&artifact_path(&store.out,gs,&test.test))!=test.test_hash {return ("stale-test".into(),"criterion-test-changed".into());}
     }
     // Criteria judged one by one: files present with some criterion tests green and
@@ -937,6 +941,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         if !artifact_stands_for(&content, &rid, &r.statement) {
             continue;
         }
+        if row.test.kind == "llm" && crate::gen::validate_criteria_file(store, &rid, None, &artifact).is_err() { continue; }
         let hashes = crate::gen::RowHashes {
             requirement: row.hashes.requirement.clone(),
             test: hash_file(&artifact),
@@ -1002,6 +1007,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 }));
                 break;
             }
+            if crate::gen::validate_criteria_file(store, rid, None, path).is_err() { continue; }
             let artifact_rel = path
                 .strip_prefix(store.out.join("gen"))
                 .unwrap_or(path)
@@ -1640,7 +1646,7 @@ mod tests {
         crate::vfs::write(
             crit.join("req-shop-2.md"),
             format!(
-                "---\nrequirement: req:shop-2\nhash: {}\n---\n\n# Verify req:shop-2\n",
+                "---\nrequirement: req:shop-2\nhash: {}\n---\n\n# Verify req:shop-2\nInspect the Cart. PASS if tidy. FAIL otherwise.\n",
                 hash_hex("The Cart shall look tidy.")
             ),
         )

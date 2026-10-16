@@ -42,6 +42,9 @@ fn bind_reason(
     {
         return Some("artifact-gone");
     }
+    if row.test.kind == "llm" && crate::gen::validate_criteria_file(store, _rid, None, &artifact).is_err() {
+        return Some("artifact-gone");
+    }
     // One test per criterion: a criterion without one, or whose statement moved since
     // its test was written, owes a bind (docs/consumers/bind.md#the-bind-goal).
     for cid in store.criteria_of(_rid) {
@@ -51,6 +54,9 @@ fn bind_reason(
             Some(t) => {
                 if t.criterion_hash != hash_hex(&c.statement) {
                     return Some("criterion-changed");
+                }
+                if t.test.kind == "llm" && crate::gen::validate_criteria_file(store, _rid, Some(&cid), &artifact_path(&store.out, gs, &t.test)).is_err() {
+                    return Some("artifact-gone");
                 }
                 if !artifact_path(&store.out, gs, &t.test).vexists() {
                     return Some("artifact-gone");
@@ -75,6 +81,7 @@ pub fn criteria_package(store: &Store, rid: &str) -> Vec<Value> {
                     "statement": c.statement,
                     "quote": c.source.as_ref().map(|s| s.quote.clone()),
                     "suggestedTestName": crate::gen::crit_test_name(cid, &c.statement),
+                    "criteriaFrontMatter": crate::gen::criteria_front_matter(rid, Some(cid), &c.statement),
                 })
             })
         })
@@ -287,6 +294,8 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
         "provenance": crate::session::provenance_line(r),
         "factHash": hash_hex(&r.statement),
+        "criteriaFrontMatter": crate::gen::criteria_front_matter(&rid, None, &r.statement),
+        "sourceSelection": gs.code,
         "deliverable": gs.deliverable.to_string_lossy(),
         "suggestedTestName": crate::gen::test_name(&rid, &r.statement),
         "medium": ledger.medium.as_ref().map(|m| m.line()),
@@ -402,6 +411,7 @@ pub fn record(
             }
             let (tref, path) =
                 parse_test_ref(store, gs, entry, &format!("tests[{}]", i), &mut path_notes)?;
+            if tref.kind == "llm" { crate::gen::validate_criteria_file(store, &rid, Some(&cid), &path)?; }
             crit_tests.insert(
                 cid,
                 crate::gen::CritTest {
@@ -497,6 +507,7 @@ pub fn record(
             ));
         }
     }
+    if kind == "llm" { crate::gen::validate_criteria_file(store, &rid, None, &path)?; }
     // Implementing files must exist: a binding names what carries the requirement, and
     // a path that is not there carries nothing. An empty list is the honest record of
     // an unimplemented requirement.
@@ -841,6 +852,49 @@ mod tests {
             },
         );
         s
+    }
+
+    #[test]
+    fn llm_bindings_require_real_current_criteria_and_invalid_old_rows_reopen() {
+        let mut store = tmp_store();
+        let gs = GenSettings { configured: true, deliverable: store.out.join("product"), worker: "agentic".into(), code: vec![] };
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(gs.deliverable.join("source.py"), "print('items')").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/test_items.py"), "def test_items(): assert True").unwrap();
+        let rid = "req:shop-1";
+        let mut test = json!({"kind":"llm","artifact":"tests/test_items.py","name":"theme","run":"llm"});
+        let files = vec!["source.py".into()];
+        let error = record(&store, rid, &files, &test, &Value::Null, "pass", None, &gs).unwrap_err();
+        assert!(error.contains("separate Markdown"), "{error}");
+        assert!(Ledger::load(&store.out).requirements.is_empty());
+        test["artifact"] = json!("tests/items.md");
+        let valid = format!("{}\nInspect the product. PASS when items are listed. FAIL when absent.\n", crate::gen::criteria_front_matter(rid, None, &store.graph.requirements[rid].statement));
+        for invalid in ["# Criteria\nPASS or FAIL".to_string(), "---\nrequirement: req:shop-1\nhash: stale\n---\nPASS or FAIL".into(), valid.replace("FAIL", "unknown"), valid.replace("req:shop-1", "req:other"), valid.replace("requirement:", "requirement: req:other\nrequirement:")] {
+            crate::vfs::write(gs.deliverable.join("tests/items.md"), invalid).unwrap();
+            assert!(record(&store, rid, &files, &test, &Value::Null, "pass", None, &gs).is_err());
+            assert!(Ledger::load(&store.out).requirements.is_empty());
+        }
+        crate::vfs::write(gs.deliverable.join("tests/items.md"), &valid).unwrap();
+        record(&store, rid, &files, &test, &Value::Null, "pass", None, &gs).unwrap();
+        assert!(pending(&store, &gs).is_empty());
+        // Simulate the previously accepted Python-as-LLM row with matching stored hashes.
+        let mut ledger = Ledger::load(&store.out);
+        let row = ledger.requirements.get_mut(rid).unwrap();
+        row.test.artifact = "tests/test_items.py".into();
+        row.hashes.test = hash_file(&gs.deliverable.join(&row.test.artifact));
+        assert_eq!(crate::verify::status_of(&store, rid, row, &gs).0, "missing");
+        ledger.save(&store.out);
+        assert_eq!(pending(&store, &gs)[0]["reason"], "artifact-gone");
+        let cid = "crit:shop-1";
+        store.graph.criteria.insert(cid.into(), crate::model::Criterion { requirement: rid.into(), statement: "Two items show two lines.".into(), ..Default::default() });
+        let mut entry = test.clone(); entry["criterion"] = json!(cid); entry["verdict"] = json!("pass");
+        // A requirement-level file cannot silently stand for its criterion.
+        assert!(record(&store, rid, &files, &Value::Null, &json!([entry.clone()]), "pass", None, &gs).unwrap_err().contains("criterion must be"));
+        let valid = format!("{}\nOpen the output. PASS for two lines. FAIL otherwise.\n", crate::gen::criteria_front_matter(rid, Some(cid), &store.graph.criteria[cid].statement));
+        crate::vfs::write(gs.deliverable.join("tests/items.md"), &valid).unwrap();
+        record(&store, rid, &files, &Value::Null, &json!([entry]), "pass", None, &gs).unwrap();
+        assert!(pending(&store, &gs).is_empty());
+        crate::vfs::remove_dir_all(store.out).ok();
     }
 
     #[test]

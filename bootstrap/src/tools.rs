@@ -4305,7 +4305,7 @@ impl ToolSession {
                 let raw = Self::str_arg(args, "path")?;
                 let (rel, note) = self.unroot_rel(raw.trim().trim_start_matches("./"));
                 let content = Self::str_arg(args, "content")?;
-                if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents",rel)));}
+                if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));}
                 let path = self.deliverable_path(&rel)?;
                 // File ownership: a path recorded for an entity outside this session's
                 // component group is off limits; the group shares its files.

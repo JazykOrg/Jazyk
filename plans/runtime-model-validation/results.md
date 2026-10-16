@@ -589,3 +589,13 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   during cleanup and after termination. The regression failed before the fix and
   passed afterward. All 13 runtime module tests passed. The changed runtime design
   page contains no em dashes and has no relative links to check.
+- The presentation's fifth attempt registered a Python test as an LLM criteria
+  artifact after its Markdown write was rejected. Recording now validates Markdown,
+  YAML requirement and criterion identity, the current statement hash, and explicit
+  verdict outcomes. Invalid saved rows return to binding; audit cannot reconstruct
+  them as valid criteria. The packages provide exact front matter and source globs,
+  and rejected writes explain how to select or configure a criteria path. The
+  regression covers executable substitution, missing and duplicate metadata, stale
+  hashes, wrong IDs, criterion ownership, valid repair, and an invalid historic row.
+  All 702 library tests passed, with three existing ignored tests. All 143 relative
+  documentation links and anchors resolve; the changed pages contain no em dashes.

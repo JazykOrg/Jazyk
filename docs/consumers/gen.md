@@ -764,6 +764,14 @@ confirm, and the verdict contract (`PASS` or `FAIL` plus reasoning). It is the p
 location of the implemented product, and what to confirm. Editing it flips
 `stale-test` like any test artifact.
 
+The front matter is YAML with `requirement` and `hash`. A criterion test also
+has `criterion`; its `hash` is the criterion statement hash. A requirement test
+without a criterion uses the requirement statement hash. The body is nonempty
+and states both `PASS` and `FAIL` outcomes. Recording validates the IDs, owning
+requirement, live hash, and body. An executable test source is not a criteria file.
+Previously recorded files that lack this contract require binding again. The model
+still judges whether the steps and evidence actually establish the criterion.
+
 The built-in worker writes it to `gen/criteria/crit-<slug>.md` in the out directory
 (metadata, not deliverable). An external worker has no reason to know the out
 directory and writes it where it writes everything else, under the deliverable. The

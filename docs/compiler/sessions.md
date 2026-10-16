@@ -490,7 +490,7 @@ and commits the rest: the extracted requirements land, the miscovered sections s
 unprocessed, and the next build resumes them. Only the explicit `done` holds the model
 to repairing its own claims.
 
-Every session's token count lands in `status.yaml` under `costs` (`sessions`, `tokens`,
+Every session's token count lands in `build.yaml` under `costs` (`sessions`, `tokens`,
 `by_kind`, `by_class`), so the choice of executor per kind is informed by what each kind
 spends ([storage layout](./graph.md#storage-layout)). A session's tokens are what the
 endpoint bills: the input and the output tokens of every model round, refused rounds
@@ -517,7 +517,7 @@ the spend ([status](../frontends/cli.md#jazyk-status)).
 ## Snapshots
 
 Every batch a session opens leaves a snapshot of the graph as it stood: the node files
-under `<out>/graph/` and `status.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
+under `<out>/graph/`, `status.yaml`, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
 starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
 what makes a session reproducible after the fact: `jazyk replay extract` seeds a
 [replay](../benchmark/replays.md) from it, so the harness answers the recorded calls

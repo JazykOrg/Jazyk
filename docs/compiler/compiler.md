@@ -216,9 +216,10 @@ Everything lives in the out directory (default `.jazyk/`). See
 - `journal/`: one entry per generation, the audit trail of every change and the ground
   truth behind `jazyk ripple`.
 - `trace/` and `sessions/`: session transcripts and the ACP session store.
-- `status.yaml`: the store `version`, the generation, the verdict with its counts, the
-  change records, parked and failed goals, costs per goal kind and class, and the
-  alignment and re-evaluation blocks.
+- `status.yaml`: the store `version`, the change records, parked and failed goals, and
+  the alignment and re-evaluation blocks.
+- `build.yaml`: the generation, the verdict with its counts, and costs per goal kind
+  and class. Local.
 - `control.yaml`, `workers/`, `leases/`: the control plane. `feedback.jsonl`: what
   sessions reported through `report_feedback`. `.lock`: the store lock.
 

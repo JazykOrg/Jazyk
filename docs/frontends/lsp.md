@@ -148,11 +148,11 @@ through the [ACP bridge](./acp.md) when the owner triggers them (`jazyk compile`
 pending goals reaches the IDE's chat surface through the
 [proxy](./acp.md#lsp-and-the-proxy), not through the LSP itself. Refresh is
 event-driven the LSP way: file watching belongs to the client, so the editor watches the
-store's `status.yaml` with its native file events and notifies the server
+store's `status.yaml` and `build.yaml` with its native file events and notifies the server
 (`workspace/didChangeWatchedFiles`); on any notification the server compares the
 generation counter, reloads, and republishes every open document (see
 [concurrency](../compiler/graph.md#concurrency)). The comparison is cheap: one line
-of each set's `status.yaml` plus the configuration hash, read on every message. The
+of each set's `build.yaml` plus the configuration hash, read on every message. The
 graph reloads only when one of them moved, so typing costs no reload. For clients
 without file watchers the server keeps a slow background poll as a fallback (the
 same comparison every 2 seconds), so a committed build always repaints eventually. Hover images are read from disk at hover time and a view's file path is

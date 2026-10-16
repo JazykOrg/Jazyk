@@ -24,11 +24,11 @@ it and the next build reconciles from empty.
 
 ```
 .jazyk/<set-id>/
-  status.yaml            # version, generation, verdict, change records, parked and
-                         # failed goals, costs, budgets spent, open diagnostic counts
-                         # by severity, pending alignment proposals, anchors marked
-                         # for re-evaluation, stamped root documents, lookalike
-                         # verdicts
+  status.yaml            # version, change records, parked and failed goals, pending
+                         # alignment proposals, anchors marked for re-evaluation,
+                         # stamped root documents, lookalike verdicts
+  build.yaml             # local: generation, verdict, costs, budgets spent, open
+                         # diagnostic counts by severity
   graph/                 # one file per node, see node files
     entities/<file id>.yaml        # one entity
     requirements/<file id>.yaml    # one requirement
@@ -57,7 +57,7 @@ it and the next build reconciles from empty.
   .lock                  # single-writer lock
 ```
 
-The store owns `status.yaml`, `graph/`, `docs/`, and `journal/`. `diagrams/` is build
+The store owns `status.yaml`, `build.yaml`, `graph/`, `docs/`, and `journal/`. `diagrams/` is build
 output the renderer rewrites after every commit ([output layout](./diagrams.md#output-layout));
 deleting it loses nothing. The rest belongs to the control plane, the frontends, and the
 consumers.
@@ -70,24 +70,16 @@ Each document file under `docs/` holds:
 - `coverage`: map of internal reference → `state`, `note`, `claimedBy`. See
   [coverage](./compilation.md#coverage).
 
-`status.yaml` holds:
+`status.yaml` holds what goal derivation reads, and nothing that changes when the graph
+does not:
 
 - `version`: the store version, `3`.
-- `generation`: bumped on every commit.
-- `verdict`: `{state, open, failed, blocked, optional}`, the last build's
-  [convergence](./compilation.md#convergence) with its counts.
 - `changes`: the open [change records](#change-records).
 - `parked`: the goals left open when a budget ran out, each entry the whole goal
   record. `failed`: `{goal, reason}` per goal a session marked failed, `goal` the whole
   record. Both persist whole, `change` payload included, so a parked or failed goal
   survives a re-derivation that would otherwise drop it. See
   [parked and failed](./reconciler.md#parked-and-failed).
-- `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
-  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`). The cost
-  of every build, by goal kind and by document, is read from the [journal](#journal)
-  instead ([`jazyk status --costs`](../frontends/cli.md#jazyk-status)).
-- `spent`: `{sessions, rounds, tokens}`, the budgets the last build used.
-- `diagnostics`: open diagnostic counts by severity, suppressed excluded.
 - `alignment`: pending [alignment proposals](./alignment.md#what-applies-and-what-is-proposed),
   one block per document. `reevaluate`: anchors placed with `reevaluate`, listed as
   stale until addressed.
@@ -98,6 +90,22 @@ Each document file under `docs/` holds:
 - `lookalikes`: the entity pairs a session kept apart, `{pair, verdict, score,
   generation}` each, the memory that keeps a judged pair off the board while its score
   holds ([verdicts are remembered](./goals/dedupe-candidates.md#verdicts-are-remembered)).
+
+`build.yaml` holds what one checkout's runs leave behind. It is local
+([committed and local state](#committed-and-local-state)):
+
+- `generation`: bumped on every commit. See [the generation](#the-generation).
+- `verdict`: `{state, open, failed, blocked, optional}`, the last build's
+  [convergence](./compilation.md#convergence) with its counts.
+- `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
+  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`). The cost
+  of every build, by goal kind and by document, is read from the [journal](#journal)
+  instead ([`jazyk status --costs`](../frontends/cli.md#jazyk-status)).
+- `spent`: `{sessions, rounds, tokens}`, the budgets the last build used.
+- `diagnostics`: open diagnostic counts by severity, suppressed excluded.
+
+Readers see one status: a load reads both files. Two branches that built without
+changing the graph commit the same `status.yaml` bytes.
 
 ### Node files
 
@@ -118,6 +126,12 @@ different nodes touch different files and git merges them without a conflict.
 
 - The encoding is reversible: the load reads each id back from its file name. No two
   ids share a name, on a case-insensitive file system too.
+- A file id longer than 180 bytes is shortened: its first 160 bytes (cut before an
+  escape it would split), then `%~`, then the 16 lowercase hex digits of the 64-bit
+  FNV-1a hash of the whole id. E.g.: `ent~a-very-long-name…%~3f2a9c0d1e4b5a67.yaml`.
+  The file then holds the full id under `id`, and the load reads the id from there.
+  The plain form never writes `%~`, so a shortened name never meets a plain one; two
+  shortened ids meet only when both their prefixes and their hashes agree.
 - A file holds the node alone, its fields in a fixed order, maps sorted by key, ending
   in a newline. A redirect file holds `to: <surviving id>`. Nothing in a file changes
   unless the node changes: the same graph always writes the same bytes.
@@ -135,8 +149,8 @@ A repository commits the state a checkout needs to resume compiling without a re
 Everything else is local: rebuilt on demand, or a log of what ran.
 
 - Committed, per set:
-  - `status.yaml`: the generation, the open change records, parked and failed goals,
-    lookalike verdicts. Goal derivation reads it.
+  - `status.yaml`: the open change records, parked and failed goals, alignment
+    proposals, lookalike verdicts. Goal derivation reads it.
   - `graph/` except the derived kinds: entities, requirements, criteria, views,
     diagnostics, redirects.
   - `docs/`: the section trees and content hashes alignment compares against.
@@ -144,6 +158,8 @@ Everything else is local: rebuilt on demand, or a log of what ran.
     ([the ledger](../consumers/gen.md#the-ledger)) and the criteria files its `llm`
     rows name.
 - Local, per set:
+  - `build.yaml`: the generation and the last build's verdict, costs, and spend. These
+    change on every run, so two branches would conflict on them at every merge.
   - `graph/relationships/` and `graph/state-machines/`: derived, recomputed at load
     when missing and on every commit.
   - `diagrams/` and `docsgen/`: deterministic output, rewritten at every build's tail.
@@ -182,21 +198,41 @@ loads it as is. Nothing starts from empty.
   fact again.
 - `control.yaml` is absent: modes read the `jazyk.toml` defaults and nothing is
   released.
+- `build.yaml` is absent: the verdict and the costs read empty until the next build,
+  and the generation starts at the floor ([the generation](#the-generation)).
+
+### The generation
+
+The generation is a local counter. Two branches that commit from one base each bump it
+from the same number, so a committed counter would conflict on every parallel commit.
+Nothing in `status.yaml` counts commits, and its text merges cleanly when the branches
+changed different things.
+
+The ids the store mints from the generation (change records `c<generation>-<n>`,
+lookalike verdicts, journal files) must not repeat the ones a merged branch committed.
+A load therefore takes the generation as the larger of `build.yaml` and the floor: the
+highest generation any change record or lookalike verdict in `status.yaml` names. The
+next commit writes the result to `build.yaml`. A writer's `store-moved` check compares
+the same value.
+
+Node markers (`created`, `updated`) keep the generation of the checkout that wrote
+them. After a merge, two branches' markers can name the same number for different
+commits, and `jazyk ripple` follows the local journal only.
 
 ### Writes and unreadable files
 
-Every file the store writes (a node file, a doc record, a journal entry, `status.yaml`)
-lands through a sibling temporary file renamed into place, so a reader or a crash never
-sees a half-written file. `save` writes `status.yaml` last: its generation is the commit
-point a reader checks. A write that fails is reported with its path and the error,
+Every file the store writes (a node file, a doc record, a journal entry, `status.yaml`,
+`build.yaml`) lands through a sibling temporary file renamed into place, so a reader or
+a crash never sees a half-written file. `save` writes `build.yaml` last: its generation
+is the commit point a reader checks. A write that fails is reported with its path and the error,
 never dropped.
 
 A YAML write skips a file whose serialized bytes already equal the file on disk. A save
 rewrites only the node files and doc records that changed, so a commit that touches one
 node leaves the others in place, and a save with nothing changed writes nothing. The
 order holds: changed node files and records first, then the deletions of removed nodes,
-then `status.yaml`. A commit always changes `status.yaml` (its generation moves), so
-the commit point is always written after the files it covers. A reader's generation check stays sound: an unchanged file
+then `status.yaml`, then `build.yaml`. A commit always changes `build.yaml` (its
+generation moves), so the commit point is always written after the files it covers. A reader's generation check stays sound: an unchanged file
 reads the same before and after the commit.
 
 A file that exists but does not parse makes the store read-only. The load reports the
@@ -893,7 +929,7 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   live one (a wait past ten seconds is reported, then continues). One changeset commits
   at a time.
 - A writer commits against the generation it loaded. Under the lock it re-reads the
-  generation in `status.yaml` and refuses with `store-moved` when another writer landed
+  generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
   first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites
   commits it has not seen. The caller reloads and restages.
 - Compilation is sequential: one build at a time (the build lease enforces it), one

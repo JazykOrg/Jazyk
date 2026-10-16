@@ -58,7 +58,7 @@ makes zero LLM calls.
   goal never spends the build cap.
 - The tail. When no goal is ready or a budget is spent, the [checks](#checks) run, the
   [requirements documents](../consumers/docsgen.md) regenerate, and the
-  [verdict](#convergence) lands in `status.yaml`. The tail needs no model.
+  [verdict](#convergence) lands in `build.yaml`. The tail needs no model.
 
 A user stop retains completed commits and drops the active session. It saves the
 incomplete verdict and spend, then releases the build lease. It runs no further
@@ -301,7 +301,7 @@ section with a body of its own is left `unprocessed`. Idempotence is what makes 
 fixed point rather than a loop: a session that re-derives an unchanged conclusion stages
 a no-op upsert, no mutation lands, and that branch of the cascade dies.
 
-The verdict in `status.yaml` is `verdict: {state, open, failed, blocked, optional}`:
+The verdict in `build.yaml` is `verdict: {state, open, failed, blocked, optional}`:
 
 - `converged` when no open or failed mandatory goal of either class remains and the
   checks are clean. The counts ride with it: `blocked` (goals waiting on a human:
@@ -335,7 +335,7 @@ a build that stopped halfway is never reported as converged.
 
 The verdict speaks to work completion, never to document health: a graph can converge
 with open `error` diagnostics standing. So the verdict never travels alone. Open
-diagnostic counts by severity (suppressed excluded) ride beside it: in `status.yaml`
+diagnostic counts by severity (suppressed excluded) ride beside it: in `build.yaml`
 (`diagnostics`), in the empty-board `goals` reply, in the final `done` reply, and in
 `await_changes` (`openDiagnostics`). An agent deciding "done" sees the open errors in
 the same breath as `converged`. Costs ride there too: `costs {sessions, tokens,

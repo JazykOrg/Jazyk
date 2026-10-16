@@ -13,9 +13,12 @@ description: |-
   - graph/state-machines/<file id>.yaml is one stateMachine (derived, rewritten on every commit)
   A file id is the node id, `:` written as `~` and `/` as `+`, every byte outside
   lowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.
+  A file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the
+  file then carries the full id under `id`.
   - docs/<mirrored doc path>.yaml is one docRecord per source document
   - journal/g<generation>.yaml is one journalEntry per generation
   - status.yaml is one status object
+  - build.yaml is one buildState object (local, never committed)
   Goals are derived from these files and never stored; goal ids appear only in
   journal entries and the parked and failed lists of status.yaml.
 definitions:
@@ -1158,7 +1161,9 @@ definitions:
         description: Open optional goals, standing advice
     additionalProperties: false
   status:
-    description: The status.yaml file
+    description: >-
+      The status.yaml file, committed: what goal derivation reads, nothing that
+      changes without a graph change
     type: object
     required:
       - version
@@ -1168,13 +1173,7 @@ definitions:
           The store version. An out directory whose status.yaml lacks it or carries a
           different one is archived whole and the store starts empty
         type: integer
-        const: 2
-      generation:
-        type: integer
-        minimum: 0
-        description: Bumped on every commit
-      verdict:
-        $ref: '#/definitions/verdict'
+        const: 3
       changes:
         description: Open change records, the input of goal derivation
         type: array
@@ -1192,6 +1191,37 @@ definitions:
         type: array
         items:
           $ref: '#/definitions/failedGoal'
+      alignment:
+        description: Pending alignment proposals, one block per target document
+        type: array
+        items:
+          $ref: '#/definitions/docAlignment'
+      reevaluate:
+        description: >-
+          Anchors a place-anchors session placed with reevaluate, listed as stale
+          anchors until addressed
+        type: array
+        items:
+          type: string
+      roots:
+        description: >-
+          The documents matching the project roots, stamped by the build after the
+          section trees sync. Orders documents by link level on commits outside a
+          build
+        type: array
+        items:
+          type: string
+  buildState:
+    description: >-
+      The build.yaml file, local: the generation and what the last run left behind
+    type: object
+    properties:
+      generation:
+        type: integer
+        minimum: 0
+        description: Bumped on every commit. A load takes the larger of this and the highest generation status.yaml names
+      verdict:
+        $ref: '#/definitions/verdict'
       costs:
         $ref: '#/definitions/costs'
       spent:
@@ -1213,26 +1243,6 @@ definitions:
         additionalProperties:
           type: integer
           minimum: 0
-      alignment:
-        description: Pending alignment proposals, one block per target document
-        type: array
-        items:
-          $ref: '#/definitions/docAlignment'
-      reevaluate:
-        description: >-
-          Anchors a place-anchors session placed with reevaluate, listed as stale
-          anchors until addressed
-        type: array
-        items:
-          type: string
-      roots:
-        description: >-
-          The documents matching the project roots, stamped by the build after the
-          section trees sync. Orders documents by link level on commits outside a
-          build
-        type: array
-        items:
-          type: string
   sectionOp:
     description: One computed section change
     type: object

@@ -213,8 +213,8 @@ pub fn set_max_completion_tokens(n: u64) {
     MAX_COMPLETION_OVERRIDE.store(n, Ordering::Relaxed);
 }
 
-// Set by the agent loop after a reply the cap cut in its reasoning with no call made:
-// the next request alone carries twice the cap. Mirrors
+// Set by the agent loop after a capped reply with no call or missing required
+// arguments: the next request alone carries twice the cap. Mirrors
 // docs/compiler/project-settings.md#environment-tuning.
 static BOOST_NEXT: AtomicBool = AtomicBool::new("BOOST_NEXT", false);
 
@@ -234,7 +234,7 @@ fn base_completion_tokens() -> u64 {
         .max(256)
 }
 
-fn max_completion_tokens() -> u64 {
+pub(crate) fn max_completion_tokens() -> u64 {
     let base = base_completion_tokens();
     if BOOST_NEXT.load(Ordering::Relaxed) {
         base * 2

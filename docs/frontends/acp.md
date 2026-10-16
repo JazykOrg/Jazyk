@@ -156,6 +156,13 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   text results remain text. Five consecutive failed tool calls stop the turn. A
   successful call resets the count. Remaining calls in the same reply receive a
   skipped result without executing, so the next prompt has complete tool history.
+  A reply can exhaust its completion allowance yet report `tool_calls` with empty
+  arguments. When reported completion usage reaches the requested cap and a call
+  lacks required schema fields, that call is not dispatched. Its paired tool
+  result names the missing fields and asks for a smaller complete call with brief
+  reasoning. Long files use a first write followed by `append` writes. At most two
+  such replies per turn receive a one-request completion boost. A complete call
+  at the cap and a valid zero-argument tool still execute normally.
   This bound also applies to MCP tools outside a graph batch. It streams thought chunks,
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
   usage. A prose reply in a prompt that already made tool calls gets one nudge before
@@ -208,7 +215,9 @@ is answered with a repair message naming the error, three strikes before the pro
 fails: a dropped brace is a resend, not an answer. A native tool call whose
 `arguments` string does not parse is the same broken action: it is repaired the same
 way, never dispatched with empty arguments, and the reply enters the history with the
-call's arguments emptied, so the endpoint never sees the cut JSON again. Before that,
+call's arguments emptied, so the endpoint never sees the cut JSON again. Every
+native call in a rejected reply receives a paired skipped result before the repair
+message. None of that reply's calls execute. Before that,
 a `write_text_file` cut at the model's output cap stayed in the history verbatim and
 every later request of the session, and of every session after it in the run, was
 refused with a 400 about an unclosed object. The check reads the whole reply,

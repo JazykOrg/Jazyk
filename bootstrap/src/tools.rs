@@ -550,13 +550,17 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_verdict",
-            description: "Record a pass or fail verdict with evidence, for a row you judged (llm rows; run_tests records programmatic rows itself). Pass the factHash from the begin_verification package; if the graph moved meanwhile the verdict is recorded but the row stays pending.",
+            description: "Record LLM judgments with evidence. Copy factHash from begin_verification. For multiple LLM criteria, criteria must include every LLM criterionTests entry with its own criterion id, factHash, verdict, and evidence. The top-level verdict is pass only when every LLM entry passes. Programmatic evidence comes from run_tests.",
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
                     "verdict": {"type": "string", "enum": ["pass", "fail"]},
                     "factHash": {"type": "string"},
-                    "evidence": {"type": "string"}
+                    "evidence": {"type": "string"},
+                    "criteria": {"type":"array","items":{"type":"object","properties":{
+                        "criterion":{"type":"string"},"verdict":{"type":"string","enum":["pass","fail"]},
+                        "factHash":{"type":"string"},"evidence":{"type":"string"}
+                    },"required":["criterion","verdict","factHash"],"additionalProperties":false}}
                 }),
                 &["requirement", "verdict"],
             ),
@@ -7639,13 +7643,13 @@ impl ToolSession {
                 let gs = self.gen_settings();
                 let seen = Self::opt_str(args, "factHash");
                 let evidence = Self::opt_str(args, "evidence");
-                crate::verify::mark(
+                crate::verify::mark_llm(
                     &self.snapshot,
                     &rid,
                     &verdict,
                     seen.as_deref(),
                     evidence.as_deref(),
-                    None,
+                    args.get("criteria"),
                     &gs,
                 )
                 .map_err(|e| ToolError::new("bad-argument", e))

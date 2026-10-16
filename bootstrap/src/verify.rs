@@ -350,9 +350,15 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "test": {"kind": row.test.kind, "label": row.test.label, "artifact": row.test.artifact,
                  "name": row.test.name, "run": row.test.run, "cwd": row.test.cwd},
         "criteria": criteria,
+        "criterionTests": row.tests.iter().map(|(cid, test)| {
+            let artifact = artifact_path(&store.out, gs, &test.test);
+            json!({"criterion":cid,"factHash":test.criterion_hash,"statement":store.graph.criteria.get(cid).map(|c| &c.statement),
+                "kind":test.test.kind,"artifact":test.test.artifact,"name":test.test.name,"verdict":test.verdict,
+                "criteria":if test.test.kind=="llm"{crate::vfs::read_to_string(&artifact).unwrap_or_default()}else{String::new()}})
+        }).collect::<Vec<_>>(),
         "context": pack,
         "instructions": if row.test.kind == "llm" {
-            "Confirm the requirement is satisfied by the implementing files. Follow the criteria's confirm steps using the deliverable paths. Report verdict pass only if every criterion is met; state what you inspected or executed and what you observed."
+            include_str!("../../docs/compiler/goals/prompts/verify-llm-contract.md")
         } else if row.test.run.starts_with("task:") {
             include_str!("../../docs/compiler/goals/prompts/verify-task-contract.md")
         } else {
@@ -420,12 +426,13 @@ pub fn mark(
     let Some(row) = ledger.requirements.get_mut(&rid) else {
         return Err(format!("no ledger row for `{}`", rid));
     };
+    let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
+    rebaseline_files(row, files);
     row.verdict = verdict.to_string();
     row.exit_code = exit_code;
     row.last_run = Some(now_iso());
     row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
-    row.hashes.files = crate::gen::hash_implementing(&store.out, gs, &row.files);
     // The headline is a criterion's own test when criteria exist: its verdict is that
     // criterion's too, or the row reads partial against a stale entry forever
     // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
@@ -452,6 +459,144 @@ pub fn mark(
     let (status, _) = status_of(store, &rid, ledger.requirements.get(&rid).unwrap(), gs);
     ledger.save(&store.out);
     Ok(json!({"recorded": rid, "verdict": verdict, "status": status, "graphMoved": stale}))
+}
+
+/// A fresh observation cannot carry unrelated tests across a source change.
+pub(crate) fn rebaseline_files(row: &mut crate::gen::ReqRow, files: String) {
+    if row.hashes.files != files {
+        row.verdict = "none".into();
+        row.exit_code = None;
+        row.last_run = None;
+        row.evidence = None;
+        for test in row.tests.values_mut() {
+            test.verdict = "none".into();
+            test.exit_code = None;
+            test.last_run = None;
+            test.evidence = None;
+        }
+        row.hashes.files = files;
+    }
+}
+
+/// Explicit model judgments cover LLM criteria only. Validate the whole list
+/// before committing, so a bad second entry cannot partially refresh a row.
+pub fn mark_llm(
+    store: &Store,
+    rid: &str,
+    verdict: &str,
+    fact_hash: Option<&str>,
+    evidence: Option<&str>,
+    criteria: Option<&Value>,
+    gs: &GenSettings,
+) -> Result<Value, String> {
+    let rid = store.resolve_id(rid).to_owned();
+    let mut ledger = Ledger::load(&store.out);
+    let row = ledger
+        .requirements
+        .get_mut(&rid)
+        .ok_or_else(|| format!("no ledger row for `{rid}`"))?;
+    let llm: Vec<String> = row
+        .tests
+        .iter()
+        .filter(|(_, t)| t.test.kind == "llm")
+        .map(|(id, _)| id.clone())
+        .collect();
+    if criteria.is_none() && row.test.kind == "llm" && llm.len() <= 1 {
+        return mark(store, &rid, verdict, fact_hash, evidence, None, gs);
+    }
+    if llm.is_empty() {
+        return Err("No LLM criterion is bound. Use run_tests for programmatic evidence.".into());
+    }
+    let entries = criteria.and_then(Value::as_array).ok_or_else(|| format!("Supply record_verdict.criteria for every LLM criterion: {}. Copy ids and factHash values from begin_verification. Programmatic evidence is not a model verdict.",llm.join(", ")))?;
+    let mut judgments = std::collections::BTreeMap::new();
+    for entry in entries {
+        let cid = entry["criterion"]
+            .as_str()
+            .ok_or("Each criteria entry requires criterion")?;
+        let cid = store.resolve_id(cid).to_owned();
+        if !llm.contains(&cid) {
+            return Err(format!("`{cid}` is not an LLM criterion bound to `{rid}`"));
+        }
+        let value = entry["verdict"]
+            .as_str()
+            .filter(|v| matches!(*v, "pass" | "fail"))
+            .ok_or("Criterion verdict must be pass or fail")?;
+        let live = store
+            .graph
+            .criteria
+            .get(&cid)
+            .ok_or("Criterion no longer exists")?;
+        let hash = hash_hex(&live.statement);
+        if entry["factHash"].as_str() != Some(hash.as_str())
+            || row.tests[&cid].criterion_hash != hash
+        {
+            return Err(format!("Criterion `{cid}` changed. Reload begin_verification before recording its verdict."));
+        }
+        if judgments
+            .insert(
+                cid,
+                (
+                    value.to_owned(),
+                    entry["evidence"]
+                        .as_str()
+                        .map(|e| crate::llm::truncate(e, 400).to_owned()),
+                ),
+            )
+            .is_some()
+        {
+            return Err("Duplicate criterion verdict".into());
+        }
+    }
+    if judgments.len() != llm.len() {
+        return Err(
+            "Every bound LLM criterion needs an explicit verdict; reload begin_verification."
+                .into(),
+        );
+    }
+    let combined = if judgments.values().all(|(v, _)| v == "pass") {
+        "pass"
+    } else {
+        "fail"
+    };
+    if verdict != combined {
+        return Err(format!(
+            "Top-level verdict must be `{combined}` to match the LLM criteria."
+        ));
+    }
+    let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
+    rebaseline_files(row, files);
+    let now = Some(now_iso());
+    for (cid, (value, observed)) in judgments {
+        let test = row.tests.get_mut(&cid).unwrap();
+        test.verdict = value;
+        test.last_run = now.clone();
+        test.exit_code = None;
+        test.evidence = observed;
+        test.test_hash = hash_file(&artifact_path(&store.out, gs, &test.test));
+    }
+    if row.test.kind == "llm" {
+        row.verdict = verdict.into();
+        row.last_run = now;
+        row.exit_code = None;
+        row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
+        row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
+    }
+    let stale = fact_hash.is_some_and(|h| {
+        store
+            .graph
+            .requirements
+            .get(&rid)
+            .is_some_and(|r| hash_hex(&r.statement) != h)
+    });
+    let (status, _) = status_of(store, &rid, row, gs);
+    let results: Vec<_> = llm
+        .iter()
+        .map(|cid| json!({"criterion":cid,"verdict":row.tests[cid].verdict}))
+        .collect();
+    ledger.save(&store.out);
+    Ok(
+        json!({"recorded":rid,"verdict":verdict,"status":status,"graphMoved":stale,"criteria":results}),
+    )
 }
 
 // Run one programmatic row: grep the artifact for the test name first (absent means
@@ -523,6 +668,10 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
     let Some(row) = ledger.requirements.get_mut(&rid) else {
         return Vec::new();
     };
+    if row.tests.values().any(|t|t.test.kind=="programmatic") {
+        let files=crate::gen::hash_implementing(&store.out,gs,&row.files);
+        rebaseline_files(row,files);
+    }
     let headline_run = row.test.run.clone();
     let headline_name = row.test.name.clone();
     let headline_verdict = row.verdict.clone();
@@ -957,6 +1106,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 row.exit_code = None;
                 reset.push(rid.clone());
             }
+            rebaseline_files(row, hashes.files.clone());
             row.hashes = hashes;
         }
         refreshed += 1;
@@ -1332,6 +1482,246 @@ mod tests {
             .0,
             "stale-requirement"
         );
+    }
+
+    fn multi_llm_fixture(out: &std::path::Path) -> (Store, GenSettings) {
+        let (mut store, gs) = fixture(out);
+        let mut ledger = Ledger::load(out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        for id in ["crit:first", "crit:second"] {
+            store.graph.criteria.insert(
+                id.into(),
+                Criterion {
+                    requirement: "req:shop-1".into(),
+                    statement: format!("Check {id}"),
+                    ..Default::default()
+                },
+            );
+            let mut test = row.test.clone();
+            test.kind = "llm".into();
+            test.name = id.into();
+            test.run = "llm".into();
+            test.artifact = format!("tests/{}.md", id.replace(':', "-"));
+            let hash = hash_hex(&store.graph.criteria[id].statement);
+            crate::vfs::write(gs.deliverable.join(&test.artifact),format!("---\nrequirement: req:shop-1\ncriterion: {id}\nhash: {hash}\n---\nInspect source. PASS if satisfied. FAIL otherwise.\n")).unwrap();
+            row.tests.insert(
+                id.into(),
+                crate::gen::CritTest {
+                    test_hash: hash_file(&artifact_path(out, &gs, &test)),
+                    test,
+                    criterion_hash: hash,
+                    verdict: "pass".into(),
+                    last_run: None,
+                    exit_code: None,
+                    evidence: None,
+                },
+            );
+        }
+        row.test = row.tests["crit:first"].test.clone();
+        row.hashes.test = row.tests["crit:first"].test_hash.clone();
+        row.verdict = "pass".into();
+        ledger.save(out);
+        (store, gs)
+    }
+
+    fn criterion_judgments(store: &Store, values: [&str; 2]) -> Value {
+        json!(["crit:first","crit:second"].into_iter().zip(values).map(|(cid,verdict)|json!({"criterion":cid,"verdict":verdict,"factHash":hash_hex(&store.graph.criteria[cid].statement),"evidence":"Inspected current source"})).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn llm_criteria_are_packaged_and_recorded_independently_and_atomically() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = multi_llm_fixture(out);
+        let package = task(&store, "req:shop-1", &gs).unwrap();
+        assert_eq!(package["criterionTests"].as_array().unwrap().len(), 2);
+        assert!(package["criterionTests"][1]["criteria"]
+            .as_str()
+            .unwrap()
+            .contains("crit:second"));
+        let original = serde_json::to_value(Ledger::load(out)).unwrap();
+        assert!(
+            mark_llm(&store, "req:shop-1", "fail", None, None, None, &gs)
+                .unwrap_err()
+                .contains("criteria")
+        );
+        let valid = criterion_judgments(&store, ["fail", "fail"]);
+        let mut stale = valid.clone();
+        stale[1]["factHash"] = json!("old");
+        for invalid in [json!([valid[0]]), json!([valid[0], valid[0]]), stale] {
+            assert!(mark_llm(
+                &store,
+                "req:shop-1",
+                "fail",
+                None,
+                None,
+                Some(&invalid),
+                &gs
+            )
+            .is_err());
+            assert_eq!(serde_json::to_value(Ledger::load(out)).unwrap(), original);
+        }
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed source").unwrap();
+        let result = mark_llm(
+            &store,
+            "req:shop-1",
+            "fail",
+            None,
+            Some("Both unmet"),
+            Some(&valid),
+            &gs,
+        )
+        .unwrap();
+        assert_eq!(result["status"], "failing");
+        let ledger = Ledger::load(out);
+        assert!(ledger.requirements["req:shop-1"]
+            .tests
+            .values()
+            .all(|t| t.verdict == "fail"));
+        let split = criterion_judgments(&store, ["pass", "fail"]);
+        assert_eq!(
+            mark_llm(&store, "req:shop-1", "fail", None, None, Some(&split), &gs).unwrap()["status"],
+            "failing"
+        );
+        let split_row = Ledger::load(out).requirements["req:shop-1"].clone();
+        assert_eq!(split_row.tests["crit:first"].verdict, "pass");
+        assert_eq!(split_row.tests["crit:second"].verdict, "fail");
+        let green = criterion_judgments(&store, ["pass", "pass"]);
+        assert_eq!(
+            mark_llm(&store, "req:shop-1", "pass", None, None, Some(&green), &gs).unwrap()["status"],
+            "verified"
+        );
+    }
+
+    #[test]
+    fn fresh_task_report_does_not_launder_an_old_llm_verdict_after_source_changes() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = multi_llm_fixture(out);
+        let mut ledger = Ledger::load(out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        let test = row.tests.get_mut("crit:second").unwrap();
+        test.test.kind = "programmatic".into();
+        test.test.run = "task:check".into();
+        test.test.name = "case".into();
+        test.test.artifact = "tests/cart.rs".into();
+        test.test_hash = hash_file(&artifact_path(out, &gs, &test.test));
+        ledger.save(out);
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed behavior").unwrap();
+        let task: crate::task_runtime::Task = serde_json::from_value(
+            json!({"id":"check","name":"Check","description":"Check cases","command":"pytest"}),
+        )
+        .unwrap();
+        crate::task_runtime::import_evidence(
+            &store,
+            &gs,
+            &task,
+            &json!({"exit_code":0,"tests":[{"identity":"Suite::case","status":"passed"}]}),
+            "fresh",
+        );
+        let ledger = Ledger::load(out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.tests["crit:first"].verdict, "none");
+        assert_eq!(row.tests["crit:second"].verdict, "pass");
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "unverified");
+        assert_eq!(
+            mark_llm(
+                &store,
+                "req:shop-1",
+                "pass",
+                None,
+                Some("Current source judged"),
+                None,
+                &gs
+            )
+            .unwrap()["status"],
+            "verified"
+        );
+    }
+
+    #[test]
+    fn built_in_verifier_judges_every_llm_criterion_and_handles_inconclusive_output() {
+        use std::cell::RefCell;
+        struct Answers(RefCell<std::collections::VecDeque<String>>);
+        impl crate::runner::SessionRunner for Answers {
+            fn agent_name(&self) -> String {
+                "fixture".into()
+            }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(
+                &self,
+                _: &crate::runner::BatchRun,
+                _: &crate::session::Trace,
+            ) -> crate::runner::SessionReport {
+                panic!("No agent batch expected")
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                panic!("Use traced asks")
+            }
+            fn ask_traced(
+                &self,
+                system: &str,
+                user: &str,
+                _: &str,
+                _: &str,
+                _: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
+                assert!(system.contains("Judge only"));
+                assert!(user.contains("Implementing files:"));
+                Ok(self
+                    .0
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("Exactly one request per criterion"))
+            }
+        }
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = multi_llm_fixture(out);
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Quiet,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let runner = Answers(RefCell::new(
+            ["PASS first observed".into(), "FAIL second unmet".into()].into(),
+        ));
+        let report = run_all(&store, &runner, &gs, &[], Some("llm"), true, &trace).unwrap();
+        assert_eq!(report["verified"], 0);
+        assert_eq!(report["failing"], 1);
+        assert!(runner.0.borrow().is_empty());
+        let row = Ledger::load(out).requirements["req:shop-1"].clone();
+        assert_eq!(row.tests["crit:first"].verdict, "pass");
+        assert_eq!(row.tests["crit:second"].verdict, "fail");
+        let runner = Answers(RefCell::new(["No judgment available".into()].into()));
+        run_all(&store, &runner, &gs, &[], Some("llm"), true, &trace).unwrap();
+        assert!(Ledger::load(out).requirements["req:shop-1"]
+            .tests
+            .values()
+            .all(|t| t.verdict == "none"));
+    }
+
+    #[test]
+    fn audit_clears_all_criterion_verdicts_when_implementing_files_change() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk");
+        let (store, gs) = multi_llm_fixture(out);
+        let mut ledger = Ledger::load(out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        // Audit recognizes a criteria headline by the requirement statement hash.
+        let path = artifact_path(out, &gs, &row.test);
+        let mut text = crate::vfs::read_to_string(&path).unwrap();
+        text.push_str(&format!("\n{}\n", row.hashes.requirement));
+        crate::vfs::write(path, &text).unwrap();
+        row.hashes.test = hash_hex(&text);
+        row.tests.get_mut("crit:first").unwrap().test_hash = row.hashes.test.clone();
+        ledger.save(out);
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// source changed").unwrap();
+        audit(&store, &gs);
+        assert!(Ledger::load(out).requirements["req:shop-1"]
+            .tests
+            .values()
+            .all(|t| t.verdict == "none"));
     }
 
     #[test]
@@ -1769,6 +2159,7 @@ pub fn select_rows(
     force: bool,
 ) -> Vec<Value> {
     let filter = if force { "all" } else { "runnable" };
+    let ledger = Ledger::load(&store.out);
     pending(store, gs, Some(filter), None)
         .into_iter()
         .filter(|r| {
@@ -1782,10 +2173,93 @@ pub fn select_rows(
             })
         })
         .filter(|r| match kind {
-            Some(k) => r["test"]["kind"].as_str() == Some(k),
+            Some(k) => r["test"]["kind"].as_str() == Some(k) || r["requirement"].as_str()
+                .and_then(|id|ledger.requirements.get(id)).is_some_and(|row|row.tests.values().any(|t|t.test.kind==k)),
             None => true,
         })
         .collect()
+}
+
+fn judge_llm_criteria(
+    store: &Store,
+    runner: &dyn crate::runner::SessionRunner,
+    rid: &str,
+    gs: &GenSettings,
+    trace: &crate::session::Trace,
+) -> Result<Value, String> {
+    let package = task(store, rid, gs)?;
+    let mut files = String::new();
+    for path in package["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        if let Ok(text) = crate::vfs::read_to_string(gs.deliverable.join(path)) {
+            files.push_str(&format!(
+                "\n=== {path} ===\n{}",
+                crate::llm::truncate(&text, 12_000)
+            ));
+        }
+    }
+    let mut results = Vec::new();
+    for test in package["criterionTests"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| t["kind"] == "llm")
+    {
+        if trace.is_cancelled() {
+            return Err("Verification cancelled".into());
+        }
+        let input=format!("Criterion: {}\n{}\n\nContext:\n{}\n\nImplementing files:{files}\n\nJudge this criterion only. Reply with PASS or FAIL, then your observed evidence.",test["statement"],test["criteria"].as_str().unwrap_or_default(),package["context"].as_str().unwrap_or_default());
+        let reply = runner
+            .ask_traced(
+                include_str!("../../docs/compiler/goals/prompts/verify-criterion-contract.md"),
+                &input,
+                &format!(
+                    "verify {rid} {}",
+                    test["criterion"].as_str().unwrap_or_default()
+                ),
+                "judge",
+                Some(trace),
+            )
+            .map_err(|e| e.to_string())?;
+        let pass = parse_verdict(&reply).ok_or("Model returned no conclusive criterion verdict")?;
+        results.push(json!({"criterion":test["criterion"],"factHash":test["factHash"],"verdict":if pass{"pass"}else{"fail"},"evidence":crate::llm::truncate(reply.trim(),300)}));
+    }
+    let verdict = if results.iter().all(|r| r["verdict"] == "pass") {
+        "pass"
+    } else {
+        "fail"
+    };
+    mark_llm(
+        store,
+        rid,
+        verdict,
+        package["factHash"].as_str(),
+        Some("Each LLM criterion was inspected separately."),
+        Some(&json!(results)),
+        gs,
+    )
+}
+
+fn record_llm_failure(store: &Store, rid: &str, error: &str) {
+    let mut ledger = Ledger::load(&store.out);
+    if let Some(row) = ledger.requirements.get_mut(rid) {
+        if row.test.kind == "llm" {
+            row.verdict = "none".into();
+            row.exit_code = None;
+            row.evidence = Some(error.into());
+        }
+        for test in row.tests.values_mut().filter(|t| t.test.kind == "llm") {
+            test.verdict = "none".into();
+            test.exit_code = None;
+            test.last_run = Some(now_iso());
+            test.evidence = Some(crate::llm::truncate(error, 400));
+        }
+        ledger.save(&store.out);
+    }
 }
 
 // Run verification over the selected rows and record verdicts. Programmatic rows
@@ -1818,7 +2292,7 @@ pub fn run_all(
     crate::gen::run_build(&store.out, gs, trace, "verify")
         .map_err(|e| format!("{}; nothing was verified", e))?;
     let task_rows:Vec<String>=selected.iter().filter_map(|r|r["requirement"].as_str()).filter(|rid|Ledger::load(&store.out).requirements.get(*rid).is_some_and(|row|row.test.run.starts_with("task:")||row.tests.values().any(|t|t.test.run.starts_with("task:")))).map(String::from).collect();
-    if !task_rows.is_empty() {run_selected_after_build(store,gs,&task_rows)?;}
+    if !task_rows.is_empty() && kind!=Some("llm") {run_selected_after_build(store,gs,&task_rows)?;}
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     // Failed programmatic runs, judged together at the end of the run.
     let mut held: Vec<(String, ProgRun, String)> = Vec::new();
@@ -1839,6 +2313,32 @@ pub fn run_all(
             continue;
         }
         let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
+        let current=Ledger::load(&store.out);
+        let has_llm_criteria=current.requirements.get(&rid).is_some_and(|row|row.tests.values().any(|t|t.test.kind=="llm"));
+        let has_programmatic=current.requirements.get(&rid).is_some_and(|row|row.test.kind=="programmatic" || row.tests.values().any(|t|t.test.kind=="programmatic"));
+        if has_llm_criteria && kind!=Some("programmatic") {
+            if !task_rows.contains(&rid) && has_programmatic && kind!=Some("llm") {
+                run_selected_after_build(store,gs,std::slice::from_ref(&rid))?;
+            }
+            match judge_llm_criteria(store,runner,&rid,gs,trace) {
+                Ok(result)=> {
+                    match result["status"].as_str(){Some("verified")=>verified+=1,Some("failing"|"partial")=>failing+=1,_=>skipped+=1}
+                    trace.event(TraceEvent::VerifyRowDone {requirement:rid.clone(),verdict:result["verdict"].as_str().unwrap_or("none").into(),run:"llm".into(),evidence:"Each bound LLM criterion received a separate judgment.".into()});
+                }
+                Err(error)=> {
+                    record_llm_failure(store,&rid,&error);skipped+=1;
+                    trace.event(TraceEvent::VerifyRowError {requirement:rid.clone(),message:error});
+                }
+            }
+            continue;
+        }
+        if row_kind=="llm" && kind==Some("programmatic") {
+            if !task_rows.contains(&rid) {run_selected_after_build(store,gs,std::slice::from_ref(&rid))?;}
+            let ledger=Ledger::load(&store.out);
+            let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);
+            match status.as_str(){"verified"=>verified+=1,"failing"|"partial"=>failing+=1,_=>skipped+=1}
+            continue;
+        }
         if row_kind!="llm" && task_rows.contains(&rid) {
             let ledger=Ledger::load(&store.out);
             let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);

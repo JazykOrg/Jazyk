@@ -807,6 +807,15 @@ would name the wrong culprit.
   [verification tools](../compiler/tools.md#verification-tools), using its own
   abilities to inspect or exercise the deliverable. Whichever harness runs, the ledger
   row comes out the same shape.
+  Every bound LLM criterion receives its own verdict. The verification package
+  includes all criteria files. The agent records an explicit list when there are
+  multiple LLM criteria; the built-in runner judges them separately. A mixed row
+  retains independent programmatic report evidence. Neither path copies a headline
+  verdict onto a different criterion.
+
+When implementing files change, refreshing a row's file hash clears previous
+criterion verdicts. A report or judgment restores only the tests it covers.
+Untested criteria remain unverified. Audit follows the same rule.
 
 ### A test that could not run says nothing
 

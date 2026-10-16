@@ -627,3 +627,34 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   hashes, wrong IDs, criterion ownership, valid repair, and an invalid historic row.
   All 702 library tests passed, with three existing ignored tests. All 143 relative
   documentation links and anchors resolve; the changed pages contain no em dashes.
+
+## Independent LLM criterion verdicts, 2026-10-16
+
+- The seventh local presentation retry completed in 1,784.10 seconds with 35 tool
+  calls. It used LocalRouter, local Ollama `gemma4:31b-mlx`, and Podman. All ten
+  requirements were verified. The two new containers terminated and the PPTX was
+  retained. An independent fresh test run preserved all ten verified statuses.
+  The final PPTX matched the independently rendered artifact byte for byte.
+- This was a review-assisted checkpoint retry. The initial attempts and their
+  failures remain recorded. It is not a claim of an unassisted first-attempt pass
+  or a hosted model run. The final assistant sentence misstated a secondary count
+  as nine; the deterministic graph check counted ten.
+- A fresh local-model negative control replaced all three jokes with unrelated
+  plain statements. The model read the current source and correctly recorded fail.
+  The harness updated only the headline LLM criterion, leaving the second
+  criterion's old pass. The row incorrectly described a partial implementation.
+- Verification packages now include every criterion test and each LLM criteria
+  file. Multiple LLM criteria require an explicit, complete verdict list. The
+  harness validates that list atomically, rejects programmatic or stale entries,
+  and preserves separate outcomes. The built-in verifier judges each criterion.
+- Refreshing implementing-file hashes invalidates old criterion evidence. Fresh
+  task reports, legacy runs, or model judgments restore only the tests they
+  actually cover. Audit follows the same rule. A report cannot make an old LLM
+  judgment current after a source change.
+- Four meaningful regressions passed, including independent and atomic recording,
+  report/LLM freshness, audit invalidation, and separate built-in model judgments
+  with inconclusive-output handling. The full library suite passed 707 tests,
+  with three existing ignored tests. The release binary was rebuilt. All 290
+  relative links and anchors in the changed design pages resolve.
+- A fresh local-model retry of the semantic negative control is in progress.
+  The grader now requires both criterion verdicts to fail independently.

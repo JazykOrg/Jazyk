@@ -2,6 +2,7 @@
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import time
 
 from runtime_model_acceptance import ACP, environment
@@ -83,6 +84,9 @@ reports=["reports/*.xml"]
     binary = str(Path(a.binary).resolve())
     env = environment(a.env_file, a.engine, a.model, a.codec, 32 if a.chat else 16)
     env.update(JAZYK_CALL_TIMEOUT='600', JAZYK_READ_TIMEOUT='600')
+    preflight = subprocess.run([a.engine, 'info'], env=env, capture_output=True, text=True, timeout=30)
+    (evidence / 'engine-preflight.log').write_text(preflight.stdout + preflight.stderr)
+    assert preflight.returncode == 0, 'Container engine is unavailable; no model session started'
     agent = ACP(binary, root, env, evidence, False)
     mcp = None
     sid = None
@@ -128,7 +132,8 @@ reports=["reports/*.xml"]
             result['test_source'] = row['test']['artifact']
             result['implementing_files'] = row['files']
             return row['status']
-        assert status() == 'verified'
+        current = status()
+        assert current == 'verified', 'Initial generation is not verified: ' + current
         result['generated_and_verified'] = True
         implementations = [root / name for name in result['implementing_files']
                            if Path(name).name == 'greet.py']

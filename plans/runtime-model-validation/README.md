@@ -17,6 +17,9 @@ Exercise the actual Jazyk prompts and tools through the owner's LocalRouter and 
 - Start with tiny fixtures and bounded requests. Avoid a full compile until discovery, submission, observation, and completion work independently.
 - Use the configured LocalRouter endpoint. Record model and codec explicitly. Probe Ollama availability without replacing the owner's configuration.
 - Model assertions are not evidence. Check files, run records, actual image identity, exit status, report evidence, and engine state independently.
+- Check the local engine before starting generation. Progress logs show run state,
+  termination, launch errors, and command results ahead of the task definition.
+  A failed launch is not an executed test or an implementation failure.
 - Use disposable local projects without real publishing credentials. Use finite commands and stop test containers and the dedicated Podman VM afterward.
 - Save raw traces in ignored local evidence storage. Commit reusable fixtures and a concise results ledger here. Do not commit secrets or generated state.
 - Preserve unrelated work. Commit and push coherent changes from this worktree. Merge reviewed fixes into master when complete.

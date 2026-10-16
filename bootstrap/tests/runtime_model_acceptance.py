@@ -79,7 +79,19 @@ class ACP:
                 self.calls.append(update)
                 print("TOOL", update.get("title"), json.dumps(update.get("rawInput")), flush=True)
             elif kind == "tool_call_update":
-                print("RESULT", update.get("status"), str(update.get("rawOutput", ""))[:350], flush=True)
+                raw = update.get("rawOutput", "")
+                try:
+                    value = json.loads(raw)
+                except (ValueError, TypeError):
+                    value = None
+                # Run definitions precede their status in the wire response. Keep
+                # terminal evidence visible instead of truncating it behind the
+                # image, command, and cache settings during a progress check.
+                if isinstance(value, dict) and "state" in value and "id" in value:
+                    summary = {k: value[k] for k in ("id", "state", "terminated", "error", "result", "log") if k in value}
+                    print("RESULT", update.get("status"), json.dumps(summary)[:1800], flush=True)
+                else:
+                    print("RESULT", update.get("status"), str(raw)[:350], flush=True)
             elif kind == "agent_message_chunk":
                 self.text.append(update.get("content", {}).get("text", ""))
             if message.get("id") == request_id:

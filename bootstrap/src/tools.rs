@@ -4718,6 +4718,30 @@ impl ToolSession {
             .collect()
     }
 
+    fn search_view_miss(&self, query: &str) -> Value {
+        let known: std::collections::BTreeMap<_, _> = self
+            .snapshot
+            .graph
+            .views
+            .iter()
+            .chain(self.staged_views.iter())
+            .collect();
+        let total = known.len();
+        let views: Vec<_> = known
+            .into_iter()
+            .take(25)
+            .map(|(id, view)| format!("{} ({})", id, view.title))
+            .collect();
+        let mut next = format!(
+            "no view matches `{}`. {} of the graph's {} views are listed above. Use get_view with a listed id, or read entities and requirements directly with get_entity or load.",
+            query, views.len(), total
+        );
+        if total > views.len() {
+            next.push_str(" Refine the query to find an unlisted view title.");
+        }
+        json!({"hits": [], "viewCount": total, "views": views, "next": next})
+    }
+
     // A miss is an answer, not a dead end. A bare empty list reads as "ask again";
     // models loop on it. Say what the graph holds and what to do next.
     fn search_miss(&self, query: &str) -> Value {
@@ -5688,7 +5712,7 @@ impl ToolSession {
                                 .collect::<Vec<_>>()
                         }));
                     }
-                    return Ok(self.search_miss(&query));
+                    return Ok(self.search_view_miss(&query));
                 }
                 let hits = self.search_all(&query);
                 if !hits.is_empty() {
@@ -9614,17 +9638,82 @@ mod tests {
         // The entity default never returns views.
         let r = t.dispatch("search", &json!({"query": "public"})).unwrap();
         assert_eq!(r["hits"].as_array().unwrap().len(), 0);
-        // A view miss is the same documented miss body.
+        // A view miss inventories views and guides reading, never entity creation.
         let r = t
             .dispatch("search", &json!({"query": "slides", "kind": "view"}))
             .unwrap();
         assert_eq!(r["hits"].as_array().unwrap().len(), 0);
-        assert_eq!(r["entityCount"], 1);
+        assert_eq!(r["viewCount"], 1);
+        assert_eq!(r["views"][0], "view:class/public (Public surface)");
+        assert!(r.get("entities").is_none());
+        assert!(r.get("entityCount").is_none());
+        assert!(r["next"].as_str().unwrap().contains("get_view"));
+        assert!(!r["next"].as_str().unwrap().contains("upsert_entity"));
         // An unknown kind bounces.
         let err = t
             .dispatch("search", &json!({"query": "x", "kind": "diagram"}))
             .unwrap_err();
         assert_eq!(err.rule, "bad-args");
+    }
+
+    #[test]
+    fn view_search_miss_includes_staged_titles_once_and_bounds_inventory() {
+        let mut t = session();
+        t.snapshot.graph.views.clear();
+        let empty = t
+            .dispatch(
+                "search",
+                &json!({"query": "requirements", "kind": "view"}),
+            )
+            .unwrap();
+        assert_eq!(empty["viewCount"], 0);
+        assert_eq!(empty["views"], json!([]));
+        assert!(empty["next"].as_str().unwrap().contains("get_entity or load"));
+
+        for i in 0..26 {
+            t.snapshot.graph.views.insert(
+                format!("view:class/{i:02}"),
+                View {
+                    title: format!("Diagram {i}"),
+                    ..Default::default()
+                },
+            );
+        }
+        t.staged_views.insert(
+            "view:class/00".into(),
+            View {
+                title: "Renamed diagram".into(),
+                ..Default::default()
+            },
+        );
+        t.staged_views.insert(
+            "view:class/01-new".into(),
+            View {
+                title: "Staged diagram".into(),
+                ..Default::default()
+            },
+        );
+        let result = t
+            .dispatch(
+                "search",
+                &json!({"queries": ["absent", "missing"], "kind": "view"}),
+            )
+            .unwrap();
+        for row in result["results"].as_array().unwrap() {
+            assert_eq!(row["viewCount"], 27);
+            assert_eq!(row["views"].as_array().unwrap().len(), 25);
+            assert_eq!(row["views"][0], "view:class/00 (Renamed diagram)");
+            assert_eq!(row["views"][2], "view:class/01-new (Staged diagram)");
+            assert!(row["next"].as_str().unwrap().contains("Refine the query"));
+            assert!(!row.to_string().contains("ent:customer"));
+        }
+        let unlisted = t
+            .dispatch(
+                "search",
+                &json!({"query": "Diagram 25", "kind": "view"}),
+            )
+            .unwrap();
+        assert_eq!(unlisted["hits"][0]["id"], "view:class/25");
     }
 
     // A section that yielded a statement cannot also state none of them.

@@ -499,3 +499,38 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
 - The full compiler library suite passed: 685 tests, zero failures, three existing
   ignored tests. The Docker lifecycle fixture's nine runs all terminated. The
   dedicated Podman VM was stopped after verifying no test containers remained.
+
+## Bounded tool recovery and local presentation follow-up, 2026-10-16
+
+- Compiler `eca04df` rejects cap-exhausted native calls with missing required
+  arguments before dispatch, pairs rejected calls with results, and bounds repair
+  budget boosts. Four provider-loop regressions cover successful recovery, valid
+  calls at the cap, malformed mixed batches, and termination after repeated bad
+  calls. All 689 library tests passed, with three existing ignored tests. The owner
+  release binary was rebuilt.
+- `cap-recovery-podman` passed in 153.14 seconds with `gemma4:31b-mlx`, native
+  codec, and MCP. LocalRouter routed to Ollama's MLX runner. Two fresh Python 3.12
+  Alpine containers saw project inputs and imported receipt products. Cache count
+  advanced from 1 to 2; cache and transient files did not enter the product tree.
+  Both containers terminated.
+- `cap-recovery-generation` failed after 1,390.48 seconds. The model configured
+  source, generated files, and recorded a binding, but Podman was no longer
+  reachable when the tasks launched. Both runs terminated without executing the
+  command. This is not a passing generation or falsification result. The dedicated
+  VM is now held by a separate supervisor while model tests run. The driver checks
+  engine availability before spending model time and prints launch errors before
+  the task definition.
+- Falsification now follows the requirement binding's implementing file. An
+  unbound leftover source copy cannot choose the target or mask a broken bound
+  implementation.
+- The private local copy of the original Cloud presentation exposed an unrelated
+  search defect: `kind: view` with no match returned entities and suggested
+  `upsert_entity`. View misses now inventory only views, include staged titles
+  once, and guide view reads or direct entity/requirement reads. The inventory is
+  bounded, and truncated replies permit a more specific title search. This fix
+  does not establish presentation generation success; that attempt is still
+  evaluated from actual run results and retained files.
+- All 96 tool regressions passed, including empty, staged, duplicate, bounded,
+  batched, and unlisted-title view-search cases. The edited documentation's links
+  and anchors resolve. Repository-wide `cargo fmt --check` still reports existing
+  formatting differences across many files; unrelated formatting was preserved.

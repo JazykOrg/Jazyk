@@ -55,11 +55,15 @@ loaded set as a stub.
   several names in one call as `{results: [{query, hits, ...}]}`, one entry per
   query in order, so the search-before-create doctrine costs one round per section,
   not one per name. No embeddings, no LLM. A miss is an answer, not a
-  dead end: `hits` is empty and the result carries `entityCount`, the graph's entities
-  by id and name (up to 25), and a `next` line saying the search will keep returning
-  this and to create the entity instead. A bare empty list reads as "ask again", and
-  models loop on it; naming the whole graph lets the caller decide without another
-  call.
+  dead end: `hits` is empty and the result carries an inventory of the requested
+  kind, including staged nodes, with up to 25 ids and names. Entity misses return
+  `entityCount`, `entities`, and a `next` line guiding reuse or creation of an entity.
+  View misses return `viewCount`, `views`, and a `next` line guiding `get_view` with
+  a listed id, or reading entities and requirements directly with `get_entity` or
+  `load`. A view miss never suggests creating an entity. When the view inventory is
+  truncated, the caller can refine the query to find an unlisted title. A bare empty
+  list reads as "ask again", and models loop on it; the inventory and next step
+  let the caller proceed.
 - `read_section({ref})`: one section's raw body and its child titles. A bare document
   name (`orders.md`, or `orders.md#`) reads the document's root section, the way a
   reader opens a file to see what it is about.

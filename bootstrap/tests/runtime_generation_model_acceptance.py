@@ -126,12 +126,15 @@ reports=["reports/*.xml"]
             assert row['test']['kind'] == 'programmatic' and row['test']['run'] == 'task:check', row
             assert row['test']['artifact'] in tests, 'Binding must name the generated test source: ' + str(row['test'])
             result['test_source'] = row['test']['artifact']
+            result['implementing_files'] = row['files']
             return row['status']
         assert status() == 'verified'
         result['generated_and_verified'] = True
-        implementations = [p for p in root.rglob('greet.py') if '.jazyk' not in p.relative_to(root).parts]
+        implementations = [root / name for name in result['implementing_files']
+                           if Path(name).name == 'greet.py']
         assert len(implementations) == 1, implementations
         implementation = implementations[0]
+        assert implementation.is_file(), implementation
         result['implementation_source'] = str(implementation.relative_to(root))
         implementation.write_text('def greeting():\n    return "BROKEN"\n')
         broken = mcp.tool('run_tests', all=True)

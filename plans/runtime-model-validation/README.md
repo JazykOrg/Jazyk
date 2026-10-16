@@ -99,5 +99,6 @@ then complete generation and runtime verification. Inspect live attempts at leas
 every 15 minutes. Stop demonstrated loops, retain their traces, fix the cause, and
 retry from fresh state.
 The agent may place the implementation at the root or under a source directory.
-Falsification locates its single generated `greet.py` and changes that file, rather
-than creating a second module at an assumed path.
+Falsification follows the requirement binding's implementing `greet.py`. A file
+left over from a rejected attempt does not select the target. Breaking the bound
+implementation must fail the test; an unbound copy must not hide that failure.

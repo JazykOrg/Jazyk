@@ -466,3 +466,26 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   test containers or named helper volumes, the unrelated workload is running, and
   the dedicated Podman VM remains stopped. This evidence-only update needs no
   production redeployment.
+
+## Empty source mapping follow-up, 2026-10-16
+
+- Compiler `59d3e12` guides an explicit generation request through document-set
+  source setup. The workspace regression preserves identity and documents and
+  observes newly available criteria goals after the edit. All 19 MCP, 30 goal,
+  and 26 board tests passed, with one existing ignored board test. The release
+  build passed. The changed documentation's 176 relative links resolved.
+- `source-setup-chat-1` used `gemma4:31b-mlx` through LocalRouter and Podman. The
+  model configured initially empty source selections, released generation,
+  wrote and bound a behavioral test, generated `src/greet.py`, and passed its
+  programmatic check. It corrected one rejected criterion identifier. The driver
+  reached independent verification after 794.07 seconds but then falsified a new
+  root-level file instead of the implementation. That is a harness failure, not a
+  passing falsification result. The corrected driver finds the single generated
+  module, and `source-setup-chat-2` retries from fresh state.
+- `source-setup-docker-lifecycle` passed on the same release: cache success and
+  failure behavior, revision conflicts, idempotency, queued and running
+  cancellation, cancellation with invalid settings, retained-file conflicts,
+  timeouts, searchable failed logs, and invalid images.
+- The unchanged large-store pruning regression passed in 2.08 seconds under its
+  existing five-second assertion. This confirms the isolated case; it does not
+  establish a portable wall-clock limit under unrelated host load.

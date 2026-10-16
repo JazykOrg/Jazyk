@@ -386,13 +386,13 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     };
     let selected = || workspace.resolve(routed.selector.as_deref());
     let route = route.strip_prefix("/api").unwrap_or(route);
-    if method == "GET" && matches!(route, "/out/file" | "/project/file" | "/deliverable/raw") {
+    if method == "GET" && matches!(route, "/out/file" | "/project/file" | "/project/raw" | "/deliverable/raw") {
         let rel = url::form_urlencoded::parse(query.as_bytes())
             .find(|(k, _)| k == "path")
             .map(|(_, v)| v.into_owned())
             .unwrap_or_default();
         let p =
-            if matches!(route, "/project/file" | "/deliverable/raw") && routed.selector.is_none() {
+            if matches!(route, "/project/file" | "/project/raw" | "/deliverable/raw") && routed.selector.is_none() {
                 workspace.files_project()
             } else {
                 match selected() {
@@ -402,7 +402,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
             };
         let result = match route {
             "/out/file" => crate::webapi::outfiles::out_file(&p.out, &rel),
-            "/project/file" => crate::webapi::projfiles::project_file(&p.root, &rel),
+            "/project/file" | "/project/raw" => crate::webapi::projfiles::project_file(&p.root, &rel),
             _ => crate::webapi::deliverable::deliverable_raw(
                 &crate::gen::GenSettings::resolve(&p),
                 &rel,

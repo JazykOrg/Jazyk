@@ -461,6 +461,8 @@ harness enforces:
   legacy command. A task imports that case's verdict from its fresh test reports.
   A legacy command's exit code is its verdict, so that command must propagate
   assertion failures. A successful task exit alone proves no individual case passed.
+  Verification packages direct both forms through `run_tests`. An unavailable
+  legacy runner leaves the test unverified; a model verdict cannot replace it.
 - `llm`: a test that requires judgment an executable assertion cannot establish.
   Non-software artifacts can still have programmatic checks for their contents,
   structure, or format. When no programmatic definition exists, the harness gives an agent the
@@ -764,6 +766,14 @@ confirm, and the verdict contract (`PASS` or `FAIL` plus reasoning). It is the p
 location of the implemented product, and what to confirm. Editing it flips
 `stale-test` like any test artifact.
 
+The front matter is YAML with `requirement` and `hash`. A criterion test also
+has `criterion`; its `hash` is the criterion statement hash. A requirement test
+without a criterion uses the requirement statement hash. The body is nonempty
+and states both `PASS` and `FAIL` outcomes. Recording validates the IDs, owning
+requirement, live hash, and body. An executable test source is not a criteria file.
+Previously recorded files that lack this contract require binding again. The model
+still judges whether the steps and evidence actually establish the criterion.
+
 The built-in worker writes it to `gen/criteria/crit-<slug>.md` in the out directory
 (metadata, not deliverable). An external worker has no reason to know the out
 directory and writes it where it writes everything else, under the deliverable. The
@@ -799,6 +809,15 @@ would name the wrong culprit.
   [verification tools](../compiler/tools.md#verification-tools), using its own
   abilities to inspect or exercise the deliverable. Whichever harness runs, the ledger
   row comes out the same shape.
+  Every bound LLM criterion receives its own verdict. The verification package
+  includes all criteria files. The agent records an explicit list when there are
+  multiple LLM criteria; the built-in runner judges them separately. A mixed row
+  retains independent programmatic report evidence. Neither path copies a headline
+  verdict onto a different criterion.
+
+When implementing files change, refreshing a row's file hash clears previous
+criterion verdicts. A report or judgment restores only the tests it covers.
+Untested criteria remain unverified. Audit follows the same rule.
 
 ### A test that could not run says nothing
 

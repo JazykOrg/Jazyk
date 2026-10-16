@@ -92,7 +92,7 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
         Err((status, error)) => {
             if matches!(
                 route,
-                "/settings" | "/project/files" | "/project/file" | "/ping"
+                "/settings" | "/project/files" | "/project/file" | "/project/raw" | "/ping"
             ) && method == "GET"
             {
                 return request_scoped(root, method, path, &routed.body, &Project::load(root));
@@ -174,6 +174,7 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
         "/project"
             | "/project/files"
             | "/project/file"
+            | "/project/raw"
             | "/project/text"
             | "/deliverable/raw"
             | "/docs/content"
@@ -733,6 +734,20 @@ pub(crate) fn request_scoped(
             let p = project();
             answer(super::projfiles::create_project_file(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
         }
+        // Any project file's bytes, text or not, for a preview; base64 in the envelope
+        // like a product file's.
+        ("GET", "/project/raw") => {
+            use base64::Engine as _;
+            let rel = param(&q, "path").unwrap_or_default();
+            answer(super::projfiles::project_file(&project().root, &rel).map(|bytes| {
+                json!({
+                    "path": rel,
+                    "size": bytes.len(),
+                    "contentType": super::outfiles::content_type(&rel),
+                    "base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                })
+            }))
+        }
         ("GET", "/project/file") => {
             let rel = param(&q, "path").unwrap_or_default();
             match super::projfiles::project_file(&project().root, &rel) {
@@ -821,5 +836,24 @@ pub(crate) fn request_scoped(
             501,
             format!("the browser backend does not serve {} {}", method, path),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn project_raw_answers_any_file_as_base64_and_file_keeps_text_only() {
+        let dir = std::env::temp_dir().join(format!("jazyk-project-raw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = [0x89u8, b'P', b'N', b'G', 0, 1, 2];
+        crate::vfs::write(dir.join("logo.png"), png).unwrap();
+        let raw: serde_json::Value = serde_json::from_str(&super::request_at(&dir, "GET", "/api/project/raw?path=logo.png", "")).unwrap();
+        let text = raw.to_string();
+        assert!(text.contains("\"contentType\":\"image/png\""), "{text}");
+        assert!(text.contains("\"base64\":\"iVBORwABAg==\""), "{text}");
+        assert!(text.contains("\"size\":7"), "{text}");
+        let file = super::request_at(&dir, "GET", "/api/project/file?path=logo.png", "");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(file.contains("501"), "{file}");
     }
 }

@@ -94,18 +94,36 @@ because it could affect recovery. No historical sweep was performed.
 Exact private checksums, backup paths, and provider evidence are in the service's
 `docs/operations/task-runtime.md` and retained release records.
 
+## Follow-up validation, 2026-10-16
+
+The counts and release pins above describe the original October 15 release.
+The [model validation results](../runtime-model-validation/results.md) record
+later fixes and tests, including unsuccessful attempts.
+
+- Local Ollama `gemma4:31b-mlx` through LocalRouter passed native and text
+  `gen-basic`, source generation, test generation, falsification, and repair.
+  Real Docker and Podman runs exercised the generated tasks.
+- A review-assisted presentation retry completed with all ten requirements
+  verified, a retained PPTX, and confirmed container termination. Independent
+  rendering and semantic review checked the actual output. A negative control
+  removed the jokes and correctly failed both semantic criteria.
+- Criterion verdicts are recorded independently. Changed source invalidates old
+  evidence. LLM judgments cannot substitute for unrun programmatic tests. The
+  final compiler suite passed 708 tests, with three existing ignored tests.
+- A Cloud replay of the locally generated presentation passed build and test tasks
+  on Fargate, retained the PPTX, and preserved all ten verified requirements.
+  Both allocations stopped. This used zero Cloud model calls. The final deck
+  was downloaded, rendered, and reviewed independently.
+- Authenticated pulls from a temporary external private registry passed on real
+  Fargate with a digest-pinned image, project files, retained products, and cache
+  reuse across fresh allocations. Credential revocation and fixture cleanup
+  passed. The registry ran on the existing host, without a new paid service.
+
 ## Evidence that remains external
 
-The configured `qwen3.8:27b-mlx` model through the owner's LocalRouter failed
-`gen-basic` in both native and text codecs. Neither run recorded generation,
-scoring 0/4 checks. This is not a passed live-model generation/repair benchmark.
-The prompt and tool protocol checks above passed with a deterministic ACP agent.
+Runtime receipts are settled and usage accounting has been checked. AWS's
+October invoice does not exist yet. Estimated Cost Explorer values cannot replace
+final invoice reconciliation. No zero-cost conclusion is drawn.
 
-The AWS runtime cost tag was inactive and is now active. The read-only cost report
-returns `pending_usage_data`, with an estimated empty AWS period. Actual invoice
-comparison awaits provider data. No zero-cost conclusion is drawn.
-
-Private-registry credential wiring is implemented. An authenticated pull from an
-external private registry was not exercised with a real customer credential.
 Native Apple/Windows execution, interactive shells, parallel project runs, and
 additional providers remain outside this finite-container release.

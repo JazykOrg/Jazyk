@@ -147,15 +147,16 @@ impl Task {
             }
         }
         let mut seen = BTreeMap::new();
-        for (field, patterns) in [("products", &self.products), ("cache", &self.cache), ("reports", &self.reports)] {
+        for (field, patterns) in [
+            ("products", &self.products),
+            ("cache", &self.cache),
+            ("reports", &self.reports),
+        ] {
             if patterns.len() > 40 {
                 return Err("Too many file patterns.".into());
             }
             for pattern in patterns {
-                if !safe_path(pattern)
-                    || protected(pattern)
-                    || pattern.starts_with('!')
-                {
+                if !safe_path(pattern) || protected(pattern) || pattern.starts_with('!') {
                     return Err(format!("Task {} {field} pattern {pattern:?} must be an unprotected, project-relative glob.", self.id));
                 }
                 if let Some(previous) = seen.insert(pattern, field) {
@@ -397,7 +398,7 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
             request = json!({});
         }
         request["operation"] = json!(name);
-        return dispatch(root, &request);
+        return dispatch(root, &request).map(|value| metadata_response(name, value));
     }
     let (source, tasks) = load(root)?;
     if name == "update_tasks" {
@@ -453,13 +454,40 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
         request["files"] = json!(files);
         request["task"] = json!(task);
     }
-    let host = dispatch(root, &request);
+    let host = dispatch(root, &request).map(|value| metadata_response(name, value));
     if name == "task_context" {
         return Ok(
             json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}}),
         );
     }
     host
+}
+// Enforce the response contract at the common boundary, including adapters that
+// return saved state directly for history, idempotent starts, or cancellation.
+fn metadata_response(operation: &str, mut value: Value) -> Value {
+    fn omit_log(value: &mut Value) {
+        if let Some(fields) = value.as_object_mut() {
+            fields.remove("log");
+            for key in ["result", "summary"] {
+                if let Some(nested) = fields.get_mut(key).and_then(Value::as_object_mut) {
+                    nested.remove("log");
+                }
+            }
+        }
+    }
+    if operation == "task_context" {
+        if let Some(runs) = value.get_mut("runs").and_then(Value::as_array_mut) {
+            for run in runs {
+                omit_log(run);
+            }
+        }
+    } else if matches!(
+        operation,
+        "run_task" | "inspect_run" | "wait_run" | "cancel_run"
+    ) {
+        omit_log(&mut value);
+    }
+    value
 }
 fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -565,7 +593,11 @@ mod tests {
         task.products = vec!["reports/*.xml".into()];
         task.reports = task.products.clone();
         let error = task.validate().unwrap_err();
-        assert!(error.contains("reports/*.xml") && error.contains("in products") && error.contains("put test report patterns in reports"));
+        assert!(
+            error.contains("reports/*.xml")
+                && error.contains("in products")
+                && error.contains("put test report patterns in reports")
+        );
         task.products.clear();
         assert!(task.validate().is_ok());
         task.cache = vec!["../outside".into()];
@@ -580,6 +612,9 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
     let operation = args["operation"].as_str().unwrap_or("inspect_run");
     if matches!(operation, "inspect_run" | "wait_run") {
         let mut value = state.clone();
+        if let Some(fields) = value.as_object_mut() {
+            fields.remove("log");
+        }
         if !result.is_null() {
             value["result"] = json!({"status":result["status"],"exit_code":result["exit_code"],"complete":result["complete"],"error":result["error"],"products":result["products"],"tests":result["tests"],"cache_skipped":result["cache_skipped"]==true,"report_errors":result["report_errors"],"file_count":result["files"].as_object().map(|v|v.len()).unwrap_or(0)});
         }
@@ -1040,6 +1075,12 @@ pub fn import_evidence(
     let mut count = 0;
     let reference = format!("task:{}", task.id);
     for row in ledger.requirements.values_mut() {
+        if (row.test.kind == "programmatic" && row.test.run == reference)
+            || row.tests.values().any(|t| t.test.kind == "programmatic" && t.test.run == reference)
+        {
+            let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
+            crate::verify::rebaseline_files(row, files);
+        }
         let mut touched = false;
         for test in row
             .tests
@@ -1161,6 +1202,77 @@ pub fn apply_result(
 #[cfg(test)]
 mod result_tests {
     use super::*;
+    #[test]
+    fn historical_and_retried_run_metadata_cannot_reload_saved_logs() {
+        let log = "dependency installed\n".repeat(10000);
+        let state = json!({"id":"saved-run","terminated":true,"log":log,
+            "result":{"status":"succeeded","log":log},
+            "summary":{"exit_code":0,"log":log}});
+        let context = metadata_response(
+            "task_context",
+            json!({
+                "available":true,"runs":[state.clone(),state.clone()],"next_cursor":"older-run"
+            }),
+        );
+        assert!(context.to_string().len() < 1024);
+        assert_eq!(context["runs"].as_array().unwrap().len(), 2);
+        assert_eq!(context["next_cursor"], "older-run");
+        for operation in ["run_task", "inspect_run", "wait_run", "cancel_run"] {
+            let value = metadata_response(operation, state.clone());
+            assert!(value.to_string().len() < 1024);
+            assert_eq!(value["id"], "saved-run");
+            assert_eq!(value["result"]["status"], "succeeded");
+            assert_eq!(value["summary"]["exit_code"], 0);
+        }
+        let page = present(
+            &state,
+            &Value::Null,
+            &json!({"operation":"read_run_log","limit":31}),
+        )
+        .unwrap();
+        assert_eq!(
+            metadata_response("read_run_log", page)["text"],
+            log.chars().take(31).collect::<String>()
+        );
+        assert_eq!(state["log"], log);
+    }
+    #[test]
+    fn status_polls_omit_logs_but_explicit_reads_preserve_them() {
+        let log = "dependency installed\n".repeat(10000);
+        for terminated in [false, true] {
+            let state = json!({"id":"run-1","state":"succeeded","terminated":terminated,"log":log});
+            let result = if terminated {
+                json!({"status":"succeeded","exit_code":0,"complete":true,"log":log,"files":{},"tests":[]})
+            } else {
+                Value::Null
+            };
+            for operation in ["inspect_run", "wait_run"] {
+                let status = present(&state, &result, &json!({"operation":operation})).unwrap();
+                assert!(status.get("log").is_none());
+                assert_eq!(status["terminated"], terminated);
+                assert!(status.to_string().len() < 1024);
+            }
+            let page = present(
+                &state,
+                &result,
+                &json!({"operation":"read_run_log","offset":3,"limit":17}),
+            )
+            .unwrap();
+            assert_eq!(
+                page["text"],
+                log.chars().skip(3).take(17).collect::<String>()
+            );
+            assert_eq!(page["next_offset"], 20);
+            assert_eq!(page["complete"], terminated);
+            let matches = present(
+                &state,
+                &result,
+                &json!({"operation":"search_run_log","query":"installed","limit":2}),
+            )
+            .unwrap();
+            assert_eq!(matches["matches"].as_array().unwrap().len(), 2);
+        }
+    }
     fn task() -> Task {
         serde_json::from_value(json!({"id":"tests","name":"Tests","description":"Check","command":"mvn test","products":["dist/**"],"reports":["reports/*.xml"]})).unwrap()
     }

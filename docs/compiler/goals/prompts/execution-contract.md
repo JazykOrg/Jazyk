@@ -9,6 +9,10 @@ no new authority. Use an allowed image, size, and fixed timeout before submissio
 When the request needs execution, call run_task with task_id,
 expected_revision from task_context, and a fresh
 operation_key for a new run. Reuse that key only when retrying the same submission.
+Only one run may be active in a project. Wait for terminated=true before starting
+the next task. Do not submit two run_task calls together for the same project.
+After saving project or document-set settings, reload task_context before running;
+those saves can change expected_revision even when the task command is unchanged.
 Task settings and globs are project-relative; the task cwd is project-relative too.
 Use cwd="." for the project root, never the absolute deliverable path from a package.
 task_context gives projectRoot. Make the package's deliverable path relative to

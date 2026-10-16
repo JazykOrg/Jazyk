@@ -1,5 +1,33 @@
 # Results
 
+## Historical log context, 2026-10-16
+
+The sixth presentation retry exposed a remaining log leak in `task_context`.
+Seven saved runs produced a 40,177-byte response in an isolated checkpoint copy.
+The shared tool boundary now removes log text from run history, idempotent starts,
+polling, and cancellation replies. Explicit bounded log tools retain the logs.
+The same real MCP query is 6,153 bytes after the fix, with all seven history rows
+preserved. Explicit log reads and cancellation of an already completed run passed.
+
+The retry was stopped after 1,307.52 seconds and 15 calls. It saved a source
+readability improvement, recovered from one truncated write, then mistyped a task
+revision. No new container was admitted; all seven historical runs were terminated.
+The checkpoint is preserved for the next local Ollama/Podman attempt. This is not
+a completed presentation validation.
+
+Validation: 14 runtime tests, then 703 library tests passed with three existing
+ignored tests. The owner's release binary rebuilt successfully. No model call was
+needed for the response-size regression.
+
+The seventh retry configured a Markdown source selection, then reused the previous
+task-settings revision. After refreshing it, the agent tried two task starts
+together. Both guards refused the invalid requests and the agent began waiting
+for the admitted build. Execution guidance now explicitly requires a fresh context
+after any project/document-set settings save and confirmed termination before the
+next task start. The active attempt retains its original binary for clear evidence.
+
+## Earlier evidence
+
 Work started on 2026-10-15. Raw local evidence is retained under the main checkout's
 ignored `.worktrees/runtime-model-validation/.local/model-validation/` directory. The reusable model driver is
 `bootstrap/tests/runtime_model_acceptance.py`.
@@ -552,3 +580,106 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   Provider-loop regressions cover a seven-call malformed batch followed by repair,
   bounded repeated schema failures, and bounded execution failures with complete
   native tool history. The real presentation retry remains local Ollama and Podman.
+- Review found that cancellation between native calls left later calls unanswered
+  in the saved history. A local scripted regression reproduced one result for a
+  three-call reply. The loop now preserves a dispatched call's actual result and
+  records the rest as skipped, without dispatch. A subsequent prompt can reuse the
+  history. Cancellation before dispatch and during the final call both return
+  `cancelled`, even on the last permitted round.
+- All 20 agent-loop tests passed. The library suite passed 697 tests, with three
+  existing ignored tests. The 71 relative links and anchors in the changed ACP
+  page resolve, and it contains no em dashes. These transport regressions use local
+  scripted HTTP responses, not a paid model provider.
+- The local release binary rebuilt successfully in 62 seconds. The ongoing
+  presentation attempt uses its immutable earlier executable snapshot.
+- The third presentation attempt repaired its tests, passed three fresh JUnit
+  cases, and retained its PPTX in a second successful Podman run. Both containers
+  terminated. The model then fetched ten binding packages together. Ollama saw a
+  73,095-token prompt with 28,536 uncached tokens. LocalRouter returned HTTP 502
+  after 300,011 ms while Ollama was still processing the prompt. Eleven binding
+  packages over the turn repeated 101,893 characters of instructions. The turn
+  ended after 1,468.05 seconds without completed bindings. It did not pass the
+  full presentation acceptance gate.
+- The agent loop now shares identical top-level instruction blocks from the same
+  tool within a prompt turn. The first and every changed block remain complete;
+  later identical blocks refer to the last complete block. Requirement fields and
+  full audit events remain intact. Native and text-codec regressions verify both
+  changed instructions and unchanged per-call data. All 21 loop tests and 698
+  library tests passed, with three existing ignored library tests. The release
+  build passed in 53.17 seconds. All 71 ACP documentation links resolve.
+- An independent copy replaced all cat jokes with plain statements and still
+  passed the three unchanged tests. That outcome is a coverage finding, not
+  completed semantic verification. The next checkpoint retry receives this
+  finding and the rendered deck's contrast findings as explicit review feedback.
+- The fifth local presentation retry exposed repeated full logs in `wait_run`
+  status replies while completed commands were still cleaning up. Status polls now
+  omit the log field. Explicit bounded log reads and searches remain available
+  during cleanup and after termination. The regression failed before the fix and
+  passed afterward. All 13 runtime module tests passed. The changed runtime design
+  page contains no em dashes and has no relative links to check.
+- The presentation's fifth attempt registered a Python test as an LLM criteria
+  artifact after its Markdown write was rejected. Recording now validates Markdown,
+  YAML requirement and criterion identity, the current statement hash, and explicit
+  verdict outcomes. Invalid saved rows return to binding; audit cannot reconstruct
+  them as valid criteria. The packages provide exact front matter and source globs,
+  and rejected writes explain how to select or configure a criteria path. The
+  regression covers executable substitution, missing and duplicate metadata, stale
+  hashes, wrong IDs, criterion ownership, valid repair, and an invalid historic row.
+  All 702 library tests passed, with three existing ignored tests. All 143 relative
+  documentation links and anchors resolve; the changed pages contain no em dashes.
+
+## Independent LLM criterion verdicts, 2026-10-16
+
+- The seventh local presentation retry completed in 1,784.10 seconds with 35 tool
+  calls. It used LocalRouter, local Ollama `gemma4:31b-mlx`, and Podman. All ten
+  requirements were verified. The two new containers terminated and the PPTX was
+  retained. An independent fresh test run preserved all ten verified statuses.
+  The final PPTX matched the independently rendered artifact byte for byte.
+- This was a review-assisted checkpoint retry. The initial attempts and their
+  failures remain recorded. It is not a claim of an unassisted first-attempt pass
+  or a hosted model run. The final assistant sentence misstated a secondary count
+  as nine; the deterministic graph check counted ten.
+- A fresh local-model negative control replaced all three jokes with unrelated
+  plain statements. The model read the current source and correctly recorded fail.
+  The harness updated only the headline LLM criterion, leaving the second
+  criterion's old pass. The row incorrectly described a partial implementation.
+- Verification packages now include every criterion test and each LLM criteria
+  file. Multiple LLM criteria require an explicit, complete verdict list. The
+  harness validates that list atomically, rejects programmatic or stale entries,
+  and preserves separate outcomes. The built-in verifier judges each criterion.
+- Refreshing implementing-file hashes invalidates old criterion evidence. Fresh
+  task reports, legacy runs, or model judgments restore only the tests they
+  actually cover. Audit follows the same rule. A report cannot make an old LLM
+  judgment current after a source change.
+- Four meaningful regressions passed, including independent and atomic recording,
+  report/LLM freshness, audit invalidation, and separate built-in model judgments
+  with inconclusive-output handling. The full library suite passed 707 tests,
+  with three existing ignored tests. The release binary was rebuilt. All 290
+  relative links and anchors in the changed design pages resolve.
+- The fresh local-model negative control passed in 182.11 seconds with three
+  calls: `begin_verification`, `read_text_file`, and `record_verdict`. Both LLM
+  criteria recorded fail independently, the requirement became failing, the
+  source stayed unchanged, and no runtime container was used. The previous
+  attempt took 283.58 seconds and exposed the stale second verdict.
+- The positive presentation was independently replayed once more with the fixed
+  binary. Its fresh Podman test run passed, all ten requirements stayed verified,
+  and the PPTX matched the reviewed bytes.
+- Final review also covers a programmatic headline with an LLM criterion. Its
+  package includes both execution and judgment guidance. An LLM pass leaves an
+  unrun programmatic case unknown; a fresh matching report then verifies the row.
+  This fifth regression and the full suite passed: 708 tests, three existing
+  ignored tests. The owner's release binary was rebuilt.
+- The final prompt review also found a legacy-command package still inviting a
+  manual model verdict. It now directs the agent through `run_tests` and keeps
+  unavailable commands unverified. The mixed-case regression checks both legacy
+  and saved-task guidance. An initial full-suite run had 707 passes and one
+  fixture socket timeout. That cancellation case passed alone in 0.52 seconds.
+  The full suite then passed all 708 tests with four test threads in 20.01 seconds,
+  with three existing ignored tests. No timeout or assertion was relaxed. All
+  102 relative links and anchors in the changed design pages resolve.
+- Compiler `86daa56` is now pinned by the deployed Cloud API and editor. A fresh
+  Fargate test of the retained presentation passed all three report cases and
+  preserved all ten verified requirements. ECS independently confirmed shutdown.
+  The retained binary PPTX and project backup preserved their reviewed bytes.
+  This used no Cloud model calls; model validation remained local Ollama through
+  LocalRouter. The dedicated Podman VM and owned build containers are stopped.

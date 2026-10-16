@@ -418,6 +418,11 @@ Diagnostics:
   like a skipped folder. A `jazyk.toml` is served with every `api_key` value
   replaced by `<redacted>`: the key is never served, the same rule as
   `GET /api/project` and `GET /api/settings`.
+- `GET /api/project/raw?path=`: one file under the project directory as its bytes,
+  text or not, for a preview (an image shown, other binary as bytes). A server
+  sends the bytes as the body with their content type. A tab's envelope carries
+  JSON, so there the body is `{ "path", "size", "contentType", "base64" }`, the
+  bytes base64-encoded. The path rules are those of `GET /api/project/file`.
 - `GET /api/project/text?path=`: one existing project file as `{path, text, hash}`,
   for editing. A file that is not UTF-8 text is 415. `PUT /api/project/text?path=`
   with `{text, baseHash}` replaces it when `baseHash` still names the file on disk

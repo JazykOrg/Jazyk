@@ -677,6 +677,67 @@ pub fn artifact_path(out: &Path, gs: &GenSettings, test: &TestRef) -> PathBuf {
     }
 }
 
+// A criteria file is executable judgment setup, not an arbitrary existing file.
+pub(crate) fn criteria_front_matter(rid: &str, criterion: Option<&str>, statement: &str) -> String {
+    let mut fields = serde_json::Map::new();
+    fields.insert("requirement".into(), json!(rid));
+    fields.insert("hash".into(), json!(hash_hex(statement)));
+    if let Some(cid) = criterion { fields.insert("criterion".into(), json!(cid)); }
+    format!("---\n{}---\n", serde_norway::to_string(&fields).expect("criteria metadata serializes"))
+}
+
+pub(crate) fn validate_criteria_file(store: &Store, rid: &str, criterion: Option<&str>, path: &Path) -> Result<(), String> {
+    use pulldown_cmark::{Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
+    #[derive(Deserialize)]
+    struct Header { requirement: String, hash: String, #[serde(default)] criterion: Option<String> }
+    let check = || -> Result<(), String> {
+        if !path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e, "md" | "markdown")) {
+            return Err("use a separate Markdown criteria file, not executable test source".into());
+        }
+        let content = crate::vfs::read_to_string(path).map_err(|e| e.to_string())?;
+        let mut parser = Parser::new_ext(&content, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS).into_offset_iter();
+        if !matches!(parser.next(), Some((Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle)), _))) {
+            return Err("YAML front matter is required".into());
+        }
+        let mut yaml = String::new();
+        let mut end = None;
+        for (event, range) in parser {
+            match event {
+                Event::Text(text) => yaml.push_str(&text),
+                Event::End(TagEnd::MetadataBlock(_)) => { end = Some(range.end); break; }
+                _ => {}
+            }
+        }
+        let header: Header = serde_norway::from_str(&yaml).map_err(|e| format!("invalid criteria metadata: {e}"))?;
+        let local_id = |id: &str| -> Result<String, String> {
+            let (set, local) = crate::webapi::sets::unqualify(id);
+            if set.as_deref().is_some_and(|set| Some(set) != store.out.file_name().and_then(|s| s.to_str())) {
+                return Err("criteria IDs belong to a different document set; copy criteriaFrontMatter".into());
+            }
+            Ok(store.resolve_id(&local).to_string())
+        };
+        if local_id(&header.requirement)? != rid { return Err(format!("requirement must be {rid}")); }
+        let cid = header.criterion.as_deref().map(local_id).transpose()?;
+        if criterion.is_some() && cid.as_deref() != criterion {
+            return Err(format!("criterion must be {}", criterion.unwrap()));
+        }
+        let statement = if let Some(cid) = cid.as_deref() {
+            &store.graph.criteria.get(cid).filter(|c| c.requirement == rid)
+                .ok_or("criterion is not owned by this requirement")?.statement
+        } else {
+            &store.graph.requirements.get(rid).ok_or("unknown requirement")?.statement
+        };
+        if header.hash != hash_hex(statement) { return Err("hash must match the current statement; copy criteriaFrontMatter".into()); }
+        let body = content.get(end.ok_or("unclosed criteria front matter")?..).unwrap_or_default().trim();
+        let words: Vec<_> = body.split(|c: char| !c.is_alphabetic()).collect();
+        if body.is_empty() || !["PASS", "FAIL"].iter().all(|expected| words.iter().any(|word| word.eq_ignore_ascii_case(expected))) {
+            return Err("the body must contain inspection steps and explicit PASS and FAIL outcomes".into());
+        }
+        Ok(())
+    };
+    check().map_err(|e| format!("invalid llm criteria artifact `{}`: {e}. Write a valid criteria file before recording; never substitute a programmatic test file", path.display()))
+}
+
 pub fn hash_file(path: &Path) -> String {
     crate::vfs::read(path)
         .map(|b| hash_hex(&String::from_utf8_lossy(&b)))
@@ -1521,6 +1582,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                             "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
                             "provenance": crate::session::provenance_line(r),
                             "hash": hash_hex(&r.statement),
+                            "criteriaFrontMatter": criteria_front_matter(rid, None, &r.statement),
                             "testName": test_name(rid, &r.statement),
                             // The criteria with the names binding gives their tests,
                             // so a test generation must write (a requirement with no
@@ -1531,6 +1593,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                                 Some(json!({
                                     "id": cid, "statement": c.statement,
                                     "suggestedTestName": crit_test_name(cid, &c.statement),
+                                    "criteriaFrontMatter": criteria_front_matter(rid, Some(cid), &c.statement),
                                 }))
                             }).collect::<Vec<Value>>(),
                             "criteriaPath": format!("criteria/req-{}.md", req_slug(rid)),
@@ -1626,6 +1689,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         "entity": id,
         "name": e.name,
         "deliverable": gs.deliverable.to_string_lossy(),
+        "sourceSelection": gs.code,
         "factHash": fact_hash(store, id),
         "instructions": instructions(),
         "context": pack,
@@ -1856,6 +1920,7 @@ pub fn mark(
                     rid, test.name, test.artifact
                 ));
             }
+            if kind == "llm" { validate_criteria_file(store, &rid, None, &path)?; }
             // The row's own `files`; an empty list takes the default below.
             let row_files: Vec<String> =
                 confine_list_in(gs, &str_list(&t["files"]), &mut path_notes)
@@ -3567,7 +3632,7 @@ mod tests {
             .contains("`programmatic`"));
         // The criteria file under the out directory satisfies an llm row.
         crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
-        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter("req:shop-1", None, &s.graph.requirements["req:shop-1"].statement))).unwrap();
         mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap();
         crate::vfs::remove_dir_all(&out).ok();
     }
@@ -3610,7 +3675,7 @@ mod tests {
         assert_eq!(unroot(&gs.deliverable, "products/cart.rs"), None);
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").unwrap();
         crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
-        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter("req:shop-1", None, &s.graph.requirements["req:shop-1"].statement))).unwrap();
         let r = mark(&s, "ent:cart", None, &json!({
             "files": ["product/src/cart.rs"],
             "tests": [{"requirement": "req:shop-1", "kind": "llm", "label": "judged",
@@ -3659,7 +3724,7 @@ mod tests {
         crate::vfs::write(gs.deliverable.join("departments.md"), "# Departments\n").unwrap();
         let row = |rid: &str| {
             let f = format!("criteria/{}.md", rid.replace(':', "-"));
-            crate::vfs::write(out.join("gen").join(&f), format!("---\nrequirement: {}\n---\n", rid)).unwrap();
+            crate::vfs::write(out.join("gen").join(&f), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter(rid, None, &s.graph.requirements[rid].statement))).unwrap();
             json!({"requirement": rid, "kind": "llm", "label": "judged", "artifact": f,
                    "name": rid.replace([':', '-'], "_"), "run": "llm"})
         };
@@ -3704,7 +3769,7 @@ mod tests {
             vec!["ent:cart".into(), "ent:buyer".into()];
         crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests/criteria")).unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/criteria/req-shop-1.md"), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter("req:shop-1", None, &s.graph.requirements["req:shop-1"].statement))).unwrap();
         let row = json!({"requirement": "req:shop-1", "kind": "llm", "label": "judged",
                          "artifact": "tests/criteria/req-shop-1.md", "name": "req_shop_1", "run": "llm"});
         // Nothing but the criteria file: refused, the requirement named.

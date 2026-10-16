@@ -112,6 +112,9 @@ lens shows in a tab what it shows on a machine:
   renders or downloads. The tab's envelope carries JSON, so the body is
   `{ "path", "size", "contentType", "base64" }`, the bytes base64-encoded, and the
   page decodes it into the same bytes the server sends.
+- `GET /api/project/raw`: one project file's bytes, text or not, for a preview, in
+  the same `{ "path", "size", "contentType", "base64" }` body as
+  `GET /api/deliverable/raw`.
 - `GET /api/verify/matrix`: the trace matrix, every requirement with its
   [derived status](../consumers/gen.md#status-is-derived-never-stored), and the Tests
   page built from it. The status is derived from the ledger and the files in the

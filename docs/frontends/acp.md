@@ -153,7 +153,13 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   send the messages and the MCP tools, dispatch the calls the model makes, append the
   results, repeat until the model stops calling tools. JSON tool results remain
   structured JSON in both codecs, without another layer of string escaping. Plain
-  text results remain text. Five consecutive failed tool calls stop the turn. A
+  text results remain text. Within a prompt turn, a successful tool result's
+  top-level `instructions` string of at least 1,024 characters enters model history
+  in full the first time that tool returns it. An identical later string refers
+  to that tool's most recent full instruction block. Changed instructions enter
+  in full. Other fields and the outward tool transcript remain unchanged. This
+  avoids repeating large lifecycle contracts for every requirement package.
+  Five consecutive failed tool calls stop the turn. A
   successful call resets the count. After any failed call, remaining calls in that
   reply receive a skipped result without executing. The model sees the error before
   more work runs, and the next prompt has complete tool history. Skipped calls do
@@ -202,7 +208,11 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   rate-limited call must not take down the host and every later session with it.
 - On `session/new` it also offers the endpoint's models as a session config option,
   so the person in the IDE picks one (below).
-- `session/cancel` stops the loop at the next round.
+- `session/cancel` stops further model requests and tool dispatch. A tool already
+  dispatched keeps its actual result. The remaining calls in that reply receive
+  skipped results without executing, so the saved conversation can resume with
+  every native call answered. The prompt returns `cancelled`, including when the
+  final dispatched call observes cancellation.
 - `session/close` (advertised in its capabilities) tears the session down: each MCP
   server's input closes and the agent waits for it to exit before answering. An
   ephemeral jazyk serving runs its implicit finish on that end of input, so closing

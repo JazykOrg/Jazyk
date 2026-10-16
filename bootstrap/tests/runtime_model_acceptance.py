@@ -4,11 +4,13 @@ No model transport is mocked. Evidence contains prompts, ACP updates, run record
 and independent assertions. Credentials are inherited, never written to evidence.
 """
 import argparse
+import contextlib
 import json
 import os
 from pathlib import Path
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -48,7 +50,8 @@ class ACP:
             for line in self.proc.stdout:
                 self.messages.put(json.loads(line))
             self.messages.put(None)
-        threading.Thread(target=reader, daemon=True).start()
+        self.reader = threading.Thread(target=reader, daemon=True)
+        self.reader.start()
 
     def send(self, method, params, notify=False):
         self.seq += 1
@@ -64,6 +67,8 @@ class ACP:
     def receive(self, request_id, timeout):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if shutil.disk_usage(Path(self.trace.name).parent).free < 1024**3:
+                raise RuntimeError("Less than 1 GiB free for test evidence; stopping before the disk fills")
             try:
                 message = self.messages.get(timeout=1)
             except queue.Empty:
@@ -103,18 +108,29 @@ class ACP:
     def close(self, sid):
         try:
             if sid:
-                self.send("session/cancel", {"sessionId": sid}, True)
+                try:
+                    self.send("session/cancel", {"sessionId": sid}, True)
+                except (OSError, ValueError):
+                    # Evidence failure must not prevent cancellation reaching the
+                    # child. This notification needs no response or trace write.
+                    self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "session/cancel",
+                                                      "params": {"sessionId": sid}}) + "\n")
+                    self.proc.stdin.flush()
             self.proc.stdin.close()
             self.proc.wait(timeout=8)
-        except (BrokenPipeError, subprocess.TimeoutExpired):
-            self.proc.terminate()
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            with contextlib.suppress(OSError):
+                self.proc.terminate()
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait()
-        self.trace.close()
-        self.stderr.close()
+        finally:
+            self.reader.join(timeout=1)
+            for stream in (self.proc.stdout, self.trace, self.stderr):
+                with contextlib.suppress(OSError, ValueError):
+                    stream.close()
 
 
 def fixture(root, case):

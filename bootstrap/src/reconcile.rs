@@ -2218,6 +2218,11 @@ pub(crate) fn compile_under(
     runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
     trace.line("build", &format!("agent: {}", runner.agent_name()));
 
+    // Every build keeps the generated ignore file current
+    // (docs/compiler/document-sets.md#persistence-and-identity).
+    if let Err(e) = crate::document_sets::ensure_ignore(&proj.root) {
+        trace.line("build", &format!("cannot write .jazyk/.gitignore: {}", e));
+    }
     let mut store = Store::open_for_build(out);
     store.status.costs = Costs::default();
     store.save_status();

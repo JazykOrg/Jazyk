@@ -1697,18 +1697,18 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
-// The store version: outside a build, a version-1 out directory reads as empty and
-// refuses a commit with `store-version`; a build archives it whole to `<out>.bak`
-// (the stray shard included), reconciles from empty to converged, and stamps the
-// current version. Mirrors docs/compiler/graph.md#store-version.
+// The store version: outside a build, a version-2 out directory (one shard per kind)
+// reads as empty and refuses a commit with `store-version`; a build archives it whole
+// to `<out>.bak` (the old shard included), reconciles from empty to converged in node
+// files, and stamps the current version. Mirrors docs/compiler/graph.md#store-version.
 #[test]
 fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty() {
     let (dir, project) = f1_copy("version");
     let out = project.out.clone();
-    let status = "version: 1\ngeneration: 7\n";
+    let status = "version: 2\ngeneration: 7\n";
     crate::vfs::create_dir_all(out.join("graph")).unwrap();
     crate::vfs::write(out.join("status.yaml"), status).unwrap();
-    crate::vfs::write(out.join("graph").join("dummy.yaml"), "dummy: true\n").unwrap();
+    crate::vfs::write(out.join("graph").join("entities.yaml"), "ent:cart:\n  name: Cart\n").unwrap();
 
     // Read-only outside a build: empty, and a writer is refused without touching disk.
     let mut read = Store::load(&out);
@@ -1731,27 +1731,28 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
         report.skipped
     );
     assert_eq!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap(), status);
-    assert!(out.join("graph").join("dummy.yaml").exists());
-    assert!(!out.join("graph").join("entities.yaml").exists());
+    assert!(out.join("graph").join("entities.yaml").exists());
+    assert!(!out.join("graph").join("entities").exists());
 
     // The build archives and starts over.
     let runner = ScriptedRunner::new(&project);
     let (report, events) = build(&project, &runner);
-    eprintln!("[e2e version] build over a version-1 store: {}", report.verdict);
+    eprintln!("[e2e version] build over a version-2 store: {}", report.verdict);
     assert_clean_build(&report, &events);
     let bak = out.with_file_name(format!(
         "{}.bak",
         out.file_name().unwrap().to_string_lossy()
     ));
-    assert!(bak.join("graph").join("dummy.yaml").exists(), "{} not archived whole", bak.display());
+    assert!(bak.join("graph").join("entities.yaml").exists(), "{} not archived whole", bak.display());
     assert_eq!(crate::vfs::read_to_string(bak.join("status.yaml")).unwrap(), status);
-    assert!(!out.join("graph").join("dummy.yaml").exists());
+    assert!(!out.join("graph").join("entities.yaml").exists());
+    assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
     assert_eq!(store.status.version, crate::store::STORE_VERSION);
-    assert_eq!(store.status.version, 2);
+    assert_eq!(store.status.version, 3);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
-    assert!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap().contains("version: 2"));
+    assert!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap().contains("version: 3"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }

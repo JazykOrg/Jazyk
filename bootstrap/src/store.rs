@@ -286,7 +286,7 @@ pub const JUDGED_RULES: [&str; 6] = [
 
 // The store version written to status.yaml. An out directory carrying another one is
 // archived whole and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
-pub const STORE_VERSION: u32 = 2;
+pub const STORE_VERSION: u32 = 3;
 
 // Change record kinds. Mirrors docs/compiler/graph.md#change-records.
 pub const CHANGE_SECTION_DIRTY: &str = "section-dirty";
@@ -767,11 +767,166 @@ fn shard<T: serde::de::DeserializeOwned + Default>(path: &Path, errors: &mut Vec
     }
 }
 
+// ---- node files ----
+// One file per node under graph/<kind>/, named by its file id.
+// Mirrors docs/compiler/graph.md#node-files.
+
+// The node kinds a repository commits, as directory names under graph/.
+pub const COMMITTED_KINDS: [&str; 6] = [
+    "entities",
+    "requirements",
+    "criteria",
+    "views",
+    "diagnostics",
+    "redirects",
+];
+
+// The derived kinds: local, recomputed at load when missing and on every commit.
+pub const DERIVED_KINDS: [&str; 2] = ["relationships", "state-machines"];
+
+// The file id of a node id: `:` as `~`, `/` as `+`, lowercase ASCII letters, digits,
+// `-`, `_`, `.` kept, every other byte (and a leading `.`) as `%XX` in uppercase hex.
+// Reversible, and no two ids fold into one name on a case-insensitive file system.
+pub fn file_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for (i, b) in id.bytes().enumerate() {
+        match b {
+            b':' => out.push('~'),
+            b'/' => out.push('+'),
+            b'.' if i == 0 => out.push_str("%2E"),
+            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+// The node id a file id spells; None for a name `file_id` never writes.
+pub fn id_from_file(stem: &str) -> Option<String> {
+    let bytes = stem.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'~' => out.push(b':'),
+            b'+' => out.push(b'/'),
+            b'%' => {
+                let hex = stem.get(i + 1..i + 3)?;
+                if !hex.bytes().all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c)) {
+                    return None;
+                }
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 2;
+            }
+            b @ (b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.') => out.push(b),
+            _ => return None,
+        }
+        i += 1;
+    }
+    let id = String::from_utf8(out).ok()?;
+    (!id.is_empty() && file_id(&id) == stem).then_some(id)
+}
+
+// The content of one redirect file.
+#[derive(Serialize, Deserialize)]
+struct RedirectFile {
+    to: String,
+}
+
+// The node files of one kind directory, `(id, path)` in id order. A name that does not
+// decode is an error naming the file. Temporary and hidden files are skipped.
+fn node_files(dir: &Path, errors: &mut Vec<String>) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    let Ok(rd) = crate::vfs::read_dir(dir) else {
+        return out;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let Some(stem) = name.strip_suffix(".yaml") else {
+            continue;
+        };
+        match id_from_file(stem) {
+            Some(id) => out.push((id, e.path())),
+            None => errors.push(format!(
+                "{}: the file name spells no node id",
+                e.path().display()
+            )),
+        }
+    }
+    out.sort();
+    out
+}
+
+// Every node of one kind directory. Missing reads as empty; a file that does not parse
+// is recorded in `errors` (the store then refuses to write).
+fn load_nodes<T: serde::de::DeserializeOwned>(
+    dir: &Path,
+    errors: &mut Vec<String>,
+) -> BTreeMap<String, T> {
+    let mut nodes = BTreeMap::new();
+    for (id, path) in node_files(dir, errors) {
+        match yaml_read::<T>(&path) {
+            Ok(Some(v)) => {
+                nodes.insert(id, v);
+            }
+            Ok(None) => {}
+            Err(e) => errors.push(e),
+        }
+    }
+    nodes
+}
+
+// The nodes of one kind directory as JSON values, for readers outside the store
+// (replays seed from a snapshot's graph).
+pub fn read_node_values(dir: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let mut errors = Vec::new();
+    load_nodes::<serde_json::Value>(dir, &mut errors)
+        .into_iter()
+        .collect()
+}
+
+// Write every node of one kind whose bytes changed; return the files of nodes that
+// left the graph, for the caller to delete after every write landed.
+fn save_nodes<T: Serialize>(dir: &Path, nodes: &BTreeMap<String, T>) -> Vec<PathBuf> {
+    for (id, node) in nodes {
+        let path = dir.join(format!("{}.yaml", file_id(id)));
+        report_write(&path, write_yaml(&path, node));
+    }
+    node_files(dir, &mut Vec::new())
+        .into_iter()
+        .filter(|(id, _)| !nodes.contains_key(id))
+        .map(|(_, path)| path)
+        .collect()
+}
+
+// Copy a directory tree, for snapshots.
+fn copy_tree(from: &Path, to: &Path) {
+    let Ok(rd) = crate::vfs::read_dir(from) else { return };
+    if crate::vfs::create_dir_all(to).is_err() {
+        return;
+    }
+    for e in rd.flatten() {
+        let p = e.path();
+        let target = to.join(e.file_name());
+        if p.vis_dir() {
+            copy_tree(&p, &target);
+        } else if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
+            crate::vfs::copy(&p, &target).ok();
+        }
+    }
+}
+
 // A file whose bytes already match is left in place, so a save rewrites only what
-// changed. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+// changed. The bytes end in one newline. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
 fn write_yaml<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let text = serde_norway::to_string(value)
+    let mut text = serde_norway::to_string(value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
     if crate::vfs::read(path).is_ok_and(|on_disk| on_disk == text.as_bytes()) {
         return Ok(());
     }
@@ -795,18 +950,6 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         return Err(e);
     }
     Ok(())
-}
-
-// Any serializable value behind one object type, so `save` writes every shard through
-// the same path.
-trait YamlFile {
-    fn write_to(&self, path: &Path) -> std::io::Result<()>;
-}
-
-impl<T: Serialize> YamlFile for T {
-    fn write_to(&self, path: &Path) -> std::io::Result<()> {
-        write_yaml(path, self)
-    }
 }
 
 // The stored record of one document, as the last build left it; None when the
@@ -979,18 +1122,10 @@ pub fn snapshot_graph(out: &Path, label: &str) {
         return;
     }
     let g = out.join("graph");
-    let Ok(rd) = crate::vfs::read_dir(&g) else { return };
-    if crate::vfs::create_dir_all(dir.join("graph")).is_err() {
+    if !g.vis_dir() {
         return;
     }
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
-            if let Some(name) = p.file_name() {
-                crate::vfs::copy(&p, dir.join("graph").join(name)).ok();
-            }
-        }
-    }
+    copy_tree(&g, &dir.join("graph"));
     crate::vfs::copy(out.join("status.yaml"), dir.join("status.yaml")).ok();
 }
 
@@ -1080,14 +1215,17 @@ impl Store {
         let mut store = Store {
             out: out.to_path_buf(),
             graph: Graph {
-                entities: shard(&g.join("entities.yaml"), &mut errors),
-                requirements: shard(&g.join("requirements.yaml"), &mut errors),
-                criteria: shard(&g.join("criteria.yaml"), &mut errors),
-                views: shard(&g.join("views.yaml"), &mut errors),
-                relationships: shard(&g.join("relationships.yaml"), &mut errors),
-                state_machines: shard(&g.join("state-machines.yaml"), &mut errors),
-                diagnostics: shard(&g.join("diagnostics.yaml"), &mut errors),
-                redirects: shard(&g.join("redirects.yaml"), &mut errors),
+                entities: load_nodes(&g.join("entities"), &mut errors),
+                requirements: load_nodes(&g.join("requirements"), &mut errors),
+                criteria: load_nodes(&g.join("criteria"), &mut errors),
+                views: load_nodes(&g.join("views"), &mut errors),
+                relationships: load_nodes(&g.join("relationships"), &mut errors),
+                state_machines: load_nodes(&g.join("state-machines"), &mut errors),
+                diagnostics: load_nodes(&g.join("diagnostics"), &mut errors),
+                redirects: load_nodes::<RedirectFile>(&g.join("redirects"), &mut errors)
+                    .into_iter()
+                    .map(|(id, r)| (id, r.to))
+                    .collect(),
             },
             docs: BTreeMap::new(),
             status: shard(&out.join("status.yaml"), &mut errors),
@@ -1109,6 +1247,13 @@ impl Store {
                     Err(e) => errors.push(e),
                 }
             }
+        }
+        // The derived kinds are local: a checkout carries none, so a load that finds
+        // either directory missing recomputes both in memory and the next commit
+        // writes them. Mirrors docs/compiler/graph.md#a-fresh-checkout.
+        if DERIVED_KINDS.iter().any(|k| !g.join(k).vis_dir()) {
+            crate::derive::recompute_relationships(&mut store);
+            crate::derive::recompute_state_machines(&mut store);
         }
         store.load_errors = errors;
         store
@@ -1160,8 +1305,9 @@ impl Store {
         Some(why)
     }
 
-    // Shards and doc records first, `status.yaml` last: its generation is the commit
-    // point a reader checks. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+    // Node files and doc records first, then the files of removed nodes, `status.yaml`
+    // last: its generation is the commit point a reader checks.
+    // Mirrors docs/compiler/graph.md#writes-and-unreadable-files and #node-files.
     pub fn save(&self) {
         if let Some(why) = self.unreadable() {
             eprintln!(
@@ -1172,19 +1318,31 @@ impl Store {
             return;
         }
         let g = self.out.join("graph");
-        let put = |p: PathBuf, v: &dyn YamlFile| report_write(&p, v.write_to(&p));
-        put(g.join("entities.yaml"), &self.graph.entities);
-        put(g.join("requirements.yaml"), &self.graph.requirements);
-        if !self.graph.criteria.is_empty() || g.join("criteria.yaml").vexists() {
-            put(g.join("criteria.yaml"), &self.graph.criteria);
-        }
-        put(g.join("views.yaml"), &self.graph.views);
-        put(g.join("relationships.yaml"), &self.graph.relationships);
-        put(g.join("state-machines.yaml"), &self.graph.state_machines);
-        put(g.join("diagnostics.yaml"), &self.graph.diagnostics);
-        put(g.join("redirects.yaml"), &self.graph.redirects);
+        let redirects: BTreeMap<String, RedirectFile> = self
+            .graph
+            .redirects
+            .iter()
+            .map(|(from, to)| (from.clone(), RedirectFile { to: to.clone() }))
+            .collect();
+        let mut gone = Vec::new();
+        gone.extend(save_nodes(&g.join("entities"), &self.graph.entities));
+        gone.extend(save_nodes(&g.join("requirements"), &self.graph.requirements));
+        gone.extend(save_nodes(&g.join("criteria"), &self.graph.criteria));
+        gone.extend(save_nodes(&g.join("views"), &self.graph.views));
+        gone.extend(save_nodes(&g.join("diagnostics"), &self.graph.diagnostics));
+        gone.extend(save_nodes(&g.join("redirects"), &redirects));
+        gone.extend(save_nodes(&g.join("relationships"), &self.graph.relationships));
+        gone.extend(save_nodes(&g.join("state-machines"), &self.graph.state_machines));
         for (doc, rec) in &self.docs {
-            put(self.out.join("docs").join(format!("{}.yaml", doc)), rec);
+            let p = self.out.join("docs").join(format!("{}.yaml", doc));
+            report_write(&p, write_yaml(&p, rec));
+        }
+        for p in gone {
+            if let Err(e) = crate::vfs::remove_file(&p) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("[jazyk] error: cannot remove {}: {}", p.display(), e);
+                }
+            }
         }
         self.save_status();
     }
@@ -6569,7 +6727,7 @@ mod tests {
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         let inodes = |dir: &Path| -> BTreeMap<PathBuf, u64> {
             let mut all = BTreeMap::new();
-            for sub in ["graph", "docs", ""] {
+            for sub in ["graph/entities", "graph/diagnostics", "docs", ""] {
                 let Ok(rd) = std::fs::read_dir(dir.join(sub)) else { continue };
                 for e in rd.flatten() {
                     let p = e.path();
@@ -6582,7 +6740,7 @@ mod tests {
         };
         let before = inodes(&out);
         assert!(before.contains_key(&out.join("status.yaml")));
-        assert!(before.contains_key(&out.join("graph").join("entities.yaml")));
+        assert!(before.contains_key(&out.join("graph/entities/ent~a.yaml")));
         let again = Store::load(&out);
         again.save();
         assert_eq!(inodes(&out), before, "a save with no change writes nothing");
@@ -6591,16 +6749,15 @@ mod tests {
         let r = s.apply(vec![create("ent:b", "B")], &session());
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         let after = inodes(&out);
-        let entities = out.join("graph").join("entities.yaml");
-        assert_ne!(after[&entities], before[&entities], "the changed shard is rewritten");
+        assert!(after.contains_key(&out.join("graph/entities/ent~b.yaml")), "the new node is written");
         assert_ne!(after[&out.join("status.yaml")], before[&out.join("status.yaml")]);
-        let diagnostics = out.join("graph").join("diagnostics.yaml");
-        assert_eq!(after[&diagnostics], before[&diagnostics], "an unchanged shard stays");
+        let a = out.join("graph/entities/ent~a.yaml");
+        assert_eq!(after[&a], before[&a], "an unchanged node file stays");
         assert_eq!(Store::load(&out).status.generation, 2);
     }
 
     #[test]
-    fn an_unparseable_shard_makes_the_store_read_only() {
+    fn an_unparseable_node_file_makes_the_store_read_only() {
         let out = own_dir("unreadable");
         let mut s = Store {
             out: out.clone(),
@@ -6608,12 +6765,12 @@ mod tests {
         };
         let r = s.apply(vec![create("ent:a", "A")], &session());
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
-        let shard = out.join("graph").join("entities.yaml");
-        let broken = "ent:a: [this is not an entity\n";
+        let shard = out.join("graph/entities/ent~a.yaml");
+        let broken = "name: [this is not an entity\n";
         crate::vfs::write(&shard, broken).unwrap();
         let mut again = Store::load(&out);
         assert!(
-            again.load_errors.iter().any(|e| e.contains("entities.yaml")),
+            again.load_errors.iter().any(|e| e.contains("ent~a.yaml")),
             "{:?}",
             again.load_errors
         );
@@ -6675,8 +6832,241 @@ mod tests {
             .collect();
         assert!(leftover.is_empty(), "{:?}", leftover);
         assert!(out.join("status.yaml").vexists());
-        assert!(out.join("graph").join("entities.yaml").vexists());
+        assert!(out.join("graph/entities/ent~a.yaml").vexists());
         assert!(out.join("journal").join("g1.yaml").vexists());
+    }
+
+    // File ids: `:` as `~`, `/` as `+`, everything outside the plain set as `%XX`, and
+    // only the canonical spelling decodes. Mirrors docs/compiler/graph.md#node-files.
+    #[test]
+    fn file_ids_round_trip_and_never_fold_under_case() {
+        for (id, name) in [
+            ("ent:order", "ent~order"),
+            ("view:class/shop", "view~class+shop"),
+            ("ent:čaj", "ent~%C4%8Daj"),
+            ("rel:order~payment", "rel~order%7Epayment"),
+            ("ent:Order", "ent~%4Frder"),
+            (".hidden", "%2Ehidden"),
+            ("req:a.b_c-1", "req~a.b_c-1"),
+            ("x+y%z", "x%2By%25z"),
+        ] {
+            assert_eq!(file_id(id), name, "{id}");
+            assert_eq!(id_from_file(name).as_deref(), Some(id), "{name}");
+        }
+        for bad in ["", "ent~%61", "ENT~a", "ent~%4", "ent~%zz", "ent~%4f", "a b", ".x"] {
+            assert_eq!(id_from_file(bad), None, "{bad}");
+        }
+        let names: BTreeSet<String> = ["ent:ab", "ent:Ab", "ent:AB", "ent:%41b", "ent:a~b", "ent:a:b"]
+            .iter()
+            .map(|id| file_id(id).to_lowercase())
+            .collect();
+        assert_eq!(names.len(), 6, "{names:?}");
+    }
+
+    fn every_kind_graph() -> Store {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:order".into(), entity("Order"));
+        s.graph.entities.insert("ent:payment".into(), entity("Payment"));
+        s.graph.entities.insert("ent:čaj".into(), entity("Čaj"));
+        let mut r = seeded_req("orders.md", "An order holds a payment.");
+        r.entities = vec!["ent:order".into(), "ent:payment".into()];
+        r.source = Some(mention("orders.md", "/orders", "An order holds a payment."));
+        r.edges = vec![ReqEdge {
+            a: "ent:order".into(),
+            b: "ent:payment".into(),
+            rel_type: Some("association".into()),
+            cardinality: None,
+        }];
+        r.transition = Some(Transition {
+            subject: "ent:order".into(),
+            from: "open".into(),
+            to: "paid".into(),
+            trigger: None,
+            guard: None,
+        });
+        s.graph.requirements.insert("req:orders-1".into(), r);
+        s.graph.criteria.insert(
+            "crit:orders-1".into(),
+            Criterion {
+                requirement: "req:orders-1".into(),
+                statement: "A paid order shows its payment.".into(),
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:class/shop".into(),
+            View {
+                kind: "class".into(),
+                title: "Shop".into(),
+                members: vec!["ent:order".into(), "ent:payment".into()],
+                ..Default::default()
+            },
+        );
+        s.graph
+            .diagnostics
+            .insert("diag:lint-1".into(), diag("lint", vec!["req:orders-1"]));
+        s.graph.redirects.insert("ent:purchase".into(), "ent:order".into());
+        crate::derive::recompute_relationships(&mut s);
+        crate::derive::recompute_state_machines(&mut s);
+        s
+    }
+
+    fn tree_bytes(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+        fn walk(root: &Path, dir: &Path, into: &mut BTreeMap<String, Vec<u8>>) {
+            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(root, &p, into);
+                } else {
+                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                    into.insert(rel, std::fs::read(&p).unwrap());
+                }
+            }
+        }
+        let mut all = BTreeMap::new();
+        walk(dir, dir, &mut all);
+        all
+    }
+
+    // Every kind lands one file per node and loads back whole.
+    #[test]
+    fn node_files_round_trip_every_kind() {
+        let out = own_dir("node-round-trip");
+        let mut s = every_kind_graph();
+        s.out = out.clone();
+        s.save();
+        let files = tree_bytes(&out);
+        for name in [
+            "graph/entities/ent~order.yaml",
+            "graph/entities/ent~%C4%8Daj.yaml",
+            "graph/requirements/req~orders-1.yaml",
+            "graph/criteria/crit~orders-1.yaml",
+            "graph/views/view~class+shop.yaml",
+            "graph/diagnostics/diag~lint-1.yaml",
+            "graph/redirects/ent~purchase.yaml",
+            "graph/relationships/rel~order%7Epayment.yaml",
+            "graph/state-machines/sm~order.yaml",
+            "status.yaml",
+        ] {
+            assert!(files.contains_key(name), "{name} missing from {:?}", files.keys());
+        }
+        assert_eq!(files["graph/redirects/ent~purchase.yaml"], b"to: ent:order\n");
+        assert!(files.values().all(|b| b.ends_with(b"\n")));
+        let back = Store::load(&out);
+        assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
+        let json = |g: &Graph| serde_json::to_value(g).unwrap();
+        assert_eq!(json(&back.graph), json(&s.graph));
+    }
+
+    // The same graph always writes the same bytes, wherever and however often it saves.
+    #[test]
+    fn two_saves_of_one_graph_write_identical_bytes() {
+        let one = own_dir("deterministic-one");
+        let two = own_dir("deterministic-two");
+        let mut s = every_kind_graph();
+        s.out = one.clone();
+        s.save();
+        let first = tree_bytes(&one);
+        s.save();
+        assert_eq!(tree_bytes(&one), first);
+        let mut again = Store::load(&one);
+        again.out = two.clone();
+        again.save();
+        assert_eq!(tree_bytes(&two), first);
+    }
+
+    // A node that leaves the graph takes its file along; the others stay.
+    #[test]
+    fn a_removed_node_deletes_its_file() {
+        let out = own_dir("node-delete");
+        let mut s = every_kind_graph();
+        s.out = out.clone();
+        s.save();
+        s.graph.entities.remove("ent:čaj");
+        s.graph.redirects.clear();
+        s.graph.diagnostics.clear();
+        s.save();
+        let files = tree_bytes(&out);
+        assert!(!files.contains_key("graph/entities/ent~%C4%8Daj.yaml"));
+        assert!(!files.keys().any(|k| k.starts_with("graph/redirects/")));
+        assert!(!files.keys().any(|k| k.starts_with("graph/diagnostics/")));
+        assert!(files.contains_key("graph/entities/ent~order.yaml"));
+        let back = Store::load(&out);
+        assert!(!back.graph.entities.contains_key("ent:čaj"));
+        assert!(back.graph.redirects.is_empty());
+    }
+
+    // A file name that spells no id is unreadable, never dropped.
+    #[test]
+    fn a_node_file_name_that_does_not_decode_makes_the_store_read_only() {
+        let out = own_dir("node-bad-name");
+        let mut s = every_kind_graph();
+        s.out = out.clone();
+        s.save();
+        crate::vfs::write(out.join("graph/entities/Order.yaml"), "name: Order\n").unwrap();
+        let back = Store::load(&out);
+        assert!(
+            back.load_errors.iter().any(|e| e.contains("Order.yaml")),
+            "{:?}",
+            back.load_errors
+        );
+        back.save();
+        assert!(out.join("graph/entities/Order.yaml").vexists());
+    }
+
+    // A fresh checkout: only the committed state is present. The derived kinds are
+    // recomputed at load, a missing journal reads as empty history, and only the
+    // document whose bytes changed outside Jazyk is dirty.
+    // Mirrors docs/compiler/graph.md#a-fresh-checkout.
+    #[test]
+    fn a_fresh_checkout_loads_committed_state_and_dirties_only_the_edited_document() {
+        let out = own_dir("fresh-checkout");
+        let mut s = every_kind_graph();
+        s.out = out.clone();
+        let a = "# Orders\nAn order holds a payment.\n\n## Paying\nAn order is paid.\n";
+        let b = "# Payments\nA payment settles an order.\n";
+        let parse = |docs: &[(&str, &str)]| -> crate::reconcile::ParsedDocs {
+            docs.iter()
+                .map(|(d, t)| (d.to_string(), (hash_hex(t), crate::md::parse_sections(t))))
+                .collect()
+        };
+        s.sync_docs(&parse(&[("orders.md", a), ("payments.md", b)]));
+        s.save();
+        let derived = serde_json::to_value((&s.graph.relationships, &s.graph.state_machines)).unwrap();
+        assert!(!s.graph.relationships.is_empty() && !s.graph.state_machines.is_empty());
+        // What a clone carries: the committed paths only.
+        for local in ["graph/relationships", "graph/state-machines", "journal", "diagrams", "trace"] {
+            crate::vfs::remove_dir_all(out.join(local)).ok();
+        }
+        crate::vfs::remove_file(out.join(".lock")).ok();
+        let committed: Vec<String> = tree_bytes(&out).into_keys().collect();
+        assert!(committed
+            .iter()
+            .all(|p| crate::document_sets::committed(&format!(".jazyk/ds_main/{p}"))), "{committed:?}");
+        let mut opened = Store::load(&out);
+        assert!(opened.load_errors.is_empty(), "{:?}", opened.load_errors);
+        assert_eq!(opened.status.generation, s.status.generation);
+        assert_eq!(
+            serde_json::to_value((&opened.graph.relationships, &opened.graph.state_machines)).unwrap(),
+            derived
+        );
+        assert!(opened.journal_entries().is_empty());
+        // The prose of one document changed on another branch.
+        let b2 = "# Payments\nA payment settles an order within a day.\n";
+        let dirty = opened.sync_docs_in_memory(&parse(&[("orders.md", a), ("payments.md", b2)]));
+        assert_eq!(
+            dirty.iter().map(|d| d.doc.as_str()).collect::<Vec<_>>(),
+            vec!["payments.md"]
+        );
+        // A commit on the checkout continues the generation and writes the derived kinds.
+        let mut opened = Store::load(&out);
+        let generation = opened.status.generation;
+        let r = opened.apply(vec![create("ent:refund", "Refund")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(opened.status.generation, generation + 1);
+        assert!(out.join("graph/relationships/rel~order%7Epayment.yaml").vexists());
+        assert!(out.join("graph/state-machines/sm~order.yaml").vexists());
     }
 
     fn wi() -> WorkItem {
@@ -8545,7 +8935,7 @@ mod tests {
         let read = Store::load(&dir);
         assert!(read.graph.entities.is_empty());
         assert_eq!(read.status.generation, 0);
-        assert!(dir.join("graph").join("entities.yaml").vexists());
+        assert!(dir.join("graph/entities/ent~cart.yaml").vexists());
         let bak = dir.with_file_name(format!(
             "{}.bak",
             dir.file_name().unwrap().to_string_lossy()
@@ -8554,7 +8944,7 @@ mod tests {
         let fresh = Store::open_for_build(&dir);
         assert!(fresh.graph.entities.is_empty());
         assert!(!dir.join("status.yaml").vexists());
-        assert!(bak.join("graph").join("entities.yaml").vexists());
+        assert!(bak.join("graph/entities/ent~cart.yaml").vexists());
         // A second archive replaces the first.
         crate::vfs::create_dir_all(&dir).unwrap();
         crate::vfs::write(dir.join("status.yaml"), "version: 1\ngeneration: 2\n").unwrap();

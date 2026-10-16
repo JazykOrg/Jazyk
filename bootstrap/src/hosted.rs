@@ -277,6 +277,33 @@ fn set_projection(
     let source = read_text(source_paths)?;
     let mut candidate = source.clone();
     candidate.extend(read_text(accepted)?);
+    // The set's committed compiler state rides with the delivery, so the receiving
+    // repository compiles incrementally from it. Local state stays in the snapshot.
+    // Mirrors docs/compiler/hosted-runtime.md#source-and-delivery-projections.
+    let out_prefix = p
+        .out
+        .strip_prefix(root())
+        .ok()
+        .and_then(|o| o.to_str())
+        .map(|o| format!("{o}/"));
+    if let Some(text) = files
+        .get(".jazyk/.gitignore")
+        .and_then(|b| std::str::from_utf8(b).ok())
+    {
+        candidate.insert(".jazyk/.gitignore".into(), text.to_owned());
+    }
+    if let Some(prefix) = out_prefix {
+        for (name, bytes) in files.range(prefix.clone()..) {
+            if !name.starts_with(&prefix) {
+                break;
+            }
+            if crate::document_sets::committed(name) {
+                let content = std::str::from_utf8(bytes)
+                    .map_err(|_| format!("projected file is not UTF-8 text: {name}"))?;
+                candidate.insert(name.clone(), content.to_owned());
+            }
+        }
+    }
     let criteria = store
         .graph
         .criteria
@@ -615,6 +642,12 @@ mod tests {
             ("spec/product/draft.py", "unrecorded output"),
             ("spec/product/build.zip", "built output"),
             (".jazyk/ds_main/gen/judge.md", "LLM judgment criteria"),
+            (".jazyk/.gitignore", crate::document_sets::IGNORE),
+            (".jazyk/ds_main/journal/g1.yaml", "build: g1\n"),
+            (".jazyk/ds_main/diagrams/class/alpha.svg", "<svg/>"),
+            (".jazyk/ds_main/graph/relationships/rel~a%7Eb.yaml", "members: []\n"),
+            (".jazyk/ds_main/trace/run.jsonl", "{}"),
+            (".jazyk/ds_main/control.yaml", "compile: auto\n"),
         ] {
             w.files.insert(path.into(), text.as_bytes().to_vec());
         }
@@ -687,7 +720,26 @@ mod tests {
                 .files
                 .contains_key(&format!("spec/product/{path}")));
         }
-        assert_eq!(projection.files.len(), projection.source.len() + 4);
+        // The set's committed compiler state rides with the delivery; local state does
+        // not (docs/compiler/hosted-runtime.md#source-and-delivery-projections).
+        let state: Vec<&str> = projection
+            .files
+            .keys()
+            .map(String::as_str)
+            .filter(|p| p.starts_with(".jazyk/") && *p != ".jazyk/jazyk.toml")
+            .collect();
+        assert_eq!(
+            state,
+            vec![
+                ".jazyk/.gitignore",
+                ".jazyk/ds_main/gen/judge.md",
+                ".jazyk/ds_main/gen/ledger.yaml",
+                ".jazyk/ds_main/graph/criteria/crit~stable.yaml",
+                ".jazyk/ds_main/status.yaml",
+            ]
+        );
+        assert_eq!(projection.files.len(), projection.source.len() + 4 + state.len());
+        assert!(!projection.source.keys().any(|p| p.starts_with(".jazyk/ds_main/")));
         assert_eq!(
             projection.source["notes.txt"],
             "An existing human file, edited."
@@ -1073,20 +1125,20 @@ mod tests {
     #[test]
     fn hosted_requests_write_no_graph_snapshots_and_drop_old_ones() {
         let mut w = workspace("Alpha");
-        w.files.insert(".jazyk/ds_main/graph/entities.yaml".into(), b"{}\n".to_vec());
-        w.files.insert(".jazyk/ds_main/status.yaml".into(), b"version: 2\n".to_vec());
+        w.files.insert(".jazyk/ds_main/graph/entities/ent~a.yaml".into(), b"name: A\n".to_vec());
+        w.files.insert(".jazyk/ds_main/status.yaml".into(), format!("version: {}\n", crate::store::STORE_VERSION).into_bytes());
         {
             let fs = crate::vfs::Scope::enter(&w.files);
             crate::store::snapshot_graph(&root().join(".jazyk/ds_main"), "b:one");
             assert!(!fs.snapshot().keys().any(|p| p.contains("/snapshots/")));
         }
         w.files.insert(
-            ".jazyk/ds_main/snapshots/b_old/graph/entities.yaml".into(),
-            b"{}\n".to_vec(),
+            ".jazyk/ds_main/snapshots/b_old/graph/entities/ent~a.yaml".into(),
+            b"name: A\n".to_vec(),
         );
         w.files.insert(
             ".jazyk/ds_main/snapshots/b_old/status.yaml".into(),
-            b"version: 2\n".to_vec(),
+            format!("version: {}\n", crate::store::STORE_VERSION).into_bytes(),
         );
         let reply = w
             .request("GET", "/api/capabilities", "", &Execution::default())
@@ -1094,7 +1146,7 @@ mod tests {
         assert_eq!(reply.status, 200);
         let files = w.snapshot();
         assert!(!files.keys().any(|p| p.contains("/snapshots/")), "{:?}", files.keys());
-        assert!(files.contains_key(".jazyk/ds_main/graph/entities.yaml"));
+        assert!(files.contains_key(".jazyk/ds_main/graph/entities/ent~a.yaml"));
         assert!(files.contains_key(".jazyk/ds_main/status.yaml"));
     }
 

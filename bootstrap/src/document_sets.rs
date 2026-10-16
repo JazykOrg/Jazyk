@@ -9,7 +9,82 @@ use std::path::{Path, PathBuf};
 
 pub const CONFIG: &str = ".jazyk/jazyk.toml";
 pub const EMPTY_CONFIG: &str = "version = 1\nsets = []\n";
-pub const IGNORE: &str = "*\n!jazyk.toml\n!.gitignore\n";
+// The generated `.jazyk/.gitignore`: everything ignored, then the configuration and
+// each set's committed state kept. Mirrors docs/compiler/document-sets.md#persistence-and-identity
+// and docs/compiler/graph.md#committed-and-local-state; `committed` is the same rule.
+pub const IGNORE: &str = "*
+!/jazyk.toml
+!/.gitignore
+!/ds_*/
+/ds_*.bak/
+!/ds_*/status.yaml
+!/ds_*/docs/
+!/ds_*/docs/**
+!/ds_*/graph/
+!/ds_*/graph/entities/
+!/ds_*/graph/entities/*.yaml
+!/ds_*/graph/requirements/
+!/ds_*/graph/requirements/*.yaml
+!/ds_*/graph/criteria/
+!/ds_*/graph/criteria/*.yaml
+!/ds_*/graph/views/
+!/ds_*/graph/views/*.yaml
+!/ds_*/graph/diagnostics/
+!/ds_*/graph/diagnostics/*.yaml
+!/ds_*/graph/redirects/
+!/ds_*/graph/redirects/*.yaml
+!/ds_*/gen/
+!/ds_*/gen/**
+.*.tmp
+";
+
+// Ignore files an earlier Jazyk generated: replaced by `IGNORE` on the next write.
+const EARLIER_IGNORES: [&str; 1] = ["*\n!jazyk.toml\n!.gitignore\n"];
+
+// Write `.jazyk/.gitignore` when it is absent or still an earlier generated one. A
+// file with other content is the owner's and stays. Returns whether it wrote.
+pub fn ensure_ignore(root: &Path) -> std::io::Result<bool> {
+    let path = root.join(".jazyk/.gitignore");
+    match crate::vfs::read_to_string(&path) {
+        Ok(text) if text == IGNORE || !EARLIER_IGNORES.contains(&text.as_str()) => Ok(false),
+        Ok(_) => crate::vfs::write(&path, IGNORE).map(|()| true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            crate::vfs::create_dir_all(root.join(".jazyk"))?;
+            crate::vfs::write(&path, IGNORE).map(|()| true)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+// Whether a project-relative path is committed state, by the rule `IGNORE` states.
+pub fn committed(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(".jazyk/") else {
+        return false;
+    };
+    if matches!(rest, "jazyk.toml" | ".gitignore") {
+        return true;
+    }
+    let mut parts = rest.split('/');
+    let Some(set) = parts.next() else { return false };
+    if !set.starts_with("ds_") || set.ends_with(".bak") {
+        return false;
+    }
+    let inner: Vec<&str> = parts.collect();
+    if inner
+        .iter()
+        .any(|c| c.is_empty() || (c.len() > 4 && c.starts_with('.') && c.ends_with(".tmp")))
+    {
+        return false;
+    }
+    match inner.as_slice() {
+        ["status.yaml"] => true,
+        ["docs", _, ..] | ["gen", _, ..] => true,
+        ["graph", kind, file] => {
+            crate::store::COMMITTED_KINDS.contains(kind) && file.ends_with(".yaml")
+        }
+        _ => false,
+    }
+}
 pub type Result<T> = std::result::Result<T, (u16, String)>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -414,10 +489,7 @@ pub fn atomic_config(root: &Path, text: &str, base_hash: &str) -> Result<()> {
         crate::vfs::remove_file(&tmp).ok();
         return Err((500, e.to_string()));
     }
-    let ignore = root.join(".jazyk/.gitignore");
-    if !ignore.vexists() {
-        crate::vfs::write(ignore, IGNORE).map_err(|e| (500, e.to_string()))?;
-    }
+    ensure_ignore(root).map_err(|e| (500, e.to_string()))?;
     Ok(())
 }
 
@@ -615,6 +687,114 @@ pub fn safe_relative(root: &Path, relative: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The generated ignore file is the block the docs state, byte for byte.
+    // Mirrors docs/compiler/document-sets.md#persistence-and-identity.
+    #[test]
+    fn the_generated_ignore_file_is_the_documented_one() {
+        let doc = include_str!("../../docs/compiler/document-sets.md");
+        assert!(doc.contains(&format!("```\n{}```\n", IGNORE)), "docs and IGNORE disagree");
+        for kind in crate::store::COMMITTED_KINDS {
+            assert!(IGNORE.contains(&format!("!/ds_*/graph/{kind}/*.yaml\n")), "{kind}");
+        }
+        for kind in crate::store::DERIVED_KINDS {
+            assert!(!IGNORE.contains(kind), "{kind}");
+        }
+    }
+
+    // Written when absent or still an earlier generated file; an owner's file stays.
+    #[test]
+    fn ensure_ignore_writes_absent_and_earlier_files_and_keeps_the_owners() {
+        let f = Fixture::new();
+        let path = f.0.join(".jazyk/.gitignore");
+        assert!(ensure_ignore(&f.0).unwrap());
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), IGNORE);
+        assert!(!ensure_ignore(&f.0).unwrap());
+        crate::vfs::write(&path, EARLIER_IGNORES[0]).unwrap();
+        assert!(ensure_ignore(&f.0).unwrap());
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), IGNORE);
+        crate::vfs::write(&path, "*\n!jazyk.toml\n").unwrap();
+        assert!(!ensure_ignore(&f.0).unwrap());
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), "*\n!jazyk.toml\n");
+    }
+
+    const CHECKOUT_PATHS: [(&str, bool); 34] = [
+        (".jazyk/jazyk.toml", true),
+        (".jazyk/.gitignore", true),
+        (".jazyk/ds_main/status.yaml", true),
+        (".jazyk/ds_main/docs/docs/main.md.yaml", true),
+        (".jazyk/ds_main/docs/a/b/c.md.yaml", true),
+        (".jazyk/ds_main/graph/entities/ent~order.yaml", true),
+        (".jazyk/ds_main/graph/requirements/req~main-1.yaml", true),
+        (".jazyk/ds_main/graph/criteria/crit~main-1.yaml", true),
+        (".jazyk/ds_main/graph/views/view~class+shop.yaml", true),
+        (".jazyk/ds_main/graph/diagnostics/diag~lint-1.yaml", true),
+        (".jazyk/ds_main/graph/redirects/ent~old.yaml", true),
+        (".jazyk/ds_main/gen/ledger.yaml", true),
+        (".jazyk/ds_main/gen/criteria/crit-main-1.md", true),
+        (".jazyk/ds_main/gen/judge.md", true),
+        (".jazyk/ds_b/status.yaml", true),
+        (".jazyk/ds_main/graph/relationships/rel~a%7Eb.yaml", false),
+        (".jazyk/ds_main/graph/state-machines/sm~order.yaml", false),
+        (".jazyk/ds_main/graph/entities/.ent~order.yaml.12.tmp", false),
+        (".jazyk/ds_main/graph/entities/notes.txt", false),
+        (".jazyk/ds_main/journal/g1.yaml", false),
+        (".jazyk/ds_main/diagrams/class/shop.svg", false),
+        (".jazyk/ds_main/docsgen/order.md", false),
+        (".jazyk/ds_main/trace/run.jsonl", false),
+        (".jazyk/ds_main/sessions/s.jsonl", false),
+        (".jazyk/ds_main/snapshots/b_1/status.yaml", false),
+        (".jazyk/ds_main/control.yaml", false),
+        (".jazyk/ds_main/workers/w.yaml", false),
+        (".jazyk/ds_main/leases/build.yaml", false),
+        (".jazyk/ds_main/.lock", false),
+        (".jazyk/ds_main/feedback.jsonl", false),
+        (".jazyk/ds_main/decompile/drafts.yaml", false),
+        (".jazyk/ds_main.bak/status.yaml", false),
+        (".jazyk/sessions/chat.jsonl", false),
+        (".jazyk/project.lock", false),
+    ];
+
+    // `committed` answers what the ignore file answers. With a git binary at hand the
+    // test asks git itself which files a checkout would add.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn committed_state_follows_the_ignore_file() {
+        for (path, want) in CHECKOUT_PATHS {
+            assert_eq!(committed(path), want, "{path}");
+        }
+        let f = Fixture::new();
+        ensure_ignore(&f.0).unwrap();
+        crate::vfs::write(f.0.join(CONFIG), EMPTY_CONFIG).unwrap();
+        for (path, _) in CHECKOUT_PATHS {
+            let p = f.0.join(path);
+            crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
+            if !p.vexists() {
+                crate::vfs::write(&p, "x: 1\n").unwrap();
+            }
+        }
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&f.0)
+                .output()
+        };
+        if !run(&["init", "-q"]).is_ok_and(|o| o.status.success()) {
+            eprintln!("no git binary; the ignore file was checked by `committed` alone");
+            return;
+        }
+        let listed = run(&["ls-files", "--others", "--exclude-standard", "--", ".jazyk"]).unwrap();
+        let listed: BTreeSet<String> = String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .map(String::from)
+            .collect();
+        let want: BTreeSet<String> = CHECKOUT_PATHS
+            .iter()
+            .filter(|(_, c)| *c)
+            .map(|(p, _)| p.to_string())
+            .collect();
+        assert_eq!(listed, want);
+    }
 
     #[cfg(unix)]
     #[test]

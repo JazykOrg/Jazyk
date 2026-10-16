@@ -17,9 +17,10 @@ paths resolve from the project folder. Machine settings stay in
   An empty set list is a configured project with no documents assigned.
 - `id` is immutable and unique. `name` is required and unique within the project
   after trimming and case folding. Names can contain spaces and Unicode.
-- `docs` is a nonempty ordered pattern list. It can temporarily match zero files,
-  e.g. a newly selected empty folder. A warning names every positive pattern that
-  currently matches nothing. It does not silently expand the selection.
+- `docs` is an ordered pattern list. It can be empty (a set with no documents yet,
+  the first one added later) or temporarily match zero files, e.g. a newly selected
+  empty folder. A list of exclusions alone is rejected. A warning names every
+  positive pattern that currently matches nothing. It does not silently expand the selection.
 - `roots` is an optional ordered list of entry-point globs over that set's effective
   documents. Report unmatched positive patterns. Omission retains the current
   no-roots behavior, including document scheduling in path order.

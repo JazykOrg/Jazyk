@@ -130,7 +130,7 @@ rules it obeys:
   creates as the next burst.
 - Chat sessions, answer sessions, and follow sessions use the `[acp]` agent. The
   overrides apply to goal work only.
-- Per-kind and per-class token costs land in `status.yaml` (`costs.by_kind`,
+- Per-kind and per-class token costs land in `build.yaml` (`costs.by_kind`,
   `costs.by_class`), so the choice is informed by what each kind spends. The resolved
   executor is recorded on the session's trace (`batchStart`, `sessionStart`) and on
   the worker record the control plane writes for the session.

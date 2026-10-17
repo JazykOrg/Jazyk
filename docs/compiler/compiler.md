@@ -63,8 +63,8 @@ ACP bridge are shared with every frontend.
 
 ### The store
 
-The [graph store](./graph.md) is the persistent home of the graph: one YAML shard per
-node kind under `graph/`, section trees and coverage under `docs/`, the journal, and
+The [graph store](./graph.md) is the persistent home of the graph: one YAML file per
+node under `graph/<kind>/`, section trees and coverage under `docs/`, the journal, and
 `status.yaml`. It commits [changesets](./graph.md#changesets) atomically behind the
 validation gates, recomputes [derived data](./graph.md#derived-data) on every commit,
 writes the [change records](./graph.md#change-records) that goal derivation reads,
@@ -198,9 +198,10 @@ free.
 Everything lives in the out directory (default `.jazyk/`). See
 [storage layout](./graph.md#storage-layout).
 
-- `graph/`: the semantic graph, the primary output. Authored shards `entities.yaml`,
-  `requirements.yaml`, `views.yaml`, `diagnostics.yaml`, `redirects.yaml`. Derived
-  shards `relationships.yaml` and `state-machines.yaml`, rewritten on every commit.
+- `graph/`: the semantic graph, the primary output, one file per node
+  ([node files](./graph.md#node-files)). Authored kinds `entities/`, `requirements/`,
+  `criteria/`, `views/`, `diagnostics/`, `redirects/`. Derived kinds `relationships/`
+  and `state-machines/`, rewritten on every commit.
 - `docs/`: section trees and coverage per document.
 - `diagrams/`: one `.puml` and one `.svg` per view under `<kind>/<slug>`, `.png` beside
   them on request. Build output, never read back. See
@@ -215,11 +216,16 @@ Everything lives in the out directory (default `.jazyk/`). See
 - `journal/`: one entry per generation, the audit trail of every change and the ground
   truth behind `jazyk ripple`.
 - `trace/` and `sessions/`: session transcripts and the ACP session store.
-- `status.yaml`: the store `version`, the generation, the verdict with its counts, the
-  change records, parked and failed goals, costs per goal kind and class, and the
-  alignment and re-evaluation blocks.
+- `status.yaml`: the store `version`, the change records, parked and failed goals, and
+  the alignment and re-evaluation blocks.
+- `build.yaml`: the generation, the verdict with its counts, and costs per goal kind
+  and class. Local.
 - `control.yaml`, `workers/`, `leases/`: the control plane. `feedback.jsonl`: what
   sessions reported through `report_feedback`. `.lock`: the store lock.
+
+A repository commits `status.yaml`, the non-derived node files, `docs/`, and `gen/`,
+and ignores the rest
+([committed and local state](./graph.md#committed-and-local-state)).
 
 `jazyk check` exits non-zero when open diagnostics of severity `error` exist. See
 [CLI](../frontends/cli.md#jazyk-check).

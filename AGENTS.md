@@ -68,13 +68,24 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   mutation will open; `mark_goal_done` is validated against the kind's gate and takes
   a one-line justification; `mark_goal_failed` is always available; `done` runs batch
   gates; the changeset commits atomically, or the session retries once and parks.
-- The store: YAML shards under `.jazyk/graph/`, natural-key upserts, changesets
-  committed atomically behind `.lock`, one journal entry per generation with
-  `opened_goals` and `resolved_goals` (each with its justification; a human save that
-  dirties sections journals as an `edit` entry, so every ripple roots in a generation),
-  the deterministic GC sweep at commit, `version: 2` in `status.yaml` (a mismatch
-  archives the out directory to `.jazyk.bak` and the next build reconciles from
-  empty; no migration code, ever).
+- The store: one YAML file per node under `.jazyk/<set>/graph/<kind>/`, named by a
+  reversible file id (`ent:order` → `ent~order.yaml`; past 180 bytes a prefix and a
+  hash, with the full id inside), natural-key upserts, changesets committed atomically
+  behind `.lock`, one journal entry per generation with `opened_goals` and
+  `resolved_goals` (each with its justification; a human save that dirties sections
+  journals as an `edit` entry, so every ripple roots in a generation), the
+  deterministic GC sweep at commit, `version: 3` in `status.yaml` (a mismatch archives
+  the out directory to `<out>.bak` and the next build reconciles from empty; no
+  migration code, ever).
+- Committed and local state: a repository commits each set's `status.yaml` (only what
+  goal derivation reads), the non-derived node files, `docs/`, and `gen/`, so any
+  commit of any branch compiles incrementally. Everything else is local: derived
+  relationships and state machines (recomputed at load when missing), diagrams,
+  docsgen, the journal, logs, the control plane, and `build.yaml` (the generation,
+  the last verdict, costs, spend). The generation is a local counter raised at load to
+  the highest generation `status.yaml` names, so parallel branches never conflict on
+  it. The engine generates `.jazyk/.gitignore` from this split
+  (`docs/compiler/graph.md#committed-and-local-state`).
 - Derived data, recomputed on every commit, no write tool: relationships from
   requirement `edges` (one node per pair, contributions grouped by direction and type,
   a typeless edge counts as `dependency`), state machines from `transition` facets (one
@@ -147,14 +158,15 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `cases/` (the case files are embedded into the binary at compile time; they are
   fixtures, excluded from the docs glob), known-results.yaml (embedded too).
 - `.jazyk/jazyk.toml`: the live project file with named document sets.
-  The dogfood graph lands in `.jazyk/ds_main/`
-  (gitignored): `graph/*.yaml` shards (entities, requirements, views, diagnostics,
-  redirects; derived relationships and state-machines rewritten every commit), `docs/`
-  section trees + coverage, `journal/g<N>.yaml`, `diagrams/<kind>/<slug>.puml` and
-  `.svg`, `docsgen/`, `gen/`, `trace/`, `sessions/`, `status.yaml` (version,
-  generation, verdict, change records, parked, failed, costs).
+  The dogfood graph lands in `.jazyk/ds_main/` (this repository's root `.gitignore`
+  keeps it out of git): `graph/<kind>/<file id>.yaml` node files (entities,
+  requirements, criteria, views, diagnostics, redirects; derived relationships and
+  state-machines rewritten every commit), `docs/` section trees + coverage,
+  `journal/g<N>.yaml`, `diagrams/<kind>/<slug>.puml` and `.svg`, `docsgen/`, `gen/`,
+  `trace/`, `sessions/`, `status.yaml` (version, change records, parked, failed,
+  alignment, lookalikes), `build.yaml` (generation, verdict, costs, spend).
 - `bootstrap/src/`: model.rs (node kinds, provenance, change records, journal entry,
-  status), store.rs (shards, natural keys, changesets, gates at commit, journal, GC
+  status), store.rs (node files and file ids, the status split, natural keys, changesets, gates at commit, journal, GC
   sweep, store version and archive), limits.rs (the limits registry and the session and
   build budgets), derive.rs (relationships, state machines, default views, flow
   clustering), goals.rs (the `GoalKind` registry trait, one implementation per kind,
@@ -253,6 +265,8 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
   the history is a ledger of the work and nothing is lost between sessions. Never leave
   the tree dirty at the end of a step.
 - Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and generated state inside `.jazyk`
-  are gitignored. Commit `.jazyk/jazyk.toml` and `.jazyk/.gitignore`.
+  are gitignored. Commit `.jazyk/jazyk.toml` and `.jazyk/.gitignore`. In this
+  repository the root `.gitignore` also keeps every set's compiled state out, so the
+  dogfood and the examples commit only their configuration.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys
   `site/` to jazyk.org via GitHub Actions.

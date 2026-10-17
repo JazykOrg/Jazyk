@@ -493,7 +493,7 @@ is a board where every section is unprocessed); the other toolsets answer with
 guidance to compile first. `report_feedback` answers either way: it writes only the
 feedback log, never the graph.
 
-Readers do not lock. They read the generation counter, load shards, and retry if the
+Readers do not lock. They read the generation counter, load the node files, and retry if the
 counter moved mid-read. Writers respect the store lock, so one changeset commits at a
 time even with a compile running next to the server. See
 [concurrency](../compiler/graph.md#concurrency).

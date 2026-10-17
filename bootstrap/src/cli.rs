@@ -185,8 +185,7 @@ pub(crate) const INIT_TOML: &str = crate::document_sets::EMPTY_CONFIG;
 // stray line of prose corrupts the stream.
 pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String> {
     crate::vfs::create_dir_all(cwd.join(".jazyk")).map_err(|e| e.to_string())?;
-    let path = cwd.join(".jazyk/.gitignore");
-    if !path.vexists() { crate::vfs::write(path, crate::document_sets::IGNORE).map_err(|e| e.to_string())?; }
+    crate::document_sets::ensure_ignore(cwd).map_err(|e| e.to_string())?;
     Ok(vec![])
 }
 

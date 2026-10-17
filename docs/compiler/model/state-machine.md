@@ -48,7 +48,7 @@ On every commit, after the changeset lands:
 - `initial` is the state with no incoming transition when exactly one such state exists.
   With none or several, `initial` is absent.
 - Arrows are ordered by their lowest requirement id and `requirements` within an arrow
-  by id, so the shard diffs cleanly.
+  by id, so the file diffs cleanly.
 - A machine whose last transition disappears is removed. Nothing retraces it: the default
   `state` view that renders it is removed at the same commit, and a curated `state` or
   `timing` view over the subject renders without it.

@@ -148,7 +148,7 @@ built-in default. The scheduler resolves the executor per kind before it batches
 goals whose kinds resolve to different executors never share a batch
 ([batching](./reconciler.md#batching)), so every batch has exactly one executor. The
 resolved profile is recorded on the session's trace and its worker file, and per-kind
-cost accounting in `status.yaml` (`costs.by_kind`, `costs.by_class`) is what makes the
+cost accounting in `build.yaml` (`costs.by_kind`, `costs.by_class`) is what makes the
 choice informed.
 
 ## Dispatch

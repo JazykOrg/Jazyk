@@ -249,7 +249,7 @@ choice is unambiguous because the scheduler resolves the executor per kind befor
 batches ([executors](./control-plane.md#executors),
 [batching](./reconciler.md#batching)). Chat sessions, answer sessions, and follow
 sessions always use the `[acp]` agent. The resolved profile is recorded on the session's trace and worker file, and
-per-kind and per-class token costs in `status.yaml` (`costs`) are what make the choice
+per-kind and per-class token costs in `build.yaml` (`costs`) are what make the choice
 informed ([storage layout](./graph.md#storage-layout)). Editing the table is a
 [project tool](../frontends/acp.md#project-tools) in chat too.
 

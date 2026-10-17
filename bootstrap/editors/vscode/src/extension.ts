@@ -94,7 +94,7 @@ async function startClient(): Promise<void> {
       // instantly without server-side polling.
       fileEvents: [
         vscode.workspace.createFileSystemWatcher('**/*.md'),
-        vscode.workspace.createFileSystemWatcher('**/.jazyk/*/status.yaml'),
+        vscode.workspace.createFileSystemWatcher('**/.jazyk/*/{status,build}.yaml'),
         vscode.workspace.createFileSystemWatcher('**/.jazyk/jazyk.toml'),
       ],
     },

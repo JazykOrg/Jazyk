@@ -458,16 +458,11 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
     } else {
         (root.join(".jazyk").join("graph"), "the project's current graph (no snapshot for this batch)")
     };
-    let read_shard = |name: &str| -> serde_json::Map<String, Value> {
-        std::fs::read_to_string(graph_dir.join(name))
-            .ok()
-            .and_then(|t| serde_norway::from_str::<Value>(&t).ok())
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default()
-    };
-    let ents = read_shard("entities.yaml");
-    let reqs = read_shard("requirements.yaml");
-    let views = read_shard("views.yaml");
+    // One file per node (docs/compiler/graph.md#node-files).
+    let read_kind = |kind: &str| crate::store::read_node_values(&graph_dir.join(kind));
+    let ents = read_kind("entities");
+    let reqs = read_kind("requirements");
+    let views = read_kind("views");
     let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let id_re = regex::Regex::new(r"(ent|req|view|crit):[A-Za-z0-9_.-]+").unwrap();
     for g in &goals {

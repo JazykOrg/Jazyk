@@ -12,32 +12,32 @@ runs inside it. One graph per project, edited in place, never regenerated.
 
 ## Storage layout
 
-The store lives in the project's out directory (default `.jazyk/`, beside
-`jazyk.toml`; `--out DIR` moves it). All files are YAML,
-sorted by key, so builds diff cleanly in git. The schema is
-[`graph.schema.yaml`](./graph.schema.yaml). The directory is a dotfolder so it stays
-out of the way in a project's listing, the same convention as `.git`; a project's
-`.gitignore` names it (`.jazyk` and `.jazyk.*`, the latter the archives). A
-`jazyk-out/` directory from before the name changed is never read and never
-compiled ([glob](./project-settings.md#glob)): move it to
-`.jazyk/` to keep its graph, or leave it and the next build reconciles from empty.
+The store lives in the set's out directory (`.jazyk/<set-id>/`, beside
+`jazyk.toml`; `--out DIR` moves it). All files are YAML, keys in a fixed order and maps sorted by key, so
+builds diff cleanly in git. The schema is [`graph.schema.yaml`](./graph.schema.yaml).
+The directory is a dotfolder so it stays out of the way in a project's listing, the
+same convention as `.git`. The generated `.jazyk/.gitignore` decides what a repository
+commits ([committed and local state](#committed-and-local-state)). A `jazyk-out/`
+directory from before the name changed is never read and never compiled
+([glob](./project-settings.md#glob)): move it to `.jazyk/` to keep its graph, or leave
+it and the next build reconciles from empty.
 
 ```
-.jazyk/
-  status.yaml            # version, generation, verdict, change records, parked and
-                         # failed goals, costs, budgets spent, open diagnostic counts
-                         # by severity, pending alignment proposals, anchors marked
-                         # for re-evaluation, stamped root documents, lookalike
-                         # verdicts
-  graph/
-    entities.yaml        # map: id -> entity
-    requirements.yaml    # map: id -> requirement
-    criteria.yaml        # map: id -> criterion (absent reads as empty)
-    views.yaml           # map: id -> view (curated views and the defaults the store derives)
-    diagnostics.yaml     # map: id -> diagnostic
-    redirects.yaml       # map: absorbed id -> surviving id
-    relationships.yaml   # map: id -> relationship (derived, rewritten on every commit)
-    state-machines.yaml  # map: id -> state machine (derived, rewritten on every commit)
+.jazyk/<set-id>/
+  status.yaml            # version, change records, parked and failed goals, pending
+                         # alignment proposals, anchors marked for re-evaluation,
+                         # stamped root documents, lookalike verdicts
+  build.yaml             # local: generation, verdict, costs, budgets spent, open
+                         # diagnostic counts by severity
+  graph/                 # one file per node, see node files
+    entities/<file id>.yaml        # one entity
+    requirements/<file id>.yaml    # one requirement
+    criteria/<file id>.yaml        # one criterion
+    views/<file id>.yaml           # one view (curated or a default the store derives)
+    diagnostics/<file id>.yaml     # one diagnostic
+    redirects/<file id>.yaml       # one absorbed id: `to: <surviving id>`
+    relationships/<file id>.yaml   # one relationship (derived, rewritten on every commit)
+    state-machines/<file id>.yaml  # one state machine (derived, rewritten on every commit)
   docs/
     <mirrored doc path>.yaml   # per document: content hash, section tree, coverage
   journal/
@@ -50,13 +50,14 @@ compiled ([glob](./project-settings.md#glob)): move it to
   trace/                 # session transcripts
   sessions/
     <session id>.jsonl   # one chat conversation, see frontends/acp.md#session-store
+  snapshots/             # per-batch graph copies for replays, see sessions.md#snapshots
   control.yaml           # modes and releases, see control-plane.md
   workers/, leases/      # who is acting, see control-plane.md
   feedback.jsonl         # report_feedback entries
   .lock                  # single-writer lock
 ```
 
-The store owns `status.yaml`, `graph/`, `docs/`, and `journal/`. `diagrams/` is build
+The store owns `status.yaml`, `build.yaml`, `graph/`, `docs/`, and `journal/`. `diagrams/` is build
 output the renderer rewrites after every commit ([output layout](./diagrams.md#output-layout));
 deleting it loses nothing. The rest belongs to the control plane, the frontends, and the
 consumers.
@@ -69,24 +70,16 @@ Each document file under `docs/` holds:
 - `coverage`: map of internal reference → `state`, `note`, `claimedBy`. See
   [coverage](./compilation.md#coverage).
 
-`status.yaml` holds:
+`status.yaml` holds what goal derivation reads, and nothing that changes when the graph
+does not:
 
-- `version`: the store version, `2`.
-- `generation`: bumped on every commit.
-- `verdict`: `{state, open, failed, blocked, optional}`, the last build's
-  [convergence](./compilation.md#convergence) with its counts.
+- `version`: the store version, `3`.
 - `changes`: the open [change records](#change-records).
 - `parked`: the goals left open when a budget ran out, each entry the whole goal
   record. `failed`: `{goal, reason}` per goal a session marked failed, `goal` the whole
   record. Both persist whole, `change` payload included, so a parked or failed goal
   survives a re-derivation that would otherwise drop it. See
   [parked and failed](./reconciler.md#parked-and-failed).
-- `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
-  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`). The cost
-  of every build, by goal kind and by document, is read from the [journal](#journal)
-  instead ([`jazyk status --costs`](../frontends/cli.md#jazyk-status)).
-- `spent`: `{sessions, rounds, tokens}`, the budgets the last build used.
-- `diagnostics`: open diagnostic counts by severity, suppressed excluded.
 - `alignment`: pending [alignment proposals](./alignment.md#what-applies-and-what-is-proposed),
   one block per document. `reevaluate`: anchors placed with `reevaluate`, listed as
   stale until addressed.
@@ -98,32 +91,161 @@ Each document file under `docs/` holds:
   generation}` each, the memory that keeps a judged pair off the board while its score
   holds ([verdicts are remembered](./goals/dedupe-candidates.md#verdicts-are-remembered)).
 
+`build.yaml` holds what one checkout's runs leave behind. It is local
+([committed and local state](#committed-and-local-state)):
+
+- `generation`: bumped on every commit. See [the generation](#the-generation).
+- `verdict`: `{state, open, failed, blocked, optional}`, the last build's
+  [convergence](./compilation.md#convergence) with its counts.
+- `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
+  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`). The cost
+  of every build, by goal kind and by document, is read from the [journal](#journal)
+  instead ([`jazyk status --costs`](../frontends/cli.md#jazyk-status)).
+- `spent`: `{sessions, rounds, tokens}`, the budgets the last build used.
+- `diagnostics`: open diagnostic counts by severity, suppressed excluded.
+
+Readers see one status: a load reads both files. Two branches that built without
+changing the graph commit the same `status.yaml` bytes.
+
+### Node files
+
+Every node of the graph is one file under `graph/<kind>/`, so two branches that change
+different nodes touch different files and git merges them without a conflict.
+
+- The file name is the file id: the node id with `:` written as `~` and `/` written as
+  `+`. Lowercase ASCII letters, digits, `-`, `_`, and `.` stay as they are. Every other
+  byte (an uppercase letter, a byte of a non-ASCII character, a literal `~`, `+`, or `%`,
+  a leading `.`) is written `%XX` in uppercase hex. E.g.:
+
+  ```
+  ent:order            → graph/entities/ent~order.yaml
+  view:class/shop      → graph/views/view~class+shop.yaml
+  ent:čaj              → graph/entities/ent~%C4%8Daj.yaml
+  rel:order~payment    → graph/relationships/rel~order%7Epayment.yaml
+  ```
+
+- The encoding is reversible: the load reads each id back from its file name. No two
+  ids share a name, on a case-insensitive file system too.
+- A file id longer than 180 bytes is shortened: its first 160 bytes (cut before an
+  escape it would split), then `%~`, then the 16 lowercase hex digits of the 64-bit
+  FNV-1a hash of the whole id. E.g.: `ent~a-very-long-name…%~3f2a9c0d1e4b5a67.yaml`.
+  The file then holds the full id under `id`, and the load reads the id from there.
+  The plain form never writes `%~`, so a shortened name never meets a plain one; two
+  shortened ids meet only when both their prefixes and their hashes agree.
+- A file holds the node alone, its fields in a fixed order, maps sorted by key, ending
+  in a newline. A redirect file holds `to: <surviving id>`. Nothing in a file changes
+  unless the node changes: the same graph always writes the same bytes.
+- A save writes the files whose bytes changed and deletes the files of nodes that left
+  the graph. A file whose name does not decode, or whose content does not parse, makes
+  the store read-only ([writes and unreadable files](#writes-and-unreadable-files)).
+- Derived kinds (`relationships/`, `state-machines/`) are local
+  ([committed and local state](#committed-and-local-state)). A load that finds either
+  directory missing recomputes both from the requirements in memory. The next commit
+  writes them.
+
+### Committed and local state
+
+A repository commits the state a checkout needs to resume compiling without a rebuild.
+Everything else is local: rebuilt on demand, or a log of what ran.
+
+- Committed, per set:
+  - `status.yaml`: the open change records, parked and failed goals, alignment
+    proposals, lookalike verdicts. Goal derivation reads it.
+  - `graph/` except the derived kinds: entities, requirements, criteria, views,
+    diagnostics, redirects.
+  - `docs/`: the section trees and content hashes alignment compares against.
+  - `gen/`: the accepted generation and verification evidence
+    ([the ledger](../consumers/gen.md#the-ledger)) and the criteria files its `llm`
+    rows name.
+- Local, per set:
+  - `build.yaml`: the generation and the last build's verdict, costs, and spend. These
+    change on every run, so two branches would conflict on them at every merge.
+  - `graph/relationships/` and `graph/state-machines/`: derived, recomputed at load
+    when missing and on every commit.
+  - `diagrams/` and `docsgen/`: deterministic output, rewritten at every build's tail.
+  - `journal/`: the history of this checkout. Every commit mints `g<generation>.yaml`,
+    so two branches add different files under the same names, and a merge would
+    conflict on every one. See [a fresh checkout](#a-fresh-checkout).
+  - `trace/`, `sessions/`, `snapshots/`, `feedback.jsonl`: logs.
+  - `control.yaml`, `workers/`, `leases/`, `.lock`: who is acting here and what this
+    operator released. The workflow defaults come from `jazyk.toml`, which is
+    committed ([modes and releases](./control-plane.md#modes-and-releases)).
+  - Everything else under the out directory (decompile drafts, benchmark results,
+    previews, deliverable baselines, temporary files): local by default.
+- Local, per project: `sessions/`, `runs/`, `removed-sets/`, `project.lock`, `trace/`,
+  and the `.bak` archives of other store versions.
+
+The generated `.jazyk/.gitignore` states this split
+([persistence and identity](./document-sets.md#persistence-and-identity)). The
+[hosted runtime](./hosted-runtime.md#source-and-delivery-projections) publishes the
+same committed files.
+
+### A fresh checkout
+
+A checkout carries the committed state and none of the local state. The first command
+loads it as is. Nothing starts from empty.
+
+- A document edited outside Jazyk (on GitHub, in another editor) hashes differently
+  from its committed record under `docs/`. The next sync marks that document dirty, and
+  only that document reconciles ([dirty set](./reconciler.md#dirty-set)).
+- The derived kinds are recomputed at load. `diagrams/` and `docsgen/` are rewritten at
+  the next build's tail.
+- The journal starts empty and continues at the committed generation. History from
+  before the checkout is absent: `jazyk ripple` and `jazyk explain` see only local
+  generations, [flip detection](./reconciler.md#flip-detection) counts moves from the
+  checkout on, and `retract_decree` on a decree made elsewhere finds no prior value. It
+  deletes the decreed fact, and the next reconcile of its section extracts the quoted
+  fact again.
+- `control.yaml` is absent: modes read the `jazyk.toml` defaults and nothing is
+  released.
+- `build.yaml` is absent: the verdict and the costs read empty until the next build,
+  and the generation starts at the floor ([the generation](#the-generation)).
+
+### The generation
+
+The generation is a local counter. Two branches that commit from one base each bump it
+from the same number, so a committed counter would conflict on every parallel commit.
+Nothing in `status.yaml` counts commits, and its text merges cleanly when the branches
+changed different things.
+
+The ids the store mints from the generation (change records `c<generation>-<n>`,
+lookalike verdicts, journal files) must not repeat the ones a merged branch committed.
+A load therefore takes the generation as the larger of `build.yaml` and the floor: the
+highest generation any change record or lookalike verdict in `status.yaml` names. The
+next commit writes the result to `build.yaml`. A writer's `store-moved` check compares
+the same value.
+
+Node markers (`created`, `updated`) keep the generation of the checkout that wrote
+them. After a merge, two branches' markers can name the same number for different
+commits, and `jazyk ripple` follows the local journal only.
+
 ### Writes and unreadable files
 
-Every file the store writes (a shard, a doc record, a journal entry, `status.yaml`)
-lands through a sibling temporary file renamed into place, so a reader or a crash never
-sees a half-written file. `save` writes `status.yaml` last: its generation is the commit
-point a reader checks. A write that fails is reported with its path and the error,
+Every file the store writes (a node file, a doc record, a journal entry, `status.yaml`,
+`build.yaml`) lands through a sibling temporary file renamed into place, so a reader or
+a crash never sees a half-written file. `save` writes `build.yaml` last: its generation
+is the commit point a reader checks. A write that fails is reported with its path and the error,
 never dropped.
 
 A YAML write skips a file whose serialized bytes already equal the file on disk. A save
-rewrites only the shards and doc records that changed, so a commit that touches one
-shard leaves the others in place, and a save with nothing changed writes nothing. The
-order holds: changed shards and records first, then `status.yaml`. A commit always
-changes `status.yaml` (its generation moves), so the commit point is always written
-after the files it covers. A reader's generation check stays sound: an unchanged file
+rewrites only the node files and doc records that changed, so a commit that touches one
+node leaves the others in place, and a save with nothing changed writes nothing. The
+order holds: changed node files and records first, then the deletions of removed nodes,
+then `status.yaml`, then `build.yaml`. A commit always changes `build.yaml` (its
+generation moves), so the commit point is always written after the files it covers. A reader's generation check stays sound: an unchanged file
 reads the same before and after the commit.
 
 A file that exists but does not parse makes the store read-only. The load reports the
 file and the parse error, reads continue with what did parse, and every writer
 (`apply`, the sweep, record clearing, a persisting alignment) refuses with
-`store-unreadable` naming the file until it is repaired or removed. A shard is never
+`store-unreadable` naming the file until it is repaired or removed. A node file is never
 read as empty because it failed to parse: that would let the next commit overwrite it,
 and the sweep would collect the requirements of a document whose record did not load.
 
 ### Store version
 
-`status.yaml` carries `version: 2`. On load, an out directory whose `status.yaml` lacks
+`status.yaml` carries `version: 3`. Version 3 is the layout of [node files](#node-files);
+version 2 kept each kind in one shard. On load, an out directory whose `status.yaml` lacks
 `version` or carries a different one is archived whole to `<out>.bak` (a sibling
 directory; an existing `.bak` is replaced) and the store starts empty. The next build
 reconciles from the empty graph, the same way a first build does. There is no migration
@@ -807,7 +929,7 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   live one (a wait past ten seconds is reported, then continues). One changeset commits
   at a time.
 - A writer commits against the generation it loaded. Under the lock it re-reads the
-  generation in `status.yaml` and refuses with `store-moved` when another writer landed
+  generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
   first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites
   commits it has not seen. The caller reloads and restages.
 - Compilation is sequential: one build at a time (the build lease enforces it), one
@@ -816,4 +938,4 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   the same lock. A running session's staged creates are reconciled against them at
   commit by natural key ([changesets](#changesets)).
 - Readers (e.g. the [MCP server](../frontends/mcp.md)) do not lock. They read the generation
-  counter, load shards, and retry if the counter moved mid-read.
+  counter, load the node files, and retry if the counter moved mid-read.

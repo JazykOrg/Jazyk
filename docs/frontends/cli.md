@@ -317,7 +317,7 @@ refused retract with its reason, a failed answer session), `2` on a usage error.
 
 ### jazyk status
 
-`jazyk status [--json] [--costs]` summarizes `status.yaml` (see
+`jazyk status [--json] [--costs]` summarizes `status.yaml` and `build.yaml` (see
 [storage layout](../compiler/graph.md#storage-layout)) and the board. It reads only and
 takes no arguments; outside a project (no `jazyk.toml` above the working directory) it
 says so on stderr and reads the ad hoc store at the working directory. The lines, in
@@ -387,7 +387,7 @@ whole journal spent, so a change to a contract or a skill can be judged on cost 
 as on quality. It reads the [journal](../compiler/graph.md#journal) and the graph and
 nothing else: no board, no LLM call, no write. The journal spans every build since the
 store began (an [archive](../compiler/graph.md#store-version) starts it over), so the
-report covers every build, where `costs` in `status.yaml` covers the last one.
+report covers every build, where `costs` in `build.yaml` covers the last one.
 
 - A `session` entry's `tokens` is its measured spend: the tokens the endpoint billed,
   input and output of every round ([budgets](../compiler/sessions.md#budgets)), so the

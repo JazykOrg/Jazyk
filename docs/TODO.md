@@ -21,8 +21,6 @@ This scratch space is a live document to outline the work for this documentation
   [Jazyk Cloud plan](https://github.com/JazykOrg/jazyk-cloud/blob/master/plans/cloud/README.md).
   The native [API](./frontends/gui.md), [browser engine](./frontends/wasm.md), and
   [capability descriptor](./frontends/gui.md#backends-and-capabilities) stay here.
-- Per-entity file sharding for the [graph store](./compiler/graph.md#storage-layout), when
-  `entities.yaml` grows too large.
 - [Journal](./compiler/graph.md#journal) rotation: cap `journal/` growth, compact old
   changesets.
 - Custom [format handlers](./compiler/parsing.md#format-handlers); Markdown is the only
@@ -140,7 +138,7 @@ LocalRouter; the default local model fails judgment-heavy goals.
   the graph in one changeset without re-dirtying the document; a decree queues a
   ratification proposal, and accepting it flips the fact's provenance to `quote`
   ([edit paths](./compiler/compilation.md#edit-paths)).
-- [ ] The store version: an out directory without `version: 2` archives to
+- [ ] The store version: an out directory without `version: 3` archives to
   `.jazyk.bak` and the next build reconciles from the empty graph, on `f1` and on
   the dogfood.
 - [ ] Docs tree and binary agree: no page describes machinery the binary lacks, no

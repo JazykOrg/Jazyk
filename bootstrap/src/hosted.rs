@@ -447,6 +447,19 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     if method == "POST" && route == "/jobs" {
         let request = routed.body.clone();
         let kind = request["kind"].as_str().unwrap_or("compile");
+        if kind == "workflow" {
+            let tasks_only = crate::workflow::parse(&request["steps"]).is_ok_and(|steps|
+                steps.iter().all(|s| matches!(s, crate::workflow::Step::Task { .. })));
+            let p = match if tasks_only && routed.selector.is_none() { Ok(workspace.files_project()) } else { selected() } {
+                Ok(p) => p, Err((code, e)) => return Ok(Reply::json(code, json!({"error":e}))),
+            };
+            let steps = match crate::workflow::parse(&request["steps"]) {
+                Ok(steps) => steps, Err(e) => return Ok(Reply::json(400, json!({"error":e}))),
+            };
+            let result = crate::workflow::run(&p, &llm(), &steps, &trace())?;
+            return Ok(Reply::json(if result["state"] == "failed" {422} else {200},
+                json!({"kind":"workflow","report":result})));
+        }
         if matches!(kind, "verify" | "audit" | "gen") {
             let p = match selected() {
                 Ok(p) => p,
@@ -510,7 +523,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     if method == "GET" && route == "/capabilities" {
         return Ok(Reply::json(
             200,
-            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["compile","gen","verify","audit"],"agent":"embedded","model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
+            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
         ));
     }
     let envelope: Value =

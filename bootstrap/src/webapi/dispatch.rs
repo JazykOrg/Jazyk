@@ -751,6 +751,11 @@ pub(crate) fn request_scoped(
         ("GET", "/project/file") => {
             let rel = param(&q, "path").unwrap_or_default();
             match super::projfiles::project_file(&project().root, &rel) {
+                Ok(bytes) if param(&q, "binary").as_deref() == Some("true") => {
+                    use base64::Engine as _;
+                    ok(json!({"base64":base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        "contentType":super::outfiles::content_type(&rel)}))
+                }
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(text) => ok(Value::String(text)),
                     Err(_) => err(

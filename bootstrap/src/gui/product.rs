@@ -38,7 +38,7 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
         "binaryDocuments": crate::webapi::binary_documents::available(),
         "events": "stream",
         "lsp": true,
-        "jobs": ["build", "compile", "gen", "verify", "audit", "decompile", "benchmark"],
+        "jobs": ["workflow", "build", "compile", "gen", "verify", "audit", "decompile", "benchmark"],
         "agent": agent,
         "model": model,
         "rendering": "server",

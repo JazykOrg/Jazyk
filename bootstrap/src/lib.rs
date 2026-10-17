@@ -77,3 +77,5 @@ pub mod viewer;
 // The browser backend: the API dispatch, the seeded filesystem, the WebLLM bridge.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
+
+pub mod workflow;

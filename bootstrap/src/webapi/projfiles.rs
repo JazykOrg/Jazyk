@@ -78,11 +78,19 @@ fn rel_dir(root: &Path, dir: &Path) -> Option<String> {
 // and where the product and the out directory sit in it.
 pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[String]) -> Value {
     let mut acc = Vec::new();
-    walk(root, root, &mut acc, &mut Default::default(), &product_patterns(root), false);
+    let products = product_patterns(root);
+    walk(root, root, &mut acc, &mut Default::default(), &products, false);
     let workspace=crate::document_sets::Workspace::load(root).ok();
     let files: Vec<Value> = acc.into_iter().map(|(path, size)| {
         let memberships=workspace.as_ref().map(|w|w.memberships(&path)).unwrap_or_default();
-        json!({ "path": path, "size": size, "memberships":memberships })
+        let input = memberships.iter().any(|m| m["role"] == "docs")
+            || crate::document_sets::included(docs_glob, &path);
+        let product = !path.split('/').any(|p| p.starts_with('.'))
+            && path != "jazyk.toml"
+            && !root.join(&path).starts_with(out)
+            && (crate::task_runtime::matches(&products, &path)
+                || (!input && root.join(&path).starts_with(deliverable)));
+        json!({ "path": path, "size": size, "memberships":memberships, "product":product })
     }).collect();
     json!({
         "files": files,
@@ -303,6 +311,8 @@ mod tests {
             let listing = project_files(root, root, &root.join(".jazyk"), &[]);
             let paths: Vec<_> = listing["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
             assert!(paths.contains(&"target/book.txt"));
+            assert!(listing["files"].as_array().unwrap().iter().filter(|f| f["path"].as_str().unwrap().ends_with("book.txt") || f["path"].as_str().unwrap().ends_with("book.pdf")).all(|f| f["product"] == true));
+            assert!(listing["files"].as_array().unwrap().iter().filter(|f| f["path"].as_str().unwrap().starts_with(".jazyk/")).all(|f| f["product"] == false));
             assert!(paths.contains(&"nested/target/book.pdf"));
             assert!(!paths.iter().any(|p| p.contains("disposable") || p.contains("dependency") || p.contains(".env") || p.contains("link")));
             assert_eq!(project_file(root, "target/book.txt").unwrap(), b"product");

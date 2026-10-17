@@ -753,6 +753,9 @@ only the ledger, never the graph.
   (`programmatic`) or the criteria and confirm-steps (`llm`).
   A saved-task reference includes instructions to use `run_tests` and inspect
   per-case evidence, not infer a verdict from the container's exit code.
+  `criterionTests` lists every bound test with its criterion id, statement hash,
+  kind, artifact, and current verdict. LLM entries include the criteria text.
+  A mixed row includes both execution guidance and LLM judgment guidance.
 - `run_tests({requirements?, all?})`: execute the recorded programmatic tests: the
   [build](../consumers/gen.md#the-build) first, once, then each selected row's command.
   `requirements` selects rows (requirement or entity ids); empty runs every
@@ -766,10 +769,18 @@ only the ledger, never the graph.
   commands as pending. Task criteria reuse the imported case evidence.
   An explicitly selected unbound requirement is returned as skipped with binding
   guidance. An empty execution cannot be reported as passing that requirement.
-- `record_verdict({requirement, verdict, factHash?, evidence?})`: record a `pass` or
+- `record_verdict({requirement, verdict, factHash?, evidence?, criteria?})`: record a `pass` or
   `fail` verdict with its evidence, rebaselining the test and files hashes. A stale
   `factHash` is recorded but the row stays pending, the same protection
   `record_generation` has. The `verify` goal's gate reads the landed verdict.
+  When multiple LLM criteria are bound, `criteria` is required. It contains one
+  `{criterion, verdict, factHash, evidence?}` entry for each LLM test. Copy the ids
+  and hashes from `criterionTests`. Duplicate, missing, stale, or programmatic
+  entries are rejected before any verdict changes. A single LLM headline retains
+  the short form. A programmatic headline with LLM criteria uses the explicit list.
+  The headline verdict summarizes the LLM entries; it cannot replace programmatic
+  evidence. Changing implementing files invalidates earlier criterion evidence.
+  A fresh verdict or report restores only the tests it actually judged.
 
 ## Validation and errors
 

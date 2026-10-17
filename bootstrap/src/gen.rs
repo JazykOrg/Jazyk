@@ -4174,6 +4174,13 @@ pub fn run_all(
     force: bool,
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
+    run_selected(store, runner, gs, entities, force, trace, true)
+}
+
+pub(crate) fn run_selected(
+    store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
+    entities: &[String], force: bool, trace: &crate::session::Trace, build_product: bool,
+) -> Result<Value, String> {
     use crate::session::TraceEvent;
     let targets: Vec<String> = if entities.is_empty() {
         store
@@ -4310,7 +4317,9 @@ pub fn run_all(
     // A built deliverable is not generated until the artifact exists, so the run ends
     // by producing it. The failure is recorded either way, which is what the next run
     // reads (docs/consumers/gen.md#the-build).
-    let build = if crate::vfs::is_scoped() {
+    let build = if !build_product || trace.is_cancelled() {
+        json!({"state":"not-selected"})
+    } else if crate::vfs::is_scoped() {
         json!({"state":"pending-ci", "pendingCi":Ledger::load(&store.out).build.is_some(),"reason":"build commands run through delivery CI"})
     } else { match run_build(&store.out, gs, trace, "gen") {
         Ok(()) => {

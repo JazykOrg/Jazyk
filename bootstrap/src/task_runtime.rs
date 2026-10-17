@@ -1075,6 +1075,12 @@ pub fn import_evidence(
     let mut count = 0;
     let reference = format!("task:{}", task.id);
     for row in ledger.requirements.values_mut() {
+        if (row.test.kind == "programmatic" && row.test.run == reference)
+            || row.tests.values().any(|t| t.test.kind == "programmatic" && t.test.run == reference)
+        {
+            let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
+            crate::verify::rebaseline_files(row, files);
+        }
         let mut touched = false;
         for test in row
             .tests

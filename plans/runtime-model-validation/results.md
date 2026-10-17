@@ -627,3 +627,59 @@ Prior release evidence includes real Docker, Podman, Fargate, and deterministic 
   hashes, wrong IDs, criterion ownership, valid repair, and an invalid historic row.
   All 702 library tests passed, with three existing ignored tests. All 143 relative
   documentation links and anchors resolve; the changed pages contain no em dashes.
+
+## Independent LLM criterion verdicts, 2026-10-16
+
+- The seventh local presentation retry completed in 1,784.10 seconds with 35 tool
+  calls. It used LocalRouter, local Ollama `gemma4:31b-mlx`, and Podman. All ten
+  requirements were verified. The two new containers terminated and the PPTX was
+  retained. An independent fresh test run preserved all ten verified statuses.
+  The final PPTX matched the independently rendered artifact byte for byte.
+- This was a review-assisted checkpoint retry. The initial attempts and their
+  failures remain recorded. It is not a claim of an unassisted first-attempt pass
+  or a hosted model run. The final assistant sentence misstated a secondary count
+  as nine; the deterministic graph check counted ten.
+- A fresh local-model negative control replaced all three jokes with unrelated
+  plain statements. The model read the current source and correctly recorded fail.
+  The harness updated only the headline LLM criterion, leaving the second
+  criterion's old pass. The row incorrectly described a partial implementation.
+- Verification packages now include every criterion test and each LLM criteria
+  file. Multiple LLM criteria require an explicit, complete verdict list. The
+  harness validates that list atomically, rejects programmatic or stale entries,
+  and preserves separate outcomes. The built-in verifier judges each criterion.
+- Refreshing implementing-file hashes invalidates old criterion evidence. Fresh
+  task reports, legacy runs, or model judgments restore only the tests they
+  actually cover. Audit follows the same rule. A report cannot make an old LLM
+  judgment current after a source change.
+- Four meaningful regressions passed, including independent and atomic recording,
+  report/LLM freshness, audit invalidation, and separate built-in model judgments
+  with inconclusive-output handling. The full library suite passed 707 tests,
+  with three existing ignored tests. The release binary was rebuilt. All 290
+  relative links and anchors in the changed design pages resolve.
+- The fresh local-model negative control passed in 182.11 seconds with three
+  calls: `begin_verification`, `read_text_file`, and `record_verdict`. Both LLM
+  criteria recorded fail independently, the requirement became failing, the
+  source stayed unchanged, and no runtime container was used. The previous
+  attempt took 283.58 seconds and exposed the stale second verdict.
+- The positive presentation was independently replayed once more with the fixed
+  binary. Its fresh Podman test run passed, all ten requirements stayed verified,
+  and the PPTX matched the reviewed bytes.
+- Final review also covers a programmatic headline with an LLM criterion. Its
+  package includes both execution and judgment guidance. An LLM pass leaves an
+  unrun programmatic case unknown; a fresh matching report then verifies the row.
+  This fifth regression and the full suite passed: 708 tests, three existing
+  ignored tests. The owner's release binary was rebuilt.
+- The final prompt review also found a legacy-command package still inviting a
+  manual model verdict. It now directs the agent through `run_tests` and keeps
+  unavailable commands unverified. The mixed-case regression checks both legacy
+  and saved-task guidance. An initial full-suite run had 707 passes and one
+  fixture socket timeout. That cancellation case passed alone in 0.52 seconds.
+  The full suite then passed all 708 tests with four test threads in 20.01 seconds,
+  with three existing ignored tests. No timeout or assertion was relaxed. All
+  102 relative links and anchors in the changed design pages resolve.
+- Compiler `86daa56` is now pinned by the deployed Cloud API and editor. A fresh
+  Fargate test of the retained presentation passed all three report cases and
+  preserved all ten verified requirements. ECS independently confirmed shutdown.
+  The retained binary PPTX and project backup preserved their reviewed bytes.
+  This used no Cloud model calls; model validation remained local Ollama through
+  LocalRouter. The dedicated Podman VM and owned build containers are stopped.

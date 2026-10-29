@@ -468,7 +468,7 @@ pub async fn serve(listener: tokio::net::TcpListener, st: SharedState) -> Result
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::gui::state::AppState;
     use axum::body::Body;
@@ -560,7 +560,7 @@ mod tests {
         );
     }
 
-    fn state(token: Option<&str>, gui_origin: &str) -> SharedState {
+    pub(crate) fn state(token: Option<&str>, gui_origin: &str) -> SharedState {
         let root = std::env::temp_dir().join(format!(
             "jazyk-gui-server-test-{}-{}",
             crate::sys::process_id(),

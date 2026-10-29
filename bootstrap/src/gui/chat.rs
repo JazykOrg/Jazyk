@@ -968,6 +968,32 @@ mod steering_tests {
         assert_eq!(manager.seq.load(Ordering::Relaxed), 42);
     }
     #[test]
+    fn transcript_write_failure_stops_turn_and_preserves_failed_state() {
+        let st = super::super::server::tests::state(None, "https://native-persistence.test");
+        let session = Arc::new(Mutex::new(ChatSession {
+            id: "missing-transcript".into(),
+            title: "Test".into(),
+            state: "running".into(),
+            handle: None,
+            ring: VecDeque::new(),
+            next_n: 0,
+            pending: vec![],
+            inputs: vec![],
+            turn_id: Some("turn-1".into()),
+            stopped: false,
+        }));
+        append(
+            &st,
+            &session,
+            json!({"sessionUpdate":"agent_message","text":"partial"}),
+        );
+        assert!(session.lock().unwrap().stopped);
+        assert_eq!(session.lock().unwrap().state, "failed");
+        set_state(&st, &session, "cancelled");
+        assert_eq!(session.lock().unwrap().state, "failed");
+    }
+
+    #[test]
     fn checked_transcript_write_rejects_missing_store() {
         let root = tempfile::tempdir().unwrap();
         assert!(crate::acp::sessions::record_update_checked(

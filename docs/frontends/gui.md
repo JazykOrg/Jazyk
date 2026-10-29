@@ -726,3 +726,6 @@ Text reads without `binary=true` retain their existing response shape.
 
 
 A restored conversation opens a new ACP session when its old process is gone. The first new prompt includes up to 24,000 trailing characters of user and answer text as prior conversation context. It excludes thoughts and tool results. Prior conversation context is not new authorization. The new prompt retains the current user message separately.
+
+
+Native input admission flushes the original message before returning acceptance. A later transcript write failure marks the session failed, stops the active prompt, and emits a persistence error. The retained admission restores as interrupted when the terminal event could not be written. Incremental transcript writes report errors without flushing each text delta.

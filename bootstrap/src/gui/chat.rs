@@ -252,7 +252,19 @@ fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, mut update: Value) {
         let mut s = sess.lock().unwrap();
         let n = s.next_n;
         update["cursor"] = json!(n);
-        crate::acp::sessions::record_update(&st.out, &s.id, &update);
+        if let Err(error) =
+            crate::acp::sessions::record_update_unflushed_checked(&st.out, &s.id, &update)
+        {
+            s.stopped = true;
+            s.state = "failed".into();
+            if let Some(handle) = &s.handle {
+                handle.cancel();
+            }
+            st.events.emit(
+                "chat.persistence_error",
+                json!({"sessionId":s.id,"error":error,"state":"failed"}),
+            );
+        }
         s.next_n += 1;
         s.ring.push_back((n, update.clone()));
         while s.ring.len() > RING {

@@ -68,16 +68,22 @@ pub fn append_checked(out: &Path, id: &str, record: Value) -> Result<(), String>
         .map_err(|error| format!("flush conversation transcript: {error}"))
 }
 
+pub fn append_unflushed_checked(out: &Path, id: &str, record: Value) -> Result<(), String> {
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path_for(out, id))
+        .map_err(|error| format!("open transcript: {error}"))?;
+    writeln!(file, "{}", record).map_err(|error| format!("persist transcript: {error}"))
+}
+
 pub fn append(out: &Path, id: &str, record: Value) {
-    let path = path_for(out, id);
-    match std::fs::OpenOptions::new().append(true).open(path) {
-        Ok(mut file) => {
-            if let Err(error) = writeln!(file, "{}", record) {
-                eprintln!("[chat] persist transcript: {error}");
-            }
-        }
-        Err(error) => eprintln!("[chat] open transcript: {error}"),
+    if let Err(error) = append_unflushed_checked(out, id, record) {
+        eprintln!("[chat] {error}");
     }
+}
+
+pub fn record_update_unflushed_checked(out: &Path, id: &str, update: &Value) -> Result<(), String> {
+    append_unflushed_checked(out, id, json!({"kind":"update","at":now(),"update":update}))
 }
 
 pub fn record_update_checked(out: &Path, id: &str, update: &Value) -> Result<(), String> {

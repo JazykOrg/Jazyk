@@ -75,3 +75,7 @@ and current turn identity. Acceptance does not claim model delivery. A normal
 completion closes input admission atomically; a concurrent input either joins
 the active turn or is retained for a subsequent prompt. Older clients can keep
 using `/prompt`. Older backends keep their existing prompt behavior.
+
+A hosted adapter can pass `afterN` on a recovered prompt. It names the highest
+durable conversation event already emitted. New transcript sequence numbers start
+after that watermark, even when the workspace snapshot predates those events.

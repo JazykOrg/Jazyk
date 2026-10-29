@@ -263,6 +263,16 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             json!({"error": "text is required: the prompt to send"}),
         );
     }
+    if let Some(after)=body["afterN"].as_u64() {
+        if after > (1u64 << 53) - 10_000 {
+            return (400,json!({"error":"conversation event watermark is too large"}));
+        }
+        BOOK.with(|b| {
+            let mut b=b.borrow_mut();
+            let c=b.chats.get_mut(id).unwrap();
+            c.next_n=c.next_n.max(after+1);
+        });
+    }
     let message_id = body["messageId"].as_str().map(str::to_owned)
         .unwrap_or_else(|| BOOK.with(|b| format!("{}-{}",id,b.borrow().chats[id].next_n)));
     let turn_id = body["turnId"].as_str().unwrap_or(&message_id).to_owned();

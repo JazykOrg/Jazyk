@@ -246,6 +246,7 @@ pub(crate) fn request_scoped(
                 "llm": { "model": crate::portable::model_name(), "baseUrl": "in-page" },
                 "version": env!("CARGO_PKG_VERSION"),
                 // What this transport is, so the app can hide what it cannot serve.
+                "chatInputs": true,
                 "backend": if crate::vfs::is_scoped() { "hosted" } else { "wasm" },
             }))
         }
@@ -797,6 +798,10 @@ pub(crate) fn request_scoped(
         // The chat pane: conversations run in the worker on the page's model, and
         // their progress is posted to the page as events while the prompt request
         // is still running. See docs/frontends/wasm.md#chat.
+        ("GET", "/chat/history") => ok(crate::conversation::export_history()),
+        ("PUT", "/chat/history") => match crate::conversation::import_history(body) {
+            Ok(value)=>ok(value), Err(message)=>err(409,message),
+        },
         ("POST", "/chat/sessions") => ok(crate::conversation::create(body)),
         ("GET", "/chat/sessions") => ok(crate::conversation::list()),
         ("GET", p) if p.starts_with("/chat/sessions/") => {
@@ -821,6 +826,11 @@ pub(crate) fn request_scoped(
             );
             let (status, v) = crate::conversation::prompt(&id, body);
             reply(status, v)
+        }
+        ("POST", p) if p.starts_with("/chat/sessions/") && p.ends_with("/inputs") => {
+            let id=decode(p.trim_start_matches("/chat/sessions/").trim_end_matches("/inputs"));
+            let (status,value)=crate::conversation::prompt(&id,body);
+            reply(status,value)
         }
         // The page answers a cancel while a turn runs; one that reaches the worker
         // found no turn running, so there is nothing to stop.

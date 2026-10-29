@@ -136,19 +136,36 @@ pub async fn answer_question(
     UrlPath(id): UrlPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
+    let session_id=body["sessionId"].as_str().filter(|sid|st.chat.is_running(sid)).map(str::to_owned);
     let out = st.out.clone();
     let project = st.proj();
+    let diagnostic=id.clone();
+    let in_conversation=session_id.is_some();
     let result = tokio::task::spawn_blocking(move || {
-        let v = crate::webapi::inbox::answer_value(&project, &out, &id, &body)?;
-        if v["status"] == "handling" {
-            crate::answer::spawn_handler(project, out, id);
+        let v = crate::webapi::inbox::answer_value(&project, &out, &diagnostic, &body)?;
+        let handling = if v["status"] == "handling" && in_conversation {
+            crate::answer::handling_prompt(&out,&diagnostic).ok()
+        } else { None };
+        if v["status"] == "handling" && handling.is_none() {
+            crate::answer::spawn_handler(project, out, diagnostic);
         }
-        Ok::<Value, crate::webapi::Refusal>(v)
+        Ok::<_, crate::webapi::Refusal>((v,handling))
     })
     .await
     .expect("answer task panicked");
     match result {
-        Ok(v) => Json(v).into_response(),
+        Ok((mut v,Some(prompt))) => {
+            let sid=session_id.unwrap();
+            let message_id=format!("answer:{}:{}",id,crate::model::hash_hex(&prompt));
+            let response=super::chat::post_input(State(st.clone()),axum::extract::Path(sid),Json(json!({"messageId":message_id,"text":prompt}))).await;
+            if response.status().is_success() {
+                v["note"]=json!("recorded; the active conversation handles the answer");
+            } else {
+                crate::answer::spawn_handler(st.proj(),st.out.clone(),id);
+            }
+            Json(v).into_response()
+        }
+        Ok((v,None)) => Json(v).into_response(),
         Err(r) => refused(r),
     }
 }

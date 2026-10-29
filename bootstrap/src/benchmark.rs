@@ -1700,6 +1700,8 @@ fn run_case_turn(
         max_rounds: round_budget,
         label: format!("bench {}", item.target),
         conversation: false,
+        inputs: None,
+        input_close: None,
     });
     // The production client sends one mid-task reminder when a turn ends in prose
     // without finishing (docs/frontends/acp.md#worker-sessions); the benchmark
@@ -1717,6 +1719,8 @@ fn run_case_turn(
             max_rounds: round_budget,
             label: format!("bench {} (reminded)", item.target),
             conversation: false,
+        inputs: None,
+        input_close: None,
         });
     }
     let mut s = session.into_inner();

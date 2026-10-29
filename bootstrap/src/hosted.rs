@@ -11,6 +11,9 @@ use std::sync::{
 
 pub type Snapshot = BTreeMap<String, Vec<u8>>;
 pub type ModelTransport = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
+pub type ModelStreamTransport = Arc<dyn Fn(&str, &mut dyn FnMut(&str, &str)) -> Result<String, String> + Send + Sync>;
+pub type InputSource = Arc<dyn Fn(&str) -> Vec<Value> + Send + Sync>;
+pub type InputClose = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub use crate::session::TraceSink;
 pub type RuntimeTransport = Arc<dyn Fn(&Value) -> Result<Value, String> + Send + Sync>;
 pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
@@ -29,6 +32,9 @@ pub struct Projection {
 pub struct Execution {
     pub model: String,
     pub transport: Option<ModelTransport>,
+    pub transport_stream: Option<ModelStreamTransport>,
+    pub inputs: Option<InputSource>,
+    pub input_close: Option<InputClose>,
     pub runtime: Option<RuntimeTransport>,
     pub trace: Option<TraceSink>,
     pub events: Option<EventSink>,
@@ -382,6 +388,22 @@ pub fn emit_event(kind: &str, mut body: Value) {
         sink(&body);
     }
 }
+pub fn take_inputs(session: &str) -> Vec<Value> {
+    EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.inputs.clone()))
+        .map(|source| source(session)).unwrap_or_default()
+}
+pub fn close_inputs(session: &str) -> bool {
+    EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.input_close.clone()))
+        .map(|close| close(session)).unwrap_or(true)
+}
+pub(crate) fn transport_deltas(body: &str, delta: &mut dyn FnMut(&str, &str)) -> Result<String, String> {
+    let e = execution();
+    if e.cancel.load(Ordering::Relaxed) { return Err("execution cancelled".into()); }
+    let Some(stream) = e.transport_stream else { return transport(body); };
+    let reply = stream(body, delta)?;
+    if e.cancel.load(Ordering::Relaxed) { return Err("execution cancelled".into()); }
+    Ok(reply)
+}
 pub(crate) fn transport(body: &str) -> Result<String, String> {
     let e = execution();
     if e.cancel.load(Ordering::Relaxed) {
@@ -523,7 +545,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     if method == "GET" && route == "/capabilities" {
         return Ok(Reply::json(
             200,
-            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
+            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
         ));
     }
     let envelope: Value =
@@ -919,6 +941,71 @@ mod tests {
         for path in ["../a", "/abs", "a//b", "a/./b", "a\\b", "a\0b"] {
             assert!(Workspace::new(BTreeMap::from([(path.into(), vec![])])).is_err());
         }
+    }
+
+    #[test]
+    fn hosted_input_callback_delivers_before_stale_write_and_persists_identity() {
+        let mut w=workspace("Steering");
+        w.files.insert("docs/hosting.md".into(),b"# Hosting\n\nOriginal.\n".to_vec());
+        let incoming=Arc::new(AtomicBool::new(false));
+        let incoming_model=incoming.clone();
+        let calls=Arc::new(AtomicUsize::new(0));
+        let model_calls=calls.clone();
+        let hash=crate::model::hash_hex("# Hosting\n\nOriginal.\n");
+        let events=Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let sink=events.clone();
+        let e=Execution{model:"fixture".into(),transport:Some(Arc::new(move|body|{
+            let n=model_calls.fetch_add(1,Ordering::SeqCst);
+            if n==0 {
+                incoming_model.store(true,Ordering::SeqCst);
+                return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"stale-write","type":"function","function":{"name":"write_document","arguments":json!({"path":"docs/hosting.md","text":"must not land","baseHash":hash}).to_string()}}]}}]}).to_string());
+            }
+            assert!(body.contains("Do not change hosting.md"));
+            Ok(model_reply("Kept hosting.md unchanged."))
+        })),inputs:Some(Arc::new(move|session|if incoming.swap(false,Ordering::SeqCst){vec![json!({"sessionId":session,"messageId":"steer-1","text":"Do not change hosting.md","sequence":2})]}else{vec![]})),input_close:Some(Arc::new(|_|true)),events:Some(Arc::new(move|event|sink.lock().unwrap().push(event.clone()))),..Default::default()};
+        let chat=value(&mut w,"POST","/api/chat/sessions",json!({}),&e);
+        value(&mut w,"POST",&format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap()),json!({"messageId":"initial","text":"Update hosting.md"}),&e);
+        assert_eq!(w.snapshot()["docs/hosting.md"],b"# Hosting\n\nOriginal.\n");
+        assert_eq!(calls.load(Ordering::SeqCst),2);
+        let timeline=value(&mut w,"GET",&format!("/api/chat/sessions/{}",chat["id"].as_str().unwrap()),Value::Null,&e);
+        assert!(timeline["inputs"].as_array().unwrap().iter().any(|v|v["messageId"]=="steer-1"&&v["state"]=="delivered"));
+        assert!(events.lock().unwrap().iter().any(|v|v["type"]=="chat.input"&&v["messageId"]=="steer-1"));
+    }
+
+    #[test]
+    fn chat_followup_edits_uncompiled_prose_without_lifecycle_work() {
+        let mut w=workspace("Alpha");
+        w.files.insert("docs/hosting.md".into(),b"# Hosting\n\nCloudFront-S3.\n".to_vec());
+        let calls=Arc::new(AtomicUsize::new(0));
+        let calls_for_model=calls.clone();
+        let expected_hash=crate::model::hash_hex("# Hosting\n\nCloudFront-S3.\n");
+        let updated="# Hosting\n\nUse the existing deployment task.\n";
+        let e=Execution{model:"fixture".into(),transport:Some(Arc::new(move |body| {
+            let request:Value=serde_json::from_str(body).unwrap();
+            let messages=request["messages"].as_array().unwrap();
+            assert!(!messages.iter().any(|m|m["content"].as_str().is_some_and(|t|t.starts_with("Read task_context and choose"))));
+            let n=calls_for_model.fetch_add(1,Ordering::SeqCst);
+            if n==0 { return Ok(model_reply("Credentials are sensitive. Resource identifiers are configuration.")); }
+            if n==1 {
+                return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"write-hosting","type":"function","function":{"name":"write_document","arguments":json!({"path":"docs/hosting.md","text":updated,"baseHash":expected_hash}).to_string()}}]}}]}).to_string());
+            }
+            assert_eq!(n,2,"unnecessary completion round");
+            Ok(model_reply("Updated hosting.md."))
+        })),..Default::default()};
+        let chat=value(&mut w,"POST","/api/chat/sessions",json!({}),&e);
+        let route=format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap());
+        value(&mut w,"POST",&route,json!({"text":"What credentials does a static deployment need?","messageId":"first"}),&e);
+        value(&mut w,"POST",&route,json!({"text":"Update the relevant section in hosting.md","messageId":"second"}),&e);
+        assert_eq!(calls.load(Ordering::SeqCst),3);
+        assert_eq!(w.snapshot()["docs/hosting.md"],updated.as_bytes());
+        let again=value(&mut w,"POST",&route,json!({"text":"Update the relevant section in hosting.md","messageId":"second"}),&e);
+        assert_eq!(again["messageId"],"second");
+        assert_eq!(calls.load(Ordering::SeqCst),3,"retry re-executed a completed turn");
+        assert!(!w.snapshot().keys().any(|p|p.contains("graph/entity/")));
+        let history=value(&mut w,"GET","/api/chat/history",Value::Null,&e);
+        let chat=&history["book"]["chats"][chat["id"].as_str().unwrap()];
+        assert_eq!(chat["inputs"]["second"]["state"],"delivered");
+        assert_eq!(chat["instruction_hash"].as_str().unwrap().len(),16);
     }
 
     #[test]

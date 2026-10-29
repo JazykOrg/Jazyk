@@ -181,6 +181,7 @@ impl<'a> LoopTrace<'a> {
         use crate::agent_loop::AgentEvent;
         use crate::session::TraceEvent;
         match ev {
+            AgentEvent::Input(_) | AgentEvent::Timing(_) => {}
             AgentEvent::Usage { tokens, cached } => {
                 self.rounds += 1;
                 self.tokens = self.tokens.saturating_add(tokens);

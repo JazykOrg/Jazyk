@@ -354,3 +354,13 @@ target document together ([docsgen](../../consumers/docsgen.md)); the LSP shows 
 diagnostic at the target section with `Apply:` and `Answer:` code actions; the GUI board
 shows the goal blocked with the reason `awaiting ratification`. A `derived` or `decree`
 fact with no open proposal is `unjustified-fact`.
+
+## Answers during a conversation
+
+A question answer can name the active `sessionId`. The native frontend records
+the answer through the normal answer API, then sends its handling contract to
+that conversation as an ordered input. It does not spawn a second handler for
+the accepted input. Without a named active conversation the existing standalone
+answer workflow applies. Failed input admission falls back to that workflow.
+Several independent answers can be submitted while an earlier answer is handled.
+Freeform steering text never resolves a diagnostic by itself.

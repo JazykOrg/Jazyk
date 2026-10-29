@@ -11,3 +11,8 @@ pub fn clear_cancel() {}
 pub fn cancel_requested() -> bool {
     crate::hosted::cancelled()
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::hosted::{take_inputs, close_inputs};
+#[cfg(target_arch = "wasm32")]
+pub use crate::wasm::llm_bridge::{take_inputs, close_inputs};

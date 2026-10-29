@@ -31,6 +31,12 @@ struct Chat {
     // A reader conversation, for a model of the `reader` tier: the `graph` serving
     // with the read tools alone (docs/frontends/wasm.md#chat).
     reader: bool,
+    #[serde(default)]
+    instruction_hash: String,
+    #[serde(default)]
+    turn_id: Option<String>,
+    #[serde(default)]
+    inputs: BTreeMap<String, Value>,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -55,7 +61,7 @@ fn snapshot() -> Vec<Value> {
             .values()
             .map(|c| {
                 json!({"id": c.id, "title": c.title, "state": c.state, "updates": c.next_n,
-                       "pending": []})
+                       "pending": [], "turnId":c.turn_id, "inputs":c.inputs.values().collect::<Vec<_>>()})
             })
             .collect()
     })
@@ -113,6 +119,9 @@ pub fn create(body: &Value) -> Value {
                 history: Vec::new(),
                 serving: None,
                 reader,
+                instruction_hash: String::new(),
+                turn_id: None,
+                inputs: BTreeMap::new(),
             },
         );
         id
@@ -138,7 +147,7 @@ pub fn get(id: &str) -> Option<Value> {
             .collect();
         Some(
             json!({"id": c.id, "title": c.title, "state": c.state, "pending": [],
-                    "updates": updates}),
+                    "updates": updates, "turnId":c.turn_id,"inputs":c.inputs.values().collect::<Vec<_>>()}),
         )
     })
 }
@@ -254,6 +263,15 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             json!({"error": "text is required: the prompt to send"}),
         );
     }
+    let message_id = body["messageId"].as_str().map(str::to_owned)
+        .unwrap_or_else(|| BOOK.with(|b| format!("{}-{}",id,b.borrow().chats[id].next_n)));
+    let turn_id = body["turnId"].as_str().unwrap_or(&message_id).to_owned();
+    let prior = BOOK.with(|b| b.borrow().chats[id].inputs.get(&message_id).cloned());
+    if let Some(prior) = prior {
+        return if prior["text"].as_str() == Some(text.as_str()) {
+            (202, json!({"ok":true,"messageId":message_id,"state":prior["state"],"turnId":prior["turnId"]}))
+        } else { (409,json!({"error":"messageId already identifies different text"})) };
+    }
     if state == "running" {
         return (
             409,
@@ -261,7 +279,9 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
         );
     }
 
-    append(id, json!({"sessionUpdate": "user_message", "text": text}));
+    BOOK.with(|b| b.borrow_mut().chats.get_mut(id).unwrap().turn_id=Some(turn_id.clone()));
+    append(id, json!({"sessionUpdate": "user_message", "text": text,"messageId":message_id,"turnId":turn_id}));
+    delivered(id,json!({"messageId":message_id,"text":text,"turnId":turn_id}));
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
             if !c.titled {
@@ -301,13 +321,19 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             }
         },
     };
-    // The first turn opens with the serving's instructions: an agent that reads
-    // nothing else still knows the project and which tools move the prose.
-    if crate::vfs::is_scoped() && !history.is_empty() {
-        push_user(&mut history, format!("{}\nThe tool context was reopened. Reload graph nodes before using handles from earlier turns.", instructions));
-    }
-    if history.is_empty() && !instructions.is_empty() {
+    let instruction_hash = crate::model::hash_hex(&instructions);
+    let changed = BOOK.with(|b| {
+        let mut b = b.borrow_mut();
+        let c = b.chats.get_mut(id).unwrap();
+        let changed = c.instruction_hash != instruction_hash;
+        c.instruction_hash = instruction_hash;
+        changed
+    });
+    if (history.is_empty() || changed) && !instructions.is_empty() {
         push_user(&mut history, instructions.clone());
+    }
+    if crate::vfs::is_scoped() && !history.is_empty() {
+        push_user(&mut history, "The tool context was reopened. Prior handles are invalid; reload only graph nodes needed for this request. This does not require task discovery or compilation.".into());
     }
     push_user(&mut history, text);
 
@@ -378,9 +404,35 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             generation = now;
             crate::portable::emit_event("sets.changed", json!({}));
         }
+        AgentEvent::Input(value) => {
+            let display = value.get("displayText").unwrap_or(&value["text"]);
+            append(&chat_id,json!({"sessionUpdate":"user_message","text":display,"messageId":value["messageId"],"turnId":value["turnId"]}));
+            delivered(&chat_id,value);
+        }
+        AgentEvent::Timing(value) => crate::portable::emit_event("chat.timing", json!({"sessionId":chat_id,"timing":value})),
         AgentEvent::Usage { .. } => {}
     };
     let cancelled = || crate::portable::cancel_requested();
+    let mut input_source = || {
+        let mut seen = std::collections::BTreeSet::new();
+        crate::portable::take_inputs(id).into_iter().filter(|v| {
+            v["messageId"].as_str().is_some_and(|mid| seen.insert(mid.to_owned()) && BOOK.with(|b| !b.borrow().chats[id].inputs.contains_key(mid)))
+        }).map(|mut value| {
+            if value["operation"] == "answer_diagnostic" {
+                let result = server.handle("tools/call", &json!({"name":"answer_diagnostic","arguments":value["arguments"]}));
+                let (ok, reply) = match result {
+                    Ok(v) => (!v["isError"].as_bool().unwrap_or(false),v),
+                    Err((code,message)) => (false,json!({"error":message,"code":code})),
+                };
+                crate::portable::emit_event("chat.answer",json!({"sessionId":id,"messageId":value["messageId"],"status":if ok {"recorded"}else{"failed"},"result":reply}));
+                value["displayText"] = value["text"].clone();
+                if !ok { value["state"]=json!("failed"); value["reason"]=json!("The diagnostic answer was rejected. Inspect the recorded tool result before retrying."); }
+                value["text"] = json!(format!("A human submitted an answer through the diagnostic answer API. Actual tool result: {}. Use the returned handling instructions if accepted. Reload affected graph context before further writes. Do not record the same answer a second time.",reply));
+            }
+            value
+        }).collect::<Vec<_>>()
+    };
+    let mut close_inputs = || crate::portable::close_inputs(id);
     let stop = agent_loop::run_loop(LoopArgs {
         llm: &crate::portable::llm(),
         history: &mut history,
@@ -391,6 +443,8 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
         max_rounds: crate::limits::AGENT_MAX_ROUNDS,
         label: format!("chat {}", id),
         conversation: true,
+        inputs: Some(&mut input_source),
+        input_close: Some(&mut close_inputs),
     });
 
     let (update, state) = match stop {
@@ -428,9 +482,47 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             c.serving = Some((server, tools, instructions));
         }
     });
+    let stop_reason = update["stop"].clone();
     append(id, update);
     set_state(id, state);
-    (202, json!({"ok": true}))
+    (202, json!({"ok": true,"messageId":message_id,"turnId":turn_id,"stop":stop_reason,"state":state}))
+}
+
+// Record delivery only after the loop inserted the human text into history.
+fn delivered(id: &str, mut input: Value) {
+    if input["state"] != "failed" { input["state"] = json!("delivered"); }
+    if let Some(display)=input.get("displayText").cloned() { input["text"]=display; }
+    input["sessionId"] = json!(id);
+    BOOK.with(|b| {
+        let mut b = b.borrow_mut();
+        if let Some(c) = b.chats.get_mut(id) {
+            if input["turnId"].is_null() { input["turnId"] = json!(c.turn_id); }
+            if let Some(mid) = input["messageId"].as_str() { c.inputs.insert(mid.to_owned(),input.clone()); }
+        }
+    });
+    crate::portable::emit_event("chat.input",input);
+}
+
+pub fn export_history() -> Value {
+    BOOK.with(|b| json!({"version":1,"book": &*b.borrow()}))
+}
+pub fn import_history(body: &Value) -> Result<Value,String> {
+    if body["version"] != 1 { return Err("unsupported conversation history version".into()); }
+    if BOOK.with(|b| b.borrow().chats.values().any(|c|c.state=="running")) {
+        return Err("cannot replace history while a turn is running".into());
+    }
+    let mut book: Book = serde_json::from_value(body["book"].clone()).map_err(|e|format!("invalid conversation history: {e}"))?;
+    for (id,c) in &mut book.chats {
+        if id != &c.id { return Err("conversation identity does not match its history key".into()); }
+        if c.state=="running" {
+            c.state="interrupted".into();
+            c.updates.push((c.next_n,json!({"sessionUpdate":"turn_end","stop":"interrupted","error":"The tab closed before this turn finished. Review saved changes before retrying."})));
+            c.next_n+=1;
+        }
+    }
+    BOOK.with(|b| *b.borrow_mut()=book);
+    publish_sessions();
+    Ok(json!({"ok":true}))
 }
 
 // A hosted request owns its conversation book. Only serializable history and

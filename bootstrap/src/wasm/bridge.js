@@ -9,10 +9,14 @@
 // The reply itself travels in a second buffer, grown by the page when needed.
 
 let control = null // Int32Array over a SharedArrayBuffer
+let inputHeader = null
+let inputBytes = null
 let replyBytes = null // Uint8Array over a SharedArrayBuffer
 
 // Called once from the worker entry when the page hands over the shared buffers.
-export function installBridge(controlBuffer, replyBuffer) {
+export function installBridge(controlBuffer, replyBuffer, inputBuffer = null) {
+  inputHeader = inputBuffer ? new Int32Array(inputBuffer, 0, 4) : null
+  inputBytes = inputBuffer ? new Uint8Array(inputBuffer, 16) : null
   control = new Int32Array(controlBuffer)
   replyBytes = new Uint8Array(replyBuffer)
 }
@@ -49,4 +53,26 @@ export function chatSync(body) {
   const reply = JSON.parse(text)
   if (reply.error) throw new Error(reply.error)
   return reply.body
+}
+
+// Called only at safe loop boundaries on the worker thread. The page is the
+// single producer; published bytes remain immutable until consumption.
+export function pollInputs() {
+  if (!inputHeader || Atomics.load(inputHeader, 0) !== 1) return '[]'
+  const length = Atomics.load(inputHeader, 1)
+  if (length < 0 || length > inputBytes.length) {
+    Atomics.store(inputHeader, 0, 0)
+    throw new Error('invalid input mailbox length')
+  }
+  const text = new TextDecoder().decode(inputBytes.slice(0, length))
+  JSON.parse(text)
+  Atomics.store(inputHeader, 0, 0)
+  self.postMessage({ kind: 'chat-input-consumed' })
+  return text
+}
+
+export function closeInputs() {
+  if (!inputHeader) return true
+  const state = Atomics.compareExchange(inputHeader, 0, 0, 2)
+  return state === 0 || state === 2
 }

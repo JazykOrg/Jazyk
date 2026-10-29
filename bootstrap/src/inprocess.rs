@@ -194,6 +194,8 @@ impl SessionRunner for InProcessRunner {
             max_rounds: crate::limits::SESSION_ROUNDS,
             label: label.clone(),
             conversation: false,
+        inputs: None,
+        input_close: None,
         });
         let (rounds, tokens, cached) = (lt.rounds, lt.tokens, lt.cached);
 
@@ -384,6 +386,8 @@ fn run_answer(
         max_rounds: crate::limits::AGENT_MAX_ROUNDS,
         label: label.to_string(),
         conversation: false,
+        inputs: None,
+        input_close: None,
     });
     let rounds = lt.rounds;
     match stop {

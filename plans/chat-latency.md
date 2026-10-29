@@ -1,6 +1,6 @@
 # Faster agent answers and document edits
 
-Status: implemented locally, 2026-10-29. Companion to [active agent steering](./steering.md).
+Status: deployed, 2026-10-29. Companion to [active agent steering](./steering.md).
 See the [verification report](./agent-steering-acceptance.md). The implementation
 uses sub-agents with shared runtime changes integrated by one owner. Merge and
 publication wait for the owner's instructions.

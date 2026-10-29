@@ -1,6 +1,6 @@
 # Agent steering and chat recovery verification
 
-Status: implemented locally, 2026-10-29. The owner approved implementation and
+Status: deployed, 2026-10-29. The owner approved implementation and
 requested worktree-only work until a merge instruction. Read with
 [steering](./steering.md) and [chat latency](./chat-latency.md).
 
@@ -107,5 +107,10 @@ plan. Steering does not change goal scheduling, grants, ratification, or gates.
 An interrupted turn with an uncertain write outcome needs explicit recovery;
 refresh and transport reconnect never blindly rerun it.
 
-The local implementation is ready for review. Merge, remote publication, service
-restart, and production verification wait for the owner's instructions.
+Both repositories are merged and pushed to master. Engine master `1a7aa48` was
+rebuilt in release mode. API and editor `b5f2a8c` are deployed with compiler
+`e6f003f`. API health, migration 29, retained project data, public editor artifacts
+and authentication boundaries passed production checks. The cloud release record
+at `docs/operations/initial-deployment.md` records backups and compatible rollback.
+GitHub runner allocation was blocked by account billing, so publication used
+verified local builds. No matched live-provider latency speedup is claimed.

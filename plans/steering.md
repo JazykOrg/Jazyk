@@ -1,6 +1,6 @@
 # Steering an active agent
 
-Status: implemented locally, 2026-10-29. This plan covers the Jazyk engine, its
+Status: deployed, 2026-10-29. This plan covers the Jazyk engine, its
 ACP roles, and the jazyk.dev editor. See the [verification report](./agent-steering-acceptance.md).
 The work stays in isolated worktrees until the owner requests a merge.
 Read with [chat latency and recovery](./chat-latency.md), which records the live

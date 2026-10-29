@@ -1,8 +1,9 @@
 # Faster agent answers and document edits
 
-Status: proposal, 2026-10-29. Companion to [active agent steering](./steering.md).
-Implement both after owner approval. Use sub-agents for the implementation, with
-shared runtime changes integrated by one owner. This step changes no runtime code.
+Status: implemented locally, 2026-10-29. Companion to [active agent steering](./steering.md).
+See the [verification report](./agent-steering-acceptance.md). The implementation
+uses sub-agents with shared runtime changes integrated by one owner. Merge and
+publication wait for the owner's instructions.
 
 ## Desired result
 

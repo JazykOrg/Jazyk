@@ -80,6 +80,17 @@ fn max_rounds() -> u32 {
         .max(1)
 }
 
+fn initial_history<'a>(instructions: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Value> {
+    let mut history = Vec::new();
+    for (name, instructions) in instructions {
+        agent_loop::push_user_text(
+            &mut history,
+            &format!("MCP server `{name}` instructions:\n{instructions}"),
+        );
+    }
+    history
+}
+
 pub fn run() -> i32 {
     // The endpoint is machine configuration (env, project [llm], global config), the
     // same ladder every jazyk command uses. Reading it is not jazyk knowledge; the
@@ -153,12 +164,9 @@ pub fn run() -> i32 {
                         }
                     }
                     let tools: Vec<GenericTool> = conns.iter().flat_map(|c| c.tools.clone()).collect();
-                    let history = conns.iter().filter_map(|c| {
-                        c.instructions.as_ref().map(|instructions| json!({
-                            "role": "user",
-                            "content": format!("MCP server `{}` instructions:\n{}", c.name, instructions)
-                        }))
-                    }).collect();
+                    let history=initial_history(conns.iter().filter_map(|connection| {
+                        connection.instructions.as_deref().map(|instructions|(connection.name.as_str(),instructions))
+                    }));
                     let model = new_llm.model.clone();
                     new_sessions.lock().unwrap().insert(
                         id.clone(),
@@ -226,7 +234,7 @@ pub fn run() -> i32 {
                         // The session's model, which the client may have changed since
                         // the last turn. Mirrors docs/frontends/acp.md#choosing-a-model.
                         let llm = crate::llm::Llm { model: state.model.clone(), ..llm };
-                        state.history.push(json!({"role": "user", "content": text}));
+                        agent_loop::push_user_text(&mut state.history,&text);
                         let cancelled = entry.cancelled.clone();
                         let mut total_tokens = 0u64;
                         let label = format!("agent {}", sid);
@@ -439,6 +447,30 @@ pub fn run() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_mcp_instructions_and_prompt_form_one_user_message() {
+        let mut history = initial_history([
+            ("project", "Read the project."),
+            ("task", "Inspect released tasks."),
+        ]);
+        agent_loop::push_user_text(&mut history, "Explain hosting.md.");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], "user");
+        assert_eq!(history[0]["content"],"MCP server `project` instructions:\nRead the project.\n\nMCP server `task` instructions:\nInspect released tasks.\n\nExplain hosting.md.");
+        let call = json!({"role":"assistant","content":null,"tool_calls":[{"id":"read-1","type":"function","function":{"name":"read_document","arguments":"{}"}}]});
+        let result = json!({"role":"tool","tool_call_id":"read-1","content":"current contents"});
+        history.push(call.clone());
+        history.push(result.clone());
+        agent_loop::push_user_text(&mut history, "Keep its existing heading.");
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[1], call);
+        assert_eq!(history[2], result);
+        assert_eq!(
+            history[3],
+            json!({"role":"user","content":"Keep its existing heading."})
+        );
+    }
 
     // The picker an IDE renders: a select in the model category, carrying the
     // resolved model as its current value, under the id clients persist.

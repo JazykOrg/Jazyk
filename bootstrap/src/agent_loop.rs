@@ -397,11 +397,24 @@ fn missing_required_args(tools: &[GenericTool], name: &str, args: &Value) -> Vec
         .collect()
 }
 
+// Some local model templates reject adjacent user roles. Input identities live
+// in delivery records, independently of this provider-facing history shape.
+pub(crate) fn push_user_text(history: &mut Vec<Value>, text: &str) {
+    if let Some(last) = history.last_mut() {
+        if last["role"] == "user" {
+            if let Some(previous) = last["content"].as_str() {
+                last["content"] = json!(format!("{previous}\n\n{text}"));
+                return;
+            }
+        }
+    }
+    history.push(json!({"role":"user","content":text}));
+}
+
 fn deliver_inputs(a: &mut LoopArgs, inputs: Vec<Value>) -> bool {
     let delivered = !inputs.is_empty();
     for input in inputs {
-        a.history
-            .push(json!({"role":"user","content":input["text"].as_str().unwrap_or_default()}));
+        push_user_text(a.history, input["text"].as_str().unwrap_or_default());
         (a.emit)(AgentEvent::Input(input));
     }
     delivered
@@ -1794,18 +1807,87 @@ mod tests {
             let requests = provider.join().unwrap();
             assert_eq!(requests.len(), 2);
             let messages = requests[1]["messages"].as_array().unwrap();
-            assert_eq!(
-                messages.last().unwrap()["content"],
-                "Do not change any file."
-            );
-            assert!(messages[messages.len() - 2]["content"]
-                .as_str()
-                .unwrap()
-                .contains("Skipped"));
+            let human = messages.last().unwrap()["content"].as_str().unwrap();
+            assert!(human.ends_with("Do not change any file."));
             if mode == 1 {
+                assert_eq!(human, "Do not change any file.");
                 assert_eq!(messages[messages.len() - 2]["tool_call_id"], "stale");
+                assert!(messages[messages.len() - 2]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Skipped"));
+            } else {
+                assert!(human.starts_with("RESULT: ") && human.contains("Skipped"));
             }
             assert_eq!(delivered.len(), 1);
+        }
+    }
+
+    #[test]
+    fn multiple_inputs_keep_distinct_deliveries_and_template_compatible_history() {
+        for mode in [1, 2] {
+            let _scope = crate::scoped_state::Scope::enter();
+            llm::set_tools_mode(mode);
+            let first = if mode == 1 {
+                native_reply(vec![native_call("skip", "fixture", "{}")], 20)
+            } else {
+                json!({"choices":[{"message":{"role":"assistant","content":r#"{"tool":"fixture","args":{}}"#},"finish_reason":"stop"}]})
+            };
+            let (llm, provider) = scripted_provider(vec![
+                first,
+                json!({"choices":[{"message":{"role":"assistant","content":"Applied both constraints."},"finish_reason":"stop"}]}),
+            ]);
+            let mut history = vec![];
+            let mut polls = 0;
+            let mut inputs = || {
+                polls += 1;
+                if polls == 2 {
+                    vec![
+                        json!({"messageId":"one","text":"Keep the adapter."}),
+                        json!({"messageId":"two","text":"Keep the schema too."}),
+                    ]
+                } else {
+                    vec![]
+                }
+            };
+            let mut delivered = vec![];
+            let stop = run_loop(LoopArgs {
+                llm: &llm,
+                history: &mut history,
+                tools: &[],
+                dispatch: &mut |_, _| panic!("stale tool dispatched"),
+                emit: &mut |event| {
+                    if let AgentEvent::Input(input) = event {
+                        delivered.push(input)
+                    }
+                },
+                cancelled: &|| false,
+                max_rounds: 3,
+                label: "multi-input".into(),
+                conversation: true,
+                inputs: Some(&mut inputs),
+                input_close: None,
+            });
+            assert!(matches!(stop, Stop::EndTurn));
+            let requests = provider.join().unwrap();
+            let messages = requests[1]["messages"].as_array().unwrap();
+            assert!(!messages
+                .windows(2)
+                .any(|pair| pair[0]["role"] == "user" && pair[1]["role"] == "user"));
+            let human = messages.last().unwrap()["content"].as_str().unwrap();
+            assert!(human.ends_with("Keep the adapter.\n\nKeep the schema too."));
+            assert_eq!(
+                delivered
+                    .iter()
+                    .map(|input| input["messageId"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                vec!["one", "two"]
+            );
+            if mode == 1 {
+                assert_eq!(messages[messages.len() - 2]["tool_call_id"], "skip");
+            } else {
+                assert!(human.starts_with("RESULT: "));
+            }
         }
     }
 

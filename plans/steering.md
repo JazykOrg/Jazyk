@@ -2,7 +2,7 @@
 
 Status: deployed, 2026-10-29. This plan covers the Jazyk engine, its
 ACP roles, and the jazyk.dev editor. See the [verification report](./agent-steering-acceptance.md).
-The work stays in isolated worktrees until the owner requests a merge.
+The owner approved the merge and production deployment on 2026-10-29.
 Read with [chat latency and recovery](./chat-latency.md), which records the live
 incident, prompting fixes, durable admission for all messages, refresh recovery,
 and removal of automatic composer suggestions. The owner approved implementation on 2026-10-29.

@@ -2,8 +2,8 @@
 
 Status: deployed, 2026-10-29. Companion to [active agent steering](./steering.md).
 See the [verification report](./agent-steering-acceptance.md). The implementation
-uses sub-agents with shared runtime changes integrated by one owner. Merge and
-publication wait for the owner's instructions.
+uses sub-agents with shared runtime changes integrated by one owner. The owner approved the merge and
+production deployment on 2026-10-29.
 
 ## Desired result
 

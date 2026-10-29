@@ -333,7 +333,7 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
         push_user(&mut history, instructions.clone());
     }
     if crate::vfs::is_scoped() && !history.is_empty() {
-        push_user(&mut history, "The tool context was reopened. Prior handles are invalid; reload only graph nodes needed for this request. This does not require task discovery or compilation.".into());
+        push_user(&mut history, include_str!("../../docs/compiler/goals/prompts/chat-context-reset.md").into());
     }
     push_user(&mut history, text);
 
@@ -427,7 +427,7 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
                 crate::portable::emit_event("chat.answer",json!({"sessionId":id,"messageId":value["messageId"],"status":if ok {"recorded"}else{"failed"},"result":reply}));
                 value["displayText"] = value["text"].clone();
                 if !ok { value["state"]=json!("failed"); value["reason"]=json!("The diagnostic answer was rejected. Inspect the recorded tool result before retrying."); }
-                value["text"] = json!(format!("A human submitted an answer through the diagnostic answer API. Actual tool result: {}. Use the returned handling instructions if accepted. Reload affected graph context before further writes. Do not record the same answer a second time.",reply));
+                value["text"] = json!(include_str!("../../docs/compiler/goals/prompts/chat-answer-input.md").replace("{RESULT}",&reply.to_string()));
             }
             value
         }).collect::<Vec<_>>()

@@ -279,6 +279,9 @@ fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, mut update: Value) {
 fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
     {
         let mut s = sess.lock().unwrap();
+        if s.stopped && s.state == "failed" {
+            return;
+        }
         s.state = state.to_string();
     }
     append(st, sess, json!({"sessionUpdate":"state","state":state}));
@@ -545,7 +548,9 @@ pub async fn post_prompt(
                 let mut session = sess2.lock().unwrap();
                 let failed = outcome.as_ref().map_or(true, |o| o.stop != "end_turn");
                 if session.stopped || failed {
-                    session.state = if session.stopped {
+                    session.state = if session.stopped && session.state == "failed" {
+                        "failed"
+                    } else if session.stopped {
                         "cancelled"
                     } else if failed {
                         "failed"

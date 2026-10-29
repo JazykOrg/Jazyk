@@ -122,7 +122,7 @@ impl Workspace {
             drop_graph_snapshots();
             let conversations = crate::conversation::Scope::enter()?;
             let reply = dispatch(method, path, body)?;
-            if path.contains("/chat/") && method != "GET" {
+            if method != "GET" && (path.contains("/chat/") || path.ends_with("/jobs") || path.ends_with("/compile")) {
                 conversations.save()?;
             }
             Ok::<_, String>((reply, fs.snapshot()))
@@ -468,6 +468,10 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     }
     if method == "POST" && route == "/jobs" {
         let request = routed.body.clone();
+        let _conversation = match crate::conversation::BuildScope::enter(&request) {
+            Ok(scope) => scope,
+            Err((status, error)) => return Ok(Reply::json(status, json!({"error":error}))),
+        };
         let kind = request["kind"].as_str().unwrap_or("compile");
         if kind == "workflow" {
             let tasks_only = crate::workflow::parse(&request["steps"]).is_ok_and(|steps|
@@ -545,7 +549,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     if method == "GET" && route == "/capabilities" {
         return Ok(Reply::json(
             200,
-            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
+            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"conversationJobs":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
         ));
     }
     let envelope: Value =
@@ -970,6 +974,71 @@ mod tests {
         let timeline=value(&mut w,"GET",&format!("/api/chat/sessions/{}",chat["id"].as_str().unwrap()),Value::Null,&e);
         assert!(timeline["inputs"].as_array().unwrap().iter().any(|v|v["messageId"]=="steer-1"&&v["state"]=="delivered"));
         assert!(events.lock().unwrap().iter().any(|v|v["type"]=="chat.input"&&v["messageId"]=="steer-1"));
+    }
+
+    #[test]
+    fn owned_build_steering_uses_worker_boundaries_and_preserves_conversation() {
+        let mut w = workspace("Steering");
+        let incoming = Arc::new(AtomicBool::new(false));
+        let incoming_model = incoming.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_model = cancel.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_model = calls.clone();
+        let events = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let sink = events.clone();
+        let execution = Execution {
+            model: "build-steering-fixture".into(),
+            cancel,
+            transport: Some(Arc::new(move |body| {
+                if calls_model.fetch_add(1, Ordering::SeqCst) == 0 {
+                    incoming_model.store(true, Ordering::SeqCst);
+                    return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{
+                        "id":"stale-coverage","type":"function","function":{"name":"set_coverage",
+                        "arguments":json!({"section":"docs/main.md#/steering","state":"non-normative","note":"stale proposal"}).to_string()}
+                    }]}}]}).to_string());
+                }
+                assert!(body.contains("Stop changing coverage. Inspect the source first."));
+                assert!(body.contains("Skipped: new human input arrived before dispatch"));
+                cancel_model.store(true, Ordering::SeqCst);
+                Ok(model_reply("Stopped after receiving the correction."))
+            })),
+            inputs: Some(Arc::new(move |session| {
+                assert_eq!(session, "chat-1", "the worker batch must drain its ordinary conversation");
+                if incoming.swap(false, Ordering::SeqCst) {
+                    vec![json!({"sessionId":session,"messageId":"build-steer-1","text":"Stop changing coverage. Inspect the source first.","turnId":"41","sequence":1})]
+                } else { vec![] }
+            })),
+            input_close: Some(Arc::new(|_| panic!("a worker batch cannot close whole-job admission"))),
+            events: Some(Arc::new(move |event| sink.lock().unwrap().push(event.clone()))),
+            ..Default::default()
+        };
+        let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &execution);
+        let id = chat["id"].as_str().unwrap();
+        let result = w.request("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1}).to_string(), &execution).unwrap();
+        assert_eq!(result.status, 200, "{}", String::from_utf8_lossy(&result.body));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let timeline = value(&mut w, "GET", &format!("/api/chat/sessions/{id}"), Value::Null, &Execution::default());
+        let rows = timeline["updates"].as_array().unwrap();
+        assert!(rows.iter().any(|v| v["update"]["sessionUpdate"] == "workflow" && v["update"]["jobId"] == 41));
+        assert_eq!(rows.iter().filter(|v| v["update"]["sessionUpdate"] == "user_message" && v["update"]["messageId"] == "build-steer-1").count(), 1);
+        assert!(timeline["inputs"].as_array().unwrap().iter().any(|v| v["messageId"] == "build-steer-1" && v["state"] == "delivered"));
+        assert!(events.lock().unwrap().iter().any(|v| v["type"] == "chat.input" && v["messageId"] == "build-steer-1" && v["state"] == "delivered"));
+        let history = String::from_utf8(w.snapshot()[".jazyk/conversations.json"].clone()).unwrap();
+        assert!(history.contains("Stop changing coverage. Inspect the source first."));
+        assert!(!history.contains("stale proposal"));
+        assert!(!w.snapshot().values().any(|v| String::from_utf8_lossy(v).contains("stale proposal")));
+    }
+
+    #[test]
+    fn owned_jobs_reject_unknown_conversation_before_execution() {
+        let mut w = workspace("Ownership");
+        let reply = w.request("POST", "/api/jobs", r#"{"kind":"compile","conversationId":"missing","jobId":42}"#, &Execution::default()).unwrap();
+        assert_eq!(reply.status, 404);
+        let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
+        let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"]}).to_string(), &Execution::default()).unwrap();
+        assert_eq!(reply.status, 400);
+        assert!(!w.snapshot().keys().any(|k| k.contains("graph/")));
     }
 
     #[test]

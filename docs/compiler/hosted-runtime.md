@@ -123,6 +123,23 @@ when no input remains. A failed close returns to input delivery. Hosted adapters
 fence these callbacks to the current job owner and preserve undelivered messages
 across pauses and worker failure. Input delivery events follow history insertion.
 
+A manually started job can name its owning `conversationId` and numeric `jobId`.
+The conversation must exist and have no running conversational turn. Its transcript
+records a `workflow` update with that job identity. The update survives workspace
+snapshots. A worker batch drains inputs for its owning conversation through the
+same input callback. It records delivery after inserting the text into worker
+history. It keeps the batch's tools, goals, and commit gates. Steering does not
+authorize unrelated writes or a second writer.
+
+Admission remains open between worker batches. Ending a batch does not call
+`Execution.input_close`. The host closes admission when the whole job ends and
+preserves any undelivered input. A job without a conversation keeps its existing
+non-conversational execution.
+
+Portable capabilities advertise `conversationJobs: true`. The native GUI does not
+advertise it. Its jobs retain their separate build transcript until its ACP job
+runner exposes the same ownership and input delivery contract.
+
 `Execution.transport_stream` optionally delivers `content`, `reasoning_content`,
 or `reasoning` deltas while returning the complete model response for history and
 tool validation. A body-only transport remains supported. Streamed tool arguments

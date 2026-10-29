@@ -49,6 +49,69 @@ struct Book {
 
 thread_local! {
     static BOOK: RefCell<Book> = RefCell::new(Book::default());
+    static BUILD_CONVERSATION: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+// A job owns the worker, while its ordinary conversation owns the human timeline.
+// This scope never opens a conversational serving or grants a worker new tools.
+pub(crate) struct BuildScope(Option<String>);
+
+impl BuildScope {
+    pub(crate) fn enter(body: &Value) -> Result<Self, (u16, String)> {
+        let owner = match body.get("conversationId") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(id)) if !id.is_empty() => Some(id.clone()),
+            _ => return Err((400, "conversationId must name a conversation".into())),
+        };
+        if let Some(id) = &owner {
+            let job = body["jobId"].as_u64().filter(|id| *id > 0)
+                .ok_or_else(|| (400, "an owned job requires a positive numeric jobId".into()))?;
+            let existing = BOOK.with(|b| {
+                let book = b.borrow();
+                let chat = book.chats.get(id).ok_or_else(|| (404, "unknown conversation".into()))?;
+                if chat.state == "running" {
+                    return Err((409, "the conversation already has a running turn".into()));
+                }
+                Ok(chat.updates.iter().any(|(_, u)| u["sessionUpdate"] == "workflow" && u["jobId"] == job))
+            })?;
+            if !existing {
+                append(id, json!({"sessionUpdate":"workflow","jobId":job}));
+            }
+        }
+        Ok(Self(BUILD_CONVERSATION.with(|current| current.replace(owner))))
+    }
+}
+
+impl Drop for BuildScope {
+    fn drop(&mut self) {
+        BUILD_CONVERSATION.with(|current| current.replace(self.0.take()));
+    }
+}
+
+pub(crate) fn build_conversation() -> Option<String> {
+    BUILD_CONVERSATION.with(|current| current.borrow().clone())
+}
+
+pub(crate) fn build_inputs(id: &str) -> Vec<Value> {
+    let mut seen = std::collections::BTreeSet::new();
+    crate::portable::take_inputs(id).into_iter().filter(|input| {
+        input["messageId"].as_str().is_some_and(|mid| {
+            seen.insert(mid.to_owned()) && BOOK.with(|b| {
+                b.borrow().chats.get(id).is_some_and(|c| !c.inputs.contains_key(mid))
+            })
+        })
+    }).collect()
+}
+
+pub(crate) fn build_input_delivered(id: &str, input: Value) {
+    BOOK.with(|b| {
+        if let Some(chat) = b.borrow_mut().chats.get_mut(id) {
+            crate::agent_loop::push_user_text(&mut chat.history, input["text"].as_str().unwrap_or_default());
+        }
+    });
+    append(id, json!({"sessionUpdate":"user_message","text":input["text"],
+        "messageId":input["messageId"],"turnId":input["turnId"]}));
+    delivered(id, input);
 }
 
 // A new project starts with no conversations.

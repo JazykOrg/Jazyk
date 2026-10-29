@@ -84,6 +84,12 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
     };
     let path = &routed.path;
     let route = path.split('?').next().unwrap_or(path);
+    let _conversation = if method == "POST" && matches!(route, "/jobs" | "/compile") {
+        match crate::conversation::BuildScope::enter(&routed.body) {
+            Ok(scope) => Some(scope),
+            Err((status, error)) => return err(status, error),
+        }
+    } else { None };
     if let Some(result) = crate::task_runtime::api(root, method, route, &routed.body, &routed.path) {
         return match result { Ok(value) => ok(value), Err(message) => err(400, message) };
     }
@@ -247,6 +253,7 @@ pub(crate) fn request_scoped(
                 "version": env!("CARGO_PKG_VERSION"),
                 // What this transport is, so the app can hide what it cannot serve.
                 "chatInputs": true,
+                "conversationJobs": true,
                 "backend": if crate::vfs::is_scoped() { "hosted" } else { "wasm" },
             }))
         }

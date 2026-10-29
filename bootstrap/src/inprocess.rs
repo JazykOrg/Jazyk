@@ -181,7 +181,15 @@ impl SessionRunner for InProcessRunner {
                 Err((_, m)) => Err(m),
             }
         };
-        let mut emit = |ev: AgentEvent| lt.on_event(ev);
+        let owner = crate::conversation::build_conversation();
+        let mut emit = |ev: AgentEvent| {
+            if let (Some(id), AgentEvent::Input(input)) = (&owner, &ev) {
+                crate::conversation::build_input_delivered(id, input.clone());
+            }
+            lt.on_event(ev);
+        };
+        let mut input_source = || owner.as_deref()
+            .map(crate::conversation::build_inputs).unwrap_or_default();
 
         let never_cancelled = || trace.is_cancelled();
         let stop = agent_loop::run_loop(LoopArgs {
@@ -194,7 +202,8 @@ impl SessionRunner for InProcessRunner {
             max_rounds: crate::limits::SESSION_ROUNDS,
             label: label.clone(),
             conversation: false,
-        inputs: None,
+        inputs: owner.as_ref().map(|_| &mut input_source as &mut dyn FnMut() -> Vec<Value>),
+        // This is one worker batch, not the whole job's admission lifetime.
         input_close: None,
         });
         lt.finish();

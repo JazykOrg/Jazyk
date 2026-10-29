@@ -466,6 +466,15 @@ documents. Stop suppresses automatic follow-up builds until an explicit Build.
 
 ## Steering and conversation recovery
 
+`POST /api/jobs` accepts an optional `conversationId` and numeric `jobId`. An owned
+job records `{"sessionUpdate":"workflow","jobId":42}` in that conversation.
+The editor supplies the job identity before starting the worker and retains the
+association in its job snapshot. Inputs enter the owning conversation's mailbox.
+Worker batches consume them at the same safe boundaries as conversational turns.
+They preserve the current batch's tool scope and gates. Admission stays open
+between batches. A delivery event means the text entered the active worker's
+history. A request arriving after the last worker stays undelivered for recovery.
+
 A running conversation accepts ordered text inputs without a second model loop.
 The page publishes a bounded JSON batch through a separate shared-memory mailbox.
 The worker drains it before model requests, between tool calls, and before turn

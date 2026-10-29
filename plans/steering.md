@@ -3,6 +3,9 @@
 Status: proposal, 2026-10-29. This plan covers the Jazyk engine, its ACP roles,
 and the jazyk.dev editor in the private sibling repository. It adds no runtime
 behavior yet. Each implementation step starts by updating its canonical docs.
+Read with [chat latency and recovery](./chat-latency.md), which records the live
+incident, prompting fixes, durable admission for all messages, refresh recovery,
+and removal of automatic composer suggestions. Implementation waits for approval.
 
 ## Intended behavior
 

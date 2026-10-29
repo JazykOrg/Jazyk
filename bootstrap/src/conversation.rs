@@ -291,7 +291,6 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
     }
     BOOK.with(|b| b.borrow_mut().chats.get_mut(id).unwrap().turn_id=Some(turn_id.clone()));
     append(id, json!({"sessionUpdate": "user_message", "text": text,"messageId":message_id,"turnId":turn_id}));
-    delivered(id,json!({"messageId":message_id,"text":text,"turnId":turn_id}));
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
             if !c.titled {
@@ -321,6 +320,7 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
                         c.history = history;
                     }
                 });
+                delivered(id,json!({"messageId":message_id,"text":text,"turnId":turn_id,"state":"failed","reason":format!("The chat serving failed to start: {e}")}));
                 append(
                     id,
                     json!({"sessionUpdate": "turn_end", "stop": "error",
@@ -345,7 +345,8 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
     if crate::vfs::is_scoped() && !history.is_empty() {
         push_user(&mut history, include_str!("../../docs/compiler/goals/prompts/chat-context-reset.md").into());
     }
-    push_user(&mut history, text);
+    push_user(&mut history, text.clone());
+    delivered(id,json!({"messageId":message_id,"text":text,"turnId":turn_id}));
 
     let generations = || {
         crate::document_sets::Workspace::load(&crate::portable::root())

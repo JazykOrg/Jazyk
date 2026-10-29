@@ -1793,7 +1793,11 @@ impl McpServer {
                     .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf")) {
                     return Err((-32602, "binary documents require a format-specific editor".into()));
                 }
-                let old = crate::vfs::read_to_string(&abs).ok();
+                let old = match crate::vfs::read_to_string(&abs) {
+                    Ok(text) => Some(text),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound && !crate::vfs::exists(&abs) => None,
+                    Err(error) => return Err((-32602,format!("cannot read existing document before editor delegation: {error}"))),
+                };
                 let hash = old.as_deref().map(crate::model::hash_hex);
                 if base != hash.as_deref() || (base.is_none() && old.is_some()) {
                     return Ok(text_result(json!({"error":{"rule":"stale-document","message":"document changed; read_document before retrying","diskHash":hash}}), true));
@@ -3706,6 +3710,17 @@ mod tests {
         assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}})).is_err());
         assert!(Store::load(&dir.join(".jazyk/ds_main")).graph.entities.is_empty());
         assert!(crate::control::Control::load(&project,&project.out).released.compile.is_empty());
+    }
+
+    #[test]
+    fn delegated_document_write_never_treats_unreadable_existing_bytes_as_missing() {
+        let dir=bare_dir("delegated-unreadable-prose");
+        crate::vfs::write(dir.join("docs/invalid.md"),[0xff,0xfe]).unwrap();
+        let project=crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let s=McpServer::with_bridge(project.clone(),project.out,vec!["chat".into()],false,BridgeFlags{ephemeral:true,edit_sink:Some("not-a-live-editor-sink".into()),..Default::default()});
+        let error=s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/invalid.md","text":"must not replace bytes"}})).unwrap_err();
+        assert!(error.1.contains("cannot read existing document"),"{error:?}");
+        assert_eq!(crate::vfs::read(dir.join("docs/invalid.md")).unwrap(),vec![0xff,0xfe]);
     }
 
     #[test]

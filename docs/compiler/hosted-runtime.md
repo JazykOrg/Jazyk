@@ -114,3 +114,17 @@ The native CLI, ACP, LSP, and local GUI retain their normal filesystem and proce
 behavior outside this profile. The browser retains its existing memory filesystem
 and model bridge. See [the filesystem seam](../frontends/wasm.md#filesystem) and
 [editor protocol](../frontends/protocol.md).
+
+## Conversation input and model deltas
+
+`Execution.inputs` drains ordered accepted inputs for one conversation at safe
+agent-loop boundaries. `Execution.input_close` atomically closes admission only
+when no input remains. A failed close returns to input delivery. Hosted adapters
+fence these callbacks to the current job owner and preserve undelivered messages
+across pauses and worker failure. Input delivery events follow history insertion.
+
+`Execution.transport_stream` optionally delivers `content`, `reasoning_content`,
+or `reasoning` deltas while returning the complete model response for history and
+tool validation. A body-only transport remains supported. Streamed tool arguments
+never execute before a complete validated response. The host bounds and cancels
+model calls and coalesces small deltas before persistence.

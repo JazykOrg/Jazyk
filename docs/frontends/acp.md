@@ -178,7 +178,10 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   at the cap and a valid zero-argument tool still execute normally.
   This bound also applies to MCP tools outside a graph batch. It streams thought chunks,
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
-  usage. A prose reply in a prompt that already made tool calls gets one nudge before
+  usage. A worker prompt ends immediately after `done` confirms `committed: true`,
+  unless `beginNext: true` requested another batch. Later calls in the same reply
+  receive skipped results. A rejected `done` remains repairable. Chat prompts keep
+  their conversational reply. A prose reply in a prompt that already made tool calls gets one nudge before
   the prompt ends: weak models forget they are mid-goal more often than they finish
   silently, and a purely conversational answer still ends the prompt immediately. A
   prose reply that announces an action ("I'll rewrite src/order.rs", "Now I'll record

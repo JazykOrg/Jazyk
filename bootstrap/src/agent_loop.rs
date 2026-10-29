@@ -831,6 +831,7 @@ pub fn run_loop_with_instructions(mut a: LoopArgs, instructions: &str) -> Stop {
 
         let mut call_n = 0u32;
         let mut reply_failed = false;
+        let mut batch_committed = false;
         let mut reply_cancelled = false;
         let mut steered = Vec::new();
         for action in actions.drain(..) {
@@ -865,6 +866,8 @@ pub fn run_loop_with_instructions(mut a: LoopArgs, instructions: &str) -> Stop {
                         Err("Skipped: new human input arrived before this call started; this call did not execute.".into())
                     } else if reply_cancelled {
                         Err("Skipped: the session was cancelled before this call started; this call did not execute.".into())
+                    } else if batch_committed {
+                        Err("Skipped: this worker batch has already committed; this call did not execute.".into())
                     } else if reply_failed {
                         Err("Skipped: an earlier call in this reply failed. Inspect its error before resubmitting this call; this call did not execute.".into())
                     } else {
@@ -891,6 +894,8 @@ pub fn run_loop_with_instructions(mut a: LoopArgs, instructions: &str) -> Stop {
                         ok,
                     });
                     let mut value = serde_json::from_str(&result).unwrap_or_else(|_| json!(result));
+                    batch_committed |= !a.conversation && ok && name == "done"
+                        && value["committed"] == true && args["beginNext"] != true;
                     // Keep the full outward transcript, but avoid sending the same
                     // large contract once per package in the model's history.
                     // A changed contract is always preserved, as are all facts.
@@ -916,6 +921,9 @@ pub fn run_loop_with_instructions(mut a: LoopArgs, instructions: &str) -> Stop {
         deliver_inputs(&mut a, steered);
         if reply_cancelled || (a.cancelled)() {
             return Stop::Cancelled;
+        }
+        if batch_committed {
+            return Stop::EndTurn;
         }
         if failed_calls >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
             return Stop::Error("Stopped after five consecutive tool errors; inspect the failed calls before retrying.".into());
@@ -1077,6 +1085,80 @@ mod tests {
             name: "write_text_file".into(),
             description: "Write text".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
+        }
+    }
+
+    #[test]
+    fn confirmed_worker_commit_ends_without_another_model_request() {
+        for (conversation, begin_next, committed, accepted) in [
+            (false, false, true, true),
+            (true, false, true, true),
+            (false, true, true, true),
+            (false, false, false, true),
+            (false, false, false, false),
+        ] {
+            let _scope = crate::scoped_state::Scope::enter();
+            llm::set_tools_mode(1);
+            let (llm, provider) = scripted_provider(vec![native_reply(
+                vec![
+                    native_call(
+                        "commit",
+                        "done",
+                        &json!({"summary":"ok", "beginNext":begin_next}).to_string(),
+                    ),
+                    native_call(
+                        "late",
+                        "write_text_file",
+                        r#"{"path":"late.txt","content":"late"}"#,
+                    ),
+                ],
+                20,
+            )]);
+            let done = GenericTool {
+                name: "done".into(),
+                description: "Commit batch".into(),
+                parameters: json!({"type":"object","properties":{"summary":{"type":"string"},"beginNext":{"type":"boolean"}},"required":["summary"]}),
+            };
+            let mut history = vec![json!({"role":"user","content":"Complete one batch"})];
+            let mut calls = Vec::new();
+            let should_end = !conversation && !begin_next && committed && accepted;
+            let stop = run_loop(LoopArgs {
+                llm: &llm,
+                history: &mut history,
+                tools: &[done, write_tool()],
+                dispatch: &mut |name, _| {
+                    calls.push(name.to_string());
+                    if name == "done" {
+                        if accepted {
+                            Ok(json!({"committed":committed}).to_string())
+                        } else {
+                            Err("repair required".into())
+                        }
+                    } else {
+                        Ok("{}".into())
+                    }
+                },
+                emit: &mut |_| {},
+                cancelled: &|| false,
+                max_rounds: if should_end { 3 } else { 1 },
+                label: "commit-boundary".into(),
+                conversation,
+                inputs: None,
+                input_close: None,
+            });
+            assert_eq!(provider.join().unwrap().len(), 1);
+            assert_eq!(matches!(stop, Stop::EndTurn), should_end);
+            assert_eq!(
+                history.iter().filter(|row| row["role"] == "tool").count(),
+                2
+            );
+            if should_end {
+                assert_eq!(calls, ["done"]);
+                assert!(history.last().unwrap()["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("already committed"));
+            }
         }
     }
 

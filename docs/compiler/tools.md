@@ -933,3 +933,20 @@ Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.sche
 
 [Task execution](task-runtime.md#tools-and-access) supplies the shared task and run
 tools to generation, binding, verification, writable MCP, and ACP sessions.
+
+## Conversational document writes
+
+`write_document({path, text, baseHash?})` replaces one prose document. A read
+returns the current `hash`, which the write sends as `baseHash`. Omitting the
+hash creates a new document exclusively. A stale hash refuses the write. The
+tool works before compilation and never releases compile work. It validates
+document-set membership and safe paths, refuses binary documents, and uses the
+same document writer as the editor. ACP document edits use the editor sink when
+one is attached. Normal document saves dirty the affected sections for the next
+build. Editing an identified compiled fact uses the existing dual-write tools.
+
+General questions need no project discovery. The conversational contract is
+embedded from `goals/prompts/chat-conversation.md`. Detailed lifecycle packages
+apply to requested lifecycle work. A document edit does not authorize compilation,
+generation, task execution, or a workflow release. A tool repair hint grants no
+new authority.

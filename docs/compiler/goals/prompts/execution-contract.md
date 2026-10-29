@@ -1,4 +1,6 @@
-Read task_context and choose tasks by name and description. Reuse existing tasks.
+When the user requests task inspection or execution, read task_context and choose
+tasks by name and description. Reuse existing tasks. General questions and prose
+document edits do not require task_context and do not authorize execution.
 Follow the requested scope: inspection alone does not authorize a run or an edit.
 A task has an ID, name, description, and command. Short commands need no script file.
 Save a bare ID such as "check" and pass that ID to run_task. The "task:check"

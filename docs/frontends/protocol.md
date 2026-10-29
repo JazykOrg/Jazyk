@@ -60,3 +60,18 @@ response without a version, and an explicitly incompatible response.
 The [local API](gui.md) and the [WebAssembly engine](wasm.md) define the transports.
 The protocol does not replace their authorization, persistence, or capability
 contracts.
+
+## Conversation input compatibility
+
+A backend that accepts steering advertises `chatInputs: true`. Clients submit
+`POST /api/chat/sessions/{id}/inputs` with `messageId`, `text`, and an optional
+`expectedTurnId`. A message ID is immutable within a conversation. Retrying its
+same payload returns its existing admission. A changed payload conflicts.
+Input states are `queued`, `delivered`, `failed`, `cancelled`, or
+`delivery_unknown`. `deliveryMode` is `steer` or `next_turn`.
+
+`chat.input` events report admission and delivery. Snapshots preserve input IDs
+and current turn identity. Acceptance does not claim model delivery. A normal
+completion closes input admission atomically; a concurrent input either joins
+the active turn or is retained for a subsequent prompt. Older clients can keep
+using `/prompt`. Older backends keep their existing prompt behavior.

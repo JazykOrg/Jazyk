@@ -463,3 +463,25 @@ another request or tool call. Late model replies are ignored. Completed session
 commits remain; staged work and provisional display are discarded. The job ends
 `cancelled`. An explicit Build resets the flag and derives remaining work from saved
 documents. Stop suppresses automatic follow-up builds until an explicit Build.
+
+## Steering and conversation recovery
+
+A running conversation accepts ordered text inputs without a second model loop.
+The page publishes a bounded JSON batch through a separate shared-memory mailbox.
+The worker drains it before model requests, between tool calls, and before turn
+completion. A completed tool keeps its real result. Unstarted stale calls receive
+skipped results before the follow-up enters history. Delivery is emitted only
+after history insertion. Stop cancels pending work and does not start another turn.
+
+The mailbox has a 16-byte atomic header (`state`, `length`, `epoch`, `sequence`)
+and UTF-8 payload bytes. The page publishes bytes before setting `state` to `1`.
+The worker reads the batch and resets `state` to `0`. Payloads include the target
+`sessionId`; the page resets the mailbox when changing projects. Full mailboxes
+leave input queued on the page. They do not acknowledge engine delivery.
+
+`GET /api/chat/history` exports `{version: 1, book}`. `PUT /api/chat/history`
+restores that envelope while no conversation is running. A restored running
+conversation becomes interrupted. The page stores this history under its project
+identity and retains accepted in-flight messages until the next snapshot. A
+refresh never automatically reruns an uncertain write. Model credentials are not
+part of the history.

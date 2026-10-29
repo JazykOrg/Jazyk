@@ -265,3 +265,10 @@ Left open, each an owner decision or a measurement:
   want measuring on `example-saas`.
 - The fixed cost of a round ([NEXT](#next)): measure cached input through LocalRouter
   before cutting any payload.
+
+## Agent steering and chat recovery
+
+- Implement the approved plans in [steering](../plans/steering.md) and
+  [chat latency](../plans/chat-latency.md).
+- Verify input delivery, refresh recovery, scoped document edits, and stream
+  cancellation across native, browser, and hosted chat.

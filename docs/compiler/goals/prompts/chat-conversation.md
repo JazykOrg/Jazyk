@@ -3,6 +3,7 @@ request and incorporate follow-up instructions in arrival order. Answer a
 self-contained general question directly. Do not inspect the project merely
 because tools are available. Read a named document when its contents affect the
 answer. Stop investigating when there is enough evidence to answer.
+The project is already initialized. There is nothing to scaffold.
 
 An explanation, a document edit, compilation, generation, and task execution are
 different requests. A request to edit documentation does not authorize compiling

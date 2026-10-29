@@ -205,12 +205,7 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
             );
         } else {
             s.push_str(
-                "CHAT SERVING: you are in a conversation about this project. Read the graph with the \
-                 read tools. A requirement lives in the prose: change one with revise_requirement (new \
-                 prose, optional new statement), add one with add_requirement, remove one with \
-                 retract_requirement; each moves the document and the graph in one atomic commit. \
-                 update_project_settings edits jazyk.toml keys. The project is already initialized: \
-                 there is no init_project tool and nothing to scaffold. ",
+                include_str!("../../docs/compiler/goals/prompts/chat-conversation.md"),
             );
             // A tab serves the compilation lifecycle alone (docs/frontends/wasm.md#chat).
             if tab {
@@ -224,13 +219,14 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
                     "The compilation, binding, generation, and verification lifecycles are \
                      available for explicit requests. ",
                 );
-                s.push_str(include_str!("../../docs/compiler/goals/prompts/chat-workflow.md"));
+                // Detailed lifecycle instructions arrive in their packages, only when requested.
             }
         }
     }
     if modes.iter().any(|m| m == "graph") && write {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
     }
+    if !modes.iter().any(|m| m == "chat") {
     s.push_str(
         "The write tools are: upsert_entity, update_entity, delete_entity, merge_entities, \
          upsert_requirement, update_requirement, delete_requirement, set_coverage, \
@@ -246,8 +242,9 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
          report_spend records it on the batch's journal entry (your own figure, never an \
          estimate).",
     );
+    }
     #[cfg(not(target_arch = "wasm32"))]
-    if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "chat" | "runtime")) {
+    if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "runtime")) {
         s.push_str("\n\n");
         s.push_str(crate::task_runtime::PROMPT);
     }
@@ -262,10 +259,10 @@ pub fn reader_instructions() -> String {
     let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and requirements \
          reconciled from prose documentation. You are in a conversation about this project \
-         and can only read it. Answer questions from the graph: search finds entities and \
+         and can only read it. Use the graph when project evidence is needed: search finds entities and \
          requirements by words, get_entity and read_section return one, load and expand \
-         bring a scope into context, diagnostics lists the open judgments. Look before you \
-         answer, then answer in prose, briefly. No tool here changes the documents or the \
+         bring a scope into context, diagnostics lists the open judgments. Answer self-contained general questions directly without tools. Otherwise read \
+         relevant evidence, then answer in prose, briefly. No tool here changes the documents or the \
          graph. ",
     );
     s.push_str(TAB_BUILD_NOTE.trim_end());
@@ -1742,7 +1739,7 @@ impl McpServer {
             return Ok(
                 json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
-                "instructions":format!("This project has independent document sets. Start with list_document_sets. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)})}),
+                "instructions":format!("This project has independent document sets. Use list_document_sets when a set-local operation needs a set ID. General answers and named document reads need no set discovery. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)})}),
             );
         }
         let writable =
@@ -1755,6 +1752,9 @@ impl McpServer {
             }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
             tools.push(json!({"name":"read_document","description":"Read a project document as compiler text. DOCX and PDF include source locations and diagnostics. Never overwrite binary documents with text.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}));
+            if writable && self.modes.iter().any(|m| m == "chat") {
+                tools.push(json!({"name":"write_document","description":"Create or replace one prose document without compilation. Read first and send its hash as baseHash. Omit baseHash only to create a missing document. Preserves document-save dirtiness; does not release or run compile work.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"baseHash":{"type":"string"}},"required":["path","text"],"additionalProperties":false}}));
+            }
             if writable {
                 for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("create_document_set","Create a named document set."),("update_document_set","Update a document set while preserving its identity."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
                     tools.push(json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":{
@@ -1775,6 +1775,38 @@ impl McpServer {
         if crate::task_runtime::TOOLS.contains(&name) { return self.handle_local(method,params); }
         if name == "list_document_sets" {
             return Ok(result_value(w.summary()));
+        }
+        if name == "write_document" {
+            if !writable || !self.modes.iter().any(|m| m == "chat") {
+                return Err((-32602, "document edits require a writable chat serving".into()));
+            }
+            let args = &params["arguments"];
+            let path = args["path"].as_str().ok_or((-32602, "path is required".into()))?;
+            let text = args["text"].as_str().ok_or((-32602, "text is required".into()))?;
+            let project = w.files_project();
+            let base = args["baseHash"].as_str();
+            // Validate and version-check before asking an attached editor to write.
+            if let Some(sink) = &self.bridge.edit_sink {
+                let abs = crate::webapi::docs::safe_doc_path_why(&project, path)
+                    .map_err(|m| (-32602, m))?;
+                if std::path::Path::new(path).extension().and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf")) {
+                    return Err((-32602, "binary documents require a format-specific editor".into()));
+                }
+                let old = crate::vfs::read_to_string(&abs).ok();
+                let hash = old.as_deref().map(crate::model::hash_hex);
+                if base != hash.as_deref() || (base.is_none() && old.is_some()) {
+                    return Ok(text_result(json!({"error":{"rule":"stale-document","message":"document changed; read_document before retrying","diskHash":hash}}), true));
+                }
+                sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text)
+                    .map_err(|m| (-32603, m))?;
+                return Ok(result_value(json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true})));
+            }
+            return match crate::webapi::docs::doc_write(&project, path, text, base) {
+                crate::webapi::docs::DocWrite::Written(v) => Ok(result_value(v)),
+                crate::webapi::docs::DocWrite::Conflict(v) => Ok(text_result(json!({"error":{"rule":"stale-document","message":v}}), true)),
+                crate::webapi::docs::DocWrite::Invalid(m) | crate::webapi::docs::DocWrite::Failed(m) => Err((-32602,m)),
+            };
         }
         if name == "read_document" {
             let path = params["arguments"]["path"].as_str().ok_or((-32602, "path is required".into()))?;
@@ -3235,7 +3267,7 @@ impl McpServer {
             return json!({"error": {"rule": "missing-argument", "message": "doc, section, text, statement, and entities are required"}});
         }
         let Some(sec_raw) = self.section_raw(&doc, &section) else {
-            return json!({"error": {"rule": "unknown-section", "message": format!("no section `{}#{}` in the graph; compile first", doc, section)}});
+            return json!({"error": {"rule": "unknown-section", "message": format!("no section `{}#{}` in the graph; for a prose document edit use read_document then write_document with its hash. Compile only when the user requests compilation", doc, section)}});
         };
         let path = self.project.root.join(&doc);
         let old_full = match crate::vfs::read_to_string(&path) {
@@ -3651,6 +3683,39 @@ mod tests {
             assert_eq!(value["diagnostics"][0]["code"], "broken-link");
             assert!(s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"../outside.docx"}})).is_err());
         }
+    }
+
+    #[test]
+    fn chat_prose_edit_works_before_compile_and_rejects_stale_or_unsafe_writes() {
+        let dir=bare_dir("chat-uncompiled-prose");
+        let path=dir.join("docs/hosting.md");
+        crate::vfs::write(&path,"# Hosting\n\nCloudFront-S3.\n").unwrap();
+        let project=crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let s=McpServer::with_bridge(project.clone(),project.out.clone(),vec!["chat".into()],false,BridgeFlags{ephemeral:true,..Default::default()});
+        let call=|name:&str,args:Value|s.handle("tools/call",&json!({"name":name,"arguments":args})).unwrap();
+        let read=call("read_document",json!({"path":"docs/hosting.md"}));
+        let read:Value=serde_json::from_str(read["content"][0]["text"].as_str().unwrap()).unwrap();
+        let changed="# Hosting\n\nUse the existing deployment task.\n";
+        let written=call("write_document",json!({"path":"docs/hosting.md","text":changed,"baseHash":read["hash"]}));
+        assert!(!written["isError"].as_bool().unwrap_or(false),"{written}");
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(),changed);
+        let stale=call("write_document",json!({"path":"docs/hosting.md","text":"must not land","baseHash":read["hash"]}));
+        assert_eq!(stale["isError"],true);
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(),changed);
+        assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"../outside.md","text":"x"}})).is_err());
+        assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}})).is_err());
+        assert!(Store::load(&dir.join(".jazyk/ds_main")).graph.entities.is_empty());
+        assert!(crate::control::Control::load(&project,&project.out).released.compile.is_empty());
+    }
+
+    #[test]
+    fn conversational_contract_does_not_require_discovery_or_execution() {
+        let instructions=instructions_in(&["chat".into()],false,true,false);
+        assert!(instructions.contains("self-contained general question directly"));
+        assert!(instructions.contains("does not authorize compiling"));
+        assert!(instructions.contains("write_document"));
+        assert!(!instructions.contains("Read task_context and choose"));
+        assert!(!instructions.contains("The write tools are:"));
     }
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {

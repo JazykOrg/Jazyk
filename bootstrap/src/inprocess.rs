@@ -197,6 +197,7 @@ impl SessionRunner for InProcessRunner {
         inputs: None,
         input_close: None,
         });
+        lt.finish();
         let (rounds, tokens, cached) = (lt.rounds, lt.tokens, lt.cached);
 
         // The session's word is never the verdict: what landed is read from the
@@ -389,6 +390,7 @@ fn run_answer(
         inputs: None,
         input_close: None,
     });
+    lt.finish();
     let rounds = lt.rounds;
     match stop {
         Stop::EndTurn => Ok(rounds),

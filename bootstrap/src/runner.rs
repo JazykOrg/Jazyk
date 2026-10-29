@@ -155,6 +155,8 @@ pub struct LoopTrace<'a> {
     label: String,
     doc: Option<String>,
     at_section: Option<String>,
+    text: String,
+    text_flushed: Option<crate::sys::Instant>,
     // The name and arguments of each call in flight, by call id: a `section` event
     // waits for the call to be accepted.
     calls: std::collections::HashMap<String, (String, serde_json::Value)>,
@@ -170,6 +172,8 @@ impl<'a> LoopTrace<'a> {
             label: batch.id.clone(),
             doc: batch_doc(batch),
             at_section: None,
+            text: String::new(),
+            text_flushed: None,
             calls: Default::default(),
             rounds: 0,
             tokens: 0,
@@ -177,9 +181,40 @@ impl<'a> LoopTrace<'a> {
         }
     }
 
+    pub fn finish(&mut self) {
+        if !self.text.is_empty() {
+            self.trace.event(crate::session::TraceEvent::ModelText {
+                label: self.label.clone(),
+                text: std::mem::take(&mut self.text),
+            });
+        }
+    }
+
+    fn buffer_text(&mut self, text: &str, now: crate::sys::Instant) {
+        if text.is_empty() {
+            return;
+        }
+        // Split on UTF-8 boundaries, keeping every byte and bounding each event.
+        for ch in text.chars() {
+            if self.text.len() + ch.len_utf8() > 2_000 {
+                self.finish();
+                self.text_flushed = Some(now);
+            }
+            self.text.push(ch);
+        }
+        if self.text_flushed.is_none_or(|last| now.duration_since(last).as_millis() >= 250) {
+            self.finish();
+            self.text_flushed = Some(now);
+        }
+    }
+
     pub fn on_event(&mut self, ev: crate::agent_loop::AgentEvent) {
         use crate::agent_loop::AgentEvent;
         use crate::session::TraceEvent;
+        if !matches!(&ev, AgentEvent::Message(_) | AgentEvent::Thought(_)) {
+            self.finish();
+            self.text_flushed = None;
+        }
         match ev {
             AgentEvent::Input(_) | AgentEvent::Timing(_) => {}
             AgentEvent::Usage { tokens, cached } => {
@@ -188,13 +223,7 @@ impl<'a> LoopTrace<'a> {
                 self.cached += cached;
             }
             AgentEvent::Message(text) | AgentEvent::Thought(text) => {
-                if text.is_empty() {
-                    return;
-                }
-                self.trace.event(TraceEvent::ModelText {
-                    label: self.label.clone(),
-                    text,
-                });
+                self.buffer_text(&text, crate::sys::Instant::now());
             }
             AgentEvent::ToolCallStart { id, name, args } => {
                 self.trace.event(TraceEvent::ToolCall {
@@ -357,6 +386,7 @@ mod tests {
             ok: false,
         });
         lt.on_event(AgentEvent::Message("I cannot find the quote.".into()));
+        lt.finish();
         assert_eq!((lt.rounds, lt.tokens, lt.cached), (1, 30, 4));
 
         let ev = events.lock().unwrap();
@@ -388,6 +418,58 @@ mod tests {
     }
 
     #[test]
+    fn tiny_deltas_are_coalesced_without_hiding_progress_or_tool_order() {
+        let (trace, events) = capture();
+        let b = batch();
+        let mut lt = LoopTrace::new(&trace, &b);
+        let now = crate::sys::Instant::now();
+        lt.buffer_text("First ", now);
+        assert_eq!(events.lock().unwrap().len(), 1);
+        for _ in 0..5_000 {
+            lt.buffer_text("x ", now);
+        }
+        lt.on_event(AgentEvent::ToolCallStart {
+            id: "load".into(),
+            name: "load".into(),
+            args: serde_json::json!({}),
+        });
+        let events = events.lock().unwrap();
+        assert!(
+            events.len() < 10,
+            "tiny deltas must not fill the trace allowance"
+        );
+        let text: String = events
+            .iter()
+            .filter_map(|event| match event {
+                TraceEvent::ModelText { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "First ".to_string() + &"x ".repeat(5_000));
+        assert!(matches!(events.last(), Some(TraceEvent::ToolCall { .. })));
+    }
+
+    #[test]
+    fn buffered_text_flushes_at_the_live_interval_and_session_end() {
+        let (trace, events) = capture();
+        let b = batch();
+        let mut lt = LoopTrace::new(&trace, &b);
+        let now = crate::sys::Instant::now();
+        lt.buffer_text("First ", now);
+        lt.buffer_text("next", now + std::time::Duration::from_millis(249));
+        assert_eq!(events.lock().unwrap().len(), 1);
+        lt.buffer_text(" ", now + std::time::Duration::from_millis(250));
+        assert_eq!(events.lock().unwrap().len(), 2);
+        lt.buffer_text("last\n", now + std::time::Duration::from_millis(251));
+        lt.finish();
+        lt.finish();
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 3);
+        assert!(matches!(&events[1], TraceEvent::ModelText { text, .. } if text == "next "));
+        assert!(matches!(&events[2], TraceEvent::ModelText { text, .. } if text == "last\n"));
+    }
+
+    #[test]
     fn streamed_model_text_preserves_whitespace_and_complete_chunks() {
         let (trace, events) = capture();
         let b = batch();
@@ -409,6 +491,7 @@ mod tests {
         let long = format!(" {} ", "é".repeat(2_100));
         lt.on_event(AgentEvent::Message(long.clone()));
         lt.on_event(AgentEvent::Thought(String::new()));
+        lt.finish();
         let events = events.lock().unwrap();
         let text: Vec<&str> = events
             .iter()
@@ -417,9 +500,8 @@ mod tests {
                 other => panic!("expected modelText, got {:?}", other),
             })
             .collect();
-        assert_eq!(text.len(), chunks.len() + 1);
-        assert_eq!(text[..chunks.len()].concat(), chunks.concat());
-        assert_eq!(text[chunks.len()], long);
+        assert_eq!(text.concat(), chunks.concat() + &long);
+        assert!(text.iter().all(|chunk| chunk.len() <= 2_000));
     }
 
     // A refusal that is not a jazyk error keeps its text under the tool's name, and

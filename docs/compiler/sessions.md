@@ -585,7 +585,10 @@ The event kinds:
 - `toolCall`, `toolResult`, `toolError`: one row per tool call, condensed.
 - `modelText`: prose or reasoning the model produced. Streamed chunks retain their
   exact whitespace, including chunks containing only spaces or newlines. Consumers
-  concatenate adjacent chunks without inserting or removing characters.
+  concatenate adjacent chunks without inserting or removing characters. In-process workers
+  coalesce text into chunks of at most 2,000 bytes or flush after 250 milliseconds
+  while deltas arrive. The first delta is visible immediately. Pending text flushes
+  before tool events, usage and session completion. Coalescing never drops text.
 - `section`: the session moved to a section. Emitted when an accepted tool call names a
   section (`set_coverage`, `upsert_requirement`, an entity mention, `read_section`,
   `load`) that differs from the last one, so the sequence of these events is the

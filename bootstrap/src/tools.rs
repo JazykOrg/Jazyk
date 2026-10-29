@@ -11972,6 +11972,46 @@ mod tests {
         assert!(t.dispatch("upsert_requirement", &req("1. The employee submits the claim to their manager.", "/warehouse/people")).is_ok());
     }
 
+    #[test]
+    fn displayed_page_copy_uses_one_source_sentence_per_requirement() {
+        let mut s = Store::default();
+        let first = "A compiler that turns documentation → requirements → acceptance criteria → architecture → design → source code → tests.";
+        let second = "Every requirement has a test.";
+        let text = format!("# Landing Page\n\n## Hero\n\n> {first} {second}\n");
+        s.docs.insert(
+            "landing.md".into(),
+            DocRecord {
+                content_hash: hash_hex(&text),
+                sections: crate::md::parse_sections(&text),
+                coverage: BTreeMap::new(),
+            },
+        );
+        s.graph
+            .entities
+            .insert("ent:landing".into(), plain("Landing Page"));
+        let mut t = ToolSession::new(
+            s,
+            reconcile_scope("landing.md", &["/landing-page/hero"], &[]),
+            64,
+            24_000,
+        );
+        let req = |quote: &str| {
+            json!({
+                "statement": format!("The Landing Page hero displays '{quote}'"),
+                "entities": ["ent:landing"], "section": "landing.md#/landing-page/hero", "quote": quote,
+                "facets": [{"facet":"constraint","reasoning":"the required display text"}],
+            })
+        };
+        assert_eq!(
+            t.dispatch("upsert_requirement", &req(&format!("{first} {second}")))
+                .unwrap_err()
+                .rule,
+            "quote-multi-sentence"
+        );
+        assert!(t.dispatch("upsert_requirement", &req(first)).is_ok());
+        assert!(t.dispatch("upsert_requirement", &req(second)).is_ok());
+    }
+
     // Unfiltered, the build's bookkeeping is counted per rule; rule lists it.
     // Mirrors docs/compiler/tools.md#read-tools.
     #[test]

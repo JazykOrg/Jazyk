@@ -424,7 +424,13 @@ fn poll_inputs(a: &mut LoopArgs) -> Vec<Value> {
     a.inputs.as_mut().map(|f| f()).unwrap_or_default()
 }
 
-pub fn run_loop(mut a: LoopArgs) -> Stop {
+pub fn run_loop(a: LoopArgs) -> Stop {
+    run_loop_with_instructions(a, "")
+}
+
+// The host owns current serving instructions. Assemble them here so every codec
+// sees the same current contract without persisting it inside human messages.
+pub fn run_loop_with_instructions(mut a: LoopArgs, instructions: &str) -> Stop {
     // Codec selection is sticky per process, learned by the first-round probe or
     // forced by JAZYK_CODEC.
     let mut mode = llm::tools_mode();
@@ -451,7 +457,14 @@ pub fn run_loop(mut a: LoopArgs) -> Stop {
         }
     };
     let mut codec = codec_for(mode);
-    let system = |codec: &dyn Codec, tools: &[GenericTool]| json!({"role": "system", "content": format!("{}{}", SYSTEM, codec.system_suffix(tools))});
+    let system = |codec: &dyn Codec, tools: &[GenericTool]| {
+        let preamble = if instructions.is_empty() {
+            SYSTEM.to_string()
+        } else {
+            format!("{SYSTEM}\n\n{instructions}")
+        };
+        json!({"role":"system","content":format!("{}{}",preamble,codec.system_suffix(tools))})
+    };
     if a.history
         .first()
         .map(|m| m["role"] == "system")
@@ -1821,6 +1834,56 @@ mod tests {
             }
             assert_eq!(delivered.len(), 1);
         }
+    }
+
+    #[test]
+    fn current_harness_context_survives_native_to_text_codec_fallback() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(0);
+        let (llm, provider) = scripted_provider(vec![
+            json!({"choices":[{"message":{"role":"assistant","content":"A prose-only probe."},"finish_reason":"stop"}]}),
+            json!({"choices":[{"message":{"role":"assistant","content":r#"{"tool":"write_text_file","args":{"path":"a.py","content":"current"}}"#},"finish_reason":"stop"}]}),
+        ]);
+        let mut history = vec![
+            json!({"role":"system","content":"obsolete harness context"}),
+            json!({"role":"user","content":"Current request"}),
+        ];
+        let mut dispatched = 0;
+        let stop = run_loop_with_instructions(
+            LoopArgs {
+                llm: &llm,
+                history: &mut history,
+                tools: &[write_tool()],
+                dispatch: &mut |_, _| {
+                    dispatched += 1;
+                    Ok("{}".into())
+                },
+                emit: &mut |_| {},
+                cancelled: &|| false,
+                max_rounds: 2,
+                label: "context-fallback".into(),
+                conversation: false,
+                inputs: None,
+                input_close: None,
+            },
+            "Current serving contract.",
+        );
+        assert!(matches!(stop, Stop::MaxRounds));
+        assert_eq!(dispatched, 1);
+        let requests = provider.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in &requests {
+            let system = request["messages"][0]["content"].as_str().unwrap();
+            assert_eq!(system.matches("Current serving contract.").count(), 1);
+            assert!(!system.contains("obsolete harness context"));
+            assert_eq!(request["messages"][1]["content"], "Current request");
+        }
+        assert!(requests[0].get("tools").is_some());
+        assert!(requests[1].get("tools").is_none());
+        assert!(requests[1]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("write_text_file"));
     }
 
     #[test]

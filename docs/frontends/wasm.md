@@ -485,3 +485,8 @@ conversation becomes interrupted. The page stores this history under its project
 identity and retains accepted in-flight messages until the next snapshot. A
 refresh never automatically reruns an uncertain write. Model credentials are not
 part of the history.
+
+
+### Current chat instructions
+
+The embedded loop assembles the current chat contract into its system message for each turn. Persistent history stores human text and actual model/tool exchanges, not repeated serving contracts. Hosted reopening and browser refresh use the same contract. Recognized legacy generated prefixes are removed only when recorded human text proves the remainder. Compiler packages from completed or cancelled earlier turns stay as evidence and do not authorize a new batch. See [conversational harness context](../compiler/sessions.md#conversational-harness-context).

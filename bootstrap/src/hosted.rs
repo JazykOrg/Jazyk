@@ -1009,6 +1009,54 @@ mod tests {
     }
 
     #[test]
+    fn restored_legacy_chat_replaces_harness_context_and_edits_only_named_document() {
+        let mut w=workspace("Alpha");
+        let original="# Hosting\n\nCloudFront-S3.\n";
+        let updated="# Hosting\n\nUse the existing deployment task.\n";
+        w.files.insert("docs/hosting.md".into(),original.as_bytes().to_vec());
+        let e=Execution::default();let created=value(&mut w,"POST","/api/chat/sessions",json!({}),&e);
+        let id=created["id"].as_str().unwrap();
+        let mut saved=value(&mut w,"GET","/api/chat/history",Value::Null,&e);
+        let legacy=include_str!("../fixtures/legacy-chat-context-v1.txt");
+        let first="What deployment credentials are needed?";
+        let edit="Update the relevant section in hosting.md.";
+        let old_pair=json!({"role":"assistant","content":null,"reasoning_content":"Earlier worker deliberation remains provider history.","tool_calls":[{"id":"old-done","type":"function","function":{"name":"done","arguments":"{}"}}]});
+        let old_result=json!({"role":"tool","tool_call_id":"old-done","content":"Committed b6-1. Next unclaimed batch b7-1."});
+        let chat=&mut saved["book"]["chats"][id];
+        chat["history"]=json!([
+            {"role":"system","content":"Old generic harness"},
+            {"role":"user","content":format!("{legacy}\n\n{first}")},old_pair.clone(),old_result.clone(),
+            {"role":"user","content":format!("{legacy}\n\n{edit}")},
+            {"role":"assistant","content":"Cancelled before the edit."}
+        ]);
+        chat["updates"]=json!([[0,{"sessionUpdate":"user_message","text":first}],[1,{"sessionUpdate":"user_message","text":edit}]]);
+        chat["next_n"]=json!(2);
+        chat["history_context_version"]=json!(0);
+        value(&mut w,"PUT","/api/chat/history",saved,&e);
+        let requests=Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));let captured=requests.clone();
+        let expected_hash=crate::model::hash_hex(original);
+        let e=Execution{model:"fixture".into(),transport:Some(Arc::new(move|body| {
+            let request:Value=serde_json::from_str(body).unwrap();
+            let mut requests=captured.lock().unwrap();let round=requests.len();requests.push(request.clone());
+            let messages=request["messages"].as_array().unwrap();
+            let system=messages[0]["content"].as_str().unwrap();assert!(system.contains("historical evidence"));
+            assert!(!messages.iter().any(|message|message["role"]=="user"&&message["content"].as_str().is_some_and(|text|text.starts_with("This project has independent document sets."))));
+            assert!(messages.contains(&old_pair));assert!(messages.contains(&old_result));
+            if round==0 {return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"read","type":"function","function":{"name":"read_document","arguments":json!({"path":"docs/hosting.md"}).to_string()}}]}}]}).to_string());}
+            if round==1 {return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"write","type":"function","function":{"name":"write_document","arguments":json!({"path":"docs/hosting.md","text":updated,"baseHash":expected_hash}).to_string()}}]}}]}).to_string());}
+            assert_eq!(round,2,"unexpected compiler or completion round");Ok(model_reply("Updated hosting.md."))
+        })),..Default::default()};
+        value(&mut w,"POST",&format!("/api/chat/sessions/{id}/prompt"),json!({"text":"Try again. Do not compile; edit only hosting.md.","messageId":"retry-edit"}),&e);
+        assert_eq!(requests.lock().unwrap().len(),3);
+        assert_eq!(w.snapshot()["docs/hosting.md"],updated.as_bytes());
+        assert!(!w.snapshot().keys().any(|path|path.contains("graph/entity/")||path.ends_with("control.yaml")));
+        let saved=value(&mut w,"GET","/api/chat/history",Value::Null,&e);
+        let messages=saved["book"]["chats"][id]["history"].as_array().unwrap();
+        assert_eq!(messages.iter().filter(|message|message["role"]=="system").count(),1);
+        assert_eq!(messages.iter().filter(|message|message["role"]=="user").map(|message|message["content"].as_str().unwrap()).collect::<Vec<_>>(),vec![first,edit,"Try again. Do not compile; edit only hosting.md."]);
+    }
+
+    #[test]
     fn chat_histories_roundtrip_and_panics_restore_all_context() {
         let mut a = workspace("Alpha");
         let mut b = workspace("Beta");

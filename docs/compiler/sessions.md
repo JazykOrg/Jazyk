@@ -639,3 +639,12 @@ Native provider streams emit answer and thought deltas separately. Complete mess
 
 
 Steering keeps separate input identities and delivery events. Adjacent human text is joined into one user message in model history when a template requires alternating roles. The text codec also joins steering after its user-role tool result. Native tool results retain their tool role and call identity. The embedded ACP agent applies the same shaping to initial MCP instruction blocks and the first human prompt.
+
+
+## Conversational harness context
+
+A conversational turn supplies its current serving contract through system-message assembly. The contract is replaced on the next turn and on codec fallback. It is not appended to the persisted human-message history. Human messages, tool results, provider reasoning fields, and call-result pairs retain their own identities and contents.
+
+Old conversations can contain generated contracts joined to human messages. The engine removes only a recognized exact generated prefix whose remaining text matches recorded human-message text, including consecutive merged human messages. An unrecognized prefix, missing transcript evidence, or a user quotation stays intact. Migration is idempotent and does not remove tool or assistant history.
+
+The current conversational contract distinguishes ongoing steering from completed work. Compiler packages and batch IDs from completed or cancelled earlier turns are historical evidence. They do not claim a batch or request more compiler work. An authorized prose edit reads the current file when needed, saves the scoped change, and reports the result. Status and rationale describe that action. The agent does not repeat harness instructions as an explanation of its task. A request for detailed reasoning retains its requested scope.

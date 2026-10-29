@@ -764,3 +764,17 @@ can run before graph compilation. Each session owns a separate cancellation fenc
 notification to the downstream agent. A later prompt does not revive cancelled runs.
 Independent runs and other sessions remain separate. Remote observers carry the
 same ownership and finish importing eligible products after the client disconnects.
+
+
+## Steering active turns
+
+Writable chat sessions accept `_session/steering` with text content blocks. The embedded agent advertises `_meta.steering.supported` and `idleBehavior: promptRequired`. Accepted inputs wait in a queue independent of the history lock. An idle session returns `promptRequired` without consuming input. Worker sessions keep their goal completion contract. Chat sessions are identified by `session/new` metadata `jazyk.purpose: chat`.
+
+The loop checks input before model calls, after complete responses, between tools, and before completion. It pairs skipped native calls before inserting queued user messages. Started tools retain their real results. Delivery means insertion into history. It does not mean the model completed the request.
+
+
+### Steering adapter compatibility
+
+The host enables live steering when `supported` is true and the handshake advertises `idleBehavior: promptRequired`. It also accepts the exact adapter identities `@agentclientprotocol/codex-acp` version `2.4.0` and `@agentclientprotocol/claude-agent-acp` version `0.99.0`. Their pinned contracts support the host-owned fallback. Other versions queue a normal next turn. Names alone do not enable steering.
+
+Pinned references: [Codex steering](https://github.com/agentclientprotocol/codex-acp/blob/v2.4.0/docs/steering.md) and [Claude adapter](https://github.com/agentclientprotocol/claude-agent-acp/blob/v0.99.0/src/acp-agent.ts). A transport timeout records unknown delivery and never automatically resends. The embedded adapter advertises `inputDeliveryEvents: true`. Its acknowledgement accepts the input; its later delivery event confirms history insertion. Pinned external adapters acknowledge insertion with `outcome: injected`.

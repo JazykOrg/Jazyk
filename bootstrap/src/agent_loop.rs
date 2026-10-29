@@ -18,6 +18,8 @@ pub struct GenericTool {
 
 // What the loop reports outward; the serving maps these onto ACP session updates.
 pub enum AgentEvent {
+    Input(Value),
+    Timing(Value),
     Thought(String),
     Message(String),
     ToolCallStart {
@@ -155,12 +157,32 @@ fn announces_action(text: &str) -> bool {
     if t.is_empty() {
         return false;
     }
-    let tail: String = t.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+    let tail: String = t
+        .lines()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" ");
     let lower = tail.to_lowercase();
+    if lower.contains("if you") || lower.contains("if needed") || lower.contains("would you like") {
+        return false;
+    }
     t.ends_with(':')
-        || ["i'll ", "i will ", "let me ", "now i ", "next i ", "next, i ", "i'm going to ", "i am going to "]
-            .iter()
-            .any(|p| lower.contains(p))
+        || [
+            "i'll ",
+            "i will ",
+            "let me ",
+            "now i ",
+            "next i ",
+            "next, i ",
+            "i'm going to ",
+            "i am going to ",
+        ]
+        .iter()
+        .any(|p| lower.contains(p))
 }
 
 // An endpoint error about the reply's own JSON: the model's output was cut before a
@@ -269,7 +291,10 @@ impl Codec for TextCodec {
         if tools.is_empty() {
             return String::new();
         }
-        let mut s = format!("\n\n{}", include_str!("../../docs/compiler/goals/prompts/text-tool-protocol.md"));
+        let mut s = format!(
+            "\n\n{}",
+            include_str!("../../docs/compiler/goals/prompts/text-tool-protocol.md")
+        );
         for t in tools {
             s.push_str(&format!(
                 "- {}: {} args schema: {}\n",
@@ -355,10 +380,13 @@ pub struct LoopArgs<'a> {
     // answer and ends the turn, with no finish nudge holding it back.
     // Mirrors docs/frontends/wasm.md#chat.
     pub conversation: bool,
+    pub inputs: Option<&'a mut dyn FnMut() -> Vec<Value>>,
+    pub input_close: Option<&'a mut dyn FnMut() -> bool>,
 }
 
 fn missing_required_args(tools: &[GenericTool], name: &str, args: &Value) -> Vec<String> {
-    tools.iter()
+    tools
+        .iter()
         .find(|tool| tool.name == name)
         .and_then(|tool| tool.parameters["required"].as_array())
         .into_iter()
@@ -369,7 +397,21 @@ fn missing_required_args(tools: &[GenericTool], name: &str, args: &Value) -> Vec
         .collect()
 }
 
-pub fn run_loop(a: LoopArgs) -> Stop {
+fn deliver_inputs(a: &mut LoopArgs, inputs: Vec<Value>) -> bool {
+    let delivered = !inputs.is_empty();
+    for input in inputs {
+        a.history
+            .push(json!({"role":"user","content":input["text"].as_str().unwrap_or_default()}));
+        (a.emit)(AgentEvent::Input(input));
+    }
+    delivered
+}
+
+fn poll_inputs(a: &mut LoopArgs) -> Vec<Value> {
+    a.inputs.as_mut().map(|f| f()).unwrap_or_default()
+}
+
+pub fn run_loop(mut a: LoopArgs) -> Stop {
     // Codec selection is sticky per process, learned by the first-round probe or
     // forced by JAZYK_CODEC.
     let mut mode = llm::tools_mode();
@@ -420,18 +462,52 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         if (a.cancelled)() {
             return Stop::Cancelled;
         }
+        let inputs = poll_inputs(&mut a);
+        deliver_inputs(&mut a, inputs);
         rounds += 1;
+        let round_started = crate::sys::Instant::now();
         let step = format!("r{}", rounds);
         let tools_param = codec.tools_param(a.tools);
         let completion_cap = llm::max_completion_tokens();
-        let (msg, cap_reached) = match a
-            .llm
-            .chat_messages_cancellable(a.history, tools_param.as_deref(), &a.label, &step, a.cancelled)
-        {
+        let mut streamed = std::collections::BTreeSet::new();
+        let mut first_delta = true;
+        let mut delta = |field: &str, text: &str| {
+            if text.is_empty() {
+                return;
+            }
+            if first_delta {
+                first_delta = false;
+                (a.emit)(AgentEvent::Timing(
+                    json!({"kind":"first_provider_delta","round":rounds,"ms":round_started.elapsed().as_millis() as u64}),
+                ));
+            }
+            streamed.insert(field.to_string());
+            if field == "content" {
+                (a.emit)(AgentEvent::Message(text.to_string()));
+            } else {
+                (a.emit)(AgentEvent::Thought(text.to_string()));
+            }
+        };
+        let delta_callback = if mode == 2 {
+            None
+        } else {
+            Some(&mut delta as &mut dyn FnMut(&str, &str))
+        };
+        let (msg, cap_reached) = match a.llm.chat_messages_deltas(
+            a.history,
+            tools_param.as_deref(),
+            &a.label,
+            &step,
+            a.cancelled,
+            delta_callback,
+        ) {
             // The cost a session carries is what the endpoint bills, input and output
             // (docs/compiler/sessions.md#budgets).
             Ok((m, t)) => {
-                (a.emit)(AgentEvent::Usage { tokens: t.billed, cached: t.cached });
+                (a.emit)(AgentEvent::Usage {
+                    tokens: t.billed,
+                    cached: t.cached,
+                });
                 (m, t.measured && t.completion >= completion_cap)
             }
             Err(_) if (a.cancelled)() => return Stop::Cancelled,
@@ -449,6 +525,9 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             // Mirrors docs/frontends/acp.md#the-embedded-agent.
             Err(e) if reply_unparsed(&e) && cut_nudges < 2 => {
                 cut_nudges += 1;
+                (a.emit)(AgentEvent::Timing(
+                    json!({"kind":"nudge","reason":"truncated_response","round":rounds}),
+                ));
                 (a.emit)(AgentEvent::Message(format!(
                     "the endpoint could not parse the last reply ({}); asking for a smaller call",
                     llm::truncate(&e, 160)
@@ -458,12 +537,18 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             }
             Err(e) => return Stop::Error(e),
         };
-        if (a.cancelled)() { return Stop::Cancelled; }
+        if (a.cancelled)() {
+            return Stop::Cancelled;
+        }
+        (a.emit)(AgentEvent::Timing(
+            json!({"kind":"model_round","round":rounds,"ms":round_started.elapsed().as_millis() as u64}),
+        ));
         let mut actions = codec.parse(&msg);
         // First-round probe: a prose-only reply under the native codec, from a model
         // whose capability is still unknown, more often means "cannot drive tools"
         // than "done before starting". Downgrade once, sticky for the process.
-        if rounds == 1
+        if !a.conversation
+            && rounds == 1
             && mode != 2
             && llm::tools_mode() == 0
             && !a.tools.is_empty()
@@ -501,10 +586,28 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         a.history.push(kept);
         for field in ["reasoning_content", "reasoning"] {
             if let Some(r) = msg[field].as_str() {
-                if !r.trim().is_empty() {
+                if !streamed.contains(field) && !r.trim().is_empty() {
                     (a.emit)(AgentEvent::Thought(r.trim().to_string()));
                 }
             }
+        }
+
+        // Pair all abandoned native calls before appending steering inputs.
+        let pending = poll_inputs(&mut a);
+        if !pending.is_empty() {
+            if mode != 2 {
+                if let Some(calls) = msg["tool_calls"].as_array() {
+                    for call in calls {
+                        let id = call["id"].as_str().map(String::from);
+                        let name = call["function"]["name"].as_str().unwrap_or_default();
+                        a.history.push(codec.result_msg(&id, name, &json!({"error":"Skipped: new human input arrived before dispatch; this call did not execute."})));
+                    }
+                }
+            } else if actions.iter().any(|a| matches!(a, Action::Call { .. })) {
+                a.history.push(codec.result_msg(&None, "", &json!({"error":"Skipped: new human input arrived before dispatch; this call did not execute."})));
+            }
+            deliver_inputs(&mut a, pending);
+            continue;
         }
 
         // A broken action gets a repair message naming the parse error, three
@@ -525,6 +628,9 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 }
             }
             malformed_streak += 1;
+            (a.emit)(AgentEvent::Timing(
+                json!({"kind":"nudge","reason":"malformed_action","round":rounds}),
+            ));
             if malformed_streak >= 3 {
                 return Stop::Error(format!(
                     "the model cannot produce a parseable action ({})",
@@ -550,15 +656,18 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         // Some providers report tool_calls rather than length after exhausting
         // the cap, replacing unfinished arguments with {}. Diagnose the reported
         // cap and missing fields together; valid calls at the cap remain usable.
-        let incomplete: std::collections::BTreeSet<String> = actions.iter().filter_map(|action| {
-            if let Action::Call { name, args, .. } = action {
-                let missing = missing_required_args(a.tools, name, args);
-                if !missing.is_empty() {
-                    return Some(format!("{name}: {}", missing.join(", ")));
+        let incomplete: std::collections::BTreeSet<String> = actions
+            .iter()
+            .filter_map(|action| {
+                if let Action::Call { name, args, .. } = action {
+                    let missing = missing_required_args(a.tools, name, args);
+                    if !missing.is_empty() {
+                        return Some(format!("{name}: {}", missing.join(", ")));
+                    }
                 }
-            }
-            None
-        }).collect();
+                None
+            })
+            .collect();
         if !incomplete.is_empty() {
             let fields = incomplete.into_iter().collect::<Vec<_>>().join("; ");
             let mut error = format!("Required arguments are missing ({fields}). Nothing ran from this reply. Resend complete calls after repairing these fields.");
@@ -571,14 +680,21 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             }
             for (index, action) in actions.iter().enumerate() {
                 if let Action::Call { id, name, args } = action {
-                    let call_id = id.clone().unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, index + 1));
+                    let call_id = id
+                        .clone()
+                        .unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, index + 1));
                     (a.emit)(AgentEvent::ToolCallStart {
-                        id: call_id.clone(), name: name.clone(), args: args.clone(),
+                        id: call_id.clone(),
+                        name: name.clone(),
+                        args: args.clone(),
                     });
                     (a.emit)(AgentEvent::ToolCallEnd {
-                        id: call_id, result: error.clone(), ok: false,
+                        id: call_id,
+                        result: error.clone(),
+                        ok: false,
                     });
-                    a.history.push(codec.result_msg(id, name, &json!({"error":error})));
+                    a.history
+                        .push(codec.result_msg(id, name, &json!({"error":error})));
                 }
             }
             called_any = true;
@@ -609,6 +725,9 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             });
             if !has_text && has_reasoning && empty_nudges < 2 {
                 empty_nudges += 1;
+                (a.emit)(AgentEvent::Timing(
+                    json!({"kind":"nudge","reason":"empty_response","round":rounds}),
+                ));
                 // The stalled reply keeps its reasoning as its message text: an
                 // OpenAI-compatible endpoint drops reasoning fields from input
                 // messages, so without this the model re-thinks from nothing and
@@ -651,22 +770,35 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 .any(|x| matches!(x, Action::Text(t) if announces_action(t)));
             if called_any && announced && intent_nudges < 3 {
                 intent_nudges += 1;
+                (a.emit)(AgentEvent::Timing(
+                    json!({"kind":"nudge","reason":"unperformed_action","round":rounds}),
+                ));
                 a.history.push(json!({"role": "user", "content":
                     "You announced an action but made no tool call, and announcing is not acting: make that call now. If the work is finished, reply with a one-line summary and nothing else."}));
                 continue;
             }
             if called_any && !nudged && !a.conversation {
                 nudged = true;
+                (a.emit)(AgentEvent::Timing(
+                    json!({"kind":"nudge","reason":"worker_completion","round":rounds}),
+                ));
                 a.history.push(json!({"role": "user", "content":
                     "If the task is not finished, continue with tool calls. If it is finished, reply with a one-line summary and nothing else."}));
                 continue;
             }
             for action in actions {
                 if let Action::Text(t) = action {
-                    if !t.trim().is_empty() {
+                    if !streamed.contains("content") && !t.trim().is_empty() {
                         (a.emit)(AgentEvent::Message(t.trim().to_string()));
                     }
                 }
+            }
+            let pending = poll_inputs(&mut a);
+            if deliver_inputs(&mut a, pending) {
+                continue;
+            }
+            if a.input_close.as_mut().is_some_and(|close| !close()) {
+                continue;
             }
             return Stop::EndTurn;
         }
@@ -674,6 +806,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         let mut call_n = 0u32;
         let mut reply_failed = false;
         let mut reply_cancelled = false;
+        let mut steered = Vec::new();
         for action in actions.drain(..) {
             reply_cancelled |= (a.cancelled)();
             match action {
@@ -681,7 +814,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 Action::Malformed(_) => {}
                 Action::Text(t) => {
                     let t = t.trim();
-                    if !reply_cancelled && !t.is_empty() {
+                    if !streamed.contains("content") && !reply_cancelled && !t.is_empty() {
                         (a.emit)(AgentEvent::Message(t.to_string()));
                     }
                 }
@@ -700,21 +833,32 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     // The repeated-call guard lives in the tool serving, keyed per
                     // open batch, so every agent gets the same contract
                     // (docs/compiler/sessions.md#repeated-calls).
-                    let dispatched = if reply_cancelled {
+                    steered.extend(poll_inputs(&mut a));
+                    let tool_started = crate::sys::Instant::now();
+                    let dispatched = if !steered.is_empty() {
+                        Err("Skipped: new human input arrived before this call started; this call did not execute.".into())
+                    } else if reply_cancelled {
                         Err("Skipped: the session was cancelled before this call started; this call did not execute.".into())
                     } else if reply_failed {
                         Err("Skipped: an earlier call in this reply failed. Inspect its error before resubmitting this call; this call did not execute.".into())
                     } else {
                         (a.dispatch)(&name, &args)
                     };
+                    (a.emit)(AgentEvent::Timing(
+                        json!({"kind":"tool","name":name,"round":rounds,"ms":tool_started.elapsed().as_millis() as u64}),
+                    ));
                     let (result, ok) = match dispatched {
                         Ok(v) => (v, true),
                         Err(e) => (e, false),
                     };
-                    if !reply_failed {
-                        failed_calls = if ok { 0 } else { failed_calls.saturating_add(1) };
+                    if !reply_failed && steered.is_empty() {
+                        failed_calls = if ok {
+                            0
+                        } else {
+                            failed_calls.saturating_add(1)
+                        };
                     }
-                    reply_failed |= !ok;
+                    reply_failed |= !ok && steered.is_empty();
                     (a.emit)(AgentEvent::ToolCallEnd {
                         id: call_id,
                         result: result.clone(),
@@ -725,8 +869,14 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     // large contract once per package in the model's history.
                     // A changed contract is always preserved, as are all facts.
                     if ok {
-                        if let Some(instructions) = value["instructions"].as_str().filter(|s| s.chars().count() >= 1024) {
-                            if tool_instructions.get(&name).is_some_and(|previous| previous == instructions) {
+                        if let Some(instructions) = value["instructions"]
+                            .as_str()
+                            .filter(|s| s.chars().count() >= 1024)
+                        {
+                            if tool_instructions
+                                .get(&name)
+                                .is_some_and(|previous| previous == instructions)
+                            {
                                 value["instructions"] = json!(format!("Unchanged. Follow the most recent full instructions returned by `{name}` earlier in this turn."));
                             } else {
                                 tool_instructions.insert(name.clone(), instructions.to_string());
@@ -737,6 +887,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 }
             }
         }
+        deliver_inputs(&mut a, steered);
         if reply_cancelled || (a.cancelled)() {
             return Stop::Cancelled;
         }
@@ -756,7 +907,8 @@ mod tests {
     // characters; the bound here leaves the rest for the conversation.
     #[test]
     fn reader_prompt_fits_a_small_window() {
-        let dir = std::env::temp_dir().join(format!("jazyk-reader-prompt-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-reader-prompt-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n").unwrap();
@@ -773,7 +925,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        let init = server.handle("initialize", &json!({"protocolVersion": "2024-11-05"})).unwrap();
+        let init = server
+            .handle("initialize", &json!({"protocolVersion": "2024-11-05"}))
+            .unwrap();
         let instructions = init["instructions"].as_str().unwrap().to_string();
         let list = server.handle("tools/list", &json!({})).unwrap();
         let tools: Vec<GenericTool> = list["tools"]
@@ -788,7 +942,12 @@ mod tests {
             .collect();
         let system = format!("{}{}", SYSTEM, TextCodec.system_suffix(&tools));
         let chars = system.chars().count() + instructions.chars().count();
-        eprintln!("reader first-call prompt: {} chars (system {}, instructions {})", chars, system.chars().count(), instructions.chars().count());
+        eprintln!(
+            "reader first-call prompt: {} chars (system {}, instructions {})",
+            chars,
+            system.chars().count(),
+            instructions.chars().count()
+        );
         assert!(chars < 16_000, "the reader prompt is {} chars", chars);
     }
 
@@ -805,7 +964,10 @@ mod tests {
         ];
         history_to_text(&mut h);
         assert!(h[2].get("tool_calls").is_none(), "{}", h[2]);
-        assert_eq!(h[2]["content"], "Reading.\n{\"tool\":\"read_section\",\"args\":{\"ref\":\"a.md#/a\"}}");
+        assert_eq!(
+            h[2]["content"],
+            "Reading.\n{\"tool\":\"read_section\",\"args\":{\"ref\":\"a.md#/a\"}}"
+        );
         assert_eq!(h[3]["role"], "user");
         assert_eq!(h[3]["content"], "RESULT: {\"title\":\"A\"}");
     }
@@ -827,21 +989,33 @@ mod tests {
                     match listener.accept() {
                         Ok((stream, _)) => break stream,
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            assert!(std::time::Instant::now() < deadline, "model request never arrived");
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "model request never arrived"
+                            );
                             std::thread::sleep(std::time::Duration::from_millis(10));
                         }
                         Err(e) => panic!("{e}"),
                     }
                 };
-                stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                // Accepted sockets can inherit O_NONBLOCK on macOS. The fixture
+                // uses blocking header reads after its bounded accept loop.
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut length = 0;
                 loop {
                     let mut line = String::new();
                     reader.read_line(&mut line).unwrap();
-                    if line == "\r\n" { break; }
+                    if line == "\r\n" {
+                        break;
+                    }
                     if let Some((key, value)) = line.split_once(':') {
-                        if key.eq_ignore_ascii_case("content-length") { length = value.trim().parse().unwrap(); }
+                        if key.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap();
+                        }
                     }
                 }
                 let mut body = vec![0; length];
@@ -852,7 +1026,16 @@ mod tests {
             }
             requests
         });
-        (Llm { base_url: format!("http://{address}"), model: "fixture".into(), api_key: String::new(), temperature: None, trace: None }, provider)
+        (
+            Llm {
+                base_url: format!("http://{address}"),
+                model: "fixture".into(),
+                api_key: String::new(),
+                temperature: None,
+                trace: None,
+            },
+            provider,
+        )
     }
 
     fn native_call(id: &str, name: &str, arguments: &str) -> Value {
@@ -864,7 +1047,11 @@ mod tests {
     }
 
     fn write_tool() -> GenericTool {
-        GenericTool { name: "write_text_file".into(), description: "Write text".into(), parameters: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}) }
+        GenericTool {
+            name: "write_text_file".into(),
+            description: "Write text".into(),
+            parameters: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
+        }
     }
 
     #[test]
@@ -874,24 +1061,56 @@ mod tests {
         llm::set_max_completion_tokens(256);
         let (llm, provider) = scripted_provider(vec![
             native_reply(vec![native_call("cut", "write_text_file", "{}")], 256),
-            native_reply(vec![native_call("fixed", "write_text_file", r#"{"path":"a.py","content":"print(1)"}"#)], 20),
+            native_reply(
+                vec![native_call(
+                    "fixed",
+                    "write_text_file",
+                    r#"{"path":"a.py","content":"print(1)"}"#,
+                )],
+                20,
+            ),
             json!({"choices":[{"message":{"role":"assistant","content":"Written."},"finish_reason":"stop"}],"usage":{"completion_tokens":3}}),
         ]);
         let mut history = vec![json!({"role":"user","content":"Write a.py"})];
         let mut dispatched = Vec::new();
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[write_tool()],
-            dispatch: &mut |_, args| { dispatched.push(args.clone()); Ok("{}".into()) },
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 3, label: "cap-repair".into(), conversation: true,
+            llm: &llm,
+            history: &mut history,
+            tools: &[write_tool()],
+            dispatch: &mut |_, args| {
+                dispatched.push(args.clone());
+                Ok("{}".into())
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 3,
+            label: "cap-repair".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         let requests = provider.join().unwrap();
         assert!(matches!(stop, Stop::EndTurn));
-        assert_eq!(dispatched, vec![json!({"path":"a.py","content":"print(1)"})]);
-        assert_eq!(requests.iter().map(|r| r["max_tokens"].as_u64().unwrap()).collect::<Vec<_>>(), vec![256, 512, 256]);
+        assert_eq!(
+            dispatched,
+            vec![json!({"path":"a.py","content":"print(1)"})]
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .map(|r| r["max_tokens"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![256, 512, 256]
+        );
         let result = requests[1]["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(result["tool_call_id"], "cut");
         let error = result["content"].as_str().unwrap();
-        assert!(error.contains("path, content") && error.contains("append: true") && error.contains("Nothing ran"), "{error}");
+        assert!(
+            error.contains("path, content")
+                && error.contains("append: true")
+                && error.contains("Nothing ran"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -899,17 +1118,38 @@ mod tests {
         let _scope = crate::scoped_state::Scope::enter();
         llm::set_tools_mode(1);
         llm::set_max_completion_tokens(256);
-        let (llm, provider) = scripted_provider(vec![native_reply(vec![
-            native_call("empty", "task_context", "{}"),
-            native_call("full", "write_text_file", r#"{"path":"a.py","content":""}"#),
-        ], 256)]);
-        let tools = [write_tool(), GenericTool { name: "task_context".into(), description: String::new(), parameters: json!({"type":"object","properties":{}}) }];
+        let (llm, provider) = scripted_provider(vec![native_reply(
+            vec![
+                native_call("empty", "task_context", "{}"),
+                native_call("full", "write_text_file", r#"{"path":"a.py","content":""}"#),
+            ],
+            256,
+        )]);
+        let tools = [
+            write_tool(),
+            GenericTool {
+                name: "task_context".into(),
+                description: String::new(),
+                parameters: json!({"type":"object","properties":{}}),
+            },
+        ];
         let mut history = vec![];
         let mut dispatched = Vec::new();
         run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &tools,
-            dispatch: &mut |name, _| { dispatched.push(name.to_string()); Ok("{}".into()) },
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 1, label: "complete-cap".into(), conversation: true,
+            llm: &llm,
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut |name, _| {
+                dispatched.push(name.to_string());
+                Ok("{}".into())
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 1,
+            label: "complete-cap".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         provider.join().unwrap();
         assert_eq!(dispatched, vec!["task_context", "write_text_file"]);
@@ -921,26 +1161,63 @@ mod tests {
         let _scope = crate::scoped_state::Scope::enter();
         llm::set_tools_mode(1);
         let (llm, provider) = scripted_provider(vec![
-            native_reply(vec![native_call("valid", "write_text_file", r#"{"path":"a.py","content":"wrong"}"#), native_call("broken", "write_text_file", "{\"path\":")], 20),
-            native_reply(vec![native_call("retry", "write_text_file", r#"{"path":"a.py","content":"correct"}"#)], 20),
+            native_reply(
+                vec![
+                    native_call(
+                        "valid",
+                        "write_text_file",
+                        r#"{"path":"a.py","content":"wrong"}"#,
+                    ),
+                    native_call("broken", "write_text_file", "{\"path\":"),
+                ],
+                20,
+            ),
+            native_reply(
+                vec![native_call(
+                    "retry",
+                    "write_text_file",
+                    r#"{"path":"a.py","content":"correct"}"#,
+                )],
+                20,
+            ),
         ]);
         let mut history = vec![];
         let mut dispatched = Vec::new();
         run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[write_tool()],
-            dispatch: &mut |_, args| { dispatched.push(args.clone()); Ok("{}".into()) },
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 2, label: "malformed-repair".into(), conversation: true,
+            llm: &llm,
+            history: &mut history,
+            tools: &[write_tool()],
+            dispatch: &mut |_, args| {
+                dispatched.push(args.clone());
+                Ok("{}".into())
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 2,
+            label: "malformed-repair".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         let requests = provider.join().unwrap();
         assert_eq!(dispatched, vec![json!({"path":"a.py","content":"correct"})]);
         let messages = requests[1]["messages"].as_array().unwrap();
-        let assistant = messages.iter().position(|m| m["role"] == "assistant").unwrap();
-        assert_eq!(messages[assistant]["tool_calls"][1]["function"]["arguments"], "{}");
+        let assistant = messages
+            .iter()
+            .position(|m| m["role"] == "assistant")
+            .unwrap();
+        assert_eq!(
+            messages[assistant]["tool_calls"][1]["function"]["arguments"],
+            "{}"
+        );
         for (offset, id) in [(1, "valid"), (2, "broken")] {
-            assert_eq!(messages[assistant+offset]["tool_call_id"], id);
-            assert!(messages[assistant+offset]["content"].as_str().unwrap().contains("no calls executed"));
+            assert_eq!(messages[assistant + offset]["tool_call_id"], id);
+            assert!(messages[assistant + offset]["content"]
+                .as_str()
+                .unwrap()
+                .contains("no calls executed"));
         }
-        assert_eq!(messages[assistant+3]["role"], "user");
+        assert_eq!(messages[assistant + 3]["role"], "user");
     }
 
     #[test]
@@ -948,16 +1225,39 @@ mod tests {
         let _scope = crate::scoped_state::Scope::enter();
         llm::set_tools_mode(1);
         llm::set_max_completion_tokens(256);
-        let (llm, provider) = scripted_provider((0..5).map(|i| native_reply(vec![native_call(&format!("cut-{i}"), "write_text_file", "{}")], 512)).collect());
+        let (llm, provider) = scripted_provider(
+            (0..5)
+                .map(|i| {
+                    native_reply(
+                        vec![native_call(&format!("cut-{i}"), "write_text_file", "{}")],
+                        512,
+                    )
+                })
+                .collect(),
+        );
         let mut history = vec![];
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[write_tool()],
+            llm: &llm,
+            history: &mut history,
+            tools: &[write_tool()],
             dispatch: &mut |_, _| panic!("incomplete call dispatched"),
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 10, label: "cap-bound".into(), conversation: true,
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 10,
+            label: "cap-bound".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         let requests = provider.join().unwrap();
         assert!(matches!(stop, Stop::Error(e) if e.contains("five consecutive")));
-        assert_eq!(requests.iter().map(|r| r["max_tokens"].as_u64().unwrap()).collect::<Vec<_>>(), vec![256, 512, 512, 256, 256]);
+        assert_eq!(
+            requests
+                .iter()
+                .map(|r| r["max_tokens"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![256, 512, 512, 256, 256]
+        );
         assert_eq!(history.iter().filter(|m| m["role"] == "tool").count(), 5);
     }
 
@@ -967,35 +1267,91 @@ mod tests {
         llm::set_tools_mode(1);
         llm::set_max_completion_tokens(256);
         let mut calls: Vec<_> = (0..7)
-            .map(|i| native_call(&format!("binding-{i}"), "record_binding", r#"{"requirement":"req:one"}"#))
+            .map(|i| {
+                native_call(
+                    &format!("binding-{i}"),
+                    "record_binding",
+                    r#"{"requirement":"req:one"}"#,
+                )
+            })
             .collect();
-        calls.push(native_call("write", "write_text_file", r#"{"path":"a.py","content":"not yet"}"#));
+        calls.push(native_call(
+            "write",
+            "write_text_file",
+            r#"{"path":"a.py","content":"not yet"}"#,
+        ));
         let (llm, provider) = scripted_provider(vec![
             native_reply(calls, 20),
-            native_reply(vec![native_call("fixed", "record_binding", r#"{"requirement":"req:one","verdict":"fail"}"#)], 20),
+            native_reply(
+                vec![native_call(
+                    "fixed",
+                    "record_binding",
+                    r#"{"requirement":"req:one","verdict":"fail"}"#,
+                )],
+                20,
+            ),
             json!({"choices":[{"message":{"role":"assistant","content":"Recorded."},"finish_reason":"stop"}],"usage":{"completion_tokens":3}}),
         ]);
-        let tools = [write_tool(), GenericTool {
-            name: "record_binding".into(), description: String::new(),
-            parameters: json!({"type":"object","properties":{"requirement":{"type":"string"},"verdict":{"type":"string"}},"required":["requirement","verdict"]}),
-        }];
+        let tools = [
+            write_tool(),
+            GenericTool {
+                name: "record_binding".into(),
+                description: String::new(),
+                parameters: json!({"type":"object","properties":{"requirement":{"type":"string"},"verdict":{"type":"string"}},"required":["requirement","verdict"]}),
+            },
+        ];
         let mut history = vec![];
         let mut dispatched = Vec::new();
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &tools,
-            dispatch: &mut |name, args| { dispatched.push((name.to_string(), args.clone())); Ok("{}".into()) },
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 3, label: "batch-repair".into(), conversation: true,
+            llm: &llm,
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut |name, args| {
+                dispatched.push((name.to_string(), args.clone()));
+                Ok("{}".into())
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 3,
+            label: "batch-repair".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         let requests = provider.join().unwrap();
         assert!(matches!(stop, Stop::EndTurn));
-        assert_eq!(dispatched, vec![("record_binding".into(), json!({"requirement":"req:one","verdict":"fail"}))]);
-        assert!(requests.iter().all(|r| r["max_tokens"] == 256), "ordinary schema repair must not increase the budget");
-        let results: Vec<_> = requests[1]["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").collect();
+        assert_eq!(
+            dispatched,
+            vec![(
+                "record_binding".into(),
+                json!({"requirement":"req:one","verdict":"fail"})
+            )]
+        );
+        assert!(
+            requests.iter().all(|r| r["max_tokens"] == 256),
+            "ordinary schema repair must not increase the budget"
+        );
+        let results: Vec<_> = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .collect();
         assert_eq!(results.len(), 8);
         for (i, result) in results.iter().enumerate() {
-            assert_eq!(result["tool_call_id"], if i == 7 { "write".into() } else { format!("binding-{i}") });
+            assert_eq!(
+                result["tool_call_id"],
+                if i == 7 {
+                    "write".into()
+                } else {
+                    format!("binding-{i}")
+                }
+            );
             let error = result["content"].as_str().unwrap();
-            assert!(error.contains("record_binding: verdict") && error.contains("Nothing ran from this reply"));
+            assert!(
+                error.contains("record_binding: verdict")
+                    && error.contains("Nothing ran from this reply")
+            );
         }
     }
 
@@ -1003,14 +1359,31 @@ mod tests {
     fn incomplete_batches_still_stop_after_five_replies() {
         let _scope = crate::scoped_state::Scope::enter();
         llm::set_tools_mode(1);
-        let (llm, provider) = scripted_provider((0..5).map(|round| {
-            native_reply((0..7).map(|i| native_call(&format!("{round}-{i}"), "write_text_file", "{}")).collect(), 20)
-        }).collect());
+        let (llm, provider) = scripted_provider(
+            (0..5)
+                .map(|round| {
+                    native_reply(
+                        (0..7)
+                            .map(|i| native_call(&format!("{round}-{i}"), "write_text_file", "{}"))
+                            .collect(),
+                        20,
+                    )
+                })
+                .collect(),
+        );
         let mut history = vec![];
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[write_tool()],
+            llm: &llm,
+            history: &mut history,
+            tools: &[write_tool()],
             dispatch: &mut |_, _| panic!("incomplete batch dispatched"),
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 10, label: "batch-bound".into(), conversation: true,
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 10,
+            label: "batch-bound".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         assert!(matches!(stop, Stop::Error(e) if e.contains("five consecutive")));
         assert_eq!(provider.join().unwrap().len(), 5);
@@ -1026,15 +1399,21 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let provider = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut length = 0;
             loop {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
-                if line == "\r\n" { break; }
+                if line == "\r\n" {
+                    break;
+                }
                 if let Some((key, value)) = line.split_once(':') {
-                    if key.eq_ignore_ascii_case("content-length") { length = value.trim().parse().unwrap(); }
+                    if key.eq_ignore_ascii_case("content-length") {
+                        length = value.trim().parse().unwrap();
+                    }
                 }
             }
             reader.read_exact(&mut vec![0; length]).unwrap();
@@ -1042,21 +1421,46 @@ mod tests {
             let body = json!({"choices":[{"message":{"role":"assistant","content":"","tool_calls":calls},"finish_reason":"tool_calls"}],"usage":{"total_tokens":1}}).to_string();
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
         });
-        let llm = Llm {base_url:format!("http://{address}"),model:"fixture".into(),api_key:String::new(),temperature:None,trace:None};
+        let llm = Llm {
+            base_url: format!("http://{address}"),
+            model: "fixture".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
         let mut history = vec![json!({"role":"user","content":"test"})];
         let mut dispatched = 0;
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[],
-            dispatch: &mut |_, args| { dispatched += 1; if args["index"] == 2 { Ok("{}".into()) } else { Err("bad argument".into()) } },
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 1,
-            label: "error-budget".into(), conversation: false,
+            llm: &llm,
+            history: &mut history,
+            tools: &[],
+            dispatch: &mut |_, args| {
+                dispatched += 1;
+                if args["index"] == 2 {
+                    Ok("{}".into())
+                } else {
+                    Err("bad argument".into())
+                }
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 1,
+            label: "error-budget".into(),
+            conversation: false,
+            inputs: None,
+            input_close: None,
         });
         provider.join().unwrap();
         assert!(matches!(stop, Stop::MaxRounds));
-        assert_eq!(dispatched, 1, "the model sees the failure before more work runs");
+        assert_eq!(
+            dispatched, 1,
+            "the model sees the failure before more work runs"
+        );
         let results: Vec<_> = history.iter().filter(|m| m["role"] == "tool").collect();
         assert_eq!(results.len(), 12);
-        for (i, result) in results.iter().enumerate() { assert_eq!(result["tool_call_id"], format!("c{i}")); }
+        for (i, result) in results.iter().enumerate() {
+            assert_eq!(result["tool_call_id"], format!("c{i}"));
+        }
         assert!(results[11]["content"].as_str().unwrap().contains("Skipped"));
     }
 
@@ -1064,15 +1468,35 @@ mod tests {
     fn repeated_dispatch_failures_stop_after_five_replies() {
         let _scope = crate::scoped_state::Scope::enter();
         llm::set_tools_mode(1);
-        let (llm, provider) = scripted_provider((0..5).map(|round| {
-            native_reply((0..7).map(|i| native_call(&format!("{round}-{i}"), "fixture", "{}")).collect(), 20)
-        }).collect());
+        let (llm, provider) = scripted_provider(
+            (0..5)
+                .map(|round| {
+                    native_reply(
+                        (0..7)
+                            .map(|i| native_call(&format!("{round}-{i}"), "fixture", "{}"))
+                            .collect(),
+                        20,
+                    )
+                })
+                .collect(),
+        );
         let mut history = vec![];
         let mut dispatched = 0;
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[],
-            dispatch: &mut |_, _| { dispatched += 1; Err("Invalid criterion".into()) },
-            emit: &mut |_| {}, cancelled: &|| false, max_rounds: 10, label: "dispatch-bound".into(), conversation: true,
+            llm: &llm,
+            history: &mut history,
+            tools: &[],
+            dispatch: &mut |_, _| {
+                dispatched += 1;
+                Err("Invalid criterion".into())
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 10,
+            label: "dispatch-bound".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         assert!(matches!(stop, Stop::Error(e) if e.contains("five consecutive")));
         assert_eq!(dispatched, 5);
@@ -1085,27 +1509,42 @@ mod tests {
         let _scope = crate::scoped_state::Scope::enter();
         llm::set_tools_mode(1);
         let (llm, provider) = scripted_provider(vec![
-            native_reply((0..3).map(|i| native_call(&format!("c{i}"), "fixture", "{}")).collect(), 20),
+            native_reply(
+                (0..3)
+                    .map(|i| native_call(&format!("c{i}"), "fixture", "{}"))
+                    .collect(),
+                20,
+            ),
             json!({"choices":[{"message":{"role":"assistant","content":"Resumed."},"finish_reason":"stop"}]}),
         ]);
         let cancelled = std::cell::Cell::new(false);
         let mut history = vec![];
         let mut dispatched = 0;
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[],
+            llm: &llm,
+            history: &mut history,
+            tools: &[],
             dispatch: &mut |_, _| {
                 dispatched += 1;
                 cancelled.set(true);
                 Ok(r#"{"completed":true}"#.into())
             },
-            emit: &mut |_| {}, cancelled: &|| cancelled.get(), max_rounds: 1,
-            label: "cancel-batch".into(), conversation: true,
+            emit: &mut |_| {},
+            cancelled: &|| cancelled.get(),
+            max_rounds: 1,
+            label: "cancel-batch".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         assert!(matches!(stop, Stop::Cancelled));
         assert_eq!(dispatched, 1);
         let results: Vec<_> = history.iter().filter(|m| m["role"] == "tool").collect();
         assert_eq!(results.len(), 3);
-        assert_eq!(serde_json::from_str::<Value>(results[0]["content"].as_str().unwrap()).unwrap(), json!({"completed":true}));
+        assert_eq!(
+            serde_json::from_str::<Value>(results[0]["content"].as_str().unwrap()).unwrap(),
+            json!({"completed":true})
+        );
         for (i, result) in results.iter().enumerate().skip(1) {
             assert_eq!(result["tool_call_id"], format!("c{i}"));
             assert!(result["content"].as_str().unwrap().contains("cancelled"));
@@ -1113,10 +1552,17 @@ mod tests {
         cancelled.set(false);
         history.push(json!({"role":"user","content":"Continue."}));
         let stop = run_loop(LoopArgs {
-            llm: &llm, history: &mut history, tools: &[],
+            llm: &llm,
+            history: &mut history,
+            tools: &[],
             dispatch: &mut |_, _| panic!("unexpected dispatch"),
-            emit: &mut |_| {}, cancelled: &|| cancelled.get(), max_rounds: 1,
-            label: "resume-batch".into(), conversation: true,
+            emit: &mut |_| {},
+            cancelled: &|| cancelled.get(),
+            max_rounds: 1,
+            label: "resume-batch".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
         });
         assert!(matches!(stop, Stop::EndTurn));
         let requests = provider.join().unwrap();
@@ -1129,14 +1575,17 @@ mod tests {
         for before_dispatch in [true, false] {
             let _scope = crate::scoped_state::Scope::enter();
             llm::set_tools_mode(1);
-            let (llm, provider) = scripted_provider(vec![
-                native_reply(vec![native_call("last", "fixture", "{}")], 20),
-            ]);
+            let (llm, provider) = scripted_provider(vec![native_reply(
+                vec![native_call("last", "fixture", "{}")],
+                20,
+            )]);
             let cancelled = std::cell::Cell::new(false);
             let mut history = vec![];
             let mut dispatched = 0;
             let stop = run_loop(LoopArgs {
-                llm: &llm, history: &mut history, tools: &[],
+                llm: &llm,
+                history: &mut history,
+                tools: &[],
                 dispatch: &mut |_, _| {
                     dispatched += 1;
                     cancelled.set(true);
@@ -1147,8 +1596,12 @@ mod tests {
                         cancelled.set(true);
                     }
                 },
-                cancelled: &|| cancelled.get(), max_rounds: 1,
-                label: "cancel-last".into(), conversation: true,
+                cancelled: &|| cancelled.get(),
+                max_rounds: 1,
+                label: "cancel-last".into(),
+                conversation: true,
+                inputs: None,
+                input_close: None,
             });
             assert!(matches!(stop, Stop::Cancelled));
             assert_eq!(dispatched, usize::from(!before_dispatch));
@@ -1157,7 +1610,10 @@ mod tests {
             if before_dispatch {
                 assert!(result["content"].as_str().unwrap().contains("cancelled"));
             } else {
-                assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(), json!({"completed":true}));
+                assert_eq!(
+                    serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(),
+                    json!({"completed":true})
+                );
             }
             assert_eq!(provider.join().unwrap().len(), 1);
         }
@@ -1183,7 +1639,9 @@ mod tests {
             let mut dispatched = 0;
             let mut observed = Vec::new();
             let stop = run_loop(LoopArgs {
-                llm: &llm, history: &mut history, tools: &[],
+                llm: &llm,
+                history: &mut history,
+                tools: &[],
                 dispatch: &mut |_, _| {
                     let i = dispatched;
                     dispatched += 1;
@@ -1194,8 +1652,12 @@ mod tests {
                         observed.push(serde_json::from_str::<Value>(&result).unwrap());
                     }
                 },
-                cancelled: &|| false, max_rounds: 5,
-                label: "shared-contract".into(), conversation: true,
+                cancelled: &|| false,
+                max_rounds: 5,
+                label: "shared-contract".into(),
+                conversation: true,
+                inputs: None,
+                input_close: None,
             });
             assert!(matches!(stop, Stop::EndTurn));
             let requests = provider.join().unwrap();
@@ -1203,8 +1665,15 @@ mod tests {
             for i in 0..4 {
                 let expected = if i < 2 { &original } else { &revised };
                 assert_eq!(observed[i]["instructions"], *expected);
-                let result = requests[i+1]["messages"].as_array().unwrap().last().unwrap();
-                let text = result["content"].as_str().unwrap().trim_start_matches("RESULT: ");
+                let result = requests[i + 1]["messages"]
+                    .as_array()
+                    .unwrap()
+                    .last()
+                    .unwrap();
+                let text = result["content"]
+                    .as_str()
+                    .unwrap()
+                    .trim_start_matches("RESULT: ");
                 let value: Value = serde_json::from_str(text).unwrap();
                 assert_eq!(value["requirement"], i);
                 assert_eq!(value["context"], observed[i]["context"]);
@@ -1212,7 +1681,9 @@ mod tests {
                     assert_eq!(value["instructions"], *expected);
                 } else {
                     let note = value["instructions"].as_str().unwrap();
-                    assert!(note.contains("package") && note.contains("most recent full instructions"));
+                    assert!(
+                        note.contains("package") && note.contains("most recent full instructions")
+                    );
                     assert!(note.len() < 200);
                 }
             }
@@ -1224,10 +1695,16 @@ mod tests {
         let object = json!({"tasks": [{"id": "receipt"}], "revision": "abc"});
         for codec in [&NativeCodec as &dyn Codec, &TextCodec as &dyn Codec] {
             let message = codec.result_msg(&Some("call-1".into()), "task_context", &object);
-            let content = message["content"].as_str().unwrap().trim_start_matches("RESULT: ");
+            let content = message["content"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches("RESULT: ");
             assert_eq!(serde_json::from_str::<Value>(content).unwrap(), object);
             let message = codec.result_msg(&None, "log", &json!("line one\nline two"));
-            assert!(message["content"].as_str().unwrap().ends_with("line one\nline two"));
+            assert!(message["content"]
+                .as_str()
+                .unwrap()
+                .ends_with("line one\nline two"));
         }
     }
 
@@ -1252,7 +1729,9 @@ mod tests {
         let msg = json!({"role": "assistant", "content": "Marking both.\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:a\"}}\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:b\"}}"});
         let actions = c.parse(&msg);
         assert_eq!(actions.len(), 1);
-        assert!(matches!(&actions[0], Action::Malformed(message) if message.contains("none executed")));
+        assert!(
+            matches!(&actions[0], Action::Malformed(message) if message.contains("none executed"))
+        );
     }
 
     #[test]
@@ -1270,10 +1749,182 @@ mod tests {
     }
 
     #[test]
+    fn steering_after_response_skips_unstarted_calls_and_pairs_native_history() {
+        for mode in [1, 2] {
+            let _scope = crate::scoped_state::Scope::enter();
+            llm::set_tools_mode(mode);
+            let first = if mode == 1 {
+                native_reply(vec![native_call("stale", "fixture", "{}")], 20)
+            } else {
+                json!({"choices":[{"message":{"role":"assistant","content":r#"{"tool":"fixture","args":{}}"#},"finish_reason":"stop"}]})
+            };
+            let (llm, provider) = scripted_provider(vec![
+                first,
+                json!({"choices":[{"message":{"role":"assistant","content":"Updated answer."},"finish_reason":"stop"}]}),
+            ]);
+            let mut history = vec![];
+            let mut polls = 0;
+            let mut inputs = || {
+                polls += 1;
+                if polls == 2 {
+                    vec![json!({"messageId":"steer-1","text":"Do not change any file."})]
+                } else {
+                    vec![]
+                }
+            };
+            let mut delivered = vec![];
+            let stop = run_loop(LoopArgs {
+                llm: &llm,
+                history: &mut history,
+                tools: &[],
+                dispatch: &mut |_, _| panic!("stale call dispatched"),
+                emit: &mut |event| {
+                    if let AgentEvent::Input(input) = event {
+                        delivered.push(input)
+                    }
+                },
+                cancelled: &|| false,
+                max_rounds: 3,
+                label: "steering".into(),
+                conversation: true,
+                inputs: Some(&mut inputs),
+                input_close: None,
+            });
+            assert!(matches!(stop, Stop::EndTurn));
+            let requests = provider.join().unwrap();
+            assert_eq!(requests.len(), 2);
+            let messages = requests[1]["messages"].as_array().unwrap();
+            assert_eq!(
+                messages.last().unwrap()["content"],
+                "Do not change any file."
+            );
+            assert!(messages[messages.len() - 2]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Skipped"));
+            if mode == 1 {
+                assert_eq!(messages[messages.len() - 2]["tool_call_id"], "stale");
+            }
+            assert_eq!(delivered.len(), 1);
+        }
+    }
+
+    #[test]
+    fn steering_after_started_tool_preserves_commit_and_skips_rest_of_batch() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(1);
+        let (llm, provider) = scripted_provider(vec![
+            native_reply(
+                vec![
+                    native_call("first", "fixture", "{}"),
+                    native_call("stale", "fixture", "{}"),
+                ],
+                20,
+            ),
+            json!({"choices":[{"message":{"role":"assistant","content":"Used the committed edit."},"finish_reason":"stop"}]}),
+        ]);
+        let queued = std::cell::Cell::new(false);
+        let mut dispatched = 0;
+        let mut history = vec![];
+        let mut inputs = || {
+            if queued.replace(false) {
+                vec![json!({"messageId":"constraint","text":"Keep the first edit; stop there."})]
+            } else {
+                vec![]
+            }
+        };
+        let stop = run_loop(LoopArgs {
+            llm: &llm,
+            history: &mut history,
+            tools: &[],
+            dispatch: &mut |_, _| {
+                dispatched += 1;
+                queued.set(true);
+                Ok(r#"{"committed":true}"#.into())
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 3,
+            label: "between-tools".into(),
+            conversation: true,
+            inputs: Some(&mut inputs),
+            input_close: None,
+        });
+        assert!(matches!(stop, Stop::EndTurn));
+        assert_eq!(dispatched, 1);
+        let requests = provider.join().unwrap();
+        let messages = requests[1]["messages"].as_array().unwrap();
+        let results = messages
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert!(results[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("committed"));
+        assert!(results[1]["content"].as_str().unwrap().contains("Skipped"));
+        assert_eq!(
+            messages.last().unwrap()["content"],
+            "Keep the first edit; stop there."
+        );
+    }
+
+    #[test]
+    fn input_close_losing_race_continues_without_resetting_budget() {
+        let _scope = crate::scoped_state::Scope::enter();
+        llm::set_tools_mode(1);
+        let answer = json!({"choices":[{"message":{"role":"assistant","content":"Answer."},"finish_reason":"stop"}]});
+        let (llm, provider) = scripted_provider(vec![answer.clone(), answer]);
+        let mut history = vec![];
+        let ready = std::cell::Cell::new(false);
+        let mut closed = 0;
+        let mut inputs = || {
+            if ready.replace(false) {
+                vec![json!({"text":"Another constraint"})]
+            } else {
+                vec![]
+            }
+        };
+        let mut close = || {
+            closed += 1;
+            if closed == 1 {
+                ready.set(true);
+                false
+            } else {
+                true
+            }
+        };
+        let stop = run_loop(LoopArgs {
+            llm: &llm,
+            history: &mut history,
+            tools: &[],
+            dispatch: &mut |_, _| unreachable!(),
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 2,
+            label: "close-race".into(),
+            conversation: true,
+            inputs: Some(&mut inputs),
+            input_close: Some(&mut close),
+        });
+        assert!(matches!(stop, Stop::EndTurn));
+        assert_eq!(provider.join().unwrap().len(), 2);
+        assert_eq!(closed, 2);
+    }
+
+    #[test]
     fn announced_actions_are_recognized() {
-        assert!(announces_action("All tests pass. Now I'll record the generation with the manifest."));
+        assert!(announces_action(
+            "All tests pass. Now I'll record the generation with the manifest."
+        ));
         assert!(announces_action("Let me fix src/order.rs first:"));
-        assert!(!announces_action("Generation of ent:stock is complete and recorded."));
+        assert!(!announces_action(
+            "Generation of ent:stock is complete and recorded."
+        ));
+        assert!(!announces_action(
+            "If you want, I will add this to the docs."
+        ));
     }
 
     #[test]

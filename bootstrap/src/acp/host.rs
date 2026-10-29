@@ -6,10 +6,9 @@ use super::config::ResolvedAgent;
 use super::policy::{self, PermissionPolicy};
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, HttpHeader,
-    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
-    PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-    RequestPermissionResponse, SessionNotification, SessionUpdate, WriteTextFileRequest,
-    WriteTextFileResponse,
+    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, PromptRequest,
+    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest, RequestPermissionResponse,
+    SessionNotification, SessionUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::util::MatchDispatch;
@@ -74,6 +73,8 @@ impl McpEntry {
 pub struct AgentInfo {
     // The reply advertised `mcpCapabilities.http`.
     pub mcp_http: bool,
+    pub steering: bool,
+    pub input_delivery_events: bool,
 }
 
 // What a prompt reports while it runs: session updates, and (for Forward-policy
@@ -97,7 +98,12 @@ pub struct PromptOutcome {
 }
 
 enum Cmd {
+    Steer {
+        request: super::steering::SteeringRequest,
+        reply: std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
+    },
     Open {
+        conversation: bool,
         cwd: PathBuf,
         mcp: Vec<McpEntry>,
         policy: PermissionPolicy,
@@ -158,6 +164,8 @@ pub struct SessionHandle {
     cmd_tx: UnboundedSender<Cmd>,
     agent: String,
     ended: Arc<std::sync::Mutex<Option<String>>>,
+    pub steering: bool,
+    pub input_delivery_events: bool,
 }
 
 fn err_s(e: agent_client_protocol::Error) -> String {
@@ -210,14 +218,13 @@ impl AcpHost {
                 // deserves the agent's error rather than a dropped channel.
                 let opening: Arc<std::sync::Mutex<Vec<(u64, OpenReply)>>> = Default::default();
                 let opening_ref = opening.clone();
-                let result = futures::executor::block_on(
-                    Client
-                        .builder()
-                        .name("jazyk")
-                        .connect_with(transport, |cx: ConnectionTo<Agent>| {
+                let result =
+                    futures::executor::block_on(Client.builder().name("jazyk").connect_with(
+                        transport,
+                        |cx: ConnectionTo<Agent>| {
                             main_loop(cx, cmd_rx, ready_tx.clone(), root, opening_ref)
-                        }),
-                );
+                        },
+                    ));
                 if let Err(e) = result {
                     let mut e = err_s(e);
                     let tail: Vec<String> = stderr.lock().unwrap().iter().cloned().collect();
@@ -287,9 +294,34 @@ impl AcpHost {
         mcp: Vec<McpEntry>,
         policy: PermissionPolicy,
     ) -> Result<SessionHandle, String> {
+        self.new_session_purpose(cwd, mcp, policy, false)
+    }
+
+    pub fn new_chat_session(
+        &self,
+        cwd: &std::path::Path,
+        mcp: Vec<McpSpec>,
+        policy: PermissionPolicy,
+    ) -> Result<SessionHandle, String> {
+        self.new_session_purpose(
+            cwd,
+            mcp.into_iter().map(McpEntry::Stdio).collect(),
+            policy,
+            true,
+        )
+    }
+
+    fn new_session_purpose(
+        &self,
+        cwd: &std::path::Path,
+        mcp: Vec<McpEntry>,
+        policy: PermissionPolicy,
+        conversation: bool,
+    ) -> Result<SessionHandle, String> {
         let (reply, rx) = std::sync::mpsc::channel();
         self.cmd_tx
             .unbounded_send(Cmd::Open {
+                conversation,
                 cwd: cwd.to_path_buf(),
                 mcp,
                 policy,
@@ -313,6 +345,8 @@ impl AcpHost {
             cmd_tx: self.cmd_tx.clone(),
             agent: self.agent.name.clone(),
             ended: self.ended.clone(),
+            steering: self.info.steering,
+            input_delivery_events: self.info.input_delivery_events,
         })
     }
 }
@@ -327,6 +361,25 @@ impl Drop for AcpHost {
 }
 
 impl SessionHandle {
+    pub fn steer(&self, text: &str, input: serde_json::Value) -> Result<serde_json::Value, String> {
+        if !self.steering {
+            return Ok(serde_json::json!({"outcome":"promptRequired","reason":"noRunningTurn"}));
+        }
+        let request = super::steering::SteeringRequest {
+            session_id: self.id.clone(),
+            prompt: vec![ContentBlock::from(text.to_string())],
+            meta: Some(
+                serde_json::json!({"steering":{"idleBehavior":"promptRequired"},"jazyk":input}),
+            ),
+        };
+        let (reply, rx) = std::sync::mpsc::channel();
+        self.cmd_tx
+            .unbounded_send(Cmd::Steer { request, reply })
+            .map_err(|_| "acp host is gone".to_string())?;
+        rx.recv_timeout(std::time::Duration::from_secs(15))
+            .map_err(|_| "steering delivery unknown: acknowledgement timed out".to_string())?
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -448,6 +501,14 @@ async fn main_loop(
         Ok(resp) => {
             let _ = ready_tx.send(Ok(AgentInfo {
                 mcp_http: resp.agent_capabilities.mcp_capabilities.http,
+                steering: super::steering::supported(
+                    &serde_json::to_value(&resp).unwrap_or_default(),
+                ),
+                input_delivery_events: resp
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("steering"))
+                    .is_some_and(|m| m["inputDeliveryEvents"] == true),
             }));
         }
         Err(e) => {
@@ -460,7 +521,15 @@ async fn main_loop(
     let mut open_seq: u64 = 0;
     while let Some(cmd) = cmd_rx.next().await {
         match cmd {
+            Cmd::Steer { request, reply } => {
+                cx.send_request(request)
+                    .on_receiving_result(async move |result| {
+                        let _ = reply.send(result.map_err(err_s));
+                        Ok(())
+                    })?;
+            }
             Cmd::Open {
+                conversation,
                 cwd,
                 mcp,
                 policy,
@@ -468,7 +537,7 @@ async fn main_loop(
             } => {
                 let servers: Vec<McpServer> =
                     mcp.into_iter().map(McpEntry::into_protocol).collect();
-                let request = NewSessionRequest::new(&cwd).mcp_servers(servers);
+                let request = NewSessionRequest::new(&cwd).mcp_servers(servers).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(serde_json::json!({"jazyk":{"purpose":if conversation {"chat"} else {"worker"}}})).ok());
                 open_seq += 1;
                 let ticket = open_seq;
                 opening.lock().unwrap().push((ticket, reply.clone()));
@@ -898,6 +967,131 @@ mod tests {
         (format!("http://{}/v1", addr), listener)
     }
 
+    #[test]
+    fn embedded_steering_reaches_a_blocked_turn_and_idle_requires_prompt() {
+        use std::io::{BufRead, BufReader};
+        let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/jazyk");
+        if !bin.exists() {
+            eprintln!("build target/debug/jazyk to exercise ACP subprocess steering");
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let provider = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap();
+                        }
+                    }
+                }
+                let mut bytes = vec![0; length];
+                reader.read_exact(&mut bytes).unwrap();
+                let body = if first.starts_with("GET ") {
+                    serde_json::json!({"data":[]}).to_string()
+                } else {
+                    requests.push(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap());
+                    if requests.len() == 1 {
+                        started_tx.send(()).unwrap();
+                        release_rx
+                            .recv_timeout(std::time::Duration::from_secs(10))
+                            .unwrap();
+                    }
+                    serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Answer."},"finish_reason":"stop"}]}).to_string()
+                };
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+                if requests.len() == 2 {
+                    return requests;
+                }
+            }
+            requests
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let host = AcpHost::start(
+            ResolvedAgent {
+                name: "embedded".into(),
+                command: bin.to_string_lossy().into_owned(),
+                args: vec!["agent".into()],
+                env: vec![],
+                serve_files: true,
+            },
+            dir.path().into(),
+            vec![
+                ("JAZYK_LLM_BASE_URL".into(), format!("http://{address}")),
+                ("JAZYK_MODEL".into(), "fixture".into()),
+                ("JAZYK_CODEC".into(), "native".into()),
+                ("JAZYK_MAX_RETRIES".into(), "0".into()),
+                ("JAZYK_MIN_INTERVAL_MS".into(), "0".into()),
+            ],
+        )
+        .unwrap();
+        assert!(host.info().steering);
+        let session = host
+            .new_chat_session(dir.path(), vec![], PermissionPolicy::Auto)
+            .unwrap();
+        let prompt_session = session.clone();
+        let delivered = Arc::new(AtomicBool::new(false));
+        let delivered_sink = delivered.clone();
+        let prompt = std::thread::spawn(move || {
+            prompt_session.prompt(
+                "Original",
+                Arc::new(move |event| {
+                    if let HostEvent::Update(update) = event {
+                        let value = serde_json::to_value(update).unwrap();
+                        if value["_meta"]["jazyk"]["input"]["messageId"] == "steer-1" {
+                            delivered_sink.store(true, Ordering::SeqCst);
+                        }
+                    }
+                }),
+            )
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(
+            session
+                .steer(
+                    "Use the existing adapter.",
+                    serde_json::json!({"messageId":"steer-1"})
+                )
+                .unwrap()["outcome"],
+            "injected"
+        );
+        release_tx.send(()).unwrap();
+        assert_eq!(prompt.join().unwrap().unwrap().stop, "end_turn");
+        let requests = provider.join().unwrap();
+        assert!(requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["content"] == "Use the existing adapter."));
+        assert!(delivered.load(Ordering::SeqCst));
+        assert_eq!(
+            session
+                .steer("Late message", serde_json::json!({"messageId":"steer-2"}))
+                .unwrap()["outcome"],
+            "promptRequired"
+        );
+        session.close();
+    }
+
     // The Phase 1 milestone in miniature: spawn the real debug binary as the embedded
     // agent, drive one prompt through the host, and read the streamed reply.
     #[test]
@@ -908,7 +1102,8 @@ mod tests {
             return;
         }
         let (url, _listener) = fake_endpoint("hello from the fake endpoint");
-        let dir = std::env::temp_dir().join(format!("jazyk-acp-host-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-acp-host-test-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();
 
         let agent = ResolvedAgent {

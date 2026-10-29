@@ -629,3 +629,10 @@ prints what the human owes instead of a prompt.
 
 Accepted graph writes can publish a [live compilation preview](./live-preview.md).
 The preview is provisional until the session commits.
+
+
+## Live input and progress
+
+The embedded loop accepts ordered human inputs at safe boundaries. Steering keeps cumulative round and failure budgets. It never grants permission or bypasses a gate. The host records delivery only after history insertion.
+
+Native provider streams emit answer and thought deltas separately. Complete messages remain the source of history and tool arguments. The final assembled response is not emitted again. Partial output is retained when a model attempt fails. An attempt with visible output is not retried automatically. Round and tool timing events carry monotonic durations.

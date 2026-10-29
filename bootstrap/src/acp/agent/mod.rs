@@ -34,6 +34,7 @@ struct SessionState {
     // The model this session prompts, which the client may change between turns.
     // Mirrors docs/frontends/acp.md#choosing-a-model.
     model: String,
+    conversation: bool,
 }
 
 // The id the model selector carries. A client persists a user's default under this
@@ -64,6 +65,7 @@ fn model_options(llm: &crate::llm::Llm, current: &str) -> Vec<SessionConfigOptio
 struct SessionEntry {
     state: Arc<Mutex<SessionState>>,
     cancelled: Arc<AtomicBool>,
+    inbox: Arc<Mutex<(bool, Vec<Value>)>>,
 }
 
 type Sessions = Arc<Mutex<HashMap<String, SessionEntry>>>;
@@ -91,6 +93,7 @@ pub fn run() -> i32 {
     let prompt_sessions = sessions.clone();
     let config_sessions = sessions.clone();
     let close_sessions = sessions.clone();
+    let steering_sessions = sessions.clone();
     let cancel_sessions = sessions;
     let new_llm = llm.clone();
     let config_llm = llm.clone();
@@ -103,7 +106,7 @@ pub fn run() -> i32 {
                 async move |req: InitializeRequest, responder, _cx| {
                     let _ = &init_sessions;
                     responder.respond(
-                        InitializeResponse::new(req.protocol_version).agent_capabilities(
+                        InitializeResponse::new(req.protocol_version).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"steering":{"supported":true,"idleBehavior":"promptRequired","inputDeliveryEvents":true}})).ok()).agent_capabilities(
                             // session/close matters: closing a session tears its MCP
                             // servers down, and an ephemeral jazyk serving runs its
                             // implicit finish on that EOF.
@@ -166,8 +169,10 @@ pub fn run() -> i32 {
                                 history,
                                 cwd,
                                 model: model.clone(),
+                                conversation: req.meta.as_ref().and_then(|m| m.get("jazyk")).is_some_and(|m| m["purpose"] == "chat"),
                             })),
                             cancelled: Arc::new(AtomicBool::new(false)),
+                            inbox: Arc::new(Mutex::new((false, Vec::new()))),
                         },
                     );
                     let options = model_options(&new_llm, &model);
@@ -189,6 +194,11 @@ pub fn run() -> i32 {
                                 .respond_with_internal_error(format!("unknown session {}", sid));
                         }
                     };
+                    {
+                        let mut inbox = entry.inbox.lock().unwrap();
+                        if inbox.0 { return responder.respond_with_internal_error("a prompt is already active"); }
+                        inbox.0 = true;
+                    }
                     entry.cancelled.store(false, Ordering::Relaxed);
                     let text: String = req
                         .prompt
@@ -228,6 +238,12 @@ pub fn run() -> i32 {
                             }
                         };
                         let mut emit = |ev: AgentEvent| match ev {
+                            AgentEvent::Input(input) => {
+                                notify(SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::from(String::new())).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"input":input,"state":"delivered"}})).ok())));
+                            }
+                            AgentEvent::Timing(timing) => {
+                                notify(SessionUpdate::UsageUpdate(UsageUpdate::new(0,0).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"timing":timing}})).ok())));
+                            }
                             AgentEvent::Thought(s) => notify(SessionUpdate::AgentThoughtChunk(
                                 ContentChunk::new(ContentBlock::from(s)),
                             )),
@@ -262,6 +278,17 @@ pub fn run() -> i32 {
                                 notify(SessionUpdate::UsageUpdate(usage));
                             }
                         };
+                        let mut inputs = || {
+                            let mut inbox = entry.inbox.lock().unwrap();
+                            if cancelled.load(Ordering::Relaxed) { inbox.1.clear(); }
+                            std::mem::take(&mut inbox.1)
+                        };
+                        let mut input_close = || {
+                            let mut inbox = entry.inbox.lock().unwrap();
+                            if !inbox.1.is_empty() { return false; }
+                            inbox.0 = false;
+                            true
+                        };
                         agent_loop::run_loop(LoopArgs {
                             llm: &llm,
                             history: &mut state.history,
@@ -271,7 +298,9 @@ pub fn run() -> i32 {
                             cancelled: &|| cancelled.load(Ordering::Relaxed),
                             max_rounds: max_rounds(),
                             label,
-                            conversation: false,
+                            conversation: state.conversation,
+                            inputs: Some(&mut inputs),
+                            input_close: Some(&mut input_close),
                         })
                         }));
                         let stop = match outcome {
@@ -281,6 +310,8 @@ pub fn run() -> i32 {
                                 crate::sys::panic_text(p.as_ref())
                             )),
                         };
+                        // Closing admission and draining use the same queue lock.
+                        { let mut inbox = entry.inbox.lock().unwrap(); inbox.0 = false; inbox.1.clear(); }
                         let _ = match stop {
                             Stop::EndTurn => responder.respond(PromptResponse::new(StopReason::EndTurn)),
                             Stop::MaxRounds => {
@@ -302,6 +333,34 @@ pub fn run() -> i32 {
                         };
                     });
                     Ok(())
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |req: super::steering::SteeringRequest, responder, _cx| {
+                    let Some(entry) = steering_sessions.lock().unwrap().get(&req.session_id).cloned() else {
+                        return responder.respond_with_internal_error("unknown session");
+                    };
+                    if req.meta.as_ref().and_then(|m|m.get("steering")).and_then(|m|m.get("idleBehavior")).is_some_and(|value|value != "promptRequired") {
+                        return responder.respond_with_internal_error("unsupported idleBehavior; use promptRequired");
+                    }
+                    let mut texts = Vec::new();
+                    for block in req.prompt {
+                        match block {
+                            ContentBlock::Text(t) => texts.push(t.text),
+                            _ => return responder.respond_with_internal_error("steering supports text only"),
+                        }
+                    }
+                    let text = texts.join("\n");
+                    if text.trim().is_empty() { return responder.respond_with_internal_error("text is required"); }
+                    let mut inbox = entry.inbox.lock().unwrap();
+                    if !inbox.0 || entry.cancelled.load(Ordering::Relaxed) {
+                        return responder.respond(json!({"outcome":"promptRequired","reason":"noRunningTurn"}));
+                    }
+                    let mut input = req.meta.as_ref().and_then(|m| m.get("jazyk")).cloned().unwrap_or_else(|| json!({}));
+                    input["text"] = json!(text);
+                    inbox.1.push(input);
+                    responder.respond(json!({"outcome":"injected"}))
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -360,6 +419,7 @@ pub fn run() -> i32 {
                 async move |n: CancelNotification, _cx| {
                     if let Some(e) = cancel_sessions.lock().unwrap().get(n.session_id.0.as_ref()) {
                         e.cancelled.store(true, Ordering::Relaxed);
+                        e.inbox.lock().unwrap().1.clear();
                     }
                     Ok(())
                 },

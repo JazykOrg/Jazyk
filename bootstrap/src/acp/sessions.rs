@@ -55,14 +55,33 @@ pub fn open(out: &Path, id: &str, cwd: &Path, agent: &str) {
     }
 }
 
+pub fn append_checked(out: &Path, id: &str, record: Value) -> Result<(), String> {
+    let path = path_for(out, id);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("open conversation transcript: {error}"))?;
+    let line = format!("{}\n", record);
+    file.write_all(line.as_bytes())
+        .map_err(|error| format!("persist conversation transcript: {error}"))?;
+    file.sync_data()
+        .map_err(|error| format!("flush conversation transcript: {error}"))
+}
+
 pub fn append(out: &Path, id: &str, record: Value) {
     let path = path_for(out, id);
-    if !path.vexists() {
-        return;
+    match std::fs::OpenOptions::new().append(true).open(path) {
+        Ok(mut file) => {
+            if let Err(error) = writeln!(file, "{}", record) {
+                eprintln!("[chat] persist transcript: {error}");
+            }
+        }
+        Err(error) => eprintln!("[chat] open transcript: {error}"),
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) {
-        let _ = writeln!(f, "{}", record);
-    }
+}
+
+pub fn record_update_checked(out: &Path, id: &str, update: &Value) -> Result<(), String> {
+    append_checked(out, id, json!({"kind":"update","at":now(),"update":update}))
 }
 
 // The first thing a person said, which is what a history list should show. Recorded
@@ -106,6 +125,13 @@ pub fn list(out: &Path) -> Vec<SessionMeta> {
                 "meta" => {
                     id = v["id"].as_str().unwrap_or_default().to_string();
                     started = v["startedAt"].as_str().unwrap_or_default().to_string();
+                }
+                "update" if v["update"]["sessionUpdate"] == "user_message" => {
+                    turns += 1;
+                    if title.is_empty() {
+                        title = summarize(v["update"]["text"].as_str().unwrap_or_default());
+                    }
+                    updated = v["at"].as_str().unwrap_or_default().to_string();
                 }
                 "user" => {
                     turns += 1;
@@ -251,7 +277,8 @@ mod tests {
     // Pruning keeps the conversations a person is most likely to want.
     #[test]
     fn pruning_keeps_the_newest() {
-        let out = std::env::temp_dir().join(format!("jazyk-sess-prune-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-sess-prune-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let cwd = std::path::Path::new("/tmp/project");
         for (i, at) in [("a", "100"), ("b", "200"), ("c", "300")] {

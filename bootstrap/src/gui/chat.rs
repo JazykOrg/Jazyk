@@ -30,6 +30,9 @@ pub struct ChatSession {
     next_n: u64,
     // Forwarded permission requests awaiting the user: {id, request}.
     pending: Vec<Value>,
+    inputs: Vec<Value>,
+    turn_id: Option<String>,
+    stopped: bool,
 }
 
 pub struct ChatManager {
@@ -49,6 +52,17 @@ impl Default for ChatManager {
 }
 
 impl ChatManager {
+    pub fn is_running(&self, id: &str) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|session| {
+                let session = session.lock().unwrap();
+                session.state == "running" && !session.stopped
+            })
+    }
+
     // The shared agent process behind every chat session, spawned on first use.
     fn host(&self, st: &SharedState) -> Result<(), String> {
         let mut h = self.host.lock().unwrap();
@@ -101,7 +115,7 @@ impl ChatManager {
         };
         let h = self.host.lock().unwrap();
         let host = h.as_ref().ok_or("agent host is gone")?;
-        let handle = host.new_session(&proj.root, vec![spec], PermissionPolicy::Forward)?;
+        let handle = host.new_chat_session(&proj.root, vec![spec], PermissionPolicy::Forward)?;
         let _ = chat_id;
         Ok(handle)
     }
@@ -114,7 +128,7 @@ impl ChatManager {
             .map(|s| {
                 let s = s.lock().unwrap();
                 json!({"id": s.id, "title": s.title, "state": s.state, "updates": s.next_n,
-                       "pending": s.pending})
+                       "pending": s.pending, "inputs":s.inputs,"turnId":s.turn_id})
             })
             .collect()
     }
@@ -139,9 +153,53 @@ impl ChatManager {
                     "update" => r["update"].clone(),
                     _ => continue,
                 };
-                ring.push_back((n as u64, update));
+                let cursor = update["cursor"].as_u64().unwrap_or(n as u64);
+                ring.push_back((cursor, update));
             }
-            let next_n = ring.back().map(|(n, _)| n + 1).unwrap_or(0);
+            let mut inputs: Vec<Value> = Vec::new();
+            for (_, update) in &ring {
+                if update["sessionUpdate"] == "input" {
+                    let mut input = update["input"].clone();
+                    if ["queued", "delivering", "accepted"]
+                        .iter()
+                        .any(|state| input["state"] == *state)
+                    {
+                        input["state"] = json!("delivery_unknown");
+                        input["reason"] =
+                            json!("server restarted; inspect committed changes before resuming");
+                    }
+                    if let Some(previous) = inputs
+                        .iter_mut()
+                        .find(|i| i["messageId"] == input["messageId"])
+                    {
+                        *previous = input;
+                    } else {
+                        inputs.push(input);
+                    }
+                }
+            }
+            let restored_state = ring
+                .iter()
+                .rev()
+                .find_map(|(_, update)| match update["sessionUpdate"].as_str() {
+                    Some("turn_end") => Some(if update["stop"] == "end_turn" {
+                        "idle"
+                    } else if update["stop"] == "cancelled" {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    }),
+                    Some("state") => Some(match update["state"].as_str() {
+                        Some("failed") => "failed",
+                        Some("cancelled") => "cancelled",
+                        Some("idle") => "idle",
+                        _ => "interrupted",
+                    }),
+                    Some("user_message" | "input") => Some("interrupted"),
+                    _ => None,
+                })
+                .unwrap_or("idle");
+            let next_n = ring.iter().map(|(n, _)| n + 1).max().unwrap_or(0);
             // A number a later append cannot collide with, whatever was trimmed.
             let seq = self.seq.load(Ordering::Relaxed);
             let n = meta
@@ -157,11 +215,14 @@ impl ChatManager {
                 ChatSession {
                     id: meta.id,
                     title: meta.title,
-                    state: "idle".into(),
+                    state: restored_state.into(),
                     handle: None,
                     ring,
                     next_n,
                     pending: Vec::new(),
+                    inputs,
+                    turn_id: None,
+                    stopped: false,
                 },
             ));
         }
@@ -184,12 +245,14 @@ async fn restore(st: &SharedState) {
         .expect("chat restore");
 }
 
-fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, update: Value) {
-    // The transcript outlives the page and the process: the same per-project store
-    // the IDE proxy writes. Mirrors docs/frontends/acp.md#session-store.
+fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, mut update: Value) {
+    // Serialize transcript writes with the in-memory cursor. Admissions use the
+    // same session lock and a checked, flushed write before HTTP acceptance.
     let (id, n, elided) = {
         let mut s = sess.lock().unwrap();
         let n = s.next_n;
+        update["cursor"] = json!(n);
+        crate::acp::sessions::record_update(&st.out, &s.id, &update);
         s.next_n += 1;
         s.ring.push_back((n, update.clone()));
         while s.ring.len() > RING {
@@ -197,18 +260,8 @@ fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, update: Value) {
         }
         (s.id.clone(), n, super::jobs::elide(&update))
     };
-    match update["sessionUpdate"].as_str() {
-        Some("user_message") => crate::acp::sessions::record_prompt(
-            &st.out,
-            &id,
-            update["text"].as_str().unwrap_or_default(),
-        ),
-        _ => crate::acp::sessions::record_update(&st.out, &id, &update),
-    }
-    st.events.emit(
-        "chat.update",
-        json!({"sessionId": id, "n": n, "update": elided}),
-    );
+    st.events
+        .emit("chat.update", json!({"sessionId":id,"n":n,"update":elided}));
 }
 
 fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
@@ -216,6 +269,7 @@ fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
         let mut s = sess.lock().unwrap();
         s.state = state.to_string();
     }
+    append(st, sess, json!({"sessionUpdate":"state","state":state}));
     st.events
         .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
 }
@@ -223,6 +277,7 @@ fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
 // ---- handlers ----
 
 pub async fn post_session(State(st): State<SharedState>) -> Response {
+    restore(&st).await;
     let n = st.chat.seq.fetch_add(1, Ordering::Relaxed) + 1;
     let id = format!("chat-{}", n);
     let session = ChatSession {
@@ -233,6 +288,9 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         ring: VecDeque::new(),
         next_n: 0,
         pending: Vec::new(),
+        inputs: Vec::new(),
+        turn_id: None,
+        stopped: false,
     };
     crate::acp::sessions::open(&st.out, &id, &st.proj().root, "gui");
     st.chat
@@ -268,7 +326,7 @@ pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) 
                 .map(|(n, u)| json!({"n": n, "update": super::jobs::elide(u)}))
                 .collect();
             Json(json!({"id": s.id, "title": s.title, "state": s.state,
-                        "pending": s.pending, "updates": updates}))
+                        "pending": s.pending, "updates": updates,"inputs":s.inputs,"turnId":s.turn_id}))
             .into_response()
         }
         None => super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id)),
@@ -295,17 +353,52 @@ pub async fn post_prompt(
             "text is required: the prompt to send",
         );
     }
-    if sess.lock().unwrap().state == "running" {
-        return super::api::err(
-            StatusCode::CONFLICT,
-            "a turn is already running; cancel it or wait for it to end",
-        );
-    }
+    let message_id = body["messageId"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            format!(
+                "native-{}-{}",
+                crate::sys::process_id(),
+                st.chat.seq.fetch_add(1, Ordering::Relaxed)
+            )
+        });
+    let input = {
+        let mut session = sess.lock().unwrap();
+        if let Some(existing) = session.inputs.iter().find(|i| i["messageId"] == message_id) {
+            return if existing["text"] == text {
+                (StatusCode::ACCEPTED, Json(existing.clone())).into_response()
+            } else {
+                super::api::err(StatusCode::CONFLICT, "messageId has different text")
+            };
+        }
+        if session.state == "running" {
+            return super::api::err(
+                StatusCode::CONFLICT,
+                "use /inputs for a running conversation",
+            );
+        }
+        let turn_id = format!("{}:{}", id, message_id);
+        let input = json!({"messageId":message_id,"text":text,"sequence":session.inputs.len()+1,"state":"queued","turnId":turn_id,"deliveryMode":"steer"});
+        if let Err(error) = crate::acp::sessions::record_update_checked(
+            &st.out,
+            &id,
+            &json!({"sessionUpdate":"input","input":input}),
+        ) {
+            return super::api::err(StatusCode::INTERNAL_SERVER_ERROR, error);
+        }
+        session.state = "running".into();
+        session.stopped = false;
+        session.turn_id = Some(turn_id);
+        session.inputs.push(input.clone());
+        input
+    };
+    append(&st, &sess, json!({"sessionUpdate":"input","input":input}));
     // The user's side of the transcript.
     append(
         &st,
         &sess,
-        json!({"sessionUpdate": "user_message", "text": text}),
+        json!({"sessionUpdate": "user_message", "text": text,"messageId":message_id}),
     );
 
     // Slash commands arrive as prompt text, per the protocol; jazyk matches the
@@ -317,6 +410,7 @@ pub async fn post_prompt(
             &sess,
             json!({"sessionUpdate": "agent_message", "text": reply}),
         );
+        set_state(&st, &sess, "idle");
         return (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response();
     }
 
@@ -324,15 +418,19 @@ pub async fn post_prompt(
     let st2 = st.clone();
     let sess2 = sess.clone();
     tokio::task::spawn_blocking(move || {
+        if sess2.lock().unwrap().stopped {
+            set_state(&st2, &sess2, "cancelled");
+            return;
+        }
         // The ACP session opens on the first prompt and lives with the chat.
-        let handle = {
+        let (handle, reopened) = {
             let existing = sess2.lock().unwrap().handle.clone();
             match existing {
-                Some(h) => h,
+                Some(h) => (h, false),
                 None => match st2.chat.open_acp_session(&st2, &id) {
                     Ok(h) => {
                         sess2.lock().unwrap().handle = Some(h.clone());
-                        h
+                        (h, true)
                     }
                     Err(e) => {
                         append(
@@ -346,14 +444,59 @@ pub async fn post_prompt(
                 },
             }
         };
-        let cb_st = st2.clone();
-        let cb_sess = sess2.clone();
-        let outcome = handle.prompt(
-            &text,
+        let mut turn_text = if reopened {
+            let session = sess2.lock().unwrap();
+            let mut context = Vec::new();
+            for (_, update) in &session.ring {
+                match update["sessionUpdate"].as_str() {
+                    Some("user_message") if update["messageId"] != message_id => context.push(
+                        format!("User: {}", update["text"].as_str().unwrap_or_default()),
+                    ),
+                    Some("agent_message") => context.push(format!(
+                        "Agent: {}",
+                        update["text"].as_str().unwrap_or_default()
+                    )),
+                    Some("agent_message_chunk") => context.push(
+                        update["content"]["text"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                    ),
+                    _ => {}
+                }
+            }
+            let context = context.join("\n");
+            let tail = context
+                .chars()
+                .rev()
+                .take(24_000)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<String>();
+            if tail.is_empty() {
+                text
+            } else {
+                format!("Previous conversation context (already completed turns, not fresh authorization):\n{tail}\n\nCurrent user message:\n{text}")
+            }
+        } else {
+            text
+        };
+        let mut current_input_id = message_id;
+        loop {
+            let cb_st = st2.clone();
+            let cb_sess = sess2.clone();
+            let initial_id = current_input_id.clone();
+            let outcome = handle.prompt_cancellable(
+            &turn_text,
             Arc::new(move |ev: &HostEvent| match ev {
                 HostEvent::Update(u) => {
+                    update_input(&cb_st,&cb_sess,&json!(initial_id),"delivered",None);
                     if let Ok(v) = serde_json::to_value(u) {
-                        append(&cb_st, &cb_sess, v);
+                        if let Some(delivered) = v["_meta"]["jazyk"]["input"].as_object() {
+                            let message_id = delivered.get("messageId").cloned().unwrap_or_default();
+                            update_input(&cb_st, &cb_sess, &message_id, "delivered", None);
+                        } else { append(&cb_st, &cb_sess, v); }
                     }
                 }
                 HostEvent::Permission { id, request } => {
@@ -363,37 +506,285 @@ pub async fn post_prompt(
                     cb_st.events.emit("chat.permission", json!({"sessionId": sid, "ask": ask}));
                 }
             }),
+            &|| sess2.lock().unwrap().stopped,
         );
-        {
-            let mut s = sess2.lock().unwrap();
-            s.pending.clear();
-        }
-        match outcome {
-            Ok(o) => {
-                append(
-                    &st2,
-                    &sess2,
-                    json!({"sessionUpdate": "turn_end", "stop": o.stop, "idled": o.idled}),
-                );
-                set_state(&st2, &sess2, "idle");
+            {
+                let mut s = sess2.lock().unwrap();
+                s.pending.clear();
             }
-            Err(e) => {
-                append(
-                    &st2,
-                    &sess2,
-                    json!({"sessionUpdate": "turn_end", "stop": "error", "error": e}),
-                );
-                set_state(&st2, &sess2, "failed");
+            update_input(
+                &st2,
+                &sess2,
+                &json!(current_input_id),
+                if outcome.is_ok() {
+                    "delivered"
+                } else {
+                    "failed"
+                },
+                None,
+            );
+            let terminal = match &outcome {
+                Ok(o) => json!({"sessionUpdate":"turn_end","stop":o.stop,"idled":o.idled}),
+                Err(e) => json!({"sessionUpdate":"turn_end","stop":"error","error":e}),
+            };
+            append(&st2, &sess2, terminal);
+            // The same lock serializes late admission and closing this turn.
+            let next = loop {
+                let mut session = sess2.lock().unwrap();
+                let failed = outcome.as_ref().map_or(true, |o| o.stop != "end_turn");
+                if session.stopped || failed {
+                    session.state = if session.stopped {
+                        "cancelled"
+                    } else if failed {
+                        "failed"
+                    } else {
+                        "idle"
+                    }
+                    .into();
+                    break None;
+                }
+                if session.inputs.iter().any(|i| i["admitting"] == true) {
+                    drop(session);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                if let Some(index) = session
+                    .inputs
+                    .iter()
+                    .position(|i| i["state"] == "queued" && i["deliveryMode"] == "next_turn")
+                {
+                    let turn_id = format!(
+                        "{}:{}",
+                        session.id,
+                        session.inputs[index]["messageId"]
+                            .as_str()
+                            .unwrap_or_default()
+                    );
+                    session.turn_id = Some(turn_id.clone());
+                    session.inputs[index]["turnId"] = json!(turn_id);
+                    break Some(session.inputs[index].clone());
+                }
+                session.state = "idle".into();
+                session.turn_id = None;
+                break None;
+            };
+            st2.events
+                .emit("chat.sessions", json!({"sessions":st2.chat.snapshot()}));
+            match next {
+                Some(input) => {
+                    append(&st2, &sess2, json!({"sessionUpdate":"input","input":input}));
+                    current_input_id = input["messageId"].as_str().unwrap_or_default().to_string();
+                    turn_text = input["text"].as_str().unwrap_or_default().to_string();
+                }
+                None => break,
             }
         }
     });
-    (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
+    (StatusCode::ACCEPTED, Json(input)).into_response()
+}
+
+fn update_input(
+    st: &SharedState,
+    sess: &Arc<Mutex<ChatSession>>,
+    message_id: &Value,
+    state: &str,
+    reason: Option<&str>,
+) {
+    let updated =
+        {
+            let mut session = sess.lock().unwrap();
+            if session.inputs.iter().any(|i| {
+                i["messageId"] == *message_id && i["state"] == state && state == "delivered"
+            }) {
+                return;
+            }
+            session
+                .inputs
+                .iter_mut()
+                .find(|i| i["messageId"] == *message_id)
+                .map(|input| {
+                    input["admitting"] = json!(false);
+                    if input["state"] != "cancelled"
+                        && !(input["state"] == "delivered" && state == "queued")
+                    {
+                        input["state"] = json!(state);
+                    }
+                    if let Some(reason) = reason {
+                        input["reason"] = json!(reason);
+                    }
+                    input.clone()
+                })
+        };
+    if let Some(input) = updated {
+        append(st, sess, json!({"sessionUpdate":"input","input":input}));
+        st.events.emit(
+            "chat.input",
+            json!({"sessionId":sess.lock().unwrap().id,"input":input}),
+        );
+    }
+}
+
+pub async fn post_input(
+    State(st): State<SharedState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    restore(&st).await;
+    let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
+        return super::api::err(StatusCode::NOT_FOUND, "unknown conversation");
+    };
+    let text = body["text"].as_str().unwrap_or_default().trim().to_string();
+    let message_id = body["messageId"].as_str().unwrap_or_default().to_string();
+    if text.is_empty() || message_id.is_empty() {
+        return super::api::err(StatusCode::BAD_REQUEST, "messageId and text are required");
+    }
+    let idle = sess.lock().unwrap().state != "running";
+    if idle {
+        return post_prompt(State(st), Path(id), Json(body)).await;
+    }
+    let (input, handle) = {
+        let mut session = sess.lock().unwrap();
+        if let Some(existing) = session.inputs.iter().find(|i| i["messageId"] == message_id) {
+            return if existing["text"] == text {
+                (StatusCode::ACCEPTED, Json(existing.clone())).into_response()
+            } else {
+                super::api::err(StatusCode::CONFLICT, "messageId has different text")
+            };
+        }
+        if session.state != "running" {
+            return super::api::err(StatusCode::CONFLICT, "turn changed; resend this input");
+        }
+        if text.starts_with('/') {
+            return super::api::err(
+                StatusCode::CONFLICT,
+                "slash commands wait until the current turn ends",
+            );
+        }
+        if body["expectedTurnId"]
+            .as_str()
+            .is_some_and(|expected| session.turn_id.as_deref() != Some(expected))
+        {
+            return super::api::err(
+                StatusCode::CONFLICT,
+                "turn changed; reload the conversation",
+            );
+        }
+        if session.stopped {
+            return super::api::err(StatusCode::CONFLICT, "turn is stopping");
+        }
+        let handle = session.handle.clone().filter(|h| h.steering);
+        let input = json!({"messageId":message_id,"text":text,"sequence":session.inputs.len()+1,"state":"queued","admitting":handle.is_some(),"turnId":session.turn_id,"deliveryMode":if handle.is_some(){"steer"}else{"next_turn"}});
+        if let Err(error) = crate::acp::sessions::record_update_checked(
+            &st.out,
+            &id,
+            &json!({"sessionUpdate":"input","input":input}),
+        ) {
+            return super::api::err(StatusCode::INTERNAL_SERVER_ERROR, error);
+        }
+        session.inputs.push(input.clone());
+        (input, handle)
+    };
+    append(
+        &st,
+        &sess,
+        json!({"sessionUpdate":"user_message","messageId":message_id,"text":text}),
+    );
+    append(&st, &sess, json!({"sessionUpdate":"input","input":input}));
+    if let Some(handle) = handle {
+        let st2 = st.clone();
+        let sess2 = sess.clone();
+        let input2 = input.clone();
+        tokio::task::spawn_blocking(move || {
+            match handle.steer(&text, input2.clone()) {
+                Ok(result) if result["outcome"] == "injected" => {
+                    // Delivery is acknowledged separately by the embedded agent.
+                    let delivered = sess2
+                        .lock()
+                        .unwrap()
+                        .inputs
+                        .iter()
+                        .find(|i| i["messageId"] == input2["messageId"])
+                        .is_some_and(|i| i["state"] == "delivered");
+                    if !delivered {
+                        update_input(
+                            &st2,
+                            &sess2,
+                            &input2["messageId"],
+                            if handle.input_delivery_events {
+                                "queued"
+                            } else {
+                                "delivered"
+                            },
+                            None,
+                        );
+                    }
+                }
+                Ok(result) if result["outcome"] == "promptRequired" => {
+                    {
+                        let mut session = sess2.lock().unwrap();
+                        if let Some(input) = session
+                            .inputs
+                            .iter_mut()
+                            .find(|i| i["messageId"] == input2["messageId"])
+                        {
+                            input["deliveryMode"] = json!("next_turn");
+                        }
+                    }
+                    update_input(&st2, &sess2, &input2["messageId"], "queued", None);
+                }
+                Ok(result) if result["outcome"] == "failed" => update_input(
+                    &st2,
+                    &sess2,
+                    &input2["messageId"],
+                    "failed",
+                    Some("adapter could not apply the input"),
+                ),
+                Ok(_) => update_input(
+                    &st2,
+                    &sess2,
+                    &input2["messageId"],
+                    "delivery_unknown",
+                    Some("adapter returned an unsupported steering outcome"),
+                ),
+                Err(error) => update_input(
+                    &st2,
+                    &sess2,
+                    &input2["messageId"],
+                    "delivery_unknown",
+                    Some(&error),
+                ),
+            }
+        });
+    }
+    (StatusCode::ACCEPTED, Json(input)).into_response()
 }
 
 pub async fn cancel(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
     let sess = st.chat.sessions.lock().unwrap().get(&id).cloned();
     match sess {
         Some(s) => {
+            let cancelled = {
+                let mut session = s.lock().unwrap();
+                session.stopped = true;
+                session
+                    .inputs
+                    .iter_mut()
+                    .filter_map(|input| {
+                        if input["state"] == "queued"
+                            || input["state"] == "delivering"
+                            || input["state"] == "accepted"
+                        {
+                            input["state"] = json!("cancelled");
+                            Some(input.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for input in cancelled {
+                append(&st, &s, json!({"sessionUpdate":"input","input":input}));
+            }
             if let Some(h) = s.lock().unwrap().handle.clone() {
                 h.cancel();
             }
@@ -532,5 +923,41 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
             Some("released: pending compile and generate work is approved".to_string())
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod steering_tests {
+    use super::*;
+    #[test]
+    fn restore_keeps_input_identity_and_marks_unfinished_turn_interrupted() {
+        let root = tempfile::tempdir().unwrap();
+        crate::acp::sessions::open(root.path(), "chat-42", root.path(), "gui");
+        let input = json!({"messageId":"second","sequence":2,"text":"update hosting.md","state":"accepted","turnId":"turn-1"});
+        crate::acp::sessions::record_update_checked(
+            root.path(),
+            "chat-42",
+            &json!({"sessionUpdate":"input","input":input}),
+        )
+        .unwrap();
+        let manager = ChatManager::default();
+        manager.restore(root.path());
+        let snapshots = manager.snapshot();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0]["state"], "interrupted");
+        assert_eq!(snapshots[0]["inputs"][0]["messageId"], "second");
+        assert_eq!(snapshots[0]["inputs"][0]["text"], "update hosting.md");
+        assert_eq!(snapshots[0]["inputs"][0]["state"], "delivery_unknown");
+        assert_eq!(manager.seq.load(Ordering::Relaxed), 42);
+    }
+    #[test]
+    fn checked_transcript_write_rejects_missing_store() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(crate::acp::sessions::record_update_checked(
+            root.path(),
+            "missing",
+            &json!({"text":"must survive"})
+        )
+        .is_err());
     }
 }

@@ -2,10 +2,10 @@
 // handling: message-history requests with native tool-calling, a sticky capability
 // probe that downgrades to the text codec when the endpoint rejects `tools`, sticky
 // temperature and streaming fallbacks, pacing, and retry policy.
+use crate::scoped_state::{AtomicBool, AtomicU64, AtomicU8};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
 use std::sync::atomic::Ordering;
-use crate::scoped_state::{AtomicBool, AtomicU64, AtomicU8};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -364,7 +364,9 @@ impl Llm {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn list_models(&self) -> Vec<String> {
-        if crate::vfs::is_scoped() { return vec![self.model.clone()]; }
+        if crate::vfs::is_scoped() {
+            return vec![self.model.clone()];
+        }
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(5))
             .timeout_read(Duration::from_secs(10))
@@ -432,6 +434,18 @@ impl Llm {
         step: &str,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<(Value, Spend), String> {
+        self.chat_messages_deltas(messages, tools, label, step, cancelled, None)
+    }
+
+    pub fn chat_messages_deltas(
+        &self,
+        messages: &[Value],
+        tools: Option<&[Value]>,
+        label: &str,
+        step: &str,
+        cancelled: &dyn Fn() -> bool,
+        mut delta: Option<&mut dyn FnMut(&str, &str)>,
+    ) -> Result<(Value, Spend), String> {
         // A boosted cap serves this one call, retries included, whatever its outcome.
         struct ClearBoost;
         impl Drop for ClearBoost {
@@ -456,12 +470,21 @@ impl Llm {
             tools: tool_names(tools),
         });
         let mut try_stream = false;
+        let mut prefer_stream = delta.is_some();
         for attempt in 0..=max {
             if cancelled() {
                 return Err("execution cancelled".into());
             }
-            let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream;
-            match self.chat_once(messages, tools, streaming, cancelled) {
+            let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream || prefer_stream;
+            let mut visible = false;
+            let mut forward = |field: &str, text: &str| {
+                visible |= !text.is_empty();
+                if let Some(callback) = delta.as_mut() {
+                    callback(field, text);
+                }
+            };
+            let outcome = self.chat_once(messages, tools, streaming, cancelled, &mut forward);
+            match outcome {
                 Ok((msg, tokens)) => {
                     if cancelled() {
                         return Err("execution cancelled".into());
@@ -492,8 +515,19 @@ impl Llm {
                     return Ok((msg, tokens));
                 }
                 Err(e) => {
+                    if visible {
+                        return Err(format!("Model attempt interrupted after partial output; retry requires a new attempt: {e}"));
+                    }
                     if cancelled() {
                         return Err("execution cancelled".into());
+                    }
+                    if prefer_stream && e.contains("400") && e.to_lowercase().contains("stream") {
+                        prefer_stream = false;
+                        self.note(
+                            label,
+                            "endpoint rejected streaming; falling back to complete responses",
+                        );
+                        continue;
                     }
                     // An endpoint that only serves streaming responses says so; switch
                     // once, sticky for the run, and retry.
@@ -647,6 +681,7 @@ impl Llm {
         tools: Option<&[Value]>,
         streaming: bool,
         cancelled: &dyn Fn() -> bool,
+        delta: &mut dyn FnMut(&str, &str),
     ) -> Result<(Value, Spend), String> {
         // History goes out as-is, reasoning fields included, so a reasoning model keeps
         // its chain across rounds. Stripped only under the sticky rejection fallback.
@@ -691,7 +726,10 @@ impl Llm {
         // in-page model (docs/frontends/wasm.md#the-model).
         // A reply without usage is billed by estimate: what went out and what came back.
         let sent_estimate = (body.chars().count() as u64).div_ceil(4);
-        settle(self.transport_cancellable(&body, streaming, cancelled)?, sent_estimate)
+        settle(
+            self.transport_cancellable(&body, streaming, cancelled, delta)?,
+            sent_estimate,
+        )
     }
 
     // Native HTTP waits hold only an owned request, never the session or its tools.
@@ -702,6 +740,7 @@ impl Llm {
         body: &str,
         streaming: bool,
         cancelled: &dyn Fn() -> bool,
+        delta: &mut dyn FnMut(&str, &str),
     ) -> Result<Transported, String> {
         if cancelled() {
             return Err("execution cancelled".into());
@@ -711,27 +750,56 @@ impl Llm {
             let client = self.clone();
             let body = body.to_owned();
             let (tx, rx) = std::sync::mpsc::channel();
+            let (delta_tx, delta_rx) = std::sync::mpsc::channel::<(String, String)>();
             std::thread::spawn(move || {
-                let _ = tx.send(client.transport(&body, streaming));
+                let _ = tx.send(client.transport(&body, streaming, &mut |field, text| {
+                    let _ = delta_tx.send((field.into(), text.into()));
+                }));
             });
+            let flush = |delta: &mut dyn FnMut(&str, &str)| {
+                let mut field = String::new();
+                let mut text = String::new();
+                for (next_field, next_text) in delta_rx.try_iter() {
+                    if !field.is_empty() && field != next_field {
+                        delta(&field, &text);
+                        text.clear();
+                    }
+                    field = next_field;
+                    text.push_str(&next_text);
+                }
+                if !text.is_empty() {
+                    delta(&field, &text);
+                }
+            };
             loop {
+                flush(delta);
                 if cancelled() {
                     return Err("execution cancelled".into());
                 }
                 match rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(result) => return result,
+                    Ok(result) => {
+                        flush(delta);
+                        return result;
+                    }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (),
                     Err(_) => return Err("model transport stopped".into()),
                 }
             }
         }
-        self.transport(body, streaming)
+        self.transport(body, streaming, delta)
     }
 
     // The HTTP transport. Everything above it is protocol, shared by both targets.
     #[cfg(not(target_arch = "wasm32"))]
-    fn transport(&self, body: &str, streaming: bool) -> Result<Transported, String> {
-        if crate::vfs::is_scoped() { return crate::hosted::transport(body).map(Transported::Body); }
+    fn transport(
+        &self,
+        body: &str,
+        streaming: bool,
+        delta: &mut dyn FnMut(&str, &str),
+    ) -> Result<Transported, String> {
+        if crate::vfs::is_scoped() {
+            return crate::hosted::transport_deltas(body, delta).map(Transported::Body);
+        }
         // Bound concurrent requests across all worker threads, and pace request starts.
         let _permit = acquire();
         pace();
@@ -767,13 +835,19 @@ impl Llm {
             }
         };
 
-        if streaming {
+        if streaming
+            && !resp
+                .header("content-type")
+                .unwrap_or_default()
+                .contains("application/json")
+        {
             // The same byte cap as the whole-body path: a proxy that never ends a
             // line cannot grow the buffer without bound.
-            return read_stream_message(
+            return read_stream_message_deltas(
                 BufReader::new(resp.into_reader().take(64 * 1024 * 1024)),
                 max_completion_tokens(),
                 call_timeout(),
+                delta,
             )
             .map(Transported::Message);
         }
@@ -806,8 +880,13 @@ impl Llm {
     // OpenAI-shaped request out to the host and blocks until the host hands a reply
     // back. Streaming has no transport to stream over: the host answers once.
     #[cfg(target_arch = "wasm32")]
-    fn transport(&self, body: &str, _streaming: bool) -> Result<Transported, String> {
-        crate::wasm::llm_bridge::chat(body).map(Transported::Body)
+    fn transport(
+        &self,
+        body: &str,
+        _streaming: bool,
+        _delta: &mut dyn FnMut(&str, &str),
+    ) -> Result<Transported, String> {
+        crate::wasm::llm_bridge::chat_deltas(body, _delta).map(Transported::Body)
     }
 }
 
@@ -843,10 +922,7 @@ fn parse_completion(body: &str, sent_estimate: u64) -> Result<(Value, Spend), St
         .map_err(|e| format!("response json: {} :: {}", e, truncate(body, 300)))?;
     let mut msg = v["choices"][0]["message"].clone();
     if msg.is_null() {
-        return Err(format!(
-            "no message in response :: {}",
-            truncate(body, 300)
-        ));
+        return Err(format!("no message in response :: {}", truncate(body, 300)));
     }
     // The finish reason rides on the message for the loop to read (a `length`
     // finish is a reply the completion cap cut); the loop strips it before the
@@ -857,10 +933,22 @@ fn parse_completion(body: &str, sent_estimate: u64) -> Result<(Value, Spend), St
     let received = (msg["content"].as_str().unwrap_or("").chars().count()
         + msg["tool_calls"].to_string().chars().count() * usize::from(msg["tool_calls"].is_array()))
         as u64;
-    let completion = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| received.div_ceil(4));
+    let completion = v["usage"]["completion_tokens"]
+        .as_u64()
+        .unwrap_or_else(|| received.div_ceil(4));
     let spend = match usage_billed(&v["usage"]) {
-        Some(billed) => Spend { completion, billed, cached: usage_cached(&v["usage"]), measured: true },
-        None => Spend { completion, billed: sent_estimate + completion, cached: 0, measured: false },
+        Some(billed) => Spend {
+            completion,
+            billed,
+            cached: usage_cached(&v["usage"]),
+            measured: true,
+        },
+        None => Spend {
+            completion,
+            billed: sent_estimate + completion,
+            cached: 0,
+            measured: false,
+        },
     };
     SPENT_TOKENS.fetch_add(completion, Ordering::Relaxed);
     Ok((msg, spend))
@@ -875,10 +963,20 @@ fn parse_completion(body: &str, sent_estimate: u64) -> Result<(Value, Spend), St
 // `max_tokens` streams a looping model forever otherwise), and the whole call has a
 // wall-clock deadline (per-read timeouts reset on every chunk, so a live stream never
 // trips them).
+#[cfg(test)]
 fn read_stream_message<R: BufRead>(
     reader: R,
     cap_tokens: u64,
     deadline: Duration,
+) -> Result<(Value, Spend), String> {
+    read_stream_message_deltas(reader, cap_tokens, deadline, &mut |_, _| {})
+}
+
+fn read_stream_message_deltas<R: BufRead>(
+    reader: R,
+    cap_tokens: u64,
+    deadline: Duration,
+    delta_out: &mut dyn FnMut(&str, &str),
 ) -> Result<(Value, Spend), String> {
     struct TcAcc {
         id: String,
@@ -946,12 +1044,15 @@ fn read_stream_message<R: BufRead>(
             let delta = &v["choices"][0]["delta"];
             if let Some(c) = delta["content"].as_str() {
                 content.push_str(c);
+                delta_out("content", c);
             }
             if let Some(r) = delta["reasoning_content"].as_str() {
                 reasoning_content.push_str(r);
+                delta_out("reasoning_content", r);
             }
             if let Some(r) = delta["reasoning"].as_str() {
                 reasoning.push_str(r);
+                delta_out("reasoning", r);
             }
             if let Some(calls) = delta["tool_calls"].as_array() {
                 for tc in calls {
@@ -961,13 +1062,24 @@ fn read_stream_message<R: BufRead>(
                     // index repeats: some endpoints stream each parallel call whole
                     // under index 0. Mirrors docs/compiler/project-settings.md#llm.
                     let idx = match slot.get(&provider_idx).copied() {
-                        Some(i) if new_id.is_some_and(|id| !tcs[i].id.is_empty() && tcs[i].id != id) => {
-                            tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
+                        Some(i)
+                            if new_id
+                                .is_some_and(|id| !tcs[i].id.is_empty() && tcs[i].id != id) =>
+                        {
+                            tcs.push(TcAcc {
+                                id: String::new(),
+                                name: String::new(),
+                                args: String::new(),
+                            });
                             tcs.len() - 1
                         }
                         Some(i) => i,
                         None => {
-                            tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
+                            tcs.push(TcAcc {
+                                id: String::new(),
+                                name: String::new(),
+                                args: String::new(),
+                            });
                             tcs.len() - 1
                         }
                     };
@@ -1000,8 +1112,18 @@ fn read_stream_message<R: BufRead>(
     SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
     // Billed is the usage's total; without one the caller adds what went out.
     let spend = match usage_billed_tokens {
-        Some(billed) => Spend { completion: tokens, billed, cached: usage_cached_tokens, measured: true },
-        None => Spend { completion: tokens, billed: tokens, cached: 0, measured: false },
+        Some(billed) => Spend {
+            completion: tokens,
+            billed,
+            cached: usage_cached_tokens,
+            measured: true,
+        },
+        None => Spend {
+            completion: tokens,
+            billed: tokens,
+            cached: 0,
+            measured: false,
+        },
     };
     let mut msg = json!({"role": "assistant", "content": content});
     if let Some(f) = finish_reason {
@@ -1101,6 +1223,33 @@ mod tests {
     }
 
     #[test]
+    fn stream_delta_callback_keeps_channels_separate_and_complete_history() {
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"reasoning_content":"Consider "}}]}"#,
+            r#"{"choices":[{"delta":{"content":"Hello "}}]}"#,
+            r#"{"choices":[{"delta":{"content":"there"},"finish_reason":"stop"}]}"#,
+        ]);
+        let mut deltas = Vec::new();
+        let (message, _) = read_stream_message_deltas(
+            body.as_bytes(),
+            4096,
+            Duration::from_secs(5),
+            &mut |field, text| deltas.push((field.to_string(), text.to_string())),
+        )
+        .unwrap();
+        assert_eq!(
+            deltas,
+            vec![
+                ("reasoning_content".into(), "Consider ".into()),
+                ("content".into(), "Hello ".into()),
+                ("content".into(), "there".into())
+            ]
+        );
+        assert_eq!(message["content"], "Hello there");
+        assert_eq!(message["reasoning_content"], "Consider ");
+    }
+
+    #[test]
     fn stream_keeps_reasoning_deltas() {
         let body = sse(&[
             r#"{"choices":[{"delta":{"reasoning_content":"the section "}}]}"#,
@@ -1161,16 +1310,27 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
             r#"{"choices":[],"usage":{"prompt_tokens":9749,"completion_tokens":31,"total_tokens":9780}}"#,
         ]);
-        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
-        assert_eq!(spend, Spend { completion: 31, billed: 9780, cached: 0, measured: true });
+        let (_msg, spend) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 31,
+                billed: 9780,
+                cached: 0,
+                measured: true
+            }
+        );
         let body = sse(&[
             r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
             r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5}}"#,
         ]);
-        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let (_msg, spend) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(spend.billed, 105);
         let body = sse(&[r#"{"choices":[{"delta":{"content":"eight ch"}}]}"#]);
-        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let (_msg, spend) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert!(!spend.measured);
         assert_eq!(spend.completion, 2);
     }
@@ -1183,11 +1343,27 @@ mod tests {
         let (msg, spend) = parse_completion(body, 50).unwrap();
         assert_eq!(msg["content"], "ok");
         assert_eq!(msg["finish_reason"], "stop");
-        assert_eq!(spend, Spend { completion: 7, billed: 107, cached: 0, measured: true });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 7,
+                billed: 107,
+                cached: 0,
+                measured: true
+            }
+        );
         // No total: prompt plus completion.
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7}}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 7, billed: 107, cached: 0, measured: true });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 7,
+                billed: 107,
+                cached: 0,
+                measured: true
+            }
+        );
     }
 
     // Without usage the completion is a quarter token per character of what came
@@ -1196,16 +1372,34 @@ mod tests {
     fn nonstream_without_usage_bills_sent_plus_received() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"eight ch"}}]}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 2, billed: 52, cached: 0, measured: false });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 2,
+                billed: 52,
+                cached: 0,
+                measured: false
+            }
+        );
         // Tool calls count by their serialized text; a null content counts nothing.
         let body = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"done","arguments":"{}"}}]}}]}"#;
         let (msg, spend) = parse_completion(body, 50).unwrap();
         let text = msg["tool_calls"].to_string().chars().count() as u64;
-        assert_eq!(spend, Spend { completion: text.div_ceil(4), billed: 50 + text.div_ceil(4), cached: 0, measured: false });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: text.div_ceil(4),
+                billed: 50 + text.div_ceil(4),
+                cached: 0,
+                measured: false
+            }
+        );
         // A body without a message is an error naming the body.
         let err = parse_completion(r#"{"choices":[]}"#, 50).unwrap_err();
         assert!(err.starts_with("no message in response"), "{}", err);
-        assert!(parse_completion("not json", 50).unwrap_err().starts_with("response json"));
+        assert!(parse_completion("not json", 50)
+            .unwrap_err()
+            .starts_with("response json"));
     }
 
     // A usage object naming only completion tokens bills nothing on its own: the
@@ -1215,7 +1409,15 @@ mod tests {
     fn usage_without_prompt_tokens_is_unmeasured() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"completion_tokens":7}}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 7, billed: 57, cached: 0, measured: false });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 7,
+                billed: 57,
+                cached: 0,
+                measured: false
+            }
+        );
         assert_eq!(usage_billed(&json!({"completion_tokens": 7})), None);
         assert_eq!(usage_billed(&json!({"prompt_tokens": 3})), Some(3));
     }
@@ -1228,7 +1430,15 @@ mod tests {
     fn cached_input_tokens_are_read_under_both_names_on_both_paths() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":64}}}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
-        assert_eq!(spend, Spend { completion: 7, billed: 107, cached: 64, measured: true });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 7,
+                billed: 107,
+                cached: 64,
+                measured: true
+            }
+        );
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":7,"cache_read_input_tokens":80}}"#;
         let (_msg, spend) = parse_completion(body, 50).unwrap();
         assert_eq!(spend.cached, 80);
@@ -1238,13 +1448,23 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"hi"}}]}"#,
             r#"{"choices":[],"usage":{"prompt_tokens":9749,"completion_tokens":31,"total_tokens":9780,"prompt_tokens_details":{"cached_tokens":9000}}}"#,
         ]);
-        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
-        assert_eq!(spend, Spend { completion: 31, billed: 9780, cached: 9000, measured: true });
+        let (_msg, spend) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 31,
+                billed: 9780,
+                cached: 9000,
+                measured: true
+            }
+        );
         let body = sse(&[
             r#"{"choices":[{"delta":{"content":"hi"}}]}"#,
             r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"cache_read_input_tokens":90}}"#,
         ]);
-        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let (_msg, spend) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!((spend.billed, spend.cached), (105, 90));
     }
 
@@ -1254,18 +1474,50 @@ mod tests {
     fn a_streamed_unmeasured_message_adds_sent_estimate() {
         let msg = json!({"role": "assistant", "content": "ok"});
         let (m, spend) = settle(
-            Transported::Message((msg.clone(), Spend { completion: 2, billed: 2, cached: 0, measured: false })),
+            Transported::Message((
+                msg.clone(),
+                Spend {
+                    completion: 2,
+                    billed: 2,
+                    cached: 0,
+                    measured: false,
+                },
+            )),
             50,
         )
         .unwrap();
         assert_eq!(m, msg);
-        assert_eq!(spend, Spend { completion: 2, billed: 52, cached: 0, measured: false });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 2,
+                billed: 52,
+                cached: 0,
+                measured: false
+            }
+        );
         let (_m, spend) = settle(
-            Transported::Message((msg, Spend { completion: 31, billed: 9780, cached: 0, measured: true })),
+            Transported::Message((
+                msg,
+                Spend {
+                    completion: 31,
+                    billed: 9780,
+                    cached: 0,
+                    measured: true,
+                },
+            )),
             50,
         )
         .unwrap();
-        assert_eq!(spend, Spend { completion: 31, billed: 9780, cached: 0, measured: true });
+        assert_eq!(
+            spend,
+            Spend {
+                completion: 31,
+                billed: 9780,
+                cached: 0,
+                measured: true
+            }
+        );
     }
 
     #[test]
@@ -1319,5 +1571,4 @@ mod tests {
         release.send(()).unwrap();
         provider.join().unwrap();
     }
-
 }

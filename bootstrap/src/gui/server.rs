@@ -155,7 +155,12 @@ fn api_router(st: SharedState) -> Router {
                 .put(docs::doc_write)
                 .delete(docs::doc_delete),
         )
-        .route("/docs/document", get(docs::binary_read).put(docs::binary_write).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
+        .route(
+            "/docs/document",
+            get(docs::binary_read)
+                .put(docs::binary_write)
+                .layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)),
+        )
         .route("/docs/baseline", get(api::doc_baseline))
         .route("/docs/rename", post(docs::doc_rename))
         .route("/gen/pending", get(api::gen_pending))
@@ -175,15 +180,24 @@ fn api_router(st: SharedState) -> Router {
             get(chat::get_session).delete(chat::delete_session),
         )
         .route("/chat/sessions/{id}/prompt", post(chat::post_prompt))
+        .route("/chat/sessions/{id}/inputs", post(chat::post_input))
         .route("/chat/sessions/{id}/cancel", post(chat::cancel))
         .route("/chat/permissions", post(chat::answer_permission))
         .route("/jobs", get(jobs::list_jobs).post(jobs::post_job))
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
         .route("/project/files", get(projfiles::list))
-        .route("/project/file", get(projfiles::file).put(projfiles::create).layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)))
+        .route(
+            "/project/file",
+            get(projfiles::file)
+                .put(projfiles::create)
+                .layer(axum::extract::DefaultBodyLimit::max(45 * 1024 * 1024)),
+        )
         .route("/project/raw", get(projfiles::file))
-        .route("/project/text", get(projfiles::text).put(projfiles::write_text))
+        .route(
+            "/project/text",
+            get(projfiles::text).put(projfiles::write_text),
+        )
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
@@ -209,7 +223,13 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     use serde_json::{json, Value};
     use tower::ServiceExt;
     let (mut parts, body) = req.into_parts();
-    let limit = if parts.uri.path().ends_with("/docs/document") || parts.uri.path().ends_with("/project/file") { 45 * 1024 * 1024 } else { 32 * 1024 * 1024 };
+    let limit = if parts.uri.path().ends_with("/docs/document")
+        || parts.uri.path().ends_with("/project/file")
+    {
+        45 * 1024 * 1024
+    } else {
+        32 * 1024 * 1024
+    };
     let bytes = match axum::body::to_bytes(body, limit).await {
         Ok(bytes) => bytes,
         Err(e) => return api::err(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
@@ -252,7 +272,9 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     ) || route.starts_with("/chat/")
         || route.starts_with("/jobs/")
         || route.starts_with("/trace/");
-    if route == "/tasks" || route == "/runs" || route.starts_with("/runs/")
+    if route == "/tasks"
+        || route == "/runs"
+        || route.starts_with("/runs/")
         || route == "/sets"
         || route == "/sets/preview"
         || (parts.method == Method::GET
@@ -349,7 +371,11 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         return response;
     }
     let (mut parts, body) = response.into_parts();
-    let limit = if route == "/docs/document" { 128 * 1024 * 1024 } else { 32 * 1024 * 1024 };
+    let limit = if route == "/docs/document" {
+        128 * 1024 * 1024
+    } else {
+        32 * 1024 * 1024
+    };
     let bytes = match axum::body::to_bytes(body, limit).await {
         Ok(b) => b,
         Err(e) => return api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
@@ -813,7 +839,9 @@ mod tests {
     #[tokio::test]
     async fn a_write_from_a_foreign_origin_is_refused_even_without_a_token() {
         let post = |origin: Option<&str>, site: Option<&str>| {
-            let mut b = Request::builder().method(Method::POST).uri("/api/jobs/1/cancel");
+            let mut b = Request::builder()
+                .method(Method::POST)
+                .uri("/api/jobs/1/cancel");
             if let Some(o) = origin {
                 b = b.header("origin", o);
             }
@@ -823,14 +851,22 @@ mod tests {
             b.body(Body::empty()).unwrap()
         };
         let st = state(None, "https://jazyk.dev");
-        let r = send(st.clone(), post(Some("https://evil.example"), Some("cross-site"))).await;
+        let r = send(
+            st.clone(),
+            post(Some("https://evil.example"), Some("cross-site")),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         let r = send(st.clone(), post(Some("null"), None)).await;
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         let r = send(st.clone(), post(None, Some("cross-site"))).await;
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         // The page, a same-site request, and a local tool all pass to the route.
-        let r = send(st.clone(), post(Some("https://jazyk.dev"), Some("cross-site"))).await;
+        let r = send(
+            st.clone(),
+            post(Some("https://jazyk.dev"), Some("cross-site")),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
         let r = send(st.clone(), post(None, Some("same-origin"))).await;
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
@@ -967,5 +1003,4 @@ mod tests {
         assert!(st.jobs.submit_auto(&st, jobs::JobKind::Compile).is_some());
         std::fs::remove_dir_all(&st.root).unwrap();
     }
-
 }

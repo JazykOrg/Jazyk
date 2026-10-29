@@ -86,7 +86,14 @@ impl ProxyState {
         if cwd.join(crate::document_sets::CONFIG).vexists() {
             return format!("{} already holds a jazyk.toml.", cwd.display());
         }
-        if let Err(e) = crate::vfs::write({ let path = cwd.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, crate::cli::INIT_TOML) {
+        if let Err(e) = crate::vfs::write(
+            {
+                let path = cwd.join(".jazyk/jazyk.toml");
+                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            },
+            crate::cli::INIT_TOML,
+        ) {
             return format!("jazyk: cannot write jazyk.toml: {}", e);
         }
         let made = match crate::cli::init_scaffold(&cwd) {
@@ -114,7 +121,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let (mut proj, llm, mut out) = crate::cli::resolve(&[], opts);
     if opts.set.is_none() {
         if let Ok(workspace) = crate::document_sets::Workspace::load(&proj.root) {
-            proj = workspace.files_project(); out = proj.out.clone();
+            proj = workspace.files_project();
+            out = proj.out.clone();
         }
     }
     let agent = match crate::acp::config::resolve_acp(
@@ -170,6 +178,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_config = state.clone();
     let st_mode = state.clone();
     let st_cancel = state.clone();
+    let st_steer = state.clone();
     if state.in_project() {
         watch_runs(&state);
         watch_board(&state);
@@ -209,7 +218,23 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
+                async move |mut req: super::steering::SteeringRequest, responder, _cx| {
+                    if req.session_id.starts_with("jazyk-run-") { return responder.respond_with_internal_error("recorded runs are read-only"); }
+                    if st_steer.in_project() {
+                        let text=req.prompt.iter().filter_map(|block|match block {ContentBlock::Text(text)=>Some(text.text.as_str()),_=>None}).collect::<Vec<_>>().join("\n");
+                        crate::acp::sessions::append_checked(&st_steer.out,&req.session_id,json!({"kind":"user","at":crate::verify::now_iso(),"text":text,"steering":true,"request":req})).map_err(|error|agent_client_protocol::Error::internal_error().data(error))?;
+                    }
+                    req.session_id = st_steer.route_down(&req.session_id);
+                    let down = st_steer.down.get().cloned().ok_or_else(not_initialized)?;
+                    down.send_request(req).on_receiving_result(async move |result| responder.respond_with_result(result))
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
                 async move |mut req: NewSessionRequest, responder, _cx| {
+                    let mut meta = req.meta.take().unwrap_or_default();
+                    meta.insert("jazyk".into(), json!({"purpose":"chat"}));
+                    req.meta = Some(meta);
                     // Inside a jazyk project, the session gains the chat serving; the
                     // dropdown entry stays inert everywhere else.
                     let fence = runtime_fence(&st_new);
@@ -547,8 +572,13 @@ fn sid_of(s: &str) -> SessionId {
 // serving, whether it came from session/new or session/load.
 // Mirrors docs/frontends/acp.md#session-store.
 fn runtime_fence(st: &Arc<ProxyState>) -> std::path::PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
-    st.out.join("sessions").join(format!("runtime-cancel-{}-{}-{}",crate::sys::process_id(),crate::sys::now_millis(),NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed)))
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    st.out.join("sessions").join(format!(
+        "runtime-cancel-{}-{}-{}",
+        crate::sys::process_id(),
+        crate::sys::now_millis(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ))
 }
 fn with_jazyk_serving(
     st: &Arc<ProxyState>,

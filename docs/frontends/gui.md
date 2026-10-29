@@ -718,3 +718,11 @@ calling its combined Build command.
 The portable browser response to `GET /api/project/file?binary=true&path=...`
 contains `base64` and `contentType`. Native and hosted servers return raw bytes.
 Text reads without `binary=true` retain their existing response shape.
+
+
+## Chat input admission
+
+`POST /api/chat/sessions/{id}/inputs` accepts `messageId`, `expectedTurnId`, and `text`. Inputs retain their identity, sequence, state, and delivery mode in snapshots and transcript events. An ID reused with different content fails. A late input queues a next turn. Stop cancels pending inputs. Restored running turns are interrupted until explicitly resumed.
+
+
+A restored conversation opens a new ACP session when its old process is gone. The first new prompt includes up to 24,000 trailing characters of user and answer text as prior conversation context. It excludes thoughts and tool results. Prior conversation context is not new authorization. The new prompt retains the current user message separately.

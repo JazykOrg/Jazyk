@@ -61,8 +61,7 @@ impl UpdateTranslator {
 
     fn flush_into(&mut self, trace: &Trace) {
         for buf in [&mut self.thought, &mut self.message] {
-            let text = buf.trim().to_string();
-            buf.clear();
+            let text = std::mem::take(buf);
             if !text.is_empty() {
                 trace.event(TraceEvent::ModelText {
                     label: self.label.clone(),
@@ -210,5 +209,52 @@ fn content_text(c: &agent_client_protocol::schema::v1::ContentBlock) -> Option<&
     match c {
         agent_client_protocol::schema::v1::ContentBlock::Text(t) => Some(t.text.as_str()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::TraceLevel;
+    use agent_client_protocol::schema::v1::ContentChunk;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn flushing_streamed_text_preserves_whitespace_at_buffer_boundaries() {
+        let events: Arc<Mutex<Vec<TraceEvent>>> = Default::default();
+        let sink = events.clone();
+        let trace = Trace::to_sink(
+            TraceLevel::Normal,
+            Arc::new(move |event| sink.lock().unwrap().push(event.clone())),
+            Default::default(),
+        );
+        for thought in [true, false] {
+            let mut translator = UpdateTranslator::new("batch");
+            let chunks = [
+                format!("{} ", "a".repeat(FLUSH_AT)),
+                " next\n".into(),
+                "  ".into(),
+            ];
+            for chunk in &chunks {
+                let content = ContentChunk::new(chunk.clone().into());
+                let update = if thought {
+                    SessionUpdate::AgentThoughtChunk(content)
+                } else {
+                    SessionUpdate::AgentMessageChunk(content)
+                };
+                translator.on_update(&update, &trace);
+            }
+            translator.finish(&trace);
+            let mut events = events.lock().unwrap();
+            let text: String = events
+                .iter()
+                .map(|event| match event {
+                    TraceEvent::ModelText { text, .. } => text.as_str(),
+                    other => panic!("expected modelText, got {:?}", other),
+                })
+                .collect();
+            assert_eq!(text, chunks.concat());
+            events.clear();
+        }
     }
 }

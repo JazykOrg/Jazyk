@@ -188,13 +188,12 @@ impl<'a> LoopTrace<'a> {
                 self.cached += cached;
             }
             AgentEvent::Message(text) | AgentEvent::Thought(text) => {
-                let text = text.trim();
                 if text.is_empty() {
                     return;
                 }
                 self.trace.event(TraceEvent::ModelText {
                     label: self.label.clone(),
-                    text: crate::llm::truncate(text, 2_000).to_string(),
+                    text,
                 });
             }
             AgentEvent::ToolCallStart { id, name, args } => {
@@ -386,6 +385,41 @@ mod tests {
         }
         assert!(matches!(&ev[7], TraceEvent::ModelText { text, .. } if text == "I cannot find the quote."));
         assert_eq!(ev.len(), 8);
+    }
+
+    #[test]
+    fn streamed_model_text_preserves_whitespace_and_complete_chunks() {
+        let (trace, events) = capture();
+        let b = batch();
+        let mut lt = LoopTrace::new(&trace, &b);
+        let chunks = [
+            "With",
+            " ",
+            "pronounciation",
+            " written",
+            " as:",
+            "\n",
+            "  ",
+            "quote",
+            "\n\n",
+        ];
+        for chunk in chunks {
+            lt.on_event(AgentEvent::Thought(chunk.into()));
+        }
+        let long = format!(" {} ", "é".repeat(2_100));
+        lt.on_event(AgentEvent::Message(long.clone()));
+        lt.on_event(AgentEvent::Thought(String::new()));
+        let events = events.lock().unwrap();
+        let text: Vec<&str> = events
+            .iter()
+            .map(|event| match event {
+                TraceEvent::ModelText { text, .. } => text.as_str(),
+                other => panic!("expected modelText, got {:?}", other),
+            })
+            .collect();
+        assert_eq!(text.len(), chunks.len() + 1);
+        assert_eq!(text[..chunks.len()].concat(), chunks.concat());
+        assert_eq!(text[chunks.len()], long);
     }
 
     // A refusal that is not a jazyk error keeps its text under the tool's name, and

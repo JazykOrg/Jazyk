@@ -38,10 +38,22 @@ Failure or cancellation stops subsequent actions. A failed check never counts as
 successful publication evidence. Unselected mandatory goals remain visible on the
 board. Finishing a selected workflow does not imply whole-project convergence.
 
-Document changes must be compiled before binding or generating. Mandatory graph
-work blocks generation. A changed task definition after submission blocks its run;
-it never substitutes a new command. Every task uses the existing snapshot,
-idempotency, cancellation, and retained-product contract.
+Compile completion and generation readiness are separate checks. A compile action
+finishes when no mandatory graph work remains open, parked, or failed. Ledger work
+not selected by the action does not prevent compile completion. An incomplete
+compile keeps its report, including its verdict and counts, beside the reason the
+workflow stopped.
+
+Document changes must be compiled before binding or generating. Unfinished mandatory
+graph work blocks these actions. Goals waiting on a human answer or ratification
+do not block compile completion, binding, or generation. Their questions and
+proposals remain visible. Binding and generation carry open error diagnostics into
+their packages and record affected rows as
+[`contradicted`](../consumers/gen.md#rows-recorded-over-an-open-contradiction).
+
+A changed task definition after submission blocks its run; it never substitutes a
+new command. Every task uses the existing snapshot, idempotency, cancellation, and
+retained-product contract.
 
 Publication remains a managed delivery operation. A workflow can prepare the
 candidate, then the editor offers the selected deliveries with their destination

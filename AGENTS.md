@@ -205,8 +205,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 
 ## Build and commands
 
-- `cd bootstrap && cargo build --release` (binary at `bootstrap/target/release/jazyk`),
-  `cargo test`.
+- `cd bootstrap && cargo build --locked --release` (binary at
+  `bootstrap/target/release/jazyk`), `cargo test --locked`.
 - The owner's `jazyk` command is a symlink to `bootstrap/target/release/jazyk`. After
   ANY change to the binary, finish with `cargo build --release`; a running `jazyk gui`
   needs a restart to pick up a new binary. The binary carries no page: `jazyk gui`
@@ -229,6 +229,27 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `docs/benchmark/benchmark.md`). Local 4B-class models fail it; the harness still holds
   (gates bounce bad calls, junk never lands), but judgment-quality output (reviews, lint)
   degrades.
+
+## Validation and hosted CI
+
+- Follow [repository validation](docs/main.md#repository-validation). Run the
+  relevant local checks before pushing: `cd bootstrap && cargo test --locked` for
+  engine changes, `cd runtime-worker && go test ./...` for helper changes, and
+  `cd bootstrap && cargo check --locked --target wasm32-unknown-unknown --lib` for
+  portable engine changes. Workflow/docs-only changes need workflow syntax,
+  trigger/input checks, and documentation link checks rather than engine rebuilds.
+- Preserve the release build requirement above after every binary change.
+  Default hosted CI uses the Rust test profile. Explicit manual
+  `release_validation=true` runs `cargo build --locked --release` and
+  `cargo test --locked --release` instead. Both modes check WASM and the Go helper.
+- CI runs automatically for relevant pull requests and supports manual dispatch.
+  No engine CI run is expected after a push to `master`. Do not wait for one or
+  dispatch replacement CI after routine tasks. Run hosted CI only when the owner
+  requests it or as part of explicitly authorized release validation.
+- When reporting hosted validation, verify the run's exact commit SHA and report
+  its URL, conclusion, and selected inputs. Report local checks as local evidence.
+- `site/` publication remains separate and automatic for relevant `master` changes.
+  A CI dispatch never deploys the static site, editor, or hosted service.
 
 ## LLM config
 
@@ -275,5 +296,6 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
   are gitignored. Commit `.jazyk/jazyk.toml` and `.jazyk/.gitignore`. In this
   repository the root `.gitignore` also keeps every set's compiled state out, so the
   dogfood and the examples commit only their configuration.
-- Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys
-  `site/` to jazyk.org via GitHub Actions.
+- Git remote: `git@github.com:JazykOrg/Jazyk.git`. A push to `master` that changes
+  `site/` or its deployment workflow publishes jazyk.org via GitHub Actions.
+  Engine-only pushes do not deploy or start engine CI.

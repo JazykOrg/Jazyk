@@ -1,23 +1,31 @@
 name: CI
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - 'bootstrap/**'
-      - 'runtime-worker/**'
-      - 'docs/benchmark/cases/**'
-      - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'bootstrap/**'
       - 'runtime-worker/**'
       - 'docs/benchmark/cases/**'
       - '.github/workflows/ci.yml'
+  workflow_dispatch:
+    inputs:
+      release_validation:
+        description: 'Build the release binary and run tests in the release profile'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   runtime-helper:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
@@ -28,16 +36,23 @@ jobs:
         working-directory: runtime-worker
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: bootstrap
-      - name: Build
-        run: cargo build --release
-        working-directory: bootstrap
       - name: Test
-        run: cargo test --release
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.release_validation }}
+        run: cargo test --locked
+        working-directory: bootstrap
+      - name: Build release binary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_validation }}
+        run: cargo build --locked --release
+        working-directory: bootstrap
+      - name: Test release profile
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_validation }}
+        run: cargo test --locked --release
         working-directory: bootstrap
       - name: Check the standalone WASM engine
         run: |

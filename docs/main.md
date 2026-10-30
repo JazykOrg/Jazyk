@@ -160,3 +160,26 @@ Consumers work from the graph to do useful work downstream.
 - [Decompilation](./consumers/decompile.md)
 - [Project Management](./consumers/pm.md)
 - [Documentation generation](./consumers/docsgen.md)
+
+## Repository validation
+
+Engine validation runs locally before a change is pushed. Run `cargo test --locked` in
+`bootstrap/` for engine changes and `go test ./...` in `runtime-worker/` for helper
+changes. Changes to portable engine code also require
+`cargo check --locked --target wasm32-unknown-unknown --lib` in `bootstrap/`.
+After any binary change, finish with `cargo build --locked --release` to refresh the
+owner's local binary.
+
+The CI workflow runs for relevant pull requests and on manual dispatch. A push to
+`master` does not start engine CI. Its default checks use the Rust test profile,
+the standalone WASM check, and the Go helper tests. A manual dispatch with
+`release_validation=true` replaces Rust test-profile validation with a release build
+and release-profile tests. The default run does not verify release-profile behavior.
+Both modes retain the WASM and Go checks. Superseded runs of the same event and
+ref are cancelled. Rust jobs have a 30-minute limit and Go jobs a 10-minute limit.
+
+An absent CI run after pushing to `master` is expected. Do not dispatch a replacement
+after each task. Hosted validation requires an explicit request or authorized release
+validation. Record the run URL, conclusion, inputs, and exact commit SHA when using
+hosted evidence. Local validation is not evidence that a hosted run passed.
+The [static site](./site.md#hosting) publishes independently when its own files change.

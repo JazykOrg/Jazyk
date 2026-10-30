@@ -74,6 +74,32 @@ pub(crate) fn set_parent(key: &str, value: Value) {
     STATE.with(|s| { s.borrow_mut().parent.insert(key.into(), value); });
 }
 
+pub(crate) fn remove_parent(key: &str) {
+    STATE.with(|s| { s.borrow_mut().parent.remove(key); });
+}
+
+pub(crate) fn remove_frame(key: &str) {
+    STATE.with(|s| { s.borrow_mut().frames.retain(|frame| frame.key != key); });
+}
+
+pub(crate) fn command_key(base: &str) -> String {
+    STATE.with(|s| {
+        let state = s.borrow();
+        // Only the command tool creates a new compiler invocation. A saved
+        // inner batch can have its own pending mutation when the command resumes.
+        match state.frames.iter().rev().filter_map(|frame| frame.harness.pending_tool.as_ref())
+            .find(|tool| tool.name == "compile_document_sets") {
+            Some(tool) => format!("{base}:{}", tool.id),
+            None => base.to_string(),
+        }
+    })
+}
+
+pub(crate) fn is_interruption(reason: &str) -> bool {
+    reason == "suspended" || ["checkpoint-incompatible:", "checkpoint-failed:", "execution-uncertain:"]
+        .iter().any(|prefix| reason.starts_with(prefix))
+}
+
 pub(crate) fn batch_key(out: &std::path::Path, id: &str) -> String {
     format!("batch:{}:{id}", out.display())
 }

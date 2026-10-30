@@ -98,6 +98,12 @@ folder names.
 - Compiler state, archives, `.git`, build caches, and existing mandatory exclusions
   remain ineligible. An explicit unsupported doc file gets a format error, never a
   successful compile with zero content. Config is a project file, not doc input.
+- Source can include the `.github` subtree and `.gitignore` files, including under
+  a selected source folder. These paths appear in file inventories and generation
+  file tools. They still need a source selection and cannot overwrite any set's
+  documents. Other hidden components remain excluded, including `.git`, `.jazyk`,
+  `.env`, `.ssh`, and `.aws`. Traversal, escaping symlinks, and nested project
+  boundaries remain excluded. This allowance does not change document discovery.
 - A document can belong to several sets. Preview lists these overlaps and explains
   that compilation and cost occur separately. Saving deliberately retains them.
   Editing that file dirties every claiming set.

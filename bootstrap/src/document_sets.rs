@@ -357,16 +357,28 @@ fn validate_pattern(pattern: &str) -> std::result::Result<(), String> {
         .map_err(|e| format!("invalid glob {}: {}", pattern, e))
 }
 
+// Shared lexical policy for authored project scaffolding. Build/output readers
+// retain their own cache policy; every caller keeps these hidden-path exclusions.
+pub(crate) fn allowed_components(path: &str) -> bool {
+    if path.is_empty() || path.contains(['\\', '\0', ':']) {
+        return false;
+    }
+    let mut components = path.split('/').peekable();
+    while let Some(c) = components.next() {
+        if c.is_empty()
+            || (c.starts_with('.')
+                && c != ".github"
+                && !(c == ".gitignore" && components.peek().is_none()))
+        {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn eligible(path: &str) -> bool {
-    !path.is_empty()
-        && !path.contains(['\\', '\0', ':'])
-        && !path.split('/').any(|c| {
-            c.is_empty()
-                || c.starts_with('.')
-                || c == "target"
-                || c == "node_modules"
-                || c.starts_with("jazyk-out")
-        })
+    allowed_components(path)
+        && !path.split('/').any(|c| c == "target" || c == "node_modules" || c.starts_with("jazyk-out"))
 }
 
 pub fn matched<'a>(patterns: &'a [String], path: &str) -> Option<&'a str> {
@@ -1381,6 +1393,75 @@ mod tests {
             vec![f.0.join("docs/a.md")]
         );
         assert_eq!(w.summary()["sets"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn project_scaffolding_keeps_the_other_hidden_and_path_boundaries() {
+        let f = Fixture::new();
+        crate::vfs::create_dir_all(f.0.join(".jazyk")).unwrap();
+        crate::vfs::write(f.0.join(CONFIG), "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['**', '!deliverable/**']\nsource = ['deliverable/**']\n").unwrap();
+        for path in [
+            ".github/workflows/check.yml", ".github/README.md", ".gitignore",
+            "deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore",
+            "deliverable/.github/.gitignore", "deliverable/.github/README.md",
+            "deliverable/.env", "deliverable/.ssh/config", "deliverable/.aws/config",
+            "deliverable/.git/config", "deliverable/.jazyk/state.yaml",
+            "deliverable/.cache/output", "deliverable/.github/.env",
+        ] {
+            let path = f.0.join(path);
+            crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+            crate::vfs::write(path, "fixture\n").unwrap();
+        }
+        let workspace = Workspace::load(&f.0).unwrap();
+        let project = workspace.resolve(Some("ds_a")).unwrap();
+        let gs = crate::gen::GenSettings::resolve(&project);
+        let files = workspace.files();
+        for path in ["deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore", "deliverable/.github/.gitignore"] {
+            assert!(eligible(path), "{path}");
+            assert!(safe_relative(&f.0, path), "{path}");
+            assert!(gs.allows_source(path), "{path}");
+            assert!(files.contains(&path.to_string()), "{path}: {files:?}");
+            assert_eq!(workspace.memberships(path)[0]["role"], "source");
+        }
+        assert!(files.contains(&".github/workflows/check.yml".into()));
+        assert!(files.contains(&".gitignore".into()));
+        for path in [".github/README.md", ".github/workflows/check.yml", ".gitignore"] {
+            assert!(!project.doc_files().contains(&f.0.join(path)), "{path}");
+            assert!(!workspace.files_project().doc_files().contains(&f.0.join(path)), "{path}");
+        }
+        assert!(!gs.allows_source(".github/workflows/check.yml"), "scaffolding outside Source stays excluded");
+        assert!(!project.doc_files().contains(&f.0.join("deliverable/.github/README.md")));
+        assert!(crate::webapi::docs::safe_doc_path(&project, "deliverable/.github/README.md").is_none());
+        for path in [
+            "deliverable/.env", "deliverable/.ssh/config", "deliverable/.aws/config",
+            "deliverable/.git/config", "deliverable/.jazyk/state.yaml", "deliverable/.cache/output",
+            "deliverable/.github/.env", "deliverable/.github/.ssh/config",
+            "deliverable/.github/../escape", "deliverable/.gitignore/child", "../.github/a.yml",
+            "/deliverable/.github/a.yml", "deliverable//.github/a.yml", "deliverable/.github/a:b.yml",
+            "deliverable/target/.github/a.yml", "deliverable/node_modules/.gitignore",
+        ] {
+            assert!(!eligible(path), "{path}");
+            assert!(!gs.allows_source(path), "{path}");
+            assert!(!files.contains(&path.to_string()), "{path}");
+        }
+        // Even a broad raw Source rule cannot overwrite another set's Documents.
+        let mut config = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
+        config.push_str("\n[[sets]]\nid = 'ds_b'\nname = 'B'\ndocs = ['deliverable/.github/README.md']\nsource = []\n");
+        crate::vfs::write(f.0.join(CONFIG), config).unwrap();
+        assert!(!gs.allows_source("deliverable/.github/README.md"));
+        // A nested project owns even a newly created scaffolding path below it.
+        crate::vfs::create_dir_all(f.0.join("deliverable/nested/.jazyk")).unwrap();
+        crate::vfs::write(f.0.join("deliverable/nested/.jazyk/jazyk.toml"), "version = 1\n").unwrap();
+        assert!(!safe_relative(&f.0, "deliverable/nested/.github/workflows/new.yml"));
+        assert!(!gs.allows_source("deliverable/nested/.github/workflows/new.yml"));
+        #[cfg(unix)]
+        {
+            let outside = Fixture::new();
+            std::os::unix::fs::symlink(&outside.0, f.0.join("deliverable/.github/escape")).unwrap();
+            assert!(!safe_relative(&f.0, "deliverable/.github/escape/new.yml"));
+            assert!(!gs.allows_source("deliverable/.github/escape/new.yml"));
+            assert!(!Workspace::load(&f.0).unwrap().files().iter().any(|p| p.contains("/escape/")));
+        }
     }
 
     fn edit_set(f: &Fixture, set: Value, intents: Value, preview: bool) -> Result<Value> {

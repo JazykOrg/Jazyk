@@ -291,7 +291,8 @@ code = ["src/**", "tests/**"]
   deliverable) scoping which deliverable files count as implementation for the
   [unclaimed report](../consumers/bind.md#the-unclaimed-report) and for
   [decompilation](../consumers/decompile.md). Default: every file under the
-  deliverable minus the standard exclusions (the out directory, hidden directories,
+  deliverable minus the standard exclusions (the out directory, hidden directories
+  except the [allowed project scaffolding](./document-sets.md#matching-and-file-roles),
   `target`, `node_modules`, and the docs the glob claims as source).
 
 The project file never says what the deliverable is. The medium is a fact the documents

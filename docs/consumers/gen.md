@@ -272,6 +272,10 @@ manifest.
 
 ## File ownership and conventions
 
+- Project scaffolding under `.github` and `.gitignore` files can be implementation
+  or support files. They follow the same source selection, ownership, and path
+  boundaries as other deliverable files. Other hidden paths remain excluded by
+  the shared [file-role policy](../compiler/document-sets.md#matching-and-file-roles).
 - Every deliverable file belongs to the entity whose session wrote it, recorded in
   [the ledger](#the-ledger), and ownership is shared across the entity's
   [component group](#grouping-by-component). The members of one group write and

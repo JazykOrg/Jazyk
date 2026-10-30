@@ -649,6 +649,9 @@ and `list_files` does not list it. A path that starts with the deliverable direc
 own name while the deliverable holds no directory of that name is normalized under
 the root, and the reply's `note` says so
 ([file ownership](../consumers/gen.md#file-ownership-and-conventions)).
+The file inventory includes `.github` and `.gitignore` within the selected source
+scope. Other hidden paths keep the shared
+[file-role exclusions](./document-sets.md#matching-and-file-roles).
 
 - `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
   the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where

@@ -507,6 +507,7 @@ impl Project {
         if let Some(sets) = &self.set_docs {
             return crate::document_sets::files_under(&self.root)
                 .into_iter()
+                .filter(|f| !f.split('/').any(|c| c.starts_with('.')))
                 .filter(|f| sets.iter().any(|docs| crate::document_sets::included(docs, f)))
                 .map(|f| self.root.join(f))
                 .collect();
@@ -529,6 +530,11 @@ impl Project {
                 Ok(r) => r.to_string_lossy().replace('\\', "/"),
                 Err(_) => continue,
             };
+            // Project scaffolding is visible to Source inventories, but hidden
+            // components remain outside document discovery.
+            if rel.split('/').any(|c| c.starts_with('.')) {
+                continue;
+            }
             let mut included = false;
             for pat in &patterns {
                 let (neg, p) = match pat.strip_prefix('!') {

@@ -1143,11 +1143,14 @@ fn list_existing_files(dir: &Path) -> Vec<String> {
             if out.len() >= 40 {
                 return;
             }
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "target" || name == "node_modules" {
+            let p = e.path();
+            let Ok(relative) = p.strip_prefix(root) else {
+                continue;
+            };
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            if !crate::document_sets::safe_relative(root, &relative) {
                 continue;
             }
-            let p = e.path();
             if p.vis_dir() {
                 walk(&p, root, out, depth + 1);
             } else if let Ok(rel) = p.strip_prefix(root) {
@@ -3077,6 +3080,58 @@ mod tests {
             code: Vec::new(),
         };
         (s, gs)
+    }
+
+    #[test]
+    fn source_scaffolding_can_be_written_bound_and_recorded() {
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let root = Path::new("/project");
+        crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+        crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Site'\ndocs = ['**', '!deliverable/**']\nsource = ['deliverable/**']\n").unwrap();
+        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+        let (store, _) = fixture(&project.out);
+        let gs = GenSettings::resolve(&project);
+        let mut tools = crate::tools::ToolSession::new(store.clone(), crate::tools::WorkScope::serving("generate"), 64, 24_000);
+        tools.gen = gs.clone();
+        let workflow = "deliverable/.github/workflows/deploy.yml";
+        let ignore = "deliverable/.gitignore";
+        let artifact = "deliverable/tests/hosting.py";
+        for (path, content) in [
+            (workflow, "name: Deploy\non:\n  push:\n    branches: [master]\njobs: {}\n"),
+            (ignore, "build/\n"),
+            (artifact, "def test_workflow():\n    pass\n"),
+        ] {
+            tools.dispatch("write_text_file", &json!({"path":path,"content":content})).unwrap();
+            assert_eq!(tools.dispatch("read_text_file", &json!({"path":path})).unwrap()["content"], content.trim_end());
+        }
+        let files = tools.dispatch("list_files", &json!({})).unwrap();
+        assert!(files["files"].as_array().unwrap().contains(&json!(workflow)));
+        assert!(files["files"].as_array().unwrap().contains(&json!(ignore)));
+        assert!(list_existing_files(&root.join("deliverable")).contains(&".github/workflows/deploy.yml".into()));
+        assert!(list_existing_files(&root.join("deliverable")).contains(&".gitignore".into()));
+        assert!(crate::document_sets::Workspace::load(root).unwrap().files().contains(&workflow.to_string()));
+        let test = json!({"kind":"programmatic","artifact":artifact,"name":"test_workflow","run":"task:check"});
+        crate::bind::record(&store, "req:shop-1", &[workflow.into()], &test, &json!([]), "fail", Some("Static fixture, no deployment executed."), &gs).unwrap();
+        crate::bind::gate(&store, &gs, "req:shop-1").unwrap();
+        mark(&store, "ent:cart", None, &json!({"files":[workflow],"supportFiles":[ignore],"tests":[{"requirement":"req:shop-1","kind":"programmatic","artifact":artifact,"name":"test_workflow","run":"task:check"}]}), &gs).unwrap();
+        assert_eq!(gate(&store, &gs, "ent:cart", false).unwrap(), 1);
+        let ledger = Ledger::load(&store.out);
+        assert_eq!(ledger.entities["cart"].files, [workflow]);
+        assert!(ledger.support.contains(&ignore.to_string()));
+        assert!(!implementation_outside_source(&gs, &ledger, &ledger.entities["cart"].files));
+        for path in ["deliverable/.env", "deliverable/.github/.env", "deliverable/.ssh/config", "deliverable/.aws/config", "deliverable/.git/config", "deliverable/.jazyk/config"] {
+            let err = tools.dispatch("write_text_file", &json!({"path":path,"content":"must not land"})).unwrap_err();
+            assert_eq!(err.rule, "source-selection", "{path}");
+            assert!(!root.join(path).vexists(), "{path}");
+        }
+        crate::vfs::create_dir_all(root.join("deliverable/nested/.jazyk")).unwrap();
+        crate::vfs::write(root.join("deliverable/nested/.jazyk/jazyk.toml"), "version = 1\n").unwrap();
+        crate::vfs::create_dir_all(root.join("deliverable/nested/.github/workflows")).unwrap();
+        crate::vfs::write(root.join("deliverable/nested/.github/workflows/own.yml"), "nested project\n").unwrap();
+        let err = tools.dispatch("write_text_file", &json!({"path":"deliverable/nested/.github/workflows/new.yml","content":"must not land"})).unwrap_err();
+        assert_eq!(err.rule, "source-selection");
+        let files = tools.dispatch("list_files", &json!({"path":"deliverable"})).unwrap();
+        assert!(!files["files"].as_array().unwrap().iter().any(|path|path.as_str().unwrap().contains("nested/")));
     }
 
     #[test]

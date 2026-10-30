@@ -4424,12 +4424,11 @@ impl ToolSession {
                     };
                     for e in entries.flatten() {
                         let p = e.path();
-                        let name = e.file_name().to_string_lossy().to_string();
-                        if name.starts_with('.')
-                            || name == "target"
-                            || name == "node_modules"
-                            || name == ".jazyk"
-                        {
+                        let Ok(relative) = p.strip_prefix(&base) else {
+                            continue;
+                        };
+                        let relative = relative.to_string_lossy().replace('\\', "/");
+                        if !crate::document_sets::safe_relative(&base, &relative) {
                             continue;
                         }
                         // A link pointing out of the deliverable is not listed:

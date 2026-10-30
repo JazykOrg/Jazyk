@@ -34,15 +34,13 @@ fn walk_seen(
     };
     for e in rd.flatten() {
         let p = e.path();
-        let name = e.file_name().to_string_lossy().to_string();
-        // Same skip list as doc collection, so a deliverable at the project root
-        // lists the product, not the compiler's output.
-        if name.starts_with('.')
-            || name == "node_modules"
-            || name == "target"
-            || name.starts_with(".jazyk")
-            || name.starts_with("jazyk-out")
-        {
+        let Ok(relative) = p.strip_prefix(base) else {
+            continue;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        // Source inventories share the project policy, including scaffolding and
+        // the boundary around a nested project.
+        if !crate::document_sets::safe_relative(base, &relative) {
             continue;
         }
         if p.vis_dir() {
@@ -121,15 +119,10 @@ pub fn deliverable_value(out_dir: &Path, gs: &GenSettings) -> Value {
 }
 
 // The lexical half of the validation: relative, forward slashes, no empty, dot,
-// dot-dot, or hidden component. A path that passes this but names nothing is
+// dot-dot, or disallowed hidden component. A path that passes this but names nothing is
 // absence (404), not an invalid path (400).
 pub(crate) fn lexical_ok(rel: &str) -> bool {
-    !rel.is_empty()
-        && !rel.starts_with('/')
-        && !rel.contains('\\')
-        && !rel
-            .split('/')
-            .any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.'))
+    crate::document_sets::allowed_components(rel)
 }
 
 // Resolve a client path strictly inside the given root directory, to a path that
@@ -311,5 +304,34 @@ mod tests {
             vec!["src/lib.rs"]
         );
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn source_scaffolding_is_listed_and_read_without_exposing_other_hidden_paths() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let root = Path::new("/project");
+        let out = root.join(".jazyk/ds_main");
+        crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+        crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Site'\ndocs = ['docs/**']\nsource = ['deliverable/**']\n").unwrap();
+        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+        let gs = GenSettings::resolve(&project);
+        for path in ["deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore", "deliverable/.env", "deliverable/.github/.aws/config"] {
+            crate::vfs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+            crate::vfs::write(root.join(path), "fixture\n").unwrap();
+        }
+        let files = deliverable_value(&out, &gs);
+        let paths: Vec<_> = files["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        assert_eq!(paths, ["deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore"]);
+        for path in paths {
+            assert_eq!(deliverable_file(&out, &gs, path).unwrap()["text"], "fixture\n");
+            assert_eq!(deliverable_raw(&gs, path).unwrap(), b"fixture\n");
+        }
+        for path in ["deliverable/.env", "deliverable/.github/.aws/config", "deliverable/.gitignore/child"] {
+            assert_eq!(deliverable_file(&out, &gs, path).unwrap_err().0, 400);
+            assert_eq!(deliverable_raw(&gs, path).unwrap_err().0, 400);
+        }
+        // This lexical helper also serves generated report files. Its callers
+        // retain the existing ability to read non-hidden build/cache paths.
+        assert!(lexical_ok("target/reports/check.xml"));
     }
 }

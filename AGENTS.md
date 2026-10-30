@@ -261,9 +261,13 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 
 ## Working norms
 
-- Always commit and push changes as you make them, one commit per coherent change, so
-  the history is a ledger of the work and nothing is lost between sessions. Never leave
-  the tree dirty at the end of a step.
+- Create an isolated local worktree with a local Git branch for each change.
+- Commit coherent changes after relevant verification. Keep unrelated user edits
+  intact and leave the worktree clean at the end of each step.
+- Keep work branches local. Do not push feature branches or create branches or
+  pull requests on GitHub.
+- Wait for the owner's explicit approval before merging into local `master`.
+  After approval, merge locally and push only `master`. Never merge through GitHub.
 - Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and generated state inside `.jazyk`
   are gitignored. Commit `.jazyk/jazyk.toml` and `.jazyk/.gitignore`. In this
   repository the root `.gitignore` also keeps every set's compiled state out, so the

@@ -47,6 +47,13 @@ The binding's artifact is the test source containing that name, not the generate
 JUnit report. Never write report cases as a substitute for running the tests.
 Use run_tests for bound checks so the harness imports case evidence. Build bindings
 may also use task:<id>. LLM criteria remain direct judgments of their artifacts.
+Reuse one saved suite task across related requirements and criteria, with a separate
+JUnit selector for each check. Do not create a task or container per requirement
+when the same suite can run them together. During generation, create meaningful
+implementation and tests in the order the work needs; a failing baseline run is
+not a prerequisite. Run the shared suite when there is actual implementation to
+check, and use run_tests with the related targets so one run imports their separate
+case verdicts. Changed source or tests require fresh evidence.
 
 Task credentials require a human-owned grant for the exact saved definition.
 Changing that definition invalidates its grant. Never copy credentials into task

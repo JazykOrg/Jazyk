@@ -163,6 +163,11 @@ ambiguous selector records `none` with the observed execution state as evidence.
 Several criterion bindings can share one task. `run_tests` runs each referenced
 task once and imports all of its matching cases. Legacy command bindings remain
 local compatibility paths and cannot execute on a Cloud API host.
+Related requirements and criteria should share a saved suite task and use separate
+JUnit selectors. One `run_tests` pass groups by task ID, not by requirement or
+criterion. A later pass freezes its own current input. Separate owners never share
+a task environment or retained evidence. An explicit single-test rerun remains a
+new run. Generation does not require a failing test baseline before implementation.
 Single-row reruns and benchmark checks use the same task adapter. They judge the
 selected case, not the whole command's exit code. A skipped, missing, ambiguous, or
 incomplete result cannot count as a successful test or a falsifiable failure.

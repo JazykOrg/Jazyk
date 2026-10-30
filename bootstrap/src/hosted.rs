@@ -1136,6 +1136,120 @@ mod tests {
         }
     }
     #[test]
+    fn shared_task_suite_dispatches_once_per_pass_and_keeps_case_and_owner_evidence_separate() {
+        use base64::Engine;
+        use crate::{gen::{GenSettings, Ledger, mark as gen_mark}, model::{Criterion, Entity, Requirement, hash_hex}, store::Store, verify::{run_selected, status_of}};
+        use std::{collections::BTreeMap, sync::{Arc, Mutex}};
+
+        let submissions = Arc::new(Mutex::new(BTreeMap::<String, Value>::new()));
+        for owner in ["owner-a", "owner-b"] {
+            let _fs = crate::vfs::Scope::enter(&Default::default());
+            let _state = crate::scoped_state::Scope::enter();
+            let root = std::path::Path::new("/project");
+            let out = root.join(".jazyk/ds_main");
+            crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+            let mut store = Store { out:out.clone(), ..Default::default() };
+            store.graph.entities.insert("ent:cart".into(), Entity { name:"Cart".into(), ..Default::default() });
+            store.graph.requirements.insert("req:shop-1".into(), Requirement { statement:"The Cart shall hold items.".into(), entities:vec!["ent:cart".into()], ..Default::default() });
+            crate::vfs::write(root.join(".jazyk/jazyk.toml"), "version=1\n[[sets]]\nid='ds_main'\nname='Site'\ndocs=['docs/**']\nsource=['src/**','tests/**']\n[[tasks]]\nid='check'\nname='Shared suite'\ndescription='Check related cases together'\ncommand='pytest --junitxml=reports/check.xml'\nreports=['reports/*.xml']\n[[tasks]]\nid='other'\nname='Other suite'\ndescription='Unselected checks'\ncommand='false'\n").unwrap();
+            let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+            let gs = GenSettings::resolve(&project);
+            crate::vfs::create_dir_all(root.join("src")).unwrap();
+            crate::vfs::create_dir_all(root.join("tests")).unwrap();
+            crate::vfs::write(root.join("tests/suite.py"), "def works(): pass\ndef broken(): pass\ndef skipped(): pass\ndef absent(): pass\ndef unrelated(): pass\n").unwrap();
+            let requirement = store.graph.requirements["req:shop-1"].clone();
+            for id in ["req:shop-2", "req:unrelated"] {
+                store.graph.requirements.insert(id.into(), Requirement { statement:format!("Statement for {id}"), ..requirement.clone() });
+            }
+            crate::vfs::write(root.join("src/cart.rs"), format!("// {owner}: revision 1\n")).unwrap();
+            gen_mark(&store, "ent:cart", None, &json!({"files":["src/cart.rs"],"tests":[
+                {"requirement":"req:shop-1","kind":"programmatic","artifact":"tests/suite.py","name":"Site::works","run":"task:check"},
+                {"requirement":"req:shop-2","kind":"programmatic","artifact":"tests/suite.py","name":"Other::works","run":"task:check"},
+                {"requirement":"req:unrelated","kind":"programmatic","artifact":"tests/suite.py","name":"unrelated","run":"task:other"}
+            ]}), &gs).unwrap();
+            let mut ledger = Ledger::load(&out);
+            for (rid, cid, selector) in [
+                ("req:shop-1", "crit:pass", "Site::works"),
+                ("req:shop-1", "crit:fail", "Site::broken"),
+                ("req:shop-1", "crit:skip", "Site::skipped"),
+                ("req:shop-2", "crit:other", "Other::works"),
+                ("req:shop-2", "crit:missing", "Site::absent"),
+                ("req:shop-2", "crit:ambiguous", "works"),
+            ] {
+                store.graph.criteria.insert(cid.into(), Criterion { requirement:rid.into(), statement:cid.into(), ..Default::default() });
+                let row = ledger.requirements.get_mut(rid).unwrap();
+                let mut test = row.test.clone();
+                test.name = selector.into();
+                row.tests.insert(cid.into(), crate::gen::CritTest {
+                    test, criterion_hash:hash_hex(cid), test_hash:row.hashes.test.clone(),
+                    verdict:"pass".into(), last_run:None, exit_code:None, evidence:None,
+                });
+            }
+            ledger.entities.get_mut("cart").unwrap().fact_hash = crate::gen::fact_hash(&store, "ent:cart");
+            let unrelated = serde_json::to_value(&ledger.requirements["req:unrelated"]).unwrap();
+            ledger.save(&out);
+            let requests = submissions.clone();
+            let runtime: crate::hosted::RuntimeTransport = Arc::new(move |request| {
+                let run_id = request["run_id"].as_str().unwrap_or_default();
+                match request["operation"].as_str().unwrap() {
+                    "task_context" => Ok(json!({"available":true})),
+                    "run_task" => {
+                        assert_eq!(request["task"]["id"], "check");
+                        let mut requests = requests.lock().unwrap();
+                        let id = format!("{owner}-run-{}", requests.len()+1);
+                        requests.insert(id.clone(), request.clone());
+                        Ok(json!({"id":id}))
+                    }
+                    "wait_run" => {
+                        assert!(run_id.starts_with(owner));
+                        assert!(requests.lock().unwrap().contains_key(run_id));
+                        Ok(json!({"terminated":true}))
+                    }
+                    "result" => {
+                        assert!(run_id.starts_with(owner));
+                        let submitted = requests.lock().unwrap()[run_id].clone();
+                        let task: crate::task_runtime::Task = serde_json::from_value(submitted["task"].clone()).unwrap();
+                        let input = serde_json::from_value(submitted["files"].clone()).unwrap();
+                        let xml = "<testsuite><testcase classname='Site' name='works'/><testcase classname='Site' name='broken'><failure/></testcase><testcase classname='Site' name='skipped'><skipped/></testcase><testcase classname='Other' name='works'/><testcase classname='Unbound' name='noise'/></testsuite>";
+                        let raw = json!({"status":"failed","complete":true,"exit_code":1,"log":"fixture suite completed","files":{},"cache":{},"deleted":[],"products":[],"reports":{"reports/check.xml":base64::engine::general_purpose::STANDARD.encode(xml)}});
+                        let mut result = crate::task_runtime::validate_result(&task, &input, raw).unwrap();
+                        result["input_files"] = submitted["files"].clone();
+                        Ok(result)
+                    }
+                    operation => panic!("Unexpected suite operation {operation}"),
+                }
+            });
+            let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime), ..Default::default() });
+            for revision in [1, 2] {
+                crate::vfs::write(root.join("src/cart.rs"), format!("// {owner}: revision {revision}\n")).unwrap();
+                let before = submissions.lock().unwrap().len();
+                let _recovery = crate::session_recovery::Scope::enter(None);
+                let result = run_selected(&store, &gs, &["req:shop-1".into(), "req:shop-2".into()]).unwrap();
+                assert_eq!(submissions.lock().unwrap().len(), before+1, "one shared suite, not one run per requirement or criterion");
+                assert_eq!(result["runs"].as_array().unwrap().len(), 1);
+                let ledger = Ledger::load(&out);
+                let first = &ledger.requirements["req:shop-1"];
+                assert_eq!(first.tests["crit:pass"].verdict, "pass");
+                assert_eq!(first.tests["crit:fail"].verdict, "fail");
+                assert_eq!(first.tests["crit:skip"].verdict, "none");
+                let second = &ledger.requirements["req:shop-2"];
+                assert_eq!(second.tests["crit:other"].verdict, "pass");
+                assert_eq!(second.tests["crit:missing"].verdict, "none");
+                assert_eq!(second.tests["crit:ambiguous"].verdict, "none");
+                assert_ne!(status_of(&store, "req:shop-2", second, &gs).0, "verified");
+                assert_eq!(serde_json::to_value(&ledger.requirements["req:unrelated"]).unwrap(), unrelated);
+                let requests = submissions.lock().unwrap();
+                let submitted = requests.values().last().unwrap();
+                let source = base64::engine::general_purpose::STANDARD.decode(submitted["files"]["src/cart.rs"].as_str().unwrap()).unwrap();
+                assert_eq!(source, format!("// {owner}: revision {revision}\n").as_bytes());
+            }
+        }
+        let requests = submissions.lock().unwrap();
+        assert_eq!(requests.len(), 4, "two owners each run once against each of two source revisions");
+        let inputs: std::collections::BTreeSet<_> = requests.values().map(|request| request["input_digest"].as_str().unwrap()).collect();
+        assert_eq!(inputs.len(), 4, "every pass uses its own frozen input");
+    }
+    #[test]
     fn task_restart_reuses_destination_intention_run_receipt_and_original_deadline() {
         for lose_reply in [false,true] {
             let mut initial = workspace("Tasks").snapshot();

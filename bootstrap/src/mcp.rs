@@ -1773,6 +1773,7 @@ impl McpServer {
         let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
         let response = crate::webapi::dispatch::request_at_async(&workspace.root, "POST", "/api/compile", &params["arguments"].to_string()).await;
         let response: Value = serde_json::from_str(&response).map_err(|e| (-32603, e.to_string()))?;
+        if let Some(reason) = compile_interruption(&response) { return Err((-32603,reason)); }
         Ok(result_value(response))
     }
 
@@ -1916,6 +1917,7 @@ impl McpServer {
             );
             let response: Value =
                 serde_json::from_str(&response).map_err(|e| (-32603, e.to_string()))?;
+            if let Some(reason) = compile_interruption(&response) { return Err((-32603,reason)); }
             return Ok(result_value(response));
             }
         }
@@ -3595,6 +3597,25 @@ fn text_result(v: Value, is_error: bool) -> Value {
         "content": [{"type": "text", "text": text}],
         "isError": is_error
     })
+}
+
+fn compile_interruption(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            for key in ["suspendReason","error","stopped"] {
+                if let Some(reason) = object.get(key).and_then(Value::as_str)
+                    .filter(|reason| crate::session_recovery::is_interruption(reason)) {
+                    return Some(reason.to_owned());
+                }
+            }
+            object.values().find_map(compile_interruption).or_else(|| {
+                ["verdict","state","stop"].iter().any(|key| object.get(*key).and_then(Value::as_str) == Some("suspended"))
+                    .then(|| "suspended".into())
+            })
+        }
+        Value::Array(values) => values.iter().find_map(compile_interruption),
+        _ => None,
+    }
 }
 
 fn result_value(value: Value) -> Value {

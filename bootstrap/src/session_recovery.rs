@@ -21,6 +21,7 @@ struct State {
     frames: Vec<Frame>,
     parent: BTreeMap<String, Value>,
     delivered: Vec<String>,
+    inputs: BTreeMap<String, Value>,
     error: Option<String>,
 }
 
@@ -62,6 +63,7 @@ fn decode(value: &Value) -> Result<State, String> {
         frames,
         parent: serde_json::from_value(value["parent"].clone()).map_err(incompatible)?,
         delivered: serde_json::from_value(value["deliveredInputs"].clone()).map_err(incompatible)?,
+        inputs: serde_json::from_value(value.get("deliveredInputValues").cloned().unwrap_or_else(|| json!({}))).map_err(incompatible)?,
         error: None,
     })
 }
@@ -81,12 +83,13 @@ pub(crate) fn set_parent(key: &str, value: Value) {
     STATE.with(|s| { s.borrow_mut().parent.insert(key.into(), value); });
 }
 
-pub(crate) fn input_delivered(id: &str) {
+pub(crate) fn input_delivered(id: &str, input: &Value) {
     STATE.with(|s| {
         let mut state = s.borrow_mut();
         if !state.delivered.iter().any(|existing| existing == id) {
             state.delivered.push(id.to_owned());
         }
+        state.inputs.insert(id.to_owned(), input.clone());
     });
 }
 
@@ -155,7 +158,7 @@ fn capsule() -> Result<Value, String> {
         Ok(json!({"version":1,"gdkVersion":GDK_VERSION,"operationSet":OPERATIONS,
             "engineVersion":env!("CARGO_PKG_VERSION"), "frames":state.frames,
             "harness":active.map(|f| &f.harness),"mcp":active.map(|f| &f.mcp),
-            "parent":state.parent,"deliveredInputs":state.delivered}))
+            "parent":state.parent,"deliveredInputs":state.delivered,"deliveredInputValues":state.inputs}))
     })
 }
 
@@ -227,6 +230,8 @@ impl<'a> McpRecovery<'a> {
             }
             None => None,
         };
+        let input_values = STATE.with(|s| s.borrow().inputs.values().cloned().collect::<Vec<_>>());
+        crate::conversation::restore_input_outcomes(input_values);
         Ok(Self { server, key, loaded })
     }
     pub(crate) fn resumed(&self) -> bool { self.loaded.is_some() }
@@ -245,6 +250,11 @@ impl Recovery for McpRecovery<'_> {
                 let mut state = s.borrow_mut();
                 for id in &harness.delivered_inputs {
                     if !state.delivered.contains(id) { state.delivered.push(id.clone()); }
+                }
+                for (id,input) in &harness.delivered_input_values {
+                    let mut input = input.clone();
+                    if input["state"] != "failed" { input["state"] = json!("delivered"); }
+                    state.inputs.insert(id.clone(),input);
                 }
                 if let Some(previous) = state.frames.iter_mut().find(|f| f.key == self.key) {
                     *previous = frame;

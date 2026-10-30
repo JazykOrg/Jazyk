@@ -107,7 +107,7 @@ pub(crate) fn build_inputs(id: &str) -> Vec<Value> {
                 b.borrow().chats.get(id).is_some_and(|c| !c.inputs.contains_key(mid))
             })
         })
-    }).collect()
+    }).map(|mut input| { input["sessionId"] = json!(id); input }).collect()
 }
 
 pub(crate) fn build_input_delivered(id: &str, input: Value) {
@@ -655,6 +655,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         crate::portable::take_inputs(id).into_iter().filter(|v| {
             v["messageId"].as_str().is_some_and(|mid| seen.insert(mid.to_owned()) && BOOK.with(|b| !b.borrow().chats[id].inputs.contains_key(mid)))
         }).map(|mut value| {
+            value["sessionId"] = json!(id);
             if value["operation"] == "answer_diagnostic" {
                 let result = server.handle("tools/call", &json!({"name":"answer_diagnostic","arguments":value["arguments"]}));
                 let (ok, reply) = match result {
@@ -758,7 +759,7 @@ fn delivered(id: &str, mut input: Value) {
     }
     input["sessionId"] = json!(id);
     if let Some(message_id) = input["messageId"].as_str() {
-        crate::session_recovery::input_delivered(message_id);
+        crate::session_recovery::input_delivered(message_id, &input);
     }
     BOOK.with(|b| {
         let mut b = b.borrow_mut();
@@ -776,6 +777,23 @@ fn delivered(id: &str, mut input: Value) {
 
 pub fn export_history() -> Value {
     BOOK.with(|b| json!({"version":1,"book": &*b.borrow()}))
+}
+
+pub(crate) fn restore_input_outcomes(mut inputs: Vec<Value>) {
+    inputs.sort_by_key(|input| input["sequence"].as_u64().unwrap_or(0));
+    for input in inputs {
+        let (Some(id),Some(mid)) = (input["sessionId"].as_str(),input["messageId"].as_str()) else { continue; };
+        let missing = BOOK.with(|b| b.borrow().chats.get(id).is_some_and(|chat|
+            chat.inputs.get(mid).is_none_or(|saved| !matches!(saved["state"].as_str(),Some("delivered"|"failed")))));
+        if !missing { continue; }
+        let recorded = BOOK.with(|b| b.borrow().chats[id].updates.iter().any(|(_,update)|
+            update["sessionUpdate"] == "user_message" && update["messageId"] == mid));
+        if !recorded {
+            let text = input.get("displayText").unwrap_or(&input["text"]);
+            append(id,json!({"sessionUpdate":"user_message","text":text,"messageId":mid,"turnId":input["turnId"]}));
+        }
+        delivered(id,input.clone());
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

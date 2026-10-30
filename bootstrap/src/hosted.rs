@@ -980,6 +980,7 @@ mod tests {
             assert_eq!(stopped["stop"],"suspended", "{phase}: {stopped}");
             let (capsule, files) = saved.lock().unwrap().clone().unwrap();
             crate::session_recovery::validate(&capsule).unwrap();
+            assert!(capsule["deliveredInputs"].as_array().unwrap().contains(&json!("accepted-1")));
             assert_eq!(files.contains_key("docs/recovery.md"), phase != "saved_model");
             let mut restored = Workspace::new(files).unwrap();
             let resumed = Execution { model:"fixture".into(),transport_async:Some(model),resume:Some(capsule),..Default::default() };

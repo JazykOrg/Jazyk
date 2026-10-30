@@ -178,17 +178,21 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   stubs, handles, high-water mark), tools.rs (the registry, gates at staging, bubbling
   previews, goal tools, the repeated-call guard), render.rs (emitters, lifting,
   collapse, the `render_svg` seam, `.puml`/`.svg`/`.png`), align.rs, md.rs,
-  project.rs, control.rs, llm.rs (OpenAI-compatible client over ureq; sticky fallbacks
-  for tools/temperature/streaming), parallel.rs, jsonrpc.rs, `acp/` (the bridge and
-  the embedded agent), `gui/` (axum; the only tokio scope in the binary), mcp.rs,
+  project.rs, control.rs, llm.rs (configured model transport with public GDK wire
+  helpers), `harness/` (the shared public GDK runtime), session_recovery.rs (owned
+  execution capsules and parent progress), parallel.rs, jsonrpc.rs, `acp/` (the
+  bridge and the embedded agent), `gui/` (axum), mcp.rs,
   lsp.rs (read-only), cli.rs, docsgen.rs, viewer.rs, gen.rs, bind.rs, verify.rs,
   decompile.rs, feedback.rs, answer.rs, benchmark.rs. `bootstrap/editors/vscode`: LSP
-  client extension. Deps: serde, serde_json, serde_norway, ureq (HTTP), notify (file
+  client extension. Deps: serde, serde_json, serde_norway, ureq (catalog HTTP),
+  reqwest + eventsource-stream (native model HTTP/SSE), notify (file
   events), regex, agent-client-protocol (ACP; futures + async-io driven by a `block_on`
   on a dedicated thread), plantuml-little + graphviz-anywhere (the in-process
   renderer; `bootstrap/.cargo/config.toml` opts into the prebuilt Graphviz archive
-  download), resvg (raster), tokio + axum + tower-http (gui only: the server and its
-  CORS layer). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
+  download), resvg (raster), tokio (native model/MCP I/O and GUI), axum + tower-http
+  (the GUI server and its CORS layer), goose-agent + goose-provider-types + the
+  documented portable goose-context-management source patch. Dependency policy
+  (owner decision, 2026-07-06): infrastructure comes from
   crates; hand-roll only domain logic. Do not reimplement transports, parsers for
   standard formats, or platform APIs.
 - Examples, each a project with its own `.jazyk/jazyk.toml`: `bootstrap/example/f1` (small)

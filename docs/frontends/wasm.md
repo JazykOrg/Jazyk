@@ -408,8 +408,8 @@ The compile action accepts explicit set IDs or all dirty sets.
 
 ## Stopping builds
 
-The page sets the shared cancellation flag for the selected running job and wakes an
-outstanding model request with cancellation. The compiler checks the flag before
+The page sends cancellation for the selected running job and rejects an
+outstanding model promise. The compiler checks cancellation before
 another request or tool call. Late model replies are ignored. Completed session
 commits remain; staged work and provisional display are discarded. The job ends
 `cancelled`. An explicit Build resets the flag and derives remaining work from saved
@@ -427,17 +427,17 @@ between batches. A delivery event means the text entered the active worker's
 history. A request arriving after the last worker stays undelivered for recovery.
 
 A running conversation accepts ordered text inputs without a second model loop.
-The page publishes a bounded JSON batch through a separate shared-memory mailbox.
+The page bounds each input and sends it to the worker through an independent message.
 The worker drains it before model requests, between tool calls, and before turn
 completion. A completed tool keeps its real result. Unstarted stale calls receive
 skipped results before the follow-up enters history. Delivery is emitted only
 after history insertion. Stop cancels pending work and does not start another turn.
 
-The mailbox has a 16-byte atomic header (`state`, `length`, `epoch`, `sequence`)
-and UTF-8 payload bytes. The page publishes bytes before setting `state` to `1`.
-The worker reads the batch and resets `state` to `0`. Payloads include the target
-`sessionId`; the page resets the mailbox when changing projects. Full mailboxes
-leave input queued on the page. They do not acknowledge engine delivery.
+Input messages include the target `sessionId` and stable `messageId`. The page
+retains ordered inputs and publishes one at a time. Worker admission acknowledges
+queueing, not insertion into model history. An input rejected because admission
+has closed stays queued on the page. Changing projects clears the worker's input queue.
+Model replies, cancellation and input messages bypass the project operation queue.
 
 `GET /api/chat/history` exports `{version: 1, book}`. `PUT /api/chat/history`
 restores that envelope while no conversation is running. A restored running

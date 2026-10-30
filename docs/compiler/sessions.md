@@ -271,9 +271,10 @@ and repeated submission with the same operation key is an intentional retry.
 Fixed run deadlines and the embedded agent's failed-call bound still apply.
 
 A refusal is not an invalid mutation: the call was well-formed, the model is stuck.
-The serving does not add it to its invalid-mutation count. The embedded agent also
-has a separate bound of five consecutive failed tool calls, including refusals
-([embedded agent](../frontends/acp.md#the-embedded-agent)). Refusals are cheap (a refused call never
+The serving does not add it to its invalid-mutation count. The
+[embedded agent](../frontends/acp.md#the-embedded-agent) has a separate failure
+counter with a limit of five. Failed calls, including refusals, increment it at
+most once per model transition. A successful call resets it. Refusals are cheap (a refused call never
 dispatches) and counted: past eight in one batch, the serving finishes the session
 implicitly, committing the staged work under the same gates the [budget path](#budgets)
 uses. A weak model that loops keeps what it earned; the guard only stops it paying for
@@ -351,8 +352,8 @@ the idle timeout, or exhausts its repair rounds) leaves no trace: the changeset 
 dropped and the graph is untouched. Its goals return to `open`, and the batch is retried
 once with a fresh session; a second failure parks the goals with an `incomplete-build`
 diagnostic ([parked and failed](./reconciler.md#parked-and-failed)). The
-[embedded agent](../frontends/acp.md#the-embedded-agent) additionally aborts its own
-loop after three consecutive invalid rounds, so a stuck weak model fails fast instead of
+[embedded agent](../frontends/acp.md#the-embedded-agent) additionally stops at its
+[failed-call limit](#repeated-calls), so a stuck weak model fails fast instead of
 spending the budget.
 
 A user stop drops the active changeset and its model context. Completed commits remain.

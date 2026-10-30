@@ -63,8 +63,9 @@ never deletes a file from the workspace.
 ## Models and events
 
 Each request receives an `Execution`. It names the model and supplies a transport
-callback, cancellation flag, and optional trace callback. The transport accepts an
-OpenAI-compatible chat request and returns a complete response. The host owns
+callback, cancellation flag, and optional trace callback. The async transport
+accepts an OpenAI-compatible chat request and returns a complete response. An
+optional streaming transport also delivers text and reasoning deltas. The host owns
 provider authentication, accounting, call deadlines, and cancellation of an
 in-flight transport. It must bound every call. The compiler checks cancellation
 before and after calls and between agent turns.
@@ -74,8 +75,8 @@ stop work for a provider or resource failure. Chat records `turn_end` with
 `stop: paused` and that reason. A user cancellation without a pause reason stays
 `cancelled`. The distinction survives snapshot storage and reopening the conversation.
 
-Model capability fallbacks, token meters, and completion limits are private to an
-execution. Hosted execution never reads the machine owner's provider settings or
+Token meters and completion limits are private to an execution. Native tool calling
+is required. Hosted execution never reads the machine owner's provider settings or
 environment credentials. A missing transport refuses model work. Read-only API
 requests need no model. Trace callbacks are thread safe and carry the existing
 [trace events](./sessions.md#trace-events).

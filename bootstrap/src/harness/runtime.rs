@@ -246,7 +246,7 @@ pub fn run_with_hosts(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn drive_native(future: impl std::future::Future<Output = Stop>) -> Stop {
-    let drive = || futures::executor::block_on(future);
+    let drive = || async_io::block_on(future);
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
             tokio::task::block_in_place(drive)
@@ -340,10 +340,7 @@ async fn run_inner_async(
         let mut response = Message::user();
         for request in unanswered(&state.conversation) {
             let result = match state.tool_receipts.get(&request.id) {
-                Some(receipt) if receipt.ok => {
-                    CallToolResult::success(vec![ContentBlock::text(&receipt.result)])
-                }
-                Some(receipt) => CallToolResult::error(vec![ContentBlock::text(&receipt.result)]),
+                Some(receipt) => tool_result(receipt.result.clone(), receipt.ok),
                 None => CallToolResult::error(vec![ContentBlock::text(
                     "Tool call was interrupted before completing",
                 )]),
@@ -644,7 +641,7 @@ async fn handle_action(
             if let Some(recorded) = state.model_requests.get(&id) {
                 if recorded != &body {
                     return Err(Stop::Error(
-                        "Restored model request differs from its durable intention".into(),
+                        "checkpoint-incompatible: Restored model request differs from its durable intention".into(),
                     ));
                 }
             } else {
@@ -918,10 +915,7 @@ fn accept_inputs(state: &mut HarnessState, inputs: &mut Vec<Value>) -> Vec<Value
         let mut skipped = Message::user();
         for pending in unanswered(&state.conversation) {
             let result = match state.tool_receipts.get(&pending.id) {
-                Some(receipt) if receipt.ok => {
-                    CallToolResult::success(vec![ContentBlock::text(&receipt.result)])
-                }
-                Some(receipt) => CallToolResult::error(vec![ContentBlock::text(&receipt.result)]),
+                Some(receipt) => tool_result(receipt.result.clone(), receipt.ok),
                 None => CallToolResult::error(vec![ContentBlock::text(
                     "Skipped: new human input arrived before dispatch; this call did not execute",
                 )]),

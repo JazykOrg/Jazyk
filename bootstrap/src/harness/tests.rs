@@ -777,3 +777,67 @@ fn dynamic_tool_provider_preserves_complete_mcp_result_blocks() {
     assert_eq!(result["_meta"]["provenance"], "fixture");
     assert_eq!(result["content"][0]["text"], "visible text");
 }
+
+#[test]
+fn native_compile_tool_can_drive_an_inner_gdk_session_on_the_same_thread() {
+    struct CompileTool;
+    impl ToolHost for CompileTool {
+        fn call<'a>(
+            &'a mut self,
+            _: &'a str,
+            _: &'a Value,
+        ) -> LocalFuture<'a, Result<String, String>> {
+            Box::pin(async {
+                let mut host = Host::new(vec![response("inner compile completed")]);
+                let mut history = vec![json!({"role":"user","content":"Compile the project"})];
+                let owner = std::thread::current().id();
+                let stop = run(
+                    &mut host,
+                    &mut Store::default(),
+                    &mut history,
+                    &mut |_, _| panic!("unexpected inner tool"),
+                    &mut |_| {
+                        assert_eq!(owner, std::thread::current().id());
+                        assert!(crate::vfs::is_scoped());
+                    },
+                );
+                assert_eq!(stop, Stop::EndTurn);
+                Ok("inner compile completed".into())
+            })
+        }
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        tokio::task::spawn_blocking(|| {
+            let _scope = crate::vfs::Scope::enter(&BTreeMap::new());
+            let mut host = Host::new(vec![call(), response("finished")]);
+            let mut history = vec![json!({"role":"user","content":"Run the compile tool"})];
+            let stop = run_with_hosts(
+                LoopArgs {
+                    llm: &llm(),
+                    history: &mut history,
+                    tools: &[tool()],
+                    dispatch: &mut |_, _| panic!("sync dispatch used"),
+                    emit: &mut |_| {},
+                    cancelled: &|| false,
+                    max_rounds: 8,
+                    label: "outer chat".into(),
+                    conversation: true,
+                    inputs: None,
+                    input_close: None,
+                },
+                "",
+                &mut host,
+                &mut CompileTool,
+                &mut Store::default(),
+            );
+            assert_eq!(stop, Stop::EndTurn);
+        })
+        .await
+        .unwrap();
+    });
+}

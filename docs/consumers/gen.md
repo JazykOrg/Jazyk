@@ -967,8 +967,8 @@ against it. A file the run creates fresh has no baseline.
 [CLI](../frontends/cli.md#jazyk-gen).
 
 - With no arguments it works every `generate` goal on the board, in topological order
-  over the relationship contributions, group by group. Binding runs first: a `bind`
-  goal of a targeted requirement resolves before its entity's `generate` goal.
+  over the relationship contributions, group by group. The session develops source
+  and tests together. A separate binding pass is optional.
 - Named entities restrict the run to their goals.
 - `--force` ignores the fact-hash skip.
 - In `manual` mode the command records the generate release

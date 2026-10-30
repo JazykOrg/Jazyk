@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 // What one session left behind: the mutations its commits applied, the goals they
 // resolved (from the journal), and whether the batch landed.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionReport {
     pub applied: usize,
     pub rounds: u32,

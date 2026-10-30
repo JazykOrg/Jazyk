@@ -16,7 +16,7 @@ pub const GROUP: usize = 20;
 // Resolved [gen] settings: where the deliverable lives. Nothing else: what the
 // deliverable is comes from the documents through the graph, never from configuration.
 // Mirrors docs/compiler/project-settings.md#generation.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct GenSettings {
     // Whether the project names a deliverable: the generation scope exists
     // (docs/compiler/goals/derive-criteria.md#created-when).

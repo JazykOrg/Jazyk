@@ -52,7 +52,7 @@ pub struct McpServer {
     ledger_target: std::sync::Mutex<Option<String>>,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Delivered {
     contract: bool,
     skills: BTreeSet<String>,
@@ -105,7 +105,9 @@ struct OpenCase {
     gs: crate::gen::GenSettings,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct OpenBatch {
+    #[serde(skip)]
     _project_lock: Option<crate::document_sets::ProjectLock>,
     id: String,
     goals: Vec<Goal>,
@@ -382,6 +384,60 @@ impl McpServer {
             finished: std::sync::Mutex::new(None),
             ledger_target: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Protected owned session state. It is not a project file or a tool result.
+    pub(crate) fn checkpoint(&self) -> Result<Value, String> {
+        let children = self.children.lock().map_err(|_| "MCP child state poisoned")?
+            .iter().map(|(id, child)| Ok((id.clone(), child.checkpoint()?)))
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        Ok(json!({
+            "version": 1,
+            "setId": self.project.set_id,
+            "configHash": self.project.config_hash,
+            "open": &*self.open.lock().map_err(|_| "MCP batch state poisoned")?,
+            "delivered": &*self.delivered.lock().map_err(|_| "MCP delivery state poisoned")?,
+            "finished": &*self.finished.lock().map_err(|_| "MCP completion state poisoned")?,
+            "ledgerTarget": &*self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")?,
+            "client": &*self.client.lock().map_err(|_| "MCP client state poisoned")?,
+            "children": children
+        }))
+    }
+
+    pub(crate) fn restore(&self, value: Value) -> Result<(), String> {
+        if value["version"] != 1 || value["setId"] != json!(self.project.set_id)
+            || value["configHash"] != json!(self.project.config_hash) {
+            return Err("MCP checkpoint is incompatible with this project configuration.".into());
+        }
+        let mut open: Option<OpenBatch> = serde_json::from_value(value["open"].clone()).map_err(|e| e.to_string())?;
+        if let Some(batch) = open.as_mut() {
+            if batch.session.snapshot.out != self.out
+                || self.bridge.only.as_ref().is_some_and(|id| id != &batch.id)
+                || batch.session.scope.batch != batch.id {
+                return Err("MCP checkpoint belongs to a different batch or workspace.".into());
+            }
+            let current = Store::load(&self.out);
+            if current.status.generation != batch.session.snapshot.status.generation {
+                return Err("Workspace generation changed while this batch was suspended.".into());
+            }
+            batch._project_lock = Some(crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock").map_err(|e| e.1)?);
+        }
+        *self.open.lock().map_err(|_| "MCP batch state poisoned")? = open;
+        *self.delivered.lock().map_err(|_| "MCP delivery state poisoned")? = serde_json::from_value(value["delivered"].clone()).map_err(|e| e.to_string())?;
+        *self.finished.lock().map_err(|_| "MCP completion state poisoned")? = serde_json::from_value(value["finished"].clone()).map_err(|e| e.to_string())?;
+        *self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")? = serde_json::from_value(value["ledgerTarget"].clone()).map_err(|e| e.to_string())?;
+        *self.client.lock().map_err(|_| "MCP client state poisoned")? = serde_json::from_value(value["client"].clone()).map_err(|e| e.to_string())?;
+        if let Some(children) = value["children"].as_object() {
+            let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e| e.1)?;
+            let mut restored = self.children.lock().map_err(|_| "MCP child state poisoned")?;
+            for (id, state) in children {
+                let project = workspace.resolve(Some(id)).map_err(|e| e.1)?;
+                let child = Self::with_bridge(project.clone(), project.out.clone(), self.modes.clone(), self.write, self.bridge.clone());
+                child.restore(state.clone())?;
+                restored.insert(id.clone(), child);
+            }
+        }
+        Ok(())
     }
 
     // The server's own long poll: returns when the graph's generation counter moves, a
@@ -3526,6 +3582,42 @@ fn result_value(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_restores_staged_batch_and_its_gate_state() {
+        let dir = bare_dir("checkpoint-batch");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap();
+        let out = project.out.clone();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.compile = "auto".into();
+        control.save(&out);
+        let make = || McpServer::with_bridge(project.clone(), out.clone(), vec!["compile".into()], true, BridgeFlags { ephemeral: true, ..Default::default() });
+        let call = |server: &McpServer, name: &str, arguments: Value| {
+            let result = server.handle("tools/call", &json!({"name":name,"arguments":arguments})).unwrap();
+            assert_ne!(result["isError"], true, "{result}");
+            serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap()
+        };
+        let original = make();
+        call(&original, "begin_goals", json!({}));
+        call(&original, "set_coverage", json!({"section":"docs/a.md#/a", "state":"non-normative", "note":"Navigation."}));
+        let goals = original.open.lock().unwrap().as_ref().unwrap().goals.iter().map(|g| g.id.clone()).collect::<Vec<_>>();
+        for goal in &goals {
+            call(&original, "mark_goal_done", json!({"goal":goal,"justification":"The section is a navigation index and is marked non-normative."}));
+        }
+        let checkpoint = original.checkpoint().unwrap();
+        let generation = crate::store::read_generation(&out);
+        assert!(!checkpoint["open"]["session"]["staged"].as_array().unwrap().is_empty());
+        drop(original);
+        let restored = make();
+        restored.restore(checkpoint.clone()).unwrap();
+        assert_eq!(restored.checkpoint().unwrap(), checkpoint);
+        let result = call(&restored, "done", json!({"summary":"Recorded the navigation coverage."}));
+        assert_eq!(result["committed"], true, "{result}");
+        assert!(crate::store::read_generation(&out) > generation);
+        drop(restored);
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
 
     fn chat_server(dir: &std::path::Path) -> McpServer {
         let project = crate::project::Project::load(dir);

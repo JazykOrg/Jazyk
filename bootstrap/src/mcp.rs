@@ -3769,6 +3769,8 @@ mod tests {
         assert!(!opening.contains(&contract));
         assert!(opening.contains("For a ledger batch (bind, generate or verify)"));
         assert!(opening.contains("`summary` only"));
+        assert!(opening.contains("When a staged graph goal cannot honestly be done"));
+        assert!(opening.contains("Unrecorded ledger work remains owed"));
         for kind in ["bind", "generate", "verify"] {
             let paragraph = crate::goals::kind(kind).unwrap().prompt();
             assert!(!paragraph.contains("then mark_goal_done"), "{kind}");
@@ -3783,6 +3785,8 @@ mod tests {
             + "\nRead src/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
         crate::vfs::write(dir.join("tests/greeting.md"), criterion).unwrap();
         let settings = crate::gen::GenSettings::resolve(&project);
+        assert!(crate::gen::gate(&store, &settings, "ent:greeter", true).is_err(),
+            "a summary cannot substitute for a recorded generation");
         let original = crate::gen::task_package(&store, "ent:greeter", &settings).unwrap();
         let server = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
             BridgeFlags { ephemeral:true, only:Some(batch.id), serve_files:true, ..Default::default() });
@@ -3803,7 +3807,8 @@ mod tests {
         assert_eq!(stop, harness::Stop::EndTurn);
         assert_eq!(model.requests.len(), 3);
         let definitions = model.requests[0]["tools"].as_array().unwrap();
-        assert!(!definitions.iter().any(|tool| tool["function"]["name"] == "mark_goal_done"));
+        assert!(!definitions.iter().any(|tool|
+            matches!(tool["function"]["name"].as_str(), Some("mark_goal_done" | "mark_goal_failed"))));
         let done = definitions.iter().find(|tool| tool["function"]["name"] == "done").unwrap();
         assert_eq!(done["function"]["parameters"]["properties"], json!({"summary":{"type":"string"}}));
         assert!(crate::gen::gate(&store, &settings, "ent:greeter", true).is_ok());

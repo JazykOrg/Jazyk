@@ -1,5 +1,6 @@
 use crate::vfs::VPathExt;
 pub(crate) mod progress;
+mod pipeline;
 // Generation: the shared contract between every generation worker, the built-in
 // `jazyk gen` and external MCP agents alike. One task per entity produces the entity's
 // part of the deliverable and the tests for its requirements; the ledger binds them to
@@ -312,7 +313,13 @@ pub fn run_build(
     };
     if let Some(id) = b.run.strip_prefix("task:") {
         let root = crate::task_runtime::project_root(out)?;
-        let (_, result) = crate::task_runtime::execute_with_key(&root,id,&format!("build:{label}:{}",out.display()))?;
+        let ledger = Ledger::load(out);
+        let files: Vec<String> = ledger.entities.values().flat_map(|row| row.files.iter().cloned())
+            .chain(ledger.support.iter().cloned()).collect();
+        let inputs = hash_hex(&json!({"run":b.run,"cwd":b.cwd,"produces":b.produces,
+            "sources":hash_files(gs,&files)}).to_string());
+        let (_, result) = crate::task_runtime::execute_with_key(&root, id,
+            &format!("build:{label}:{}:{inputs}", out.display()))?;
         let success = result["status"] == "succeeded" && result["complete"] == true;
         if !success {
             record_build_run(out, false, result["log"].as_str().unwrap_or("No log output"));
@@ -2881,6 +2888,34 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
     }
 
+    #[test]
+    fn a_resumed_generation_command_keeps_its_group_and_counts_the_result_once() {
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let _scope = crate::session_recovery::Scope::enter(None);
+        let out = std::path::Path::new("/project/.jazyk/main");
+        let (store, gs) = fixture(out);
+        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn previous() {}\n").unwrap();
+        mark(&store, "ent:cart", None, &json!({"files":["cart.rs"],"tests":[]}), &gs).unwrap();
+        let mut ledger = Ledger::load(out);
+        ledger.entities.get_mut("cart").unwrap().recorded_at = Some("before-command".into());
+        ledger.medium = Some(Medium { form: "Rust source".into(), produced: "written".into(),
+            toolchain: "rustc".into(), artifact: String::new() });
+        ledger.save(out);
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}), Default::default());
+        let paused = StubRunner { record: false, stopped: Some("checkpoint-failed: test storage outage".into()),
+            store: store.clone(), gs: gs.clone() };
+        let error = run_selected(&store, &paused, &gs, &[], true, &trace, false).unwrap_err();
+        assert!(error.starts_with("checkpoint-failed:"));
+        let writer = StubRunner { record: true, stopped: None, store: store.clone(), gs: gs.clone() };
+        let result = run_selected(&store, &writer, &gs, &[], true, &trace, false).unwrap();
+        assert_eq!(result["regenerated"], 1);
+        assert_eq!(result["failures"], 0);
+        // A worker that would interrupt cannot be reached after the result receipt.
+        assert_eq!(run_selected(&store, &paused, &gs, &[], true, &trace, false).unwrap(), result);
+    }
+
     fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
         let mut s = Store {
             out: out.to_path_buf(),
@@ -4180,40 +4215,80 @@ pub async fn run_all(
     run_selected(store, runner, gs, entities, force, trace, true).await
 }
 
+#[derive(Default, Serialize, Deserialize)]
+struct GenCommand {
+    groups: Option<Vec<(String, Vec<String>)>>,
+    pending: std::collections::BTreeSet<String>,
+    cursor: usize,
+    active: Option<GenGroup>,
+    medium_decided: bool,
+    regenerated: u64,
+    skipped: u64,
+    failures: u64,
+    streak: usize,
+    stopped: Option<String>,
+    result: Option<Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GenGroup {
+    root: String,
+    ready: Vec<String>,
+    pipeline_cursor: usize,
+    pipeline_task: Option<Value>,
+    pipeline_results: Vec<(String, Result<usize, String>)>,
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 pub(crate) async fn run_selected(
-    store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
-    entities: &[String], force: bool, trace: &crate::session::Trace, build_product: bool,
+    store: &Store,
+    runner: &dyn crate::runner::SessionRunner,
+    gs: &GenSettings,
+    entities: &[String],
+    force: bool,
+    trace: &crate::session::Trace,
+    build_product: bool,
 ) -> Result<Value, String> {
     use crate::session::TraceEvent;
-    let targets: Vec<String> = if entities.is_empty() {
-        store
-            .graph
-            .entities
-            .keys()
-            .filter(|id| !store.requirements_referencing(id).is_empty())
-            .cloned()
-            .collect()
-    } else {
-        let mut v = Vec::new();
-        for e in entities {
-            let id = store.resolve_id(e).to_string();
-            if store.graph.entities.contains_key(&id) {
-                v.push(id);
-            } else {
-                return Err(format!("unknown entity `{}`", e));
-            }
-        }
-        v
-    };
-    if targets.is_empty() {
-        return Err("no entities with requirements; run `jazyk compile` first".into());
+    let signature = json!({"settings": gs, "entities": entities, "force": force, "buildProduct": build_product});
+    let key = progress::command_key("generate", &store.out, &signature);
+    let mut command = progress::Progress::load(key, signature, GenCommand::default)?;
+    if let Some(result) = &command.data.result {
+        return Ok(result.clone());
     }
-
-    // The medium is decided before the first task, not inside it. A ledger with no
-    // entities decides again, so wiping the deliverable is how a project changes its
-    // mind (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-    {
+    if command.data.groups.is_none() {
+        let targets: Vec<String> = if entities.is_empty() {
+            store
+                .graph
+                .entities
+                .keys()
+                .filter(|id| !store.requirements_referencing(id).is_empty())
+                .cloned()
+                .collect()
+        } else {
+            let mut targets = Vec::new();
+            for entity in entities {
+                let id = store.resolve_id(entity).to_string();
+                if !store.graph.entities.contains_key(&id) {
+                    return Err(format!("unknown entity `{entity}`"));
+                }
+                targets.push(id);
+            }
+            targets
+        };
+        if targets.is_empty() {
+            return Err("no entities with requirements; run `jazyk compile` first".into());
+        }
+        command.data.groups = Some(groups_in_order(store, &generation_order(store, &targets)));
+        command.data.pending = pending(store, gs)
+            .iter()
+            .filter_map(|item| item["entity"].as_str().map(String::from))
+            .collect();
+        command.save().await?;
+    }
+    // Medium selection is a command step. An empty ledger on resume does not
+    // start this decision again after a later group has already begun.
+    if !command.data.medium_decided {
         let mut ledger = Ledger::load(&store.out);
         if ledger.medium.is_none() || ledger.entities.is_empty() {
             let medium = decide_medium(store, runner, &gs.deliverable).await?;
@@ -4221,129 +4296,196 @@ pub(crate) async fn run_selected(
             ledger.medium = Some(medium);
             ledger.save(&store.out);
         }
+        command.data.medium_decided = true;
+        command.save().await?;
     }
-
-    // Leaf-first over the per-direction contributions and the containment tree: the
-    // part before the whole, the dependency before the dependent, so a group's parts
-    // land before the entity that composes them
-    // (docs/consumers/gen.md#grouping-by-component).
-    let ordered = generation_order(store, &targets);
-
     crate::vfs::create_dir_all(&gs.deliverable).ok();
-    let pending_set: std::collections::BTreeSet<String> = pending(store, gs)
-        .iter()
-        .filter_map(|p| p["entity"].as_str().map(String::from))
-        .collect();
-    let (mut regenerated, mut skipped, mut failures) = (0u64, 0u64, 0u64);
-    // The dead-endpoint breaker a build has: sessions failing in a row without
-    // spending a token are the endpoint's, and the groups left are not run through
-    // it (docs/consumers/gen.md#command).
-    let (mut streak, mut stopped): (usize, Option<String>) = (0, None);
-    // One session per component group: the ready goals of one group run together, so
-    // the parts of one component are written under one set of conventions. A member
-    // whose facts match the ledger is skipped; its files ride the packages as
-    // context (docs/consumers/gen.md#grouping-by-component).
-    for (root, members) in groups_in_order(store, &ordered) {
+    while command.data.cursor < command.data.groups.as_ref().unwrap().len() {
+        if command.data.stopped.is_some() {
+            break;
+        }
         if trace.is_cancelled() {
             break;
         }
-        let mut ready: Vec<String> = Vec::new();
-        for id in &members {
-            if !force && !pending_set.contains(id) {
-                skipped += 1;
-                trace.event(TraceEvent::GenEntitySkipped {
-                    entity: id.clone(),
-                    reason: skip_reason(store, gs, id),
-                });
-            } else {
-                ready.push(id.clone());
+        if crate::session_recovery::suspension_requested() {
+            command.save().await?;
+            return Err("suspended".into());
+        }
+        if command.data.active.is_none() {
+            let (root, members) =
+                command.data.groups.as_ref().unwrap()[command.data.cursor].clone();
+            let mut ready = Vec::new();
+            for id in members {
+                if !force && !command.data.pending.contains(&id) {
+                    command.data.skipped += 1;
+                    trace.event(TraceEvent::GenEntitySkipped {
+                        entity: id.clone(),
+                        reason: skip_reason(store, gs, &id),
+                    });
+                } else {
+                    ready.push(id);
+                }
             }
+            if ready.is_empty() {
+                command.data.cursor += 1;
+                command.save().await?;
+                continue;
+            }
+            command.data.active = Some(GenGroup {
+                root,
+                ready,
+                pipeline_cursor: 0,
+                pipeline_task: None,
+                pipeline_results: Vec::new(),
+            });
+            command.save().await?;
         }
-        if ready.is_empty() {
-            continue;
-        }
+        let active = command.data.active.as_ref().unwrap();
+        let (root, ready) = (active.root.clone(), active.ready.clone());
         for id in &ready {
             trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
         }
-        let (results, spent, session_failed): (Vec<(String, Result<usize, String>)>, u64, Option<String>) = if gs.worker == "pipeline" {
-            // The pipeline worker is a fixed per-entity sequence; the group still
-            // orders it, part before whole.
-            let mut out = Vec::new();
-            for id in &ready {
+        let outcome = if gs.worker == "pipeline" {
+            while command.data.active.as_ref().unwrap().pipeline_cursor < ready.len() {
+                let cursor = command.data.active.as_ref().unwrap().pipeline_cursor;
+                let id = &ready[cursor];
                 if trace.is_cancelled() {
                     break;
                 }
-                match task_package(store, id, gs) {
-                    Ok(task) => out.push((id.clone(), gen_one(store, runner, gs, id, &task).await)),
-                    Err(e) => {
-                        trace.event(TraceEvent::GenEntityFailed {
-                            entity: id.clone(),
-                            stage: "task".into(),
-                            error: e,
-                        });
-                        failures += 1;
+                if crate::session_recovery::suspension_requested() {
+                    command.save().await?;
+                    return Err("suspended".into());
+                }
+                if command
+                    .data
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .pipeline_task
+                    .is_none()
+                {
+                    match task_package(store, id, gs) {
+                        Ok(task) => {
+                            command.data.active.as_mut().unwrap().pipeline_task = Some(task);
+                            command.save().await?;
+                        }
+                        Err(error) => {
+                            let active = command.data.active.as_mut().unwrap();
+                            active.pipeline_results.push((id.clone(), Err(error)));
+                            active.pipeline_cursor += 1;
+                            command.save().await?;
+                            continue;
+                        }
                     }
                 }
+                let task = command
+                    .data
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .pipeline_task
+                    .as_ref()
+                    .unwrap()
+                    .clone();
+                let result = gen_one(store, runner, gs, id, &task).await;
+                if let Err(reason) = &result {
+                    if crate::session_recovery::is_interruption(reason) {
+                        return Err(reason.clone());
+                    }
+                }
+                let active = command.data.active.as_mut().unwrap();
+                active.pipeline_results.push((id.clone(), result));
+                active.pipeline_cursor += 1;
+                active.pipeline_task = None;
+                command.save().await?;
             }
-            (out, 0, None)
+            GenSessionOutcome {
+                results: command
+                    .data
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .pipeline_results
+                    .clone(),
+                tokens: 0,
+                failed: None,
+            }
         } else {
-            let o = gen_session(store, runner, gs, &root, &ready, trace).await;
-            (o.results, o.tokens, o.failed)
+            gen_session(store, runner, gs, &root, &ready, trace).await
         };
-        let (next, down) = crate::reconcile::breaker_step(streak, spent, session_failed.as_deref());
-        streak = next;
-        for (id, result) in results {
+        if let Some(reason) = outcome
+            .failed
+            .as_ref()
+            .filter(|reason| crate::session_recovery::is_interruption(reason))
+        {
+            return Err(reason.clone());
+        }
+        let (next, down) = crate::reconcile::breaker_step(
+            command.data.streak,
+            outcome.tokens,
+            outcome.failed.as_deref(),
+        );
+        command.data.streak = next;
+        for (id, result) in outcome.results {
             match result {
                 Ok(files) => {
                     trace.event(TraceEvent::GenEntityDone { entity: id, files });
-                    regenerated += 1;
+                    command.data.regenerated += 1;
                 }
-                Err(e) => {
+                Err(error) => {
                     trace.event(TraceEvent::GenEntityFailed {
                         entity: id,
                         stage: "generate".into(),
-                        error: e,
+                        error,
                     });
-                    failures += 1;
+                    command.data.failures += 1;
                 }
             }
         }
-        if down && streak >= crate::limits::ENDPOINT_BREAKER {
-            let e = session_failed.unwrap_or_default();
-            trace.line(
-                "gen",
-                &format!("stopped: the agent failed {} session(s) in a row without spending a token ({}); the groups left are not tried", streak, e),
-            );
-            stopped = Some(e);
+        command.data.active = None;
+        command.data.cursor += 1;
+        crate::session_recovery::remove_frame(&crate::session_recovery::batch_key(
+            &store.out,
+            &format!("g:generate:{root}"),
+        ));
+        if down && command.data.streak >= crate::limits::ENDPOINT_BREAKER {
+            command.data.stopped = outcome.failed;
+        }
+        command.save().await?;
+        if command.data.stopped.is_some() {
             break;
         }
     }
-    // A built deliverable is not generated until the artifact exists, so the run ends
-    // by producing it. The failure is recorded either way, which is what the next run
-    // reads (docs/consumers/gen.md#the-build).
     let build = if !build_product || trace.is_cancelled() {
         json!({"state":"not-selected"})
     } else if crate::vfs::is_scoped() {
-        json!({"state":"pending-ci", "pendingCi":Ledger::load(&store.out).build.is_some(),"reason":"build commands run through delivery CI"})
-    } else { match run_build(&store.out, gs, trace, "gen") {
-        Ok(()) => {
-            let produced = Ledger::load(&store.out)
-                .build
-                .map(|b| b.produces.join(", "))
-                .filter(|p| !p.is_empty());
-            if let Some(p) = &produced {
-                trace.line("gen", &format!("built {}", p));
+        json!({"state":"pending-ci", "pendingCi": Ledger::load(&store.out).build.is_some(), "reason":"build commands run through delivery CI"})
+    } else {
+        match run_build(&store.out, gs, trace, "gen") {
+            Ok(()) => {
+                let produced = Ledger::load(&store.out)
+                    .build
+                    .map(|build| build.produces.join(", "))
+                    .filter(|paths| !paths.is_empty());
+                if let Some(paths) = &produced {
+                    trace.line("gen", &format!("built {paths}"));
+                }
+                json!({"ok": true, "produced": produced})
             }
-            json!({ "ok": true, "produced": produced })
+            Err(error) => {
+                if crate::session_recovery::is_interruption(&error) {
+                    return Err(error);
+                }
+                trace.line("gen", &error);
+                json!({"ok": false, "error": error})
+            }
         }
-        Err(e) => {
-            trace.line("gen", &e);
-            json!({ "ok": false, "error": e })
-        }
-    }};
-    Ok(
-        json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "stopped": stopped, "build": build }),
-    )
+    };
+    let result = json!({"regenerated":command.data.regenerated,"skipped":command.data.skipped,
+        "failures":command.data.failures,"stopped":command.data.stopped,"build":build});
+    command.data.result = Some(result.clone());
+    command.save().await?;
+    Ok(result)
 }
 
 // Every file a reply carries, in order. A step asks for one, but a model that writes
@@ -4357,6 +4499,13 @@ pub(crate) async fn run_selected(
 // word, never the model's: the session must have left record_generation's mark with
 // current facts and existing files for each member.
 // Mirrors docs/compiler/sessions.md#generation-sessions.
+#[derive(Serialize, Deserialize)]
+struct GenSessionState {
+    session: progress::BatchProgress,
+    before: Vec<Option<String>>,
+    result: Option<GenSessionOutcome>,
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 async fn gen_session(
     store: &Store,
@@ -4366,67 +4515,111 @@ async fn gen_session(
     ids: &[String],
     trace: &crate::session::Trace,
 ) -> GenSessionOutcome {
-    let goals: Vec<crate::model::Goal> = ids
-        .iter()
-        .map(|id| crate::model::Goal {
-            id: format!("g:generate:{}", id),
-            kind: "generate".into(),
-            class: "compile".into(),
-            mandatory: true,
-            target: id.to_string(),
-            unit: "entity".into(),
-            change: serde_json::json!({"goal": "generate"}),
-            cause: None,
-            state: crate::model::GoalState::Open,
-            hints: Vec::new(),
-        })
-        .collect();
-    // The group root labels the session; a group of one keeps its goal id.
-    let batch = crate::runner::BatchRun {
-        id: format!("g:generate:{}", root),
-        goals,
-        executor: None,
+    let error = |reason: String| GenSessionOutcome {
+        results: Vec::new(),
+        tokens: 0,
+        failed: Some(reason),
     };
-    let recorded_before = |ledger: &Ledger, id: &str| -> Option<String> {
-        ledger.entities.get(&slug_of(id)).and_then(|e| e.recorded_at.clone())
-    };
-    let before: Vec<Option<String>> = {
+    let signature = json!({"settings":gs,"root":root,"ids":ids,
+        "facts":ids.iter().map(|id| fact_hash(store,id)).collect::<Vec<_>>()});
+    let key = progress::command_key("generation-session", &store.out, &signature);
+    let mut saved = match progress::Progress::load(key, signature, || {
+        let batch = crate::runner::BatchRun {
+            id: format!("g:generate:{root}"),
+            executor: None,
+            goals: ids
+                .iter()
+                .map(|id| crate::model::Goal {
+                    id: format!("g:generate:{id}"),
+                    kind: "generate".into(),
+                    class: "compile".into(),
+                    mandatory: true,
+                    target: id.clone(),
+                    unit: "entity".into(),
+                    change: json!({"goal":"generate"}),
+                    ..Default::default()
+                })
+                .collect(),
+        };
         let ledger = Ledger::load(&store.out);
-        ids.iter().map(|id| recorded_before(&ledger, id)).collect()
+        GenSessionState {
+            session: progress::BatchProgress::new(batch, &store.out),
+            before: ids
+                .iter()
+                .map(|id| {
+                    ledger
+                        .entities
+                        .get(&slug_of(id))
+                        .and_then(|row| row.recorded_at.clone())
+                })
+                .collect(),
+            result: None,
+        }
+    }) {
+        Ok(saved) => saved,
+        Err(reason) => return error(reason),
     };
-    let report = runner.run_item(&batch, trace).await;
-    let (tokens, failed) = (report.tokens, report.failed.clone());
-    let outcome = |results| GenSessionOutcome { results, tokens, failed: failed.clone() };
-    if let Some(e) = report.failed {
-        return outcome(ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect());
+    if let Some(result) = &saved.data.result {
+        return result.clone();
     }
-    // Success is the gate's word over a record this session wrote: the record landed
-    // with current facts and existing files. A record the session never moved is no
-    // generation, whatever the ledger held before, and the failure names why the
-    // session stopped. Whether run_tests ran is the verify goal's business here; a
-    // session that recorded and ended resolves the goal at the next derivation
-    // (docs/compiler/goals/generate.md#gate, docs/consumers/gen.md#the-ledger).
+    if let Err(reason) = saved.save().await {
+        return error(reason);
+    }
+    let report = match saved.data.session.report.clone() {
+        Some(report) => report,
+        None => match saved.data.session.committed_report(&store.out) {
+            Some(report) => report,
+            None => runner.run_item(&saved.data.session.batch, trace).await,
+        },
+    };
+    if let Some(reason) = progress::interruption(&report) {
+        return error(reason);
+    }
+    saved.data.session.report = Some(report.clone());
+    if let Err(reason) = saved.save().await {
+        return error(reason);
+    }
     let after = Ledger::load(&store.out);
     let results = ids
         .iter()
-        .zip(before)
-        .map(|(id, was)| {
-            if recorded_before(&after, id) == was {
-                let why = report
-                    .stopped
-                    .clone()
-                    .unwrap_or_else(|| "the session ended without record_generation".to_string());
-                (id.clone(), Err(format!("no record landed for `{}` in this session: {}", id, why)))
+        .zip(&saved.data.before)
+        .map(|(id, before)| {
+            let result = if let Some(reason) = &report.failed {
+                Err(reason.clone())
+            } else if after
+                .entities
+                .get(&slug_of(id))
+                .and_then(|row| row.recorded_at.clone())
+                == *before
+            {
+                Err(format!(
+                    "no record landed for `{id}` in this session: {}",
+                    report
+                        .stopped
+                        .as_deref()
+                        .unwrap_or("the session ended without record_generation")
+                ))
             } else {
-                (id.clone(), gate(store, gs, id, false))
-            }
+                gate(store, gs, id, false)
+            };
+            (id.clone(), result)
         })
         .collect();
-    outcome(results)
+    let outcome = GenSessionOutcome {
+        results,
+        tokens: report.tokens,
+        failed: report.failed,
+    };
+    saved.data.result = Some(outcome.clone());
+    if let Err(reason) = saved.save().await {
+        return error(reason);
+    }
+    outcome
 }
 
 // What one generate session came to: the per-entity results, and what the session
 // spent and how it failed, for the run's dead-endpoint breaker.
+#[derive(Clone, Serialize, Deserialize)]
 struct GenSessionOutcome {
     results: Vec<(String, Result<usize, String>)>,
     tokens: u64,
@@ -4539,6 +4732,13 @@ fn snapshot_baseline(
     }
 }
 
+fn snapshot_pipeline_baseline(out: &Path, gs: &GenSettings, rel: &str,
+    seen: &mut std::collections::HashSet<String>, key: &str) -> Result<(), String> {
+    if pipeline::first_baseline(key, rel)? { snapshot_baseline(out, gs, rel, seen); }
+    else { seen.insert(rel.into()); }
+    Ok(())
+}
+
 // What the decided medium demands of the file this task writes. The decision is
 // already made; this states what follows from it, in the imperative.
 fn medium_directive(medium: &Option<Medium>) -> String {
@@ -4564,6 +4764,19 @@ pub async fn gen_one(
     gs: &GenSettings,
     id: &str,
     task: &serde_json::Value,
+) -> Result<usize, String> {
+    pipeline::run(store, runner, gs, id, task).await
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn gen_one_inner(
+    store: &Store,
+    runner: &dyn crate::runner::SessionRunner,
+    gs: &GenSettings,
+    id: &str,
+    task: &serde_json::Value,
+    ledger_snapshot: &Ledger,
+    baseline_key: &str,
 ) -> Result<usize, String> {
     let mut baselined: std::collections::HashSet<String> = Default::default();
     let instructions = task["instructions"].as_str().unwrap_or_default();
@@ -4622,7 +4835,7 @@ pub async fn gen_one(
     // File ownership: a path recorded for an entity outside this one's component
     // group is off limits. One corrective retry, then the task fails.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-    let ledger = Ledger::load(&store.out);
+    let ledger = ledger_snapshot;
     let owner_of = |path: &str| -> Option<String> { file_owner(store, &ledger, id, path) };
     let groups = task["requirementGroups"]
         .as_array()
@@ -4669,7 +4882,7 @@ pub async fn gen_one(
                 &format!("gen {}", id),
                 &format!("product {}/{}", k + 1, parts),
             ).await
-            .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
+            .map_err(|e| pipeline::step_error(format!("product part {}/{}", k + 1, parts), e))?;
         if k == 0 {
             // Shape gets one corrective round here too: the product step is where a
             // long prompt most often costs the FILE line
@@ -4688,7 +4901,7 @@ pub async fn gen_one(
                             &format!("gen {}", id),
                             "product format retry",
                         ).await
-                        .map_err(|e| format!("product format retry: {}", e))?;
+                        .map_err(|e| pipeline::step_error("product format retry".into(), e))?;
                     parse_file_replies(&again)?
                 }
             };
@@ -4705,7 +4918,7 @@ pub async fn gen_one(
                 if let Some(parent) = full.parent() {
                     crate::vfs::create_dir_all(parent).ok();
                 }
-                snapshot_baseline(&store.out, gs, &p, &mut baselined);
+                snapshot_pipeline_baseline(&store.out, gs, &p, &mut baselined, baseline_key)?;
                 if crate::vfs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
                     extra_written.push(p);
                 }
@@ -4722,7 +4935,7 @@ pub async fn gen_one(
                         &format!("gen {}", id),
                         "product retry",
                     ).await
-                    .map_err(|e| format!("product retry: {}", e))?;
+                    .map_err(|e| pipeline::step_error("product retry".into(), e))?;
                 let (p, b) = parse_file_reply(&reply2)?;
                 if let Some(o) = owner_of(&p) {
                     return Err(format!("product path `{}` belongs to entity `{}`", p, o));
@@ -4745,7 +4958,7 @@ pub async fn gen_one(
     if let Some(p) = product_path.parent() {
         crate::vfs::create_dir_all(p).ok();
     }
-    snapshot_baseline(&store.out, gs, &product_rel, &mut baselined);
+    snapshot_pipeline_baseline(&store.out, gs, &product_rel, &mut baselined, baseline_key)?;
     crate::vfs::write(&product_path, &code).map_err(|e| e.to_string())?;
 
     // Tests: the model names the file too, or declares nothing programmatic.
@@ -4770,7 +4983,7 @@ pub async fn gen_one(
     );
     let tests_reply = runner
         .ask(instructions, &tests_user, &format!("gen {}", id), "tests").await
-        .map_err(|e| format!("tests file: {}", e))?;
+        .map_err(|e| pipeline::step_error("tests file".into(), e))?;
     let mut files = vec![product_rel.clone()];
     // Files the manifest declares as the deliverable's, filled in once it is parsed
     // (docs/consumers/gen.md#file-ownership-and-conventions).
@@ -4793,7 +5006,7 @@ pub async fn gen_one(
                     if let Some(parent) = full.parent() {
                         crate::vfs::create_dir_all(parent).ok();
                     }
-                    snapshot_baseline(&store.out, gs, &p, &mut baselined);
+                    snapshot_pipeline_baseline(&store.out, gs, &p, &mut baselined, baseline_key)?;
                     if crate::vfs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
                         extra_written.push(p);
                     }
@@ -4812,7 +5025,7 @@ pub async fn gen_one(
                         &format!("gen {}", id),
                         "tests format retry",
                     ).await
-                    .map_err(|e| format!("tests format retry: {}", e))?;
+                    .map_err(|e| pipeline::step_error("tests format retry".into(), e))?;
                 if again.trim() == "NONE" {
                     None
                 } else {
@@ -4828,7 +5041,7 @@ pub async fn gen_one(
             );
                 let reply2 = runner
                     .ask(instructions, &retry, &format!("gen {}", id), "tests retry").await
-                    .map_err(|e| format!("tests retry: {}", e))?;
+                    .map_err(|e| pipeline::step_error("tests retry".into(), e))?;
                 let (p, b) =
                     parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
                 if let Some(o) = owner_of(&p) {
@@ -4843,7 +5056,7 @@ pub async fn gen_one(
             if let Some(p) = tests_path.parent() {
                 crate::vfs::create_dir_all(p).ok();
             }
-            snapshot_baseline(&store.out, gs, &tests_rel, &mut baselined);
+            snapshot_pipeline_baseline(&store.out, gs, &tests_rel, &mut baselined, baseline_key)?;
             crate::vfs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
             files.push(tests_rel.clone());
         }
@@ -4914,7 +5127,7 @@ pub async fn gen_one(
             &format!("gen {}", id),
             "manifest",
         ).await
-        .map_err(|e| format!("manifest: {}", e))?;
+        .map_err(|e| pipeline::step_error("manifest".into(), e))?;
     let parse_manifest = |reply: &str| -> Result<serde_json::Value, String> {
         let text = strip_fences(reply);
         let start = text.find('{').ok_or("the reply held no JSON object")?;
@@ -4937,7 +5150,7 @@ pub async fn gen_one(
                     &format!("gen {}", id),
                     "manifest format retry",
                 ).await
-                .map_err(|e| format!("manifest format retry: {}", e))?;
+                .map_err(|e| pipeline::step_error("manifest format retry".into(), e))?;
             parse_manifest(&again).map_err(|e| format!("manifest JSON: {}", e))?
         }
     };
@@ -5070,12 +5283,11 @@ pub async fn gen_one(
             serde_json::to_string_pretty(&manifest_json).unwrap_or_default(),
             mismatches.join("\n")
         );
-        if let Ok(reply2) = runner.ask(
-            instructions,
-            &retry,
-            &format!("gen {}", id),
-            "manifest retry",
-        ).await {
+        let retry_reply = runner.ask(instructions, &retry, &format!("gen {}", id), "manifest retry").await;
+        if let Err(reason) = &retry_reply {
+            if crate::session_recovery::is_interruption(reason) { return Err(reason.clone()); }
+        }
+        if let Ok(reply2) = retry_reply {
             if let Ok(mut v) = parse_manifest(&reply2) {
                 // Merge over the first answer: a retry that forgot a field keeps it.
                 for key in ["supportFiles", "build", "choices"] {
@@ -5113,7 +5325,7 @@ pub async fn gen_one(
             if let Some(parent) = p.parent() {
                 crate::vfs::create_dir_all(parent).ok();
             }
-            snapshot_baseline(&store.out, gs, path, &mut baselined);
+            snapshot_pipeline_baseline(&store.out, gs, path, &mut baselined, baseline_key)?;
             crate::vfs::write(&p, content).map_err(|e| e.to_string())?;
             support_files.push(path.to_string());
         }

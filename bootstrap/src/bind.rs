@@ -723,6 +723,18 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
 // command tools over the deliverable, the same harness the generation session uses.
 // Success is the ledger's word: the session must have left record_binding's row
 // with the current statement hash. Mirrors docs/consumers/bind.md#when-binding-runs.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BindCommand {
+    owed: Vec<Value>,
+    cursor: usize,
+    active: Option<crate::gen::progress::BatchProgress>,
+    bound: u64,
+    failures: u64,
+    streak: usize,
+    stopped: Option<String>,
+    result: Option<Value>,
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 pub async fn run_all(
     store: &Store,
@@ -731,36 +743,45 @@ pub async fn run_all(
     targets: &[String],
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
-    let owed: Vec<Value> = pending(store, gs)
-        .into_iter()
-        .filter(|t| {
-            targets.is_empty()
-                || targets.iter().any(|x| {
-                    let x = store.resolve_id(x);
-                    t["requirement"] == x || t["entity"] == x
-                })
-        })
-        .collect();
-    if owed.is_empty() {
-        return Ok(json!({"bound": 0, "failures": 0, "note": "every requirement is bound"}));
+    use crate::gen::progress::{self, BatchProgress, Progress};
+    let signature = json!({"settings":gs,"targets":targets});
+    let key = progress::command_key("bind", &store.out, &signature);
+    let mut command = Progress::load(key, signature, || BindCommand {
+        owed: pending(store, gs)
+            .into_iter()
+            .filter(|target| {
+                targets.is_empty()
+                    || targets.iter().any(|id| {
+                        let id = store.resolve_id(id);
+                        target["requirement"] == id || target["entity"] == id
+                    })
+            })
+            .collect(),
+        cursor: 0,
+        active: None,
+        bound: 0,
+        failures: 0,
+        streak: 0,
+        stopped: None,
+        result: None,
+    })?;
+    if let Some(result) = &command.data.result {
+        return Ok(result.clone());
     }
+    command.save().await?;
     crate::vfs::create_dir_all(&gs.deliverable).ok();
-    let (mut bound, mut failures) = (0u64, 0u64);
-    // The dead-endpoint breaker a build has: sessions failing in a row without
-    // spending a token are the endpoint's, and the rest of the requirements are not
-    // run through it (docs/consumers/gen.md#command).
-    let (mut streak, mut stopped): (usize, Option<String>) = (0, None);
-    for t in &owed {
+    while command.data.cursor < command.data.owed.len() {
+        if command.data.stopped.is_some() {
+            break;
+        }
         if trace.is_cancelled() {
             break;
         }
-        // A test is written in the medium's toolchain, so a deliverable with no decided
-        // medium decides it before the bind, the same way the first generation task
-        // does. Checked per goal: a record that found the medium diverged from the
-        // recorded commands while nothing is generated clears it, and the next bind
-        // re-decides it from those commands
-        // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-        {
+        if crate::session_recovery::suspension_requested() {
+            command.save().await?;
+            return Err("suspended".into());
+        }
+        if command.data.active.is_none() {
             let mut ledger = Ledger::load(&store.out);
             if ledger.medium.is_none() {
                 let medium = crate::gen::decide_medium(store, runner, &gs.deliverable).await?;
@@ -768,57 +789,122 @@ pub async fn run_all(
                 ledger.medium = Some(medium);
                 ledger.save(&store.out);
             }
+            let target = &command.data.owed[command.data.cursor];
+            let rid = target["requirement"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            trace.line(
+                "bind",
+                &format!("{} ({})", rid, target["reason"].as_str().unwrap_or("")),
+            );
+            let batch = crate::runner::BatchRun::single(crate::model::Goal {
+                id: format!("g:bind:{rid}"),
+                kind: "bind".into(),
+                class: "compile".into(),
+                mandatory: true,
+                target: rid,
+                unit: "requirement".into(),
+                change: json!({"goal":"bind","reason":target["reason"]}),
+                ..Default::default()
+            });
+            command.data.active = Some(BatchProgress::new(batch, &store.out));
+            command.save().await?;
         }
-        let rid = t["requirement"].as_str().unwrap_or_default().to_string();
-        trace.line(
-            "bind",
-            &format!("{} ({})", rid, t["reason"].as_str().unwrap_or("")),
+        let active = command.data.active.as_ref().unwrap();
+        let report = match active.report.clone() {
+            Some(report) => report,
+            None => match active.committed_report(&store.out) {
+                Some(report) => report,
+                None => runner.run_item(&active.batch, trace).await,
+            },
+        };
+        if let Some(reason) = progress::interruption(&report) {
+            return Err(reason);
+        }
+        command.data.active.as_mut().unwrap().report = Some(report.clone());
+        command.save().await?;
+        let rid = command.data.active.as_ref().unwrap().batch.goals[0]
+            .target
+            .clone();
+        let (next, down) = crate::reconcile::breaker_step(
+            command.data.streak,
+            report.tokens,
+            report.failed.as_deref(),
         );
-        let batch = crate::runner::BatchRun::single(crate::model::Goal {
-            id: format!("g:bind:{}", rid),
-            kind: "bind".into(),
-            class: "compile".into(),
-            mandatory: true,
-            target: rid.clone(),
-            unit: "requirement".into(),
-            change: json!({"goal": "bind", "reason": t["reason"]}),
-            cause: None,
-            state: crate::model::GoalState::Open,
-            hints: Vec::new(),
-        });
-        let out = runner.run_item(&batch, trace).await;
-        let (next, down) = crate::reconcile::breaker_step(streak, out.tokens, out.failed.as_deref());
-        streak = next;
-        if let Some(e) = out.failed {
-            trace.line("bind", &format!("{} failed: {}", rid, e));
-            failures += 1;
-            if down && streak >= crate::limits::ENDPOINT_BREAKER {
-                let left = owed.len() as u64 - bound - failures;
-                trace.line(
-                    "bind",
-                    &format!("stopped: the agent failed {} session(s) in a row without spending a token ({}); {} requirement(s) not tried", streak, e, left),
-                );
-                stopped = Some(e);
-                break;
+        command.data.streak = next;
+        if let Some(error) = report.failed {
+            trace.line("bind", &format!("{rid} failed: {error}"));
+            command.data.failures += 1;
+            if down && command.data.streak >= crate::limits::ENDPOINT_BREAKER {
+                command.data.stopped = Some(error);
             }
-            continue;
+        } else {
+            match gate(store, gs, &rid) {
+                Ok(()) => command.data.bound += 1,
+                Err(error) => {
+                    trace.line("bind", &format!("{rid} still owed: {error}"));
+                    command.data.failures += 1;
+                }
+            }
         }
-        // Success is the gate's word, the same check mark_goal_done faces
-        // (docs/compiler/goals/bind.md#gate).
-        match gate(store, gs, &rid) {
-            Ok(()) => bound += 1,
-            Err(e) => {
-                trace.line("bind", &format!("{} still owed: {}", rid, e));
-                failures += 1;
-            }
+        command.data.active.take().unwrap().finish(&store.out);
+        command.data.cursor += 1;
+        command.save().await?;
+        if command.data.stopped.is_some() {
+            break;
         }
     }
-    Ok(json!({"bound": bound, "failures": failures, "stopped": stopped}))
+    let result = if command.data.owed.is_empty() {
+        json!({"bound":0,"failures":0,"note":"every requirement is bound"})
+    } else {
+        json!({"bound":command.data.bound,"failures":command.data.failures,"stopped":command.data.stopped})
+    };
+    command.data.result = Some(result.clone());
+    command.save().await?;
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_resumed_binding_command_keeps_its_selected_row_and_accounting() {
+        use crate::gen::progress::{self, BatchProgress, Progress};
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        use crate::session::Trace;
+        struct NoReplay;
+        impl SessionRunner for NoReplay {
+            fn agent_name(&self) -> String { "no-replay".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, _: &BatchRun, _: &Trace) -> SessionReport { panic!("saved report must not run again") }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { panic!("saved active row must not decide a medium again") }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&Trace>) -> Result<String,String> { unreachable!() }
+        }
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let _scope = crate::session_recovery::Scope::enter(None);
+        let store = Store { out: "/project/.jazyk/main".into(), ..Default::default() };
+        let gs = GenSettings::from_out(&store.out);
+        let signature = json!({"settings":gs,"targets":[]});
+        let key = progress::command_key("bind", &store.out, &signature);
+        let batch = BatchRun::single(crate::model::Goal {
+            id:"g:bind:req:second".into(), target:"req:second".into(), kind:"bind".into(), ..Default::default()
+        });
+        let mut active = BatchProgress::new(batch, &store.out);
+        active.report = Some(SessionReport { applied:0, rounds:1,tokens:9,cached:0,
+            failed:Some("ordinary rejected binding".into()),resolved:Vec::new(),stopped:None });
+        let progress = Progress::load(key, signature, || BindCommand {
+            owed:vec![json!({"requirement":"req:first"}),json!({"requirement":"req:second"})],
+            cursor:1,active:Some(active),bound:1,failures:2,streak:1,stopped:None,result:None,
+        }).unwrap();
+        progress.save().unwrap();
+        let trace = Trace::to_sink(crate::session::TraceLevel::Normal,std::sync::Arc::new(|_|{}),Default::default());
+        let result = run_all(&store,&NoReplay,&gs,&[],&trace).unwrap();
+        assert_eq!(result["bound"],1);
+        assert_eq!(result["failures"],3);
+        assert_eq!(run_all(&store,&NoReplay,&gs,&[],&trace).unwrap(),result);
+    }
 
     fn tmp_store() -> Store {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

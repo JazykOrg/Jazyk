@@ -74,6 +74,22 @@ pub(crate) fn set_parent(key: &str, value: Value) {
     STATE.with(|s| { s.borrow_mut().parent.insert(key.into(), value); });
 }
 
+pub(crate) fn batch_key(out: &std::path::Path, id: &str) -> String {
+    format!("batch:{}:{id}", out.display())
+}
+
+pub(crate) fn saved_usage(key: &str) -> Option<(u64, u64, u32)> {
+    STATE.with(|s| {
+        let state = s.borrow();
+        let frame = state.frames.iter().find(|f| f.key == key)?;
+        let tokens = frame.harness.usage.iter().map(|u| u.usage.total_tokens
+            .unwrap_or_else(|| u.usage.input_tokens.unwrap_or(0) + u.usage.output_tokens.unwrap_or(0))
+            .max(0) as u64).sum();
+        let cached = frame.harness.usage.iter().map(|u| u.usage.cache_read_input_tokens.unwrap_or(0).max(0) as u64).sum();
+        Some((tokens, cached, frame.harness.rounds))
+    })
+}
+
 fn capsule() -> Result<Value, String> {
     STATE.with(|s| {
         let state = s.borrow();

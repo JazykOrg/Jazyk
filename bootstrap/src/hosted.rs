@@ -673,17 +673,17 @@ mod tests {
         files.insert("docs/main.md".into(), b"# Main\n\nThe system shall respond.\n".to_vec());
         let mut w = Workspace::new(files).unwrap();
         let e = Execution::default();
-        let doc = w.request("GET", "/api/docs/content?path=docs/main.md", "", &e).unwrap();
+        let doc = w.request_test("GET", "/api/docs/content?path=docs/main.md", "", &e).unwrap();
         assert_eq!(doc.status, 409, "{}", String::from_utf8_lossy(&doc.body));
         assert!(String::from_utf8_lossy(&doc.body).contains("no-document-set"));
-        let job = w.request("POST", "/api/jobs", r#"{"kind":"audit"}"#, &e).unwrap();
+        let job = w.request_test("POST", "/api/jobs", r#"{"kind":"audit"}"#, &e).unwrap();
         assert_eq!(job.status, 409, "{}", String::from_utf8_lossy(&job.body));
         assert!(String::from_utf8_lossy(&job.body).contains("Add one under Document sets"));
-        let text = w.request("GET", "/api/project/text?path=docs/main.md", "", &e).unwrap();
+        let text = w.request_test("GET", "/api/project/text?path=docs/main.md", "", &e).unwrap();
         assert_eq!(text.status, 200);
         assert!(String::from_utf8_lossy(&text.body).contains("The system shall respond."));
         // The old paths come back as the first set's suggestion, and nothing is written.
-        let sets = w.request("GET", "/api/sets", "", &e).unwrap();
+        let sets = w.request_test("GET", "/api/sets", "", &e).unwrap();
         let v: Value = serde_json::from_slice(&sets.body).unwrap();
         assert_eq!(v["suggested"]["docs"], json!(["docs/**/*.md"]), "{}", v);
         assert_eq!(v["suggested"]["roots"], json!(["docs/main.md"]), "{}", v);
@@ -903,8 +903,29 @@ mod tests {
         assert!(!crate::vfs::is_scoped());
     }
 
+    impl Workspace {
+        // Existing fixture providers stay synchronous; every production invocation
+        // below still exercises the new owned asynchronous host interface.
+        fn request_test(&mut self, method: &str, path: &str, body: &str, execution: &Execution) -> Result<Reply, String> {
+            let mut execution = execution.clone();
+            if execution.transport_async.is_none() {
+                execution.transport_async = execution.transport.clone().map(|source| Arc::new(move |body: String| {
+                    let source = source.clone();
+                    Box::pin(async move { source(&body) }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<String,String>> + Send>>
+                }) as ModelAsyncTransport);
+            }
+            if execution.transport_async_stream.is_none() {
+                execution.transport_async_stream = execution.transport_stream.clone().map(|source| Arc::new(move |body: String, sink: ModelDeltaSink| {
+                    let source = source.clone();
+                    Box::pin(async move { source(&body, &mut |field, text| sink(field,text)) }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<String,String>> + Send>>
+                }) as ModelAsyncStreamTransport);
+            }
+            self.request(method,path,body,&execution)
+        }
+    }
+
     fn value(w: &mut Workspace, method: &str, path: &str, body: Value, e: &Execution) -> Value {
-        let reply = w.request(method, path, &body.to_string(), e).unwrap();
+        let reply = w.request_test(method, path, &body.to_string(), e).unwrap();
         assert!(
             reply.status < 400,
             "{}",
@@ -914,6 +935,64 @@ mod tests {
     }
     fn model_reply(content: &str) -> String {
         json!({"choices":[{"message":{"role":"assistant","content":content}}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string()
+    }
+    #[test]
+    fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
+        for phase in ["saved_model", "after_tool", "finished"] {
+            let mut w = workspace("Recovery");
+            let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
+            let path = format!("/api/chat/sessions/{}/prompt", chat["id"].as_str().unwrap());
+            let body = json!({"text":"Create the recovery document.","messageId":"accepted-1","turnId":"turn-1"});
+            let calls = Arc::new(AtomicUsize::new(0));
+            let model_calls = calls.clone();
+            let model: ModelAsyncTransport = Arc::new(move |request| {
+                let model_calls = model_calls.clone();
+                Box::pin(async move {
+                    let request: Value = serde_json::from_str(&request).unwrap();
+                    assert!(request["_jazyk"]["requestId"].is_string());
+                    let n = model_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(if n == 0 {
+                        json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"write-1","type":"function","function":{"name":"write_document","arguments":json!({"path":"docs/recovery.md","text":"# Recovered\n\nSaved once.\n"}).to_string()}}]}}],"usage":{"total_tokens":13,"prompt_tokens":10,"completion_tokens":3}}).to_string()
+                    } else {
+                        assert_eq!(n, 1, "A completed provider call was replayed at {phase}");
+                        model_reply("Recovery complete.")
+                    })
+                })
+            });
+            let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+            let checkpoint = saved.clone();
+            let injected = Arc::new(AtomicBool::new(false));
+            let inject = injected.clone();
+            let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+                let checkpoint = checkpoint.clone();
+                let inject = inject.clone();
+                Box::pin(async move {
+                    let next = capsule["sequence"].as_u64().unwrap() + 1;
+                    capsule["sequence"] = json!(next);
+                    let current_phase = capsule["frames"].as_array().and_then(|frames| frames.last())
+                        .and_then(|frame| frame["boundary"]["phase"].as_str());
+                    let fail = current_phase == Some(phase) && !inject.swap(true, Ordering::SeqCst);
+                    *checkpoint.lock().unwrap() = Some((capsule, files));
+                    if fail { Err("checkpoint-failed: injected process loss after durable save".into()) } else { Ok(next) }
+                })
+            });
+            let execution = Execution { model:"fixture".into(),transport_async:Some(model.clone()),checkpoint:Some(sink),..Default::default() };
+            let stopped = value(&mut w,"POST",&path,body.clone(),&execution);
+            assert_eq!(stopped["stop"],"suspended", "{phase}: {stopped}");
+            let (capsule, files) = saved.lock().unwrap().clone().unwrap();
+            crate::session_recovery::validate(&capsule).unwrap();
+            assert_eq!(files.contains_key("docs/recovery.md"), phase != "saved_model");
+            let mut restored = Workspace::new(files).unwrap();
+            let resumed = Execution { model:"fixture".into(),transport_async:Some(model),resume:Some(capsule),..Default::default() };
+            let complete = value(&mut restored,"POST",&path,body,&resumed);
+            assert_eq!(complete["stop"],"end_turn", "{phase}: {complete}");
+            assert_eq!(calls.load(Ordering::SeqCst),2, "{phase}");
+            assert_eq!(restored.snapshot()["docs/recovery.md"], b"# Recovered\n\nSaved once.\n");
+            let timeline = value(&mut restored,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
+            let updates = timeline["updates"].as_array().unwrap();
+            assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "user_message").count(),1,"{phase}");
+            assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "turn_end").count(),1,"{phase}");
+        }
     }
     fn navigation_model(
         name: &'static str,
@@ -1025,7 +1104,7 @@ mod tests {
             assert_eq!(scope.snapshot(), before);
         }
         let reply = w
-            .request(
+            .request_test(
                 "GET",
                 "/api/project/file?path=picture.png",
                 "",
@@ -1110,7 +1189,7 @@ mod tests {
         let id = chat["id"].as_str().unwrap();
         // A reopened workspace can lack updates already committed to the event DB.
         // Its empty conversation book is behind that DB's durable cursor of 800.
-        let result = w.request("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1,"afterN":800}).to_string(), &execution).unwrap();
+        let result = w.request_test("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1,"afterN":800}).to_string(), &execution).unwrap();
         assert_eq!(result.status, 200, "{}", String::from_utf8_lossy(&result.body));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         let timeline = value(&mut w, "GET", &format!("/api/chat/sessions/{id}"), Value::Null, &Execution::default());
@@ -1131,12 +1210,12 @@ mod tests {
     #[test]
     fn owned_jobs_reject_unknown_conversation_before_execution() {
         let mut w = workspace("Ownership");
-        let reply = w.request("POST", "/api/jobs", r#"{"kind":"compile","conversationId":"missing","jobId":42}"#, &Execution::default()).unwrap();
+        let reply = w.request_test("POST", "/api/jobs", r#"{"kind":"compile","conversationId":"missing","jobId":42}"#, &Execution::default()).unwrap();
         assert_eq!(reply.status, 404);
         let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
-        let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"]}).to_string(), &Execution::default()).unwrap();
+        let reply = w.request_test("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"]}).to_string(), &Execution::default()).unwrap();
         assert_eq!(reply.status, 400);
-        let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"],"jobId":42,"afterN":1u64 << 53}).to_string(), &Execution::default()).unwrap();
+        let reply = w.request_test("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"],"jobId":42,"afterN":1u64 << 53}).to_string(), &Execution::default()).unwrap();
         assert_eq!(reply.status, 400, "the cursor must stay within safe JSON event integers");
         assert!(!w.snapshot().keys().any(|k| k.contains("graph/")));
     }
@@ -1268,7 +1347,7 @@ mod tests {
             ..Default::default()
         };
         assert!(restored
-            .request(
+            .request_test(
                 "POST",
                 "/api/chat/sessions/chat-1/prompt",
                 "{\"text\":\"panic\"}",
@@ -1458,7 +1537,7 @@ mod tests {
             format!("version: {}\n", crate::store::STORE_VERSION).into_bytes(),
         );
         let reply = w
-            .request("GET", "/api/capabilities", "", &Execution::default())
+            .request_test("GET", "/api/capabilities", "", &Execution::default())
             .unwrap();
         assert_eq!(reply.status, 200);
         let files = w.snapshot();

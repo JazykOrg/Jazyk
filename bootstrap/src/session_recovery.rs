@@ -11,6 +11,7 @@ const OPERATIONS: &str = "jazyk-gdk-1";
 #[derive(Clone, Serialize, Deserialize)]
 struct Frame {
     key: String,
+    boundary: CheckpointBoundary,
     harness: HarnessState,
     mcp: Value,
 }
@@ -206,7 +207,7 @@ impl Recovery for McpRecovery<'_> {
         -> LocalFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let mcp = self.server.map(McpServer::checkpoint).transpose()?.unwrap_or(Value::Null);
-            let frame = Frame { key: self.key.clone(), harness: harness.clone(), mcp };
+            let frame = Frame { key: self.key.clone(), boundary, harness: harness.clone(), mcp };
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
                 for id in &harness.delivered_inputs {
@@ -216,7 +217,6 @@ impl Recovery for McpRecovery<'_> {
                     *previous = frame;
                 } else { state.frames.push(frame); }
             });
-            let _ = boundary;
             save().await
         })
     }

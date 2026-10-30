@@ -2965,6 +2965,30 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_generation_exposes_its_target_and_round_limit_without_an_early_halt() {
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let out = std::path::Path::new("/project/.jazyk/generation-budget");
+        let (store,gs) = fixture(out);
+        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.rs"),"fn prior() {}\n").unwrap();
+        mark(&store,"ent:cart",None,&json!({"files":["cart.rs"],"tests":[]}),&gs).unwrap();
+        let mut ledger = Ledger::load(out);
+        ledger.medium=Some(Medium {form:"Rust".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new()});
+        ledger.save(out);
+        let runner = StubRunner { record:false,failed:None,stopped:Some("the session ran out of rounds after 24".into()),store:store.clone(),gs:gs.clone() };
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
+        let result = run_selected(&store,&runner,&gs,&[],true,&trace,false).unwrap();
+        assert_eq!(result["failures"],1);
+        assert!(result["stopped"].is_null());
+        let error = result["error"].as_str().unwrap();
+        assert!(error.contains("ent:cart") && error.contains("no record landed") && error.contains("24"),"{result}");
+        let mut old = serde_json::to_value(GenCommand::default()).unwrap();
+        old.as_object_mut().unwrap().remove("first_error");
+        let restored:GenCommand = serde_json::from_value(old).unwrap();
+        assert!(restored.first_error.is_none());
+    }
+
+    #[test]
     fn a_resumed_generation_command_keeps_its_group_and_counts_the_result_once() {
         let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
         let _scope = crate::session_recovery::Scope::enter(None);
@@ -4303,6 +4327,8 @@ struct GenCommand {
     failures: u64,
     streak: usize,
     stopped: Option<String>,
+    #[serde(default)]
+    first_error: Option<String>,
     result: Option<Value>,
 }
 
@@ -4515,6 +4541,10 @@ pub(crate) async fn run_selected(
                     command.data.regenerated += 1;
                 }
                 Err(error) => {
+                    if outcome.failed.is_none() {
+                        command.data.first_error.get_or_insert_with(||
+                            format!("Generation {id} incomplete: {error}"));
+                    }
                     trace.event(TraceEvent::GenEntityFailed {
                         entity: id,
                         stage: "generate".into(),
@@ -4563,8 +4593,11 @@ pub(crate) async fn run_selected(
             }
         }
     };
-    let result = json!({"regenerated":command.data.regenerated,"skipped":command.data.skipped,
+    let mut result = json!({"regenerated":command.data.regenerated,"skipped":command.data.skipped,
         "failures":command.data.failures,"stopped":command.data.stopped,"build":build});
+    if let Some(error) = &command.data.first_error {
+        result["error"] = json!(error);
+    }
     command.data.result = Some(result.clone());
     command.save().await?;
     Ok(result)

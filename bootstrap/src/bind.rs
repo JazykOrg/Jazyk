@@ -732,6 +732,8 @@ struct BindCommand {
     failures: u64,
     streak: usize,
     stopped: Option<String>,
+    #[serde(default)]
+    first_error: Option<String>,
     result: Option<Value>,
 }
 
@@ -763,6 +765,7 @@ pub async fn run_all(
         failures: 0,
         streak: 0,
         stopped: None,
+        first_error: None,
         result: None,
     })?;
     if let Some(result) = &command.data.result {
@@ -843,8 +846,11 @@ pub async fn run_all(
                     trace.line("bind", &format!("{rid} failed: {error}"));
                     command.data.stopped = Some(error);
                 } else {
-                    let error = gate_error;
-                    trace.line("bind", &format!("{rid} still owed: {error}"));
+                    let reason = report.stopped.as_deref()
+                        .unwrap_or("the session ended without recording the binding");
+                    let error = format!("Binding {rid} incomplete: {reason}; {gate_error}");
+                    command.data.first_error.get_or_insert_with(|| error.clone());
+                    trace.line("bind", &error);
                 }
             }
         }
@@ -855,11 +861,14 @@ pub async fn run_all(
             break;
         }
     }
-    let result = if command.data.owed.is_empty() {
+    let mut result = if command.data.owed.is_empty() {
         json!({"bound":0,"failures":0,"note":"every requirement is bound"})
     } else {
         json!({"bound":command.data.bound,"failures":command.data.failures,"stopped":command.data.stopped})
     };
+    if let Some(error) = &command.data.first_error {
+        result["error"] = json!(error);
+    }
     command.data.result = Some(result.clone());
     command.save().await?;
     Ok(result)
@@ -868,6 +877,62 @@ pub async fn run_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_binding_keeps_the_budget_reason_and_continues_to_the_next_target() {
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        struct Worker { store:Store, gs:GenSettings, reason:Option<String>, calls:std::cell::RefCell<Vec<String>> }
+        impl SessionRunner for Worker {
+            fn agent_name(&self) -> String { "budget-fixture".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, batch:&BatchRun, _: &crate::session::Trace) -> SessionReport {
+                let rid = &batch.goals[0].target;
+                self.calls.borrow_mut().push(rid.clone());
+                if rid == "req:shop-1" {
+                    return SessionReport { applied:0,rounds:24,tokens:240,cached:0,failed:None,resolved:vec![],stopped:self.reason.clone() };
+                }
+                let criteria = crate::gen::criteria_front_matter(rid,None,&self.store.graph.requirements[rid].statement)
+                    + "\nInspect the other items. PASS when listed. FAIL when absent.\n";
+                crate::vfs::create_dir_all(self.gs.deliverable.join("tests")).unwrap();
+                crate::vfs::write(self.gs.deliverable.join("tests/other.md"),criteria).unwrap();
+                record(&self.store,rid,&[],&json!({"kind":"llm","artifact":"tests/other.md","name":"other","run":"llm"}),
+                    &Value::Null,"fail",Some("No implementation exists."),&self.gs).unwrap();
+                SessionReport { applied:0,rounds:1,tokens:10,cached:0,failed:None,resolved:vec![],stopped:None }
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { unreachable!() }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> { unreachable!() }
+        }
+        for reason in [Some("the session ran out of rounds after 24".to_string()),None] {
+            let mut store = tmp_store();
+            store.graph.requirements.insert("req:shop-2".into(),crate::model::Requirement {
+                statement:"The shop shall list other items.".into(),entities:vec!["ent:shop".into()],..Default::default()
+            });
+            let gs = GenSettings { configured:true,deliverable:store.out.join("product"),worker:"agentic".into(),code:vec![] };
+            Ledger { medium:Some(crate::gen::Medium {form:"Markdown".into(),produced:"written".into(),toolchain:"text".into(),artifact:String::new()}),..Default::default() }.save(&store.out);
+            let runner = Worker {store:store.clone(),gs:gs.clone(),reason:reason.clone(),calls:Default::default()};
+            let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
+            let result = run_all(&store,&runner,&gs,&[],&trace).unwrap();
+            assert_eq!(*runner.calls.borrow(),vec!["req:shop-1","req:shop-2"]);
+            assert_eq!(result["bound"],1);
+            assert_eq!(result["failures"],1);
+            assert!(result["stopped"].is_null());
+            let error = result["error"].as_str().unwrap();
+            assert!(error.contains("req:shop-1") && error.contains("no ledger row"),"{result}");
+            assert!(error.contains(reason.as_deref().unwrap_or("the session ended")),"{result}");
+            assert!(Ledger::load(&store.out).requirements.contains_key("req:shop-2"));
+            crate::vfs::remove_dir_all(&store.out).unwrap();
+        }
+    }
+
+    #[test]
+    fn old_binding_progress_without_error_metadata_preserves_its_cursor() {
+        let old = json!({"owed":[{"requirement":"req:first"},{"requirement":"req:second"}],
+            "cursor":1,"active":null,"bound":0,"failures":1,"streak":0,"stopped":null,"result":null});
+        let restored: BindCommand = serde_json::from_value(old).unwrap();
+        assert_eq!(restored.cursor,1);
+        assert_eq!(restored.failures,1);
+        assert!(restored.first_error.is_none());
+    }
 
     #[test]
     fn a_resumed_binding_command_keeps_its_selected_row_and_accounting() {
@@ -896,7 +961,7 @@ mod tests {
             failed:Some("ordinary rejected binding".into()),resolved:Vec::new(),stopped:None });
         let progress = Progress::load(key, signature, || BindCommand {
             owed:vec![json!({"requirement":"req:first"}),json!({"requirement":"req:second"})],
-            cursor:1,active:Some(active),bound:1,failures:2,streak:1,stopped:None,result:None,
+            cursor:1,active:Some(active),bound:1,failures:2,streak:1,stopped:None,first_error:None,result:None,
         }).unwrap();
         progress.save().unwrap();
         let trace = Trace::to_sink(crate::session::TraceLevel::Normal,std::sync::Arc::new(|_|{}),Default::default());

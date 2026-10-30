@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeMap};
 
 const GDK_VERSION: &str = "0.1.0-alpha.13";
-const OPERATIONS: &str = "jazyk-gdk-2";
+const OPERATIONS: &str = "jazyk-gdk-3";
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Frame {
@@ -382,7 +382,7 @@ mod tests {
         assert!(saved["harness"].is_null());
         validate(&saved).unwrap();
         let mut legacy = saved.clone();
-        legacy["operationSet"] = json!("jazyk-gdk-1");
+        legacy["operationSet"] = json!("jazyk-gdk-2");
         assert!(validate(&legacy).unwrap_err().starts_with("checkpoint-incompatible:"));
         {
             let _legacy = Scope::enter(Some(&legacy));

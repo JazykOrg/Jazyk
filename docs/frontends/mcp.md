@@ -408,8 +408,13 @@ generating a handbook tried `report_diagnostic` for one. A coding agent can brin
 own file tools. With `--serve-files`, the serving exposes the
 [generation file tools](../compiler/goals/generate.md#file-and-command-tools).
 Owned worker batches carry the execution contract in their opening prompt.
-`begin_binding` and `begin_generation` keep their full domain contracts in the reply
-and omit that repeated execution contract. Standalone servings keep both contracts.
+A batch containing generation also carries the complete generation contract there.
+Its `begin_generation` replies omit the repeated instructions and retain the current
+entity, facts, manifest and task data. Reopening another entity does not repeat the
+contract. The serving records that delivery when its owned scope opens, before
+any mutation. The protected MCP checkpoint retains it when board batches change
+and across restoration. Binding-only batches keep the full binding contract in `begin_binding`
+and omit the repeated execution contract. Standalone servings keep full instructions.
 The latest successful `begin_generation` or `begin_binding` sets their ownership
 target within that document set. A write renews that target's claim and refuses
 another worker's live claim. Successful recording releases the claim and clears the

@@ -66,6 +66,10 @@ paired results and required provider metadata.
 Compaction uses the same admitted model route and job limits. Its cost counts
 toward the job. Graph loaded-set policy remains independent of conversation
 compaction. Jazyk retains its fixed agent contract and domain skill payloads.
+An owned worker batch also retains its original opening user message verbatim.
+The compacted conversation keeps that message before the summary and continuation.
+Generation and execution contracts in that opening remain authoritative, including
+after restoration. Ordinary chat compaction does not retain an old opening this way.
 
 The request to summarize history is runtime control, not a new user request.
 Jazyk adds this boundary to the upstream compaction prompt. The summary describes
@@ -83,6 +87,11 @@ inference already admitted before the update.
 
 An execution checkpoint is protected operational state. It is separate from graph
 `status.yaml`, diagnostic exports and project files. Its format has its own version.
+The `jazyk-gdk-3` operation set requires the complete generation contract in every
+owned generation opening. Earlier operation sets may lack that contract and cannot
+resume under this guarantee. Release preflight refuses incompatible active capsules.
+Those jobs must finish under their compatible engine before the upgrade. Their
+capsules are preserved, never silently rewritten or discarded.
 
 It records the logical job and command, conversation and accepted inputs, native
 GDK state, operation identities, current batch and parent continuation, complete

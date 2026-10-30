@@ -172,8 +172,8 @@ Durable task receipts distinguish the nearest pending GDK tool invocation. A new
 `run_tests` call receives a fresh task intention, including after source edits in
 the same agent session. Replaying the same invocation retains its original
 intention, destination run, and deadline. Parent compiler progress keeps its
-existing command identity. This contract uses checkpoint operation set
-`jazyk-gdk-2`. Release preflight refuses earlier operation sets, rather than
+existing command identity. This contract was introduced in checkpoint operation set
+`jazyk-gdk-2` and is retained by later operation sets. Release preflight refuses incompatible operation sets, rather than
 guessing which invocation an old task receipt belongs to. Compatible checkpoints
 continue to resume normally.
 Single-row reruns and benchmark checks use the same task adapter. They judge the

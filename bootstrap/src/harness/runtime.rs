@@ -581,6 +581,11 @@ async fn drive(
             let model = ProviderModel::new(provider, config.clone());
             // The summary borrows a snapshot so host checkpoints may mutate owned state.
             let messages = state.conversation.messages().clone();
+            // Worker openings carry immutable batch contracts. Keep the saved
+            // message, not a freshly assembled prompt or the model's summary.
+            let opening = (!args.conversation)
+                .then(|| messages.first().filter(|message| message.role == Role::User).cloned())
+                .flatten();
             let mut templates = Templates::default();
             templates.compaction.push_str("\n\n");
             templates.compaction.push_str(COMPACTION_REQUEST);
@@ -600,11 +605,11 @@ async fn drive(
             .await
             {
                 Ok(summary) => {
-                    state.conversation = Conversation::new_unvalidated([
-                        summary.message,
-                        Message::user()
-                            .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)),
-                    ]);
+                    let mut compacted: Vec<Message> = opening.into_iter().collect();
+                    compacted.push(summary.message);
+                    compacted.push(Message::user()
+                        .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)));
+                    state.conversation = Conversation::new_unvalidated(compacted);
                     record_usage(args, state, summary.usage);
                     state.compacted_at_round = Some(state.rounds);
                     state.transition += 1;

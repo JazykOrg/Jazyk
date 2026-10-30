@@ -3021,13 +3021,14 @@ pub(crate) mod tests {
     // counters (size, sections, criteria, charged sides) start over. A pair never
     // meets a wall (pairs are tier 2, the walled kinds tiers 0, 1, and 3), so the
     // reset of charged sides has no pair to show it; what a wall does show is a
-    // bind goal alone in its batch while the criteria goals of the same tier pack
-    // among themselves, where without the wall the bind would share the first
-    // criteria batch. Mirrors docs/compiler/reconciler.md#batching.
+    // component's Generate and Bind goals together, without the criteria goals of
+    // other localities. Those goals pack among themselves, where without the wall
+    // they would share the ledger batch. Mirrors docs/compiler/reconciler.md#batching.
     #[test]
     fn a_walled_locality_never_shares_a_batch() {
         let mut s = Store::default();
-        // One requirement already carrying a criterion owes a bind and no criteria.
+        // One requirement already carrying a criterion owes development and a bind,
+        // but no criteria. Development starts first within its component locality.
         s.graph.entities.insert("ent:g".into(), Entity { name: "G".into(), ..Default::default() });
         s.graph.requirements.insert(
             "req:r-g".into(),
@@ -3065,13 +3066,17 @@ pub(crate) mod tests {
         };
         let control = Control { generate: "auto".into(), ..control_auto() };
         let b = Board::derive(&s, &proj, &control);
+        assert!(b.is_ready("g:generate:ent:g"), "{:?}", b.readiness.get("g:generate:ent:g"));
         assert!(b.is_ready("g:bind:req:r-g"), "{:?}", b.readiness.get("g:bind:req:r-g"));
         let bind = b
             .batches
             .iter()
             .find(|bt| bt.goals.iter().any(|id| id == "g:bind:req:r-g"))
             .unwrap_or_else(|| panic!("{:?}", b.batches));
-        assert_eq!(bind.goals, vec!["g:bind:req:r-g".to_string()], "{:?}", bind);
+        assert_eq!(bind.goals, vec!["g:generate:ent:g".to_string(), "g:bind:req:r-g".to_string()], "{:?}", bind);
+        for batch in b.batches.iter().filter(|batch| batch.goals.iter().any(|id| id.starts_with("g:derive-criteria:"))) {
+            assert!(batch.goals.iter().all(|id| id.starts_with("g:derive-criteria:")), "{:?}", batch);
+        }
         let per_batch: Vec<usize> = b
             .batches
             .iter()

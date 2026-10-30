@@ -37,6 +37,10 @@ use super::{
 };
 
 const SYSTEM: &str = include_str!("../../../docs/compiler/goals/prompts/embedded-agent.md");
+const COMPACTION_REQUEST: &str =
+    include_str!("../../../docs/compiler/goals/prompts/compaction-request.md");
+const COMPACTION_CONTINUATION: &str =
+    include_str!("../../../docs/compiler/goals/prompts/compaction-continuation.md");
 
 #[derive(Clone)]
 struct Session {
@@ -577,7 +581,9 @@ async fn drive(
             let model = ProviderModel::new(provider, config.clone());
             // The summary borrows a snapshot so host checkpoints may mutate owned state.
             let messages = state.conversation.messages().clone();
-            let templates = Templates::default();
+            let mut templates = Templates::default();
+            templates.compaction.push_str("\n\n");
+            templates.compaction.push_str(COMPACTION_REQUEST);
             let future = goose_context_management::summarize(&model, None, &templates, &messages);
             match drive_future(
                 future,
@@ -594,7 +600,11 @@ async fn drive(
             .await
             {
                 Ok(summary) => {
-                    state.conversation = Conversation::new_unvalidated([summary.message]);
+                    state.conversation = Conversation::new_unvalidated([
+                        summary.message,
+                        Message::user()
+                            .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)),
+                    ]);
                     record_usage(args, state, summary.usage);
                     state.compacted_at_round = Some(state.rounds);
                     state.transition += 1;

@@ -33,6 +33,9 @@ fn bind_reason(
     if hash_hex(&r.statement) != row.hashes.requirement {
         return Some("requirement-changed");
     }
+    if !crate::gen::binding_source_current(&store.out, gs, &Ledger::load(&store.out), row) {
+        return Some("source-selection-changed");
+    }
     let artifact = artifact_path(&store.out, gs, &row.test);
     if !artifact.vexists() {
         return Some("artifact-gone");
@@ -180,6 +183,10 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
         )),
         Some("criterion-changed") => Err(format!(
             "a criterion of `{}` moved since its test was written; begin_binding again and record the tests against the current criteria",
+            rid
+        )),
+        Some("source-selection-changed") => Err(format!(
+            "the row for `{}` names files outside current Source; begin_binding again and record_binding using the current source selection",
             rid
         )),
         Some(_) => Err(format!(

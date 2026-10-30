@@ -1,6 +1,6 @@
 use crate::vfs::VPathExt;
 // Verification: run the tests the ledger records and feed verdicts back. Status is
-// derived, never stored; every staleness flip is a hash comparison. Mirrors
+// derived, never stored, from byte hashes and current Source membership. Mirrors
 // docs/consumers/gen.md (the ledger, runners) and
 // docs/compiler/tools.md#verification-tools.
 use crate::gen::{artifact_path, hash_file, GenSettings, Ledger, ReqRow};
@@ -16,6 +16,9 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     let Some(r) = live else {
         return ("missing".into(), "requirement-gone".into());
     };
+    if !crate::gen::binding_source_current(&store.out, gs, &Ledger::load(&store.out), row) {
+        return ("missing".into(), "source-selection-changed".into());
+    }
     let artifact = artifact_path(&store.out, gs, &row.test);
     if !artifact.vexists() {
         return ("missing".into(), "artifact-gone".into());
@@ -61,7 +64,8 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
         ledger
             .entities
             .get(&crate::gen::slug_of(&row.entity))
-            .map(|e| e.fact_hash == crate::gen::fact_hash(store, &row.entity))
+            .map(|e| e.fact_hash == crate::gen::fact_hash(store, &row.entity)
+                && !crate::gen::implementation_outside_source(gs, &ledger, &e.files))
             .unwrap_or(false)
     };
     if (crit_fail > 0 || row.verdict == "fail") && generated_here() {
@@ -100,6 +104,14 @@ pub(crate) fn artifact_names(artifact: &std::path::Path, name: &str) -> bool {
             .unwrap_or(false)
 }
 
+fn ensure_current_source(store: &Store, gs: &GenSettings, row: &ReqRow) -> Result<(), String> {
+    if crate::gen::binding_source_current(&store.out, gs, &Ledger::load(&store.out), row) {
+        Ok(())
+    } else {
+        Err("source-selection-changed: the binding names files outside current Source; begin_binding again and record_binding using the current source selection".into())
+    }
+}
+
 // The one sentence a person needs beside a status: which command or goal clears it.
 // A `failing` row names no command, because it is a finding, not a task
 // (docs/consumers/gen.md#status-is-derived-never-stored).
@@ -113,6 +125,7 @@ pub fn repair_for(status: &str, reason: &str, rid: &str, entity: &str) -> String
         ("missing", "not-generated") => format!("bind it: `{}` binds first, then generates what the bind leaves unimplemented", gen),
         ("missing", "artifact-gone") => format!("the test artifact is gone or no longer contains the test name; re-bind it: `{}`", gen),
         ("missing", "requirement-gone") => "the requirement left the graph; the next record_generation prunes the row".into(),
+        ("missing", "source-selection-changed") => format!("the binding names files outside current Source; re-bind it: `{}`", gen),
         ("stale-requirement", _) => format!("the statement was reworded since the row was bound; re-bind it: `{}`", gen),
         ("stale-test", _) => format!("the test artifact changed; rerun it: `jazyk test {}`", rid),
         ("stale-code", _) => format!("an implementing file changed; rerun it: `jazyk test {}`", rid),
@@ -431,6 +444,7 @@ pub fn mark(
     let Some(row) = ledger.requirements.get_mut(&rid) else {
         return Err(format!("no ledger row for `{}`", rid));
     };
+    ensure_current_source(store, gs, row)?;
     let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
     rebaseline_files(row, files);
     row.verdict = verdict.to_string();
@@ -500,6 +514,7 @@ pub fn mark_llm(
         .requirements
         .get_mut(&rid)
         .ok_or_else(|| format!("no ledger row for `{rid}`"))?;
+    ensure_current_source(store, gs, row)?;
     let llm: Vec<String> = row
         .tests
         .iter()
@@ -674,6 +689,9 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
     let Some(row) = ledger.requirements.get_mut(&rid) else {
         return Vec::new();
     };
+    if let Err(reason) = ensure_current_source(store, gs, row) {
+        return vec![json!({"requirement":rid,"note":reason})];
+    }
     if row.tests.values().any(|t|t.test.kind=="programmatic") {
         let files=crate::gen::hash_implementing(&store.out,gs,&row.files);
         rebaseline_files(row,files);
@@ -753,6 +771,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     let Some(row) = ledger.requirements.get(&rid) else {
         return Err(format!("no ledger row for `{}`", rid));
     };
+    ensure_current_source(store, gs, row)?;
     if row.test.run.trim().is_empty() {
         return Err(format!(
             "`{}` has no recorded run command, so nothing can execute it; remove the row from gen/ledger.yaml so binding records the real command (`jazyk gen {}` binds first), or record it with record_binding",
@@ -876,6 +895,10 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             skipped.push(json!({"requirement": rid, "reason": "no ledger row: the requirement is not bound yet; binding_tasks lists it, begin_binding then record_binding"}));
             continue;
         };
+        if let Err(reason) = ensure_current_source(store, gs, row) {
+            skipped.push(json!({"requirement":rid,"reason":reason}));
+            continue;
+        }
         if row.test.kind != "programmatic" {
             // The headline is judged, not run; its programmatic criterion tests run
             // all the same, or three checks vanish behind a green reply
@@ -2023,6 +2046,106 @@ mod tests {
         // Programmatic run: `true` exits 0.
         let pass = run_programmatic(&s, "req:shop-1", &gs).unwrap().pass;
         assert!(pass);
+    }
+
+    fn scoped_fixture() -> (Store, GenSettings) {
+        let (store, mut gs) = fixture(std::path::Path::new("/project/.jazyk/ds_main"));
+        let old = gs.deliverable.clone();
+        gs.deliverable = "/project".into();
+        gs.code = vec!["src/**".into(), "tests/**".into()];
+        for file in ["src/cart.rs", "tests/cart.rs"] {
+            let path = gs.deliverable.join(file);
+            crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+            crate::vfs::write(path, crate::vfs::read(old.join(file)).unwrap()).unwrap();
+        }
+        scoped_mapping(&[]);
+        mark(&store, "req:shop-1", "pass", None, None, Some(0), &gs).unwrap();
+        (store, gs)
+    }
+
+    fn scoped_mapping(extra_docs: &[&str]) {
+        let docs: Vec<_> = std::iter::once("docs/**").chain(extra_docs.iter().copied()).collect();
+        crate::vfs::write("/project/.jazyk/jazyk.toml", format!(
+            "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = {}\nsource = ['src/**', 'tests/**']\n",
+            serde_json::to_string(&docs).unwrap()
+        )).unwrap();
+    }
+
+    #[test]
+    fn document_reclassification_reopens_binding_and_generation_without_touching_files() {
+        let _vfs = crate::vfs::Scope::enter(&Default::default());
+        let (store, gs) = scoped_fixture();
+        assert!(pending(&store, &gs, None, None).is_empty());
+        assert!(crate::bind::pending(&store, &gs).is_empty());
+        assert!(crate::gen::pending(&store, &gs).is_empty());
+        let before = crate::vfs::read(store.out.join("gen/ledger.yaml")).unwrap();
+        let content = crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap();
+        scoped_mapping(&["src/cart.rs"]);
+        let ledger = Ledger::load(&store.out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "source-selection-changed".into()));
+        assert_eq!(crate::bind::pending(&store, &gs)[0]["reason"], "source-selection-changed");
+        assert_eq!(crate::gen::pending(&store, &gs)[0]["reason"], "source-selection-changed");
+        assert!(crate::bind::gate(&store, &gs, "req:shop-1").unwrap_err().contains("current Source"));
+        assert!(gate(&store, &gs, "req:shop-1").is_err());
+        assert!(crate::gen::gate(&store, &gs, "ent:cart", false).unwrap_err().contains("current Source"));
+        assert!(task(&store, "req:shop-1", &gs).unwrap_err().contains("source-selection-changed"));
+        assert!(mark(&store, "req:shop-1", "pass", None, None, Some(0), &gs).unwrap_err().contains("source-selection-changed"));
+        assert!(run_programmatic(&store, "req:shop-1", &gs).err().unwrap().contains("source-selection-changed"));
+        assert!(run_criterion_tests(&store, "req:shop-1", &gs)[0]["note"].as_str().unwrap().contains("source-selection-changed"));
+        let test = json!({"kind":"programmatic","artifact":row.test.artifact,"name":row.test.name,"run":"true"});
+        assert!(crate::bind::record(&store, "req:shop-1", &["src/cart.rs".into()], &test, &Value::Null, "pass", None, &gs).is_err());
+        let stale_manifest = json!({"files":["src/cart.rs"],"tests":[]});
+        assert!(gen_mark(&store, "ent:cart", None, &stale_manifest, &gs).is_err());
+        assert!(crate::gen::confine_in(&gs, "src/cart.rs", &mut Vec::new()).is_err());
+        assert_eq!(crate::vfs::read(store.out.join("gen/ledger.yaml")).unwrap(), before);
+        assert_eq!(crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(), content);
+        // Binding honestly records no implementation, then generation writes inside
+        // Source. The file assigned to Docs is preserved through that repair.
+        crate::bind::record(&store, "req:shop-1", &[], &test, &Value::Null, "fail", None, &gs).unwrap();
+        let ledger = Ledger::load(&store.out);
+        assert!(ledger.requirements["req:shop-1"].files.is_empty());
+        assert_eq!(status_of(&store, "req:shop-1", &ledger.requirements["req:shop-1"], &gs).0, "unimplemented");
+        assert!(crate::bind::pending(&store, &gs).is_empty());
+        assert!(!crate::gen::pending(&store, &gs).is_empty());
+        assert_eq!(crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(), content);
+        crate::vfs::write(gs.deliverable.join("src/cart-new.rs"), "// replacement product").unwrap();
+        gen_mark(&store, "ent:cart", None, &json!({
+            "files":["src/cart-new.rs"], "tests":[{
+                "requirement":"req:shop-1", "kind":"programmatic", "artifact":row.test.artifact,
+                "name":row.test.name, "run":"true", "files":["src/cart-new.rs"]
+            }]
+        }), &gs).unwrap();
+        assert!(crate::gen::pending(&store, &gs).is_empty());
+        assert_eq!(crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(), content);
+    }
+
+    #[test]
+    fn test_reclassification_reopens_binding_without_treating_tests_as_implementation() {
+        let _vfs = crate::vfs::Scope::enter(&Default::default());
+        let (store, gs) = scoped_fixture();
+        scoped_mapping(&["tests/cart.rs"]);
+        let ledger = Ledger::load(&store.out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs).1, "source-selection-changed");
+        assert_eq!(crate::bind::pending(&store, &gs).len(), 1);
+        assert!(crate::gen::pending(&store, &gs).is_empty());
+        scoped_mapping(&[]);
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
+        // Internal LLM criteria are metadata, not an implementing path that must be
+        // added to Source. Criterion artifacts outside it still need rebinding.
+        let mut internal = row.clone();
+        internal.test.kind = "llm".into();
+        internal.test.artifact = "criteria/cart.md".into();
+        crate::vfs::create_dir_all(store.out.join("gen/criteria")).unwrap();
+        crate::vfs::write(store.out.join("gen/criteria/cart.md"), "metadata").unwrap();
+        assert!(crate::gen::binding_source_current(&store.out, &gs, &ledger, &internal));
+        internal.tests.insert("crit:cart-1".into(), crate::gen::CritTest {
+            test: crate::gen::TestRef { artifact: "docs/test.rs".into(), ..row.test.clone() },
+            criterion_hash: String::new(), test_hash: String::new(), verdict: "none".into(),
+            last_run: None, exit_code: None, evidence: None,
+        });
+        assert!(!crate::gen::binding_source_current(&store.out, &gs, &ledger, &internal));
     }
 
     // A rebuilt artifact among a row's files is not a code change: the stale-code hash

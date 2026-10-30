@@ -800,6 +800,25 @@ pub fn hash_implementing(out: &Path, gs: &GenSettings, files: &[String]) -> Stri
     hash_files(gs, &implementing_files(&Ledger::load(out), files))
 }
 
+// Scope is independent of byte freshness. Test artifacts and build outputs never
+// count as implementation, including legacy manifests that named them in files.
+pub(crate) fn implementation_outside_source(gs: &GenSettings, ledger: &Ledger, files: &[String]) -> bool {
+    let artifacts = test_artifacts(ledger);
+    implementing_files(ledger, files).iter().any(|file| {
+        !artifacts.contains(file) && !gs.allows_source(file)
+    })
+}
+
+// A recorded binding must still describe this set's current deliverable. Internal
+// LLM criteria remain metadata; external criteria and programmatic tests are Source.
+pub(crate) fn binding_source_current(out: &Path, gs: &GenSettings, ledger: &Ledger, row: &ReqRow) -> bool {
+    !implementation_outside_source(gs, ledger, &row.files)
+        && std::iter::once(&row.test).chain(row.tests.values().map(|test| &test.test)).all(|test| {
+            (test.kind == "llm" && artifact_path(out, gs, test).starts_with(out.join("gen")))
+                || gs.allows_source(&test.artifact)
+        })
+}
+
 // A deliverable-relative path as the ledger records it: forward slashes, no leading
 // `./`, no empty or `.` segments. An absolute path, or one that climbs out with
 // `..`, is rejected naming it: nothing the ledger records, strips, hashes, or
@@ -1383,7 +1402,9 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                 // A record with no files is an entity carried by other entities' files
                 // (an actor whose statements the tool implements); nothing of its own
                 // can be gone. Mirrors docs/compiler/goals/generate.md#created-when.
-                if !gone.is_empty() {
+                if implementation_outside_source(gs, &ledger, &e.files) {
+                    ("source-selection-changed".to_string(), json!(e.files))
+                } else if !gone.is_empty() {
                     ("files-gone".to_string(), json!(gone))
                 } else if !unimplemented.is_empty() {
                     ("unimplemented-bindings".to_string(), json!(unimplemented))
@@ -1429,6 +1450,12 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
             id, e.fact_hash, live
         ));
     }
+    if implementation_outside_source(gs, &ledger, &e.files) {
+        return Err(format!(
+            "the record for `{}` names implementing files outside current Source; re-bind its requirements and record_generation inside the current source selection",
+            id
+        ));
+    }
     let gone: Vec<&String> = e
         .files
         .iter()
@@ -1448,7 +1475,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     let artifacts = test_artifacts(&ledger);
     let outputs = build_outputs(&ledger);
     let implementing = |f: &String| {
-        !artifacts.contains(f) && !outputs.contains(f) && gs.deliverable.join(f).vis_file()
+        !artifacts.contains(f) && !outputs.contains(f) && gs.allows_source(f) && gs.deliverable.join(f).vis_file()
     };
     if !e.files.iter().any(&implementing) {
         let missing: Vec<String> = reqs_of_sorted(store, &id)
@@ -1951,6 +1978,7 @@ pub fn mark(
         !artifacts.contains(f)
             && !outputs.contains(f)
             && !build_produces.contains(f)
+            && gs.allows_source(f)
             && gs.deliverable.join(f).vis_file()
     };
     // A file an entity outside this entity's component group records is theirs. Test
@@ -2218,7 +2246,7 @@ pub fn mark(
                 .as_ref()
                 .map(|b| b.produces.contains(f))
                 .unwrap_or(false);
-        if claimed || !gs.deliverable.join(f).vis_file() {
+        if claimed || !gs.allows_source(f) || !gs.deliverable.join(f).vis_file() {
             continue;
         }
         snapshot_baseline(&store.out, gs, f, &mut baselined);

@@ -269,6 +269,8 @@ pub fn workers(out: &Path) -> Vec<Worker> {
 pub struct Lease {
     pub task: String,
     pub worker: String,
+    #[serde(default, rename = "claimId", skip_serializing_if = "String::is_empty")]
+    pub claim_id: String,
     pub claimed_at: u64,
     pub expires_at: u64,
     // The goal ids a batch lease holds, so the board renders claimedBy per goal.
@@ -325,6 +327,9 @@ pub(crate) struct OwnedLease {
 }
 
 pub(crate) fn owned_lease(out: &Path, task: &str, worker: &str) -> Option<OwnedLease> {
+    if crate::vfs::is_scoped() && crate::session_recovery::active() {
+        return crate::session_recovery::owned_claim(out, task).filter(|claim| claim.lease.worker == worker);
+    }
     let lease = read_lease(&lease_file(out, task))?;
     (lease.task == task && lease.worker == worker).then(|| OwnedLease { out: out.into(), lease })
 }
@@ -341,7 +346,8 @@ pub(crate) fn claim_restored(out: &Path, task: &str, worker: &str, goals: &[Stri
 pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let path = lease_file(&saved.out, &saved.lease.task);
     let Some(current) = read_lease(&path) else { return Ok(false); };
-    if current.task != saved.lease.task || current.worker != saved.lease.worker
+    if saved.lease.claim_id.is_empty() || current.claim_id != saved.lease.claim_id
+        || current.task != saved.lease.task || current.worker != saved.lease.worker
         || current.claimed_at != saved.lease.claimed_at || current.goals != saved.lease.goals {
         return Ok(false);
     }
@@ -359,6 +365,9 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
 // Claim a goal batch: the lease names the goals it holds, so the board shows
 // claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce).map_err(|error| format!("Cannot mint control claim identity: {error}"))?;
+    let claim_id = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
     crate::vfs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
     if let Some(l) = read_lease(&path) {
@@ -372,6 +381,7 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
     let lease = Lease {
         task: task.to_string(),
         worker: worker.to_string(),
+        claim_id,
         claimed_at: now(),
         expires_at: now() + LEASE_TTL_SECS,
         goals: goals.to_vec(),
@@ -400,6 +410,12 @@ pub fn refresh_lease(out: &Path, task: &str) {
 }
 
 pub fn release_lease(out: &Path, task: &str) {
+    if crate::vfs::is_scoped() && crate::session_recovery::active() {
+        if let Some(claim) = crate::session_recovery::owned_claim(out, task) {
+            let _ = release_owned_lease(&claim);
+        }
+        return;
+    }
     if crate::vfs::remove_file(lease_file(out, task)).is_ok() {
         crate::session_recovery::released(out, task);
     }
@@ -514,6 +530,40 @@ mod tests {
         ));
         crate::vfs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn saved_claim_cannot_release_same_worker_same_second_replacement_or_legacy_claim() {
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _recovery = crate::session_recovery::Scope::enter(None);
+        let out = std::path::Path::new("/project/.jazyk/ds_main");
+        let goals = vec!["g:reconcile-section:docs/main.md#/main".into()];
+        claim_goals(out, "batch", "internal-1", &goals).unwrap();
+        let saved = owned_lease(out, "batch", "internal-1").unwrap();
+        claim_goals(out, "batch", "internal-1", &goals).unwrap();
+        let path = lease_file(out, "batch");
+        let mut replacement = read_lease(&path).unwrap();
+        replacement.claimed_at = saved.lease.claimed_at;
+        assert_ne!(replacement.claim_id, saved.lease.claim_id);
+        crate::vfs::write(&path, serde_norway::to_string(&replacement).unwrap()).unwrap();
+        let before = crate::vfs::read(&path).unwrap();
+        assert!(!release_owned_lease(&saved).unwrap());
+        assert_eq!(crate::vfs::read(&path).unwrap(), before);
+        let mut legacy = owned_lease(out, "batch", "internal-1").unwrap();
+        legacy.lease.claim_id.clear();
+        assert!(!release_owned_lease(&legacy).unwrap());
+        assert_eq!(crate::vfs::read(&path).unwrap(), before);
+        let current = owned_lease(out, "batch", "internal-1").unwrap();
+        refresh_lease(out, "batch");
+        assert!(release_owned_lease(&current).unwrap(), "Expiry refresh does not replace ownership");
+        claim_goals(out, "batch", "internal-1", &goals).unwrap();
+        let mut replacement = read_lease(&path).unwrap();
+        replacement.claim_id.push('f');
+        let foreign = serde_norway::to_string(&replacement).unwrap();
+        crate::vfs::write(&path, &foreign).unwrap();
+        release_lease(out, "batch");
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), foreign,
+            "Active cancellation must use its recorded receipt, not the current same-worker claim");
     }
 
     #[test]

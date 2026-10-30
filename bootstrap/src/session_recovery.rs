@@ -96,6 +96,10 @@ pub(crate) fn claimed(claim: crate::control::OwnedLease) {
     });
 }
 
+pub(crate) fn owned_claim(out: &std::path::Path, task: &str) -> Option<crate::control::OwnedLease> {
+    STATE.with(|s| s.borrow().claims.iter().find(|claim| claim.out == out && claim.lease.task == task).cloned())
+}
+
 pub(crate) fn released(out: &std::path::Path, task: &str) {
     if !active() || !crate::vfs::is_scoped() { return; }
     STATE.with(|s| s.borrow_mut().claims.retain(|claim| claim.out != out || claim.lease.task != task));

@@ -127,7 +127,8 @@ fn successful(v: &Value) -> bool {
         })
 }
 
-pub fn run(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run(
     proj: &Project,
     llm: &crate::llm::Llm,
     steps: &[Step],
@@ -156,97 +157,7 @@ pub fn run(
             "workflow",
             &format!("{} · step {} of {}", label, index + 1, steps.len()),
         );
-        let result = (|| -> Result<Value, String> {
-            if matches!(step, Step::Compile) {
-                let _scope = GraphScope::enter();
-                let report = crate::reconcile::compile(proj, llm, &proj.out, trace);
-                let store = Store::load(&proj.out);
-                graph_ready(proj, &store)?;
-                return Ok(json!(report));
-            }
-            if let Step::Task { task_id } = step {
-                let current = crate::task_runtime::load(&proj.root)?.1;
-                let expected = selected_tasks.iter().find(|t| &t.id == task_id).unwrap();
-                if !current.iter().any(|t| {
-                    &t.id == task_id
-                        && serde_json::to_value(t).ok() == serde_json::to_value(expected).ok()
-                }) {
-                    return Err(format!(
-                        "Task {task_id} changed. Review the workflow before running it again."
-                    ));
-                }
-                let (id, result) = crate::task_runtime::execute(&proj.root, task_id)?;
-                if result["status"] != "succeeded" || result["complete"] != true {
-                    return Err(format!("Task {task_id} did not succeed. Inspect run {id}."));
-                }
-                return Ok(json!({"runId":id,"result":result}));
-            }
-            let store = Store::load(&proj.out);
-            let gs = gen::GenSettings::resolve(proj);
-            if matches!(step, Step::Bind | Step::Generate) {
-                graph_ready(proj, &store)?;
-            }
-            if matches!(step, Step::Generate) && !crate::bind::pending(&store, &gs).is_empty() {
-                return Err(
-                    "Tests need binding. Select Generate tests before Generate product.".into(),
-                );
-            }
-            if matches!(step, Step::Build) {
-                gen::run_build(&proj.out, &gs, trace, "workflow")?;
-                return Ok(json!({"ok":true}));
-            }
-            if matches!(step, Step::Test | Step::Review) {
-                artifact_exists(&store, &gs)?;
-            }
-            if matches!(step, Step::Test) {
-                let targets = gen::Ledger::load(&proj.out)
-                    .requirements
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                return crate::verify::run_selected_after_build(&store, &gs, &targets);
-            }
-            let stage = if matches!(step, Step::Review) {
-                "verify"
-            } else {
-                "generate"
-            };
-            let _lease = crate::control::begin_internal_build(proj, &proj.out, stage)?;
-            let runner: Box<dyn SessionRunner> = if crate::vfs::is_scoped() {
-                Box::new(crate::inprocess::InProcessRunner::start(
-                    proj, llm, &proj.out,
-                )?)
-            } else {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    Box::new(crate::acp::runner::AcpRunner::start(proj, llm, &proj.out)?)
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    Box::new(crate::inprocess::InProcessRunner::start(
-                        proj, llm, &proj.out,
-                    )?)
-                }
-            };
-            runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
-            match step {
-                Step::Bind => crate::bind::run_all(&store, runner.as_ref(), &gs, &[], trace),
-                Step::Generate => {
-                    gen::run_selected(&store, runner.as_ref(), &gs, &[], false, trace, false)
-                }
-                Step::Review => crate::verify::run_without_build(
-                    &store,
-                    runner.as_ref(),
-                    &gs,
-                    &[],
-                    Some("llm"),
-                    true,
-                    trace,
-                    false,
-                ),
-                _ => unreachable!(),
-            }
-        })();
+        let result = run_step(proj, llm, step, trace, &selected_tasks).await;
         let (state, result) = match result {
             Ok(value) if successful(&value) => ("done", value),
             Ok(value) => ("failed", value),
@@ -261,6 +172,105 @@ pub fn run(
         }
     }
     Ok(json!({"state":"done", "steps":results}))
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn run_step(
+    proj: &Project,
+    llm: &crate::llm::Llm,
+    step: &Step,
+    trace: &Trace,
+    selected_tasks: &[crate::task_runtime::Task],
+) -> Result<Value, String> {
+    if matches!(step, Step::Compile) {
+        let _scope = GraphScope::enter();
+        let report = crate::reconcile::compile(proj, llm, &proj.out, trace).await;
+        let store = Store::load(&proj.out);
+        graph_ready(proj, &store)?;
+        return Ok(json!(report));
+    }
+    if let Step::Task { task_id } = step {
+        let current = crate::task_runtime::load(&proj.root)?.1;
+        let expected = selected_tasks.iter().find(|t| &t.id == task_id).unwrap();
+        if !current.iter().any(|t| {
+            &t.id == task_id
+                && serde_json::to_value(t).ok() == serde_json::to_value(expected).ok()
+        }) {
+            return Err(format!(
+                "Task {task_id} changed. Review the workflow before running it again."
+            ));
+        }
+        let (id, result) = crate::task_runtime::execute(&proj.root, task_id)?;
+        if result["status"] != "succeeded" || result["complete"] != true {
+            return Err(format!("Task {task_id} did not succeed. Inspect run {id}."));
+        }
+        return Ok(json!({"runId":id,"result":result}));
+    }
+    let store = Store::load(&proj.out);
+    let gs = gen::GenSettings::resolve(proj);
+    if matches!(step, Step::Bind | Step::Generate) {
+        graph_ready(proj, &store)?;
+    }
+    if matches!(step, Step::Generate) && !crate::bind::pending(&store, &gs).is_empty() {
+        return Err(
+            "Tests need binding. Select Generate tests before Generate product.".into(),
+        );
+    }
+    if matches!(step, Step::Build) {
+        gen::run_build(&proj.out, &gs, trace, "workflow")?;
+        return Ok(json!({"ok":true}));
+    }
+    if matches!(step, Step::Test | Step::Review) {
+        artifact_exists(&store, &gs)?;
+    }
+    if matches!(step, Step::Test) {
+        let targets = gen::Ledger::load(&proj.out)
+            .requirements
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        return crate::verify::run_selected_after_build(&store, &gs, &targets);
+    }
+    let stage = if matches!(step, Step::Review) {
+        "verify"
+    } else {
+        "generate"
+    };
+    let _lease = crate::control::begin_internal_build(proj, &proj.out, stage)?;
+    let runner: Box<dyn SessionRunner> = if crate::vfs::is_scoped() {
+        Box::new(crate::inprocess::InProcessRunner::start(
+            proj, llm, &proj.out,
+        )?)
+    } else {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Box::new(crate::acp::runner::AcpRunner::start(proj, llm, &proj.out)?)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Box::new(crate::inprocess::InProcessRunner::start(
+                proj, llm, &proj.out,
+            )?)
+        }
+    };
+    runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+    match step {
+        Step::Bind => crate::bind::run_all(&store, runner.as_ref(), &gs, &[], trace).await,
+        Step::Generate => {
+            gen::run_selected(&store, runner.as_ref(), &gs, &[], false, trace, false).await
+        }
+        Step::Review => crate::verify::run_without_build(
+            &store,
+            runner.as_ref(),
+            &gs,
+            &[],
+            Some("llm"),
+            true,
+            trace,
+            false,
+        ).await,
+        _ => unreachable!(),
+    }
 }
 
 #[cfg(test)]

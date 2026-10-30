@@ -2162,14 +2162,16 @@ fn reload(
     store.sync_docs(parsed);
 }
 
-pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
-    compile_with(proj, llm, out, trace, None)
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
+    compile_with(proj, llm, out, trace, None).await
 }
 
 // `max_sessions` is the `--sessions` count: at most that many sessions, then an
 // honest incomplete, so a project advances one batch at a time.
 // Mirrors docs/frontends/cli.md#jazyk-compile.
-pub fn compile_with(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn compile_with(
     proj: &Project,
     llm: &Llm,
     out: &Path,
@@ -2202,12 +2204,13 @@ pub fn compile_with(
     };
     #[cfg(target_arch = "wasm32")]
     let runner: Box<dyn crate::runner::SessionRunner> = match crate::inprocess::InProcessRunner::start(proj,llm,out) { Ok(r) => Box::new(r), Err(e) => return refused(e) };
-    compile_under(proj, out, trace, max_sessions, runner.as_ref(), _build)
+    compile_under(proj, out, trace, max_sessions, runner.as_ref(), _build).await
 }
 
 // A build with its lease held and its runner chosen: the rest of `compile_with`, and
 // what a test drives with a scripted runner (docs/compiler/sessions.md#execution).
-pub(crate) fn compile_under(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn compile_under(
     proj: &Project,
     out: &Path,
     trace: &Trace,
@@ -2243,7 +2246,7 @@ pub(crate) fn compile_under(
     // record the compile release so manual mode gates nothing this run asked for.
     crate::control::release(proj, out, Some("compile"));
     let control = Control::load(proj, out);
-    let run = run_sessions(proj, out, trace, max_sessions, runner, &mut store, &parsed, &control);
+    let run = run_sessions(proj, out, trace, max_sessions, runner, &mut store, &parsed, &control).await;
     let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
     report.goals = run.derived;
     report.sessions = run.sessions;
@@ -2267,7 +2270,8 @@ pub(crate) struct SessionsRun {
 // synced and swept; the runner is whatever runs a batch (an ACP worker, the
 // in-process loop, a test's stub). Mirrors docs/compiler/compilation.md#a-build.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_sessions(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn run_sessions(
     proj: &Project,
     out: &Path,
     trace: &Trace,
@@ -2431,7 +2435,10 @@ pub(crate) fn run_sessions(
             executor: batch.executor.clone(),
         };
         sessions += 1;
-        let report = runner.run_item(&run, trace);
+        let report = runner.run_item(&run, trace).await;
+        if report.stopped.as_deref() == Some("suspended") {
+            break;
+        }
         applied += report.applied;
         costs.charge(&batch_kind.0, &batch_kind.1, report.tokens);
         // Count consecutive failures that spent nothing: an endpoint answering

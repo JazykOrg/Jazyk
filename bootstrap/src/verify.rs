@@ -2230,7 +2230,8 @@ pub fn select_rows(
         .collect()
 }
 
-fn judge_llm_criteria(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn judge_llm_criteria(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     rid: &str,
@@ -2273,7 +2274,7 @@ fn judge_llm_criteria(
                 ),
                 "judge",
                 Some(trace),
-            )
+            ).await
             .map_err(|e| e.to_string())?;
         let pass = parse_verdict(&reply).ok_or("Model returned no conclusive criterion verdict")?;
         results.push(json!({"criterion":test["criterion"],"factHash":test["factHash"],"verdict":if pass{"pass"}else{"fail"},"evidence":crate::llm::truncate(reply.trim(),300)}));
@@ -2316,7 +2317,8 @@ fn record_llm_failure(store: &Store, rid: &str, error: &str) {
 // execute their command; llm rows drive the configured model against the verify_task
 // package. Returns {rows, verified, failing, stale, skipped}.
 // Mirrors docs/consumers/gen.md#runners.
-pub fn run_all(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run_all(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
@@ -2325,10 +2327,11 @@ pub fn run_all(
     force: bool,
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
-    run_without_build(store, runner, gs, targets, kind, force, trace, true)
+    run_without_build(store, runner, gs, targets, kind, force, trace, true).await
 }
 
-pub(crate) fn run_without_build(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn run_without_build(
     store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
     targets: &[String], kind: Option<&str>, force: bool, trace: &crate::session::Trace,
     build_product: bool,
@@ -2380,7 +2383,7 @@ pub(crate) fn run_without_build(
             if !task_rows.contains(&rid) && has_programmatic && kind!=Some("llm") {
                 run_selected_after_build(store,gs,std::slice::from_ref(&rid))?;
             }
-            match judge_llm_criteria(store,runner,&rid,gs,trace) {
+            match judge_llm_criteria(store,runner,&rid,gs,trace).await {
                 Ok(result)=> {
                     match result["status"].as_str(){Some("verified")=>verified+=1,Some("failing"|"partial")=>failing+=1,_=>skipped+=1}
                     trace.event(TraceEvent::VerifyRowDone {requirement:rid.clone(),verdict:result["verdict"].as_str().unwrap_or("none").into(),run:"llm".into(),evidence:"Each bound LLM criterion received a separate judgment.".into()});
@@ -2440,7 +2443,7 @@ pub(crate) fn run_without_build(
                         &format!("verify {}", rid),
                         "judge",
                         Some(trace),
-                    ) {
+                    ).await {
                         Ok(reply) => match parse_verdict(&reply) {
                             Some(pass) => Some((
                                 pass,

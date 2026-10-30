@@ -274,7 +274,8 @@ pub fn submit(
 // pipeline generation worker uses. An attached agent over `jazyk mcp decompile` is
 // the better worker; this one keeps the command usable without one.
 // Mirrors docs/consumers/decompile.md#draft-goals.
-pub fn run_all(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run_all(
     proj: &Project,
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
@@ -331,7 +332,7 @@ pub fn run_all(
                 &format!("decompile {}", scope),
                 if attempt == 0 { "draft" } else { "draft retry" },
                 Some(trace),
-            ) {
+            ).await {
                 Ok(r) => r,
                 Err(e) => {
                     last_err = e;

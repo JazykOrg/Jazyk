@@ -157,3 +157,9 @@ pub fn trace() -> crate::session::Trace {
 pub fn request(method: &str, path: &str, body: &str) -> String {
     crate::webapi::dispatch::request(method, path, body)
 }
+
+#[wasm_bindgen]
+pub async fn request_async(method: String, path: String, body: String) -> String {
+    let _recovery = crate::session_recovery::Scope::enter(None);
+    crate::webapi::dispatch::request_async(&method, &path, &body).await
+}

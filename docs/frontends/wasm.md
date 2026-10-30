@@ -226,17 +226,15 @@ background compilation service.
 ## The trace
 
 The native server streams [trace events](../compiler/sessions.md#trace-events) over
-SSE. The browser backend has no stream and no moment to poll: a build runs
-synchronously inside the worker, and the worker answers nothing until it returns.
-So each event is posted to the page the instant the compiler emits it, from inside
+SSE. The browser backend posts each event to the page as the asynchronous build
+emits it. Model replies, cancellation and accepted inputs can reach a suspended
+operation. Project requests stay serialized. Events travel from inside
 the running build, and the page pushes it through the same path a streamed event
 takes. The workbench renders a browser build exactly as it renders a server one,
 and the page's console carries the same events one line each.
 
-The model host logs one line per call (messages, characters, tools) and one per
-reply (tokens in and out, the finish reason, the tools called, the first words),
-and a progress line every hundred chunks while a slow model works, because the
-backend is blocked on the answer and can say nothing itself.
+The page can show answer and reasoning deltas while the harness awaits a complete
+validated model response. Tool arguments stay in the native tool-call channel.
 
 ## Chat
 
@@ -255,7 +253,7 @@ module.
   prompt fits a small window and the model answers questions about the project
   without being offered edits it cannot make well. The page passes the tier when it
   opens the conversation (`{"tier": "reader"}` in the body).
-- `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::agent_loop::run_loop`
+- `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::harness::run_loop_with_instructions`
   with the serving's tools and a dispatch closure that calls `tools/call` on it,
   against the page's model through [the bridge](#the-model). The first turn opens
   with the serving's instructions, so the model knows which project it is in and
@@ -375,14 +373,14 @@ See the [application build](https://github.com/JazykOrg/jazyk-cloud/blob/master/
 
 ## Serving
 
-The synchronous model bridge requires `SharedArrayBuffer`. Its host document must
-be cross-origin isolated with these response headers:
+The model bridge uses promises and request identities. It does not require
+`SharedArrayBuffer` or `Atomics.wait`. A synchronous `request` export remains for
+deterministic operations and refuses model-driven routes. `request_async` awaits
+model-driven execution and returns the same response envelope.
 
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-
-Without isolation the engine's reads remain usable; model calls report the missing
-capability. Offline caching and deployment belong to the
+Hosts serialize project operations while delivering model replies, cancellation
+and accepted inputs independently. A late model response cannot satisfy another
+request. Offline caching, browser feature policy and deployment belong to the
 [browser application](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#serving).
 
 ## Browser application specification

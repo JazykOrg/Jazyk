@@ -9,7 +9,7 @@
 // mode, so the gates, the staged changeset, and the commit are the ones every other
 // front door uses. See docs/frontends/wasm.md#sessions.
 
-use crate::agent_loop::{self, AgentEvent, GenericTool, LoopArgs, Stop};
+use crate::harness::{self, AgentEvent, GenericTool, LoopArgs, Stop};
 use crate::llm::Llm;
 use crate::mcp::McpServer;
 use crate::project::Project;
@@ -68,6 +68,8 @@ impl InProcessRunner {
     }
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl SessionRunner for InProcessRunner {
     fn agent_name(&self) -> String {
         "in-page".to_string()
@@ -79,7 +81,7 @@ impl SessionRunner for InProcessRunner {
         self.build_token.set(token);
     }
 
-    fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
+    async fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
         let label = batch.id.clone();
         let failed = |msg: String, rounds: u32, tokens: u64| SessionReport {
             applied: 0,
@@ -192,7 +194,7 @@ impl SessionRunner for InProcessRunner {
             .map(crate::conversation::build_inputs).unwrap_or_default();
 
         let never_cancelled = || trace.is_cancelled();
-        let stop = agent_loop::run_loop(LoopArgs {
+        let stop = harness::run_loop(LoopArgs {
             llm: &self.llm,
             history: &mut history,
             tools: &tools,
@@ -205,7 +207,7 @@ impl SessionRunner for InProcessRunner {
         inputs: owner.as_ref().map(|_| &mut input_source as &mut dyn FnMut() -> Vec<Value>),
         // This is one worker batch, not the whole job's admission lifetime.
         input_close: None,
-        });
+        }).await;
         lt.finish();
         let (rounds, tokens, cached) = (lt.rounds, lt.tokens, lt.cached);
 
@@ -215,6 +217,12 @@ impl SessionRunner for InProcessRunner {
         let (applied, resolved) =
             crate::runner::journal_diff(&self.out, gen_before, gen_after, &batch.goal_ids());
         let committed = gen_after != gen_before;
+        if stop == Stop::Suspended {
+            return SessionReport {
+                applied, rounds, tokens, cached, failed: None, resolved,
+                stopped: Some("suspended".into()),
+            };
+        }
         // A batch the model left open never commits: drop the changeset so the goals
         // return to open rather than sitting claimed.
         if !committed {
@@ -269,11 +277,11 @@ impl SessionRunner for InProcessRunner {
         }
     }
 
-    fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
-        self.ask_traced(system, user, label, step, None)
+    async fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
+        self.ask_traced(system, user, label, step, None).await
     }
 
-    fn ask_traced(
+    async fn ask_traced(
         &self,
         system: &str,
         user: &str,
@@ -281,7 +289,7 @@ impl SessionRunner for InProcessRunner {
         _step: &str,
         _trace: Option<&Trace>,
     ) -> Result<String, String> {
-        self.llm.chat(system, user, _label, _step)
+        self.llm.chat(system, user, _label, _step).await
     }
 }
 
@@ -291,51 +299,55 @@ impl SessionRunner for InProcessRunner {
 // handling prompt a native answer session gets, and the page's model. The outcome
 // lands on the answer, `handled` or `failed`, the way the native handler records it.
 // Answers one line per session for the build's reply.
-pub fn run_answers(project: &Project, llm: &Llm, out: &Path, trace: &Trace) -> Vec<Value> {
-    crate::answer::handling_ids(out)
-        .into_iter()
-        .map(|id| {
-            let label = format!("answer {}", id);
-            trace.event(TraceEvent::SessionStart {
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run_answers(project: &Project, llm: &Llm, out: &Path, trace: &Trace) -> Vec<Value> {
+    let mut results = Vec::new();
+    for id in crate::answer::handling_ids(out) {
+        let label = format!("answer {}", id);
+        trace.event(TraceEvent::SessionStart {
+            label: label.clone(),
+            goals: Vec::new(),
+            task: "answer".into(),
+            target: id.clone(),
+            doc: None,
+            dirty: 0,
+            sections: Vec::new(),
+            stale: 0,
+            proposals: 0,
+        });
+        let outcome = run_answer(project, llm, out, &id, &label, trace).await;
+        if outcome.as_ref().err().is_some_and(|error| error == "suspended") {
+            break;
+        }
+        match &outcome {
+            Ok(rounds) => trace.event(TraceEvent::SessionDone {
                 label: label.clone(),
                 goals: Vec::new(),
-                task: "answer".into(),
-                target: id.clone(),
-                doc: None,
-                dirty: 0,
-                sections: Vec::new(),
-                stale: 0,
-                proposals: 0,
-            });
-            let outcome = run_answer(project, llm, out, &id, &label, trace);
-            match &outcome {
-                Ok(rounds) => trace.event(TraceEvent::SessionDone {
-                    label: label.clone(),
-                    goals: Vec::new(),
-                    staged: 0,
-                    rounds: *rounds,
-                    mode: "done".into(),
-                    summary: String::new(),
-                }),
-                Err(e) => trace.event(TraceEvent::SessionFailed {
-                    label: label.clone(),
-                    goals: Vec::new(),
-                    attempt: 1,
-                    error: e.clone(),
-                }),
-            }
-            let recorded = outcome.as_ref().map(|_| ()).map_err(|e| e.clone());
-            crate::answer::record_outcome(out, &id, &recorded);
-            match outcome {
-                Ok(_) => json!({"id": id, "status": "handled"}),
-                Err(e) => json!({"id": id, "status": "failed", "error": e}),
-            }
-        })
-        .collect()
+                staged: 0,
+                rounds: *rounds,
+                mode: "done".into(),
+                summary: String::new(),
+            }),
+            Err(e) => trace.event(TraceEvent::SessionFailed {
+                label: label.clone(),
+                goals: Vec::new(),
+                attempt: 1,
+                error: e.clone(),
+            }),
+        }
+        let recorded = outcome.as_ref().map(|_| ()).map_err(|e| e.clone());
+        crate::answer::record_outcome(out, &id, &recorded);
+        results.push(match outcome {
+            Ok(_) => json!({"id": id, "status": "handled"}),
+            Err(e) => json!({"id": id, "status": "failed", "error": e}),
+        });
+    }
+    results
 }
 
 // One answer session: answers the rounds it took, or why it failed.
-fn run_answer(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn run_answer(
     project: &Project,
     llm: &Llm,
     out: &Path,
@@ -386,7 +398,7 @@ fn run_answer(
     };
     let mut emit = |ev: AgentEvent| lt.on_event(ev);
     let never_cancelled = || trace.is_cancelled();
-    let stop = agent_loop::run_loop(LoopArgs {
+    let stop = harness::run_loop(LoopArgs {
         llm,
         history: &mut history,
         tools: &tools,
@@ -398,7 +410,7 @@ fn run_answer(
         conversation: false,
         inputs: None,
         input_close: None,
-    });
+    }).await;
     lt.finish();
     let rounds = lt.rounds;
     match stop {

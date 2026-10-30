@@ -226,14 +226,19 @@ pub fn aggregate(root: &Path, workspace: &Workspace, path: &str) -> Value {
     let mut combined = Value::Null;
     for set in &workspace.sets {
         let context = workspace.resolve(Some(&set.id)).expect("validated set");
-        let envelope: Value = serde_json::from_str(&super::dispatch::request_scoped(
+        let response = super::dispatch::request_scoped(
             root,
             "GET",
             path,
             &Value::Null,
             &context,
-        ))
-        .unwrap();
+        );
+        #[cfg(target_arch = "wasm32")]
+        let response = {
+            use futures::FutureExt;
+            response.now_or_never().expect("aggregate GET routes are deterministic")
+        };
+        let envelope: Value = serde_json::from_str(&response).unwrap();
         if envelope["status"].as_u64().unwrap_or(500) >= 300 {
             continue;
         }

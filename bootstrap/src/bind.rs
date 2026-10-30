@@ -723,7 +723,8 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
 // command tools over the deliverable, the same harness the generation session uses.
 // Success is the ledger's word: the session must have left record_binding's row
 // with the current statement hash. Mirrors docs/consumers/bind.md#when-binding-runs.
-pub fn run_all(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run_all(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
@@ -762,7 +763,7 @@ pub fn run_all(
         {
             let mut ledger = Ledger::load(&store.out);
             if ledger.medium.is_none() {
-                let medium = crate::gen::decide_medium(store, runner, &gs.deliverable)?;
+                let medium = crate::gen::decide_medium(store, runner, &gs.deliverable).await?;
                 trace.line("bind medium", &medium.line());
                 ledger.medium = Some(medium);
                 ledger.save(&store.out);
@@ -785,7 +786,7 @@ pub fn run_all(
             state: crate::model::GoalState::Open,
             hints: Vec::new(),
         });
-        let out = runner.run_item(&batch, trace);
+        let out = runner.run_item(&batch, trace).await;
         let (next, down) = crate::reconcile::breaker_step(streak, out.tokens, out.failed.as_deref());
         streak = next;
         if let Some(e) = out.failed {

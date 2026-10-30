@@ -6,7 +6,7 @@
 // is posted to the page as it happens, in the native event stream's shapes.
 // See docs/frontends/wasm.md#chat.
 
-use crate::agent_loop::{self, AgentEvent, GenericTool, LoopArgs, Stop};
+use crate::harness::{self, AgentEvent, GenericTool, LoopArgs, Stop};
 use crate::mcp::McpServer;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -113,7 +113,7 @@ pub(crate) fn build_inputs(id: &str) -> Vec<Value> {
 pub(crate) fn build_input_delivered(id: &str, input: Value) {
     BOOK.with(|b| {
         if let Some(chat) = b.borrow_mut().chats.get_mut(id) {
-            crate::agent_loop::push_user_text(&mut chat.history, input["text"].as_str().unwrap_or_default());
+            crate::harness::push_user_text(&mut chat.history, input["text"].as_str().unwrap_or_default());
         }
     });
     append(id, json!({"sessionUpdate":"user_message","text":input["text"],
@@ -392,7 +392,8 @@ fn explain(err: &str) -> String {
 
 // Answers the status and body the native handler would: 202 once the turn has run,
 // or the refusal. The turn's progress has already reached the page as events.
-pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let text = body["text"].as_str().unwrap_or("").trim().to_string();
     let found = BOOK.with(|b| b.borrow().chats.get(id).map(|c| c.state.clone()));
     let Some(state) = found else {
@@ -626,7 +627,7 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
         }).collect::<Vec<_>>()
     };
     let mut close_inputs = || crate::portable::close_inputs(id);
-    let stop = agent_loop::run_loop_with_instructions(
+    let stop = harness::run_loop_with_instructions(
         LoopArgs {
             llm: &crate::portable::llm(),
             history: &mut history,
@@ -641,9 +642,20 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
             input_close: Some(&mut close_inputs),
         },
         &context,
-    );
+    ).await;
 
+    BOOK.with(|b| {
+        if let Some(c) = b.borrow_mut().chats.get_mut(id) {
+            c.history = history;
+            c.serving = Some((server, tools, instructions));
+        }
+    });
+    if stop == Stop::Suspended {
+        set_state(id, "running");
+        return (202, json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":"suspended","state":"running"}));
+    }
     let (update, state) = match stop {
+        Stop::Suspended => unreachable!("suspension returned above"),
         Stop::EndTurn => (
             json!({"sessionUpdate": "turn_end", "stop": "end_turn"}),
             "idle",
@@ -675,12 +687,6 @@ pub fn prompt(id: &str, body: &Value) -> (u16, Value) {
     } else {
         (update, state)
     };
-    BOOK.with(|b| {
-        if let Some(c) = b.borrow_mut().chats.get_mut(id) {
-            c.history = history;
-            c.serving = Some((server, tools, instructions));
-        }
-    });
     let stop_reason = update["stop"].clone();
     append(id, update);
     set_state(id, state);

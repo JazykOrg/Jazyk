@@ -1137,7 +1137,8 @@ fn list_existing_files(dir: &Path) -> Vec<String> {
 // answer is recorded in the ledger and stated as a fact to every later task, so no
 // per-entity task has to work it out again.
 // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
-pub fn decide_medium(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn decide_medium(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     deliverable: &Path,
@@ -1232,7 +1233,7 @@ pub fn decide_medium(
             } else {
                 "decide retry"
             },
-        )?;
+        ).await?;
         // A rate limit relayed as a reply is the endpoint's answer, not a decision:
         // say so instead of blaming an empty field (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
         if crate::reconcile::rate_limited(&reply) {
@@ -4166,7 +4167,8 @@ mod tests {
 // Run generation over the given entities (all entities with requirements when empty),
 // leaf-first over the relationship graph, skipping entities whose facts are unchanged
 // unless forced. Returns {regenerated, skipped, failures}.
-pub fn run_all(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run_all(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
@@ -4174,10 +4176,11 @@ pub fn run_all(
     force: bool,
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
-    run_selected(store, runner, gs, entities, force, trace, true)
+    run_selected(store, runner, gs, entities, force, trace, true).await
 }
 
-pub(crate) fn run_selected(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn run_selected(
     store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
     entities: &[String], force: bool, trace: &crate::session::Trace, build_product: bool,
 ) -> Result<Value, String> {
@@ -4212,7 +4215,7 @@ pub(crate) fn run_selected(
     {
         let mut ledger = Ledger::load(&store.out);
         if ledger.medium.is_none() || ledger.entities.is_empty() {
-            let medium = decide_medium(store, runner, &gs.deliverable)?;
+            let medium = decide_medium(store, runner, &gs.deliverable).await?;
             trace.line("gen medium", &medium.line());
             ledger.medium = Some(medium);
             ledger.save(&store.out);
@@ -4270,7 +4273,7 @@ pub(crate) fn run_selected(
                     break;
                 }
                 match task_package(store, id, gs) {
-                    Ok(task) => out.push((id.clone(), gen_one(store, runner, gs, id, &task))),
+                    Ok(task) => out.push((id.clone(), gen_one(store, runner, gs, id, &task).await)),
                     Err(e) => {
                         trace.event(TraceEvent::GenEntityFailed {
                             entity: id.clone(),
@@ -4283,7 +4286,7 @@ pub(crate) fn run_selected(
             }
             (out, 0, None)
         } else {
-            let o = gen_session(store, runner, gs, &root, &ready, trace);
+            let o = gen_session(store, runner, gs, &root, &ready, trace).await;
             (o.results, o.tokens, o.failed)
         };
         let (next, down) = crate::reconcile::breaker_step(streak, spent, session_failed.as_deref());
@@ -4353,7 +4356,8 @@ pub(crate) fn run_selected(
 // word, never the model's: the session must have left record_generation's mark with
 // current facts and existing files for each member.
 // Mirrors docs/compiler/sessions.md#generation-sessions.
-fn gen_session(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn gen_session(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
@@ -4389,7 +4393,7 @@ fn gen_session(
         let ledger = Ledger::load(&store.out);
         ids.iter().map(|id| recorded_before(&ledger, id)).collect()
     };
-    let report = runner.run_item(&batch, trace);
+    let report = runner.run_item(&batch, trace).await;
     let (tokens, failed) = (report.tokens, report.failed.clone());
     let outcome = |results| GenSessionOutcome { results, tokens, failed: failed.clone() };
     if let Some(e) = report.failed {
@@ -4552,7 +4556,8 @@ fn medium_directive(medium: &Option<Medium>) -> String {
     }
 }
 
-pub fn gen_one(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn gen_one(
     store: &Store,
     runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
@@ -4662,7 +4667,7 @@ pub fn gen_one(
                 &user,
                 &format!("gen {}", id),
                 &format!("product {}/{}", k + 1, parts),
-            )
+            ).await
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
         if k == 0 {
             // Shape gets one corrective round here too: the product step is where a
@@ -4681,7 +4686,7 @@ pub fn gen_one(
                             &retry,
                             &format!("gen {}", id),
                             "product format retry",
-                        )
+                        ).await
                         .map_err(|e| format!("product format retry: {}", e))?;
                     parse_file_replies(&again)?
                 }
@@ -4715,7 +4720,7 @@ pub fn gen_one(
                         &retry,
                         &format!("gen {}", id),
                         "product retry",
-                    )
+                    ).await
                     .map_err(|e| format!("product retry: {}", e))?;
                 let (p, b) = parse_file_reply(&reply2)?;
                 if let Some(o) = owner_of(&p) {
@@ -4763,7 +4768,7 @@ pub fn gen_one(
         crate::llm::truncate(&code, 16_000)
     );
     let tests_reply = runner
-        .ask(instructions, &tests_user, &format!("gen {}", id), "tests")
+        .ask(instructions, &tests_user, &format!("gen {}", id), "tests").await
         .map_err(|e| format!("tests file: {}", e))?;
     let mut files = vec![product_rel.clone()];
     // Files the manifest declares as the deliverable's, filled in once it is parsed
@@ -4805,7 +4810,7 @@ pub fn gen_one(
                         &retry,
                         &format!("gen {}", id),
                         "tests format retry",
-                    )
+                    ).await
                     .map_err(|e| format!("tests format retry: {}", e))?;
                 if again.trim() == "NONE" {
                     None
@@ -4821,7 +4826,7 @@ pub fn gen_one(
                 tests_user, path, owner
             );
                 let reply2 = runner
-                    .ask(instructions, &retry, &format!("gen {}", id), "tests retry")
+                    .ask(instructions, &retry, &format!("gen {}", id), "tests retry").await
                     .map_err(|e| format!("tests retry: {}", e))?;
                 let (p, b) =
                     parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
@@ -4907,7 +4912,7 @@ pub fn gen_one(
             &manifest_user,
             &format!("gen {}", id),
             "manifest",
-        )
+        ).await
         .map_err(|e| format!("manifest: {}", e))?;
     let parse_manifest = |reply: &str| -> Result<serde_json::Value, String> {
         let text = strip_fences(reply);
@@ -4930,7 +4935,7 @@ pub fn gen_one(
                     &retry,
                     &format!("gen {}", id),
                     "manifest format retry",
-                )
+                ).await
                 .map_err(|e| format!("manifest format retry: {}", e))?;
             parse_manifest(&again).map_err(|e| format!("manifest JSON: {}", e))?
         }
@@ -5069,7 +5074,7 @@ pub fn gen_one(
             &retry,
             &format!("gen {}", id),
             "manifest retry",
-        ) {
+        ).await {
             if let Ok(mut v) = parse_manifest(&reply2) {
                 // Merge over the first answer: a retry that forgot a field keeps it.
                 for key in ["supportFiles", "build", "choices"] {

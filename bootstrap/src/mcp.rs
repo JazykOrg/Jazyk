@@ -1875,7 +1875,9 @@ impl McpServer {
             if writable {
                 for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("create_document_set","Create a named document set."),("update_document_set","Update a document set while preserving its identity."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
                     tools.push(json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":{
-                        "baseHash":{"type":"string"},"remove":{"type":"string"},"set":{"type":"object","properties":{
+                        "baseHash":{"type":"string"},"remove":{"type":"string"},
+                        "roleIntents":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string","enum":["docs","source"]},"patterns":{"type":"array","items":{"type":"string"}}},"required":["role","patterns"],"additionalProperties":false}},
+                        "set":{"type":"object","properties":{
                             "id":{"type":"string"},"name":{"type":"string"},"docs":{"type":"array","items":{"type":"string"}},
                             "roots":{"type":"array","items":{"type":"string"}},"source":{"type":"array","items":{"type":"string"}}}}},"required":["baseHash"]}}));
                 }

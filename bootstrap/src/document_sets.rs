@@ -65,7 +65,9 @@ pub fn committed(path: &str) -> bool {
         return true;
     }
     let mut parts = rest.split('/');
-    let Some(set) = parts.next() else { return false };
+    let Some(set) = parts.next() else {
+        return false;
+    };
     if !set.starts_with("ds_") || set.ends_with(".bak") {
         return false;
     }
@@ -287,7 +289,11 @@ pub fn legacy_suggestion(root: &Path) -> Option<Value> {
             .get(section)
             .and_then(|s| s.get(key))
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let docs = strings("docs", "glob");
@@ -373,6 +379,322 @@ pub fn matched<'a>(patterns: &'a [String], path: &str) -> Option<&'a str> {
 }
 pub fn included(patterns: &[String], path: &str) -> bool {
     matched(patterns, path).is_some()
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum FileRole {
+    Docs,
+    Source,
+}
+impl FileRole {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Docs => Self::Source,
+            Self::Source => Self::Docs,
+        }
+    }
+    fn patterns(self, set: &DocumentSet) -> &[String] {
+        match self {
+            Self::Docs => &set.docs,
+            Self::Source => &set.source,
+        }
+    }
+    fn patterns_mut(self, set: &mut DocumentSet) -> &mut Vec<String> {
+        match self {
+            Self::Docs => &mut set.docs,
+            Self::Source => &mut set.source,
+        }
+    }
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoleIntent {
+    role: FileRole,
+    patterns: Vec<String>,
+}
+
+// Existing paths and possible paths named by the rules prove ordinary overlaps,
+// including empty selected folders. Complex future overlaps stay behind the
+// source-write guard; this is not a glob subset or intersection parser.
+fn known_role_overlap(left: &[String], right: &[String], files: &[String]) -> bool {
+    let mut candidates = files.to_vec();
+    for pattern in left.iter().chain(right).filter(|p| !p.starts_with('!')) {
+        candidates.push(pattern.clone());
+        let folder = if pattern == "**" {
+            Some("")
+        } else {
+            pattern.strip_suffix("/**")
+        };
+        if let Some(folder) = folder {
+            for extension in ["md", "markdown", "txt", "docx", "pdf"] {
+                candidates.push(format!(
+                    "{}__jazyk_role_probe__.{extension}",
+                    if folder.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{folder}/")
+                    }
+                ));
+            }
+        }
+    }
+    candidates
+        .iter()
+        .any(|p| included(left, p) && included(right, p))
+}
+
+fn enabled_patterns(before: &[String], after: &[String]) -> Vec<String> {
+    let mut patterns: Vec<_> = after
+        .iter()
+        .filter(|p| {
+            !p.starts_with('!')
+                && (!before.contains(p) || (!included(before, p) && included(after, p)))
+        })
+        .cloned()
+        .collect();
+    for excluded in before.iter().filter_map(|p| p.strip_prefix('!')) {
+        if !included(before, excluded)
+            && included(after, excluded)
+            && !patterns.iter().any(|p| p == excluded)
+        {
+            patterns.push(excluded.into());
+        }
+    }
+    patterns
+}
+
+fn append_exclusion(patterns: &mut Vec<String>, selected: &str) -> bool {
+    let excluded = format!("!{selected}");
+    // An exact exclusion still applies to every future path when no later
+    // positive rule can re-enable part of it. Keep repeated saves byte-stable.
+    if let Some(index) = patterns.iter().rposition(|p| p == &excluded) {
+        if patterns[index + 1..].iter().all(|p| p.starts_with('!')) {
+            return false;
+        }
+    }
+    patterns.push(excluded);
+    true
+}
+
+fn resolve_role_edits(
+    before: &Workspace,
+    after: &mut Workspace,
+    id: &str,
+    body: &Value,
+) -> Result<Vec<Value>> {
+    let Some(target) = after.sets.iter().position(|s| s.id == id) else {
+        return Ok(vec![]);
+    };
+    let original = after.sets.clone();
+    let requested = after.sets[target].clone();
+    let files = after.files();
+    let mut intents: Vec<RoleIntent> = if let Some(value) = body.get("roleIntents") {
+        if body.get("roleIntent").is_some() {
+            return Err((400, "use roleIntents or roleIntent, not both".into()));
+        }
+        serde_json::from_value(value.clone())
+            .map_err(|e| (400, format!("invalid roleIntents: {e}")))?
+    } else if let Some(value) = body.get("roleIntent") {
+        vec![serde_json::from_value(value.clone())
+            .map_err(|e| (400, format!("invalid roleIntent: {e}")))?]
+    } else {
+        vec![]
+    };
+    for intent in &intents {
+        let selected = intent.role.patterns(&requested);
+        for pattern in &intent.patterns {
+            validate_pattern(pattern).map_err(|e| (400, e))?;
+            let direct = selected
+                .iter()
+                .rposition(|p| p == pattern)
+                .is_some_and(|index| {
+                    !selected[index + 1..].iter().any(|p| {
+                        p.strip_prefix('!')
+                            .is_some_and(|p| p == pattern || crate::project::glob_match(p, pattern))
+                    })
+                });
+            let source_fallback =
+                intent.role == FileRole::Source && pattern == "**" && selected.contains(pattern);
+            if pattern.starts_with('!')
+                || !(source_fallback || direct || included(selected, pattern))
+            {
+                return Err((
+                    400,
+                    format!(
+                        "role intent must name a positive selection enabled by the edit: {pattern}"
+                    ),
+                ));
+            }
+        }
+    }
+    let explicit = !intents.is_empty();
+    // Replaying the resolved form is a no-op, even when the client retains its
+    // transient selection history for retry after a lost response.
+    if explicit
+        && before.sets.len() == after.sets.len()
+        && before.sets.iter().all(|old| {
+            after
+                .sets
+                .iter()
+                .find(|set| set.id == old.id)
+                .is_some_and(|set| old.docs == set.docs && old.source == set.source)
+        })
+    {
+        return Ok(vec![]);
+    }
+    if intents.is_empty() {
+        let old = before.sets.iter().find(|s| s.id == id);
+        let docs = enabled_patterns(old.map_or(&[], |s| s.docs.as_slice()), &requested.docs);
+        let old_source: &[String] = old.map_or(&[], |s| s.source.as_slice());
+        let mut source = enabled_patterns(old_source, &requested.source);
+        if requested.source.iter().any(|p| p == "**") && old_source != requested.source.as_slice() {
+            // Removing an exclusion under Entire project chooses fallback
+            // coverage, rather than reclassifying that document subtree.
+            source.retain(|p| requested.source.contains(p));
+            if !source.iter().any(|p| p == "**") {
+                source.insert(0, "**".into());
+            }
+        }
+        if !docs.is_empty() && !source.is_empty() && known_role_overlap(&docs, &source, &files) {
+            if docs.iter().any(|p| p == "**" || p.starts_with("**/"))
+                && !source.iter().any(|p| p == "**")
+            {
+                intents.push(RoleIntent {
+                    role: FileRole::Source,
+                    patterns: source,
+                });
+            } else if source.iter().any(|p| p == "**") {
+                intents.push(RoleIntent {
+                    role: FileRole::Source,
+                    patterns: source,
+                });
+            } else {
+                return Err((400, "document and source selections overlap; edit one role at a time or supply ordered roleIntents to choose their roles".into()));
+            }
+        } else {
+            if !docs.is_empty() {
+                intents.push(RoleIntent {
+                    role: FileRole::Docs,
+                    patterns: docs,
+                });
+            }
+            if !source.is_empty() {
+                intents.push(RoleIntent {
+                    role: FileRole::Source,
+                    patterns: source,
+                });
+            }
+        }
+    }
+    // Entire-project source is fallback coverage. Specific assignments keep
+    // their ordering and take precedence even if the broad checkbox came last.
+    if intents
+        .iter()
+        .any(|i| i.role == FileRole::Source && i.patterns.iter().any(|p| p == "**"))
+        && after
+            .sets
+            .iter()
+            .any(|set| known_role_overlap(&after.sets[target].source, &set.docs, &files))
+    {
+        let prior = before
+            .sets
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.source.clone())
+            .unwrap_or_default();
+        let current = after.sets[target].source.clone();
+        let retained = if current.iter().any(|p| p != "**") {
+            current
+        } else {
+            prior
+        };
+        let docs: Vec<_> = after
+            .sets
+            .iter()
+            .flat_map(|s| s.docs.iter())
+            .filter(|p| !p.starts_with('!'))
+            .cloned()
+            .collect();
+        let mut patterns = vec!["**".to_string()];
+        for pattern in docs {
+            append_exclusion(&mut patterns, &pattern);
+        }
+        for pattern in retained.into_iter().filter(|p| p != "**") {
+            if let Some(positive) = pattern.strip_prefix('!') {
+                append_exclusion(&mut patterns, positive);
+            } else if !patterns.contains(&pattern) || !included(&patterns, &pattern) {
+                // A broad form edit keeps an already selected specific source
+                // scope. It must not use a raw unresolved overlap to take prose.
+                if !before.sets.iter().any(|set| included(&set.docs, &pattern)) {
+                    for set in &mut after.sets {
+                        if included(&set.docs, &pattern) {
+                            append_exclusion(&mut set.docs, &pattern);
+                        }
+                    }
+                }
+                patterns.push(pattern);
+            }
+        }
+        after.sets[target].source = patterns;
+    }
+    let mut automatic_exclusions: Vec<(FileRole, usize)> = Vec::new();
+    for intent in intents {
+        for pattern in intent.patterns {
+            if intent.role == FileRole::Source && pattern == "**" {
+                continue;
+            }
+            let selected = intent.role.patterns_mut(&mut after.sets[target]);
+            let last_positive = selected.iter().rposition(|p| p == &pattern);
+            if last_positive.is_none()
+                || last_positive.is_some_and(|index| {
+                    (selected[index + 1..].iter().any(|p| p.starts_with('!'))
+                        && !included(selected, &pattern))
+                        || automatic_exclusions
+                            .iter()
+                            .any(|(role, position)| *role == intent.role && *position > index)
+                })
+            {
+                selected.push(pattern.clone());
+            }
+            for set in &mut after.sets {
+                let opposite = intent.role.opposite();
+                let opposing = opposite.patterns_mut(set);
+                if opposing.is_empty()
+                    || (!explicit && !known_role_overlap(opposing, &[pattern.clone()], &files))
+                {
+                    continue;
+                }
+                if append_exclusion(opposing, &pattern) {
+                    let position = opposing.len() - 1;
+                    if set.id == id {
+                        automatic_exclusions.push((opposite, position));
+                    }
+                }
+            }
+        }
+    }
+    // Report only additions relative to the requested form, including a repeated
+    // exclusion appended after a later inclusion. Group by affected set and role.
+    let mut adjustments = Vec::new();
+    for set in &after.sets {
+        let old = original.iter().find(|s| s.id == set.id).expect("same sets");
+        for role in [FileRole::Docs, FileRole::Source] {
+            let mut excluded = Vec::new();
+            for pattern in role.patterns(set).iter().filter(|p| p.starts_with('!')) {
+                if !excluded.contains(pattern)
+                    && role.patterns(set).iter().filter(|p| *p == pattern).count()
+                        > role.patterns(old).iter().filter(|p| *p == pattern).count()
+                {
+                    excluded.push(pattern.clone());
+                }
+            }
+            if !excluded.is_empty() {
+                adjustments.push(json!({"setId":set.id,"role":role,"excluded":excluded}));
+            }
+        }
+    }
+    Ok(adjustments)
 }
 
 // Every eligible file under the project, project-relative, sorted. A full walk with
@@ -621,11 +943,68 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
             }
         }
     }
+    let mut after = Workspace::parse(root, &document.to_string(), true)?;
+    let role_adjustments = if removal.is_none() && restore.is_none() {
+        resolve_role_edits(&before, &mut after, &id, body)?
+    } else {
+        vec![]
+    };
+    for table in document["sets"]
+        .as_array_of_tables_mut()
+        .expect("validated sets")
+        .iter_mut()
+    {
+        let set = after
+            .sets
+            .iter()
+            .find(|s| Some(s.id.as_str()) == table.get("id").and_then(|v| v.as_str()))
+            .expect("validated set");
+        for (field, patterns) in [("docs", &set.docs), ("source", &set.source)] {
+            let existing: Vec<String> = table
+                .get(field)
+                .and_then(|v| v.as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if &existing != patterns {
+                if patterns.starts_with(&existing)
+                    && table.get(field).and_then(|v| v.as_array()).is_some()
+                {
+                    let array = table[field].as_array_mut().expect("existing array");
+                    for pattern in &patterns[existing.len()..] {
+                        array.push(pattern.as_str());
+                    }
+                } else {
+                    table[field] =
+                        toml_edit::value(patterns.iter().cloned().collect::<toml_edit::Array>());
+                }
+            }
+        }
+    }
     let next = document.to_string();
     let after = Workspace::parse(root, &next, true)?;
     let mut value = after.summary();
     value["setId"] = json!(id);
     value["baseHash"] = json!(before.hash);
+    value["roleAdjustments"] = json!(role_adjustments);
+    value["affectedSetIds"] = json!(after
+        .sets
+        .iter()
+        .filter(|set| {
+            before
+                .sets
+                .iter()
+                .find(|s| s.id == set.id)
+                .is_none_or(|old| {
+                    old.docs != set.docs || old.source != set.source || old.roots != set.roots
+                })
+        })
+        .map(|set| &set.id)
+        .collect::<Vec<_>>());
     let files = after.files();
     value["overlaps"] = json!(files
         .iter()
@@ -639,7 +1018,9 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
         let old = before.sets.iter().find(|s| s.id == set.id);
         json!({"setId": set.id,
             "added": files.iter().filter(|f| included(&set.docs, f) && !old.is_some_and(|o| included(&o.docs, f))).collect::<Vec<_>>(),
-            "removed": files.iter().filter(|f| !included(&set.docs, f) && old.is_some_and(|o| included(&o.docs, f))).collect::<Vec<_>>()})
+            "removed": files.iter().filter(|f| !included(&set.docs, f) && old.is_some_and(|o| included(&o.docs, f))).collect::<Vec<_>>(),
+            "sourceAdded": files.iter().filter(|f| included(&set.source, f) && !old.is_some_and(|o| included(&o.source, f))).collect::<Vec<_>>(),
+            "sourceRemoved": files.iter().filter(|f| !included(&set.source, f) && old.is_some_and(|o| included(&o.source, f))).collect::<Vec<_>>()})
     }).collect::<Vec<_>>());
     if !preview {
         let _build = ProjectLock::acquire(root, "project.lock")?;
@@ -693,9 +1074,15 @@ mod tests {
     #[test]
     fn the_generated_ignore_file_is_the_documented_one() {
         let doc = include_str!("../../docs/compiler/document-sets.md");
-        assert!(doc.contains(&format!("```\n{}```\n", IGNORE)), "docs and IGNORE disagree");
+        assert!(
+            doc.contains(&format!("```\n{}```\n", IGNORE)),
+            "docs and IGNORE disagree"
+        );
         for kind in crate::store::COMMITTED_KINDS {
-            assert!(IGNORE.contains(&format!("!/ds_*/graph/{kind}/*.yaml\n")), "{kind}");
+            assert!(
+                IGNORE.contains(&format!("!/ds_*/graph/{kind}/*.yaml\n")),
+                "{kind}"
+            );
         }
         for kind in crate::store::DERIVED_KINDS {
             assert!(!IGNORE.contains(kind), "{kind}");
@@ -715,7 +1102,10 @@ mod tests {
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), IGNORE);
         crate::vfs::write(&path, "*\n!jazyk.toml\n").unwrap();
         assert!(!ensure_ignore(&f.0).unwrap());
-        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), "*\n!jazyk.toml\n");
+        assert_eq!(
+            crate::vfs::read_to_string(&path).unwrap(),
+            "*\n!jazyk.toml\n"
+        );
     }
 
     const CHECKOUT_PATHS: [(&str, bool); 35] = [
@@ -736,7 +1126,10 @@ mod tests {
         (".jazyk/ds_b/status.yaml", true),
         (".jazyk/ds_main/graph/relationships/rel~a%7Eb.yaml", false),
         (".jazyk/ds_main/graph/state-machines/sm~order.yaml", false),
-        (".jazyk/ds_main/graph/entities/.ent~order.yaml.12.tmp", false),
+        (
+            ".jazyk/ds_main/graph/entities/.ent~order.yaml.12.tmp",
+            false,
+        ),
         (".jazyk/ds_main/graph/entities/notes.txt", false),
         (".jazyk/ds_main/journal/g1.yaml", false),
         (".jazyk/ds_main/diagrams/class/shop.svg", false),
@@ -860,7 +1253,12 @@ mod tests {
     fn a_set_can_start_with_no_documents() {
         let f = Fixture::new();
         let hash = Workspace::load(&f.0).unwrap().hash;
-        let saved = edit(&f.0, &json!({"baseHash":hash,"set":{"id":"ds_a","name":"Later","docs":[]}}), false).unwrap();
+        let saved = edit(
+            &f.0,
+            &json!({"baseHash":hash,"set":{"id":"ds_a","name":"Later","docs":[]}}),
+            false,
+        )
+        .unwrap();
         assert_eq!(saved["sets"][0]["documents"], json!([]));
         assert_eq!(saved["sets"][0]["state"], "empty");
         let hash = Workspace::load(&f.0).unwrap().hash;
@@ -940,6 +1338,349 @@ mod tests {
         assert_eq!(w.summary()["sets"].as_array().unwrap().len(), 2);
     }
 
+    fn edit_set(f: &Fixture, set: Value, intents: Value, preview: bool) -> Result<Value> {
+        let mut body = json!({"baseHash":Workspace::load(&f.0).unwrap().hash,"set":set});
+        if !intents.is_null() {
+            body["roleIntents"] = intents;
+        }
+        edit(&f.0, &body, preview)
+    }
+
+    #[test]
+    fn empty_source_folder_is_excluded_from_broad_documents_before_files_exist() {
+        let f = Fixture::new();
+        f.add("ds_a", "A", &["**"]);
+        crate::vfs::create_dir_all(f.0.join("deliverable")).unwrap();
+        let original = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
+        let body = json!({"baseHash":Workspace::load(&f.0).unwrap().hash,
+            "set":{"id":"ds_a","source":["src/**","deliverable/**"]}});
+        let preview = edit(&f.0, &body, true).unwrap();
+        assert_eq!(
+            preview["sets"][0]["docs"],
+            json!(["**", "!src/**", "!deliverable/**"])
+        );
+        assert_eq!(
+            preview["roleAdjustments"],
+            json!([{"setId":"ds_a","role":"docs","excluded":["!deliverable/**"]}])
+        );
+        assert_eq!(preview["affectedSetIds"], json!(["ds_a"]));
+        assert_eq!(
+            crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap(),
+            original
+        );
+        assert_eq!(preview, edit(&f.0, &body, false).unwrap());
+        crate::vfs::write(f.0.join("deliverable/README.md"), "# Product\n").unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        let project = workspace.resolve(Some("ds_a")).unwrap();
+        assert!(!project
+            .doc_files()
+            .contains(&f.0.join("deliverable/README.md")));
+        assert!(crate::gen::GenSettings::resolve(&project).allows_source("deliverable/README.md"));
+        let text = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
+        let resolved = &workspace.sets[0];
+        let repeat = edit_set(
+            &f,
+            json!({"id":"ds_a","docs":resolved.docs,"source":resolved.source}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        assert_eq!(repeat["roleAdjustments"], json!([]));
+        assert_eq!(repeat["affectedSetIds"], json!([]));
+        assert_eq!(crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap(), text);
+        for pattern in [
+            "**/*.md",
+            "**/*.markdown",
+            "**/*.txt",
+            "**/*.docx",
+            "**/*.pdf",
+        ] {
+            let f = Fixture::new();
+            f.add("ds_a", "A", &[pattern]);
+            edit_set(
+                &f,
+                json!({"id":"ds_a","source":["src/**","deliverable/**"]}),
+                Value::Null,
+                false,
+            )
+            .unwrap();
+            let workspace = Workspace::load(&f.0).unwrap();
+            assert!(
+                workspace.sets[0].docs.contains(&"!deliverable/**".into()),
+                "{pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn specific_roles_resolve_across_sets_and_keep_same_role_sharing() {
+        let f = Fixture::new();
+        f.add("ds_a", "A", &["docs/a.md"]);
+        f.add("ds_b", "B", &["docs/a.md", "docs/b.md"]);
+        let preview = edit_set(
+            &f,
+            json!({"id":"ds_a","source":["src/**","docs/**"]}),
+            Value::Null,
+            true,
+        )
+        .unwrap();
+        assert_eq!(preview["affectedSetIds"], json!(["ds_a", "ds_b"]));
+        assert_eq!(
+            preview["changes"][1]["removed"],
+            json!(["docs/a.md", "docs/b.md"])
+        );
+        edit_set(
+            &f,
+            json!({"id":"ds_a","source":["src/**","docs/**"]}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        let old_source = crate::gen::GenSettings::resolve(
+            &Workspace::load(&f.0)
+                .unwrap()
+                .resolve(Some("ds_a"))
+                .unwrap(),
+        );
+        assert!(old_source.allows_source("docs/a.md"));
+        let saved = edit_set(
+            &f,
+            json!({"id":"ds_b","docs":["docs/a.md","docs/b.md","!docs/**","docs/a.md"]}),
+            json!([{"role":"docs","patterns":["docs/a.md"]}]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(saved["changes"][0]["sourceRemoved"], json!(["docs/a.md"]));
+        assert!(saved["sets"][1]["dirty"].as_bool().unwrap());
+        assert!(
+            !old_source.allows_source("docs/a.md"),
+            "an existing source scope must honor the new document claim"
+        );
+        edit_set(
+            &f,
+            json!({"id":"ds_a","docs":["docs/a.md"]}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        assert_eq!(
+            workspace
+                .memberships("docs/a.md")
+                .iter()
+                .filter(|m| m["role"] == "docs")
+                .count(),
+            2
+        );
+        assert_eq!(
+            workspace
+                .memberships("src/shared.rs")
+                .iter()
+                .filter(|m| m["role"] == "source")
+                .count(),
+            2
+        );
+        assert_eq!(
+            workspace
+                .memberships("docs/a.md")
+                .iter()
+                .filter(|m| m["role"] == "source")
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn ordered_specific_assignments_override_broad_source_and_keep_child_documents() {
+        let f = Fixture::new();
+        let intents = json!([
+            {"role":"source","patterns":["deliverable/**"]},
+            {"role":"docs","patterns":["deliverable/README.md"]},
+            {"role":"source","patterns":["**"]}
+        ]);
+        let result = edit_set(
+            &f,
+            json!({"id":"ds_a","name":"A","docs":["**"],"source":["**","deliverable/**"]}),
+            intents.clone(),
+            false,
+        )
+        .unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        let set = &workspace.sets[0];
+        assert!(included(&set.source, "deliverable/main.rs"));
+        assert!(!included(&set.docs, "deliverable/main.rs"));
+        assert!(included(&set.docs, "deliverable/README.md"));
+        assert!(!included(&set.source, "deliverable/README.md"));
+        assert!(included(&set.docs, "docs/a.md"));
+        assert!(!included(&set.source, "docs/a.md"));
+        let text = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
+        let repeat = edit_set(
+            &f,
+            json!({"id":"ds_a","docs":set.docs,"source":set.source}),
+            intents,
+            false,
+        )
+        .unwrap();
+        assert_eq!(repeat["roleAdjustments"], json!([]));
+        assert_eq!(repeat["sets"][0]["docs"], result["sets"][0]["docs"]);
+        assert_eq!(repeat["sets"][0]["source"], result["sets"][0]["source"]);
+        assert_eq!(crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap(), text);
+    }
+
+    #[test]
+    fn later_source_folder_assignment_reclaims_an_earlier_document_child() {
+        for intents in [
+            json!([
+                {"role":"docs","patterns":["deliverable/README.md"]},
+                {"role":"source","patterns":["deliverable/**"]}
+            ]),
+            json!([
+                {"role":"source","patterns":["deliverable/**"]},
+                {"role":"docs","patterns":["deliverable/README.md"]},
+                {"role":"source","patterns":["deliverable/**"]}
+            ]),
+        ] {
+            let f = Fixture::new();
+            edit_set(&f, json!({"id":"ds_a","name":"A","docs":["**","deliverable/README.md"],"source":["deliverable/**"]}), intents, false).unwrap();
+            let workspace = Workspace::load(&f.0).unwrap();
+            assert!(included(&workspace.sets[0].source, "deliverable/README.md"));
+            assert!(!included(&workspace.sets[0].docs, "deliverable/README.md"));
+        }
+    }
+
+    #[test]
+    fn broad_source_preserves_documents_and_unpartitioned_broad_roles_keep_docs_protected() {
+        let f = Fixture::new();
+        edit_set(
+            &f,
+            json!({"id":"ds_a","name":"A","docs":["docs/**"],"source":["**"]}),
+            json!([{"role":"source","patterns":["**"]}]),
+            false,
+        )
+        .unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        assert_eq!(workspace.sets[0].source, vec!["**", "!docs/**"]);
+        assert!(included(&workspace.sets[0].source, "src/shared.rs"));
+        assert!(!included(&workspace.sets[0].source, "docs/a.md"));
+        let result = edit_set(
+            &f,
+            json!({"id":"ds_a","docs":["**"],"source":["**"]}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        assert_eq!(result["sets"][0]["sourceFiles"], json!([]));
+        assert!(included(
+            &Workspace::load(&f.0).unwrap().sets[0].docs,
+            "docs/a.md"
+        ));
+    }
+
+    #[test]
+    fn broader_form_preserves_an_existing_specific_source_partition() {
+        let f = Fixture::new();
+        f.add("ds_a", "A", &["docs/**"]);
+        edit_set(
+            &f,
+            json!({"id":"ds_a","docs":["**"],"source":["**"]}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        let set = &workspace.sets[0];
+        assert!(included(&set.source, "src/shared.rs"));
+        assert!(!included(&set.docs, "src/shared.rs"));
+        assert!(included(&set.docs, "docs/a.md"));
+        assert!(!included(&set.source, "docs/a.md"));
+    }
+
+    #[test]
+    fn ambiguous_advanced_overlap_requires_intent_but_disjoint_edits_and_negatives_work() {
+        let f = Fixture::new();
+        let bad = json!({"id":"ds_a","name":"A","docs":["docs/**"],"source":["docs/*.md"]});
+        assert!(edit_set(&f, bad.clone(), Value::Null, true)
+            .unwrap_err()
+            .1
+            .contains("roleIntents"));
+        assert!(!f.0.join(CONFIG).vexists());
+        edit_set(
+            &f,
+            bad,
+            json!([{"role":"source","patterns":["docs/*.md"]}]),
+            false,
+        )
+        .unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        assert!(!included(&workspace.sets[0].docs, "docs/a.md"));
+        assert!(included(&workspace.sets[0].source, "docs/a.md"));
+        edit_set(&f, json!({"id":"ds_b","name":"B","docs":["docs/b.md","!docs/a.md"],"source":["src/**","!src/private/**"]}), Value::Null, false).unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        let b = workspace.select("ds_b").unwrap();
+        assert!(b.docs.contains(&"!docs/a.md".into()));
+        assert!(b.source.contains(&"!src/private/**".into()));
+        assert!(!included(&b.source, "src/private/key.txt"));
+    }
+
+    #[test]
+    fn invalid_role_intents_do_not_change_configuration_or_files() {
+        let f = Fixture::new();
+        f.add("ds_a", "A", &["docs/a.md"]);
+        let before = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
+        for intent in [
+            json!({"role":"source","patterns":["!src/**"]}),
+            json!({"role":"source","patterns":["../outside/**"]}),
+            json!({"role":"source","patterns":["docs/b.md"]}),
+            json!({"role":"other","patterns":["src/**"]}),
+        ] {
+            assert!(edit_set(
+                &f,
+                json!({"id":"ds_a","source":["src/**"]}),
+                json!([intent]),
+                false
+            )
+            .is_err());
+            assert_eq!(
+                crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap(),
+                before
+            );
+        }
+        assert!(edit_set(
+            &f,
+            json!({"id":"ds_a","source":["src/**","!src/**"]}),
+            json!([{"role":"source","patterns":["src/**"]}]),
+            false
+        )
+        .is_err());
+        assert_eq!(
+            crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap(),
+            before
+        );
+        assert_eq!(
+            crate::vfs::read_to_string(f.0.join("docs/a.md")).unwrap(),
+            "# A\n\nA does something.\n"
+        );
+    }
+
+    #[test]
+    fn raw_toml_overlap_remains_readable_but_cannot_authorize_source_writes() {
+        let f = Fixture::new();
+        crate::vfs::create_dir_all(f.0.join(".jazyk")).unwrap();
+        crate::vfs::write(f.0.join(CONFIG), "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['**']\nsource = ['deliverable/**']\n").unwrap();
+        let workspace = Workspace::load(&f.0).unwrap();
+        let project = workspace.resolve(Some("ds_a")).unwrap();
+        assert!(!crate::gen::GenSettings::resolve(&project).allows_source("deliverable/README.md"));
+        edit_set(
+            &f,
+            json!({"id":"ds_a","name":"Renamed"}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        assert_eq!(Workspace::load(&f.0).unwrap().sets[0].docs, vec!["**"]);
+        assert!(!crate::gen::GenSettings::resolve(&project).allows_source("deliverable/README.md"));
+    }
+
     #[test]
     fn stale_edits_and_invalid_patterns_leave_config_unchanged() {
         let f = Fixture::new();
@@ -976,13 +1717,33 @@ mod tests {
             false,
         )
         .unwrap();
-        let text = crate::vfs::read_to_string(path).unwrap();
+        let text = crate::vfs::read_to_string(&path).unwrap();
         assert!(text.contains("# Owner comment"));
         assert!(text.contains("note = 'keep me'"));
         assert_eq!(
             Workspace::load(&f.0).unwrap().select("B").unwrap().docs,
             vec!["docs/b.md"]
         );
+        let text = text.replace(
+            "docs = [\"docs/b.md\"]",
+            "docs = [\n  # Keep the owner's selection note.\n  \"docs/b.md\",\n]",
+        );
+        assert!(text.contains("# Keep the owner's selection note."));
+        crate::vfs::write(&path, text).unwrap();
+        edit_set(
+            &f,
+            json!({"id":"ds_a","source":["src/**","docs/**"]}),
+            Value::Null,
+            false,
+        )
+        .unwrap();
+        let text = crate::vfs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("# Keep the owner's selection note."),
+            "{text}"
+        );
+        assert!(text.contains("# Owner comment"));
+        assert!(text.contains("note = 'keep me'"));
     }
 
     #[test]

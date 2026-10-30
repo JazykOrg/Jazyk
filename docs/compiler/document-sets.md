@@ -103,9 +103,29 @@ folder names.
   Editing that file dirties every claiming set.
 - Source overlaps are normal. A source badge states scope, not proof that a
   requirement implements or owns the file. The ledger remains that evidence.
+- Typed set edits resolve document versus source selections in the shared engine.
+  Selecting a specific file or folder for one role appends its explicit exclusion
+  to the opposing role in every affected set. Later specific selections win.
+  Selecting a document can retain its membership in several document sets. The
+  same applies to source selections. Files never move or disappear.
+- The request can supply ordered `roleIntents: [{role, patterns}]`. `role` is
+  `docs` or `source`. `patterns` contains positive selections enabled by the edit.
+  `roleIntent` accepts one such assignment. The editor sends picker selections in
+  their selection order. These fields describe the edit and are not configuration.
+- Without explicit intent, one changed role supplies the selection intent. A new
+  set with broad documents and a specific source folder assigns that folder to
+  source. Broad source `**` preserves documents. Other simultaneous selections
+  with a known conflict require explicit intent. Disjoint edits remain valid.
+  Matching uses the shared glob matcher, not a client glob approximation.
+- Preview returns `roleAdjustments: [{setId, role, excluded}]`, the explicit
+  exclusions added to each opposing role, and `affectedSetIds`. Membership
+  `changes` include document `added` and `removed`, and `sourceAdded` and
+  `sourceRemoved`. Empty folders retain their rules before files exist. Preview
+  and save apply the same resolution. Repeating a resolved save adds no rules.
 - Files claimed as documents by any set are excluded from source write scopes in
   every set. Broad source patterns cannot authorize generation over another set's
-  prose. Show these exclusions in the preview rather than hiding them.
+  prose. This guard also applies to unresolved overlaps written through raw TOML.
+  Typed management edits save the explicit exclusions shown in preview.
 - Membership returns all `{setId, role, matchedPattern}` entries. A folder has an
   explicit selection marker when its rule selects descendants. A mixed parent has
   a descendant summary; it is never marked as if all its files shared one role.

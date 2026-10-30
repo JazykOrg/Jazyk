@@ -407,6 +407,9 @@ through the `failing-binding` check once the row is recorded, since a Codex sess
 generating a handbook tried `report_diagnostic` for one. A coding agent can bring its
 own file tools. With `--serve-files`, the serving exposes the
 [generation file tools](../compiler/goals/generate.md#file-and-command-tools).
+Owned worker batches carry the execution contract in their opening prompt.
+`begin_binding` and `begin_generation` keep their full domain contracts in the reply
+and omit that repeated execution contract. Standalone servings keep both contracts.
 The latest successful `begin_generation` or `begin_binding` sets their ownership
 target within that document set. A write renews that target's claim and refuses
 another worker's live claim. Successful recording releases the claim and clears the

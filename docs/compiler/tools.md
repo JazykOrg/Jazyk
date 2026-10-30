@@ -670,6 +670,9 @@ scope. Other hidden paths keep the shared
   in the manifest; the medium is not, it is already decided, or the package carries
   `mediumNote` asking the worker to decide it first with `record_medium`. Stateless on
   the server: beginning claims nothing and holds nothing; the lease is the claim.
+  An owned worker batch receives the execution contract in its opening prompt, so
+  this reply carries only the full generation contract. A standalone serving carries
+  both contracts.
 - `record_medium({form, produced, toolchain?, artifact?})`: record what the
   deliverable is made of when no session has
   ([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)):

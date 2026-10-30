@@ -157,6 +157,8 @@ It does not import the Goose application facade.
 Provider errors end the prompt with a refusal and an actionable message. They do
 not close the ACP connection or unrelated sessions. Panics are contained at the
 host boundary. There is no text tool codec or automatic native-tool downgrade.
+Injected MCP servers must expose unique tool names within one session. Session
+creation refuses an ambiguous name before any tool can execute.
 
 The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md) remains a
 Jazyk payload. MCP supplies the domain prompt and tools. IDE-mediated edits still

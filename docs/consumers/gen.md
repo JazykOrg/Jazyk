@@ -288,7 +288,7 @@ manifest.
   document-like medium puts a component on one page (a handbook page for a department
   and its roles). An entity outside every group (a system, the entities of a flat
   graph) shares with nobody.
-- A session never overwrites a file an entity outside its group records: the harness
+- A session never overwrites an exclusive file an entity outside its group records: the harness
   rejects the path at `write_text_file` and at `record_generation`, naming the owner,
   and asks the worker for another path (one corrective retry, then the goal fails).
   Using another group's files goes through references (imports, includes, links),
@@ -318,13 +318,25 @@ manifest.
   it needs a build or configuration file no session has written yet (a `package.json`, a
   `Cargo.toml`), the session returns that file as a support file. Recording a command
   that cannot run is a generation defect; verification surfaces it as a failing row.
-- Support files belong to the deliverable, not to an entity. They are what makes the
-  recorded commands runnable (a `package.json`, a `Cargo.toml`, the entry point a
-  build runs, a crate root such as `src/lib.rs` that every module must be declared
-  in), and every session may rewrite one: a manifest that lists more parts than
+- Support files belong to the deliverable, not to an entity. They make recorded
+  commands runnable or compose the shared artifact (a `package.json`, a `Cargo.toml`,
+  the entry point a build runs, a crate root such as `src/lib.rs`, or a static page
+  containing several unrelated entities). This applies when written files are the
+  artifact too. Every session may extend one: a manifest that lists more parts than
   the last session saw is exactly why the file exists. The ledger keeps them in their own
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.
+- An existing exclusive entrypoint can become shared support through an explicit
+  `record_generation`. First call `begin_generation` for its recorded owner. Preserve
+  the file's current content and the owner's files and tests, then re-record that
+  manifest with the entrypoint added to `supportFiles`. This unchanged record keeps
+  existing requirement sites and evidence. Begin the entity being implemented again,
+  read the shared entrypoint, and extend it while preserving its existing parts.
+  List the path in `files` too when it implements that entity's requirements. An
+  implementation change invalidates prior evidence through the normal source hashes.
+  Promotion is for a real shared composition point, never a way to take over another
+  entity's exclusive module. No filename is automatically shared. Source and Documents
+  boundaries still apply to support files.
 - A dependency manifest pins each dependency to a version that resolved: a caret or
   exact range on a version that exists (`^4.19.2`), never `latest`, `*`, or an empty
   range. A generation of a Node deliverable once pinned every dependency to `latest`
@@ -379,10 +391,9 @@ manifest.
   the build's entry point, belongs to the deliverable; everything else the session wrote
   belongs to the entity that wrote it. Classifying by arrival would make a second test
   file deliverable-wide, unowned, and rewritable by any later session.
-- A support file never lands on a file an entity owns, this goal's own product and
-  tests included. Support files exist so any session may rewrite them; letting one take
-  an owned path would let a manifest step quietly overwrite the module the product
-  step just wrote.
+- A pipeline manifest step never silently overwrites an owned file with support
+  content, this goal's own product and tests included. Reclassifying a real existing
+  composition point uses the explicit preserve-first record above.
 - A reply in the wrong shape gets one corrective round before the goal fails: a
   product or tests reply whose `FILE:` line never appears, a manifest that is not
   valid JSON. The complaint is quoted back with the same request, and the correction

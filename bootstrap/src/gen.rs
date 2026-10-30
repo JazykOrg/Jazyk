@@ -77,9 +77,9 @@ pub struct Ledger {
     // Mirrors docs/consumers/gen.md#the-ledger.
     #[serde(skip)]
     pub unreadable: Option<String>,
-    // Files that belong to the deliverable, not to an entity: what makes the recorded
-    // commands runnable (a package.json, the entry point the build runs). Any task may
-    // rewrite one; ownership never applies.
+    // Files that belong to the deliverable, not to an entity: command setup and
+    // shared composition points, including a written artifact. Any task may extend
+    // one while preserving its parts; exclusive entity ownership never applies.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub support: Vec<String>,
@@ -970,6 +970,9 @@ pub fn test_artifacts(ledger: &Ledger) -> std::collections::BTreeSet<String> {
 // file is someone else's.
 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
 pub fn file_owner(store: &Store, ledger: &Ledger, id: &str, path: &str) -> Option<String> {
+    if ledger.support.iter().any(|support| support == path) {
+        return None;
+    }
     let id = store.resolve_id(id);
     let group = group_root(store, id);
     ledger
@@ -1800,7 +1803,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
         // Shared requirements confused a Codex session into re-recording them
         // (docs/compiler/goals/generate.md#what-the-model-sees).
-        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; a requirement a file of another group carries (its page, its module) is carried by naming that file on its test row (files: [path]); an entity whose every requirement is carried records files: []; a file a sharedWith member recorded is your group's too: extend it and record it in files",
+        "ownershipNote": "a requirement already carried by another entity's file names that file on its test row (files: [path]); an entity whose every requirement is carried records files: []; extend a sharedWith member's file and record it in files. A genuine shared composition entrypoint can be support even for a written artifact: begin its recorded owner, preserve its content/current files/tests and re-record with that entrypoint added to supportFiles, then begin your entity and extend it. Also list it in files when it implements your requirements. Never promote an exclusive module merely to bypass ownership",
         // The entity's component group: members whose files it may write and record
         // too (docs/consumers/gen.md#file-ownership-and-conventions).
         "sharedWith": shared_with(store, id),
@@ -2299,7 +2302,9 @@ pub fn mark(
                     tests,
                     entity: owner,
                     files: row_files,
-                    sites: sites_by_rid.remove(&rid).unwrap_or_default(),
+                    // An unchanged support promotion has no markers left to strip.
+                    sites: sites_by_rid.remove(&rid)
+                        .unwrap_or_else(|| prior.map(|row| row.sites.clone()).unwrap_or_default()),
                     test,
                     hashes,
                     verdict,
@@ -4235,6 +4240,127 @@ mod tests {
         assert_eq!(shared_with(&s, "ent:operations"), vec!["ent:store-manager".to_string()]);
         assert!(shared_with(&s, "ent:org").is_empty());
         crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn scoped_worker_explicitly_promotes_and_extends_a_shared_written_page() {
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let root = Path::new("/project");
+        crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+        crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Site'\ndocs = ['docs/**']\nsource = ['deliverable/**']\n").unwrap();
+        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+        let gs = GenSettings::resolve(&project);
+        let mut store = Store { out: project.out.clone(), ..Default::default() };
+        for (id, name, rid, statement) in [
+            ("ent:footer", "Footer", "req:footer", "The page displays the footer."),
+            ("ent:top-menu", "Top Menu", "req:top-menu", "The page displays the menu."),
+        ] {
+            store.graph.entities.insert(id.into(), Entity { name: name.into(), ..Default::default() });
+            store.graph.requirements.insert(rid.into(), Requirement {
+                statement: statement.into(), entities: vec![id.into()], ..Default::default()
+            });
+            store.graph.criteria.insert(format!("crit:{}", id.trim_start_matches("ent:")), Criterion {
+                requirement: rid.into(), statement: statement.into(), ..Default::default()
+            });
+        }
+        store.save();
+        let page = "deliverable/page.html";
+        let exclusive = "deliverable/footer.css";
+        let artifact = "deliverable/tests/site.py";
+        crate::vfs::create_dir_all(root.join("deliverable/tests")).unwrap();
+        crate::vfs::write(root.join(page), "<html><body>\n<!-- req:footer hash:12345678 -->\n<footer>Existing footer</footer>\n</body></html>\n").unwrap();
+        crate::vfs::write(root.join(exclusive), "footer { color: navy; }\n").unwrap();
+        crate::vfs::write(root.join(artifact), "def checks_footer():\n    pass\ndef checks_menu():\n    pass\n").unwrap();
+        let mut ledger = Ledger::load(&store.out);
+        ledger.medium = Some(Medium {
+            form: "Static HTML page".into(), produced: "written".into(),
+            toolchain: "HTML".into(), artifact: page.into(),
+        });
+        ledger.save(&store.out);
+        let footer_test = json!({"requirement":"req:footer","criterion":"crit:footer","kind":"programmatic",
+            "artifact":artifact,"name":"checks_footer","run":"task:site","files":[page]});
+        let mut footer_manifest = json!({"files":[page,exclusive],"tests":[footer_test]});
+        mark(&store, "ent:footer", None, &footer_manifest, &gs).unwrap();
+        let original = crate::vfs::read_to_string(root.join(page)).unwrap();
+        let mut ledger = Ledger::load(&store.out);
+        let footer = ledger.requirements.get_mut("req:footer").unwrap();
+        footer.verdict = "pass".into();
+        footer.evidence = Some("Prior fixture judgment of these exact source bytes.".into());
+        for test in footer.tests.values_mut() {
+            test.verdict = "pass".into();
+            test.evidence = footer.evidence.clone();
+        }
+        ledger.save(&store.out);
+        let prior_row = serde_json::to_value(&ledger.requirements["req:footer"]).unwrap();
+        assert_eq!(crate::verify::status_of(&store, "req:footer", &ledger.requirements["req:footer"], &gs).0, "verified");
+        assert!(shared_with(&store, "ent:top-menu").is_empty());
+
+        // This is the same target fence as a Top Menu-only in-process worker.
+        let server = crate::mcp::McpServer::with_bridge(project.clone(), store.out.clone(),
+            vec!["generate".into()], true, crate::mcp::BridgeFlags {
+                ephemeral: true, serve_files: true,
+                only: Some("g:generate:ent:top-menu".into()),
+                build_token: Some("shared-page-fixture".into()), ..Default::default()
+            });
+        let call = |name: &str, args: Value| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+        let successful = |reply: Value| -> Value {
+            assert!(!reply["isError"].as_bool().unwrap_or(false), "{reply}");
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap()
+        };
+        let refused = call("write_text_file", json!({"path":page,"content":"must not replace footer"}));
+        assert!(refused.to_string().contains("file-owned"), "{refused}");
+        assert_eq!(crate::vfs::read_to_string(root.join(page)).unwrap(), original);
+
+        // Reopen the recorded owner, preserve its bytes and complete manifest,
+        // and explicitly add the real shared composition page to support.
+        let owner = successful(call("begin_generation", json!({"entity":"ent:footer"})));
+        footer_manifest["supportFiles"] = json!([page]);
+        successful(call("record_generation", json!({"entity":"ent:footer",
+            "factHash":owner["factHash"],"manifest":footer_manifest})));
+        let promoted = Ledger::load(&store.out);
+        assert_eq!(promoted.support, [page]);
+        assert_eq!(crate::vfs::read_to_string(root.join(page)).unwrap(), original);
+        assert_eq!(serde_json::to_value(&promoted.requirements["req:footer"]).unwrap(), prior_row);
+        assert!(file_owner(&store, &promoted, "ent:top-menu", page).is_none());
+
+        let package = successful(call("begin_generation", json!({"entity":"ent:top-menu"})));
+        assert_eq!(package["sharedWith"], json!([]));
+        assert_eq!(package["supportFiles"], json!([page]));
+        let next = original.replace("<html><body>\n", "<html><body>\n<!-- req:top-menu hash:12345678 -->\n<nav>New menu</nav>\n");
+        successful(call("write_text_file", json!({"path":page,"content":next})));
+        let exclusive_refusal = call("write_text_file", json!({"path":exclusive,"content":"must not replace exclusive module"}));
+        assert!(exclusive_refusal.to_string().contains("file-owned"), "{exclusive_refusal}");
+        assert_eq!(crate::vfs::read_to_string(root.join(exclusive)).unwrap(), "footer { color: navy; }\n");
+        let outside = call("write_text_file", json!({"path":"private/page.html","content":"outside Source"}));
+        assert!(outside.to_string().contains("source-selection"), "{outside}");
+        let bad_promotion = call("record_generation", json!({"entity":"ent:top-menu",
+            "factHash":package["factHash"],"manifest":{"files":[page],"supportFiles":["private/page.html"]}}));
+        assert!(bad_promotion.to_string().contains("source selection"), "{bad_promotion}");
+        assert_eq!(Ledger::load(&store.out).support, [page]);
+        successful(call("record_generation", json!({"entity":"ent:top-menu",
+            "factHash":package["factHash"],"manifest":{"files":[page],"supportFiles":[page],"tests":[{
+                "requirement":"req:top-menu","criterion":"crit:top-menu","kind":"programmatic","artifact":artifact,
+                "name":"checks_menu","run":"task:site","files":[page]
+            }]}})));
+
+        let ledger = Ledger::load(&store.out);
+        let content = crate::vfs::read_to_string(root.join(page)).unwrap();
+        assert!(content.contains("<nav>New menu</nav>"));
+        assert!(content.contains("<footer>Existing footer</footer>"));
+        assert!(!content.contains("hash:"));
+        assert_eq!(ledger.entities["footer"].files, [page, exclusive]);
+        assert_eq!(ledger.entities["top-menu"].files, [page]);
+        let menu = &ledger.requirements["req:top-menu"];
+        assert_eq!(menu.files, [page]);
+        assert_eq!(menu.sites[0].head, "<nav>New menu</nav>");
+        assert_eq!(menu.hashes.files, hash_implementing(&store.out, &gs, &menu.files));
+        assert_eq!(crate::verify::status_of(&store, "req:top-menu", menu, &gs).0, "unverified");
+        let footer = &ledger.requirements["req:footer"];
+        assert_eq!(footer.sites[0].head, "<footer>Existing footer</footer>");
+        assert!(locate_head(&content, &footer.sites[0].head, footer.sites[0].line).is_some());
+        assert_eq!(crate::verify::status_of(&store, "req:footer", footer, &gs).0, "stale-code");
+        assert!(file_owner(&store, &ledger, "ent:top-menu", exclusive).is_some());
+        assert!(!root.join("private/page.html").vexists());
     }
 
     // A record names the files that realize the entity's requirements: files that

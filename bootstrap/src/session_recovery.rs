@@ -157,12 +157,18 @@ pub(crate) fn suspension_requested() -> bool {
 }
 
 pub(crate) struct McpRecovery<'a> {
-    server: &'a McpServer,
+    server: Option<&'a McpServer>,
     key: String,
     loaded: Option<HarnessState>,
 }
 impl<'a> McpRecovery<'a> {
     pub(crate) fn new(server: &'a McpServer, key: String) -> Result<Self, String> {
+        Self::from_frame(Some(server), key)
+    }
+    pub(crate) fn utility(key: String) -> Result<Self, String> {
+        Self::from_frame(None, key)
+    }
+    fn from_frame(server: Option<&'a McpServer>, key: String) -> Result<Self, String> {
         let frame = STATE.with(|s| {
             let state = s.borrow();
             if let Some(error) = &state.error { return Err(error.clone()); }
@@ -170,7 +176,11 @@ impl<'a> McpRecovery<'a> {
         })?;
         let loaded = match frame {
             Some(frame) => {
-                server.restore(frame.mcp).map_err(incompatible)?;
+                if let Some(server) = server {
+                    server.restore(frame.mcp).map_err(incompatible)?;
+                } else if !frame.mcp.is_null() {
+                    return Err(incompatible("Utility inference cannot restore an MCP session"));
+                }
                 let mut harness = frame.harness;
                 // The saved VFS and MCP state precede this local operation. No
                 // later local effect exists outside that atomic checkpoint. A nested
@@ -187,9 +197,6 @@ impl<'a> McpRecovery<'a> {
         Ok(Self { server, key, loaded })
     }
     pub(crate) fn resumed(&self) -> bool { self.loaded.is_some() }
-    pub(crate) fn finish(&self) {
-        STATE.with(|s| s.borrow_mut().frames.retain(|f| f.key != self.key));
-    }
 }
 impl Recovery for McpRecovery<'_> {
     fn load<'a>(&'a mut self) -> LocalFuture<'a, Result<Option<HarnessState>, String>> {
@@ -198,7 +205,8 @@ impl Recovery for McpRecovery<'_> {
     fn checkpoint<'a>(&'a mut self, boundary: CheckpointBoundary, harness: &'a HarnessState)
         -> LocalFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            let frame = Frame { key: self.key.clone(), harness: harness.clone(), mcp: self.server.checkpoint()? };
+            let mcp = self.server.map(McpServer::checkpoint).transpose()?.unwrap_or(Value::Null);
+            let frame = Frame { key: self.key.clone(), harness: harness.clone(), mcp };
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
                 for id in &harness.delivered_inputs {

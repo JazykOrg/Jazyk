@@ -609,6 +609,7 @@ pub fn mark_llm(
 // What one programmatic run produced. `tail` is the output alone: a run compares tails
 // with other rows to tell one broken runner from many unmet requirements
 // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProgRun {
     pub pass: bool,
     pub code: i32,
@@ -1726,6 +1727,7 @@ mod tests {
             }
         }
         let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _command = crate::session_recovery::Scope::enter(None);
         let out = std::path::Path::new("/project/.jazyk");
         let (store, gs) = multi_llm_fixture(out);
         let trace = crate::session::Trace::to_sink(
@@ -1743,6 +1745,11 @@ mod tests {
         let row = Ledger::load(out).requirements["req:shop-1"].clone();
         assert_eq!(row.tests["crit:first"].verdict, "pass");
         assert_eq!(row.tests["crit:second"].verdict, "fail");
+        // A lost command reply reuses its completed result and counters. No
+        // criterion judgment is admitted a second time under the same execution.
+        let no_calls = Answers(RefCell::new(Default::default()));
+        assert_eq!(run_all(&store,&no_calls,&gs,&[],Some("llm"),true,&trace).unwrap(),report);
+        let _next_command = crate::session_recovery::Scope::enter(None);
         let runner = Answers(RefCell::new(["No judgment available".into()].into()));
         run_all(&store, &runner, &gs, &[], Some("llm"), true, &trace).unwrap();
         assert!(Ledger::load(out).requirements["req:shop-1"]
@@ -2330,6 +2337,21 @@ pub async fn run_all(
     run_without_build(store, runner, gs, targets, kind, force, trace, true).await
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VerifyProgress {
+    selected: Vec<Value>,
+    task_rows: Vec<String>,
+    build_done: bool,
+    tasks_done: bool,
+    next: usize,
+    verified: u64,
+    failing: u64,
+    stale: u64,
+    skipped: u64,
+    held: Vec<(String, ProgRun, String)>,
+    result: Option<Value>,
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 pub(crate) async fn run_without_build(
     store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
@@ -2339,7 +2361,20 @@ pub(crate) async fn run_without_build(
     use crate::session::TraceEvent;
     // Every prompt this run sends reports under the requirement it is judging.
 
-    let selected = select_rows(store, gs, targets, kind, force);
+    let signature = json!({"targets":targets,"kind":kind,"force":force,"settings":gs,"build":build_product});
+    let key = crate::gen::progress::command_key("verify", &store.out, &signature);
+    let mut progress = crate::gen::progress::Progress::load(key, signature, || {
+        let selected = select_rows(store, gs, targets, kind, force);
+        let ledger = Ledger::load(&store.out);
+        let task_rows = selected.iter().filter_map(|r| r["requirement"].as_str())
+            .filter(|rid| ledger.requirements.get(*rid).is_some_and(|row| row.test.run.starts_with("task:") || row.tests.values().any(|t| t.test.run.starts_with("task:"))))
+            .map(str::to_owned).collect();
+        VerifyProgress { selected,task_rows,build_done:false,tasks_done:false,next:0,
+            verified:0,failing:0,stale:0,skipped:0,held:Vec::new(),result:None }
+    })?;
+    if let Some(result) = &progress.data.result { return Ok(result.clone()); }
+    let selected = progress.data.selected.clone();
+    progress.save().await?;
     if !targets.is_empty() && selected.is_empty() {
         return Err(
             "no ledger rows match the given target(s); run `jazyk gen` first or check the ids"
@@ -2350,19 +2385,27 @@ pub(crate) async fn run_without_build(
     // artifact that was never produced, so a broken build stops the run instead of
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
-    if build_product {
-        crate::gen::run_build(&store.out, gs, trace, "verify")
-            .map_err(|e| format!("{}; nothing was verified", e))?;
+    if build_product && !progress.data.build_done {
+        crate::gen::run_build(&store.out, gs, trace, "verify").map_err(|e|
+            if crate::session_recovery::is_interruption(&e) { e } else { format!("{e}; nothing was verified") })?;
+        progress.data.build_done = true;
+        progress.save().await?;
     }
-    let task_rows:Vec<String>=selected.iter().filter_map(|r|r["requirement"].as_str()).filter(|rid|Ledger::load(&store.out).requirements.get(*rid).is_some_and(|row|row.test.run.starts_with("task:")||row.tests.values().any(|t|t.test.run.starts_with("task:")))).map(String::from).collect();
-    if !task_rows.is_empty() && kind!=Some("llm") {run_selected_after_build(store,gs,&task_rows)?;}
-    let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
-    // Failed programmatic runs, judged together at the end of the run.
-    let mut held: Vec<(String, ProgRun, String)> = Vec::new();
-    for r in &selected {
+    let task_rows = progress.data.task_rows.clone();
+    if !progress.data.tasks_done {
+        if !task_rows.is_empty() && kind != Some("llm") { run_selected_after_build(store,gs,&task_rows)?; }
+        progress.data.tasks_done = true;
+        progress.save().await?;
+    }
+    let (mut verified,mut failing,mut stale,mut skipped) =
+        (progress.data.verified,progress.data.failing,progress.data.stale,progress.data.skipped);
+    let mut held = progress.data.held.clone();
+    for (index,r) in selected.iter().enumerate().skip(progress.data.next) {
         if trace.is_cancelled() {
             break;
         }
+        if crate::session_recovery::suspension_requested() { return Err("suspended".into()); }
+        'row: {
         let rid = r["requirement"].as_str().unwrap_or_default().to_string();
         let status = r["status"].as_str().unwrap_or_default();
         if status == "stale-requirement" || status == "missing" {
@@ -2373,7 +2416,7 @@ pub(crate) async fn run_without_build(
                 reason: r["reason"].as_str().unwrap_or("").to_string(),
             });
             stale += 1;
-            continue;
+            break 'row;
         }
         let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
         let current=Ledger::load(&store.out);
@@ -2388,29 +2431,30 @@ pub(crate) async fn run_without_build(
                     match result["status"].as_str(){Some("verified")=>verified+=1,Some("failing"|"partial")=>failing+=1,_=>skipped+=1}
                     trace.event(TraceEvent::VerifyRowDone {requirement:rid.clone(),verdict:result["verdict"].as_str().unwrap_or("none").into(),run:"llm".into(),evidence:"Each bound LLM criterion received a separate judgment.".into()});
                 }
+                Err(error) if crate::session_recovery::is_interruption(&error) => return Err(error),
                 Err(error)=> {
                     record_llm_failure(store,&rid,&error);skipped+=1;
                     trace.event(TraceEvent::VerifyRowError {requirement:rid.clone(),message:error});
                 }
             }
-            continue;
+            break 'row;
         }
         if row_kind=="llm" && kind==Some("programmatic") {
             if !task_rows.contains(&rid) {run_selected_after_build(store,gs,std::slice::from_ref(&rid))?;}
             let ledger=Ledger::load(&store.out);
             let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);
             match status.as_str(){"verified"=>verified+=1,"failing"|"partial"=>failing+=1,_=>skipped+=1}
-            continue;
+            break 'row;
         }
         if row_kind!="llm" && task_rows.contains(&rid) {
             let ledger=Ledger::load(&store.out);
             let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);
             match status.as_str(){"verified"=>verified+=1,"failing"|"partial"=>failing+=1,_=>skipped+=1}
-            continue;
+            break 'row;
         }
         if crate::vfs::is_scoped() && row_kind != "llm" {
             skipped += 1;
-            continue;
+            break 'row;
         }
         trace.event(TraceEvent::VerifyRowStart {
             requirement: rid.clone(),
@@ -2459,6 +2503,7 @@ pub(crate) async fn run_without_build(
                                 None
                             }
                         },
+                        Err(e) if crate::session_recovery::is_interruption(&e) => return Err(e),
                         Err(e) => {
                             trace.event(TraceEvent::VerifyRowError {
                                 requirement: rid.clone(),
@@ -2517,6 +2562,14 @@ pub(crate) async fn run_without_build(
             }
             None => skipped += 1,
         }
+        }
+        progress.data.next = index + 1;
+        progress.data.verified = verified;
+        progress.data.failing = failing;
+        progress.data.stale = stale;
+        progress.data.skipped = skipped;
+        progress.data.held = held.clone();
+        progress.save().await?;
     }
     // One broken runner says the same thing to every row it touched; unmet requirements
     // do not agree with each other. When nothing passed and every failure carries the
@@ -2573,7 +2626,7 @@ pub(crate) async fn run_without_build(
         .filter_map(|r| r["requirement"].as_str())
         .filter(|rid| gate(store, gs, rid).is_ok())
         .count();
-    Ok(json!({
+    let result = json!({
         "rows": selected.len(),
         "pendingCi": if crate::vfs::is_scoped() { selected.iter().filter(|r| r["test"]["kind"] != "llm" && !task_rows.iter().any(|id| r["requirement"]==*id)).cloned().collect::<Vec<_>>() } else { Vec::new() },
         "verified": verified,
@@ -2582,5 +2635,8 @@ pub(crate) async fn run_without_build(
         "stale": stale,
         "skipped": skipped,
         "resolved": resolved,
-    }))
+    });
+    progress.data.result = Some(result.clone());
+    progress.save().await?;
+    Ok(result)
 }

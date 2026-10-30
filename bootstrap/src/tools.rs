@@ -458,7 +458,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "generation_tasks",
-            description: "Generation work currently derived for entities. Bind their requirements first: an empty list can mean binding or verification is still owed, not that an artifact exists or passed. Follow next and prerequisites, then begin_generation on one ready entity.",
+            description: "Generation work currently derived for entities. Develop implementation and tests together; a separate Bind pass is optional. An empty list does not prove that an artifact exists or its checks passed. Follow next and prerequisites, then begin_generation on one ready entity.",
             parameters: obj(json!({}), &[]),
         },
         ToolDef {

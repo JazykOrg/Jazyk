@@ -774,7 +774,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     ensure_current_source(store, gs, row)?;
     if row.test.run.trim().is_empty() {
         return Err(format!(
-            "`{}` has no recorded run command, so nothing can execute it; remove the row from gen/ledger.yaml so binding records the real command (`jazyk gen {}` binds first), or record it with record_binding",
+            "`{}` has no recorded run command, so nothing can execute it; define a saved suite task and record its test declaration with record_binding, or record_generation for entity `{}`",
             rid, row.entity
         ));
     }

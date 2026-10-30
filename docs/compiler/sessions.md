@@ -467,10 +467,16 @@ The next build lists the anchor again.
 Budgets are registry constants built into the binary, not settings
 ([budgets and thresholds](./graph.md#budgets-and-thresholds)):
 
-- Rounds: batches are sized so 24 rounds, 8 per section, fit ordinary work. The
-  embedded agent's loop stops at 48 model round-trips (`JAZYK_AGENT_MAX_ROUNDS` to
-  override), a flat runaway stop, not a per-batch budget: one round-trip may carry
-  several tool calls, so a trace's call count can exceed it. An external agent bounds
+- Rounds: graph batches are sized so 24 rounds, 8 per section, fit ordinary work.
+  This sizing estimate does not cap an agent session. The embedded ACP agent and
+  the in-process worker use the same 48-model-request limit, including compaction
+  requests. `JAZYK_AGENT_MAX_ROUNDS` overrides it where native environment settings
+  are allowed, with a minimum of one. Hosted workspaces use the default and do not
+  inherit the service environment. One request may carry several tool calls, so a
+  trace's call count can exceed the limit. Reaching the limit reports
+  `Agent reached the session limit after N model requests; unfinished work remains open`.
+  A restored request keeps its identity and counts once against the same limit.
+  An external agent bounds
   its own loop, and the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
   [worker sessions](../frontends/acp.md#worker-sessions)) bounds them all.
 - Staged mutations per session: 64, raised for a session holding an

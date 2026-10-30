@@ -979,6 +979,9 @@ against it. A file the run creates fresh has no baseline.
   report, a line in the trace naming what was not tried), so an agent answering
   only errors (a spent quota, a model it does not know) is not run once per
   requirement. A novel gen once ran fifty such sessions in a row.
+- An unfinished generation report names the entity and the observed stop reason.
+  A session that records no completion says so in plain language. Structured trace
+  events keep the entity id for technical inspection.
 - `jazyk codegen` and `jazyk testgen` are aliases that print a pointer to `jazyk gen`.
 
 `jazyk test [target...]` runs verification ([CLI](../frontends/cli.md#jazyk-test)). With

@@ -732,6 +732,9 @@ fn delivered(id: &str, mut input: Value) {
         input["text"] = display;
     }
     input["sessionId"] = json!(id);
+    if let Some(message_id) = input["messageId"].as_str() {
+        crate::session_recovery::input_delivered(message_id);
+    }
     BOOK.with(|b| {
         let mut b = b.borrow_mut();
         if let Some(c) = b.chats.get_mut(id) {

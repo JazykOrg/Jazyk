@@ -1018,7 +1018,8 @@ fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String,
     save(&key, &pending)?;
     if recovery::suspension_requested() { return Err("suspended".into()); }
     if pending.run_id.is_none() {
-        let run = call(root, "run_task", &json!({"task_id":id,"expected_revision":pending.context["revision"],"operation_key":pending.operation_key}))?;
+        let run = call(root, "run_task", &json!({"task_id":id,"expected_revision":pending.context["revision"],"operation_key":pending.operation_key}))
+            .map_err(|error| format!("execution-uncertain: Task submission needs its saved destination receipt: {error}"))?;
         pending.run_id = Some(run["id"].as_str().ok_or("Run ID missing")?.to_owned());
         save(&key, &pending)?;
     }

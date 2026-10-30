@@ -81,6 +81,15 @@ pub(crate) fn set_parent(key: &str, value: Value) {
     STATE.with(|s| { s.borrow_mut().parent.insert(key.into(), value); });
 }
 
+pub(crate) fn input_delivered(id: &str) {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if !state.delivered.iter().any(|existing| existing == id) {
+            state.delivered.push(id.to_owned());
+        }
+    });
+}
+
 pub(crate) fn remove_parent(key: &str) {
     STATE.with(|s| { s.borrow_mut().parent.remove(key); });
 }

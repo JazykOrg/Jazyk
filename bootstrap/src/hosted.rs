@@ -1012,6 +1012,70 @@ mod tests {
             assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "turn_end").count(),1,"{phase}");
         }
     }
+    #[test]
+    fn task_restart_reuses_destination_intention_run_receipt_and_original_deadline() {
+        for lose_reply in [false,true] {
+            let mut initial = workspace("Tasks").snapshot();
+            initial.get_mut(".jazyk/jazyk.toml").unwrap().extend_from_slice(b"\n[[tasks]]\nid='check'\nname='Check'\ndescription='Check source'\ncommand='true'\n");
+            let saved = Arc::new(std::sync::Mutex::new(None::<(Value,Snapshot)>));
+            let effects = Arc::new(std::sync::Mutex::new(BTreeMap::<String,Value>::new()));
+            let requests = Arc::new(AtomicUsize::new(0));
+            let runtime_effects = effects.clone();
+            let runtime_requests = requests.clone();
+            let runtime: RuntimeTransport = Arc::new(move |request| match request["operation"].as_str().unwrap() {
+                "task_context" => Ok(json!({"available":true})),
+                "run_task" => {
+                    let n = runtime_requests.fetch_add(1,Ordering::SeqCst);
+                    let key = request["operation_key"].as_str().unwrap().to_owned();
+                    let mut effects = runtime_effects.lock().unwrap();
+                    if let Some(previous) = effects.get(&key) { assert_eq!(previous,request); }
+                    effects.insert(key,request.clone());
+                    if lose_reply && n == 0 { Err("reply lost after destination accepted the task".into()) }
+                    else { Ok(json!({"id":"original-run"})) }
+                }
+                "wait_run" => { assert_eq!(request["run_id"],"original-run"); Ok(json!({"terminated":true})) }
+                "result" => Ok(json!({"status":"succeeded","complete":true,"input_files":null})),
+                operation => panic!("Unexpected task operation {operation}"),
+            });
+            let checkpoint = saved.clone();
+            let failed = Arc::new(AtomicBool::new(false));
+            let fail = failed.clone();
+            let sink: CheckpointSink = Arc::new(move |mut capsule,files| {
+                let checkpoint = checkpoint.clone(); let fail = fail.clone();
+                Box::pin(async move {
+                    let next = capsule["sequence"].as_u64().unwrap()+1;
+                    capsule["sequence"] = json!(next);
+                    let has_run = capsule["parent"].as_object().unwrap().values().any(|p| p["run_id"] == "original-run");
+                    *checkpoint.lock().unwrap() = Some((capsule,files));
+                    if has_run && !lose_reply && !fail.swap(true,Ordering::SeqCst) {
+                        Err("checkpoint-failed: process lost after the run receipt was saved".into())
+                    } else { Ok(next) }
+                })
+            });
+            {
+                let _fs = crate::vfs::Scope::enter(&initial);
+                let _state = crate::scoped_state::Scope::enter();
+                let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime.clone()),checkpoint:Some(sink),..Default::default() });
+                let _recovery = crate::session_recovery::Scope::enter(None);
+                let error = crate::task_runtime::execute_with_key(&root(),"check","verify").unwrap_err();
+                assert!(crate::session_recovery::is_interruption(&error),"{error}");
+            }
+            let (capsule,files) = saved.lock().unwrap().clone().unwrap();
+            let deadline = capsule["parent"].as_object().unwrap().values().find_map(|p| p["deadline"].as_u64()).unwrap();
+            {
+                let _fs = crate::vfs::Scope::enter(&files);
+                let _state = crate::scoped_state::Scope::enter();
+                let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime),resume:Some(capsule.clone()),..Default::default() });
+                let _recovery = crate::session_recovery::Scope::enter(Some(&capsule));
+                let (id,result) = crate::task_runtime::execute_with_key(&root(),"check","verify").unwrap();
+                assert_eq!(id,"original-run"); assert_eq!(result["status"],"succeeded");
+                let key = capsule["parent"].as_object().unwrap().keys().next().unwrap();
+                assert_eq!(crate::session_recovery::parent(key).unwrap().unwrap()["deadline"],deadline);
+            }
+            assert_eq!(effects.lock().unwrap().len(),1);
+            assert_eq!(requests.load(Ordering::SeqCst),if lose_reply {2}else{1});
+        }
+    }
     fn navigation_model(
         name: &'static str,
         calls: Arc<AtomicUsize>,

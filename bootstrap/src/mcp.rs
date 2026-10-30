@@ -1065,7 +1065,7 @@ impl McpServer {
                 "readTools": crate::tools::READ_TOOLS.to_vec(),
                 "goalTools": crate::tools::GOAL_TOOLS.to_vec(),
                 "finishTool": "done",
-                "next": "load what the goals name, stage findings, mark each goal with mark_goal_done, then done with a one-line summary",
+                "next": "load what the goals name, stage findings, then done with a one-line summary and final goals claims ({goal, justification, evidence?}) in the same call",
             })
         };
         *self.open.lock().unwrap() = Some(OpenBatch {
@@ -1091,13 +1091,9 @@ impl McpServer {
         let Some(mut o) = open.take() else {
             return json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}});
         };
-        let summary = params["arguments"]["summary"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
         // The same batch gates an in-process session faces: every goal resolved or
         // failed, coverage contract, stale anchors, undecided proposals.
-        if let Err(e) = o.session.dispatch("done", &json!({"summary": summary})) {
+        if let Err(e) = o.session.dispatch("done", &params["arguments"]) {
             let v = e.to_value();
             crate::control::refresh_lease(&self.out, &o.id);
             *open = Some(o); // the changeset stays open; repair and finish again
@@ -2136,8 +2132,8 @@ impl McpServer {
                     }));
                     tools.push(json!({
                         "name": "done",
-                        "description": "Finish the open batch: run the batch gates (every goal marked done or failed, every dirty section marked, every stale anchor addressed) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again. The reply names the next ready batch (beginNext: true also claims it in the same call); the finish that empties the board reports the verdict with its counts.",
-                        "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "beginNext": {"type": "boolean"}}, "required": ["summary"], "additionalProperties": false}
+                        "description": "Resolve final goals and finish the open batch in one call. goals entries carry {goal, justification, evidence?} under the same gates as mark_goal_done. Run all batch gates and commit atomically; a refusal names the repair and preserves earlier work. The reply names the next ready batch (beginNext: true also claims it). The finish that empties the board reports the verdict and counts.",
+                        "inputSchema": crate::tools::done_parameters(true)
                     }));
                     tools.push(json!({
                         "name": "abandon_goals",
@@ -3667,9 +3663,6 @@ mod tests {
         call(&original, "begin_goals", json!({}));
         call(&original, "set_coverage", json!({"section":"docs/a.md#/a", "state":"non-normative", "note":"Navigation."}));
         let goals = original.open.lock().unwrap().as_ref().unwrap().goals.iter().map(|g| g.id.clone()).collect::<Vec<_>>();
-        for goal in &goals {
-            call(&original, "mark_goal_done", json!({"goal":goal,"justification":"The section is a navigation index and is marked non-normative."}));
-        }
         let checkpoint = original.checkpoint().unwrap();
         let generation = crate::store::read_generation(&out);
         assert!(!checkpoint["open"]["session"]["staged"].as_array().unwrap().is_empty());
@@ -3677,7 +3670,8 @@ mod tests {
         let restored = make();
         restored.restore(checkpoint.clone()).unwrap();
         assert_eq!(restored.checkpoint().unwrap(), checkpoint);
-        let result = call(&restored, "done", json!({"summary":"Recorded the navigation coverage."}));
+        let claims = goals.iter().map(|goal| json!({"goal":goal,"justification":"The section is a navigation index and is marked non-normative."})).collect::<Vec<_>>();
+        let result = call(&restored, "done", json!({"summary":"Recorded the navigation coverage.","goals":claims}));
         assert_eq!(result["committed"], true, "{result}");
         assert!(crate::store::read_generation(&out) > generation);
         drop(restored);

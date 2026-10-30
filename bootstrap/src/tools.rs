@@ -15,6 +15,28 @@ pub struct ToolDef {
     pub parameters: Value,
 }
 
+fn obj(props: Value, required: &[&str]) -> Value {
+    json!({"type": "object", "properties": props, "required": required, "additionalProperties": false})
+}
+
+fn goal_claim_parameters() -> Value {
+    obj(
+        json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
+        &["goal", "justification"],
+    )
+}
+
+pub(crate) fn done_parameters(begin_next: bool) -> Value {
+    let mut properties = json!({
+        "summary": {"type": "string"},
+        "goals": {"type": "array", "minItems": 1, "items": goal_claim_parameters()}
+    });
+    if begin_next {
+        properties["beginNext"] = json!({"type": "boolean"});
+    }
+    obj(properties, &["summary"])
+}
+
 // A rejection: names the violated rule and how to repair the call, because the caller is a
 // model that will read it and try again.
 #[derive(Debug)]
@@ -99,9 +121,6 @@ fn prefer_quote(name: &str, args: &mut Value) -> Option<String> {
 }
 
 pub fn catalog() -> Vec<ToolDef> {
-    fn obj(props: Value, required: &[&str]) -> Value {
-        json!({"type": "object", "properties": props, "required": required, "additionalProperties": false})
-    }
     vec![
         ToolDef {
             name: "load",
@@ -640,10 +659,7 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "mark_goal_done",
             description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], parts: [{id, verdict: parented|edge-fixed|kept, reason}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike, unreferenced statement, open diagnostic, and composition part the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]} (one per declared attribute, inherited included, and per link); derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work: a listed item without a verdict is refused as *-unjudged, a verdict the staged work does not carry as *-unbacked, each naming the repair.",
-            parameters: obj(
-                json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
-                &["goal", "justification"],
-            ),
+            parameters: goal_claim_parameters(),
         },
         ToolDef {
             name: "settle_pairs",
@@ -676,13 +692,13 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "load_skill",
-            description: "Bring one skill into the session by name (extraction, judgment, flow-views, structural-views, abstraction, conformance). The reply renders the payload; at most four skills render in one session.",
+            description: "Bring one skill into the session by its name from the skills index. The reply renders the payload; at most four skills render in one session.",
             parameters: obj(json!({"name": {"type": "string"}}), &["name"]),
         },
         ToolDef {
             name: "done",
-            description: "End the session and request commit of the staged mutations. Every mandatory goal of the batch must be marked done or failed first; the batch gates run and a failure names the repair. summary is one line.",
-            parameters: obj(json!({"summary": {"type": "string"}}), &["summary"]),
+            description: "Resolve final goals and commit the staged mutations in one call. goals entries use {goal, justification, evidence?}, with the same evidence and gates as mark_goal_done. Earlier claims may already be marked. Every mandatory goal must end done or failed; all batch gates run. A rejected claim or gate leaves earlier work intact for repair. summary is one line.",
+            parameters: done_parameters(false),
         },
     ]
 }
@@ -3174,6 +3190,44 @@ impl ToolSession {
             reply["note"] = json!(n);
         }
         Ok(reply)
+    }
+
+    fn done_with_goals(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let entries = args["goals"].as_array().ok_or_else(|| {
+            ToolError::new("bad-args", "done.goals takes a list of final {goal, justification, evidence?} claims".into())
+        })?;
+        if entries.len() > self.scope.goals.len() {
+            return Err(ToolError::new("bad-args", "done.goals cannot contain more claims than this batch has goals".into()));
+        }
+        let mut named = BTreeSet::new();
+        for entry in entries {
+            let goal = Self::str_arg(entry, "goal")?;
+            if !named.insert(goal.clone()) {
+                return Err(ToolError::new("duplicate-goal", format!("done.goals names `{goal}` more than once")));
+            }
+        }
+        // mark_goal_done can append a review mutation and replace an outcome.
+        // Like settle_one, roll back this call's effects when a later claim or
+        // batch gate refuses. The snapshot and earlier staged work stay intact.
+        let staged_before = self.staged.len();
+        let outcomes_before = self.outcomes.clone();
+        let note_before = self.review_staged_note.clone();
+        let done_before = self.done.clone();
+        let result = (|| {
+            for entry in entries {
+                self.mark_goal_done(entry)?;
+            }
+            let mut finish = args.clone();
+            finish.as_object_mut().unwrap().remove("goals");
+            self.dispatch_inner("done", &finish)
+        })();
+        if result.is_err() {
+            self.staged.truncate(staged_before);
+            self.outcomes = outcomes_before;
+            self.review_staged_note = note_before;
+            self.done = done_before;
+        }
+        result
     }
 
     // The batch claim of a pair session: one entry per rejudge-pair goal, each doing
@@ -7759,6 +7813,9 @@ impl ToolSession {
                 }))
             }
             "done" => {
+                if args.get("goals").is_some() {
+                    return self.done_with_goals(args);
+                }
                 // A done that leaves a mandatory goal neither done nor failed is
                 // rejected naming it; the implicit path commits around it and the
                 // goal stays open for its retry. Mirrors docs/compiler/sessions.md#commit.
@@ -10768,6 +10825,50 @@ mod tests {
         t.dispatch("done", &json!({"summary": "all sections marked"}))
             .unwrap();
         assert!(t.done.is_some());
+    }
+
+    #[test]
+    fn inline_done_validates_final_claims_and_preserves_earlier_work_for_repair() {
+        let mut t = session();
+        t.dispatch("set_coverage", &json!({"section":"/shop", "state":"non-normative", "note":"The root contains introductory text."})).unwrap();
+        let earlier = t.staged.len();
+        let root = json!({"goal":"g:reconcile-section:shop.md#/shop", "justification":"The root's introductory text is marked non-normative."});
+        let cart = json!({"goal":"g:reconcile-section:shop.md#/shop/cart", "justification":"The cart section's coverage is recorded."});
+
+        // The first inline claim passes, but the second still owes its coverage.
+        let error = t.dispatch("done", &json!({"summary":"Recorded both sections.", "goals":[root, cart]})).unwrap_err();
+        assert_eq!(error.rule, "unmarked-section");
+        assert_eq!(t.staged.len(), earlier);
+        assert!(t.outcomes.is_empty());
+        assert!(t.done.is_none());
+
+        // An otherwise valid inline claim cannot skip the remaining batch goal.
+        let error = t.dispatch("done", &json!({"summary":"Only the root.", "goals":[root]})).unwrap_err();
+        assert_eq!(error.rule, "open-goal");
+        assert!(t.outcomes.is_empty());
+        assert_eq!(t.staged.len(), earlier);
+
+        t.dispatch("set_coverage", &json!({"section":"/shop/cart", "state":"non-normative", "note":"The fixture records this section's classification."})).unwrap();
+        t.dispatch("done", &json!({"summary":"Recorded both sections.", "goals":[root, cart]})).unwrap();
+        assert!(t.done.is_some());
+        let commit = t.commit(1, None);
+        assert_eq!(commit.resolved.len(), 2);
+        assert!(commit.resolved.iter().all(|r| !r.justification.is_empty()));
+    }
+
+    #[test]
+    fn inline_done_refuses_foreign_duplicate_and_false_goal_claims() {
+        let mut t = session();
+        let claim = json!({"goal":"g:reconcile-section:shop.md#/shop", "justification":"The root is covered."});
+        let error = t.dispatch("done", &json!({"summary":"Duplicate.", "goals":[claim, claim]})).unwrap_err();
+        assert_eq!(error.rule, "duplicate-goal");
+        let error = t.dispatch("done", &json!({"summary":"Foreign.", "goals":[{"goal":"g:reconcile-section:elsewhere.md#/elsewhere", "justification":"The section is covered."}]})).unwrap_err();
+        assert_eq!(error.rule, "unknown-goal");
+        let error = t.dispatch("done", &json!({"summary":"False claim.", "goals":[claim]})).unwrap_err();
+        assert_eq!(error.rule, "unmarked-section");
+        assert!(t.outcomes.is_empty());
+        assert!(t.staged.is_empty());
+        assert!(t.done.is_none());
     }
 
     #[test]

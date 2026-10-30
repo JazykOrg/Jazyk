@@ -10872,6 +10872,60 @@ mod tests {
     }
 
     #[test]
+    fn inline_done_rolls_back_review_mutations_and_retains_earlier_claims() {
+        let mut store = Store::default();
+        store.graph.entities.insert("ent:customer".into(), plain("Customer"));
+        store.graph.entities.insert("ent:order".into(), plain("Order"));
+        store.graph.requirements.insert("req:a".into(), Requirement {
+            statement: "An Order names the Customer who placed it.".into(),
+            entities: vec!["ent:order".into()],
+            ..Default::default()
+        });
+        let goals = ["customer", "order"].map(|name| Goal {
+            id: format!("g:review-entity:ent:{name}"),
+            kind: "review-entity".into(),
+            mandatory: true,
+            target: format!("ent:{name}"),
+            ..Default::default()
+        });
+        let mut t = ToolSession::new(store, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        t.dispatch("update_entity", &json!({"id":"ent:order", "definition":"A purchase record naming its customer."})).unwrap();
+        t.dispatch("mark_goal_done", &json!({
+            "goal":"g:review-entity:ent:order",
+            "justification":"The definition now identifies the purchase record.",
+            "evidence":{"definition":"refreshed"}
+        })).unwrap();
+        let staged_before = serde_json::to_value(&t.staged).unwrap();
+        let outcomes_before = serde_json::to_value(&t.outcomes).unwrap();
+        let customer = json!({
+            "goal":"g:review-entity:ent:customer",
+            "justification":"The requirement names the order's customer without defining customer behavior.",
+            "evidence":{"definition":"current", "unreferenced":[{
+                "id":"req:a", "verdict":"word-match", "reason":"Customer is the object of the order's statement."
+            }]}
+        });
+        // The first claim stages not_about. The second contradicts the definition
+        // update that was already staged and claimed before this call.
+        let error = t.dispatch("done", &json!({"summary":"Reviewed both entities.", "goals":[customer, {
+            "goal":"g:review-entity:ent:order", "justification":"The definition is unchanged.",
+            "evidence":{"definition":"current"}
+        }]})).unwrap_err();
+        assert_eq!(error.rule, "definition-unbacked");
+        assert_eq!(serde_json::to_value(&t.staged).unwrap(), staged_before);
+        assert_eq!(serde_json::to_value(&t.outcomes).unwrap(), outcomes_before);
+        assert!(t.review_staged_note.is_none());
+        assert!(t.done.is_none());
+
+        t.dispatch("done", &json!({"summary":"Reviewed both entities.", "goals":[customer]})).unwrap();
+        assert!(t.done.is_some());
+        assert_eq!(t.staged.iter().filter(|op| matches!(op,
+            Op::UpdateEntity { id, not_about_add, .. }
+                if id == "ent:customer" && not_about_add == &vec!["req:a".to_string()]
+        )).count(), 1);
+        assert_eq!(t.commit(1, None).resolved.len(), 2);
+    }
+
+    #[test]
     fn edges_must_be_subset_of_entities() {
         let mut t = session();
         t.dispatch("upsert_entity", &json!({"name": "Shopping Cart", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}})).unwrap();

@@ -253,14 +253,17 @@ impl<'a> LoopTrace<'a> {
                     });
                     return;
                 }
-                let out: serde_json::Value = serde_json::from_str(&result)
+                let full_out: serde_json::Value = serde_json::from_str(&result)
                     .unwrap_or_else(|_| serde_json::Value::String(result.clone()));
+                let out = full_out["content"][0]["text"].as_str()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                    .unwrap_or_else(|| full_out.clone());
                 self.trace.event(TraceEvent::ToolResult {
                     activity: crate::live_preview::activity(&name, &args, Some(&out)),
                     label: self.label.clone(),
                     name: name.clone(),
                     summary: crate::session::condense(&out, 160),
-                    full: crate::session::full_payload(&out),
+                    full: crate::session::full_payload(&full_out),
                 });
                 // An accepted call that names another section says where the session is.
                 let Some(doc) = self.doc.clone() else { return };

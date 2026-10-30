@@ -125,6 +125,20 @@ impl Workspace {
         self.files.clone()
     }
 
+    /// Finalize Stop against a protected checkpoint without running a harness.
+    /// Only committed VFS bytes exist here; staged MCP operations stay in the
+    /// capsule and are discarded by the host after its fenced publication.
+    pub fn stop_recovery(&mut self, capsule: &Value) -> Result<(), String> {
+        crate::session_recovery::validate(capsule)?;
+        let fs = crate::vfs::Scope::enter(&self.files);
+        let _state = crate::scoped_state::Scope::enter();
+        let conversations = crate::conversation::Scope::enter()?;
+        crate::conversation::stop_recovered();
+        conversations.save()?;
+        self.files = fs.snapshot();
+        Ok(())
+    }
+
     /// Preserve authored membership explicitly. Merely writing a generated file
     /// does not make it source or a delivery candidate.
     pub fn projection(&self, authored_paths: &[String]) -> Result<Projection, String> {
@@ -703,8 +717,11 @@ mod tests {
         let e = Execution {
             model: "ledger-fixture".into(),
             cancel,
-            transport: Some(Arc::new(move |body| {
-                let request: Value = serde_json::from_str(body).unwrap();
+            transport_async: Some(Arc::new(move |body| {
+                let saw = saw.clone();
+                let cancelled = cancelled.clone();
+                Box::pin(async move {
+                let request: Value = serde_json::from_str(&body).unwrap();
                 let user = request["messages"]
                     .as_array()
                     .unwrap()
@@ -719,6 +736,7 @@ mod tests {
                 saw.store(true, Ordering::SeqCst);
                 cancelled.store(true, Ordering::SeqCst);
                 Ok(model_reply("Stopped after inspecting the prompt."))
+                })
             })),
             ..Default::default()
         };
@@ -1300,7 +1318,9 @@ mod tests {
         assert!(!w.snapshot().keys().any(|path|path.contains("graph/entity/")||path.ends_with("control.yaml")));
         let saved=value(&mut w,"GET","/api/chat/history",Value::Null,&e);
         let messages=saved["book"]["chats"][id]["history"].as_array().unwrap();
-        assert_eq!(messages.iter().filter(|message|message["role"]=="system").count(),1);
+        // Current instructions are supplied separately to GDK, not persisted as
+        // human or provider history.
+        assert_eq!(messages.iter().filter(|message|message["role"]=="system").count(),0);
         assert_eq!(messages.iter().filter(|message|message["role"]=="user").map(|message|message["content"].as_str().unwrap()).collect::<Vec<_>>(),vec![first,edit,"Try again. Do not compile; edit only hosting.md."]);
     }
 

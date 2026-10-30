@@ -749,6 +749,16 @@ fn delivered(id: &str, mut input: Value) {
 pub fn export_history() -> Value {
     BOOK.with(|b| json!({"version":1,"book": &*b.borrow()}))
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stop_recovered() {
+    let running = BOOK.with(|b| b.borrow().chats.values()
+        .filter(|chat| chat.state == "running").map(|chat| chat.id.clone()).collect::<Vec<_>>());
+    for id in running {
+        append(&id, json!({"sessionUpdate":"turn_end","stop":"cancelled"}));
+        set_state(&id, "idle");
+    }
+}
 pub fn import_history(body: &Value) -> Result<Value, String> {
     if body["version"] != 1 {
         return Err("unsupported conversation history version".into());

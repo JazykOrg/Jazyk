@@ -111,6 +111,9 @@ ownership and execution sequence. A stale owner cannot claim new work.
 Stop is final. It wins over reclaim and does not auto-resume. Suspension does not
 reset limits, extend task deadlines, create a new billed turn or redeliver input.
 Partial model text is provisional and restored from stable message identities.
+Stopping a suspended job retains its already committed workspace changes. The
+host publishes those saved bytes under a fresh ownership fence, closes its running
+conversation and discards the staged MCP changeset without running the model.
 
 The first upgrade lets legacy agents finish because they have no checkpoints.
 Later incompatible upgrades or rollbacks wait for affected jobs to finish. Graph

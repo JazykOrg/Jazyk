@@ -7,14 +7,16 @@ and unrelated settings. Patterns can select future files; do not include documen
 or compiler state. This setup is part of the user's generation request and needs no
 extra confirmation. Reload goals after saving: criteria work becomes available.
 
-Then inspect binding_tasks. Bind an entity's requirements before generating it. An empty
-generation_tasks list only says no generation goal is currently derived; it does
-not prove the deliverable exists, is complete, or passed verification.
-For each requirement, call begin_binding and use that package's criterion IDs and
-test names. Do not infer criterion IDs from requirement numbers. Complete and
-inspect one record_binding result before moving to the next requirement. Its
-top-level verdict is required as well as the verdict on each test row. A claimed
-pass needs actual evidence; a failed run or missing report is not a pass.
+Then inspect generation_tasks and the existing files. Develop source and tests
+together through begin_generation. Choose the order that fits the task, and reuse
+existing checks. Do not bind every requirement before creating implementation.
+Use the package's criterion IDs and test names, never inferred IDs. Record complete
+criterion declarations in the generation manifest and inspect the result.
+An empty generation_tasks list only says no generation goal is currently derived;
+it does not prove the deliverable exists, is complete, or passed verification.
+Use binding_tasks and begin_binding for an explicit request to link existing code
+and tests, or for deliberate test-first work. A claimed pass needs actual evidence;
+a failed run or missing report is not a pass.
 
 The user's explicit request to do work authorizes that work. If its requested stage
 awaits release, call release_work with stage compile or generate and the selected

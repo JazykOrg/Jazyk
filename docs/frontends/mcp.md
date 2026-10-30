@@ -425,14 +425,15 @@ from the refusal that followed; `generation_tasks` carries a `staleNote` when ro
 went stale since their last run (a shared test file or implementation file changed
 under a generation), since their generate goals return only after `run_tests`
 re-baselines them and a Codex session saw entities appear in the list it had read as
-complete. An empty generation list does not assert that a deliverable exists. When
-binding goals remain, `prerequisites.binding` gives their count and `next` directs
-the agent to `binding_tasks`. Discovery lists the work currently derived by the board.
+complete. An empty generation list does not assert that a deliverable exists.
+Missing or stale requirement bindings open development work on their owning entity.
+The agent creates source and tests together through `begin_generation` and records
+their criterion declarations in the manifest. Binding remains an explicit lifecycle
+for existing code and tests or deliberate test-first work. Discovery lists the work currently derived by the board.
 It never substitutes for file inspection or verification. Also,
 `begin_generation` refuses an entity whose goal is not ready (`not-ready`, the same
-reason), since a Codex session bound one requirement of an entity and generated the
-whole entity next while its other requirements still owed a binding; generation waits
-for every binding of the entity because the bound tests are the interface it builds to
+reason). Generation waits for graph and criterion readiness, then completes source
+and current requirement bindings together
 ([readiness](../compiler/goals/generate.md#readiness)).
 
 Verification: `run_tests` executes recorded programmatic tests (the build first, then

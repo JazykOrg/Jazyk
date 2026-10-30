@@ -172,6 +172,8 @@ pub struct HarnessState {
     pub pending_tool: Option<ToolIntention>,
     pub delivered_inputs: Vec<String>,
     #[serde(default)]
+    pub delivered_input_values: BTreeMap<String, Value>,
+    #[serde(default)]
     pub pending_inputs: Vec<Value>,
     #[serde(default)]
     pub consecutive_tool_errors: u32,

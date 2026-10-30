@@ -912,16 +912,23 @@ fn checkpoint_failure_and_uncertainty_have_preservable_recovery_signals() {
 
 #[test]
 fn live_model_deltas_run_on_the_owner_thread_without_repeating_the_final_prefix() {
-    struct StreamingHost { completed: Arc<AtomicBool> }
+    struct StreamingHost {
+        completed: Arc<AtomicBool>,
+    }
     impl ModelHost for StreamingHost {
-        fn infer<'a>(&'a mut self, request: ModelRequest) -> LocalFuture<'a, Result<ModelResponse, String>> {
+        fn infer<'a>(
+            &'a mut self,
+            request: ModelRequest,
+        ) -> LocalFuture<'a, Result<ModelResponse, String>> {
             Box::pin(async move {
                 let sink = request.deltas.expect("native inference has a delta sink");
                 std::thread::spawn(move || {
                     sink("content", "Hello ");
                     sink("reasoning_content", "Think ");
                     sink("tool_calls", "must not appear");
-                }).join().unwrap();
+                })
+                .join()
+                .unwrap();
                 async_io::Timer::after(std::time::Duration::from_millis(10)).await;
                 self.completed.store(true, Ordering::SeqCst);
                 let mut body = response("Hello there");
@@ -931,57 +938,103 @@ fn live_model_deltas_run_on_the_owner_thread_without_repeating_the_final_prefix(
         }
     }
     let completed = Arc::new(AtomicBool::new(false));
-    let mut host = StreamingHost { completed: completed.clone() };
+    let mut host = StreamingHost {
+        completed: completed.clone(),
+    };
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let owner = std::thread::current().id();
     let mut content = String::new();
     let mut thought = String::new();
-    let stop = run(&mut host, &mut Store::default(), &mut history, &mut |_, _| panic!(), &mut |event| {
-        assert_eq!(owner, std::thread::current().id());
-        match event {
-            AgentEvent::Message(text) => {
-                if text == "Hello " { assert!(!completed.load(Ordering::SeqCst)); }
-                content.push_str(&text);
+    let stop = run(
+        &mut host,
+        &mut Store::default(),
+        &mut history,
+        &mut |_, _| panic!(),
+        &mut |event| {
+            assert_eq!(owner, std::thread::current().id());
+            match event {
+                AgentEvent::Message(text) => {
+                    if text == "Hello " {
+                        assert!(!completed.load(Ordering::SeqCst));
+                    }
+                    content.push_str(&text);
+                }
+                AgentEvent::Thought(text) => thought.push_str(&text),
+                _ => {}
             }
-            AgentEvent::Thought(text) => thought.push_str(&text),
-            _ => {}
-        }
-    });
+        },
+    );
     assert_eq!(stop, Stop::EndTurn);
     assert_eq!(content, "Hello there");
     assert_eq!(thought, "Think more");
-    assert!(history.iter().any(|message| message["content"] == "Hello there"));
+    assert!(history
+        .iter()
+        .any(|message| message["content"] == "Hello there"));
 }
 
 #[test]
 fn input_accepted_during_a_final_model_reply_is_delivered_before_finishing() {
-    struct SteeringHost { inbox: Rc<RefCell<Vec<Value>>>, calls: usize }
+    struct SteeringHost {
+        inbox: Rc<RefCell<Vec<Value>>>,
+        calls: usize,
+    }
     impl ModelHost for SteeringHost {
-        fn infer<'a>(&'a mut self, request: ModelRequest) -> LocalFuture<'a, Result<ModelResponse, String>> {
+        fn infer<'a>(
+            &'a mut self,
+            request: ModelRequest,
+        ) -> LocalFuture<'a, Result<ModelResponse, String>> {
             Box::pin(async move {
                 self.calls += 1;
                 if self.calls == 1 {
-                    self.inbox.borrow_mut().push(json!({"messageId":"final-input","text":"Preserve the identifiers"}));
+                    self.inbox
+                        .borrow_mut()
+                        .push(json!({"messageId":"final-input","text":"Preserve the identifiers"}));
                 } else {
-                    assert!(request.body.to_string().contains("Preserve the identifiers"));
+                    assert!(request
+                        .body
+                        .to_string()
+                        .contains("Preserve the identifiers"));
                 }
-                Ok(ModelResponse { body: response("finished") })
+                Ok(ModelResponse {
+                    body: response("finished"),
+                })
             })
         }
     }
     let inbox = Rc::new(RefCell::new(Vec::new()));
-    let mut host = SteeringHost { inbox: inbox.clone(), calls: 0 };
+    let mut host = SteeringHost {
+        inbox: inbox.clone(),
+        calls: 0,
+    };
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let mut inputs = || std::mem::take(&mut *inbox.borrow_mut());
     let mut store = Store::default();
-    let stop = runtime::run_with_host(LoopArgs {
-        llm: &llm(), history: &mut history, tools: &[], dispatch: &mut |_, _| panic!(),
-        emit: &mut |_| {}, cancelled: &|| false, max_rounds: 8, label: "steering at end".into(),
-        conversation: true, inputs: Some(&mut inputs), input_close: Some(&mut || true),
-    }, "", &mut host, &mut store);
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &[],
+            dispatch: &mut |_, _| panic!(),
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "steering at end".into(),
+            conversation: true,
+            inputs: Some(&mut inputs),
+            input_close: Some(&mut || true),
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
     assert_eq!(stop, Stop::EndTurn);
     assert_eq!(host.calls, 2);
-    assert_eq!(store.saved.unwrap().delivered_inputs, vec!["final-input"]);
+    let saved = store.saved.unwrap();
+    assert_eq!(saved.delivered_inputs, vec!["final-input"]);
+    assert_eq!(
+        saved.delivered_input_values["final-input"],
+        json!({"messageId":"final-input","text":"Preserve the identifiers"})
+    );
     assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished));
 }
 
@@ -989,23 +1042,313 @@ fn input_accepted_during_a_final_model_reply_is_delivered_before_finishing() {
 fn saved_model_receipt_retains_the_already_streamed_prefix() {
     struct PrefixHost;
     impl ModelHost for PrefixHost {
-        fn infer<'a>(&'a mut self, request: ModelRequest) -> LocalFuture<'a, Result<ModelResponse, String>> {
+        fn infer<'a>(
+            &'a mut self,
+            request: ModelRequest,
+        ) -> LocalFuture<'a, Result<ModelResponse, String>> {
             Box::pin(async move {
                 request.deltas.unwrap()("content", "Hello ");
-                Ok(ModelResponse { body: response("Hello there") })
+                Ok(ModelResponse {
+                    body: response("Hello there"),
+                })
             })
         }
     }
     let mut history = vec![json!({"role":"user","content":"Run"})];
-    let mut store = Store { fail: Some(CheckpointPhase::SavedModel), ..Default::default() };
+    let mut store = Store {
+        fail: Some(CheckpointPhase::SavedModel),
+        ..Default::default()
+    };
     let mut content = String::new();
-    let mut emit = |event| if let AgentEvent::Message(text) = event { content.push_str(&text); };
-    assert!(matches!(run(&mut PrefixHost, &mut store, &mut history, &mut |_, _| panic!(), &mut emit), Stop::Error(_)));
-    let prefix = store.saved.as_ref().unwrap().model_deltas.values().next().unwrap();
+    let mut emit = |event| {
+        if let AgentEvent::Message(text) = event {
+            content.push_str(&text);
+        }
+    };
+    assert!(matches!(
+        run(
+            &mut PrefixHost,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!(),
+            &mut emit
+        ),
+        Stop::Error(_)
+    ));
+    let prefix = store
+        .saved
+        .as_ref()
+        .unwrap()
+        .model_deltas
+        .values()
+        .next()
+        .unwrap();
     assert_eq!(prefix.content, "Hello ");
     let mut cached_host = Host::new(vec![]);
-    assert_eq!(run(&mut cached_host, &mut store, &mut history, &mut |_, _| panic!(), &mut emit), Stop::EndTurn);
+    assert_eq!(
+        run(
+            &mut cached_host,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!(),
+            &mut emit
+        ),
+        Stop::EndTurn
+    );
     assert!(cached_host.requests.borrow().is_empty());
     assert_eq!(content, "Hello there");
     assert!(store.saved.unwrap().model_deltas.is_empty());
+}
+
+fn done_response(extra_call: bool) -> Value {
+    let mut calls =
+        vec![json!({"id":"done-1","type":"function","function":{"name":"done","arguments":"{}"}})];
+    if extra_call {
+        calls.push(json!({"id":"after-done","type":"function","function":{"name":"fixture","arguments":"{}"}}));
+    }
+    json!({"choices":[{"message":{"role":"assistant","content":"","tool_calls":calls},"finish_reason":"tool_calls"}]})
+}
+
+fn completion_run(
+    conversation: bool,
+    host: &mut dyn ModelHost,
+    store: &mut dyn Recovery,
+    history: &mut Vec<Value>,
+    dispatch: &mut dyn FnMut(&str, &Value) -> Result<String, String>,
+    mut inputs: Option<&mut dyn FnMut() -> Vec<Value>>,
+) -> Stop {
+    let mut tools = vec![tool()];
+    tools.push(GenericTool {
+        name: "done".into(),
+        description: "Commit the validated batch".into(),
+        parameters: json!({"type":"object"}),
+    });
+    let mut source = || inputs.as_mut().map(|source| source()).unwrap_or_default();
+    let llm = llm();
+    runtime::run_with_host(
+        LoopArgs {
+            llm: &llm,
+            history,
+            tools: &tools,
+            dispatch,
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "completion".into(),
+            conversation,
+            inputs: Some(&mut source),
+            input_close: None,
+        },
+        "",
+        host,
+        store,
+    )
+}
+
+#[test]
+fn worker_done_stops_before_more_tools_inference_or_post_commit_steering() {
+    let mut host = Host::new(vec![done_response(true), response("must not request this")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Resolve the batch"})];
+    let inbox = Rc::new(RefCell::new(Vec::new()));
+    let delivery = inbox.clone();
+    let mut inputs = || std::mem::take(&mut *delivery.borrow_mut());
+    let mut calls = 0;
+    let stop = completion_run(
+        false,
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |name, _| {
+            assert_eq!(name, "done");
+            calls += 1;
+            inbox
+                .borrow_mut()
+                .push(json!({"messageId":"next-batch-input","text":"Change the next goal"}));
+            Ok(json!({"content":[{"type":"text","text":"Committed"}],"isError":false}).to_string())
+        },
+        Some(&mut inputs),
+    );
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(calls, 1);
+    assert_eq!(host.requests.borrow().len(), 1);
+    assert_eq!(inbox.borrow().len(), 1);
+    assert!(store.saved.as_ref().unwrap().delivered_inputs.is_empty());
+    assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished));
+}
+
+#[test]
+fn a_chat_continues_after_done_to_explain_the_result() {
+    let mut host = Host::new(vec![done_response(false), response("The batch committed.")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Resolve and explain"})];
+    assert_eq!(
+        completion_run(
+            true,
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| Ok("Committed".into()),
+            None
+        ),
+        Stop::EndTurn
+    );
+    assert_eq!(host.requests.borrow().len(), 2);
+    assert!(history
+        .iter()
+        .any(|message| message["content"] == "The batch committed."));
+}
+
+#[test]
+fn a_saved_done_receipt_finishes_without_tool_or_model_replay() {
+    let mut host = Host::new(vec![done_response(false)]);
+    let mut store = Store {
+        fail: Some(CheckpointPhase::AfterTool),
+        ..Default::default()
+    };
+    let mut history = vec![json!({"role":"user","content":"Resolve"})];
+    let mut calls = 0;
+    assert!(matches!(
+        completion_run(
+            false,
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| {
+                calls += 1;
+                Ok("Committed".into())
+            },
+            None
+        ),
+        Stop::Error(_)
+    ));
+    assert_eq!(calls, 1);
+    let mut restored_host = Host::new(vec![]);
+    assert_eq!(
+        completion_run(
+            false,
+            &mut restored_host,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!("committed tool must not repeat"),
+            None
+        ),
+        Stop::EndTurn
+    );
+    assert!(restored_host.requests.borrow().is_empty());
+    assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished));
+    assert_eq!(history.last().unwrap()["role"], "tool");
+}
+
+#[test]
+fn a_rejected_done_gate_does_not_complete_a_worker() {
+    let mut host = Host::new(vec![
+        done_response(false),
+        response("The gate needs repair."),
+    ]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Resolve"})];
+    assert_eq!(
+        completion_run(
+            false,
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| {
+                Ok(
+                    json!({"content":[{"type":"text","text":"Gate refused"}],"isError":true})
+                        .to_string(),
+                )
+            },
+            None
+        ),
+        Stop::EndTurn
+    );
+    assert_eq!(host.requests.borrow().len(), 2);
+}
+
+#[test]
+fn input_checkpoint_preserves_the_full_payload_before_delivery_events() {
+    let input = json!({"messageId":"answer-1","text":"The diagnostic has no safe resolution",
+        "diagnosticAnswer":{"state":"failed","reason":"The source is contradictory"}});
+    let mut inbox = Some(input.clone());
+    let mut inputs = || inbox.take().into_iter().collect();
+    let mut host = Host::new(vec![]);
+    let mut store = Store {
+        fail: Some(CheckpointPhase::Input),
+        ..Default::default()
+    };
+    let mut history = vec![json!({"role":"user","content":"Resolve the diagnostic"})];
+    let mut events = Vec::new();
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &[],
+            dispatch: &mut |_, _| panic!(),
+            emit: &mut |event| events.push(event),
+            cancelled: &|| false,
+            max_rounds: 4,
+            label: "input receipt".into(),
+            conversation: true,
+            inputs: Some(&mut inputs),
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
+    assert!(matches!(stop,Stop::Error(ref error) if error.starts_with("checkpoint-failed:")));
+    assert!(host.requests.borrow().is_empty());
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Input(_))));
+    let saved = store.saved.unwrap();
+    assert_eq!(saved.delivered_inputs, vec!["answer-1"]);
+    assert_eq!(saved.delivered_input_values["answer-1"], input);
+}
+
+#[test]
+fn host_response_replay_retains_a_durable_prefix_before_the_engine_receipt() {
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut store = Store {
+        fail: Some(CheckpointPhase::BeforeModel),
+        ..Default::default()
+    };
+    assert!(matches!(
+        run(
+            &mut Host::new(vec![]),
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!(),
+            &mut |_| {}
+        ),
+        Stop::Error(_)
+    ));
+    let saved = store.saved.as_mut().unwrap();
+    let request = saved.model_requests.keys().next().unwrap().clone();
+    saved.model_deltas.insert(
+        request,
+        ModelDeltaProgress {
+            content: "Hello ".into(),
+            thought: String::new(),
+        },
+    );
+    assert!(saved.model_receipts.is_empty());
+    let mut host = Host::new(vec![response("Hello there")]);
+    let mut content = "Hello ".to_string();
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!(),
+            &mut |event| if let AgentEvent::Message(text) = event {
+                content.push_str(&text);
+            }
+        ),
+        Stop::EndTurn
+    );
+    assert_eq!(content, "Hello there");
+    assert_eq!(host.requests.borrow().len(), 1);
 }

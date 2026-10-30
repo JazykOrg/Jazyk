@@ -157,7 +157,7 @@ def main():
                 process.stdin.flush()
                 return sequence
 
-            def receive(request_id):
+            def receive(request_id, expect_error=False):
                 updates = []
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
@@ -166,6 +166,9 @@ def main():
                     if message.get('method') == 'session/update':
                         updates.append(message['params']['update'])
                     if message.get('id') == request_id:
+                        if expect_error:
+                            assert 'error' in message, message
+                            return message['error'], updates
                         assert 'error' not in message, message
                         return message['result'], updates
                 raise TimeoutError(f'ACP response {request_id}')
@@ -203,10 +206,21 @@ def main():
                 release_request.set()
                 receive(send('session/close', {'sessionId': session}))
                 assert shutdown.read_text() == 'closed on EOF'
+                duplicate_markers = [root / 'first-closed.txt', root / 'second-closed.txt']
+                error, _ = receive(send('session/new', {'cwd': str(root), 'mcpServers': [
+                    {'name': name, 'command': sys.executable,
+                     'args': [str(script), str(calls), str(marker)], 'env': []}
+                    for name, marker in zip(['first', 'second'], duplicate_markers)]}), expect_error=True)
+                assert all(name in json.dumps(error) for name in ['fixture', 'first', 'second']), error
+                deadline = time.monotonic() + 3
+                while not all(marker.exists() for marker in duplicate_markers) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                assert all(marker.read_text() == 'closed on EOF' for marker in duplicate_markers)
                 process.stdin.close()
                 assert process.wait(timeout=10) == 0, process.stderr.read()
                 print(json.dumps({'status': 'pass', 'modelRequests': len(requests),
-                                  'toolCalls': 2, 'cancel': 'cancelled', 'mcpClose': 'EOF'}))
+                                  'toolCalls': 2, 'cancel': 'cancelled', 'mcpClose': 'EOF',
+                                  'duplicateMcpNames': 'refused'}))
             finally:
                 release_request.set()
                 if process.poll() is None:

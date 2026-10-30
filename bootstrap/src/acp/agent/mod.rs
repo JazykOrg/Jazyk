@@ -90,6 +90,21 @@ fn initial_history<'a>(instructions: impl IntoIterator<Item = (&'a str, &'a str)
     history
 }
 
+fn session_tools<'a>(servers: impl IntoIterator<Item = (&'a str, &'a [GenericTool])>)
+    -> Result<Vec<GenericTool>, String> {
+    let mut names = std::collections::BTreeMap::new();
+    let mut tools = Vec::new();
+    for (server, definitions) in servers {
+        for tool in definitions {
+            if let Some(previous) = names.insert(tool.name.as_str(), server) {
+                return Err(format!("MCP tool name `{}` is provided by both `{previous}` and `{server}`; injected tool names must be unique", tool.name));
+            }
+            tools.push(tool.clone());
+        }
+    }
+    Ok(tools)
+}
+
 pub fn run() -> i32 {
     // The endpoint is machine configuration (env, project [llm], global config), the
     // same ladder every jazyk command uses. Reading it is not jazyk knowledge; the
@@ -162,7 +177,11 @@ pub fn run() -> i32 {
                             }
                         }
                     }
-                    let tools: Vec<GenericTool> = conns.iter().flat_map(|c| c.tools.clone()).collect();
+                    let tools = match session_tools(conns.iter().map(|connection|
+                        (connection.name.as_str(), connection.tools.as_slice()))) {
+                        Ok(tools) => tools,
+                        Err(error) => return responder.respond_with_internal_error(error),
+                    };
                     let history=initial_history(conns.iter().filter_map(|connection| {
                         connection.instructions.as_deref().map(|instructions|(connection.name.as_str(),instructions))
                     }));
@@ -450,6 +469,16 @@ pub fn run() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_injected_mcp_tool_names_refuse_the_session() {
+        let tool = GenericTool { name:"read_file".into(),description:"Read a file".into(),parameters:json!({"type":"object"}) };
+        let first = vec![tool.clone()];
+        let second = vec![tool];
+        let error = session_tools([("project",first.as_slice()),("other",second.as_slice())]).unwrap_err();
+        assert!(error.contains("read_file") && error.contains("project") && error.contains("other"));
+        assert_eq!(session_tools([("project",first.as_slice())]).unwrap().len(),1);
+    }
 
     #[test]
     fn initial_mcp_instructions_and_prompt_form_one_user_message() {

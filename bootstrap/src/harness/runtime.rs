@@ -421,7 +421,14 @@ fn flush_deltas(
     args: &mut LoopArgs<'_>,
 ) -> Result<(), Stop> {
     let pending = std::mem::take(&mut *pending.lock().unwrap_or_else(|p| p.into_inner()));
-    if pending.overflow || live.content.len().saturating_add(live.thought.len()).saturating_add(pending.bytes) > 16 * 1024 * 1024 {
+    if pending.overflow
+        || live
+            .content
+            .len()
+            .saturating_add(live.thought.len())
+            .saturating_add(pending.bytes)
+            > 16 * 1024 * 1024
+    {
         return Err(Stop::Error("model delta buffer exceeds 16 MiB".into()));
     }
     for (field, text) in pending.chunks {
@@ -447,6 +454,15 @@ async fn drive(
         .with_context_limit(Some(crate::limits::CONTEXT_BUDGET))
         .with_vision_support(false);
     loop {
+        // A successful domain gate completes a worker batch. Input accepted after
+        // that commit belongs to the next batch, and needs no summary inference.
+        if !args.conversation && completed_batch(state) {
+            pair_completed_batch(state);
+            return match checkpoint(recovery, state, CheckpointPhase::Finished, None).await {
+                Ok(()) => Stop::EndTurn,
+                Err(error) => Stop::Error(error),
+            };
+        }
         if (args.cancelled)() {
             return Stop::Cancelled;
         }
@@ -612,7 +628,12 @@ async fn drive(
             }
         }
         let mut pending_inputs = std::mem::take(&mut state.pending_inputs);
-        let accepted_inputs = accept_inputs(state, &mut pending_inputs);
+        let accepted_inputs = if !args.conversation && completed_batch(state) {
+            state.pending_inputs = pending_inputs;
+            Vec::new()
+        } else {
+            accept_inputs(state, &mut pending_inputs)
+        };
         state.model_deltas.clear();
         state.transition += 1;
         if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
@@ -717,12 +738,14 @@ async fn handle_action(
                 *live = state.model_deltas.get(&id).cloned().unwrap_or_default();
                 value.clone()
             } else {
-                *live = LiveDeltas::default();
+                *live = state.model_deltas.get(&id).cloned().unwrap_or_default();
                 let pending = Arc::new(std::sync::Mutex::new(PendingDeltas::default()));
                 let (notice, mut notices) = mpsc::channel(1);
                 let buffer = pending.clone();
                 let sink: ModelDeltaSink = Arc::new(move |field, text| {
-                    if text.is_empty() || !matches!(field, "content" | "reasoning" | "reasoning_content") {
+                    if text.is_empty()
+                        || !matches!(field, "content" | "reasoning" | "reasoning_content")
+                    {
                         return;
                     }
                     let mut pending = buffer.lock().unwrap_or_else(|p| p.into_inner());
@@ -730,10 +753,16 @@ async fn handle_action(
                         pending.overflow = true;
                     } else {
                         pending.bytes += text.len();
-                        if let Some((_, value)) = pending.chunks.back_mut().filter(|(previous, _)| previous == field) {
+                        if let Some((_, value)) = pending
+                            .chunks
+                            .back_mut()
+                            .filter(|(previous, _)| previous == field)
+                        {
                             value.push_str(text);
                         } else {
-                            pending.chunks.push_back((field.to_string(), text.to_string()));
+                            pending
+                                .chunks
+                                .push_back((field.to_string(), text.to_string()));
                         }
                     }
                     let _ = notice.try_send(());
@@ -802,6 +831,12 @@ async fn handle_action(
                 } else {
                     Err(receipt.result.clone())
                 });
+                return Ok(());
+            }
+            if !args.conversation && completed_batch(state) {
+                let _ = reply.send(Err(
+                    "Skipped: this goal batch already committed successfully".into(),
+                ));
                 return Ok(());
             }
             let steering = args
@@ -936,6 +971,41 @@ fn unanswered(
         .collect()
 }
 
+fn completed_batch(state: &HarnessState) -> bool {
+    state
+        .conversation
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(MessageContent::as_tool_request)
+        .filter(|request| {
+            request
+                .tool_call
+                .as_ref()
+                .is_ok_and(|call| call.name == "done")
+        })
+        .any(|request| {
+            state.tool_receipts.get(&request.id).is_some_and(|receipt| {
+                receipt.ok && tool_result(receipt.result.clone(), true).is_error != Some(true)
+            })
+        })
+}
+
+fn pair_completed_batch(state: &mut HarnessState) {
+    let mut response = Message::user();
+    for request in unanswered(&state.conversation) {
+        let result = match state.tool_receipts.get(&request.id) {
+            Some(receipt) => tool_result(receipt.result.clone(), receipt.ok),
+            None => CallToolResult::error(vec![ContentBlock::text(
+                "Skipped: this goal batch already committed successfully",
+            )]),
+        };
+        response.add_tool_response_with_metadata(request.id, Ok(result), request.metadata.as_ref());
+    }
+    if !response.content.is_empty() {
+        state.conversation.push(response);
+    }
+}
+
 fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
     if let GdkEvent::Message(message) = event {
         if !message.is_user_visible() {
@@ -945,11 +1015,15 @@ fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
             match content {
                 MessageContent::Text(text) if message.role == Role::Assistant => {
                     let text = LiveDeltas::remainder(&mut live.content, text.text);
-                    if !text.is_empty() { (args.emit)(AgentEvent::Message(text)); }
+                    if !text.is_empty() {
+                        (args.emit)(AgentEvent::Message(text));
+                    }
                 }
                 MessageContent::Thinking(thought) => {
                     let text = LiveDeltas::remainder(&mut live.thought, thought.thinking);
-                    if !text.is_empty() { (args.emit)(AgentEvent::Thought(text)); }
+                    if !text.is_empty() {
+                        (args.emit)(AgentEvent::Thought(text));
+                    }
                 }
                 _ => {}
             }
@@ -1025,6 +1099,9 @@ fn accept_inputs(state: &mut HarnessState, inputs: &mut Vec<Value>) -> Vec<Value
         state
             .conversation
             .push(Message::user().with_text(input["text"].as_str().unwrap_or_default()));
+        state
+            .delivered_input_values
+            .insert(id.clone(), input.clone());
         state.delivered_inputs.push(id);
         accepted.push(input);
     }
@@ -1080,6 +1157,7 @@ fn initial_state(history: &[Value]) -> Result<HarnessState, String> {
         tool_receipts: BTreeMap::new(),
         pending_tool: None,
         delivered_inputs: Vec::new(),
+        delivered_input_values: BTreeMap::new(),
         pending_inputs: Vec::new(),
         consecutive_tool_errors: 0,
         failed_tool_transition: None,

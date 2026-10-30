@@ -64,8 +64,9 @@ fs2 = "0.4"
 agent-client-protocol = "=2.2.0"
 async-io = "2"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"] }
+rmcp = { version = "=3.4.1", default-features = false, features = ["client", "transport-async-rw"] }
 # GUI server (async runtime is scoped inside src/gui/; the rest of the binary stays sync).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "process"] }
 axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

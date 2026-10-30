@@ -3,7 +3,6 @@
 // offers their tools to the model, and streams updates. It knows nothing about jazyk;
 // the same session against an external agent carries the same prompt and tools.
 // Mirrors docs/frontends/acp.md#the-embedded-agent.
-pub use crate::agent_loop;
 pub mod mcp_client;
 
 use agent_client_protocol::schema::v1::{
@@ -17,7 +16,7 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Agent, Stdio};
 
-use agent_loop::{AgentEvent, LoopArgs, Stop};
+use crate::harness::{self, AgentEvent, LoopArgs, Stop};
 use mcp_client::{GenericTool, McpServerConn};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -83,7 +82,7 @@ fn max_rounds() -> u32 {
 fn initial_history<'a>(instructions: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Value> {
     let mut history = Vec::new();
     for (name, instructions) in instructions {
-        agent_loop::push_user_text(
+        harness::push_user_text(
             &mut history,
             &format!("MCP server `{name}` instructions:\n{instructions}"),
         );
@@ -234,7 +233,7 @@ pub fn run() -> i32 {
                         // The session's model, which the client may have changed since
                         // the last turn. Mirrors docs/frontends/acp.md#choosing-a-model.
                         let llm = crate::llm::Llm { model: state.model.clone(), ..llm };
-                        agent_loop::push_user_text(&mut state.history,&text);
+                        harness::push_user_text(&mut state.history,&text);
                         let cancelled = entry.cancelled.clone();
                         let mut total_tokens = 0u64;
                         let label = format!("agent {}", sid);
@@ -297,7 +296,7 @@ pub fn run() -> i32 {
                             inbox.0 = false;
                             true
                         };
-                        agent_loop::run_loop(LoopArgs {
+                        harness::run_loop(LoopArgs {
                             llm: &llm,
                             history: &mut state.history,
                             tools: &state.tools,
@@ -326,6 +325,10 @@ pub fn run() -> i32 {
                                 responder.respond(PromptResponse::new(StopReason::MaxTurnRequests))
                             }
                             Stop::Cancelled => responder.respond(PromptResponse::new(StopReason::Cancelled)),
+                            Stop::Suspended => {
+                                notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from("This native ACP session does not support suspension recovery."))));
+                                responder.respond(PromptResponse::new(StopReason::Refusal))
+                            },
                             // A loop failure answers as a refusal with the error in a
                             // message chunk, never as a protocol error: the client
                             // library treats an error response to session/prompt as
@@ -454,7 +457,7 @@ mod tests {
             ("project", "Read the project."),
             ("task", "Inspect released tasks."),
         ]);
-        agent_loop::push_user_text(&mut history, "Explain hosting.md.");
+        harness::push_user_text(&mut history, "Explain hosting.md.");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["role"], "user");
         assert_eq!(history[0]["content"],"MCP server `project` instructions:\nRead the project.\n\nMCP server `task` instructions:\nInspect released tasks.\n\nExplain hosting.md.");
@@ -462,7 +465,7 @@ mod tests {
         let result = json!({"role":"tool","tool_call_id":"read-1","content":"current contents"});
         history.push(call.clone());
         history.push(result.clone());
-        agent_loop::push_user_text(&mut history, "Keep its existing heading.");
+        harness::push_user_text(&mut history, "Keep its existing heading.");
         assert_eq!(history.len(), 4);
         assert_eq!(history[1], call);
         assert_eq!(history[2], result);

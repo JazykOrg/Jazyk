@@ -338,6 +338,13 @@ fn tool_names(tools: Option<&[Value]>) -> Vec<String> {
         .collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn native_io_runtime() -> &'static tokio::runtime::Runtime {
+    static NETWORK: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    NETWORK.get_or_init(|| tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1).enable_all().build().expect("native model and MCP I/O runtime"))
+}
+
 impl Llm {
     /// Send a public-GDK-formatted request. Policy and durable identities live in
     /// the harness and host; this boundary never retries or changes tool codecs.
@@ -364,14 +371,7 @@ impl Llm {
             use futures::StreamExt;
             // Only owned HTTP work runs on this process-shared executor. The
             // harness and every MCP/VFS callback stay on their owning thread.
-            static NETWORK: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-            let network = NETWORK.get_or_init(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()
-                    .expect("native model network runtime")
-            });
+            let network = native_io_runtime();
             let base_url = self.base_url.clone();
             let api_key = self.api_key.clone();
             let timeout = call_timeout();

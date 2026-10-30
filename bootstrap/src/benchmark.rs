@@ -1,6 +1,6 @@
 use crate::vfs::VPathExt;
 // The benchmark frontend: decides whether a model is capable of driving compilation
-// turns. Runs every case under both codecs in a sandbox store, grades with
+// turns. Runs every case through the native-tool GDK runtime in a sandbox store, grades with
 // deterministic checks, no LLM judge. Mirrors docs/benchmark/benchmark.md.
 //
 // The case definitions ARE the documentation: the fenced yaml blocks in
@@ -1549,7 +1549,7 @@ pub fn seed_verification(
     Ok(())
 }
 
-// One case as a turn on the generic loop: the same codecs the embedded agent runs,
+// One case as a turn on the generic loop: the same GDK runtime the embedded agent runs,
 // dispatching into a ToolSession over the sandbox. What run_turn used to be, scoped
 // to grading. Mirrors docs/benchmark/benchmark.md#runs.
 // How a case turn fell short: the session aborted, or the model marked the batch's
@@ -1566,7 +1566,7 @@ enum TurnFail {
 pub struct CaseSession {
     pub session: crate::tools::ToolSession,
     pub prompt: String,
-    pub tools: Vec<crate::acp::agent::mcp_client::GenericTool>,
+    pub tools: Vec<crate::harness::GenericTool>,
 }
 
 pub fn case_session(
@@ -1610,7 +1610,7 @@ pub fn case_session_batch(
     derived: Option<&crate::model::Goal>,
     extra: &[crate::model::Goal],
 ) -> CaseSession {
-    use crate::acp::agent::mcp_client::GenericTool;
+    use crate::harness::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
     let goal = match derived {
         Some(g) => g.clone(),
@@ -1671,7 +1671,7 @@ fn run_case_turn(
     // runs the goal its item describes. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
     derived: Option<&crate::model::Goal>,
 ) -> (Vec<crate::store::Op>, u32, Option<TurnFail>, crate::store::Commit) {
-    use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
+    use crate::harness::{self, AgentEvent, LoopArgs, Stop};
     let CaseSession { session, prompt, tools } = case_session(snapshot, item, lint, gs, derived);
     let session = std::cell::RefCell::new(session);
     let mut history = vec![serde_json::json!({"role": "user", "content": prompt})];
@@ -1689,7 +1689,7 @@ fn run_case_turn(
     };
     let round_budget = crate::limits::SESSION_ROUNDS
         .max(item.dirty_sections.len() as u32 * crate::limits::ROUNDS_PER_SECTION);
-    let mut stop = agent_loop::run_loop(LoopArgs {
+    let mut stop = harness::run_loop(LoopArgs {
         llm,
         history: &mut history,
         tools: &tools,
@@ -1709,7 +1709,7 @@ fn run_case_turn(
     if matches!(stop, Stop::EndTurn) && session.borrow().done.is_none() {
         history.push(serde_json::json!({"role": "user", "content":
             "The task is not finished: nothing has committed. Continue with the tool calls the instructions name, then finish with done."}));
-        stop = agent_loop::run_loop(LoopArgs {
+        stop = harness::run_loop(LoopArgs {
             llm,
             history: &mut history,
             tools: &tools,
@@ -2019,7 +2019,7 @@ fn run_traced_filtered(
     let trace = Trace::stderr(TraceLevel::Quiet);
     println!("jazyk benchmark: model {} at {}", llm.model, llm.base_url);
     // One tiny completion before grading: a dead or misrouted endpoint fails one
-    // probe, not every case under both codecs.
+    // probe, not every benchmark case.
     if let Err(e) = llm.chat(
         "Reply with the single word: ok",
         "ok?",
@@ -2036,7 +2036,9 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
     let mut any_usable = false;
     let mut codec_reports: Vec<(String, Value)> = Vec::new();
 
-    for (codec_name, mode) in [("native", 1u8), ("text", 2u8)] {
+    {
+        // Keep the stored report key compatible with historical benchmark data.
+        let codec_name = "native";
         let started = std::time::Instant::now();
         let tokens_before = llm::tokens_spent();
         // Per-tier perfection (drives verdicts) and per-tier score sums (the scale).
@@ -2047,14 +2049,13 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
         let mut eff_sum = 0.0f64;
         let mut eff_n = 0usize;
         let mut case_results: Vec<(String, Value)> = Vec::new();
-        // A codec where no turn ever produces a completion is unmeasured, not graded.
+        // A run with no model completion is unmeasured, not graded.
         // Mirrors docs/benchmark/benchmark.md#report.
         let mut any_completion = false;
         let mut first_abort: Option<String> = None;
-        println!("\ncodec: {}", codec_name);
+        println!("\nharness: goose-gdk (native tools)");
 
         for case in &cases {
-            llm::set_tools_mode(mode);
             let tmp = std::env::temp_dir().join(format!(
                 "jazyk-bench-{}-{}",
                 crate::sys::process_id(),
@@ -2173,10 +2174,6 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                         aborted = true;
                     }
                     None => {
-                        // A native case that silently downgraded mid-turn did not pass natively.
-                        if mode == 1 && llm::tools_mode() == 2 {
-                            fail = Some("endpoint or model rejected native tool calls".into());
-                        }
                         if staged > 0 {
                             // A derived goal commits as the session did, its
                             // resolution in the journal; an assembled one as the
@@ -2282,14 +2279,14 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             }
         }
 
-        // No completion ever arrived: nothing was graded, so the codec gets no
+        // No completion ever arrived: nothing was graded, so the run gets no
         // verdict and no results entry. Mirrors docs/benchmark/benchmark.md#report.
         if !any_completion {
             println!(
                 "  verdict: unmeasured  no completion ever arrived ({})",
                 first_abort.as_deref().unwrap_or("no turns ran")
             );
-            continue;
+            return 2;
         }
         // Verdicts per workflow: a tier is held when every one of its cases scored 1.
         // A tier no case ran under (a filtered run) gets `-`, never a claim.
@@ -2382,8 +2379,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             }),
         ));
     }
-    llm::set_tools_mode(0);
-    // Both codecs unmeasured: a dead endpoint never overwrites a real grade.
+    // An unmeasured native run never overwrites a real grade.
     // Mirrors docs/benchmark/benchmark.md#results-file.
     if codec_reports.is_empty() {
         eprintln!("jazyk: benchmark measured nothing: the endpoint never returned a completion; results not written");

@@ -748,3 +748,32 @@ fn incompatible_checkpoint_refuses_takeover_with_recovery_signal() {
     assert!(matches!(stop, Stop::Error(error) if error.starts_with("checkpoint-incompatible:")));
     assert_eq!(host.requests.borrow().len(), 1);
 }
+
+#[test]
+fn dynamic_tool_provider_preserves_complete_mcp_result_blocks() {
+    let mut host = Host::new(vec![call(), response("finished")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let result = json!({"content":[{"type":"text","text":"visible text"}],"structuredContent":{"value":7},"_meta":{"provenance":"fixture"},"isError":false});
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| Ok(result.to_string()),
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
+    let state = store.saved.as_ref().unwrap();
+    let response = state
+        .conversation
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(goose_provider_types::conversation::message::MessageContent::as_tool_response)
+        .unwrap();
+    let result = serde_json::to_value(response.tool_result.as_ref().unwrap()).unwrap();
+    assert_eq!(result["structuredContent"]["value"], 7);
+    assert_eq!(result["_meta"]["provenance"], "fixture");
+    assert_eq!(result["content"][0]["text"], "visible text");
+}

@@ -104,9 +104,29 @@ impl ToolProvider<Session> for DynamicTools {
             .await
             .map_err(|_| ErrorData::internal_error("tool host closed", None))?
         {
-            Ok(text) => Ok(CallToolResult::success(vec![ContentBlock::text(text)])),
-            Err(text) => Ok(CallToolResult::error(vec![ContentBlock::text(text)])),
+            Ok(text) => Ok(tool_result(text, true)),
+            Err(text) => Ok(tool_result(text, false)),
         }
+    }
+}
+
+fn tool_result(text: String, ok: bool) -> CallToolResult {
+    if let Ok(value) = serde_json::from_str::<Value>(&text) {
+        if value.get("content").is_some_and(Value::is_array)
+            || value.get("structuredContent").is_some()
+        {
+            if let Ok(mut result) = serde_json::from_value::<CallToolResult>(value) {
+                if !ok {
+                    result.is_error = Some(true);
+                }
+                return result;
+            }
+        }
+    }
+    if ok {
+        CallToolResult::success(vec![ContentBlock::text(text)])
+    } else {
+        CallToolResult::error(vec![ContentBlock::text(text)])
     }
 }
 

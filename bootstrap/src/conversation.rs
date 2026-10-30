@@ -148,6 +148,9 @@ fn append(id: &str, update: Value) {
     let n = BOOK.with(|b| {
         let mut b = b.borrow_mut();
         let c = b.chats.get_mut(id)?;
+        if update["sessionUpdate"] == "turn_end" && c.updates.last().is_some_and(|(_,previous)| previous == &update) {
+            return None;
+        }
         let n = c.next_n;
         c.next_n += 1;
         c.updates.push((n, update.clone()));
@@ -168,6 +171,28 @@ fn set_state(id: &str, state: &str) {
         }
     });
     publish_sessions();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn replay_updates(events: &[Value]) -> Result<(),String> {
+    for event in events {
+        if event["type"] != "chat.update" { continue; }
+        let (Some(id),Some(n)) = (event["sessionId"].as_str(),event["n"].as_u64()) else { continue; };
+        let needed = BOOK.with(|b| b.borrow().chats.get(id).is_some_and(|chat| n >= chat.next_n));
+        if !needed { continue; }
+        let update = &event["update"];
+        let field = update["sessionUpdate"].as_str().unwrap_or_default();
+        if matches!(field,"agent_message_chunk" | "agent_thought_chunk") {
+            crate::session_recovery::replay_delta(id,field,update["content"]["text"].as_str().unwrap_or_default())?;
+        }
+        BOOK.with(|b| {
+            if let Some(chat) = b.borrow_mut().chats.get_mut(id) {
+                chat.updates.push((n,update.clone()));
+                chat.next_n = n + 1;
+            }
+        });
+    }
+    Ok(())
 }
 
 // The page passes the loaded model's tier: `{"tier": "reader"}` opens a reader

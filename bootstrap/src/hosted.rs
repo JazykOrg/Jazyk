@@ -60,6 +60,7 @@ pub struct Execution {
     pub transport_async: Option<ModelAsyncTransport>,
     pub transport_async_stream: Option<ModelAsyncStreamTransport>,
     pub resume: Option<Value>,
+    pub replay_events: Vec<Value>,
     pub checkpoint: Option<CheckpointSink>,
     pub suspend: Arc<AtomicBool>,
     pub inputs: Option<InputSource>,
@@ -165,6 +166,9 @@ impl Workspace {
             let _recovery = crate::session_recovery::Scope::enter(execution.resume.as_ref());
             drop_graph_snapshots();
             let conversations = crate::conversation::Scope::enter()?;
+            if execution.resume.is_some() {
+                crate::conversation::replay_updates(&execution.replay_events)?;
+            }
             let reply = dispatch(method, path, body)?;
             if method != "GET" && (path.contains("/chat/") || path.ends_with("/jobs") || path.ends_with("/compile")) {
                 conversations.save()?;

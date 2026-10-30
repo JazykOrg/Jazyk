@@ -124,6 +124,9 @@ ownership and execution sequence. A stale owner cannot claim new work.
 Stop is final. It wins over reclaim and does not auto-resume. Suspension does not
 reset limits, extend task deadlines, create a new billed turn or redeliver input.
 Partial model text is provisional and restored from stable message identities.
+Recovery reconciles retained job chat events after the saved workspace cursor.
+Their already published model prefix is added to the active request receipt, so
+replaying a saved complete response does not append that prefix again.
 Stopping a suspended job retains its already committed workspace changes. The
 host publishes those saved bytes under a fresh ownership fence, closes its running
 conversation and discards the staged MCP changeset without running the model.

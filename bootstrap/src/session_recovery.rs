@@ -90,6 +90,21 @@ pub(crate) fn input_delivered(id: &str) {
     });
 }
 
+pub(crate) fn replay_delta(session: &str, field: &str, text: &str) -> Result<(),String> {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        let Some(frame) = state.frames.iter_mut().rev().find(|frame| frame.key.starts_with(&format!("chat:{session}:"))) else { return Ok(()); };
+        if !matches!(frame.boundary.phase, crate::harness::CheckpointPhase::BeforeModel | crate::harness::CheckpointPhase::SavedModel) { return Ok(()); }
+        let Some(request_id) = &frame.boundary.operation_id else { return Ok(()); };
+        let prefix = frame.harness.model_deltas.entry(request_id.clone()).or_default();
+        if prefix.content.len().saturating_add(prefix.thought.len()).saturating_add(text.len()) > 16*1024*1024 {
+            return Err("execution-uncertain: retained model prefix exceeds the response limit".into());
+        }
+        match field { "agent_message_chunk" => prefix.content.push_str(text), "agent_thought_chunk" => prefix.thought.push_str(text), _ => {} }
+        Ok(())
+    })
+}
+
 pub(crate) fn remove_parent(key: &str) {
     STATE.with(|s| { s.borrow_mut().parent.remove(key); });
 }
@@ -113,7 +128,7 @@ pub(crate) fn command_key(base: &str) -> String {
 
 pub(crate) fn is_interruption(reason: &str) -> bool {
     reason == "suspended" || ["checkpoint-incompatible:", "checkpoint-failed:", "execution-uncertain:"]
-        .iter().any(|prefix| reason.starts_with(prefix))
+        .iter().any(|prefix| reason.contains(prefix))
 }
 
 pub(crate) fn batch_key(out: &std::path::Path, id: &str) -> String {

@@ -480,6 +480,10 @@ server keeps every event a job emitted, numbered per job, so a reloaded page sho
 same history the live stream showed. `POST /api/jobs/{id}/cancel` requests
 cancellation.
 
+The `gen` job develops source and tests together through the
+[generation contract](../consumers/gen.md). It does not run a binding phase first.
+The agent chooses the order of source work and checks, as in the CLI and ACP.
+
 - Every job's trace persists as one JSON-lines file under `<out>/trace/`: a metadata
   line, one line per numbered event, and a final line with the outcome. The activity
   panel lists past jobs from these files, so the history survives server restarts and

@@ -498,7 +498,7 @@ what setup remains. The catalog:
 | `/ripple` | Walk a change's cascade through the journal: the generations it led to, the goals each opened, the sessions that resolved them. `--back` walks upstream to the edit that started it. What [`jazyk ripple`](./cli.md#jazyk-ripple) prints. |
 | `/questions` | The [standing questions](#questions-in-chat) on open findings. |
 | `/compile` | Reconcile the graph with the documents: run the board to convergence. |
-| `/generate` | Bind and generate the deliverable. |
+| `/generate` | Develop source and tests together, then record and check the deliverable. |
 | `/verify` | Run verification over the ledger. |
 | `/release` | Approve pending work in manual mode. |
 

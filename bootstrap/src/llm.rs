@@ -377,15 +377,20 @@ impl Llm {
             let timeout = call_timeout();
             tokio_util::task::AbortOnDropHandle::new(network
                 .spawn(async move {
+                    use eventsource_stream::Eventsource;
+                    use goose_provider_types::{base::collect_stream, errors::ProviderError, formats::openai};
                     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
                     let client = CLIENT.get_or_init(reqwest::Client::new);
+                    let mut body = request.body;
+                    body["stream"] = json!(true);
+                    body["stream_options"] = json!({"include_usage":true});
                     let mut call = client
                         .post(format!(
                             "{}/chat/completions",
                             base_url.trim_end_matches('/')
                         ))
                         .timeout(timeout)
-                        .json(&request.body);
+                        .json(&body);
                     if !api_key.is_empty() {
                         call = call.bearer_auth(&api_key);
                     }
@@ -394,6 +399,23 @@ impl Llm {
                         .await
                         .map_err(|e| format!("model transport: {e}"))?;
                     let status = response.status();
+                    let streaming = response.headers().get(reqwest::header::CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/event-stream"));
+                    if status.is_success() && streaming {
+                        let mut received = 0usize;
+                        let bytes = response.bytes_stream().map(move |chunk| {
+                            let chunk = chunk.map_err(anyhow::Error::from)?;
+                            received = received.saturating_add(chunk.len());
+                            if received > 16 * 1024 * 1024 { anyhow::bail!("model response exceeds 16 MiB"); }
+                            Ok::<_, anyhow::Error>(chunk)
+                        });
+                        let events = bytes.eventsource().map(|event| event
+                            .map(|event| format!("data: {}", event.data)).map_err(anyhow::Error::from));
+                        let decoded = openai::response_to_streaming_message(Box::pin(events))
+                            .map(|result| result.map_err(|e| ProviderError::RequestFailed(e.to_string())));
+                        let (message, usage) = collect_stream(Box::pin(decoded)).await.map_err(|e| e.to_string())?;
+                        return Ok(json!({"_jazykGdkResponse":{"message":message,"usage":usage}}).to_string());
+                    }
                     let mut stream = response.bytes_stream();
                     let mut bytes = Vec::new();
                     while let Some(chunk) = stream.next().await {
@@ -416,7 +438,8 @@ impl Llm {
         self.event(crate::session::TraceEvent::LlmResponse {
             label: request_id, step: purpose, ms: started.elapsed().as_millis() as u64,
             tokens: response["usage"]["completion_tokens"].as_u64().unwrap_or(0),
-            message: response["choices"][0]["message"].clone(),
+            message: response.get("_jazykGdkResponse").map(|v| v["message"].clone())
+                .unwrap_or_else(|| response["choices"][0]["message"].clone()),
         });
         Ok(response)
     }

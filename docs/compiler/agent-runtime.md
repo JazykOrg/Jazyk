@@ -19,6 +19,8 @@ The native provider uses the configured LocalRouter endpoint and existing
 configuration precedence. Hosted inference uses the host's admitted transport.
 Browser inference uses its model host. Public GDK wire helpers preserve tool call,
 reasoning and usage metadata. Provider credentials remain host capabilities.
+Native HTTP requests use streaming transport. The maintained SSE decoder and GDK
+collector produce a complete native response before its tools execute.
 
 Tools come from MCP. A dynamic GDK tool provider delegates list and call operations
 to the existing serving. Hosted and browser tools execute in process against their

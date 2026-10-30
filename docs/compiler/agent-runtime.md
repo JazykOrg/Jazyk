@@ -67,6 +67,18 @@ Compaction uses the same admitted model route and job limits. Its cost counts
 toward the job. Graph loaded-set policy remains independent of conversation
 compaction. Jazyk retains its fixed agent contract and domain skill payloads.
 
+The request to summarize history is runtime control, not a new user request.
+Jazyk adds this boundary to the upstream compaction prompt. The summary describes
+the actual task and accepted steering. It does not replace them with the request
+to summarize. After compaction, a host continuation names the active session and
+asks the model to resume its pending work. The summary and continuation are saved
+together before another inference. Completed tool outcomes and goal gates remain
+authoritative. Compaction does not authorize their replay.
+
+The fixed agent contract applies the same boundary to restored summaries. Saved
+model requests retain their admitted bytes. A runtime update does not rewrite an
+inference already admitted before the update.
+
 ## Checkpoints
 
 An execution checkpoint is protected operational state. It is separate from graph

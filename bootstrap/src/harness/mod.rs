@@ -14,6 +14,8 @@ pub use runtime::{
     run_with_hosts, run_with_hosts_async, MemoryRecovery,
 };
 
+pub type ModelDeltaSink = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 pub type LocalFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 #[derive(Clone, Debug)]
@@ -75,11 +77,29 @@ pub enum ModelPurpose {
     Compaction,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ModelRequest {
     pub body: Value,
     pub attempt_id: String,
     pub purpose: ModelPurpose,
+    pub deltas: Option<ModelDeltaSink>,
+}
+
+impl std::fmt::Debug for ModelRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelRequest")
+            .field("body", &self.body)
+            .field("attempt_id", &self.attempt_id)
+            .field("purpose", &self.purpose)
+            .field("deltas", &self.deltas.is_some())
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ModelDeltaProgress {
+    pub content: String,
+    pub thought: String,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +166,8 @@ pub struct HarnessState {
     #[serde(default)]
     pub model_requests: BTreeMap<String, Value>,
     pub model_receipts: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub model_deltas: BTreeMap<String, ModelDeltaProgress>,
     pub tool_receipts: BTreeMap<String, ToolReceipt>,
     pub pending_tool: Option<ToolIntention>,
     pub delivered_inputs: Vec<String>,

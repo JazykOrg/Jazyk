@@ -909,3 +909,103 @@ fn checkpoint_failure_and_uncertainty_have_preservable_recovery_signals() {
     );
     assert!(matches!(stop, Stop::Error(error) if error.starts_with("execution-uncertain:")));
 }
+
+#[test]
+fn live_model_deltas_run_on_the_owner_thread_without_repeating_the_final_prefix() {
+    struct StreamingHost { completed: Arc<AtomicBool> }
+    impl ModelHost for StreamingHost {
+        fn infer<'a>(&'a mut self, request: ModelRequest) -> LocalFuture<'a, Result<ModelResponse, String>> {
+            Box::pin(async move {
+                let sink = request.deltas.expect("native inference has a delta sink");
+                std::thread::spawn(move || {
+                    sink("content", "Hello ");
+                    sink("reasoning_content", "Think ");
+                    sink("tool_calls", "must not appear");
+                }).join().unwrap();
+                async_io::Timer::after(std::time::Duration::from_millis(10)).await;
+                self.completed.store(true, Ordering::SeqCst);
+                let mut body = response("Hello there");
+                body["choices"][0]["message"]["reasoning_content"] = json!("Think more");
+                Ok(ModelResponse { body })
+            })
+        }
+    }
+    let completed = Arc::new(AtomicBool::new(false));
+    let mut host = StreamingHost { completed: completed.clone() };
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let owner = std::thread::current().id();
+    let mut content = String::new();
+    let mut thought = String::new();
+    let stop = run(&mut host, &mut Store::default(), &mut history, &mut |_, _| panic!(), &mut |event| {
+        assert_eq!(owner, std::thread::current().id());
+        match event {
+            AgentEvent::Message(text) => {
+                if text == "Hello " { assert!(!completed.load(Ordering::SeqCst)); }
+                content.push_str(&text);
+            }
+            AgentEvent::Thought(text) => thought.push_str(&text),
+            _ => {}
+        }
+    });
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(content, "Hello there");
+    assert_eq!(thought, "Think more");
+    assert!(history.iter().any(|message| message["content"] == "Hello there"));
+}
+
+#[test]
+fn input_accepted_during_a_final_model_reply_is_delivered_before_finishing() {
+    struct SteeringHost { inbox: Rc<RefCell<Vec<Value>>>, calls: usize }
+    impl ModelHost for SteeringHost {
+        fn infer<'a>(&'a mut self, request: ModelRequest) -> LocalFuture<'a, Result<ModelResponse, String>> {
+            Box::pin(async move {
+                self.calls += 1;
+                if self.calls == 1 {
+                    self.inbox.borrow_mut().push(json!({"messageId":"final-input","text":"Preserve the identifiers"}));
+                } else {
+                    assert!(request.body.to_string().contains("Preserve the identifiers"));
+                }
+                Ok(ModelResponse { body: response("finished") })
+            })
+        }
+    }
+    let inbox = Rc::new(RefCell::new(Vec::new()));
+    let mut host = SteeringHost { inbox: inbox.clone(), calls: 0 };
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut inputs = || std::mem::take(&mut *inbox.borrow_mut());
+    let mut store = Store::default();
+    let stop = runtime::run_with_host(LoopArgs {
+        llm: &llm(), history: &mut history, tools: &[], dispatch: &mut |_, _| panic!(),
+        emit: &mut |_| {}, cancelled: &|| false, max_rounds: 8, label: "steering at end".into(),
+        conversation: true, inputs: Some(&mut inputs), input_close: Some(&mut || true),
+    }, "", &mut host, &mut store);
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(host.calls, 2);
+    assert_eq!(store.saved.unwrap().delivered_inputs, vec!["final-input"]);
+    assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished));
+}
+
+#[test]
+fn saved_model_receipt_retains_the_already_streamed_prefix() {
+    struct PrefixHost;
+    impl ModelHost for PrefixHost {
+        fn infer<'a>(&'a mut self, request: ModelRequest) -> LocalFuture<'a, Result<ModelResponse, String>> {
+            Box::pin(async move {
+                request.deltas.unwrap()("content", "Hello ");
+                Ok(ModelResponse { body: response("Hello there") })
+            })
+        }
+    }
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut store = Store { fail: Some(CheckpointPhase::SavedModel), ..Default::default() };
+    let mut content = String::new();
+    let mut emit = |event| if let AgentEvent::Message(text) = event { content.push_str(&text); };
+    assert!(matches!(run(&mut PrefixHost, &mut store, &mut history, &mut |_, _| panic!(), &mut emit), Stop::Error(_)));
+    let prefix = store.saved.as_ref().unwrap().model_deltas.values().next().unwrap();
+    assert_eq!(prefix.content, "Hello ");
+    let mut cached_host = Host::new(vec![]);
+    assert_eq!(run(&mut cached_host, &mut store, &mut history, &mut |_, _| panic!(), &mut emit), Stop::EndTurn);
+    assert!(cached_host.requests.borrow().is_empty());
+    assert_eq!(content, "Hello there");
+    assert!(store.saved.unwrap().model_deltas.is_empty());
+}

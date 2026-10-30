@@ -345,6 +345,21 @@ pub(crate) fn native_io_runtime() -> &'static tokio::runtime::Runtime {
         .worker_threads(1).enable_all().build().expect("native model and MCP I/O runtime"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn forward_model_delta(
+    message: &goose_provider_types::conversation::message::Message,
+    sink: &crate::harness::ModelDeltaSink,
+) {
+    use goose_provider_types::conversation::message::MessageContent;
+    for content in &message.content {
+        match content {
+            MessageContent::Text(text) if !text.text.is_empty() => sink("content", &text.text),
+            MessageContent::Thinking(thought) if !thought.thinking.is_empty() => sink("reasoning_content", &thought.thinking),
+            _ => {}
+        }
+    }
+}
+
 impl Llm {
     /// Send a public-GDK-formatted request. Policy and durable identities live in
     /// the harness and host; this boundary never retries or changes tool codecs.
@@ -366,7 +381,7 @@ impl Llm {
         let response = if crate::vfs::is_scoped() {
             let mut body = request.body;
             body["_jazyk"] = json!({"requestId":request.attempt_id,"purpose":request.purpose});
-            crate::hosted::transport_async(&request.attempt_id, &body.to_string(), None).await?
+            crate::hosted::transport_async(&request.attempt_id, &body.to_string(), request.deltas).await?
         } else {
             use futures::StreamExt;
             // Only owned HTTP work runs on this process-shared executor. The
@@ -409,9 +424,15 @@ impl Llm {
                             if received > 16 * 1024 * 1024 { anyhow::bail!("model response exceeds 16 MiB"); }
                             Ok::<_, anyhow::Error>(chunk)
                         });
+                        let deltas = request.deltas;
                         let events = bytes.eventsource().map(|event| event
                             .map(|event| format!("data: {}", event.data)).map_err(anyhow::Error::from));
                         let decoded = openai::response_to_streaming_message(Box::pin(events))
+                            .inspect(move |result| {
+                                if let (Ok((Some(message), _)), Some(sink)) = (result, &deltas) {
+                                    forward_model_delta(message, sink);
+                                }
+                            })
                             .map(|result| result.map_err(|e| ProviderError::RequestFailed(e.to_string())));
                         let (message, usage) = collect_stream(Box::pin(decoded)).await.map_err(|e| e.to_string())?;
                         return Ok(json!({"_jazykGdkResponse":{"message":message,"usage":usage}}).to_string());
@@ -779,17 +800,36 @@ impl Llm {
         let mut emit = |event| {
             if let crate::harness::AgentEvent::Message(text) = event { output.push_str(&text); }
         };
-        let stop = crate::harness::run_loop_with_instructions(crate::harness::LoopArgs {
+        let mut memory = crate::harness::MemoryRecovery::default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut durable = if crate::vfs::is_scoped() {
+            let key = format!("utility:{}", crate::model::hash_hex(&json!([label, step, system, user]).to_string()));
+            Some(crate::session_recovery::McpRecovery::utility(key)?)
+        } else { None };
+        #[cfg(not(target_arch = "wasm32"))]
+        let recovery: &mut dyn crate::harness::Recovery = match durable.as_mut() {
+            Some(recovery) => recovery,
+            None => &mut memory,
+        };
+        #[cfg(target_arch = "wasm32")]
+        let recovery: &mut dyn crate::harness::Recovery = &mut memory;
+        let mut host = crate::harness::provider::DefaultModelHost::new(self);
+        let stop = crate::harness::run_with_host(crate::harness::LoopArgs {
             llm: self, history: &mut history, tools: &[],
             dispatch: &mut |_, _| Err("No tools are available in this inference".into()),
             emit: &mut emit, cancelled: &cancelled, max_rounds: 1,
             label: format!("{label} {step}"), conversation: true, inputs: None, input_close: None,
-        }, system).await;
+        }, system, &mut host, recovery).await;
+        if output.is_empty() {
+            if let Some(message) = history.iter().rev().find(|message| message["role"] == "assistant") {
+                output = message["content"].as_str().unwrap_or_default().to_string();
+            }
+        }
         match stop {
             crate::harness::Stop::EndTurn => Ok(output),
             crate::harness::Stop::Error(error) => Err(error),
             crate::harness::Stop::Cancelled => Err("execution cancelled".into()),
-            crate::harness::Stop::Suspended => Err("execution suspended".into()),
+            crate::harness::Stop::Suspended => Err("suspended".into()),
             crate::harness::Stop::MaxRounds => Err("utility inference reached its request limit".into()),
         }
     }

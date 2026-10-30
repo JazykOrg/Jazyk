@@ -22,6 +22,7 @@ export function clearCancel() { cancelled = false; inputOpen = true }
 
 export function setCancelled(value) {
   cancelled = Boolean(value)
+  if (!cancelled) inputOpen = true
   if (cancelled) {
     for (const waiter of pending.values()) waiter.reject(new Error('execution cancelled'))
     pending.clear()

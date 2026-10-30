@@ -380,6 +380,56 @@ async fn checkpoint(
         .map_err(|error| format!("checkpoint-failed: {error}"))
 }
 
+type LiveDeltas = ModelDeltaProgress;
+
+impl LiveDeltas {
+    fn emit(&mut self, args: &mut LoopArgs<'_>, field: &str, text: String) {
+        if field == "content" {
+            self.content.push_str(&text);
+            (args.emit)(AgentEvent::Message(text));
+        } else {
+            self.thought.push_str(&text);
+            (args.emit)(AgentEvent::Thought(text));
+        }
+    }
+
+    fn remainder(prefix: &mut String, text: String) -> String {
+        if let Some(rest) = prefix.strip_prefix(&text) {
+            *prefix = rest.to_string();
+            String::new()
+        } else if let Some(rest) = text.strip_prefix(prefix.as_str()) {
+            let rest = rest.to_string();
+            prefix.clear();
+            rest
+        } else {
+            prefix.clear();
+            text
+        }
+    }
+}
+
+#[derive(Default)]
+struct PendingDeltas {
+    chunks: std::collections::VecDeque<(String, String)>,
+    bytes: usize,
+    overflow: bool,
+}
+
+fn flush_deltas(
+    pending: &std::sync::Mutex<PendingDeltas>,
+    live: &mut LiveDeltas,
+    args: &mut LoopArgs<'_>,
+) -> Result<(), Stop> {
+    let pending = std::mem::take(&mut *pending.lock().unwrap_or_else(|p| p.into_inner()));
+    if pending.overflow || live.content.len().saturating_add(live.thought.len()).saturating_add(pending.bytes) > 16 * 1024 * 1024 {
+        return Err(Stop::Error("model delta buffer exceeds 16 MiB".into()));
+    }
+    for (field, text) in pending.chunks {
+        live.emit(args, &field, text);
+    }
+    Ok(())
+}
+
 async fn drive(
     args: &mut LoopArgs<'_>,
     instructions: &str,
@@ -388,6 +438,7 @@ async fn drive(
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
 ) -> Stop {
+    let mut live = LiveDeltas::default();
     let config = ModelConfig::new(&args.llm.model)
         .with_temperature(args.llm.temperature.map(|t| t as f32))
         .with_max_tokens(Some(
@@ -508,6 +559,7 @@ async fn drive(
                 recovery,
                 state,
                 &cancellation,
+                &mut live,
             )
             .await
             {
@@ -536,6 +588,7 @@ async fn drive(
                 recovery,
                 state,
                 &cancellation,
+                &mut live,
             )
             .await
             {
@@ -544,7 +597,7 @@ async fn drive(
             }
         };
         while let Ok(event) = event_rx.try_recv() {
-            emit_gdk(args, event);
+            emit_gdk(args, event, &mut live);
         }
         for effect in outcome.effects {
             match effect {
@@ -560,6 +613,7 @@ async fn drive(
         }
         let mut pending_inputs = std::mem::take(&mut state.pending_inputs);
         let accepted_inputs = accept_inputs(state, &mut pending_inputs);
+        state.model_deltas.clear();
         state.transition += 1;
         if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
             return Stop::Error(error);
@@ -569,9 +623,6 @@ async fn drive(
         }
         if outcome.status == RunStatus::Cancelled {
             return Stop::Cancelled;
-        }
-        if outcome.status == RunStatus::Yielded {
-            return Stop::EndTurn;
         }
     }
 }
@@ -586,6 +637,7 @@ async fn drive_future<F, T>(
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
     cancellation: &CancellationToken,
+    live: &mut LiveDeltas,
 ) -> Result<T, Stop>
 where
     F: std::future::Future<Output = Result<T>>,
@@ -600,9 +652,9 @@ where
         futures::select_biased! {
             result = future => return result.map_err(|e| Stop::Error(e.to_string())),
             action = request => if let Some(action) = action {
-                handle_action(action, args, host, tools_host, recovery, state, cancellation).await?;
+                handle_action(action, args, host, tools_host, recovery, state, cancellation, live).await?;
             },
-            event = event => if let Some(event) = event { emit_gdk(args, event); },
+            event = event => if let Some(event) = event { emit_gdk(args, event, live); },
             _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
         }
     }
@@ -616,6 +668,7 @@ async fn handle_action(
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
     cancellation: &CancellationToken,
+    live: &mut LiveDeltas,
 ) -> Result<(), Stop> {
     if (args.cancelled)() {
         cancellation.cancel();
@@ -661,26 +714,63 @@ async fn handle_action(
                 .map_err(Stop::Error)?;
             }
             let value = if let Some(value) = state.model_receipts.get(&id) {
+                *live = state.model_deltas.get(&id).cloned().unwrap_or_default();
                 value.clone()
             } else {
+                *live = LiveDeltas::default();
+                let pending = Arc::new(std::sync::Mutex::new(PendingDeltas::default()));
+                let (notice, mut notices) = mpsc::channel(1);
+                let buffer = pending.clone();
+                let sink: ModelDeltaSink = Arc::new(move |field, text| {
+                    if text.is_empty() || !matches!(field, "content" | "reasoning" | "reasoning_content") {
+                        return;
+                    }
+                    let mut pending = buffer.lock().unwrap_or_else(|p| p.into_inner());
+                    if pending.bytes.saturating_add(text.len()) > 16 * 1024 * 1024 {
+                        pending.overflow = true;
+                    } else {
+                        pending.bytes += text.len();
+                        if let Some((_, value)) = pending.chunks.back_mut().filter(|(previous, _)| previous == field) {
+                            value.push_str(text);
+                        } else {
+                            pending.chunks.push_back((field.to_string(), text.to_string()));
+                        }
+                    }
+                    let _ = notice.try_send(());
+                });
                 let request = ModelRequest {
                     body,
                     attempt_id: id.clone(),
                     purpose,
+                    deltas: if cfg!(target_arch = "wasm32") || purpose == ModelPurpose::Compaction {
+                        None
+                    } else {
+                        Some(sink.clone())
+                    },
                 };
                 let inference = host.infer(request).fuse();
                 futures::pin_mut!(inference);
                 let response = loop {
+                    if (args.cancelled)() {
+                        cancellation.cancel();
+                        return Err(Stop::Cancelled);
+                    }
                     let tick = sleep_tick().fuse();
-                    futures::pin_mut!(tick);
+                    let notice = notices.recv().fuse();
+                    futures::pin_mut!(tick, notice);
                     futures::select_biased! {
-                        result = inference => match result {
-                            Ok(response) => break response,
-                            Err(error) => { let _ = reply.send(Err(error)); return Ok(()); }
+                        result = inference => {
+                            flush_deltas(&pending, live, args)?;
+                            match result {
+                                Ok(response) => break response,
+                                Err(error) => { let _ = reply.send(Err(error)); return Ok(()); }
+                            }
                         },
+                        _ = notice => flush_deltas(&pending, live, args)?,
                         _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
                     }
                 };
+                state.model_deltas.insert(id.clone(), live.clone());
                 state
                     .model_receipts
                     .insert(id.clone(), response.body.clone());
@@ -846,7 +936,7 @@ fn unanswered(
         .collect()
 }
 
-fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent) {
+fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
     if let GdkEvent::Message(message) = event {
         if !message.is_user_visible() {
             return;
@@ -854,10 +944,12 @@ fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent) {
         for content in message.content {
             match content {
                 MessageContent::Text(text) if message.role == Role::Assistant => {
-                    (args.emit)(AgentEvent::Message(text.text))
+                    let text = LiveDeltas::remainder(&mut live.content, text.text);
+                    if !text.is_empty() { (args.emit)(AgentEvent::Message(text)); }
                 }
                 MessageContent::Thinking(thought) => {
-                    (args.emit)(AgentEvent::Thought(thought.thinking))
+                    let text = LiveDeltas::remainder(&mut live.thought, thought.thinking);
+                    if !text.is_empty() { (args.emit)(AgentEvent::Thought(text)); }
                 }
                 _ => {}
             }
@@ -984,6 +1076,7 @@ fn initial_state(history: &[Value]) -> Result<HarnessState, String> {
         conversation,
         model_requests: BTreeMap::new(),
         model_receipts: BTreeMap::new(),
+        model_deltas: BTreeMap::new(),
         tool_receipts: BTreeMap::new(),
         pending_tool: None,
         delivered_inputs: Vec::new(),

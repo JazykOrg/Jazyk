@@ -20,7 +20,12 @@ configuration precedence. Hosted inference uses the host's admitted transport.
 Browser inference uses its model host. Public GDK wire helpers preserve tool call,
 reasoning and usage metadata. Provider credentials remain host capabilities.
 Native HTTP requests use streaming transport. The maintained SSE decoder and GDK
-collector produce a complete native response before its tools execute.
+collector produce a complete native response before its tools execute. Text and
+reasoning deltas reach the owner thread while inference is pending. The final
+message retains the complete response and does not repeat its streamed prefix.
+The saved model receipt includes the prefix already delivered to the event stream.
+Restoring that receipt does not repeat the prefix. Compaction summaries do not emit
+user-facing deltas.
 
 Tools come from MCP. A dynamic GDK tool provider delegates list and call operations
 to the existing serving. Hosted and browser tools execute in process against their
@@ -77,6 +82,9 @@ recorded workspace revision. The compiler resumes its active batch before choosi
 new work. A completed batch receipt prevents duplicate parent execution.
 
 Nested compilation retains the outer tool intention and each active inner session.
+Hosted utility inference retains its response under a key derived from its prompt.
+A parent retry reuses the response until it acknowledges that work.
+
 Parent progress can be checkpointed between sessions without an active model
 conversation. A running chat retains its accepted input and event cursor in the
 same workspace checkpoint. Restoring it does not append the opening input again.

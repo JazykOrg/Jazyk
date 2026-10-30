@@ -714,6 +714,9 @@ tools; jazyk holds the ledger. These tools never mutate the graph.
   and build when they exist, the test conventions already recorded in the ledger, and
   `existingTests`, the deliverable files that name the requirement by id, slug, or
   statement hash (a test left under an earlier id is found here, never by hand).
+  An owned worker batch receives the execution contract in its opening prompt, so
+  this reply carries only the full binding contract. A standalone serving carries
+  both contracts.
   Stateless on the server; the lease is the claim.
 - `record_binding({requirement, files, tests?, test?, verdict?, evidence?})`: record the
   row: the implementing files (an empty list is a finding), one test per

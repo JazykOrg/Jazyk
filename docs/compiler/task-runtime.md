@@ -145,6 +145,18 @@ remain binary files. Historical results remain readable after container teardown
 Repeated context requests do not reload historical logs into the model context.
 `read_run_log` and `search_run_log` read the retained log in bounded parts.
 
+An owned worker's MCP status replies name the frozen task by `id` and `name` instead
+of repeating its definition. They carry one `result`, without a duplicate `summary`. All lifecycle,
+input identity, termination, error, and result fields remain available. Saved task
+definitions and the retained execution result do not change. HTTP task views keep
+their full response. A standalone MCP serving also keeps the full response.
+
+An owned worker's `task_context` returns at most five recent runs. `before` and
+`next_cursor` page through older runs. It still returns every current task definition,
+the configuration revision, defaults, and execution capabilities. A standalone
+serving keeps the normal history page. Status polls never include source snapshots
+or file contents.
+
 A programmatic binding uses `run = "task:<id>"`. Its `name` is an exact
 `classname::name` JUnit selector, or a unique unqualified case name. A missing or
 ambiguous selector records `none` with the observed execution state as evidence.

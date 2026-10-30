@@ -167,6 +167,9 @@ agent spawns nothing:
   `--packaged`, `--serve-files`), the same transcript under `<out>/trace`. The
   batch lifecycle (`begin_goals`, the write tools, `mark_goal_done`, `done`) behaves
   identically, because it is the same code.
+- Owned workers use the [compact task view](../compiler/task-runtime.md#results-and-verification).
+  An owned worker's task history uses five-row pages with the existing cursors.
+  The editor's HTTP task view and retained runtime evidence are unchanged.
 - The server stops when the session closes. Jazyk closes the session first (the agent
   tears its client down), then stops the listener and runs the implicit finish, the
   same one end of input runs on a stdio serving: staged work commits under the

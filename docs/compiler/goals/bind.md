@@ -128,6 +128,11 @@ The binding contract rides the tool reply, not the prompt, because the model mus
 interleave jazyk's package with its own file and shell work
 ([generation sessions](../sessions.md#generation-sessions)):
 
+An owned worker batch already carries the task execution contract in its opening
+prompt. Its `begin_binding` reply carries the full binding contract without repeating
+that execution contract. A standalone serving carries both contracts in the reply.
+The binding rules and package fields stay the same.
+
 1. `begin_binding({requirement})` answers with
    [`prompts/bind-contract.md`](./prompts/bind-contract.md) as `instructions`
    (search before write, both directions get a test, the two test kinds,

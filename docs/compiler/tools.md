@@ -657,7 +657,7 @@ scope. Other hidden paths keep the shared
   the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where
   `changed` lists the requirement ids added, removed, or reworded since the entity was
   last generated and `blockedBy` is the board's readiness reason for a row that is not
-  ready (its requirements still owe a binding, a release). `begin_generation` refuses a
+  ready (its graph or criteria work is open, or a release). `begin_generation` refuses a
   row that is not ready with the same reason (`not-ready`).
 - `begin_generation({entity})`: the full package for one entity: the instructions (the
   generation contract: both halves per entity, traceability markers, the two test
@@ -677,7 +677,7 @@ scope. Other hidden paths keep the shared
   earlier decision until an entity is generated, refused (`medium-settled`) after.
 - `record_generation({entity, factHash, manifest, choices?})`: record the entity
   generated. The worker writes the deliverable files itself; the `manifest` binds
-  them to the graph: `{files: [...], supportFiles?: [...], tests: [{requirement, kind,
+  them to the graph: `{files: [...], supportFiles?: [...], tests: [{requirement, criterion?, kind,
   label, artifact, name, run, cwd}], build?}`, `supportFiles` the deliverable-wide
   files ownership never applies to
   ([file ownership](../consumers/gen.md#file-ownership-and-conventions)). A `files`
@@ -689,7 +689,13 @@ scope. Other hidden paths keep the shared
   manifest files and records each as an anchored site on its requirement's row
   ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps
   and [prunes rows](../consumers/gen.md#deletion-prunes-the-ledger) whose requirement
-  left the graph; the `generate` goal's gate reads the landed record. `choices` lists
+  left the graph; the `generate` goal's gate reads the landed record. A criterion
+  entry names both `requirement` and `criterion`. It creates or refreshes that
+  criterion's test declaration with no invented verdict. A current bound test keeps
+  its artifact, selector, kind, and assertions. Its `run` and `cwd` may change to a
+  shared suite task, clearing evidence until the same selector runs again.
+  Missing or stale required tests keep the generation gate open;
+  programmatic evidence still comes from `run_tests`. `choices` lists
   what the worker had to invent, each `{choice, scope, reasoning, requirements?}`,
   recorded as [`invented-choice`](../consumers/gen.md#invented-choices) diagnostics
   graded by scope. A `factHash` that no longer matches the live graph is recorded but leaves the

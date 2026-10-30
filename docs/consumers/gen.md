@@ -13,10 +13,11 @@ the prose, is the spec.
 
 The end product is called the deliverable. It is usually code, but the workflow does not
 assume software: a book, a schematic, a course. Whatever the requirements describe,
-generation produces it. Tests are the tie between the requirements and the deliverable,
-and they exist before generation runs: [binding](./bind.md) ties each requirement to
-its files and its test first, and generation is the step that makes `unimplemented`
-bindings pass.
+generation produces it. Tests tie the requirements to the deliverable. A generation
+session develops implementation and tests together. The model chooses their order,
+reuses current bindings, writes missing tests, and checks the resulting implementation.
+It does not need a separate binding pass or a failing execution before writing source.
+[Binding](./bind.md) remains available to inspect and test an existing deliverable.
 
 Generation is goal work on the board: a `generate` goal per entity whose facts differ
 from the ledger, ready at the ledger tier after the entity's compile goals settle, resolved
@@ -214,11 +215,12 @@ transitions, its derived relationships, and its state machine when one derives
 ([the loaded set](../compiler/context.md#the-loaded-set)). Nothing outside the loaded
 set leaks in, so each goal is small, repeatable, and auditable.
 
-The goal produces the entity's part of the deliverable. The tests already exist:
-[binding](./bind.md) wrote one per requirement before the entity became generation
-work, and the goal package carries them. The bound test defines the interface, and the
-product conforms to it. A session that cannot make a bound test pass without changing it
-reports that instead of rewriting the judge; the repair is a re-bind.
+The goal produces the entity's part of the deliverable and its missing tests. The
+package carries existing bindings and the current criteria. Current bound tests stay
+the acceptance contract. Reuse their references and assertions. Do not weaken a test
+to make an implementation pass. A stale statement or criterion takes a test for the
+current obligation. A requirement with no current test takes a new test. Source and
+tests may be written in either order and refined within the session.
 
 ### Grouping by component
 
@@ -427,8 +429,8 @@ a choice made in the graph, not an emergency at generation time.
 
 Each [criterion](../compiler/model/criterion.md) derives a test, keyed by the criterion
 id; the requirement it belongs to is the row that groups them, and the requirement
-verifies when every criterion's test is green. The tests are written when the
-requirement is [bound](./bind.md), before generation runs. A failing test names the
+verifies when every criterion's test is green. Tests are written during generation
+or explicit [binding](./bind.md). A failing test names the
 criterion it verifies and the requirement above it, and a changed criterion invalidates
 exactly the test keyed to it (`criterion-revised`), while a changed requirement statement
 marks its derived criteria revised and reaches the tests through them
@@ -438,6 +440,22 @@ is not bound: `bind` waits on `derive-criteria`
 share (an actor's statement about the tool it uses lists both) has one row and one
 test: the entity generated later finds the row in its package's `boundTests` and lists
 it unchanged, never a second test beside it.
+
+`record_generation` accepts `manifest.tests` entries with `requirement` and
+`criterion` for each criterion test. A requirement with no criteria uses a
+requirement-level entry without `criterion`. Existing criterion entries may be
+reused unchanged. New or changed test declarations start with verdict `none`. A
+current test keeps its artifact, selector, kind, and assertions. Its `run` and `cwd`
+may move to a shared saved suite task. That routing change clears its evidence and
+must produce the same exact JUnit selector before the test can pass again.
+Recording files or declarations does not invent execution evidence. A generation
+cannot close with missing or stale required test declarations, or incomplete required
+programmatic execution. Programmatic verdicts come from `run_tests`. Valid judgment
+test declarations remain unjudged until the separate Review action. Generation
+does not invent a passing verdict or require Review before producing the artifact.
+Related requirements and criteria can share one saved suite task with distinct JUnit
+selectors. Run it against meaningful source, rather than starting a container for
+each requirement or requiring a failing baseline before implementation.
 
 A run of the row's headline test records its verdict on the criterion entry that is
 the same test (the same test name; two criteria may share one runner command), so the
@@ -711,7 +729,7 @@ for a re-bind and regeneration, `jazyk test <requirement>` for a rerun, nothing 
 Source membership is checked separately from byte hashes. A scope change loses
 fresh evidence even when the file bytes do not change. Test artifacts and build
 outputs never count as implementation. A generation entry whose implementing
-files left Source is generation work, after its requirements are re-bound. Its
+files left Source is generation work. Its
 gate rejects the old manifest. Reclassification never deletes or rewrites a file.
 
 Each status that says action is a goal on the board, derived from a `ledger-stale`
@@ -725,11 +743,11 @@ rerun it anyway, because a rerun is what a person asking for one wants.
 
 ### The cascade
 
-Rewording a requirement flips its row to `stale-requirement`. The repair order is
-[bind](./bind.md) first, then generate: the re-bind rewrites the test against the new
-statement and reruns it, and only an `unimplemented` outcome makes the entity
-generation work. Generation then rewrites the implementing files until the bound test
-passes. Hand edits to the deliverable flip exactly the rows whose `files` hash moved
+Rewording a requirement flips its row to `stale-requirement`. Generation updates the
+implementation and its affected tests against the current statement. Explicit
+[binding](./bind.md) can inspect and re-anchor the row separately. Missing or stale
+bindings open generation work without forcing that separate pass. Current bound tests
+remain unchanged. Hand edits to the deliverable flip exactly the rows whose `files` hash moved
 to `stale-code`. Reruns update verdicts; when the test passes, the requirement is
 `verified`. Each arrow is a goal the board derives with its cause on record
 ([edit paths](../compiler/compilation.md#edit-paths)); nothing in this loop is
@@ -880,9 +898,9 @@ that pass, is exactly what verification is for.
   prunes them.
 - Lost `llm` rows are recreated from their criteria files: the file carries everything
   the row needs. A lost programmatic test the scan finds is reported under `found`,
-  never recreated: only the [bind goal](./bind.md#the-bind-goal) can record the command
-  that runs it, so the requirement stays `missing` and binds, and the bind session
-  finds the existing test instead of writing a second one.
+  never recreated by an audit. A generation or [bind goal](./bind.md#the-bind-goal)
+  records the command that runs it. The requirement stays `missing` until that
+  session finds and records the existing test instead of writing a duplicate.
 - Sites are not rebuilt: only generation records them.
 - The `requirement` hash is never rewritten from the live graph: an artifact carrying
   an outdated statement hash stays `stale-requirement` until it is re-bound.
@@ -893,10 +911,10 @@ A rerun skips entities whose `factHash` is unchanged and whose recorded files st
 exist, so a docs edit regenerates only the entities it touched; a group session
 regenerates only the members whose facts moved
 ([grouping by component](#grouping-by-component)). An entity with no ledger entry is
-generation work only through an `unimplemented` row
+generation work through a missing or stale binding, or an `unimplemented` row
 ([the generate goal](../compiler/goals/generate.md#created-when)), so adopted code whose
 rows all read `verified` is never regenerated over. `jazyk gen` names the reason for
-every entity it skips: unchanged, a bind still owed, or no row that says generate. It
+every entity it skips: unchanged, or current adopted rows with no generation work. It
 counts an entity as generated only when its record's `recordedAt` moved during the
 session; an entity whose session ended without recording is a failure naming why the
 session stopped (a rate limit, the round budget, a cancel), never a regeneration, since a

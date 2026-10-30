@@ -3014,11 +3014,10 @@ impl GoalKind for Generate {
         if let Ready::Blocked(r) = tier3_ready(board) {
             return Ready::Blocked(r);
         }
-        let owed = board.bind_open_for_entity(&goal.target);
-        if owed > 0 {
+        if board.open_kind_on("derive-criteria", &goal.target) {
             return Ready::Blocked(format!(
-                "binding first: {} of the entity's requirements owe a bind",
-                owed
+                "criteria: derive-criteria on {} runs first",
+                goal.target
             ));
         }
         Ready::Ready

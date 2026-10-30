@@ -1357,12 +1357,15 @@ impl Board {
                     charged.clear();
                 }
                 // Parked goals first, pairs before entity reviews, sections in
-                // document order, deepest abstraction first.
+                // document order, deepest abstraction first. Development starts
+                // before standalone binding within a locality.
                 ids.sort_by_key(|id| {
                     let g = self.goal(id).unwrap();
                     let parked = !matches!(g.state, GoalState::Parked);
                     let order = match g.kind.as_str() {
                         "rejudge-pair" => 0,
+                        "generate" => 0,
+                        "bind" => 2,
                         "abstract-entity" => usize::MAX - entity_depth(store, &g.target),
                         "reconcile-section" => section_order(store, &g.target),
                         _ => 1,

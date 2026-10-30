@@ -314,11 +314,6 @@ async fn run_step(
     if matches!(step, Step::Bind | Step::Generate) {
         graph_ready(proj, &store)?;
     }
-    if matches!(step, Step::Generate) && !crate::bind::pending(&store, &gs).is_empty() {
-        return Err(
-            "Tests need binding. Select Generate tests before Generate product.".into(),
-        );
-    }
     if matches!(step, Step::Build) {
         gen::run_build(&proj.out, &gs, trace, "workflow")?;
         return Ok(json!({"ok":true}));
@@ -457,7 +452,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn compile_accepts_thirty_three_ratifications_and_twenty_nine_gated_bindings() {
+    fn compile_accepts_ratifications_and_gated_development_work() {
         let files = pending_workspace(29, 33, false);
         {
             let _fs = crate::vfs::Scope::enter(&files);
@@ -467,7 +462,8 @@ mod tests {
             let board = crate::board::Board::derive(&store, &project, &control);
             assert_eq!(board.goals.iter().filter(|goal| goal.kind == "ratify").count(), 33);
             assert_eq!(board.goals.iter().filter(|goal| goal.kind == "bind" && board.gated.contains(&goal.id)).count(), 29);
-            assert_eq!(board.counts().blocked, 62);
+            assert_eq!(board.goals.iter().filter(|goal| goal.kind == "generate" && board.gated.contains(&goal.id)).count(), 1);
+            assert_eq!(board.counts().blocked, 63);
             assert!(board.verdict().converged());
             graph_ready(&project, &store).unwrap();
         }
@@ -476,7 +472,7 @@ mod tests {
         let report = &result["report"]["steps"][0]["result"];
         assert!(report["verdict"].as_str().unwrap().starts_with("converged"), "{report}");
         assert_eq!(report["sessions"], 0);
-        assert_eq!(report["blocked"], 62);
+        assert_eq!(report["blocked"], 63);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -498,6 +494,69 @@ mod tests {
             board.goals = vec![Goal { id: "g:review-entity:ent:site".into(), kind: "review-entity".into(), mandatory: true, state, ..Default::default() }];
             assert!(graph_complete(&board).is_err());
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generation_is_ready_before_binding_and_preserves_explicit_binding() {
+        use crate::goals::GoalKind;
+        let files = pending_workspace(1, 1, false);
+        let _fs = crate::vfs::Scope::enter(&files);
+        let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+        crate::control::release(&project, &project.out, Some("generate"));
+        let store = Store::load(&project.out);
+        let control = crate::control::Control::load(&project, &project.out);
+        let board = crate::board::Board::derive(&store, &project, &control);
+        let generation = board.goal("g:generate:ent:site").expect("missing implementation is development work");
+        let binding = board.goal("g:bind:req:site-1").expect("explicit binding remains available");
+        assert!(matches!(crate::goals::Generate.ready(generation, &board), crate::goals::Ready::Ready));
+        assert!(matches!(crate::goals::Bind.ready(binding, &board), crate::goals::Ready::Ready));
+        let ledger_goals: Vec<_> = board.batches.iter().flat_map(|batch| batch.goals.iter())
+            .filter_map(|id| board.goal(id)).filter(|goal| matches!(goal.kind.as_str(), "generate" | "bind")).collect();
+        assert_eq!(ledger_goals.first().unwrap().kind, "generate");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_fresh_workflow_writes_source_before_tests_without_a_binding_phase() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let files = pending_workspace(1, 1, false);
+        let (fact_hash, test_name, criteria_file) = {
+            let _fs = crate::vfs::Scope::enter(&files);
+            let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+            let store = Store::load(&project.out);
+            assert!(gen::Ledger::load(&project.out).requirements.is_empty());
+            let criterion = &store.graph.criteria["crit:site-1"];
+            (gen::fact_hash(&store, "ent:site"), gen::crit_test_name("crit:site-1", &criterion.statement),
+                format!("{}\nInspect src/site.md.\nPASS when Item 1 is visible.\nFAIL when Item 1 is absent.\n", gen::criteria_front_matter("req:site-1", Some("crit:site-1"), &criterion.statement)))
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let execution = crate::hosted::Execution { transport_async: Some(Arc::new(move |body| {
+            assert_eq!(observed.fetch_add(1, Ordering::Relaxed), 0, "unexpected extra model request: {body}");
+            let actions = [
+                ("begin_generation", json!({"entity":"ent:site"})),
+                ("write_text_file", json!({"path":"src/site.md","content":"# Site\n\nItem 1 is visible.\n"})),
+                ("write_text_file", json!({"path":"tests/site.md","content":criteria_file})),
+                ("record_generation", json!({"entity":"ent:site","factHash":fact_hash,"manifest":{
+                    "files":["src/site.md"],"tests":[{"requirement":"req:site-1","criterion":"crit:site-1","kind":"llm","label":"Visible item","artifact":"tests/site.md","name":test_name,"run":"llm"}]
+                }})),
+                ("done", json!({"summary":"Created source and its criterion check together."})),
+            ];
+            let reply = json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(index,(name,args))|
+                json!({"id":format!("adaptive-{index}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}).to_string();
+            Box::pin(async move { Ok(reply) })
+        })), ..Default::default() };
+        let (result, files) = workflow_request(files, json!([{"action":"compile"},{"action":"generate"}]), &execution);
+        assert_eq!(result["report"]["state"], "done", "{result}");
+        assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 2);
+        assert_eq!(result["report"]["steps"][1]["result"]["regenerated"], 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(files["src/site.md"], b"# Site\n\nItem 1 is visible.\n");
+        let _fs = crate::vfs::Scope::enter(&files);
+        let ledger = gen::Ledger::load(Path::new("/project/.jazyk/ds_main"));
+        assert!(ledger.requirements["req:site-1"].tests.contains_key("crit:site-1"));
+        assert_ne!(ledger.requirements["req:site-1"].verdict, "pass", "unexecuted criteria must not become passing evidence");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -661,23 +720,18 @@ mod tests {
                     }]})),
                     ("done", json!({"summary":"Bound the visible-item criterion; the product is unimplemented."})),
                 ],
-                1 => vec![],
-                2 => vec![
+                1 => vec![
                     ("begin_generation", json!({"entity":"ent:site"})),
                     ("write_text_file", json!({"path":"src/site.md","content":"# Site\n\nItem 1 is visible.\n"})),
                     ("record_generation", json!({"entity":"ent:site","factHash":fact_hash,"manifest":{
-                        "files":["src/site.md"],"tests":[{"requirement":"req:site-1","kind":"llm","label":"Visible item","artifact":"tests/site.md","name":test_name,"run":"llm"}]
+                        "files":["src/site.md"],"tests":[{"requirement":"req:site-1","criterion":"crit:site-1","kind":"llm","label":"Visible item","artifact":"tests/site.md","name":test_name,"run":"llm"}]
                     }})),
                     ("done", json!({"summary":"Wrote and recorded the site page against the bound criterion."})),
                 ],
                 _ => panic!("Unexpected model request {round}: {body}"),
             };
-            let message = if round == 1 {
-                json!({"role":"assistant","content":json!({"form":"Markdown page","produced":"written","toolchain":"text","artifact":""}).to_string()})
-            } else {
-                json!({"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(index,(name,args))|
-                    json!({"id":format!("workflow-{round}-{index}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()})
-            };
+            let message = json!({"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(index,(name,args))|
+                json!({"id":format!("workflow-{round}-{index}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()});
             let reply = json!({"choices":[{"message":message}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}).to_string();
             Box::pin(async move { Ok(reply) })
         })), ..Default::default() };
@@ -686,7 +740,7 @@ mod tests {
         assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 3);
         assert_eq!(result["report"]["steps"][1]["result"]["bound"], 1);
         assert_eq!(result["report"]["steps"][2]["result"]["regenerated"], 1);
-        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
         assert_eq!(files["src/site.md"], b"# Site\n\nItem 1 is visible.\n");
         let _fs = crate::vfs::Scope::enter(&files);
         let out = Path::new("/project/.jazyk/ds_main");

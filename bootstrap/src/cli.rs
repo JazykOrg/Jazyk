@@ -2241,7 +2241,6 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
         }
     };
     runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
-    let store = Store::load(&out);
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.
     use crate::session::TraceEvent;
@@ -2264,29 +2263,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
         });
     let trace =
         Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "gen");
-    // Binding first: owed bind tasks classify each requirement before any entity
-    // regenerates, and the bound tests become generation's acceptance gates.
-    // Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
-    match crate::bind::run_all(&store, &runner, &gs, entities, &trace) {
-        Ok(b) => {
-            let (bound, bfail) = (
-                b["bound"].as_u64().unwrap_or(0),
-                b["failures"].as_u64().unwrap_or(0),
-            );
-            if bound + bfail > 0 {
-                println!(
-                    "jazyk: bind: {} bind goal(s) resolved, {} failure(s)",
-                    bound, bfail
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!("jazyk: bind: {}", e);
-        }
-    }
-    // The typed gen approves its own work: the bind phase committed newer generations,
-    // so the release is stamped again before the generate phase, or every generate
-    // session reads the goals its own bindings opened as awaiting release.
+    // The typed command releases adaptive source-and-test development together.
     // Mirrors docs/compiler/control-plane.md#modes-and-releases.
     crate::control::release(&proj, &out, Some("generate"));
     let store = Store::load(&out);

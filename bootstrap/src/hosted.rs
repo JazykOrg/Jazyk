@@ -594,7 +594,6 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                let _ = crate::bind::run_all(&store, &runner, &gs, &entities, &trace());
                 crate::gen::run_all(
                     &store,
                     &runner,

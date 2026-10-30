@@ -115,6 +115,11 @@ pub trait ModelHost {
 }
 
 pub trait ToolHost {
+    /// Refresh model-visible definitions on the owner thread before a model step.
+    /// None retains LoopArgs.tools; Some replaces it, including an empty catalog.
+    fn catalog(&mut self) -> LocalFuture<'_, Result<Option<Vec<GenericTool>>, String>> {
+        Box::pin(async { Ok(None) })
+    }
     fn call<'a>(
         &'a mut self,
         name: &'a str,

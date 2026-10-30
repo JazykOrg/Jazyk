@@ -723,6 +723,50 @@ fn async_tool_host_awaits_without_moving_the_workspace() {
 }
 
 #[test]
+fn tool_catalog_refreshes_on_owner_thread_between_model_steps() {
+    struct ChangingTools { owner: std::thread::ThreadId, calls: u32 }
+    impl ToolHost for ChangingTools {
+        fn catalog(&mut self) -> LocalFuture<'_, Result<Option<Vec<GenericTool>>, String>> {
+            Box::pin(async move {
+                assert_eq!(self.owner, std::thread::current().id());
+                let mut current = tool();
+                current.name = if self.calls == 0 { "claim" } else { "write" }.into();
+                Ok(Some(vec![current]))
+            })
+        }
+        fn call<'a>(&'a mut self, name: &'a str, _: &'a Value) -> LocalFuture<'a, Result<String, String>> {
+            Box::pin(async move {
+                assert_eq!(self.owner, std::thread::current().id());
+                assert_eq!(name, if self.calls == 0 { "claim" } else { "write" });
+                self.calls += 1;
+                Ok("catalog changed".into())
+            })
+        }
+    }
+    let mut claim = call();
+    claim["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = json!("claim");
+    let mut write = call();
+    write["choices"][0]["message"]["tool_calls"][0]["id"] = json!("tool-2");
+    write["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = json!("write");
+    let mut host = Host::new(vec![claim, write, response("finished")]);
+    let mut tools = ChangingTools { owner: std::thread::current().id(), calls: 0 };
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let stop = run_with_hosts(LoopArgs {
+        llm: &llm(), history: &mut history, tools: &[tool()],
+        dispatch: &mut |_, _| panic!("fallback dispatch used"), emit: &mut |_| {}, cancelled: &|| false,
+        max_rounds: 8, label: "dynamic catalog".into(), conversation: true, inputs: None, input_close: None,
+    }, "", &mut host, &mut tools, &mut Store::default());
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(tools.calls, 2);
+    let requests = host.requests.borrow();
+    for (request, expected) in requests.iter().zip(["claim", "write", "write"]) {
+        let schemas = request.body["tools"].as_array().unwrap();
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0]["function"]["name"], expected);
+    }
+}
+
+#[test]
 fn incompatible_checkpoint_refuses_takeover_with_recovery_signal() {
     let mut host = Host::new(vec![response("finished")]);
     let mut store = Store::default();

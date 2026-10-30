@@ -568,6 +568,31 @@ impl McpServer {
         })
     }
 
+    // Advertising follows the open batch, while enabled_tools remains the serving's
+    // authorization boundary so cached or guessed writes still reach scope gates.
+    fn active_tools(&self) -> Option<BTreeSet<&'static str>> {
+        let mut active = None;
+        if let Some(open) = self.open.lock().unwrap().as_ref() {
+            let kinds = open.session.scope.kinds();
+            let refs = kinds.iter().map(String::as_str).collect::<Vec<_>>();
+            let mut names = toolset_for_kinds(&refs).into_iter().collect::<BTreeSet<_>>();
+            names.extend(LIFECYCLE);
+            active = Some(names);
+        }
+        for child in self.children.lock().unwrap().values() {
+            if let Some(names) = child.active_tools() {
+                active.get_or_insert_with(BTreeSet::new).extend(names);
+            }
+        }
+        active
+    }
+
+    fn scope_catalog(&self, tools: &mut Vec<Value>) {
+        if let Some(names) = self.active_tools() {
+            tools.retain(|tool| names.contains(tool["name"].as_str().unwrap_or_default()));
+        }
+    }
+
     fn enabled_tools(&self) -> Vec<&'static str> {
         // The reader serving carries the read tools and nothing else, not even
         // report_feedback: every schema travels with every call of a small model.
@@ -1858,6 +1883,7 @@ impl McpServer {
             if writable {
                 tools.push(json!({"name":"compile_document_sets","description":"Compile selected set IDs sequentially, or all dirty sets when setIds is absent.","inputSchema":{"type":"object","properties":{"setIds":{"type":"array","items":{"type":"string"}}}}}));
             }
+            self.scope_catalog(result["tools"].as_array_mut().unwrap());
             return Ok(result);
         }
         if method != "tools/call" {
@@ -2274,6 +2300,7 @@ impl McpServer {
                 // not list a shared tool twice.
                 let mut seen: BTreeSet<String> = BTreeSet::new();
                 tools.retain(|t| seen.insert(t["name"].as_str().unwrap_or_default().to_string()));
+                self.scope_catalog(&mut tools);
                 Ok(json!({"tools": tools}))
             }
             "tools/call" => {
@@ -3675,6 +3702,65 @@ mod tests {
         assert_eq!(result["committed"], true, "{result}");
         assert!(crate::store::read_generation(&out) > generation);
         drop(restored);
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
+        let dir = bare_dir("active-catalog");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap();
+        let out = project.out.clone();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.compile = "auto".into();
+        control.save(&out);
+        let make = || McpServer::with_bridge(project.clone(), out.clone(), vec!["compile".into()], true, BridgeFlags { ephemeral: true, ..Default::default() });
+        let server = make();
+        assert!(tool_names(&server).iter().any(|name| name == "upsert_entity"));
+        server.handle("tools/call", &json!({"name":"begin_goals","arguments":{}})).unwrap();
+        // Every session kind from the captured build advertises its registry slice.
+        for (kind, count) in [("reconcile-section", 28), ("review-entity", 24), ("derive-criteria", 22), ("declare-edges", 19)] {
+            server.open.lock().unwrap().as_mut().unwrap().session.scope.goals[0].kind = kind.into();
+            let names = tool_names(&server);
+            let mut expected = toolset_for_kinds(&[kind]);
+            expected.extend(LIFECYCLE);
+            assert_eq!(names.len(), count, "{kind}");
+            assert_eq!(names.into_iter().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect(), "{kind}");
+        }
+        // Mixed batches expose the union, rather than the first goal's slice.
+        {
+            let mut open = server.open.lock().unwrap();
+            let scope = &mut open.as_mut().unwrap().session.scope;
+            let mut review = scope.goals[0].clone();
+            review.kind = "review-entity".into();
+            scope.goals.push(review);
+        }
+        assert!(tool_names(&server).iter().any(|name| name == "merge_entities"));
+        server.open.lock().unwrap().as_mut().unwrap().session.scope.goals.pop();
+        let names = tool_names(&server);
+        let mut expected = toolset_for_kinds(&["declare-edges"]);
+        expected.extend(LIFECYCLE);
+        assert_eq!(names.iter().cloned().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect());
+        assert!(!names.iter().any(|name| name == "upsert_entity"));
+        let reply = server.handle("tools/call", &json!({"name":"upsert_entity","arguments":{"name":"Hidden"}})).unwrap();
+        assert_eq!(reply["isError"], true);
+        assert!(reply["content"][0]["text"].as_str().unwrap().contains("wrong-toolset"));
+        // Recovery restores the scope before the next catalog is requested.
+        let checkpoint = server.checkpoint().unwrap();
+        drop(server);
+        let recovered = make();
+        recovered.restore(checkpoint).unwrap();
+        assert_eq!(tool_names(&recovered), names);
+        // The workspace parent advertises its active child's scope as well.
+        let mut parent = crate::project::Project::load(&dir);
+        parent.set_id = None;
+        let workspace = McpServer::with_bridge(parent, dir.join(".jazyk"), vec!["chat".into()], true, BridgeFlags { ephemeral: true, ..Default::default() });
+        workspace.children.lock().unwrap().insert("ds_main".into(), recovered);
+        assert_eq!(tool_names(&workspace).into_iter().collect::<BTreeSet<_>>(), names.into_iter().collect());
+        let abandoned = workspace.handle("tools/call", &json!({"name":"abandon_goals","arguments":{"setId":"ds_main","reason":"Test complete"}})).unwrap();
+        assert_ne!(abandoned["isError"], true, "{abandoned}");
+        assert!(tool_names(&workspace).iter().any(|name| name == "upsert_entity"));
+        drop(workspace);
         crate::vfs::remove_dir_all(dir).unwrap();
     }
 

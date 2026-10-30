@@ -523,7 +523,15 @@ async fn drive(
             purpose: ModelPurpose::Inference,
             ordinal: ordinal.clone(),
         });
-        let definitions = match definitions(args.tools) {
+        let catalog = match tools_host.as_deref_mut() {
+            Some(host) => match host.catalog().await {
+                Ok(tools) => tools,
+                Err(error) => return Stop::Error(error),
+            },
+            None => None,
+        };
+        let current_tools = catalog.as_deref().unwrap_or(args.tools);
+        let definitions = match definitions(current_tools) {
             Ok(tools) => tools,
             Err(e) => return Stop::Error(e),
         };
@@ -534,7 +542,7 @@ async fn drive(
         let inference = InferenceRunner::<Session, Effect>::new(provider, config.clone());
         let policy = Policy {
             system: format!("{SYSTEM}\n\n{instructions}"),
-            names: args.tools.iter().map(|t| t.name.clone()).collect(),
+            names: current_tools.iter().map(|t| t.name.clone()).collect(),
         };
         let machine = StateMachine::new(
             vec![

@@ -105,6 +105,25 @@ fn session_tools<'a>(servers: impl IntoIterator<Item = (&'a str, &'a [GenericToo
     Ok(tools)
 }
 
+struct ConnectedTools<'a>(&'a mut [McpServerConn]);
+impl harness::ToolHost for ConnectedTools<'_> {
+    fn catalog(&mut self) -> harness::LocalFuture<'_, Result<Option<Vec<GenericTool>>, String>> {
+        Box::pin(async move {
+            for connection in self.0.iter_mut() { connection.refresh_tools()?; }
+            session_tools(self.0.iter().map(|c| (c.name.as_str(), c.tools.as_slice()))).map(Some)
+        })
+    }
+
+    fn call<'a>(&'a mut self, name: &'a str, args: &'a Value) -> harness::LocalFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            match self.0.iter_mut().find(|c| c.tools.iter().any(|t| t.name == name)) {
+                Some(connection) => connection.call(name, args),
+                None => Err(format!("unknown tool `{name}`")),
+            }
+        })
+    }
+}
+
 pub fn run() -> i32 {
     // The endpoint is machine configuration (env, project [llm], global config), the
     // same ladder every jazyk command uses. Reading it is not jazyk knowledge; the
@@ -257,12 +276,10 @@ pub fn run() -> i32 {
                         let mut total_tokens = 0u64;
                         let label = format!("agent {}", sid);
                         let state = &mut *state;
-                        let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
-                            match state.conns.iter_mut().find(|c| c.tools.iter().any(|t| t.name == name)) {
-                                Some(c) => c.call(name, args),
-                                None => Err(format!("unknown tool `{}`", name)),
-                            }
-                        };
+                        let mut tools = ConnectedTools(&mut state.conns);
+                        let mut model = harness::provider::DefaultModelHost::new(&llm);
+                        let mut recovery = harness::MemoryRecovery;
+                        let mut dispatch = |_: &str, _: &Value| Err("tool host unavailable".into());
                         let mut emit = |ev: AgentEvent| match ev {
                             AgentEvent::Input(input) => {
                                 notify(SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::from(String::new())).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"input":input,"state":"delivered"}})).ok())));
@@ -315,7 +332,7 @@ pub fn run() -> i32 {
                             inbox.0 = false;
                             true
                         };
-                        harness::run_loop(LoopArgs {
+                        harness::run_with_hosts(LoopArgs {
                             llm: &llm,
                             history: &mut state.history,
                             tools: &state.tools,
@@ -327,7 +344,7 @@ pub fn run() -> i32 {
                             conversation: state.conversation,
                             inputs: Some(&mut inputs),
                             input_close: Some(&mut input_close),
-                        })
+                        }, "", &mut model, &mut tools, &mut recovery)
                         }));
                         let stop = match outcome {
                             Ok(stop) => stop,

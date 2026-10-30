@@ -73,6 +73,24 @@ impl McpServerConn {
         }, timeout + Duration::from_secs(1)).map_err(|e| format!("MCP {name}: {e}"))
     }
 
+    /// Fetch the current catalog after a batch claim or completion.
+    pub fn refresh_tools(&mut self) -> Result<(), String> {
+        let peer = self.service.as_ref().ok_or("MCP server is closed")?.peer().clone();
+        let timeout = crate::acp::config::idle_timeout();
+        let name = self.name.clone();
+        self.tools = io(async move {
+            let tools = tokio::time::timeout(timeout, peer.list_all_tools()).await
+                .map_err(|_| format!("MCP {name}: tool listing exceeded {}s (JAZYK_ACP_IDLE_TIMEOUT)", timeout.as_secs()))?
+                .map_err(|e| format!("MCP {name}: {e}"))?;
+            Ok(tools.into_iter().map(|tool| GenericTool {
+                name: tool.name.into_owned(),
+                description: tool.description.map(|d| d.into_owned()).unwrap_or_default(),
+                parameters: Value::Object((*tool.input_schema).clone()),
+            }).collect())
+        }, timeout + Duration::from_secs(1))?;
+        Ok(())
+    }
+
     /// Preserve the complete MCP result, including structured content and metadata.
     /// The GDK dynamic provider accepts this standard result envelope directly.
     pub fn call(&mut self, tool: &str, args: &Value) -> Result<String, String> {
@@ -145,14 +163,16 @@ mod tests {
     #[test]
     fn official_client_keeps_instructions_tools_and_structured_results() {
         let script = r#"import json,sys
+claimed=False
 for line in sys.stdin:
  m=json.loads(line)
  if 'id' not in m: continue
  if m['method']=='initialize':
   r={'protocolVersion':m['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'},'instructions':'Read task_context before run_task.'}
  elif m['method']=='tools/list':
-  r={'tools':[{'name':'fixture','description':'Read fixture','inputSchema':{'type':'object'}}],'nextCursor':'next'} if not m.get('params',{}).get('cursor') else {'tools':[{'name':'fixture_second','inputSchema':{'type':'object'}}]}
+  r={'tools':[{'name':'scoped','inputSchema':{'type':'object'}}]} if claimed else ({'tools':[{'name':'fixture','description':'Read fixture','inputSchema':{'type':'object'}}],'nextCursor':'next'} if not m.get('params',{}).get('cursor') else {'tools':[{'name':'fixture_second','inputSchema':{'type':'object'}}]})
  elif m['method']=='tools/call':
+  claimed=True
   r={'content':[{'type':'text','text':'visible text'}],'structuredContent':{'value':7},'_meta':{'provenance':'fixture'},'isError':False}
  else:r={}
  print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':r}),flush=True)
@@ -176,6 +196,9 @@ for line in sys.stdin:
         assert_eq!(result["content"][0]["text"], "visible text");
         assert_eq!(result["structuredContent"]["value"], 7);
         assert_eq!(result["_meta"]["provenance"], "fixture");
+        connection.refresh_tools().unwrap();
+        assert_eq!(connection.tools.len(), 1);
+        assert_eq!(connection.tools[0].name, "scoped");
     }
 
     #[test]

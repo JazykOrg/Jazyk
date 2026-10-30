@@ -306,6 +306,18 @@ impl Recovery for McpRecovery<'_> {
 
 pub(crate) struct McpTools<'a>(pub &'a McpServer);
 impl ToolHost for McpTools<'_> {
+    fn catalog(&mut self) -> LocalFuture<'_, Result<Option<Vec<crate::harness::GenericTool>>, String>> {
+        Box::pin(async move {
+            let reply = self.0.handle_async("tools/list", &json!({})).await
+                .map_err(|(_, message)| message)?;
+            Ok(Some(reply["tools"].as_array().ok_or("Invalid MCP tool catalog")?.iter()
+                .map(|tool| crate::harness::GenericTool {
+                    name: tool["name"].as_str().unwrap_or_default().into(),
+                    description: tool["description"].as_str().unwrap_or_default().into(),
+                    parameters: tool["inputSchema"].clone(),
+                }).collect()))
+        })
+    }
     fn call<'a>(&'a mut self, name: &'a str, args: &'a Value) -> LocalFuture<'a, Result<String, String>> {
         Box::pin(async move {
             let result = self.0.handle_async("tools/call", &json!({"name":name,"arguments":args}))

@@ -13,6 +13,11 @@ open changeset: a session's batch, an MCP batch claimed with `begin_goals`, or a
 changeset per call under `jazyk mcp graph --write`. Outside an open batch a write tool
 is rejected toward `begin_goals`.
 
+An open batch advertises only its goal kinds' tools, the read and goal tools, and
+the compilation lifecycle. Hidden writes still pass the same scope checks and
+are refused outside that batch's toolset. Repair reads, `mark_goal_failed`, and
+`abandon_goals` remain available after a gate refusal.
+
 The catalog is deliberately small. Weak models handle few, simple tools better than many
 clever ones. No tool enqueues work: the model writes graph state, the harness derives the
 [goals](./reconciler.md#goal-derivation).

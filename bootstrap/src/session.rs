@@ -700,11 +700,12 @@ pub(crate) fn with_feedback_note(system: &str) -> String {
 }
 
 // The skill payloads, embedded at compile time. Mirrors docs/compiler/sessions.md#skills.
-pub const SKILLS: [(&str, &str); 7] = [
+pub const SKILLS: [(&str, &str); 8] = [
     (
         "extraction",
         include_str!("../../docs/compiler/skills/extraction.md"),
     ),
+    ("edges", include_str!("../../docs/compiler/skills/edges.md")),
     (
         "judgment",
         include_str!("../../docs/compiler/skills/judgment.md"),
@@ -1698,6 +1699,24 @@ mod tests {
         assert!(s.contains("report_feedback"));
         let rest = AGENT_CONTRACT.split_once("\n\n").map(|(_, r)| r).unwrap();
         assert!(s.ends_with(rest), "nothing of the contract is lost");
+    }
+
+    #[test]
+    fn declare_edges_pins_only_unchanged_edge_and_stability_rules() {
+        let store = fixture();
+        let mut edges = goal();
+        edges.kind = "declare-edges".into();
+        edges.target = "req:cart-items".into();
+        let (_, skills) = initial_loaded(&store, &[edges]);
+        assert!(skills.has_pinned());
+        assert_eq!(skills.rendered.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), vec!["edges"]);
+        let extraction = skill_payload("extraction").unwrap();
+        let edges = skill_payload("edges").unwrap();
+        let edge_rules = extraction.split_once("Edges. ").unwrap().1.split_once("Transitions. ").unwrap().0;
+        let stability = extraction.split_once("Stability. ").unwrap().1.split_once("Rounds. ").unwrap().0;
+        assert_eq!(edges, format!("Edges. {edge_rules}Stability. {}\n", stability.trim_end()));
+        assert!(edges.len() < extraction.len() / 4);
+        assert_eq!(goals::skills_for("reconcile-section", &store, ""), vec!["extraction"]);
     }
 
     // Auto-load once, the cap, and the inactive marking.

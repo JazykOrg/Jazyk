@@ -186,6 +186,12 @@ only where the agent asks for it.
 
 ## The work loop
 
+`tools/list` reflects the active batch. Before a claim, it retains the serving
+catalog so clients can discover its lifecycle. After `begin_goals`, it advertises
+the batch's toolset. Embedded native, ACP and browser runners refresh this list
+before each model step. External clients can list again after a batch change.
+The server's write gates remain authoritative even when a client caches schemas.
+
 The agent-facing loop, common to the compile, generate, and verify toolsets:
 
 1. Ask for work: `goals`, `binding_tasks`, `generation_tasks`, or

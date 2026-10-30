@@ -166,7 +166,8 @@ pub const CHANGE_FLOW_UNPLACED: &str = "flow-unplaced";
 // retrace kinds follow the target's kind.
 pub fn skills_for(kind: &str, store: &Store, target: &str) -> Vec<&'static str> {
     match kind {
-        "reconcile-section" | "declare-edges" => vec!["extraction"],
+        "reconcile-section" => vec!["extraction"],
+        "declare-edges" => vec!["edges"],
         "rejudge-pair" | "review-entity" | "dedupe-candidates" => vec!["judgment"],
         "conform-instance" => vec!["conformance"],
         "derive-criteria" => vec!["criteria"],
@@ -3506,7 +3507,7 @@ impl GoalKind for DeclareEdges {
                     ));
                 }
             }
-            hints.push("skill extraction; update_requirement passing only id and edges".into());
+            hints.push("skill edges; update_requirement passing only id and edges".into());
             out.push(build_goal(
                 self,
                 &rec.subject,

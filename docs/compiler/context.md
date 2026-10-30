@@ -69,6 +69,10 @@ record.
 
 ## Tools
 
+A batch loads the skills selected by its goal kinds. Edge declaration uses the
+focused `edges` skill. Loading a section as reference in that batch does not
+auto-load the full extraction skill. Other skills remain available by name.
+
 The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 
 - `load({target, depth?})`: load a target and its immediate neighborhood. The target is

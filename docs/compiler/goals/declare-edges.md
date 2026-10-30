@@ -105,7 +105,7 @@ The hint computer emits, per goal:
   and its part, a realizer and its interface, a type and its instance.
 - `related <ent>~<ent>: <type> (<count>)` for each pair already tied by a relationship
   through other requirements, so a declared edge agrees with what the graph holds.
-- `skill extraction`.
+- `skill edges`.
 - `update_requirement`: the tool that resolves the kind.
 
 ## What the model sees
@@ -124,10 +124,10 @@ one line, the gate in one line, and the hints. E.g.:
   structural, declare nothing and say why.
   Change: 2 entities (ent:order-service, ent:stock-api), no edges (g414).
   Gate: edges declared, or justification says not structural.
-  Hints: load req:shop-3; load ent:stock-api; skill extraction.
+  Hints: load req:shop-3; load ent:stock-api; skill edges.
 ```
 
-The [extraction skill](../skills/extraction.md) is active from the first round
+The focused [edges skill](../skills/edges.md) is active from the first round
 ([skills](../sessions.md#skills)): edge direction per type, one sentence yielding several
 arrows, cardinality from stated counts, and the rule that an edge without a type counts
 as the weakest.

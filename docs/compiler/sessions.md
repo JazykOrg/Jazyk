@@ -167,7 +167,8 @@ differs from a related concept. The contract paragraph says what to do for a goa
 skill says how. Skills are files under `docs/compiler/skills/`, embedded into the binary
 at compile time and excluded from the docs glob like the goal contracts:
 [`extraction`](./skills/extraction.md) (statements, entities, edges, transitions,
-attributes, coverage honesty), [`judgment`](./skills/judgment.md) (the review asymmetry,
+attributes, coverage honesty), [`edges`](./skills/edges.md) (edge declaration and stability),
+[`judgment`](./skills/judgment.md) (the review asymmetry,
 duplicates, contradictions, verdict quality), [`flow-views`](./skills/flow-views.md)
 (ordering, branches, participants), [`structural-views`](./skills/structural-views.md)
 (class, component, and package membership, collapse, limits),
@@ -177,6 +178,10 @@ condition, the boundary, the negative, the measure),
 docs proposals), [`conformance`](./skills/conformance.md) (instances, attributes,
 links). Skill text is medium-neutral: the model adapts its wording to the medium it
 reads, as it does everywhere else.
+
+`declare-edges` activates `edges`, the edge and stability rules from extraction.
+Other extraction work keeps the full `extraction` skill. The focused payload does
+not change the edge rules or the goal contract.
 
 The lifecycle inside a session:
 
@@ -214,7 +219,10 @@ The lifecycle inside a session:
 
 The session's toolset is the union of what the batch's goal kinds need, computed by the
 harness ([toolsets](./tools.md#toolsets)), so a batch of extraction goals still sees a
-small toolset. Every session sees, on top of its kinds' slices:
+small toolset. The MCP catalog for an open batch contains that union, not every
+write tool the serving can support. The embedded runner refreshes the catalog
+before each model step, including after `begin_goals` or a batch transition.
+Every session sees, on top of its kinds' slices:
 
 - the [read tools](./tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,
   `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`,

@@ -35,7 +35,20 @@ impl Scope {
         let state = resume.map(decode).transpose().unwrap_or_else(|error| {
             Some(State { error: Some(error), ..Default::default() })
         }).unwrap_or_default();
-        Self(STATE.with(|s| s.replace(state)), ACTIVE.with(|a| a.replace(true)))
+        let scope = Self(STATE.with(|s| s.replace(state)), ACTIVE.with(|a| a.replace(true)));
+        if resume.is_some() && crate::vfs::is_scoped() {
+            let claims = STATE.with(|s| {
+                let state = s.borrow();
+                state.error.is_none().then(|| state.claims.clone()).unwrap_or_default()
+            });
+            for claim in claims {
+                if let Err(error) = crate::control::release_owned_lease(&claim) {
+                    STATE.with(|s| s.borrow_mut().error = Some(incompatible(format!("Cannot hand over saved control claim: {error}"))));
+                    break;
+                }
+            }
+        }
+        scope
     }
 }
 impl Drop for Scope {

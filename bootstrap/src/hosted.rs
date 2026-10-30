@@ -989,6 +989,78 @@ mod tests {
     }
 
     #[test]
+    fn actual_compiler_resume_hands_over_saved_claims_and_refuses_foreign_replacements() {
+        let mut workspace = workspace("Alpha");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut execution = navigation_model("Alpha", calls.clone(), None);
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+        let save = saved.clone();
+        let suspend = execution.suspend.clone();
+        execution.checkpoint = Some(Arc::new(move |mut capsule, files| {
+            let save = save.clone(); let suspend = suspend.clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                capsule["sequence"] = json!(next);
+                if capsule["frames"].as_array().and_then(|frames| frames.last())
+                    .is_some_and(|frame| frame["boundary"]["phase"] == "after_tool") {
+                    suspend.store(true, Ordering::SeqCst);
+                }
+                *save.lock().unwrap() = Some((capsule, files));
+                Ok(next)
+            })
+        }));
+        let stopped = value(&mut workspace,"POST","/api/jobs",json!({"kind":"compile","setIds":["ds_main"]}),&execution);
+        assert!(stopped.to_string().contains("suspended"), "{stopped}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let (mut capsule, mut files) = saved.lock().unwrap().clone().unwrap();
+        // Emulate a previous OS worker. Its protected receipts and VFS agree,
+        // while the replacement's fresh control identity is internal-1.
+        for claim in capsule["claims"].as_array_mut().unwrap() {
+            claim["lease"]["worker"] = json!("previous-process");
+        }
+        for (path, bytes) in files.iter_mut().filter(|(path,_)| path.contains("/leases/")) {
+            let mut lease: crate::control::Lease = serde_norway::from_slice(bytes).unwrap();
+            lease.worker = "previous-process".into();
+            *bytes = serde_norway::to_string(&lease).unwrap().into_bytes();
+            assert!(!path.is_empty());
+        }
+        let mut foreign_files = files.clone();
+        let (foreign_path, bytes) = foreign_files.iter_mut()
+            .find(|(path,_)| path.contains("/leases/") && !path.ends_with("/build.yaml")).unwrap();
+        let foreign_path = foreign_path.clone();
+        let mut lease: crate::control::Lease = serde_norway::from_slice(bytes).unwrap();
+        lease.worker = "another-execution".into();
+        *bytes = serde_norway::to_string(&lease).unwrap().into_bytes();
+        let foreign_bytes = bytes.clone();
+        let resume = Execution { resume:Some(capsule.clone()), ..navigation_model("Alpha",calls.clone(),None) };
+        let mut foreign = Workspace::new(foreign_files).unwrap();
+        let refused = value(&mut foreign,"POST","/api/jobs",json!({"kind":"compile","setIds":["ds_main"]}),&resume);
+        assert!(refused.to_string().contains("incomplete"), "{refused}");
+        assert_eq!(foreign.snapshot()[&foreign_path], foreign_bytes);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Foreign claim dispatched inference");
+        let observed = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let observe = observed.clone();
+        let checkpoint: CheckpointSink = Arc::new(move |capsule, _| {
+            let observe = observe.clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                observe.lock().unwrap().push(capsule);
+                Ok(next)
+            })
+        });
+        let resume = Execution { checkpoint:Some(checkpoint), ..resume };
+        let mut restored = Workspace::new(files).unwrap();
+        let complete = value(&mut restored,"POST","/api/jobs",json!({"kind":"compile","setIds":["ds_main"]}),&resume);
+        assert!(complete.to_string().contains("converged"), "{complete}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Saved model response was billed again");
+        assert!(!restored.snapshot().keys().any(|path| path.contains("/leases/")));
+        assert!(observed.lock().unwrap().iter().any(|capsule|
+            capsule["claims"].as_array().is_some_and(|claims| claims.iter().any(|claim|
+                claim["lease"]["task"] != "build" && claim["lease"]["worker"] == "internal-1"))),
+            "Restored MCP batch was not reclaimed by the replacement");
+    }
+
+    #[test]
     fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
         for phase in ["saved_model", "after_tool", "finished"] {
             let mut w = workspace("Recovery");

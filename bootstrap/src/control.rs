@@ -329,6 +329,14 @@ pub(crate) fn owned_lease(out: &Path, task: &str, worker: &str) -> Option<OwnedL
     (lease.task == task && lease.worker == worker).then(|| OwnedLease { out: out.into(), lease })
 }
 
+/// A restored session may claim only a slot released by its protected receipts.
+pub(crate) fn claim_restored(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
+    if crate::vfs::is_scoped() {
+        if let Some(current) = read_lease(&lease_file(out, task)) { return Err(current.worker); }
+    }
+    claim_goals(out, task, worker, goals)
+}
+
 /// Stop never sweeps leases or removes a replacement owner's claim.
 pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let path = lease_file(&saved.out, &saved.lease.task);

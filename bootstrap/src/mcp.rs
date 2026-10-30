@@ -421,11 +421,19 @@ impl McpServer {
                 return Err("Workspace generation changed while this batch was suspended.".into());
             }
             batch._project_lock = Some(crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock").map_err(|e| e.1)?);
+            let goals = batch.goals.iter().map(|goal| goal.id.clone()).collect::<Vec<_>>();
+            crate::control::claim_restored(&self.out, &batch.id, &self.worker_id(), &goals)
+                .map_err(|worker| format!("Restored batch `{}` is held by worker `{worker}`", batch.id))?;
         }
         *self.open.lock().map_err(|_| "MCP batch state poisoned")? = open;
         *self.delivered.lock().map_err(|_| "MCP delivery state poisoned")? = serde_json::from_value(value["delivered"].clone()).map_err(|e| e.to_string())?;
         *self.finished.lock().map_err(|_| "MCP completion state poisoned")? = serde_json::from_value(value["finished"].clone()).map_err(|e| e.to_string())?;
-        *self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")? = serde_json::from_value(value["ledgerTarget"].clone()).map_err(|e| e.to_string())?;
+        let ledger_target: Option<String> = serde_json::from_value(value["ledgerTarget"].clone()).map_err(|e| e.to_string())?;
+        if let Some(target) = &ledger_target {
+            crate::control::claim_restored(&self.out, target, &self.worker_id(), &[])
+                .map_err(|worker| format!("Restored ledger task `{target}` is held by worker `{worker}`"))?;
+        }
+        *self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")? = ledger_target;
         *self.client.lock().map_err(|_| "MCP client state poisoned")? = serde_json::from_value(value["client"].clone()).map_err(|e| e.to_string())?;
         if let Some(children) = value["children"].as_object() {
             let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e| e.1)?;

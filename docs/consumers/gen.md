@@ -216,10 +216,13 @@ transitions, its derived relationships, and its state machine when one derives
 set leaks in, so each goal is small, repeatable, and auditable.
 
 The goal produces the entity's part of the deliverable and its missing tests. The
-package carries existing bindings and the current criteria. Current bound tests stay
-the acceptance contract. Reuse their references and assertions. Do not weaken a test
-to make an implementation pass. A stale statement or criterion takes a test for the
-current obligation. A requirement with no current test takes a new test. Source and
+package carries existing bindings and the current criteria. Inspect each existing
+test against the documented obligation. Reuse valid checks. Correct assumptions
+about implementation that the documents do not require, such as requiring
+CloudFormation JSON when the documents require only CloudFront and S3. Preserve
+assertions of required behavior. Explain each correction and the obligation it
+still checks in the session summary. Never weaken a required check to force a pass.
+A stale statement or criterion takes a test for the current obligation. A requirement with no current test takes a new test. Source and
 tests may be written in either order and refined within the session.
 
 ### Grouping by component
@@ -445,8 +448,9 @@ it unchanged, never a second test beside it.
 `criterion` for each criterion test. A requirement with no criteria uses a
 requirement-level entry without `criterion`. Existing criterion entries may be
 reused unchanged. New or changed test declarations start with verdict `none`. A
-current test keeps its artifact, selector, kind, and assertions. Its `run` and `cwd`
-may move to a shared saved suite task. That routing change clears its evidence and
+current test keeps its artifact, selector, and kind when reused. Its assertions may
+be corrected against the documented obligation. Changed test bytes clear the
+previous evidence. Its `run` and `cwd` may move to a shared saved suite task. That routing change clears its evidence and
 must produce the same exact JUnit selector before the test can pass again.
 Recording files or declarations does not invent execution evidence. A generation
 cannot close with missing or stale required test declarations, or incomplete required
@@ -746,8 +750,9 @@ rerun it anyway, because a rerun is what a person asking for one wants.
 Rewording a requirement flips its row to `stale-requirement`. Generation updates the
 implementation and its affected tests against the current statement. Explicit
 [binding](./bind.md) can inspect and re-anchor the row separately. Missing or stale
-bindings open generation work without forcing that separate pass. Current bound tests
-remain unchanged. Hand edits to the deliverable flip exactly the rows whose `files` hash moved
+bindings open generation work without forcing that separate pass. Valid bound tests
+are reused. Unsupported implementation assumptions are corrected with an explanation
+and fresh evidence. Hand edits to the deliverable flip exactly the rows whose `files` hash moved
 to `stale-code`. Reruns update verdicts; when the test passes, the requirement is
 `verified`. Each arrow is a goal the board derives with its cause on record
 ([edit paths](../compiler/compilation.md#edit-paths)); nothing in this loop is

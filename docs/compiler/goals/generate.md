@@ -181,7 +181,7 @@ generatedFiles                     other entities' files with what each holds; n
 sharedWith                         the entity's component group: members whose files it may write and record too
 supportFiles                       the deliverable-wide files any session may rewrite
 buildEntry, buildError             the build's entry with its content; the standing failure, if any
-boundTests                         tests binding wrote, one per criterion under criteriaTests; make them pass, list them unchanged
+boundTests                         existing tests, one per criterion under criteriaTests; reuse valid checks, correct undocumented implementation assumptions, record fresh evidence
 ownershipNote                      a row already passing under another entity's files is carried there: list it unchanged, record no file for it; a requirement another group's file carries names that file on its row's `files`; an entity whose rows are all carried records files: []; a group member's file is shared
 requirementGroups                  each requirement with its statement, quote, openDiagnostics, criteria (id, statement, suggestedTestName) and testName (for a requirement with no criteria)
 contradicted, mediumWarning        the disputed requirements; the medium's standing divergence

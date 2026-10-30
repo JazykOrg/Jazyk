@@ -1,8 +1,9 @@
 # Goose GDK integration and deployment recovery
 
-Status: investigation and implementation plan, 2026-10-29. No runtime behavior has
-changed. The boundaries below record the owner's decisions. The exact component
-set remains a later decision.
+Status: investigation record, 2026-10-29. No runtime behavior has changed. The
+boundaries below record the owner's decisions. The
+[implementation approval plan](goose-gdk-implementation.md) proposes the component
+selection, work packages and acceptance gates for the next step.
 
 ## Decisions
 

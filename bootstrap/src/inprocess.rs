@@ -215,7 +215,11 @@ impl SessionRunner for InProcessRunner {
             Stop::Error(error) if crate::session_recovery::is_interruption(error) => Some(error.clone()),
             _ => None,
         };
-        if let Some(reason) = interruption {
+        if trace.is_cancelled() {
+            // User Stop wins over a simultaneous model/checkpoint interruption.
+            // Earlier commits do not grant permission to retain a new open batch.
+            server.cancel_owned();
+        } else if let Some(reason) = interruption {
             return SessionReport {
                 applied, rounds, tokens, cached, failed: None, resolved,
                 stopped: Some(reason),

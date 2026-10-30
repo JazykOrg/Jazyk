@@ -317,6 +317,31 @@ fn lease_file(out: &Path, task: &str) -> PathBuf {
     leases_dir(out).join(format!("{}.yaml", encode_lease_id(task)))
 }
 
+/// A protected receipt for one execution's claim. Expiry may be refreshed.
+#[derive(Serialize, Deserialize, Clone)]
+pub(crate) struct OwnedLease {
+    pub out: PathBuf,
+    pub lease: Lease,
+}
+
+pub(crate) fn owned_lease(out: &Path, task: &str, worker: &str) -> Option<OwnedLease> {
+    let lease = read_lease(&lease_file(out, task))?;
+    (lease.task == task && lease.worker == worker).then(|| OwnedLease { out: out.into(), lease })
+}
+
+/// Stop never sweeps leases or removes a replacement owner's claim.
+pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
+    let path = lease_file(&saved.out, &saved.lease.task);
+    let Some(current) = read_lease(&path) else { return Ok(false); };
+    if current.task != saved.lease.task || current.worker != saved.lease.worker
+        || current.claimed_at != saved.lease.claimed_at || current.goals != saved.lease.goals {
+        return Ok(false);
+    }
+    crate::vfs::remove_file(path).map_err(|e| e.to_string())?;
+    crate::session_recovery::released(&saved.out, &saved.lease.task);
+    Ok(true)
+}
+
 // Claim a task. Create-new semantics decide the winner; an expired lease is
 // reclaimable. Err carries the live holder.
 pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
@@ -345,7 +370,10 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
     };
     let text = serde_norway::to_string(&lease).map_err(|e| e.to_string())?;
     match crate::vfs::create_new(&path, &text) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            crate::session_recovery::claimed(OwnedLease { out: out.into(), lease });
+            Ok(())
+        },
         // Lost the race to another claimant between the check and the create.
         Err(_) => Err(read_lease(&path)
             .map(|l| l.worker)
@@ -364,7 +392,9 @@ pub fn refresh_lease(out: &Path, task: &str) {
 }
 
 pub fn release_lease(out: &Path, task: &str) {
-    crate::vfs::remove_file(lease_file(out, task)).ok();
+    if crate::vfs::remove_file(lease_file(out, task)).is_ok() {
+        crate::session_recovery::released(out, task);
+    }
 }
 
 fn read_lease(path: &Path) -> Option<Lease> {

@@ -704,12 +704,26 @@ impl McpServer {
             child.finish();
         }
         if self.cancelled() {
-            self.abandon_goals(&json!({"arguments": {"reason": "the build was stopped"}}));
+            self.cancel_owned();
         } else if self.bridge.ephemeral {
             self.eof_finish();
         }
         self.trace
             .finish_transcript("done", &json!({"modes": self.modes}));
+    }
+
+    /// Cancellation discards staged work, including children, without EOF commit.
+    pub(crate) fn cancel_owned(&self) {
+        for child in self.children.lock().unwrap().values() { child.cancel_owned(); }
+        if let Some(batch) = self.open.lock().unwrap().take() {
+            if let Some(claim) = crate::control::owned_lease(&self.out, &batch.id, &self.worker_id()) {
+                let _ = crate::control::release_owned_lease(&claim);
+            }
+        }
+        if let Some(target) = self.ledger_target.lock().unwrap().take() {
+            self.release_own_ledger_claim(&target);
+        }
+        if let Some(worker) = self.worker.lock().unwrap().as_mut() { worker.refresh(Some("")); }
     }
 
     // A transport-level note in the transcript (a refused call, a bind), under the
@@ -2925,8 +2939,8 @@ impl McpServer {
 // docs/frontends/acp.md#dual-write-tools.
 impl McpServer {
     fn release_own_ledger_claim(&self, target: &str) {
-        if crate::control::leases(&self.out).get(target).is_some_and(|lease| lease.worker == self.worker_id()) {
-            crate::control::release_lease(&self.out, target);
+        if let Some(claim) = crate::control::owned_lease(&self.out, target, &self.worker_id()) {
+            let _ = crate::control::release_owned_lease(&claim);
         }
     }
 

@@ -134,6 +134,7 @@ impl Workspace {
         let fs = crate::vfs::Scope::enter(&self.files);
         let _state = crate::scoped_state::Scope::enter();
         let conversations = crate::conversation::Scope::enter()?;
+        crate::session_recovery::stop_owned(capsule)?;
         crate::conversation::stop_recovered();
         conversations.save()?;
         self.files = fs.snapshot();
@@ -401,10 +402,6 @@ impl Drop for ExecutionScope {
 }
 fn execution() -> Execution {
     EXECUTION.with(|e| e.borrow().clone().expect("hosted execution context"))
-}
-
-pub(crate) fn recovery_state() -> Option<Value> {
-    EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.resume.clone()))
 }
 
 pub(crate) fn suspension_requested() -> bool {
@@ -935,6 +932,62 @@ mod tests {
     fn model_reply(content: &str) -> String {
         json!({"choices":[{"message":{"role":"assistant","content":content}}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string()
     }
+    #[test]
+    fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commit() {
+        let mut workspace = workspace("Stop");
+        workspace.files.insert("docs/committed.txt".into(), b"An earlier accepted edit.\n".to_vec());
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let model_calls = calls.clone();
+        let model: ModelAsyncTransport = Arc::new(move |_| {
+            model_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(json!({"choices":[{"message":{"role":"assistant","tool_calls":[
+                {"id":"stage","type":"function","function":{"name":"set_coverage","arguments":json!({
+                    "section":"docs/main.md#/stop","state":"non-normative","note":"Staged coverage, not committed."}).to_string()}}
+            ]}}]}).to_string()) })
+        });
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+        let saved_sink = saved.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = cancel.clone();
+        let sink: CheckpointSink = Arc::new(move |capsule, files| {
+            let saved = saved_sink.clone(); let stop = stop.clone();
+            Box::pin(async move {
+                let after_tool = capsule["frames"].as_array().and_then(|v| v.last())
+                    .is_some_and(|frame| frame["boundary"]["phase"] == "after_tool");
+                if after_tool {
+                    *saved.lock().unwrap() = Some((capsule, files));
+                    stop.store(true, Ordering::SeqCst);
+                    Err("checkpoint-failed: cancellation raced with durable save".into())
+                } else { Ok(capsule["sequence"].as_u64().unwrap() + 1) }
+            })
+        });
+        let execution = Execution { model:"fixture".into(), transport_async:Some(model), checkpoint:Some(sink), cancel, ..Default::default() };
+        let reply = workspace.request("POST", "/api/jobs", &json!({"kind":"compile"}).to_string(), &execution).unwrap();
+        assert!(reply.status < 400, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "{}", String::from_utf8_lossy(&reply.body));
+        assert!(!workspace.snapshot().keys().any(|path| path.contains("/leases/")), "active cancellation retained a claim");
+        let (capsule, files) = saved.lock().unwrap().clone().expect("staged tool checkpoint");
+        assert!(capsule["frames"][0]["mcp"]["open"]["session"]["staged"].as_array().is_some_and(|v| !v.is_empty()), "{capsule}");
+        assert!(files.keys().any(|path| path.ends_with("/leases/build.yaml")));
+        assert!(files.keys().any(|path| path.contains("/leases/b")));
+        assert!(capsule["claims"].as_array().unwrap().len() >= 2);
+        let mut recovered = Workspace::new(files.clone()).unwrap();
+        recovered.stop_recovery(&capsule).unwrap();
+        let stopped = recovered.snapshot();
+        assert!(!stopped.keys().any(|path| path.contains("/leases/")));
+        assert_eq!(stopped["docs/committed.txt"], b"An earlier accepted edit.\n");
+        for (path, bytes) in &files {
+            if !path.contains("/leases/") && path != ".jazyk/conversations.json" {
+                assert_eq!(stopped.get(path), Some(bytes), "Stop changed committed bytes: {path}");
+            }
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Stop invoked the model");
+        let _fs = crate::vfs::Scope::enter(&stopped);
+        let project = crate::document_sets::Workspace::load(&root()).unwrap().resolve(Some("ds_main")).unwrap();
+        let guard = crate::control::begin_internal_build(&project, &project.out, "compile").expect("fresh build must not inherit the stopped batch lease");
+        drop(guard);
+    }
+
     #[test]
     fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
         for phase in ["saved_model", "after_tool", "finished"] {

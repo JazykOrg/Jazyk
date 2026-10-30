@@ -22,6 +22,7 @@ struct State {
     parent: BTreeMap<String, Value>,
     delivered: Vec<String>,
     inputs: BTreeMap<String, Value>,
+    claims: Vec<crate::control::OwnedLease>,
     error: Option<String>,
 }
 
@@ -64,12 +65,36 @@ fn decode(value: &Value) -> Result<State, String> {
         parent: serde_json::from_value(value["parent"].clone()).map_err(incompatible)?,
         delivered: serde_json::from_value(value["deliveredInputs"].clone()).map_err(incompatible)?,
         inputs: serde_json::from_value(value.get("deliveredInputValues").cloned().unwrap_or_else(|| json!({}))).map_err(incompatible)?,
+        claims: serde_json::from_value(value.get("claims").cloned().unwrap_or_else(|| json!([]))).map_err(incompatible)?,
         error: None,
     })
 }
 
 /// Release preflight uses the same validation as an executing worker.
 pub fn validate(value: &Value) -> Result<(), String> { decode(value).map(|_| ()) }
+
+/// Claim receipts cover parent builds, nested MCP batches and ledger workers.
+pub(crate) fn claimed(claim: crate::control::OwnedLease) {
+    if !active() || !crate::vfs::is_scoped() { return; }
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        state.claims.retain(|old| old.out != claim.out || old.lease.task != claim.lease.task);
+        state.claims.push(claim);
+    });
+}
+
+pub(crate) fn released(out: &std::path::Path, task: &str) {
+    if !active() || !crate::vfs::is_scoped() { return; }
+    STATE.with(|s| s.borrow_mut().claims.retain(|claim| claim.out != out || claim.lease.task != task));
+}
+
+/// Apply protected ownership receipts without restoring or running MCP state.
+pub(crate) fn stop_owned(value: &Value) -> Result<(), String> {
+    if !crate::vfs::is_scoped() { return Err("Stop recovery requires a scoped workspace".into()); }
+    let state = decode(value)?;
+    for claim in state.claims { crate::control::release_owned_lease(&claim)?; }
+    Ok(())
+}
 
 pub(crate) fn parent(key: &str) -> Result<Option<Value>, String> {
     STATE.with(|s| {
@@ -106,10 +131,6 @@ pub(crate) fn replay_delta(session: &str, field: &str, text: &str) -> Result<(),
         match field { "agent_message_chunk" => prefix.content.push_str(text), "agent_thought_chunk" => prefix.thought.push_str(text), _ => {} }
         Ok(())
     })
-}
-
-pub(crate) fn remove_parent(key: &str) {
-    STATE.with(|s| { s.borrow_mut().parent.remove(key); });
 }
 
 pub(crate) fn remove_frame(key: &str) {
@@ -158,7 +179,7 @@ fn capsule() -> Result<Value, String> {
         Ok(json!({"version":1,"gdkVersion":GDK_VERSION,"operationSet":OPERATIONS,
             "engineVersion":env!("CARGO_PKG_VERSION"), "frames":state.frames,
             "harness":active.map(|f| &f.harness),"mcp":active.map(|f| &f.mcp),
-            "parent":state.parent,"deliveredInputs":state.delivered,"deliveredInputValues":state.inputs}))
+            "parent":state.parent,"claims":state.claims,"deliveredInputs":state.delivered,"deliveredInputValues":state.inputs}))
     })
 }
 
@@ -282,6 +303,35 @@ impl ToolHost for McpTools<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stop_receipts_preserve_foreign_replacements_and_require_scoped_vfs() {
+        let saved = {
+            let _fs = crate::vfs::Scope::enter(&Default::default());
+            let _scope = Scope::enter(None);
+            let out = std::path::Path::new("/project/.jazyk/ds_main");
+            crate::control::claim(out, "ledger:owned", "worker-one").unwrap();
+            crate::control::claim(out, "batch:replaced", "worker-one").unwrap();
+            crate::control::claim(out, "batch:renewed", "worker-one").unwrap();
+            let saved = capsule().unwrap();
+            crate::control::release_lease(out, "batch:replaced");
+            crate::control::claim(out, "batch:replaced", "worker-two").unwrap();
+            let path = out.join("leases/batch%3Arenewed.yaml");
+            let mut renewed: crate::control::Lease = serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap();
+            renewed.claimed_at += 1;
+            crate::vfs::write(&path, serde_norway::to_string(&renewed).unwrap()).unwrap();
+            crate::control::claim(out, "ledger:foreign", "worker-two").unwrap();
+            let foreign = crate::vfs::read(out.join("leases/ledger%3Aforeign.yaml")).unwrap();
+            stop_owned(&saved).unwrap();
+            assert!(!crate::vfs::exists(&out.join("leases/ledger%3Aowned.yaml")));
+            assert_eq!(crate::control::leases(out).len(), 3);
+            assert_eq!(crate::vfs::read(out.join("leases/ledger%3Aforeign.yaml")).unwrap(), foreign);
+            assert_eq!(crate::control::leases(out)["batch:replaced"].worker, "worker-two");
+            assert_eq!(crate::control::leases(out)["batch:renewed"].claimed_at, renewed.claimed_at);
+            saved
+        };
+        assert!(stop_owned(&saved).unwrap_err().contains("scoped workspace"));
+    }
+
     #[test]
     fn parent_only_capsule_and_nested_scopes_preserve_progress_and_reject_unknown_versions() {
         let _outer = Scope::enter(None);

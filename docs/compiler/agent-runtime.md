@@ -130,6 +130,10 @@ replaying a saved complete response does not append that prefix again.
 Stopping a suspended job retains its already committed workspace changes. The
 host publishes those saved bytes under a fresh ownership fence, closes its running
 conversation and discards the staged MCP changeset without running the model.
+Stop releases the stopped execution's batch, ledger and build claims. Earlier
+commits remain. A lease is released only when its saved task, worker and claim
+time still match. Claims belonging to another execution remain. Cancellation
+discards an open changeset before returning, including after a checkpoint error.
 
 The first upgrade lets legacy agents finish because they have no checkpoints.
 Later incompatible upgrades or rollbacks wait for affected jobs to finish. Graph

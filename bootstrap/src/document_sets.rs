@@ -418,8 +418,22 @@ struct RoleIntent {
 // including empty selected folders. Complex future overlaps stay behind the
 // source-write guard; this is not a glob subset or intersection parser.
 fn known_role_overlap(left: &[String], right: &[String], files: &[String]) -> bool {
+    known_role_overlap_in(left, right, &[], files)
+}
+
+fn known_role_overlap_in(
+    left: &[String],
+    right: &[String],
+    scope: &[String],
+    files: &[String],
+) -> bool {
     let mut candidates = files.to_vec();
-    for pattern in left.iter().chain(right).filter(|p| !p.starts_with('!')) {
+    for pattern in left
+        .iter()
+        .chain(right)
+        .chain(scope)
+        .filter(|p| !p.starts_with('!'))
+    {
         candidates.push(pattern.clone());
         let folder = if pattern == "**" {
             Some("")
@@ -439,9 +453,9 @@ fn known_role_overlap(left: &[String], right: &[String], files: &[String]) -> bo
             }
         }
     }
-    candidates
-        .iter()
-        .any(|p| included(left, p) && included(right, p))
+    candidates.iter().any(|p| {
+        included(left, p) && included(right, p) && (scope.is_empty() || included(scope, p))
+    })
 }
 
 fn enabled_patterns(before: &[String], after: &[String]) -> Vec<String> {
@@ -539,6 +553,19 @@ fn resolve_role_edits(
                 .iter()
                 .find(|set| set.id == old.id)
                 .is_some_and(|set| old.docs == set.docs && old.source == set.source)
+        })
+        && !intents.iter().any(|intent| {
+            intent.patterns.iter().any(|pattern| {
+                let scope = [pattern.clone()];
+                after.sets.iter().any(|opposing| {
+                    known_role_overlap_in(
+                        intent.role.patterns(&after.sets[target]),
+                        intent.role.opposite().patterns(opposing),
+                        &scope,
+                        &files,
+                    )
+                })
+            })
         })
     {
         return Ok(vec![]);
@@ -929,15 +956,29 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
         for field in ["name", "docs", "roots", "source"] {
             if let Some(value) = data.get(field) {
                 table[field] = if field == "name" {
-                    toml_edit::value(
-                        value
-                            .as_str()
-                            .ok_or_else(|| (400, "name must be text".into()))?
-                            .trim(),
-                    )
+                    let name = value
+                        .as_str()
+                        .ok_or_else(|| (400, "name must be text".into()))?
+                        .trim();
+                    if table.get(field).and_then(|v| v.as_str()) == Some(name) {
+                        continue;
+                    }
+                    toml_edit::value(name)
                 } else {
                     let values: Vec<String> = serde_json::from_value(value.clone())
                         .map_err(|_| (400, format!("{} must be a list of patterns", field)))?;
+                    if table
+                        .get(field)
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|array| {
+                            array
+                                .iter()
+                                .filter_map(|v| v.as_str())
+                                .eq(values.iter().map(String::as_str))
+                        })
+                    {
+                        continue;
+                    }
                     toml_edit::value(values.into_iter().collect::<toml_edit::Array>())
                 };
             }
@@ -1513,6 +1554,13 @@ mod tests {
         assert!(!included(&set.source, "deliverable/README.md"));
         assert!(included(&set.docs, "docs/a.md"));
         assert!(!included(&set.source, "docs/a.md"));
+        // An unrelated raw overlap must not make a resolved retry accumulate
+        // another copy of each ordered assignment's temporary exclusions.
+        crate::vfs::create_dir_all(f.0.join("elsewhere")).unwrap();
+        crate::vfs::write(f.0.join("elsewhere/claim.md"), "# Unrelated\n").unwrap();
+        let config = format!("{}\n[[sets]]\nid='ds_other'\nname='Other'\ndocs=['elsewhere/claim.md']\nsource=['elsewhere/**']\n",
+            crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap());
+        crate::vfs::write(f.0.join(CONFIG), config).unwrap();
         let text = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
         let repeat = edit_set(
             &f,
@@ -1679,6 +1727,44 @@ mod tests {
         .unwrap();
         assert_eq!(Workspace::load(&f.0).unwrap().sets[0].docs, vec!["**"]);
         assert!(!crate::gen::GenSettings::resolve(&project).allows_source("deliverable/README.md"));
+    }
+
+    #[test]
+    fn rechecking_an_unchanged_source_selection_resolves_another_sets_document_claim() {
+        let f = Fixture::new();
+        crate::vfs::create_dir_all(f.0.join(".jazyk")).unwrap();
+        crate::vfs::write(f.0.join("src/a.md"), "# Source\n").unwrap();
+        crate::vfs::write(f.0.join(CONFIG), "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['docs/a.md']\nsource = ['src/**']\n[[sets]]\nid = 'ds_b'\nname = 'B'\ndocs = ['src/a.md']\nsource = []\n").unwrap();
+        let intent = json!([{"role":"source","patterns":["src/a.md"]}]);
+        let request = json!({"id":"ds_a","source":["src/**"]});
+        let preview = edit_set(&f, request.clone(), intent.clone(), true).unwrap();
+        assert!(preview["roleAdjustments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["setId"] == "ds_b" && change["excluded"] == json!(["!src/a.md"])));
+        assert_eq!(
+            preview,
+            edit_set(&f, request, intent.clone(), false).unwrap()
+        );
+        let workspace = Workspace::load(&f.0).unwrap();
+        let project = workspace.resolve(Some("ds_a")).unwrap();
+        assert!(crate::gen::GenSettings::resolve(&project).allows_source("src/a.md"));
+        assert!(!included(
+            &workspace.select("ds_b").unwrap().docs,
+            "src/a.md"
+        ));
+        let text = crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap();
+        let set = workspace.select("ds_a").unwrap();
+        let repeat = edit_set(
+            &f,
+            json!({"id":"ds_a","docs":set.docs,"source":set.source}),
+            intent,
+            false,
+        )
+        .unwrap();
+        assert_eq!(repeat["roleAdjustments"], json!([]));
+        assert_eq!(crate::vfs::read_to_string(f.0.join(CONFIG)).unwrap(), text);
     }
 
     #[test]

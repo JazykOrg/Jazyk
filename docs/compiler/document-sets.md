@@ -122,6 +122,9 @@ folder names.
   `changes` include document `added` and `removed`, and `sourceAdded` and
   `sourceRemoved`. Empty folders retain their rules before files exist. Preview
   and save apply the same resolution. Repeating a resolved save adds no rules.
+  An explicit assignment still resolves known opposing claims when the requested
+  pattern arrays equal the current configuration. Rechecking a path is an
+  assignment, including claims from other sets.
 - Files claimed as documents by any set are excluded from source write scopes in
   every set. Broad source patterns cannot authorize generation over another set's
   prose. This guard also applies to unresolved overlaps written through raw TOML.

@@ -458,12 +458,26 @@ fn known_role_overlap_in(
     })
 }
 
+fn positive_enabled(patterns: &[String], pattern: &str) -> bool {
+    let direct = patterns
+        .iter()
+        .rposition(|p| p == pattern)
+        .is_some_and(|index| {
+            !patterns[index + 1..].iter().any(|p| {
+                p.strip_prefix('!')
+                    .is_some_and(|p| p == pattern || crate::project::glob_match(p, pattern))
+            })
+        });
+    direct || included(patterns, pattern)
+}
+
 fn enabled_patterns(before: &[String], after: &[String]) -> Vec<String> {
     let mut patterns: Vec<_> = after
         .iter()
         .filter(|p| {
             !p.starts_with('!')
-                && (!before.contains(p) || (!included(before, p) && included(after, p)))
+                && positive_enabled(after, p)
+                && (!before.contains(p) || !positive_enabled(before, p))
         })
         .cloned()
         .collect();
@@ -519,19 +533,9 @@ fn resolve_role_edits(
         let selected = intent.role.patterns(&requested);
         for pattern in &intent.patterns {
             validate_pattern(pattern).map_err(|e| (400, e))?;
-            let direct = selected
-                .iter()
-                .rposition(|p| p == pattern)
-                .is_some_and(|index| {
-                    !selected[index + 1..].iter().any(|p| {
-                        p.strip_prefix('!')
-                            .is_some_and(|p| p == pattern || crate::project::glob_match(p, pattern))
-                    })
-                });
             let source_fallback =
                 intent.role == FileRole::Source && pattern == "**" && selected.contains(pattern);
-            if pattern.starts_with('!')
-                || !(source_fallback || direct || included(selected, pattern))
+            if pattern.starts_with('!') || !(source_fallback || positive_enabled(selected, pattern))
             {
                 return Err((
                     400,
@@ -1668,6 +1672,34 @@ mod tests {
         assert!(b.docs.contains(&"!docs/a.md".into()));
         assert!(b.source.contains(&"!src/private/**".into()));
         assert!(!included(&b.source, "src/private/key.txt"));
+    }
+
+    #[test]
+    fn disabled_positive_globs_do_not_infer_an_assignment_or_override_exclusions() {
+        for role in [FileRole::Docs, FileRole::Source] {
+            let f = Fixture::new();
+            f.add("ds_a", "A", &["docs/a.md"]);
+            let (field, patterns) = match role {
+                FileRole::Docs => ("docs", json!(["docs/*.md", "!docs/**"])),
+                FileRole::Source => ("source", json!(["src/*.rs", "!src/**"])),
+            };
+            let mut set = json!({"id":"ds_a"});
+            set[field] = patterns.clone();
+            let body =
+                json!({"baseHash":Workspace::load(&f.0).unwrap().hash,"set":set,"roleIntents":[]});
+            let preview = edit(&f.0, &body, true).unwrap();
+            assert_eq!(preview["roleAdjustments"], json!([]));
+            assert_eq!(preview["sets"][0][field], patterns);
+            let files = if role == FileRole::Docs {
+                "documents"
+            } else {
+                "sourceFiles"
+            };
+            assert_eq!(preview["sets"][0][files], json!([]));
+            assert_eq!(preview, edit(&f.0, &body, false).unwrap());
+            let workspace = Workspace::load(&f.0).unwrap();
+            assert_eq!(json!(role.patterns(&workspace.sets[0])), patterns);
+        }
     }
 
     #[test]

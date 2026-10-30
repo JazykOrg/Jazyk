@@ -117,6 +117,8 @@ folder names.
   source. Broad source `**` preserves documents. Other simultaneous selections
   with a known conflict require explicit intent. Disjoint edits remain valid.
   Matching uses the shared glob matcher, not a client glob approximation.
+  Inference ignores positive rules disabled by later exclusions. It never
+  re-enables a selection that the submitted rules exclude.
 - Preview returns `roleAdjustments: [{setId, role, excluded}]`, the explicit
   exclusions added to each opposing role, and `affectedSetIds`. Membership
   `changes` include document `added` and `removed`, and `sourceAdded` and

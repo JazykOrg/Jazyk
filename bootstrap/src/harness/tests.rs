@@ -1436,3 +1436,78 @@ fn interrupted_model_host_leaves_only_the_durable_request_intention() {
     assert!(state.model_receipts.is_empty());
     assert_eq!(state.conversation.len(), 1);
 }
+
+#[test]
+fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change() {
+    for phase in [CheckpointPhase::BeforeModel, CheckpointPhase::SavedModel, CheckpointPhase::AfterTool] {
+        let mut host = Host::new(vec![call(), response("finished")]);
+        let mut store = Store { fail: Some(phase), ..Default::default() };
+        let mut history = vec![json!({"role":"user","content":"Run"})];
+        let mut calls = 0;
+        let mut dispatch = |name: &str, _: &Value| {
+            assert_eq!(name, "fixture");
+            calls += 1;
+            Ok("tool result".into())
+        };
+        let mut unused = tool();
+        unused.name = "unused".into();
+        let wide = [tool(), unused];
+        let mut run = |tools: &[GenericTool], instructions: &str, host: &mut Host, store: &mut Store| {
+            run_with_host(LoopArgs {
+                llm: &llm(), history: &mut history, tools, dispatch: &mut dispatch,
+                emit: &mut |_| {}, cancelled: &|| false, max_rounds: 8,
+                label: "catalog upgrade".into(), conversation: true, inputs: None, input_close: None,
+            }, instructions, host, store)
+        };
+        assert!(matches!(run(&wide, "Original prompt", &mut host, &mut store), Stop::Error(_)));
+        let saved = store.saved.as_ref().unwrap();
+        let (id, body) = saved.model_requests.iter().next().unwrap();
+        let (id, body) = (id.clone(), body.clone());
+        assert_eq!(body["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(run(&[tool()], "Updated prompt", &mut host, &mut store), Stop::EndTurn, "{phase:?}");
+        drop(run);
+        assert_eq!(calls, 1, "{phase:?}: a restored tool must execute once");
+        let requests = host.requests.borrow();
+        assert_eq!(requests.len(), 2, "{phase:?}: saved responses do not add model calls");
+        assert_eq!(requests[0].attempt_id, id);
+        assert_eq!(requests[0].body, body, "{phase:?}: the admitted body is immutable");
+        assert_eq!(requests[1].body["tools"].as_array().unwrap().len(), 1);
+        assert!(requests[1].body["messages"].to_string().contains("Updated prompt"));
+        assert_eq!(store.saved.as_ref().unwrap().rounds, 2);
+    }
+}
+
+#[test]
+fn last_allowed_model_intention_replays_once_and_stop_still_wins() {
+    for phase in [CheckpointPhase::BeforeModel, CheckpointPhase::SavedModel] {
+        let mut host = Host::new(vec![response("finished")]);
+        let mut store = Store { fail: Some(phase), ..Default::default() };
+        let mut history = vec![json!({"role":"user","content":"Run"})];
+        let mut run = |cancelled: bool, store: &mut Store| {
+            run_with_host(LoopArgs {
+                llm: &llm(), history: &mut history, tools: &[tool()], dispatch: &mut |_, _| panic!(),
+                emit: &mut |_| {}, cancelled: &|| cancelled, max_rounds: 1,
+                label: "last admitted model".into(), conversation: true, inputs: None, input_close: None,
+            }, "", &mut host, store)
+        };
+        assert!(matches!(run(false, &mut store), Stop::Error(_)));
+        assert_eq!(store.saved.as_ref().unwrap().rounds, 1);
+        let mut stopped = Store { saved: store.saved.clone(), ..Default::default() };
+        assert_eq!(run(true, &mut stopped), Stop::Cancelled);
+        assert_eq!(run(false, &mut store), Stop::EndTurn, "{phase:?}");
+        drop(run);
+        assert_eq!(host.requests.borrow().len(), 1, "{phase:?}: no extra admission");
+        assert_eq!(store.saved.as_ref().unwrap().rounds, 1);
+    }
+    // A genuinely new inference is still refused when the original cap is spent.
+    let mut host = Host::new(vec![call(), response("must not be requested")]);
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut tools = 0;
+    assert_eq!(run_with_host(LoopArgs {
+        llm: &llm(), history: &mut history, tools: &[tool()], dispatch: &mut |_, _| { tools += 1; Ok("result".into()) },
+        emit: &mut |_| {}, cancelled: &|| false, max_rounds: 1,
+        label: "spent budget".into(), conversation: true, inputs: None, input_close: None,
+    }, "", &mut host, &mut Store::default()), Stop::MaxRounds);
+    assert_eq!(tools, 1);
+    assert_eq!(host.requests.borrow().len(), 1);
+}

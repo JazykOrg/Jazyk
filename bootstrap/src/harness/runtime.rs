@@ -513,10 +513,6 @@ async fn drive(
                 Err(error) => Stop::Error(error),
             };
         }
-        if state.rounds >= args.max_rounds && unanswered(&state.conversation).is_empty() {
-            return Stop::MaxRounds;
-        }
-
         let (actions, mut requests) = mpsc::unbounded_channel();
         let (events, mut event_rx) = mpsc::unbounded_channel();
         let cancellation = CancellationToken::new();
@@ -723,12 +719,10 @@ async fn handle_action(
                 "{}:{}:{purpose:?}:{ordinal}",
                 state.run_id, state.transition
             );
-            if let Some(recorded) = state.model_requests.get(&id) {
-                if recorded != &body {
-                    return Err(Stop::Error(
-                        "checkpoint-incompatible: Restored model request differs from its durable intention".into(),
-                    ));
-                }
+            let body = if let Some(recorded) = state.model_requests.get(&id) {
+                // The protected intention owns its provider body. A newer catalog
+                // or prompt applies only to the next inference identity.
+                recorded.clone()
             } else {
                 if state.rounds >= args.max_rounds {
                     return Err(Stop::MaxRounds);
@@ -743,7 +737,8 @@ async fn handle_action(
                 )
                 .await
                 .map_err(Stop::Error)?;
-            }
+                body
+            };
             let value = if let Some(value) = state.model_receipts.get(&id) {
                 *live = state.model_deltas.get(&id).cloned().unwrap_or_default();
                 value.clone()

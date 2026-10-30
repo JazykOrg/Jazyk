@@ -99,6 +99,13 @@ intention before dispatch. A local mutation, result and MCP checkpoint commit
 together. A repeated operation identity returns its recorded result. A changed
 request digest under that identity is rejected.
 
+The exact model request is saved before admission. Restoration uses that saved
+body and identity, including when a complete response already exists. A newer
+catalog or prompt affects only a new inference identity. Reformatting a saved
+inference does not replace its original request. Replaying that already counted
+inference does not consume another round or exceed the original round budget.
+Tool dispatch still uses the restored session's current authorization gates.
+
 Remote effects use destination idempotency or queryable receipts. An uncertain
 outcome is reconciled before continuation. If it cannot be proven, execution
 pauses explicitly. A missing response does not authorize blind replay.

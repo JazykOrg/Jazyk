@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::path::Path;
 
 pub(crate) fn enabled() -> bool {
-    cfg!(target_arch = "wasm32") || crate::vfs::is_scoped()
+    crate::session_recovery::active() && (cfg!(target_arch = "wasm32") || crate::vfs::is_scoped())
 }
 
 pub(crate) struct Progress<T> {

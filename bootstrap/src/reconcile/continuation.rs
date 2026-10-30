@@ -47,7 +47,7 @@ pub(super) struct Receipt {
 }
 
 pub(super) fn enabled() -> bool {
-    cfg!(target_arch = "wasm32") || crate::vfs::is_scoped()
+    crate::session_recovery::active() && (cfg!(target_arch = "wasm32") || crate::vfs::is_scoped())
 }
 
 pub(super) fn key(out: &Path) -> String {

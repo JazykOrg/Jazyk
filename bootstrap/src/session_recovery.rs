@@ -25,19 +25,25 @@ struct State {
 }
 
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
+thread_local! { static ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
-pub(crate) struct Scope(State);
+pub(crate) struct Scope(State, bool);
 impl Scope {
     pub(crate) fn enter(resume: Option<&Value>) -> Self {
         let state = resume.map(decode).transpose().unwrap_or_else(|error| {
             Some(State { error: Some(error), ..Default::default() })
         }).unwrap_or_default();
-        Self(STATE.with(|s| s.replace(state)))
+        Self(STATE.with(|s| s.replace(state)), ACTIVE.with(|a| a.replace(true)))
     }
 }
 impl Drop for Scope {
-    fn drop(&mut self) { STATE.with(|s| s.replace(std::mem::take(&mut self.0))); }
+    fn drop(&mut self) {
+        STATE.with(|s| s.replace(std::mem::take(&mut self.0)));
+        ACTIVE.with(|a| a.set(self.1));
+    }
 }
+
+pub(crate) fn active() -> bool { ACTIVE.with(|a| a.get()) }
 
 fn incompatible(message: impl std::fmt::Display) -> String {
     format!("checkpoint-incompatible: {message}")
@@ -130,6 +136,7 @@ fn capsule() -> Result<Value, String> {
 }
 
 async fn save() -> Result<(), String> {
+    if !active() { return Ok(()); }
     #[cfg(not(target_arch = "wasm32"))]
     {
         if crate::vfs::is_scoped() {
@@ -171,6 +178,7 @@ impl<'a> McpRecovery<'a> {
     }
     fn from_frame(server: Option<&'a McpServer>, key: String) -> Result<Self, String> {
         let frame = STATE.with(|s| {
+            if !active() { return Ok(None); }
             let state = s.borrow();
             if let Some(error) = &state.error { return Err(error.clone()); }
             Ok(state.frames.iter().find(|f| f.key == key).cloned())
@@ -206,6 +214,7 @@ impl Recovery for McpRecovery<'_> {
     fn checkpoint<'a>(&'a mut self, boundary: CheckpointBoundary, harness: &'a HarnessState)
         -> LocalFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            if !active() { return Ok(()); }
             let mcp = self.server.map(McpServer::checkpoint).transpose()?.unwrap_or(Value::Null);
             let frame = Frame { key: self.key.clone(), boundary, harness: harness.clone(), mcp };
             STATE.with(|s| {

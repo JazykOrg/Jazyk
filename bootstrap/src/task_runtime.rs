@@ -979,6 +979,78 @@ pub fn project_root(path: &Path) -> Result<std::path::PathBuf, String> {
 }
 /// Execute a saved finite task and wait through the shared adapter. Cancellation
 /// remains an out-of-band operation while this call waits.
+pub fn execute_with_key(root: &Path, id: &str, identity: &str) -> Result<(String, Value), String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::vfs::is_scoped() { return execute_recoverable(root, id, identity); }
+    let _ = identity;
+    execute(root, id)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String, Value), String> {
+    use crate::session_recovery as recovery;
+    #[derive(Serialize, Deserialize)]
+    struct Pending {
+        version: u32,
+        context: Value,
+        operation_key: String,
+        deadline: u64,
+        run_id: Option<String>,
+        result: Option<Value>,
+    }
+    fn save(key: &str, pending: &Pending) -> Result<(), String> {
+        recovery::set_parent(key, serde_json::to_value(pending).map_err(|e| e.to_string())?);
+        recovery::checkpoint_parent().map_err(|e| format!("checkpoint-failed: {e}"))
+    }
+    let key = recovery::command_key(&format!("task:{}:{id}:{identity}",root.display()));
+    let mut pending: Pending = match recovery::parent(&key)? {
+        Some(value) => serde_json::from_value(value).map_err(|e| format!("checkpoint-incompatible: task continuation: {e}"))?,
+        None => Pending {
+            version: 1, context: call(root, "task_context", &json!({}))?,
+            operation_key: format!("resume-{}", &digest(format!("{key}:{}:{}",crate::sys::now_millis(),crate::sys::process_id()).as_bytes())[..32]),
+            deadline: crate::sys::now_unix() + 8100, run_id: None, result: None,
+        },
+    };
+    if pending.version != 1 { return Err("checkpoint-incompatible: unsupported task continuation".into()); }
+    if let (Some(run_id), Some(result)) = (&pending.run_id, &pending.result) {
+        return Ok((run_id.clone(), result.clone()));
+    }
+    save(&key, &pending)?;
+    if recovery::suspension_requested() { return Err("suspended".into()); }
+    if pending.run_id.is_none() {
+        let run = call(root, "run_task", &json!({"task_id":id,"expected_revision":pending.context["revision"],"operation_key":pending.operation_key}))?;
+        pending.run_id = Some(run["id"].as_str().ok_or("Run ID missing")?.to_owned());
+        save(&key, &pending)?;
+    }
+    let run_id = pending.run_id.clone().unwrap();
+    loop {
+        if crate::hosted::cancelled() || operation_cancelled() {
+            let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
+            return Err(format!("Execution cancelled; run {run_id} is stopping."));
+        }
+        if recovery::suspension_requested() { save(&key,&pending)?; return Err("suspended".into()); }
+        let status = call(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}))?;
+        if status["terminated"] == true {
+            let result = dispatch(root, &json!({"operation":"result","run_id":run_id}))?;
+            if let (Ok(input), Some(definition)) = (
+                serde_json::from_value::<BTreeMap<String,String>>(result["input_files"].clone()),
+                pending.context["tasks"].as_array().and_then(|tasks| tasks.iter().find(|task| task["id"] == id)),
+            ) {
+                let task: Task = serde_json::from_value(definition.clone()).map_err(|e| e.to_string())?;
+                apply_result(root, &task, &input, &result, &run_id)?;
+            }
+            pending.result = Some(result.clone());
+            save(&key,&pending)?;
+            return Ok((run_id,result));
+        }
+        if crate::sys::now_unix() >= pending.deadline {
+            let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
+            return Err(format!("Run {run_id} exceeded the waiting limit and was cancelled."));
+        }
+        crate::sys::sleep(std::time::Duration::from_millis(1000));
+    }
+}
+
 pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
     let context = call(root, "task_context", &json!({}))?;
     let key = format!(

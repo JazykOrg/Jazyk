@@ -620,7 +620,7 @@ pub struct ProgRun {
 pub(crate) fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
     if let Some(task) = t.run.strip_prefix("task:") {
         let root = crate::task_runtime::project_root(&gs.deliverable)?;
-        let (id, result) = crate::task_runtime::execute(&root, task)?;
+        let (id, result) = crate::task_runtime::execute_with_key(&root, task, &format!("test:{}:{}",t.name,t.run))?;
         return task_case_outcome(&result, &t.name, &id);
     }
     let cwd = gs.deliverable.join(&t.cwd);
@@ -859,7 +859,7 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
     if !tasks.is_empty() {
         let root = crate::task_runtime::project_root(&store.out)?;
         for id in tasks {
-            let (run_id, result) = crate::task_runtime::execute(&root, &id)?;
+            let (run_id, result) = crate::task_runtime::execute_with_key(&root, &id, &format!("verify:{}",store.out.display()))?;
             runs.push(json!({"id":run_id,"task":id,"state":result["status"],"tests":result["tests"]}));
         }
     }

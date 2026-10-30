@@ -93,6 +93,10 @@ request digest under that identity is rejected.
 Remote effects use destination idempotency or queryable receipts. An uncertain
 outcome is reconciled before continuation. If it cannot be proven, execution
 pauses explicitly. A missing response does not authorize blind replay.
+Compiler task execution saves its destination operation key before submission.
+It retains the returned run ID, original waiting deadline and collected result.
+Deployment resumes waiting on that run. It does not submit another task or extend
+the deadline. User Stop still cancels the owned run.
 
 Checkpoint failure stops new work. Debug export pruning cannot remove active
 recovery state. Checkpoints retain tenant protection and contain no provider keys.

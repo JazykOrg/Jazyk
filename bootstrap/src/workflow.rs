@@ -200,7 +200,7 @@ async fn run_step(
                 "Task {task_id} changed. Review the workflow before running it again."
             ));
         }
-        let (id, result) = crate::task_runtime::execute(&proj.root, task_id)?;
+        let (id, result) = crate::task_runtime::execute_with_key(&proj.root, task_id, "workflow")?;
         if result["status"] != "succeeded" || result["complete"] != true {
             return Err(format!("Task {task_id} did not succeed. Inspect run {id}."));
         }

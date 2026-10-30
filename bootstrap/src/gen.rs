@@ -311,7 +311,7 @@ pub fn run_build(
     };
     if let Some(id) = b.run.strip_prefix("task:") {
         let root = crate::task_runtime::project_root(out)?;
-        let (_, result) = crate::task_runtime::execute(&root,id)?;
+        let (_, result) = crate::task_runtime::execute_with_key(&root,id,&format!("build:{label}:{}",out.display()))?;
         let success = result["status"] == "succeeded" && result["complete"] == true;
         if !success {
             record_build_run(out, false, result["log"].as_str().unwrap_or("No log output"));

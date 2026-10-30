@@ -59,7 +59,7 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   by cone, sequential: one build under the build lease, one session at a time.
 - Sessions: one session per goal batch (open goals of the highest ready tier, grouped by
   locality, filled to the context budget), run as an ACP worker session (the embedded
-  agent with native or text codec, probed and sticky per run, or an external agent per
+  Goose GDK agent with native tool calling, or an external agent per
   `[executors]`). The prompt is assembled from payload files, never authored per goal:
   the fixed agent contract, the active skills, a project block, one block per goal
   (contract paragraph, change, gate, hints), the loaded set. The model loads the graph
@@ -221,7 +221,7 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 - A project is a directory with `.jazyk/jazyk.toml` (walk-up discovery). Run the
   dogfood from the repository root. Each set stores state directly in `.jazyk/<id>/`.
 - Always run `jazyk benchmark` before trusting a new model: it grades session capability
-  per codec with deterministic checks (cases per goal kind are deferred, see
+  through the native GDK runtime with deterministic checks (cases per goal kind are deferred, see
   `docs/benchmark/benchmark.md`). Local 4B-class models fail it; the harness still holds
   (gates bounce bad calls, junk never lands), but judgment-quality output (reviews, lint)
   degrades.
@@ -232,9 +232,8 @@ Precedence per field: CLI flag → env (`JAZYK_LLM_BASE_URL`, `JAZYK_MODEL`, `JA
 project `[llm]` → `~/.jazyk/config.toml` → default. The repo `.env` points
 `JAZYK_LLM_BASE_URL` at LocalRouter (`http://127.0.0.1:3625`), which proxies local Ollama
 models and remote providers; the global config picks the model (`gemma4:e4b-mlx`). Use
-LocalRouter; do not override the endpoint unless asked. Tuning: `JAZYK_MAX_RETRIES`,
-`JAZYK_TEMPERATURE` (negative omits), `JAZYK_VERBOSE`, `JAZYK_CODEC` (force
-`native`/`text`), `JAZYK_PLANTUML` (an official PlantUML native binary behind the render
+LocalRouter; do not override the endpoint unless asked. Tuning:
+`JAZYK_TEMPERATURE` (negative omits), `JAZYK_VERBOSE`, `JAZYK_PLANTUML` (an official PlantUML native binary behind the render
 seam instead of the in-process renderer). Builds are sequential by design (one session at
 a time). Local models are slow: test on `bootstrap/example/f1` first.
 

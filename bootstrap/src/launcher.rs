@@ -539,8 +539,8 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when every step and check holds, 1 otherwise".to_string(),
         "benchmark" => format!(
             "usage: jazyk benchmark [case...]\n\n\
-             Grade the configured model: every benchmark case runs under both codecs\n\
-             (native tool calls and the text codec) in a sandbox store, scored by\n\
+             Grade the configured model: benchmark cases use Goose GDK with native\n\
+             tool calls in a sandbox store, scored by\n\
              deterministic checks. Results land in <out>/benchmark/results.yaml.\n\n\
              options:\n  \
              --project <dir> --goal <id>   run one goal's session from a copy of a real project\n  \

@@ -595,8 +595,8 @@ The event kinds:
   request carries the whole outgoing message list (the prompt and the conversation so
   far) plus the tool names offered; the response carries the raw assistant message, the
   elapsed milliseconds, and the completion tokens; a retry carries the attempt, the
-  error, and how long the client waits before trying again. Sticky fallbacks (codec
-  downgrade, streaming, dropped `temperature`) are notes on the same label. A session
+  error, and how long the admitted host waits before trying again. Capability errors
+  stop the session without switching tool formats. A session
   against an external agent carries none of these: that agent's model traffic lives in
   its own logs.
 - `note`: a plain line. Verbose notes carry the full loaded set and raw payloads.

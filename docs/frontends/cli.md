@@ -147,9 +147,8 @@ Live trace:
   arguments, the condensed results, and the model's reasoning text, and one line per
   goal resolved (with its justification) or failed (with its reason). See
   [trace events](../compiler/sessions.md#trace-events). Endpoint trouble prints here
-  too: retries, rate-limit waits, and the sticky fallbacks (codec downgrade, streaming,
-  dropped `temperature`) are trace events, not stray stderr, so every frontend sees
-  them.
+  too: admitted retries, rate-limit waits and capability errors are trace events,
+  so every frontend sees them.
 - `--verbose`: additionally prints every session's assembled
   [prompt](../compiler/sessions.md#the-prompt) (the goals block and the
   [loaded set](../compiler/context.md#the-loaded-set) as the model receives them),

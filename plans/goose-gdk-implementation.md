@@ -17,13 +17,13 @@ instance restores the same job and continues automatically. Completed model
 responses and tool effects are reused. User cancellation remains final. An unknown
 external outcome is reconciled or paused explicitly.
 
-The deliverable is an integrated local implementation in isolated worktrees, with
-passing relevant checks and a reviewable preview. Merge, push, upstream posting,
-infrastructure changes and production deployment are later actions.
+The owner approved implementation, testing, local master merge, master publication,
+production deployment and post-deployment tests. Use isolated worktrees and the
+existing local release build infrastructure. Upstream posting remains separate.
 
 ## Approval scope
 
-Approval of this plan authorizes the following local work:
+Approval of this plan and the subsequent implementation instruction authorize:
 
 - Update canonical documentation before each behavior change in both repositories.
 - Integrate the component set below. Remove the old generic loop, text codec,
@@ -41,8 +41,9 @@ Approval of this plan authorizes the following local work:
 - Delegate independent implementation and review work to subagents after approval.
 - Commit coherent changes on local branches. Leave main checkouts intact.
 
-This approval does not authorize merging, pushing, deployment, paid infrastructure,
-changes to production limits, or automatic model/provider reconfiguration.
+The subsequent instruction authorizes local master merges, master publication and
+deployment after verification. It does not authorize new paid infrastructure,
+changes to production limits or automatic model/provider reconfiguration.
 
 ## Recommended component selection
 

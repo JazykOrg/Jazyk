@@ -101,6 +101,12 @@ or unrestricted filesystem access. Subagents inherit a permitted subset of the
 parent capabilities and budgets. Do not configure credentials through global
 environment mutations.
 
+Audit request formatting as well as tools. The public OpenAI formatter can load
+image paths found in user text when vision is enabled. Disable this path for text
+compilation. Any future hosted vision integration must receive explicit workspace
+attachments without reading host paths. A pure formatter or explicit host image
+resolver is a separate candidate for an upstream contribution.
+
 An in-process library has the host process's OS privileges. Tool restrictions limit
 model-directed actions but are not protection against a library exploit. Project
 commands remain in the existing isolated task runtime. Use a restricted worker
@@ -113,6 +119,56 @@ crate. The earlier inspection found a WASM compaction `Send`/`Sync` obstacle.
 Prove the selected component set with browser inference, tools, cancellation and
 compaction before removing the existing portable loop. Keep browser transport and
 storage supplied by the browser host. Do not create a second tool dialect.
+
+### WASM feasibility
+
+Source audit: 2026-10-29, at the upstream commit recorded below. No new crate
+changes, builds, or runtime tests were performed for this audit.
+
+| Component | Current browser status | Required work |
+| --- | --- | --- |
+| `goose-agent` | Upstream compiles it for WASM and tests Promise-backed providers, tools and session storage in Node | Supply Jazyk's host implementations. Verify real browser behavior. |
+| `goose-provider-types` | Included in upstream WASM CI. Public request builders and response decoders are available | Reuse these through a Jazyk provider over the existing browser model transport. |
+| `goose-context-management` | Compaction traits and wrappers still assume native thread-safe futures | Apply the existing platform-aware trait pattern, then add WASM regression coverage. |
+| `goose-providers` | Shared clients and multiple implementations assume native HTTP and runtime behavior | A full port is broader. It is not required for the browser provider boundary. |
+| Skills and subagents | Portable skill rendering and non-thread-safe subagent runner interfaces exist | Supply skill entries from embedded payloads or VFS. Implement and test browser child sessions. Native filesystem discovery remains native-only. |
+
+The concrete compaction patch uses `MaybeSend` and `MaybeSync` from
+`goose-provider-types`. Native builds retain actual `Send` and `Sync` requirements.
+WASM traits and implementations use `async_trait(?Send)` so they can await
+JavaScript promises. Apply this to `CompactionModel`, `TokenEstimator`,
+`ProviderModel`, and `CompactingProvider`. The algorithm and embedded prompts do not
+need to change.
+
+Estimated production patch: two files and about 15 to 25 changed lines. A complete
+upstream contribution also needs target-scoped test dependencies, adapted native
+test implementations, Promise-backed WASM tests, CI and documentation. Estimate
+six to eight files and about 150 to 250 changed lines in total. These are source
+inspection estimates, not a measured patch. Reuse the convention accepted in
+[the existing WASM port](https://github.com/aaif-goose/goose/pull/12569). Confirm
+maintainer scope through the upstream issue workflow before implementing a PR.
+
+Jazyk's integration is larger than that portability patch. The current compiler
+Worker blocks on `Atomics.wait` while the page performs inference. An initial GDK
+provider can call that bridge, decode the completed response, and return a
+single-message stream. This avoids requiring an immediate async compiler rewrite.
+Preserve the host's existing UI stream and cancellation behavior.
+
+A future that awaits a JavaScript promise on that same Worker cannot progress
+while the Worker is blocked in a synchronous executor. Actual asynchronous tools,
+storage, retry timers and concurrent subagents need an async driver or a step/host
+bridge. Do not claim that changing crate annotations solves this integration.
+
+The current WebLLM wrapper uses text tools and collects text output. The Chrome
+Prompt API wrapper also exposes plain text. Under the native-tool-only decision,
+verify and implement native tool calls for a model source before offering it for
+tool-driven compilation. Do not preserve the old text compatibility path.
+
+Do not make a full `goose-providers` browser port a prerequisite. Its wider work
+includes browser HTTP configuration, timeout primitives, async trait bounds, live
+transport actors, and configuration loading. Native model inference and downloads
+also remain separate from browser WebLLM integration. Rust embedding in Jazyk's own
+WASM module does not require porting the Python and Kotlin binding facade.
 
 ## Deployment recovery
 

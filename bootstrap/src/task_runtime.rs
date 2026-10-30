@@ -489,6 +489,43 @@ fn metadata_response(operation: &str, mut value: Value) -> Value {
     }
     value
 }
+
+// A worker already knows the task definitions from task_context. Keep its status
+// observations small without changing retained runtime evidence or HTTP views.
+pub(crate) fn worker_response(operation: &str, mut value: Value) -> Value {
+    fn status(value: &mut Value) {
+        let Some(fields) = value.as_object_mut() else { return };
+        if let Some(task) = fields.get_mut("task").and_then(Value::as_object_mut) {
+            task.retain(|key, _| matches!(key.as_str(), "id" | "name"));
+        }
+        if fields.contains_key("result") && fields.get("summary") == fields.get("result") {
+            fields.remove("summary");
+        } else if !fields.contains_key("result") {
+            if let Some(summary) = fields.remove("summary") {
+                fields.insert("result".into(), summary);
+            }
+        }
+    }
+    if operation == "task_context" {
+        if let Some(execution) = value.get_mut("execution").and_then(Value::as_object_mut) {
+            let next = if let Some(runs) = execution.get_mut("runs").and_then(Value::as_array_mut) {
+                let next = (runs.len() > 5).then(|| runs[4]["id"].clone());
+                runs.truncate(5);
+                for run in runs {
+                    status(run);
+                }
+                next
+            } else { None };
+            if let Some(next) = next {
+                execution.insert("next_cursor".into(), next);
+            }
+        }
+    } else if matches!(operation, "run_task" | "inspect_run" | "wait_run" | "cancel_run") {
+        status(&mut value);
+    }
+    value
+}
+
 fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -523,6 +560,59 @@ pub fn watchdog(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     const CONFIG:&str="[llm]\nmodel='existing'\n# retained comment\n[[tasks]]\nid='test'\nname='Tests'\ndescription='Run unit tests'\ncommand='mvn test'\nreports=['target/*.xml']\n";
+
+    #[test]
+    fn worker_status_keeps_exact_evidence_without_repeated_task_definitions() {
+        let result = json!({"status":"succeeded","complete":true,"exit_code":0,
+            "tests":[{"name":"Greeter::hello","status":"passed","report":"reports/tests.xml"}],
+            "file_count":2,"report_errors":[],"import_pending":false});
+        let original = json!({"id":"run-1","task":{"id":"test","name":"Tests",
+            "command":"mvn test","description":"Run unit tests","image":"test-image","reports":["reports/*.xml"]},
+            "state":"succeeded","terminated":true,"cancel_requested":false,"deadline":123,
+            "input_digest":"frozen-input","source_revision":17,"error":null,"result":result,"summary":result});
+        for operation in ["run_task", "inspect_run", "wait_run", "cancel_run"] {
+            let compact = worker_response(operation, original.clone());
+            let mut expected = original.clone();
+            expected["task"] = json!({"id":"test","name":"Tests"});
+            expected.as_object_mut().unwrap().remove("summary");
+            assert_eq!(compact, expected, "{operation}");
+            assert_eq!(compact["result"], result);
+            assert!(compact.to_string().len() < original.to_string().len());
+        }
+        assert_eq!(original["task"]["command"], "mvn test");
+        assert_eq!(original["summary"], result);
+        let start = json!({"id":"run-2","task":{"id":"test","command":"mvn test"},"summary":null});
+        let start = worker_response("run_task", start);
+        assert_eq!(start["result"], Value::Null);
+        assert!(!start.as_object().unwrap().contains_key("summary"));
+        let different = json!({"summary":{"provider":"local"},"result":result});
+        assert_eq!(worker_response("inspect_run", different.clone()), different);
+    }
+
+    #[test]
+    fn worker_context_pages_history_without_losing_current_tasks_or_cursors() {
+        let tasks = json!([{"id":"test","name":"Tests","command":"mvn test","reports":["reports/*.xml"]}]);
+        let runs: Vec<_> = (0..12).map(|n| json!({"id":format!("run-{n}"),
+            "task":{"id":"test","name":"Tests","command":"mvn test"},"state":"succeeded", "summary":null})).collect();
+        let original = json!({"tasks":tasks,"legacy":[],"revision":"configuration-revision",
+            "projectRoot":"/project","defaults":{"cwd":"."},
+            "execution":{"available":true,"location":"cloud","runs":runs,"next_cursor":"run-29"}});
+        let first = worker_response("task_context", original.clone());
+        for key in ["tasks", "legacy", "revision", "projectRoot", "defaults"] {
+            assert_eq!(first[key], original[key], "{key}");
+        }
+        assert_eq!(first["execution"]["available"], true);
+        assert_eq!(first["execution"]["runs"].as_array().unwrap().len(), 5);
+        assert_eq!(first["execution"]["next_cursor"], "run-4");
+        assert_eq!(original["execution"]["runs"].as_array().unwrap().len(), 12);
+        let mut last = original;
+        last["execution"]["runs"] = json!([{"id":"last","task":{"id":"test"},"summary":null}]);
+        last["execution"]["next_cursor"] = Value::Null;
+        assert_eq!(worker_response("task_context", last)["execution"]["next_cursor"], Value::Null);
+        let unavailable = json!({"tasks":tasks,"execution":{"available":false,"reason":"No runtime attached."}});
+        assert_eq!(worker_response("task_context", unavailable.clone()), unavailable);
+    }
+
     #[test]
     fn explicit_products_survive_default_build_directory_omissions() {
         let root =

@@ -272,6 +272,35 @@ pub fn reader_instructions() -> String {
 }
 
 impl McpServer {
+    // Ledger workers carry the execution contract in their opening prompt. A
+    // manually claimed ledger batch receives it from begin_goals instead.
+    fn has_execution_contract(&self) -> bool {
+        (self.bridge.ephemeral
+            && self.bridge.only.is_some()
+            && self.modes.iter().any(|mode| matches!(mode.as_str(), "generate" | "verify")))
+            || self.open.lock().unwrap().as_ref().is_some_and(|batch| {
+                batch.goals.iter().any(|goal| matches!(goal.kind.as_str(), "bind" | "generate" | "verify"))
+            })
+    }
+
+    fn worker_reply(&self, name: &str, mut reply: Value) -> Value {
+        if reply["isError"] == true
+            || (!crate::task_runtime::TOOLS.contains(&name) && name != "begin_binding")
+            || !self.has_execution_contract()
+        {
+            return reply;
+        }
+        let Some(text) = reply["content"][0]["text"].as_str() else { return reply };
+        let Ok(mut value) = serde_json::from_str::<Value>(text) else { return reply };
+        if name == "begin_binding" {
+            value["instructions"] = json!(crate::bind::contract());
+        } else {
+            value = crate::task_runtime::worker_response(name, value);
+        }
+        reply["content"][0]["text"] = json!(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()));
+        reply
+    }
+
     pub fn live_preview(&self) -> Option<crate::live_preview::Preview> {
         self.preview.lock().unwrap().clone()
     }
@@ -2320,7 +2349,8 @@ impl McpServer {
                     summary: crate::session::condense(&params["arguments"], 160),
                     full: crate::session::full_payload(&params["arguments"]),
                 });
-                let reply = self.tool_call(&name, params, &label);
+                let reply = self.tool_call(&name, params, &label)
+                    .map(|reply| self.worker_reply(&name, reply));
                 if let Ok(v) = &reply {
                     let is_err = v["isError"] == true;
                     let text = v["content"][0]["text"].as_str().unwrap_or_default();
@@ -3672,6 +3702,64 @@ fn result_value(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_binding_carries_each_contract_once_and_standalone_keeps_full_instructions() {
+        let dir = bare_dir("worker-binding-contract");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let mut store = Store::load(&out);
+        store.graph.entities.insert("ent:greeter".into(), crate::model::Entity {
+            name:"Greeter".into(), ..Default::default()
+        });
+        store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
+            statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default()
+        });
+        store.save();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.generate = "auto".into();
+        control.save(&out);
+        let batch = crate::runner::BatchRun::single(Goal {
+            id:"g:bind:req:greet".into(),kind:"bind".into(),target:"req:greet".into(),
+            class:"compile".into(),mandatory:true,..Default::default()
+        });
+        let opening = crate::runner::batch_prompt(&project, &out, &batch);
+        assert_eq!(opening.matches(crate::task_runtime::PROMPT).count(), 1);
+        assert!(!opening.contains(crate::bind::contract()));
+        let server = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
+            BridgeFlags { ephemeral:true, only:Some(batch.id), serve_files:true, ..Default::default() });
+        let reply = server.handle("tools/call", &json!({"name":"begin_binding","arguments":{"requirement":"req:greet"}})).unwrap();
+        assert_ne!(reply["isError"], true, "{reply}");
+        let worker:Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(worker["instructions"], crate::bind::contract());
+        let full_context = format!("{}\n{}", opening, worker["instructions"].as_str().unwrap());
+        assert_eq!(full_context.matches(crate::task_runtime::PROMPT).count(), 1);
+        assert_eq!(full_context.matches(crate::bind::contract()).count(), 1);
+        let saved = server.checkpoint().unwrap();
+        let restored = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
+            server.bridge.clone());
+        restored.restore(saved).unwrap();
+        assert!(restored.has_execution_contract());
+        let manual = McpServer::with_bridge(project, out, vec!["generate".into()], true, BridgeFlags::default());
+        let original = crate::bind::task(&store, "req:greet", &crate::gen::GenSettings::resolve(&manual.project)).unwrap();
+        let standalone = manual.worker_reply("begin_binding", text_result(original.clone(), false));
+        let standalone:Value = serde_json::from_str(standalone["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(standalone, original);
+        assert!(standalone["instructions"].as_str().unwrap().contains(crate::task_runtime::PROMPT));
+        let mut same = original;
+        same["instructions"] = worker["instructions"].clone();
+        assert_eq!(worker, same);
+        let status = text_result(json!({"task":{"id":"test","name":"Tests","command":"mvn test"},
+            "state":"running","terminated":false,"summary":null}), false);
+        assert_eq!(manual.worker_reply("wait_run", status.clone()), status);
+        assert_ne!(restored.worker_reply("wait_run", status.clone()), status);
+        let refused = text_result(json!({"error":{"rule":"task-runtime","message":"Denied."}}),true);
+        assert_eq!(restored.worker_reply("wait_run", refused.clone()), refused);
+        drop(restored);
+        drop(server);
+        drop(manual);
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn checkpoint_restores_staged_batch_and_its_gate_state() {

@@ -827,24 +827,24 @@ pub async fn run_all(
         let rid = command.data.active.as_ref().unwrap().batch.goals[0]
             .target
             .clone();
-        let (next, down) = crate::reconcile::breaker_step(
+        let gate = gate(store, gs, &rid);
+        let failure = gate.as_ref().err().and(report.failed.as_deref());
+        let (next, _) = crate::reconcile::breaker_step(
             command.data.streak,
             report.tokens,
-            report.failed.as_deref(),
+            failure,
         );
         command.data.streak = next;
-        if let Some(error) = report.failed {
-            trace.line("bind", &format!("{rid} failed: {error}"));
-            command.data.failures += 1;
-            if down && command.data.streak >= crate::limits::ENDPOINT_BREAKER {
-                command.data.stopped = Some(error);
-            }
-        } else {
-            match gate(store, gs, &rid) {
-                Ok(()) => command.data.bound += 1,
-                Err(error) => {
+        match gate {
+            Ok(()) => command.data.bound += 1,
+            Err(gate_error) => {
+                command.data.failures += 1;
+                if let Some(error) = report.failed {
+                    trace.line("bind", &format!("{rid} failed: {error}"));
+                    command.data.stopped = Some(error);
+                } else {
+                    let error = gate_error;
                     trace.line("bind", &format!("{rid} still owed: {error}"));
-                    command.data.failures += 1;
                 }
             }
         }

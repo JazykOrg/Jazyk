@@ -1759,6 +1759,35 @@ mod tests {
     }
 
     #[test]
+    fn a_review_transport_error_stops_before_the_next_criterion() {
+        struct Broken(std::cell::Cell<usize>);
+        impl crate::runner::SessionRunner for Broken {
+            fn agent_name(&self) -> String { "broken".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, _: &crate::runner::BatchRun, _: &crate::session::Trace) -> crate::runner::SessionReport { unreachable!() }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { unreachable!() }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> {
+                self.0.set(self.0.get()+1);
+                Err("Review model transport closed.".into())
+            }
+        }
+        let _vfs = crate::vfs::Scope::enter(&Default::default());
+        let out = std::path::Path::new("/project/.jazyk/review-error");
+        let (store, gs) = multi_llm_fixture(out);
+        let before = Ledger::load(out);
+        let runner = Broken(std::cell::Cell::new(0));
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_|{}),Default::default());
+        let error = run_without_build(&store,&runner,&gs,&[],Some("llm"),true,&trace,false).unwrap_err();
+        assert_eq!(error,"Review model transport closed.");
+        assert_eq!(runner.0.get(),1);
+        let after = Ledger::load(out);
+        for (id,test) in &before.requirements["req:shop-1"].tests {
+            assert_eq!(after.requirements["req:shop-1"].tests[id].verdict,test.verdict);
+        }
+    }
+
+    #[test]
     fn audit_clears_all_criterion_verdicts_when_implementing_files_change() {
         let _scope = crate::vfs::Scope::enter(&Default::default());
         let out = std::path::Path::new("/project/.jazyk");
@@ -2237,6 +2266,11 @@ pub fn select_rows(
         .collect()
 }
 
+enum JudgmentError {
+    Model(String),
+    Invalid(String),
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 async fn judge_llm_criteria(
     store: &Store,
@@ -2244,8 +2278,8 @@ async fn judge_llm_criteria(
     rid: &str,
     gs: &GenSettings,
     trace: &crate::session::Trace,
-) -> Result<Value, String> {
-    let package = task(store, rid, gs)?;
+) -> Result<Value, JudgmentError> {
+    let package = task(store, rid, gs).map_err(JudgmentError::Invalid)?;
     let mut files = String::new();
     for path in package["files"]
         .as_array()
@@ -2268,7 +2302,7 @@ async fn judge_llm_criteria(
         .filter(|t| t["kind"] == "llm")
     {
         if trace.is_cancelled() {
-            return Err("Verification cancelled".into());
+            return Err(JudgmentError::Invalid("Verification cancelled".into()));
         }
         let input=format!("Criterion: {}\n{}\n\nContext:\n{}\n\nImplementing files:{files}\n\nJudge this criterion only. Reply with PASS or FAIL, then your observed evidence.",test["statement"],test["criteria"].as_str().unwrap_or_default(),package["context"].as_str().unwrap_or_default());
         let reply = runner
@@ -2282,8 +2316,8 @@ async fn judge_llm_criteria(
                 "judge",
                 Some(trace),
             ).await
-            .map_err(|e| e.to_string())?;
-        let pass = parse_verdict(&reply).ok_or("Model returned no conclusive criterion verdict")?;
+            .map_err(JudgmentError::Model)?;
+        let pass = parse_verdict(&reply).ok_or_else(|| JudgmentError::Invalid("Model returned no conclusive criterion verdict".into()))?;
         results.push(json!({"criterion":test["criterion"],"factHash":test["factHash"],"verdict":if pass{"pass"}else{"fail"},"evidence":crate::llm::truncate(reply.trim(),300)}));
     }
     let verdict = if results.iter().all(|r| r["verdict"] == "pass") {
@@ -2299,7 +2333,7 @@ async fn judge_llm_criteria(
         Some("Each LLM criterion was inspected separately."),
         Some(&json!(results)),
         gs,
-    )
+    ).map_err(JudgmentError::Invalid)
 }
 
 fn record_llm_failure(store: &Store, rid: &str, error: &str) {
@@ -2431,8 +2465,13 @@ pub(crate) async fn run_without_build(
                     match result["status"].as_str(){Some("verified")=>verified+=1,Some("failing"|"partial")=>failing+=1,_=>skipped+=1}
                     trace.event(TraceEvent::VerifyRowDone {requirement:rid.clone(),verdict:result["verdict"].as_str().unwrap_or("none").into(),run:"llm".into(),evidence:"Each bound LLM criterion received a separate judgment.".into()});
                 }
-                Err(error) if crate::session_recovery::is_interruption(&error) => return Err(error),
-                Err(error)=> {
+                Err(JudgmentError::Model(error)) => {
+                    if !crate::session_recovery::is_interruption(&error) {
+                        trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: error.clone() });
+                    }
+                    return Err(error);
+                }
+                Err(JudgmentError::Invalid(error))=> {
                     record_llm_failure(store,&rid,&error);skipped+=1;
                     trace.event(TraceEvent::VerifyRowError {requirement:rid.clone(),message:error});
                 }
@@ -2509,7 +2548,7 @@ pub(crate) async fn run_without_build(
                                 requirement: rid.clone(),
                                 message: format!(" llm run failed: {}", e),
                             });
-                            None
+                            return Err(e);
                         }
                     }
                 }

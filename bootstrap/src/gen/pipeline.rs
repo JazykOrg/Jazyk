@@ -111,6 +111,32 @@ pub(super) async fn run(
     id: &str,
     task: &Value,
 ) -> Result<usize, String> {
+    run_report(store, runner, gs, id, task).await?.result
+}
+
+pub(super) struct Outcome {
+    pub result: Result<usize, String>,
+    pub failed: Option<String>,
+}
+
+impl Outcome {
+    fn from_requests(result: Result<usize, String>, requests: &BTreeMap<String, Request>) -> Self {
+        let failed = if result.is_err() {
+            requests.values().find_map(|request|
+                request.reply.as_ref().and_then(|reply| reply.as_ref().err()).cloned())
+        } else { None };
+        Self { result, failed }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(super) async fn run_report(
+    store: &Store,
+    runner: &dyn SessionRunner,
+    gs: &GenSettings,
+    id: &str,
+    task: &Value,
+) -> Result<Outcome, String> {
     let signature =
         serde_json::json!({"settings":gs,"entity":id,"facts":super::fact_hash(store,id)});
     let key = progress::command_key("generation-pipeline", &store.out, &signature);
@@ -122,7 +148,7 @@ pub(super) async fn run(
         result: None,
     })?;
     if let Some(result) = &saved.data.result {
-        return result.clone();
+        return Ok(Outcome::from_requests(result.clone(), &saved.data.requests));
     }
     saved.save().await?;
     let (task, ledger) = (saved.data.task.clone(), saved.data.ledger.clone());
@@ -136,11 +162,12 @@ pub(super) async fn run(
         .err()
         .is_some_and(|reason| crate::session_recovery::is_interruption(reason))
     {
-        return result;
+        return Ok(Outcome { result, failed: None });
     }
     runner.progress.borrow_mut().data.result = Some(result.clone());
     runner.progress.borrow().save().await?;
-    result
+    let outcome = Outcome::from_requests(result, &runner.progress.borrow().data.requests);
+    Ok(outcome)
 }
 
 /// The next model/parent checkpoint atomically saves this set and the writes that

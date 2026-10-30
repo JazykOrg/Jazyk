@@ -545,6 +545,92 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn a_binding_transport_error_stops_before_the_next_target_and_retains_its_reason() {
+        use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+        let mut workspace = crate::hosted::Workspace::new(pending_workspace(2, 2, false)).unwrap();
+        let created = workspace.request("POST", "/api/chat/sessions", "{}", &Default::default()).unwrap();
+        let chat: Value = serde_json::from_slice(&created.body).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = events.clone();
+        let execution = crate::hosted::Execution {
+            transport_async: Some(Arc::new(move |_| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err("Local model request failed.".into()) })
+            })),
+            trace: Some(Arc::new(move |event| recorded.lock().unwrap().push(serde_json::to_value(event).unwrap()))),
+            ..Default::default()
+        };
+        let request = json!({"kind":"workflow","setId":"ds_main","conversationId":chat["id"],"jobId":494,
+            "steps":[{"action":"compile"},{"action":"bind"},{"action":"generate"}]});
+        let reply = workspace.request("POST", "/api/jobs", &request.to_string(), &execution).unwrap();
+        let result: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(reply.status, 422, "{result}");
+        assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 2);
+        let binding = &result["report"]["steps"][1]["result"];
+        assert_eq!(binding["bound"], 0);
+        assert_eq!(binding["failures"], 1);
+        assert!(binding["stopped"].as_str().unwrap().contains("Local model request failed."), "{result}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let events = events.lock().unwrap();
+        let sessions: Vec<_> = events.iter().filter(|event| event["kind"] == "sessionStart").collect();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["label"], "g:bind:req:site-1");
+        drop(events);
+        let mut restored = crate::hosted::Workspace::new(workspace.snapshot()).unwrap();
+        let reply = restored.request("GET", &format!("/api/chat/sessions/{}", chat["id"].as_str().unwrap()), "", &Default::default()).unwrap();
+        let timeline: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert!(timeline["updates"].as_array().unwrap().iter().any(|row|
+            row["update"]["sessionUpdate"] == "workflow" && row["update"]["jobId"] == 494));
+        let snapshot = restored.snapshot();
+        let _fs = crate::vfs::Scope::enter(&snapshot);
+        assert!(gen::Ledger::load(Path::new("/project/.jazyk/ds_main")).requirements.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_committed_binding_wins_over_a_later_model_error() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let files = pending_workspace(1, 1, false);
+        let criteria = {
+            let _fs = crate::vfs::Scope::enter(&files);
+            let store = Store::load(Path::new("/project/.jazyk/ds_main"));
+            gen::criteria_front_matter("req:site-1", Some("crit:site-1"), &store.graph.criteria["crit:site-1"].statement)
+                + "\nInspect the product. PASS when Item 1 is visible. FAIL when absent.\n"
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let execution = crate::hosted::Execution {
+            transport_async: Some(Arc::new(move |_| {
+                let round = observed.fetch_add(1, Ordering::SeqCst);
+                let criteria = criteria.clone();
+                Box::pin(async move {
+                    if round > 0 { return Err("Post-record model connection closed.".into()); }
+                    let actions = [
+                        ("begin_binding", json!({"requirement":"req:site-1"})),
+                        ("write_text_file", json!({"path":"tests/site.md","content":criteria})),
+                        ("record_binding", json!({"requirement":"req:site-1","files":[],"verdict":"fail","tests":[{
+                            "criterion":"crit:site-1","kind":"llm","artifact":"tests/site.md","label":"Visible item","name":"visible","run":"llm","verdict":"fail","evidence":"No implementation exists."
+                        }]})),
+                    ];
+                    Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(index,(name,args))|
+                        json!({"id":format!("record-{index}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()}}]}).to_string())
+                })
+            })), ..Default::default()
+        };
+        let (result, files) = workflow_request(files, json!([{"action":"bind"}]), &execution);
+        assert_eq!(result["report"]["state"], "done", "{result}");
+        assert_eq!(result["report"]["steps"][0]["result"]["bound"], 1);
+        assert_eq!(result["report"]["steps"][0]["result"]["failures"], 0);
+        assert!(result["report"]["steps"][0]["result"]["stopped"].is_null());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let _fs = crate::vfs::Scope::enter(&files);
+        assert!(gen::Ledger::load(Path::new("/project/.jazyk/ds_main")).requirements.contains_key("req:site-1"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn selected_binding_and_generation_write_a_deliverable_with_open_human_questions() {
         use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
         let files = pending_workspace(1, 1, true);

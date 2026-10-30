@@ -19,6 +19,14 @@ use serde_json::{json, Value};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
+fn ledger_failure(stop: &Stop, rounds: u32) -> Option<String> {
+    match stop {
+        Stop::Error(error) if !crate::session_recovery::is_interruption(error) => {
+            Some(crate::runner::unlanded_reason(stop, rounds))
+        }
+        _ => None,
+    }
+}
 pub struct InProcessRunner {
     project: Project,
     llm: Llm,
@@ -269,7 +277,13 @@ impl SessionRunner for InProcessRunner {
             rounds,
             tokens,
             cached,
-            failed: if committed || batch.is_ledger() || trace.is_cancelled() {
+            failed: if trace.is_cancelled() {
+                None
+            } else if batch.is_ledger() {
+                // The ledger worker checks its gates first, including partial
+                // commits. Only a runtime error is a fatal session failure here.
+                ledger_failure(&stop, rounds)
+            } else if committed {
                 None
             } else {
                 Some(crate::runner::unlanded_reason(&stop, rounds))
@@ -292,6 +306,22 @@ impl SessionRunner for InProcessRunner {
         _trace: Option<&Trace>,
     ) -> Result<String, String> {
         self.llm.chat(system, user, _label, _step).await
+    }
+}
+
+#[cfg(test)]
+mod ledger_failure_tests {
+    use super::*;
+
+    #[test]
+    fn only_an_ordinary_runtime_error_is_a_fatal_ledger_failure() {
+        for stop in [Stop::EndTurn, Stop::MaxRounds, Stop::Cancelled, Stop::Suspended,
+            Stop::Error("checkpoint-failed: disk".into()),
+            Stop::Error("execution-uncertain: task".into())] {
+            assert!(ledger_failure(&stop, 3).is_none(), "{stop:?}");
+        }
+        assert_eq!(ledger_failure(&Stop::Error("Local model request failed.".into()), 3),
+            Some("the model call failed: Local model request failed.".into()));
     }
 }
 

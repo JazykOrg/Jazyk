@@ -17,6 +17,8 @@ pub struct SessionReport {
     // cache (docs/compiler/sessions.md#budgets).
     pub tokens: u64,
     pub cached: u64,
+    // Ledger callers check committed gates first. If work remains, an ordinary
+    // runtime error here stops later targets; other session stops stay distinct.
     pub failed: Option<String>,
     // Goal ids the batch's journal entries resolved.
     pub resolved: Vec<String>,

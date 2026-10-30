@@ -2837,6 +2837,7 @@ mod tests {
     // the stop otherwise. Mirrors docs/consumers/gen.md#the-ledger.
     struct StubRunner {
         record: bool,
+        failed: Option<String>,
         stopped: Option<String>,
         store: Store,
         gs: GenSettings,
@@ -2851,7 +2852,7 @@ mod tests {
                 crate::vfs::write(self.gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
                 mark(&self.store, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &self.gs).unwrap();
             }
-            crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, cached: 0, failed: None, resolved: Vec::new(), stopped: self.stopped.clone() }
+            crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, cached: 0, failed: self.failed.clone(), resolved: Vec::new(), stopped: self.stopped.clone() }
         }
         fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
             Err("stub".into())
@@ -2872,20 +2873,95 @@ mod tests {
         mark(&s, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &gs).unwrap();
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal, std::sync::Arc::new(|_| {}), Default::default());
         let ids = vec!["ent:cart".to_string()];
-        let idle = StubRunner { record: false, stopped: Some("http error: HTTP 429 :: rate limit".into()), store: s.clone(), gs: gs.clone() };
+        let idle = StubRunner { failed: None, record: false, stopped: Some("http error: HTTP 429 :: rate limit".into()), store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &idle, &gs, "ent:cart", &ids, &trace);
         let err = r.results[0].1.as_ref().unwrap_err();
         assert!(err.contains("no record landed") && err.contains("429"), "{}", err);
-        let quiet = StubRunner { record: false, stopped: None, store: s.clone(), gs: gs.clone() };
+        let quiet = StubRunner { failed: None, record: false, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &quiet, &gs, "ent:cart", &ids, &trace);
         assert!(r.results[0].1.as_ref().unwrap_err().contains("without record_generation"), "{:?}", r.results[0].1);
         // recordedAt has one-second resolution; a real session spans seconds.
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let writer = StubRunner { record: true, stopped: None, store: s.clone(), gs: gs.clone() };
+        let writer = StubRunner { failed: None, record: true, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &writer, &gs, "ent:cart", &ids, &trace);
         assert_eq!(r.results[0].1.as_ref().unwrap(), &1, "{:?}", r.results[0].1);
         assert!(Ledger::load(&out).entities["cart"].recorded_at.is_some());
         crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn a_fresh_generation_manifest_wins_over_a_later_runtime_error() {
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let out = std::path::Path::new("/project/.jazyk/post-record");
+        let (mut store, gs) = fixture(out);
+        store.graph.entities.insert("ent:other".into(), Entity { name:"Other".into(), ..Default::default() });
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}), Default::default());
+        let writer = StubRunner { record:true, failed:Some("the model call failed: connection closed".into()),
+            stopped:Some("the model call failed: connection closed".into()), store:store.clone(), gs:gs.clone() };
+        let result = gen_session(&store, &writer, &gs, "ent:cart", &["ent:cart".into()], &trace);
+        assert!(result.results[0].1.is_ok());
+        assert!(result.failed.is_none());
+        let mut ledger = Ledger::load(out);
+        ledger.entities.get_mut("cart").unwrap().recorded_at = Some("before-partial".into());
+        ledger.save(out);
+        let result = gen_session(&store, &writer, &gs, "ent:cart", &["ent:cart".into(), "ent:other".into()], &trace);
+        assert!(result.results[0].1.is_ok());
+        assert_eq!(result.results[1].1.as_ref().unwrap_err(), "the model call failed: connection closed");
+        assert_eq!(result.failed.as_deref(), Some("the model call failed: connection closed"));
+    }
+
+    #[test]
+    fn a_generation_runtime_error_does_not_attempt_the_next_group() {
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        struct Broken(std::cell::Cell<usize>);
+        impl SessionRunner for Broken {
+            fn agent_name(&self) -> String { "broken".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, _: &BatchRun, _: &crate::session::Trace) -> SessionReport {
+                self.0.set(self.0.get() + 1);
+                SessionReport { applied:0,rounds:1,tokens:7,cached:0,failed:Some("the model call failed: disconnected".into()),resolved:Vec::new(),stopped:Some("the model call failed: disconnected".into()) }
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> {
+                self.0.set(self.0.get()+1);
+                Err("the model call failed: disconnected".into())
+            }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> { unreachable!() }
+        }
+        for worker in ["agentic", "pipeline"] {
+        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+        let out = std::path::Path::new("/project/.jazyk/generation-fatal");
+        let (mut store, mut gs) = fixture(out);
+        gs.worker = worker.into();
+        store.graph.entities.insert("ent:other".into(), Entity { name:"Other".into(), ..Default::default() });
+        store.graph.requirements.insert("req:other-1".into(), Requirement {
+            statement:"Other holds items.".into(),entities:vec!["ent:other".into()],..Default::default()
+        });
+        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn previous() {}\n").unwrap();
+        mark(&store,"ent:cart",None,&json!({"files":["cart.rs"],"tests":[]}),&gs).unwrap();
+        let mut ledger = Ledger::load(out);
+        ledger.medium=Some(Medium { form:"Rust source".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new() });
+        ledger.save(out);
+        let runner = Broken(std::cell::Cell::new(0));
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_|{}),Default::default());
+        let result = run_selected(&store,&runner,&gs,&[],true,&trace,false).unwrap();
+        assert_eq!(runner.0.get(),1);
+        assert_eq!(result["failures"],1);
+        assert_eq!(result["stopped"],"the model call failed: disconnected");
+        assert!(!Ledger::load(out).entities.contains_key("other"));
+        }
+    }
+
+    #[test]
+    fn prior_generation_group_progress_keeps_its_position_without_an_error_field() {
+        let old = json!({"root":"ent:cart","ready":["ent:cart","ent:other"],
+            "pipeline_cursor":1,"pipeline_task":null,"pipeline_results":[["ent:cart",{"Ok":1}]]});
+        let restored: GenGroup = serde_json::from_value(old).unwrap();
+        assert_eq!(restored.pipeline_cursor,1);
+        assert_eq!(restored.pipeline_results,vec![("ent:cart".into(),Ok(1))]);
+        assert!(restored.pipeline_failed.is_none());
     }
 
     #[test]
@@ -2904,11 +2980,11 @@ mod tests {
         ledger.save(out);
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
             std::sync::Arc::new(|_| {}), Default::default());
-        let paused = StubRunner { record: false, stopped: Some("checkpoint-failed: test storage outage".into()),
+        let paused = StubRunner { failed: None, record: false, stopped: Some("checkpoint-failed: test storage outage".into()),
             store: store.clone(), gs: gs.clone() };
         let error = run_selected(&store, &paused, &gs, &[], true, &trace, false).unwrap_err();
         assert!(error.starts_with("checkpoint-failed:"));
-        let writer = StubRunner { record: true, stopped: None, store: store.clone(), gs: gs.clone() };
+        let writer = StubRunner { failed: None, record: true, stopped: None, store: store.clone(), gs: gs.clone() };
         let result = run_selected(&store, &writer, &gs, &[], true, &trace, false).unwrap();
         assert_eq!(result["regenerated"], 1);
         assert_eq!(result["failures"], 0);
@@ -4237,6 +4313,8 @@ struct GenGroup {
     pipeline_cursor: usize,
     pipeline_task: Option<Value>,
     pipeline_results: Vec<(String, Result<usize, String>)>,
+    #[serde(default)]
+    pipeline_failed: Option<String>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
@@ -4337,6 +4415,7 @@ pub(crate) async fn run_selected(
                 pipeline_cursor: 0,
                 pipeline_task: None,
                 pipeline_results: Vec::new(),
+                pipeline_failed: None,
             });
             command.save().await?;
         }
@@ -4346,7 +4425,8 @@ pub(crate) async fn run_selected(
             trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
         }
         let outcome = if gs.worker == "pipeline" {
-            while command.data.active.as_ref().unwrap().pipeline_cursor < ready.len() {
+            while command.data.active.as_ref().unwrap().pipeline_cursor < ready.len()
+                && command.data.active.as_ref().unwrap().pipeline_failed.is_none() {
                 let cursor = command.data.active.as_ref().unwrap().pipeline_cursor;
                 let id = &ready[cursor];
                 if trace.is_cancelled() {
@@ -4387,13 +4467,15 @@ pub(crate) async fn run_selected(
                     .as_ref()
                     .unwrap()
                     .clone();
-                let result = gen_one(store, runner, gs, id, &task).await;
+                let outcome = pipeline::run_report(store, runner, gs, id, &task).await?;
+                let result = outcome.result;
                 if let Err(reason) = &result {
                     if crate::session_recovery::is_interruption(reason) {
                         return Err(reason.clone());
                     }
                 }
                 let active = command.data.active.as_mut().unwrap();
+                active.pipeline_failed = outcome.failed;
                 active.pipeline_results.push((id.clone(), result));
                 active.pipeline_cursor += 1;
                 active.pipeline_task = None;
@@ -4408,7 +4490,7 @@ pub(crate) async fn run_selected(
                     .pipeline_results
                     .clone(),
                 tokens: 0,
-                failed: None,
+                failed: command.data.active.as_ref().unwrap().pipeline_failed.clone(),
             }
         } else {
             gen_session(store, runner, gs, &root, &ready, trace).await
@@ -4420,7 +4502,7 @@ pub(crate) async fn run_selected(
         {
             return Err(reason.clone());
         }
-        let (next, down) = crate::reconcile::breaker_step(
+        let (next, _) = crate::reconcile::breaker_step(
             command.data.streak,
             outcome.tokens,
             outcome.failed.as_deref(),
@@ -4448,7 +4530,7 @@ pub(crate) async fn run_selected(
             &store.out,
             &format!("g:generate:{root}"),
         ));
-        if down && command.data.streak >= crate::limits::ENDPOINT_BREAKER {
+        if outcome.failed.is_some() {
             command.data.stopped = outcome.failed;
         }
         command.save().await?;
@@ -4584,31 +4666,30 @@ async fn gen_session(
         .iter()
         .zip(&saved.data.before)
         .map(|(id, before)| {
-            let result = if let Some(reason) = &report.failed {
-                Err(reason.clone())
-            } else if after
+            let result = if after
                 .entities
                 .get(&slug_of(id))
                 .and_then(|row| row.recorded_at.clone())
                 == *before
             {
-                Err(format!(
+                Err(report.failed.clone().unwrap_or_else(|| format!(
                     "no record landed for `{id}` in this session: {}",
-                    report
-                        .stopped
-                        .as_deref()
-                        .unwrap_or("the session ended without record_generation")
-                ))
+                    report.stopped.as_deref().unwrap_or("the session ended without record_generation")
+                )))
             } else {
                 gate(store, gs, id, false)
+                    .map_err(|error| report.failed.clone().unwrap_or(error))
             };
             (id.clone(), result)
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let failed = if results.iter().any(|(_, result)| result.is_err()) {
+        report.failed
+    } else { None };
     let outcome = GenSessionOutcome {
         results,
         tokens: report.tokens,
-        failed: report.failed,
+        failed,
     };
     saved.data.result = Some(outcome.clone());
     if let Err(reason) = saved.save().await {

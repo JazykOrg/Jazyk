@@ -657,7 +657,8 @@ impl AcpRunner {
                 rounds,
                 tokens,
                 cached,
-                failed: None,
+                failed: (!trace.is_cancelled() && stop.stop == "refusal")
+                    .then(|| stop_reason.clone()).flatten(),
                 resolved,
                 stopped: stop_reason,
             };

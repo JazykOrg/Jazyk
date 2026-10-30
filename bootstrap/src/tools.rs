@@ -1221,7 +1221,7 @@ fn junk_name(name: &str) -> Option<&'static str> {
 
 // The scope of one goal in the batch: what the per-goal gates key on.
 // Mirrors docs/compiler/sessions.md#anatomy.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct GoalScope {
     pub goal: String,
     pub kind: String,
@@ -1313,7 +1313,7 @@ impl GoalScope {
 }
 
 // The scope a session works in: one goal batch, or a serving surface outside one.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct WorkScope {
     // The batch id: names the session and the feedback entries.
     pub batch: String,
@@ -1450,7 +1450,7 @@ impl WorkScope {
 }
 
 // How one goal of the batch ended, as the session claimed it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum GoalOutcome {
     Done {
         justification: String,
@@ -1473,6 +1473,7 @@ pub fn harness_owned_rule(rule: &str) -> bool {
         || rule.starts_with("unstable-")
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ToolSession {
     pub snapshot: Store,
     pub scope: WorkScope,

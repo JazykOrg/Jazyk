@@ -30,6 +30,10 @@ files and retains the requirement freshness rules of the verification ledger.
 A request includes an ordered, nonempty `steps` array, with at most 100 actions.
 Unknown actions and duplicate actions or task IDs are refused. Actions run
 sequentially. Each action records its name, result, and state in the job result.
+The execution checkpoint retains the frozen task definitions, current action and
+completed results. Restoration resumes the active action before selecting another
+one. Completed actions retain their results and do not execute again. Deployment
+suspension retains the current action and does not record a failed result.
 Failure or cancellation stops subsequent actions. A failed check never counts as
 successful publication evidence. Unselected mandatory goals remain visible on the
 board. Finishing a selected workflow does not imply whole-project convergence.

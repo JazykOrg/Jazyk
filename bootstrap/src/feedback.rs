@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 // The caller's references, so a record says who and what called it. Set by the harness
 // that owns the session; empty fields are omitted from the record.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Caller {
     // "session" (a compilation session) or "mcp" (an external agent).
     pub source: String,

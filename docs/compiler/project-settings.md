@@ -328,35 +328,14 @@ They bound the endpoint and the process; session and build budgets are
 [registry constants](./sessions.md#budgets), and builds are
 [sequential](./control-plane.md#sequential-builds), so there is no concurrency knob.
 
-- `JAZYK_MAX_RETRIES`: retries, in addition to the first attempt, for a failed LLM call
-  (default 2). A transient failure (a transport error, HTTP 429, 502, 503, or 504)
-  retries after a 5 second pause; a rate-limited call (HTTP 429) waits 20 seconds.
-  Hammering a struggling endpoint only makes it worse.
-- `JAZYK_MIN_INTERVAL_MS`: minimum gap between request starts to the endpoint
-  (default 500). Bounds the request rate even when calls fail fast in a tight loop.
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
-- `JAZYK_READ_TIMEOUT`: seconds to wait for the next byte of one LLM response before
-  the call fails (default 300). Bounds stalls: a dead endpoint costs at most the
-  timeout times the retries, not an open-ended wait. It does not bound a response
-  that keeps streaming; the two knobs below do.
 - `JAZYK_MAX_COMPLETION_TOKENS`: cap on one response's completion, sent as
-  `max_tokens` on every request (default 4096). After a reply the cap cut in its
-  reasoning with no call made, or a cap-exhausted call missing required fields,
-  the embedded agent's next request alone carries twice the cap. The latter repair
-  can boost at most two replies per turn. A local reasoning model planning a
-  two-section extraction ran past
-  4096 tokens on every round of a session and never reached its first write. This is the loop detector: a small
-  model stuck repeating itself hits the cap and the call fails as
-  `runaway completion` instead of generating forever. The stream reader enforces the
-  same cap on accumulated content, so a server that ignores the field is still
-  bounded. An endpoint that rejects the field gets one retry without it, sticky for
-  the run, the same fallback contract as `temperature`.
-- `JAZYK_CALL_TIMEOUT`: seconds for one whole LLM call (default 600).
-  `JAZYK_READ_TIMEOUT` waits for the next byte; this bounds the call even when bytes
-  keep arriving, streaming or not. Connecting is bounded separately at 15 seconds.
-  Every layer above adds its own bound: session round budgets, the ACP idle watchdog
-  (`JAZYK_ACP_IDLE_TIMEOUT`), and lease TTLs, so no single stall can hold a build.
+  `max_tokens` on every request (default 4096). The runtime does not switch codecs,
+  remove the cap, or boost a later response. Native responses are bounded to 16 MiB.
+- `JAZYK_CALL_TIMEOUT`: seconds for one whole native LLM call (default 600).
+  Hosted and browser transports enforce their host's deadline. Session round
+  budgets, the ACP idle watchdog and lease TTLs provide additional bounds.
 - `JAZYK_COMMAND_TIMEOUT`: seconds one shell command may run (default 600): a recorded
   build or test under `jazyk test`, a session's `run_command`. Past it the harness kills
   the command and records exit `124`
@@ -380,3 +359,10 @@ They bound the endpoint and the process; session and build budgets are
 
 The project-level `[[tasks]]` list defines finite command execution. See
 [task execution](task-runtime.md) for fields, file globs, and host limits.
+
+## Native tool capability
+
+The embedded runtime requires native tool calling. `JAZYK_CODEC` is no longer
+read. No run switches to a text tool protocol. An unsupported model receives an
+explicit capability error. Older
+benchmark and transcript codec labels remain historical data.

@@ -70,10 +70,34 @@ fn param(q: &[(String, String)], key: &str) -> Option<String> {
 }
 
 pub fn request(method: &str, path: &str, body: &str) -> String {
-    request_at(&crate::portable::root(), method, path, body)
+    #[cfg(not(target_arch = "wasm32"))]
+    { request_at(&crate::portable::root(), method, path, body) }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use futures::FutureExt;
+        let route = path.split('?').next().unwrap_or(path);
+        if method == "POST" && ["/jobs", "/compile", "/prompt", "/inputs"].iter().any(|suffix| route.ends_with(suffix)) {
+            return err(409, "Model execution requires request_async.");
+        }
+        request_at(&crate::portable::root(), method, path, body)
+            .now_or_never()
+            .unwrap_or_else(|| err(409, "This operation requires request_async."))
+    }
 }
 
-pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) -> String {
+pub async fn request_async(method: &str, path: &str, body: &str) -> String {
+    request_at_async(&crate::portable::root(), method, path, body).await
+}
+
+pub async fn request_at_async(root: &std::path::Path, method: &str, path: &str, body: &str) -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    { request_at(root, method, path, body) }
+    #[cfg(target_arch = "wasm32")]
+    { request_at(root, method, path, body).await }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) -> String {
     let body: Value = match serde_json::from_str(if body.is_empty() { "null" } else { body }) {
         Ok(v) => v,
         Err(e) => return err(400, e.to_string()),
@@ -101,7 +125,7 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
                 "/settings" | "/project/files" | "/project/file" | "/project/raw" | "/ping"
             ) && method == "GET"
             {
-                return request_scoped(root, method, path, &routed.body, &Project::load(root));
+                return request_scoped(root, method, path, &routed.body, &Project::load(root)).await;
             }
             return err(status, error);
         }
@@ -156,7 +180,7 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
             }
             let p = workspace.resolve(Some(&id)).unwrap();
             let mut result: Value =
-                serde_json::from_str(&request_scoped(root, method, path, &routed.body, &p))
+                serde_json::from_str(&request_scoped(root, method, path, &routed.body, &p).await)
                     .unwrap();
             result["setId"] = json!(id);
             results.push(result);
@@ -202,7 +226,7 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
             "this operation requires setId or a qualified graph reference",
         );
     };
-    let response = request_scoped(root, method, path, &routed.body, &context);
+    let response = request_scoped(root, method, path, &routed.body, &context).await;
     let mut envelope: Value = serde_json::from_str(&response).unwrap();
     if route == "/project" {
         envelope["body"]["sets"] = workspace.summary()["sets"].clone();
@@ -214,7 +238,8 @@ pub fn request_at(root: &std::path::Path, method: &str, path: &str, body: &str) 
     envelope.to_string()
 }
 
-pub(crate) fn request_scoped(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn request_scoped(
     root: &std::path::Path,
     method: &str,
     path: &str,
@@ -433,14 +458,14 @@ pub(crate) fn request_scoped(
             let trace = crate::portable::trace();
             // The answers recorded since the last build run first: a tab runs no
             // answer session in the background (docs/frontends/wasm.md#the-inbox).
-            let answers = crate::inprocess::run_answers(&p, &llm, &p.out, &trace);
+            let answers = crate::inprocess::run_answers(&p, &llm, &p.out, &trace).await;
             let report = crate::reconcile::compile_with(
                 &p,
                 &llm,
                 &p.out,
                 &trace,
                 body["sessions"].as_u64().map(|n| n as usize),
-            );
+            ).await;
             ok(json!({
                 "id": 1,
                 "kind": "compile",
@@ -831,12 +856,12 @@ pub(crate) fn request_scoped(
                 p.trim_start_matches("/chat/sessions/")
                     .trim_end_matches("/prompt"),
             );
-            let (status, v) = crate::conversation::prompt(&id, body);
+            let (status, v) = crate::conversation::prompt(&id, body).await;
             reply(status, v)
         }
         ("POST", p) if p.starts_with("/chat/sessions/") && p.ends_with("/inputs") => {
             let id=decode(p.trim_start_matches("/chat/sessions/").trim_end_matches("/inputs"));
-            let (status,value)=crate::conversation::prompt(&id,body);
+            let (status,value)=crate::conversation::prompt(&id,body).await;
             reply(status,value)
         }
         // The page answers a cancel while a turn runs; one that reaches the worker

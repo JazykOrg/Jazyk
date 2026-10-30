@@ -15,7 +15,7 @@ pub struct LlmSettings {
     pub temperature: Option<f64>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Linting {
     pub warnings: Vec<String>,
     pub errors: Vec<String>,

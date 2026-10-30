@@ -563,6 +563,26 @@ pub fn is_scoped() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn scoped_snapshot() -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+    if !is_scoped() {
+        return Err("No hosted workspace is installed on this thread.".into());
+    }
+    memory::list_all()
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .strip_prefix("/project")
+                .map_err(|_| "Path outside hosted workspace".to_string())?
+                .to_str()
+                .ok_or("Invalid workspace path")?
+                .to_owned();
+            let bytes = memory::read(&path).map_err(|e| e.to_string())?;
+            Ok((name, bytes))
+        })
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn checked(path: &Path) -> io::Result<PathBuf> {
     let normalized = memory::norm(path);
     if !normalized.is_absolute() || !normalized.starts_with("/project") {

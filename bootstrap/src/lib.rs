@@ -8,7 +8,6 @@
 
 // Core: the graph, the reconciler, and everything they need. Compiles for both
 // targets against crate::vfs instead of std::fs.
-pub mod agent_loop;
 pub mod align;
 pub mod answer;
 pub mod board;
@@ -23,6 +22,7 @@ pub mod feedback;
 pub mod bind;
 pub mod gen;
 pub mod goals;
+pub mod harness;
 pub mod limits;
 pub mod live_preview;
 pub mod llm;
@@ -44,6 +44,7 @@ pub mod reconcile;
 pub mod render;
 pub mod runner;
 pub mod session;
+pub mod session_recovery;
 pub mod store;
 pub mod sys;
 pub mod tools;

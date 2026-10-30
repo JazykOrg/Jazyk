@@ -51,7 +51,7 @@ pub fn parse_handle(handle: &str) -> Result<(String, String, usize), String> {
     Ok((parts.join(":"), axis, start))
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
 pub struct Handle {
     pub handle: String,
     pub description: String,
@@ -59,7 +59,7 @@ pub struct Handle {
 }
 
 // One item of the loaded set: a node loaded in full, a stub, or a section body.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct LoadedItem {
     pub target: String,
     // "full" | "stub" | "section body", with counts appended at render time.
@@ -70,6 +70,7 @@ pub struct LoadedItem {
 }
 
 // The session's working set. Mirrors docs/compiler/context.md#the-loaded-set.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct LoadedSet {
     pub items: Vec<LoadedItem>,
     pub budget: usize,

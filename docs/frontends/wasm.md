@@ -197,95 +197,44 @@ like any other file.
 
 ## Sessions
 
-Natively a session is an [ACP worker session](./acp.md#worker-sessions): jazyk
-spawns an agent, injects a `jazyk mcp` serving scoped to the batch, and the agent
-talks to that serving over a transport. In a tab there is nothing to spawn and
-nothing to connect over, so the same three pieces sit in one module and call each
-other directly.
+The browser uses the shared [GDK runtime](../compiler/agent-runtime.md). Its
+in-process runner opens the same MCP serving and goal batch as native execution.
+The gates, staged changeset and atomic commit are shared. What landed is read from
+the journal, never inferred from the model's final text.
 
-`crate::runner::SessionRunner` is the contract the reconciler and the ledger workers
-speak: `agent_name`, `set_build_token`, `run_item`, `ask`, `ask_traced`. Two
-implementations satisfy it.
-
-- `crate::acp::runner::AcpRunner`, natively.
-- `crate::wasm::runner::InPageRunner`, in a tab. It builds an `McpServer` in compile
-  mode, lists its tools, claims the batch with `begin_goals` (whose reply carries the
-  assembled session prompt), and drives `crate::agent_loop::run_loop` with a dispatch
-  closure that calls `tools/call` on that serving.
-
-The serving is the same one a native session gets, in the same mode, so the
-[gates](../compiler/graph.md#validation-gates), the staged changeset, and the atomic commit are
-the ones every other front door uses. What landed is read from the
-[journal](../compiler/graph.md#journal) through `crate::runner::journal_diff`, never
-from the model's word. A batch the model leaves open never commits: the changeset is
-abandoned and the goals return to open.
-
-The runner emits the session's [trace events](../compiler/sessions.md#trace-events)
-the way the ACP runner's translator does: `sessionStart`, one `toolCall` per call
-with its `toolResult` or `toolError`, a `section` event when an accepted call names
-another section, the model's text and reasoning as `modelText`, and `sessionDone`
-when the batch lands. A batch that does not land fails with the stop in words (the
-model ended its turn with the batch still open, the round budget, the model's error).
-
-`crate::agent_loop` is the generic loop the embedded agent already used: send the
-history and the tools, dispatch the calls the model makes, repeat until it stops
-calling tools. It carries the codec machinery (native tool calls, the text fallback,
-the first-round probe) and knows nothing about jazyk, which is why it serves both.
+Session execution is asynchronous. The worker serializes project operations while
+model replies, Stop and accepted steering remain deliverable independently. A
+model-driven request returns through an async WASM entry point. Deterministic reads
+retain their existing API values and routes.
 
 ## The model
 
-A session is synchronous all the way down: it calls the model and waits for the reply
-before it decides what to stage. Every model API in a browser is a promise, and a
-promise cannot be awaited from synchronous Rust. The two are joined the only way that
-composes without turning the reconciler inside out:
+The page owns inference, authentication and model loading. The engine supplies a
+native-tool request and awaits the host's response. JavaScript promises can resume
+on the worker. The model bridge does not block that worker with `Atomics.wait`.
 
-- The backend runs in a Web Worker.
-- The JavaScript host owns the model and stays on the main thread.
-- A call writes the request out and blocks the worker on `Atomics.wait`.
-- The page runs the model, writes the reply into a `SharedArrayBuffer`, and wakes the
-  worker with `Atomics.notify`.
+The host preserves native tool calls, reasoning and usage in the completed
+response. UI deltas may stream separately. The engine receives complete native
+messages for history and checkpointing. Models without verified native tool calling
+are unavailable for tool-driven work. There is no text tool fallback.
 
-`crate::llm` is unchanged above the transport: it assembles the same
-OpenAI-shaped request, and `Transported` is the one seam. Natively the transport is
-HTTP through `ureq`; in a tab it is `crate::wasm::llm_bridge`, whose `chatSync` does
-the blocking handshake above. Streaming has no transport to stream over, so the page
-answers once.
-
-`SharedArrayBuffer` requires a [cross-origin isolated](#serving) page. Without it the
-backend still serves every read; only a build or a chat turn is refused, with the
-reason. The same
-holds without WebGPU: there is no model to call, and the page says so instead of
-hanging.
-
-The backend speaks the text codec in a tab, set once at boot (the same effect as
-`JAZYK_CODEC=text`). WebLLM's native tool calling is whitelisted to a few 8B builds
-and refuses a custom system prompt beside it, so the first-round probe would fail
-every session before falling back. The text codec renders the compile serving's tool
-schemas into the prompt, about 19k tokens before the model says a word, so the
-engine's context window is set to 32k. The window is paid for in KV cache: for a 3B
-model about 3.5GB beside 2GB of weights, which a laptop with unified memory carries.
-
-The model the page loads is a small instruct model, so a first visit downloads
-gigabytes rather than tens of gigabytes, and the weights cache in the browser. A
-model this size is well under what the [benchmark](../benchmark/benchmark.md) asks
-for: the harness holds (gates bounce bad calls, junk never lands), but the judgment
-the sessions produce is poor, and a turn takes a minute or more. The demo shows the
-machinery, not the quality.
+Browser storage and effects use the same logical checkpoint contract as other
+hosts. Reload restores complete saved state or reports interruption. An uncertain
+external effect is never silently replayed. Closing a tab does not create a
+background compilation service.
 
 ## The trace
 
 The native server streams [trace events](../compiler/sessions.md#trace-events) over
-SSE. The browser backend has no stream and no moment to poll: a build runs
-synchronously inside the worker, and the worker answers nothing until it returns.
-So each event is posted to the page the instant the compiler emits it, from inside
+SSE. The browser backend posts each event to the page as the asynchronous build
+emits it. Model replies, cancellation and accepted inputs can reach a suspended
+operation. Project requests stay serialized. Events travel from inside
 the running build, and the page pushes it through the same path a streamed event
 takes. The workbench renders a browser build exactly as it renders a server one,
 and the page's console carries the same events one line each.
 
-The model host logs one line per call (messages, characters, tools) and one per
-reply (tokens in and out, the finish reason, the tools called, the first words),
-and a progress line every hundred chunks while a slow model works, because the
-backend is blocked on the answer and can say nothing itself.
+The page can show answer and reasoning deltas while the harness awaits a complete
+validated model response. Tool arguments stay in the native tool-call channel.
 
 ## Chat
 
@@ -304,7 +253,7 @@ module.
   prompt fits a small window and the model answers questions about the project
   without being offered edits it cannot make well. The page passes the tier when it
   opens the conversation (`{"tier": "reader"}` in the body).
-- `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::agent_loop::run_loop`
+- `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::harness::run_loop_with_instructions`
   with the serving's tools and a dispatch closure that calls `tools/call` on it,
   against the page's model through [the bridge](#the-model). The first turn opens
   with the serving's instructions, so the model knows which project it is in and
@@ -337,7 +286,7 @@ What the serving does in a tab:
   it is stored like any edit ([browser storage](#browser-storage)).
 - The binding, generation, and verification lifecycles are not served: each needs a
   shell. The compilation lifecycle stays. Fewer tools is also a shorter prompt, since
-  the text codec writes every tool's schema into it.
+  native tool schemas still contribute to the model context.
 - No [slash commands](./acp.md#slash-commands): the catalog lives in `acp`, which is
   gated off the wasm build. The list answers empty, and a prompt that starts with
   `/` reaches the model as text.
@@ -364,7 +313,9 @@ The model:
   its line says to wait or choose another source, since a new conversation would not
   help.
 
-## A measured run
+## A prior measured run
+
+This run predates the GDK runtime and native tool requirement.
 
 On an Apple laptop with Hermes-3-Llama-3.2-3B on WebGPU, one `reconcile-section`
 session over the demo project: 15451 tokens in, prefill about 85 seconds, decode
@@ -424,14 +375,14 @@ See the [application build](https://github.com/JazykOrg/jazyk-cloud/blob/master/
 
 ## Serving
 
-The synchronous model bridge requires `SharedArrayBuffer`. Its host document must
-be cross-origin isolated with these response headers:
+The model bridge uses promises and request identities. It does not require
+`SharedArrayBuffer` or `Atomics.wait`. A synchronous `request` export remains for
+deterministic operations and refuses model-driven routes. `request_async` awaits
+model-driven execution and returns the same response envelope.
 
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-
-Without isolation the engine's reads remain usable; model calls report the missing
-capability. Offline caching and deployment belong to the
+Hosts serialize project operations while delivering model replies, cancellation
+and accepted inputs independently. A late model response cannot satisfy another
+request. Offline caching, browser feature policy and deployment belong to the
 [browser application](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/browser.md#serving).
 
 ## Browser application specification
@@ -457,8 +408,8 @@ The compile action accepts explicit set IDs or all dirty sets.
 
 ## Stopping builds
 
-The page sets the shared cancellation flag for the selected running job and wakes an
-outstanding model request with cancellation. The compiler checks the flag before
+The page sends cancellation for the selected running job and rejects an
+outstanding model promise. The compiler checks cancellation before
 another request or tool call. Late model replies are ignored. Completed session
 commits remain; staged work and provisional display are discarded. The job ends
 `cancelled`. An explicit Build resets the flag and derives remaining work from saved
@@ -476,17 +427,17 @@ between batches. A delivery event means the text entered the active worker's
 history. A request arriving after the last worker stays undelivered for recovery.
 
 A running conversation accepts ordered text inputs without a second model loop.
-The page publishes a bounded JSON batch through a separate shared-memory mailbox.
+The page bounds each input and sends it to the worker through an independent message.
 The worker drains it before model requests, between tool calls, and before turn
 completion. A completed tool keeps its real result. Unstarted stale calls receive
 skipped results before the follow-up enters history. Delivery is emitted only
 after history insertion. Stop cancels pending work and does not start another turn.
 
-The mailbox has a 16-byte atomic header (`state`, `length`, `epoch`, `sequence`)
-and UTF-8 payload bytes. The page publishes bytes before setting `state` to `1`.
-The worker reads the batch and resets `state` to `0`. Payloads include the target
-`sessionId`; the page resets the mailbox when changing projects. Full mailboxes
-leave input queued on the page. They do not acknowledge engine delivery.
+Input messages include the target `sessionId` and stable `messageId`. The page
+retains ordered inputs and publishes one at a time. Worker admission acknowledges
+queueing, not insertion into model history. An input rejected because admission
+has closed stays queued on the page. Changing projects clears the worker's input queue.
+Model replies, cancellation and input messages bypass the project operation queue.
 
 `GET /api/chat/history` exports `{version: 1, book}`. `PUT /api/chat/history`
 restores that envelope while no conversation is running. A restored running

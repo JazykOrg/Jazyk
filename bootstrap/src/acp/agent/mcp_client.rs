@@ -1,25 +1,41 @@
-pub use crate::agent_loop::GenericTool;
-// Minimal sync MCP client over stdio, for the embedded agent: spawn each server a
-// session names, list its tools, dispatch calls. Line-delimited JSON-RPC, the same
-// framing the jazyk MCP server speaks. The embedded agent knows nothing about jazyk;
-// this client treats every server identically.
-// Mirrors docs/frontends/acp.md#the-embedded-agent.
-use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+//! Native MCP subprocess I/O through the maintained Rust SDK.
+pub use crate::harness::GenericTool;
+
+use std::{future::Future, sync::mpsc, time::Duration};
+
+use rmcp::{
+    model::{CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation},
+    service::RunningService,
+    RoleClient, ServiceExt,
+};
+use serde_json::Value;
 
 pub struct McpServerConn {
     pub name: String,
-    child: Child,
-    // Option so Drop can close it first: EOF is the server's shutdown signal, and a
-    // jazyk `--ephemeral` serving runs its implicit finish on it.
-    stdin: Option<ChildStdin>,
-    // The server's lines, read on a thread so a request waits with a deadline; the
-    // channel closes when the server does. Mirrors docs/frontends/acp.md#the-embedded-agent.
-    lines: std::sync::mpsc::Receiver<String>,
-    next_id: u64,
+    service: Option<RunningService<RoleClient, ClientConfig>>,
+    child: Option<tokio::process::Child>,
     pub tools: Vec<GenericTool>,
     pub instructions: Option<String>,
+}
+
+// Only owned transport operations run here. The caller's MCP dispatch and
+// workspace scope never move. A channel also lets synchronous ACP lifecycle
+// handlers call this while the ACP connection's futures executor is active.
+fn io<T: Send + 'static>(
+    future: impl Future<Output = Result<T, String>> + Send + 'static,
+    timeout: Duration,
+) -> Result<T, String> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let task = crate::llm::native_io_runtime().spawn(async move {
+        let _ = tx.send(future.await);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(error) => {
+            task.abort();
+            Err(format!("MCP I/O did not complete: {error}"))
+        }
+    }
 }
 
 impl McpServerConn {
@@ -29,173 +45,96 @@ impl McpServerConn {
         args: &[String],
         env: &[(String, String)],
         cwd: &std::path::Path,
-    ) -> Result<McpServerConn, String> {
-        let mut cmd = Command::new(command);
-        cmd.args(args)
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("cannot spawn MCP server `{}`: {}", command, e))?;
-        let stdin = child.stdin.take().ok_or("no stdin")?;
-        let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
-        let (tx, lines) = std::sync::mpsc::channel::<String>();
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            loop {
-                buf.clear();
-                match stdout.read_until(b'\n', &mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        if tx.send(String::from_utf8_lossy(&buf).to_string()).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-        let mut conn = McpServerConn {
-            name: name.to_string(),
-            child,
-            stdin: Some(stdin),
-            lines,
-            next_id: 0,
-            tools: Vec::new(),
-            instructions: None,
-        };
-        let initialized = conn.request(
-            "initialize",
-            json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "jazyk-agent", "version": env!("CARGO_PKG_VERSION")}
-            }),
-        )?;
-        conn.instructions = initialized["instructions"]
-            .as_str()
-            .filter(|text| !text.trim().is_empty())
-            .map(str::to_owned);
-        conn.notify("notifications/initialized", json!({}))?;
-        let listed = conn.request("tools/list", json!({}))?;
-        conn.tools = listed["tools"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|t| GenericTool {
-                        name: t["name"].as_str().unwrap_or_default().to_string(),
-                        description: t["description"].as_str().unwrap_or_default().to_string(),
-                        parameters: if t["inputSchema"].is_null() {
-                            json!({"type": "object"})
-                        } else {
-                            t["inputSchema"].clone()
-                        },
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(conn)
+    ) -> Result<Self, String> {
+        let name = name.to_string();
+        let operation_name = name.clone();
+        let command = command.to_string();
+        let args = args.to_vec();
+        let env = env.to_vec();
+        let cwd = cwd.to_path_buf();
+        let timeout = crate::acp::config::idle_timeout();
+        io(async move {
+            let start = async {
+                let mut process = tokio::process::Command::new(command);
+                process.args(args).envs(env).current_dir(cwd).kill_on_drop(true)
+                    .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::inherit());
+                let mut child = process.spawn().map_err(|e| e.to_string())?;
+                let stdout = child.stdout.take().ok_or("MCP server has no stdout")?;
+                let stdin = child.stdin.take().ok_or("MCP server has no stdin")?;
+                let client = ClientConfig::new(ClientCapabilities::default(), Implementation::new("jazyk-agent", env!("CARGO_PKG_VERSION")));
+                let service = client.serve((stdout, stdin)).await.map_err(|e| e.to_string())?;
+                let instructions = service.peer_info().and_then(|info| info.instructions.clone()).filter(|text| !text.trim().is_empty());
+                let tools = service.list_all_tools().await.map_err(|e| e.to_string())?.into_iter()
+                    .map(|tool| GenericTool { name: tool.name.into_owned(), description: tool.description.map(|d| d.into_owned()).unwrap_or_default(), parameters: Value::Object((*tool.input_schema).clone()) }).collect();
+                Ok(Self { name: operation_name.clone(), service: Some(service), child: Some(child), tools, instructions })
+            };
+            tokio::time::timeout(timeout, start).await
+                .map_err(|_| format!("MCP {operation_name}: initialization exceeded {}s (JAZYK_ACP_IDLE_TIMEOUT)", timeout.as_secs()))?
+        }, timeout + Duration::from_secs(1)).map_err(|e| format!("MCP {name}: {e}"))
     }
 
-    // One tool call. The MCP result's content blocks concatenate into one string; an
-    // isError result comes back as Err so the loop reports a failed call.
+    /// Preserve the complete MCP result, including structured content and metadata.
+    /// The GDK dynamic provider accepts this standard result envelope directly.
     pub fn call(&mut self, tool: &str, args: &Value) -> Result<String, String> {
-        let result = self.request("tools/call", json!({"name": tool, "arguments": args}))?;
-        let text = result["content"]
-            .as_array()
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        if result["isError"].as_bool().unwrap_or(false) {
-            Err(text)
-        } else {
-            Ok(text)
-        }
-    }
-
-    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        self.next_id += 1;
-        let id = self.next_id;
-        let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        let stdin = self.stdin.as_mut().ok_or("mcp stdin closed")?;
-        writeln!(stdin, "{}", line).map_err(|e| format!("mcp {} write: {}", self.name, e))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("mcp {} flush: {}", self.name, e))?;
-        // Skip notifications and unrelated traffic until our response arrives, each
-        // wait bounded: a wedged server fails the call instead of pinning the turn.
-        let wait = crate::acp::config::idle_timeout();
-        loop {
-            let buf = match self.lines.recv_timeout(wait) {
-                Ok(line) => line,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(format!(
-                        "mcp {}: no answer to `{}` within {}s (JAZYK_ACP_IDLE_TIMEOUT)",
-                        self.name,
-                        method,
-                        wait.as_secs()
-                    ));
+        let peer = self
+            .service
+            .as_ref()
+            .ok_or("MCP server is closed")?
+            .peer()
+            .clone();
+        let params = CallToolRequestParams::new(tool.to_string()).with_arguments(
+            args.as_object()
+                .cloned()
+                .ok_or("MCP tool arguments must be an object")?,
+        );
+        let timeout = crate::acp::config::idle_timeout();
+        let name = self.name.clone();
+        io(
+            async move {
+                let result = tokio::time::timeout(timeout, peer.call_tool(params))
+                    .await
+                    .map_err(|_| {
+                        format!(
+                            "MCP {name}: tool call exceeded {}s (JAZYK_ACP_IDLE_TIMEOUT)",
+                            timeout.as_secs()
+                        )
+                    })?
+                    .map_err(|e| format!("MCP {name}: {e}"))?;
+                let failed = result.is_error.unwrap_or(false);
+                let serialized = serde_json::to_string(&result).map_err(|e| e.to_string())?;
+                if failed {
+                    Err(serialized)
+                } else {
+                    Ok(serialized)
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(format!(
-                        "mcp {}: server closed the stream during `{}`",
-                        self.name, method
-                    ));
-                }
-            };
-            let v: Value = match serde_json::from_str(buf.trim()) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if v["id"].as_u64() != Some(id) {
-                continue;
-            }
-            if !v["error"].is_null() {
-                return Err(format!(
-                    "mcp {} `{}`: {}",
-                    self.name,
-                    method,
-                    v["error"]["message"].as_str().unwrap_or("error")
-                ));
-            }
-            return Ok(v["result"].clone());
-        }
-    }
-
-    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        let line = json!({"jsonrpc": "2.0", "method": method, "params": params});
-        let stdin = self.stdin.as_mut().ok_or("mcp stdin closed")?;
-        writeln!(stdin, "{}", line).map_err(|e| format!("mcp {} write: {}", self.name, e))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("mcp {} flush: {}", self.name, e))
+            },
+            timeout + Duration::from_secs(1),
+        )
     }
 }
 
 impl Drop for McpServerConn {
     fn drop(&mut self) {
-        // Closing stdin is the shutdown signal: a jazyk `--ephemeral` serving runs its
-        // implicit finish on EOF. Give it a moment to exit, then reap; kill only a
-        // server that ignores the signal.
-        drop(self.stdin.take());
-        for _ in 0..50 {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Err(_) => break,
-            }
+        if let Some(mut service) = self.service.take() {
+            let child = self.child.take();
+            // SDK close sends EOF, waits for the ephemeral serving to commit,
+            // and reaps or kills a server that does not exit.
+            let _ = io(
+                async move {
+                    service.close().await.map_err(|e| e.to_string())?;
+                    if let Some(mut child) = child {
+                        if tokio::time::timeout(Duration::from_secs(3), child.wait())
+                            .await
+                            .is_err()
+                        {
+                            child.kill().await.map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Ok(())
+                },
+                Duration::from_secs(5),
+            );
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -204,19 +143,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn initialization_keeps_server_instructions_beside_tools() {
+    fn official_client_keeps_instructions_tools_and_structured_results() {
         let script = r#"import json,sys
 for line in sys.stdin:
  m=json.loads(line)
  if 'id' not in m: continue
- r={'instructions':'Read task_context before run_task.'} if m['method']=='initialize' else {'tools':[]}
+ if m['method']=='initialize':
+  r={'protocolVersion':m['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'},'instructions':'Read task_context before run_task.'}
+ elif m['method']=='tools/list':
+  r={'tools':[{'name':'fixture','description':'Read fixture','inputSchema':{'type':'object'}}],'nextCursor':'next'} if not m.get('params',{}).get('cursor') else {'tools':[{'name':'fixture_second','inputSchema':{'type':'object'}}]}
+ elif m['method']=='tools/call':
+  r={'content':[{'type':'text','text':'visible text'}],'structuredContent':{'value':7},'_meta':{'provenance':'fixture'},'isError':False}
+ else:r={}
  print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':r}),flush=True)
 "#;
-        let conn = McpServerConn::spawn(
-            "fixture", "python3", &["-c".into(), script.into()], &[],
+        let mut connection = McpServerConn::spawn(
+            "fixture",
+            "python3",
+            &["-c".into(), script.into()],
+            &[],
             &std::env::temp_dir(),
-        ).unwrap();
-        assert_eq!(conn.instructions.as_deref(), Some("Read task_context before run_task."));
-        assert!(conn.tools.is_empty());
+        )
+        .unwrap();
+        assert_eq!(
+            connection.instructions.as_deref(),
+            Some("Read task_context before run_task.")
+        );
+        assert_eq!(connection.tools.len(), 2);
+        let result: Value =
+            serde_json::from_str(&connection.call("fixture", &serde_json::json!({})).unwrap())
+                .unwrap();
+        assert_eq!(result["content"][0]["text"], "visible text");
+        assert_eq!(result["structuredContent"]["value"], 7);
+        assert_eq!(result["_meta"]["provenance"], "fixture");
+    }
+
+    #[test]
+    fn sdk_close_delivers_eof_before_reaping_the_ephemeral_server() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("finished");
+        let script = r#"import json,sys
+for line in sys.stdin:
+ m=json.loads(line)
+ if 'id' not in m: continue
+ r={'protocolVersion':m['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'}} if m['method']=='initialize' else {'tools':[]}
+ print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':r}),flush=True)
+open(sys.argv[1],'w').write('finished on EOF')
+"#;
+        let connection = McpServerConn::spawn(
+            "fixture",
+            "python3",
+            &[
+                "-c".into(),
+                script.into(),
+                marker.to_string_lossy().into_owned(),
+            ],
+            &[],
+            directory.path(),
+        )
+        .unwrap();
+        drop(connection);
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "finished on EOF");
     }
 }

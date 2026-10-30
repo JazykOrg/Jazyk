@@ -18,7 +18,10 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-#[derive(Clone, Debug, Default, serde::Serialize)]
+pub(crate) mod continuation;
+use continuation::{ActiveBatch, Continuation, Receipt};
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildReport {
     pub verdict: String,
@@ -34,6 +37,8 @@ pub struct BuildReport {
     pub warnings: usize,
     pub coverage_pct: u32,
     pub tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspend_reason: Option<String>,
 }
 
 impl BuildReport {
@@ -2162,14 +2167,16 @@ fn reload(
     store.sync_docs(parsed);
 }
 
-pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
-    compile_with(proj, llm, out, trace, None)
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
+    compile_with(proj, llm, out, trace, None).await
 }
 
 // `max_sessions` is the `--sessions` count: at most that many sessions, then an
 // honest incomplete, so a project advances one batch at a time.
 // Mirrors docs/frontends/cli.md#jazyk-compile.
-pub fn compile_with(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn compile_with(
     proj: &Project,
     llm: &Llm,
     out: &Path,
@@ -2202,12 +2209,13 @@ pub fn compile_with(
     };
     #[cfg(target_arch = "wasm32")]
     let runner: Box<dyn crate::runner::SessionRunner> = match crate::inprocess::InProcessRunner::start(proj,llm,out) { Ok(r) => Box::new(r), Err(e) => return refused(e) };
-    compile_under(proj, out, trace, max_sessions, runner.as_ref(), _build)
+    compile_under(proj, out, trace, max_sessions, runner.as_ref(), _build).await
 }
 
 // A build with its lease held and its runner chosen: the rest of `compile_with`, and
 // what a test drives with a scripted runner (docs/compiler/sessions.md#execution).
-pub(crate) fn compile_under(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn compile_under(
     proj: &Project,
     out: &Path,
     trace: &Trace,
@@ -2218,37 +2226,113 @@ pub(crate) fn compile_under(
     runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
     trace.line("build", &format!("agent: {}", runner.agent_name()));
 
+    let command_key = continuation::key(out);
+    let saved = match Continuation::load(&command_key, max_sessions) {
+        Ok(saved) => saved,
+        Err(reason) => return suspended_build(reason, 0, 0, 0, 0),
+    };
+    if let Some(result) = saved.as_ref().and_then(|state| state.result.as_ref()) {
+        return result.clone();
+    }
+    let resuming = saved.is_some();
+
     // Every build keeps the generated ignore file current
     // (docs/compiler/document-sets.md#persistence-and-identity).
     if let Err(e) = crate::document_sets::ensure_ignore(&proj.root) {
         trace.line("build", &format!("cannot write .jazyk/.gitignore: {}", e));
     }
     let mut store = Store::open_for_build(out);
-    store.status.costs = Costs::default();
-    store.save_status();
+    if !resuming {
+        store.status.costs = Costs::default();
+        store.save_status();
+    }
     let (parsed, _links) = parse_all(proj);
-    store.sync_docs(&parsed);
+    if !resuming {
+        store.sync_docs(&parsed);
+    }
     // Stamp the documents matching the project roots, so commits with no Project at
     // hand (edits, answers, MCP sessions) order documents by the same link levels.
     // Mirrors docs/compiler/graph.md#storage-layout.
-    store.status.roots = store
-        .docs
-        .keys()
-        .filter(|d| proj.is_root_file(d))
-        .cloned()
-        .collect();
-    store.save_status();
-    sweep(&mut store, trace);
+    if !resuming {
+        store.status.roots = store
+            .docs
+            .keys()
+            .filter(|d| proj.is_root_file(d))
+            .cloned()
+            .collect();
+        store.save_status();
+        sweep(&mut store, trace);
+    }
     // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):
     // record the compile release so manual mode gates nothing this run asked for.
     crate::control::release(proj, out, Some("compile"));
     let control = Control::load(proj, out);
-    let run = run_sessions(proj, out, trace, max_sessions, runner, &mut store, &parsed, &control);
+    let run = run_sessions(
+        proj,
+        out,
+        trace,
+        max_sessions,
+        runner,
+        &mut store,
+        &parsed,
+        &control,
+    )
+    .await;
+    if let Some(reason) = run.suspend_reason {
+        return suspended_build(
+            reason,
+            run.derived,
+            run.sessions,
+            run.applied,
+            run.costs.tokens,
+        );
+    }
     let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
     report.goals = run.derived;
     report.sessions = run.sessions;
     report.applied = run.applied;
+    if let Some(mut state) = match Continuation::load(&command_key, max_sessions) {
+        Ok(state) => state,
+        Err(reason) => {
+            return suspended_build(
+                reason,
+                run.derived,
+                run.sessions,
+                run.applied,
+                run.costs.tokens,
+            )
+        }
+    } {
+        state.result = Some(report.clone());
+        if let Err(reason) = state.save(&command_key).await {
+            return suspended_build(
+                reason,
+                run.derived,
+                run.sessions,
+                run.applied,
+                run.costs.tokens,
+            );
+        }
+    }
     report
+}
+
+fn suspended_build(
+    reason: String,
+    goals: usize,
+    sessions: u32,
+    applied: usize,
+    tokens: u64,
+) -> BuildReport {
+    BuildReport {
+        verdict: "suspended".into(),
+        goals,
+        sessions,
+        applied,
+        tokens,
+        suspend_reason: Some(reason),
+        ..Default::default()
+    }
 }
 
 // What the session loop leaves for the tail: the goals the board derived when the
@@ -2260,6 +2344,7 @@ pub(crate) struct SessionsRun {
     pub applied: usize,
     pub costs: Costs,
     pub parked: Vec<ParkedGoal>,
+    pub suspend_reason: Option<String>,
 }
 
 // The session loop of a build: derive the board, run one session per batch, highest
@@ -2267,7 +2352,8 @@ pub(crate) struct SessionsRun {
 // synced and swept; the runner is whatever runs a batch (an ACP worker, the
 // in-process loop, a test's stub). Mirrors docs/compiler/compilation.md#a-build.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_sessions(
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub(crate) async fn run_sessions(
     proj: &Project,
     out: &Path,
     trace: &Trace,
@@ -2277,6 +2363,56 @@ pub(crate) fn run_sessions(
     parsed: &ParsedDocs,
     control: &Control,
 ) -> SessionsRun {
+    let command_key = continuation::key(out);
+    let mut saved = match Continuation::load(&command_key, max_sessions) {
+        Ok(saved) => saved.unwrap_or_else(|| Continuation::fresh(max_sessions)),
+        Err(reason) => {
+            return SessionsRun {
+                derived: 0,
+                sessions: 0,
+                applied: 0,
+                costs: Costs::default(),
+                parked: Vec::new(),
+                suspend_reason: Some(reason),
+            }
+        }
+    };
+    // Resume the exact saved batch before deriving any new work. Its committed
+    // journal is authoritative when the worker's report did not reach the parent.
+    if let Some(active) = saved.active.as_mut() {
+        if active.report.is_none() {
+            let report = match active.committed_report(out) {
+                Some(report) => report,
+                None => runner.run_item(&active.run, trace).await,
+            };
+            if let Some(reason) = report
+                .stopped
+                .iter()
+                .chain(report.failed.iter())
+                .find(|reason| crate::session_recovery::is_interruption(reason))
+            {
+                return SessionsRun {
+                    derived: saved.derived_ids.len(),
+                    sessions: saved.sessions,
+                    applied: saved.applied,
+                    costs: saved.costs,
+                    parked: saved.parked,
+                    suspend_reason: Some(reason.clone()),
+                };
+            }
+            active.report = Some(report);
+            if let Err(reason) = saved.save(&command_key).await {
+                return SessionsRun {
+                    derived: saved.derived_ids.len(),
+                    sessions: saved.sessions,
+                    applied: saved.applied,
+                    costs: saved.costs,
+                    parked: saved.parked,
+                    suspend_reason: Some(reason),
+                };
+            }
+        }
+    }
     crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
     let mut board = Board::derive(store, proj, control);
     absorb_derivation(store, &board);
@@ -2286,152 +2422,224 @@ pub(crate) fn run_sessions(
         kinds: kinds_line(&board),
         blocked: board.counts().blocked,
     });
-    // The build cap grows with the build: `derived` counts the distinct goal ids any
-    // board of this build has carried, recomputed after every commit, so the deeper
-    // link levels of a project (whose goals derive only after the roots ingest) widen
-    // the cap instead of exhausting one sized for the first board. Finite: goal ids
-    // are finite and the reopen cycle parks a goal that keeps coming back.
-    // Mirrors docs/compiler/compilation.md#convergence.
-    let mut derived_ids: BTreeSet<String> =
-        board.open_goals().iter().map(|g| g.id.clone()).collect();
+    let mut derived_ids = std::mem::take(&mut saved.derived_ids);
+    derived_ids.extend(board.open_goals().iter().map(|goal| goal.id.clone()));
     let cap_for = |derived: usize| {
         max_sessions.unwrap_or(
             crate::limits::BUILD_SESSION_FACTOR * derived + crate::limits::BUILD_SESSION_FLOOR,
         )
     };
-
-    let mut sessions = 0u32;
-    let mut applied = 0usize;
-    let mut costs = Costs::default();
-    let mut attempts: BTreeMap<String, u32> = BTreeMap::new();
-    let mut parked: Vec<ParkedGoal> = Vec::new();
-    let mut parked_ids: BTreeSet<String> = BTreeSet::new();
-    let mut known: BTreeSet<String> = board.open_goals().iter().map(|g| g.id.clone()).collect();
-    // The reopen cycle count: the change each resolved goal was resolved under, and per
-    // goal id the change it keeps coming back with and how many times it has. A goal
-    // re-derived with the same change after its resolution is a cycle; the second one
-    // parks it. Mirrors docs/compiler/reconciler.md#parked-and-failed.
-    let mut resolved_changes: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-    let mut cycles: BTreeMap<String, (serde_json::Value, u32)> = BTreeMap::new();
-    // The dead-endpoint breaker: consecutive failed sessions that spent no tokens.
-    // Mirrors docs/compiler/reconciler.md#escalation.
-    let mut dead_endpoint = 0usize;
-    let mut endpoint_error = String::new();
-
+    let mut sessions = saved.sessions;
+    let mut applied = saved.applied;
+    let mut costs = std::mem::take(&mut saved.costs);
+    let mut attempts = std::mem::take(&mut saved.attempts);
+    let mut parked = std::mem::take(&mut saved.parked);
+    let mut parked_ids = std::mem::take(&mut saved.parked_ids);
+    let mut known = std::mem::take(&mut saved.known);
+    if known.is_empty() {
+        known = board
+            .open_goals()
+            .iter()
+            .map(|goal| goal.id.clone())
+            .collect();
+    }
+    let mut resolved_changes = std::mem::take(&mut saved.resolved_changes);
+    let mut cycles = std::mem::take(&mut saved.cycles);
+    let mut dead_endpoint = saved.dead_endpoint;
+    let mut endpoint_error = std::mem::take(&mut saved.endpoint_error);
+    let mut active = saved.active.take();
+    let mut suspend_reason = None;
+    macro_rules! persist {
+        () => {{
+            saved.derived_ids = derived_ids.clone();
+            saved.sessions = sessions;
+            saved.applied = applied;
+            saved.costs = costs.clone();
+            saved.attempts = attempts.clone();
+            saved.parked = parked.clone();
+            saved.parked_ids = parked_ids.clone();
+            saved.known = known.clone();
+            saved.resolved_changes = resolved_changes.clone();
+            saved.cycles = cycles.clone();
+            saved.dead_endpoint = dead_endpoint;
+            saved.endpoint_error = endpoint_error.clone();
+            saved.active = active.clone();
+            #[cfg(not(target_arch = "wasm32"))]
+            { saved.save(&command_key) }
+            #[cfg(target_arch = "wasm32")]
+            { saved.save(&command_key).await }
+        }};
+    }
     loop {
-        derived_ids.extend(board.open_goals().iter().map(|g| g.id.clone()));
-        let cap = cap_for(derived_ids.len());
-        // The batches the serving can run: none of their goals parked this build.
-        let runnable = |b: &crate::board::Batch| !b.goals.iter().any(|id| parked_ids.contains(id))
-            && (!crate::workflow::graph_only() || b.goals.iter().all(|id|
-                board.goals.iter().find(|g| &g.id == id).is_some_and(|g|
-                    !crate::board::LEDGER_KINDS.contains(&g.kind.as_str()))));
-        let compile_batches: Vec<crate::board::Batch> = board
-            .batches
-            .iter()
-            .filter(|b| b.class == goals::Class::Compile && runnable(b))
-            .cloned()
-            .collect();
-        let gc_batches: Vec<crate::board::Batch> = board
-            .batches
-            .iter()
-            .filter(|b| b.class == goals::Class::Gc && runnable(b))
-            .cloned()
-            .collect();
-        let remaining = cap.saturating_sub(sessions as usize);
-        // Compile outranks GC when the cap is tight.
-        let tight = remaining <= compile_batches.len();
-        let next = if !gc_batches.is_empty() && !tight {
-            gc_batches.into_iter().next()
-        } else {
-            compile_batches.into_iter().next().or_else(|| {
-                if tight {
-                    None
-                } else {
-                    gc_batches.into_iter().next()
-                }
-            })
-        };
-        let Some(batch) = next else { break };
-        if trace.is_cancelled() { break; }
-        if sessions as usize >= cap
-            || dead_endpoint >= crate::limits::ENDPOINT_BREAKER
-        {
-            // Exhaustion parks every open goal the loop could still run.
-            let reason = if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
-                format!(
-                    "the endpoint answers only errors ({}); the build stopped early",
-                    endpoint_error
-                )
-            } else if max_sessions.is_some() {
-                format!("the session limit of {} (--sessions) ran out", cap)
-            } else {
-                format!("the build cap of {} sessions ran out", cap)
+        if active.is_none() {
+            if crate::session_recovery::suspension_requested() {
+                suspend_reason = Some(match persist!() {
+                    Ok(()) => "suspended".into(),
+                    Err(reason) => reason,
+                });
+                break;
+            }
+            derived_ids.extend(board.open_goals().iter().map(|g| g.id.clone()));
+            let cap = cap_for(derived_ids.len());
+            // The batches the serving can run: none of their goals parked this build.
+            let runnable = |b: &crate::board::Batch| {
+                !b.goals.iter().any(|id| parked_ids.contains(id))
+                    && (!crate::workflow::graph_only()
+                        || b.goals.iter().all(|id| {
+                            board.goals.iter().find(|g| &g.id == id).is_some_and(|g| {
+                                !crate::board::LEDGER_KINDS.contains(&g.kind.as_str())
+                            })
+                        }))
             };
-            for g in board.open_goals() {
-                if !parked_ids.contains(&g.id) {
-                    parked_ids.insert(g.id.clone());
-                    parked.push(ParkedGoal::new(g.clone(), reason.clone()));
-                    trace.event(TraceEvent::Goal {
-                        label: "build".into(),
-                        goal: g.id.clone(),
-                        event: "parked".into(),
-                        cause: None,
-                        justification: None,
-                        reason: Some(reason.clone()),
+            let compile_batches: Vec<crate::board::Batch> = board
+                .batches
+                .iter()
+                .filter(|b| b.class == goals::Class::Compile && runnable(b))
+                .cloned()
+                .collect();
+            let gc_batches: Vec<crate::board::Batch> = board
+                .batches
+                .iter()
+                .filter(|b| b.class == goals::Class::Gc && runnable(b))
+                .cloned()
+                .collect();
+            let remaining = cap.saturating_sub(sessions as usize);
+            // Compile outranks GC when the cap is tight.
+            let tight = remaining <= compile_batches.len();
+            let next = if !gc_batches.is_empty() && !tight {
+                gc_batches.into_iter().next()
+            } else {
+                compile_batches.into_iter().next().or_else(|| {
+                    if tight {
+                        None
+                    } else {
+                        gc_batches.into_iter().next()
+                    }
+                })
+            };
+            let Some(batch) = next else { break };
+            if trace.is_cancelled() {
+                break;
+            }
+            if sessions as usize >= cap || dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
+                // Exhaustion parks every open goal the loop could still run.
+                let reason = if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
+                    format!(
+                        "the endpoint answers only errors ({}); the build stopped early",
+                        endpoint_error
+                    )
+                } else if max_sessions.is_some() {
+                    format!("the session limit of {} (--sessions) ran out", cap)
+                } else {
+                    format!("the build cap of {} sessions ran out", cap)
+                };
+                for g in board.open_goals() {
+                    if !parked_ids.contains(&g.id) {
+                        parked_ids.insert(g.id.clone());
+                        parked.push(ParkedGoal::new(g.clone(), reason.clone()));
+                        trace.event(TraceEvent::Goal {
+                            label: "build".into(),
+                            goal: g.id.clone(),
+                            event: "parked".into(),
+                            cause: None,
+                            justification: None,
+                            reason: Some(reason.clone()),
+                        });
+                    }
+                }
+                break;
+            }
+            // The graph as this batch sees it, for replays (docs/compiler/sessions.md#snapshots).
+            crate::store::snapshot_graph(out, &batch.id);
+            trace.event(TraceEvent::BatchStart {
+                label: batch.id.clone(),
+                class: batch.class.name().into(),
+                tier: batch.tier,
+                goals: batch
+                    .goals
+                    .iter()
+                    .filter_map(|id| board.goal(id))
+                    .map(|g| json!({"id": g.id, "kind": g.kind, "target": g.target}))
+                    .collect(),
+                executor: batch.executor.clone(),
+            });
+            if batch.class == goals::Class::Gc {
+                for g in batch.goals.iter().filter_map(|id| board.goal(id)) {
+                    let (count, limit, what) = burst_measure(g);
+                    trace.event(TraceEvent::GcBurst {
+                        label: batch.id.clone(),
+                        goal_kind: g.kind.clone(),
+                        target: g.target.clone(),
+                        count,
+                        limit,
+                        detail: what,
                     });
                 }
             }
-            break;
-        }
-        // The graph as this batch sees it, for replays (docs/compiler/sessions.md#snapshots).
-        crate::store::snapshot_graph(out, &batch.id);
-        trace.event(TraceEvent::BatchStart {
-            label: batch.id.clone(),
-            class: batch.class.name().into(),
-            tier: batch.tier,
-            goals: batch
-                .goals
-                .iter()
-                .filter_map(|id| board.goal(id))
-                .map(|g| json!({"id": g.id, "kind": g.kind, "target": g.target}))
-                .collect(),
-            executor: batch.executor.clone(),
-        });
-        if batch.class == goals::Class::Gc {
-            for g in batch.goals.iter().filter_map(|id| board.goal(id)) {
-                let (count, limit, what) = burst_measure(g);
-                trace.event(TraceEvent::GcBurst {
-                    label: batch.id.clone(),
-                    goal_kind: g.kind.clone(),
-                    target: g.target.clone(),
-                    count,
-                    limit,
-                    detail: what,
-                });
+            let gen_before = crate::store::read_generation(out);
+            // One session per batch: the runner resolves the executor, ships the
+            // assembled prompt, and the serving commits under its own gates.
+            let run = crate::runner::BatchRun {
+                id: batch.id.clone(),
+                goals: batch
+                    .goals
+                    .iter()
+                    .filter_map(|id| board.goal(id))
+                    .cloned()
+                    .collect(),
+                executor: batch.executor.clone(),
+            };
+            sessions += 1;
+            active = Some(ActiveBatch {
+                records: batch
+                    .goals
+                    .iter()
+                    .map(|id| (id.clone(), board.records_of(id)))
+                    .collect(),
+                run,
+                class: batch.class.name().into(),
+                tier: batch.tier,
+                generation: gen_before,
+                report: None,
+            });
+            if let Err(reason) = persist!() {
+                suspend_reason = Some(reason);
+                break;
             }
         }
-        let gen_before = crate::store::read_generation(out);
-        let batch_kind = batch
-            .goals
-            .first()
-            .and_then(|id| board.goal(id))
-            .map(|g| (g.kind.clone(), g.class.clone()))
-            .unwrap_or_default();
-        // One session per batch: the runner resolves the executor, ships the
-        // assembled prompt, and the serving commits under its own gates.
-        let run = crate::runner::BatchRun {
-            id: batch.id.clone(),
-            goals: batch
-                .goals
-                .iter()
-                .filter_map(|id| board.goal(id))
-                .cloned()
-                .collect(),
-            executor: batch.executor.clone(),
+        let current = active.as_ref().expect("selected batch");
+        let batch = crate::board::Batch {
+            id: current.run.id.clone(),
+            goals: current.run.goal_ids(),
+            class: if current.class == "gc" {
+                goals::Class::Gc
+            } else {
+                goals::Class::Compile
+            },
+            tier: current.tier,
+            executor: current.run.executor.clone(),
+            locality: String::new(),
         };
-        sessions += 1;
-        let report = runner.run_item(&run, trace);
+        let gen_before = current.generation;
+        let batch_kind = (current.run.kind(), current.run.class());
+        let report = match current.report.clone() {
+            Some(report) => report,
+            None => runner.run_item(&current.run, trace).await,
+        };
+        if let Some(reason) = report
+            .stopped
+            .iter()
+            .chain(report.failed.iter())
+            .find(|reason| crate::session_recovery::is_interruption(reason))
+        {
+            suspend_reason = Some(reason.clone());
+            break;
+        }
+        active.as_mut().unwrap().report = Some(report.clone());
+        if let Err(reason) = persist!() {
+            suspend_reason = Some(reason);
+            break;
+        }
         applied += report.applied;
         costs.charge(&batch_kind.0, &batch_kind.1, report.tokens);
         // Count consecutive failures that spent nothing: an endpoint answering
@@ -2445,7 +2653,7 @@ pub(crate) fn run_sessions(
                 endpoint_error = e.clone();
             }
         }
-        if let Some(e) = report.failed.filter(|_| !trace.is_cancelled()) {
+        if let Some(e) = report.failed.clone().filter(|_| !trace.is_cancelled()) {
             trace.event(TraceEvent::SessionFailed {
                 label: batch.id.clone(),
                 goals: batch.goals.clone(),
@@ -2469,7 +2677,6 @@ pub(crate) fn run_sessions(
         );
         reload(store, out, parsed);
         sweep(store, trace);
-        let before = board;
         crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
         board = Board::derive(store, proj, control);
         absorb_derivation(store, &board);
@@ -2515,11 +2722,24 @@ pub(crate) fn run_sessions(
                     justification: Some(justification),
                     reason: None,
                 });
-                let ids = before.records_of(id);
+                let ids = active
+                    .as_ref()
+                    .unwrap()
+                    .records
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_default();
                 if !ids.is_empty() {
                     store.clear_resolved(&ids);
                 }
-                if let Some(g) = before.goal(id) {
+                if let Some(g) = active
+                    .as_ref()
+                    .unwrap()
+                    .run
+                    .goals
+                    .iter()
+                    .find(|goal| goal.id == *id)
+                {
                     resolved_changes.insert(id.clone(), g.change.clone());
                 }
                 // Resolving a parked goal clears its entry with its record; the
@@ -2544,7 +2764,9 @@ pub(crate) fn run_sessions(
             if endpoint_down {
                 continue;
             }
-            if trace.is_cancelled() { continue; }
+            if trace.is_cancelled() {
+                continue;
+            }
             let n = attempts.entry(id.clone()).or_insert(0);
             *n += 1;
             if *n >= 2 {
@@ -2654,6 +2876,23 @@ pub(crate) fn run_sessions(
             ),
             verbose: false,
         });
+        saved.completed.push(Receipt {
+            session: sessions,
+            batch: batch.id.clone(),
+            generation: gen_after,
+            report,
+        });
+        active = None;
+        crate::session_recovery::remove_frame(&crate::session_recovery::batch_key(out, &batch.id));
+        if let Err(reason) = persist!() {
+            suspend_reason = Some(reason);
+            break;
+        }
+    }
+    if suspend_reason.is_none() {
+        if let Err(reason) = persist!() {
+            suspend_reason = Some(reason);
+        }
     }
 
     SessionsRun {
@@ -2662,6 +2901,7 @@ pub(crate) fn run_sessions(
         applied,
         costs,
         parked,
+        suspend_reason,
     }
 }
 
@@ -2898,6 +3138,7 @@ pub fn finalize(
             .map(|pct| pct as u32)
             .unwrap_or(100),
         tokens: s.status.costs.tokens,
+        suspend_reason: None,
     }
 }
 

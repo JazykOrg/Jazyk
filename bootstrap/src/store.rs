@@ -630,13 +630,14 @@ fn disk_generation(out: &Path) -> Result<Option<u64>, String> {
     })
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Store {
     pub out: PathBuf,
     pub graph: Graph,
     pub docs: BTreeMap<String, DocRecord>,
     pub status: Status,
     // Alignment thresholds, registry constants (docs/compiler/graph.md#budgets-and-thresholds).
+    #[serde(skip)]
     pub align: crate::align::Thresholds,
     // Files that existed but did not parse at load, each with its error. Non-empty
     // makes the store read-only. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.

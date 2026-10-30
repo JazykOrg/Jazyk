@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 // What one session left behind: the mutations its commits applied, the goals they
 // resolved (from the journal), and whether the batch landed.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionReport {
     pub applied: usize,
     pub rounds: u32,
@@ -28,6 +29,7 @@ pub struct SessionReport {
 // One session's worth of work: the batch id, its goals, and the scheduler's executor
 // hint. The reconciler builds one per board batch; the ledger workers build
 // single-goal batches per row.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatchRun {
     pub id: String,
     pub goals: Vec<Goal>,
@@ -80,6 +82,8 @@ impl BatchRun {
 }
 
 // The contract every runner satisfies.
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait SessionRunner {
     // Named in the trace line that opens a build.
     fn agent_name(&self) -> String;
@@ -89,12 +93,12 @@ pub trait SessionRunner {
 
     // One batch, one session. A runner reports what landed; it never decides
     // whether the goals are resolved, which is read from the store.
-    fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport;
+    async fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport;
 
     // One prompt, one reply, no tools and no session: the ledger's one-shots.
-    fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String>;
+    async fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String>;
 
-    fn ask_traced(
+    async fn ask_traced(
         &self,
         system: &str,
         user: &str,
@@ -208,8 +212,8 @@ impl<'a> LoopTrace<'a> {
         }
     }
 
-    pub fn on_event(&mut self, ev: crate::agent_loop::AgentEvent) {
-        use crate::agent_loop::AgentEvent;
+    pub fn on_event(&mut self, ev: crate::harness::AgentEvent) {
+        use crate::harness::AgentEvent;
         use crate::session::TraceEvent;
         if !matches!(&ev, AgentEvent::Message(_) | AgentEvent::Thought(_)) {
             self.finish();
@@ -249,14 +253,17 @@ impl<'a> LoopTrace<'a> {
                     });
                     return;
                 }
-                let out: serde_json::Value = serde_json::from_str(&result)
+                let full_out: serde_json::Value = serde_json::from_str(&result)
                     .unwrap_or_else(|_| serde_json::Value::String(result.clone()));
+                let out = full_out["content"][0]["text"].as_str()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                    .unwrap_or_else(|| full_out.clone());
                 self.trace.event(TraceEvent::ToolResult {
                     activity: crate::live_preview::activity(&name, &args, Some(&out)),
                     label: self.label.clone(),
                     name: name.clone(),
                     summary: crate::session::condense(&out, 160),
-                    full: crate::session::full_payload(&out),
+                    full: crate::session::full_payload(&full_out),
                 });
                 // An accepted call that names another section says where the session is.
                 let Some(doc) = self.doc.clone() else { return };
@@ -312,12 +319,13 @@ pub fn session_start(batch: &BatchRun) -> crate::session::TraceEvent {
 
 // Why a batch that did not land stopped, in words, never a bare "nothing committed"
 // (docs/compiler/sessions.md#trace-events).
-pub fn unlanded_reason(stop: &crate::agent_loop::Stop, rounds: u32) -> String {
-    use crate::agent_loop::Stop;
+pub fn unlanded_reason(stop: &crate::harness::Stop, rounds: u32) -> String {
+    use crate::harness::Stop;
     match stop {
         Stop::EndTurn => "the model ended its turn with the batch still open".to_string(),
         Stop::MaxRounds => format!("the session ran out of rounds after {}", rounds),
         Stop::Cancelled => "the session was cancelled".to_string(),
+        Stop::Suspended => "suspended".to_string(),
         Stop::Error(e) => format!("the model call failed: {}", e),
     }
 }
@@ -325,7 +333,7 @@ pub fn unlanded_reason(stop: &crate::agent_loop::Stop, rounds: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop::{AgentEvent, Stop};
+    use crate::harness::{AgentEvent, Stop};
     use crate::session::{TraceEvent, TraceLevel};
     use std::sync::{Arc, Mutex};
 

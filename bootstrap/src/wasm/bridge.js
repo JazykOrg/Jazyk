@@ -1,78 +1,72 @@
-// The worker half of the model bridge. The page owns the model; this blocks the
-// worker on Atomics.wait until the page answers, so the synchronous reconciler
-// above it never learns that the call went anywhere.
-//
-// Layout of the shared control buffer:
-//   [0] Int32  state: 0 pending, 1 answered
-//   [1] Int32  byte length of the reply
-//   [2] Int32  cancel: 1 once the page cancels the running chat turn
-// The reply itself travels in a second buffer, grown by the page when needed.
+// Model and input capabilities supplied by the page. The worker stays responsive
+// while Rust awaits model promises. Project operations are serialized by the host.
+let installed = false
+let cancelled = false
+let inputOpen = true
+let inputs = []
+let nextModelId = 0
+const pending = new Map()
 
-let control = null // Int32Array over a SharedArrayBuffer
-let inputHeader = null
-let inputBytes = null
-let replyBytes = null // Uint8Array over a SharedArrayBuffer
-
-// Called once from the worker entry when the page hands over the shared buffers.
-export function installBridge(controlBuffer, replyBuffer, inputBuffer = null) {
-  inputHeader = inputBuffer ? new Int32Array(inputBuffer, 0, 4) : null
-  inputBytes = inputBuffer ? new Uint8Array(inputBuffer, 16) : null
-  control = new Int32Array(controlBuffer)
-  replyBytes = new Uint8Array(replyBuffer)
+export function installBridge() {
+  for (const waiter of pending.values()) waiter.reject(new Error('model bridge reset'))
+  pending.clear()
+  installed = true
+  cancelled = false
+  inputOpen = true
+  inputs = []
 }
 
-export function bridgeReady() {
-  return control !== null
-}
+export function bridgeReady() { return installed }
+export function cancelRequested() { return cancelled }
+export function clearCancel() { cancelled = false; inputOpen = true }
 
-// The page sets the cancel flag when a person cancels a chat turn; the worker is
-// inside that turn and could not hear a message. See docs/frontends/wasm.md#chat.
-export function cancelRequested() {
-  return control !== null && control.length > 2 && Atomics.load(control, 2) === 1
-}
-
-export function clearCancel() {
-  if (control !== null && control.length > 2) Atomics.store(control, 2, 0)
-}
-
-export function chatSync(body) {
-  if (!control) {
-    throw new Error(
-      'no model bridge: the page did not install one (cross-origin isolation is required for SharedArrayBuffer)',
-    )
+export function setCancelled(value) {
+  cancelled = Boolean(value)
+  if (!cancelled) inputOpen = true
+  if (cancelled) {
+    for (const waiter of pending.values()) waiter.reject(new Error('execution cancelled'))
+    pending.clear()
   }
-  Atomics.store(control, 0, 0)
-  Atomics.store(control, 1, 0)
-  // The page is listening for this and will run the model.
-  self.postMessage({ kind: 'llm', body })
-  // Block this worker. The page is on its own thread and stays responsive.
-  Atomics.wait(control, 0, 0)
-  const len = Atomics.load(control, 1)
-  const bytes = replyBytes.slice(0, len)
-  const text = new TextDecoder().decode(bytes)
-  const reply = JSON.parse(text)
-  if (reply.error) throw new Error(reply.error)
-  return reply.body
 }
 
-// Called only at safe loop boundaries on the worker thread. The page is the
-// single producer; published bytes remain immutable until consumption.
+export function chatAsync(body) {
+  if (!installed) return Promise.reject(new Error('no model bridge: the page did not install one'))
+  if (cancelled) return Promise.reject(new Error('execution cancelled'))
+  const id = ++nextModelId
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject })
+    self.postMessage({ kind: 'llm', id, body })
+  })
+}
+
+export function resolveModelReply(id, reply) {
+  const waiter = pending.get(id)
+  if (!waiter) return
+  pending.delete(id)
+  if (reply.error) waiter.reject(new Error(reply.error))
+  else if (typeof reply.body !== 'string') waiter.reject(new Error('invalid model response'))
+  else waiter.resolve(reply.body)
+}
+
+export function enqueueInputs(items) {
+  if (!inputOpen) return false
+  if (!Array.isArray(items)) throw new Error('invalid input mailbox')
+  inputs.push(...items)
+  return true
+}
+
+export function clearInputs() { inputs = [] }
+
 export function pollInputs() {
-  if (!inputHeader || Atomics.load(inputHeader, 0) !== 1) return '[]'
-  const length = Atomics.load(inputHeader, 1)
-  if (length < 0 || length > inputBytes.length) {
-    Atomics.store(inputHeader, 0, 0)
-    throw new Error('invalid input mailbox length')
-  }
-  const text = new TextDecoder().decode(inputBytes.slice(0, length))
-  JSON.parse(text)
-  Atomics.store(inputHeader, 0, 0)
-  self.postMessage({ kind: 'chat-input-consumed' })
-  return text
+  const batch = inputs
+  inputs = []
+  if (batch.length) self.postMessage({ kind: 'chat-input-consumed' })
+  return JSON.stringify(batch)
 }
 
 export function closeInputs() {
-  if (!inputHeader) return true
-  const state = Atomics.compareExchange(inputHeader, 0, 0, 2)
-  return state === 0 || state === 2
+  if (inputs.length) return false
+  inputOpen = false
+  self.postMessage({ kind: 'chat-input-closed' })
+  return true
 }

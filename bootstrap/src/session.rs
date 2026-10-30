@@ -753,7 +753,7 @@ pub fn skill_for_target(store: &Store, target: &str) -> Option<&'static str> {
 
 // ---- skills state ----
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SkillEntry {
     pub name: String,
     pub active: bool,
@@ -771,6 +771,7 @@ pub enum SkillLoad {
 // The skills rendered this session, active or inactive, capped. Rendered text stays
 // in the conversation, so the cap counts every rendering and an inactive skill keeps
 // its chars. Mirrors docs/compiler/sessions.md#skills.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SkillState {
     pub rendered: Vec<SkillEntry>,
     pub cap: usize,

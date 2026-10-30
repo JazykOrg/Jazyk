@@ -41,6 +41,16 @@ form_urlencoded = "1"
 # The per-session bearer token of the MCP-over-HTTP serving (docs/frontends/mcp.md).
 getrandom = "0.3"
 siphasher = "1"
+anyhow = "1"
+async-trait = "0.1"
+maybe-async = "0.2.11"
+futures = "0.3"
+goose-agent = "=0.1.0-alpha.13"
+goose-provider-types = "=0.1.0-alpha.13"
+goose-context-management = { path = "vendor/goose-context-management" }
+rmcp = { version = "=3.4.1", default-features = false, features = ["server", "macros"] }
+tokio = { version = "1", default-features = false, features = ["macros", "sync", "rt", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Native only: a process, sockets, threads, a terminal, and the C renderer.
 # Infrastructure comes from crates; only domain logic is hand-rolled (owner decision).
@@ -51,11 +61,13 @@ notify = "6"
 fs2 = "0.4"
 # ACP bridge (docs/frontends/acp.md): the official protocol SDK. Executor-agnostic
 # (futures + async-io), driven by a block_on on a dedicated thread; no tokio outside gui/.
-agent-client-protocol = "2.0.0"
-futures = "0.3"
+agent-client-protocol = "=2.2.0"
 async-io = "2"
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"] }
+eventsource-stream = "0.2"
+rmcp = { version = "=3.4.1", default-features = false, features = ["client", "transport-async-rw"] }
 # GUI server (async runtime is scoped inside src/gui/; the rest of the binary stays sync).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "process"] }
 axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
@@ -84,6 +96,8 @@ js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.3", features = ["wasm_js"] }
+rmcp = { version = "=3.4.1", default-features = false, features = ["local"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
@@ -93,3 +107,6 @@ features = ["console", "Window", "Performance"]
 [dev-dependencies]
 # Router tests drive the axum app in process (src/gui/server.rs).
 tower = { version = "0.5", features = ["util"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tempfile = "3"

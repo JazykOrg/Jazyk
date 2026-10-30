@@ -418,7 +418,7 @@ The gates:
 - Every requirement carries at least one `facet`
   ([facets](./model/requirement.md#facets)); a create without one is refused.
 - Every `quote` must appear verbatim in its named section. Locating is
-  whitespace-insensitive and forgives markdown escapes (a text-codec model often
+  whitespace-insensitive and forgives markdown escapes (a model often
   writes `` \` `` for a backtick inside JSON); the stored quote is the form that
   locates in the source, so provenance stays verbatim to the document. A section's
   heading is its title, not body text: a quote that is the heading is refused with a

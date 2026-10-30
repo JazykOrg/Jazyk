@@ -1053,3 +1053,38 @@ session re-deriving its pairs; the front door's "Its concerns are described in"
 leaving Ledger beside its areas rather than above them (an owner question); the
 deterministic checks' findings appearing only at the tail while the project block
 counts judgment diagnostics, which one session read as a contradiction.
+
+## GDK runtime measurements, 2026-10-30
+
+`examples/gdk_profile.rs` and `tests/gdk_profile.py` measure the public GDK runtime
+in a release build on macOS ARM64. The host injects 100 ms per inference and two
+tool calls. Each row retains 100 suspended session capsules. Values are medians
+of three runs. Every run used two process threads.
+
+| Active sessions | Completion time | Peak RSS | Latest first model request |
+| --- | --- | --- | --- |
+| 1 | 307.5 ms | 42.4 MiB | 0.4 ms |
+| 8 | 307.2 ms | 43.5 MiB | 1.5 ms |
+| 32 | 314.3 ms | 50.8 MiB | 9.4 ms |
+
+Cancelling eight of 32 sessions left the other 24 able to finish. The worst
+observed cancellation latency was 23.7 ms. A session serialized 16 checkpoints,
+493,184 bytes in total, with a largest capsule of 44,997 bytes. Serialization
+typically took 14 to 17 microseconds at the median and 26 to 45 microseconds at
+the 95th percentile.
+
+These timings measure JSON serialization. They exclude MCP state, workspace
+snapshots, database and object-store writes, real providers and network latency.
+The hosted service also has an owner thread for each active workspace operation.
+This profile is not a whole-service capacity test. There is no comparable old-loop
+baseline, so these results do not establish a performance improvement.
+
+Real `llama3.1:8b` through the configured LocalRouter passed native ACP/MCP task
+discovery in 19.3 seconds. It failed the extraction and navigation capability
+benchmark (0 of 10 checks), and a task-running prompt supplied a nonexistent run
+ID instead of starting the task. Those runs do not establish compilation or task
+execution capability for that model. Gates rejected its invalid tool calls.
+
+`qwen3.8:27b-mlx` passed navigation (4 of 4 checks) through the same endpoint,
+but failed extraction (0 of 6). Its combined compilation verdict is not-capable.
+The failures included malformed tool arguments and missing entity provenance.

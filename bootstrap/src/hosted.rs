@@ -17,6 +17,30 @@ pub type InputClose = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub use crate::session::TraceSink;
 pub type RuntimeTransport = Arc<dyn Fn(&Value) -> Result<Value, String> + Send + Sync>;
 pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
+pub type ModelAsyncTransport = Arc<
+    dyn Fn(
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync,
+>;
+pub type ModelDeltaSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
+pub type ModelAsyncStreamTransport = Arc<
+    dyn Fn(String, ModelDeltaSink)
+        -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send + Sync,
+>;
+pub type CheckpointSink = Arc<
+    dyn Fn(
+            Value,
+            Snapshot,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
 
 /// Text projections for authored revisions and delivery, not a verification verdict.
 #[derive(Debug, serde::Serialize)]
@@ -33,6 +57,12 @@ pub struct Execution {
     pub model: String,
     pub transport: Option<ModelTransport>,
     pub transport_stream: Option<ModelStreamTransport>,
+    pub transport_async: Option<ModelAsyncTransport>,
+    pub transport_async_stream: Option<ModelAsyncStreamTransport>,
+    pub resume: Option<Value>,
+    pub replay_events: Vec<Value>,
+    pub checkpoint: Option<CheckpointSink>,
+    pub suspend: Arc<AtomicBool>,
     pub inputs: Option<InputSource>,
     pub input_close: Option<InputClose>,
     pub runtime: Option<RuntimeTransport>,
@@ -96,6 +126,24 @@ impl Workspace {
         self.files.clone()
     }
 
+    /// Finalize Stop against a protected checkpoint without running a harness.
+    /// Only committed VFS bytes exist here; staged MCP operations stay in the
+    /// capsule and are discarded by the host after its fenced publication.
+    pub fn stop_recovery(&mut self, capsule: &Value, events: &[Value]) -> Result<(), String> {
+        crate::session_recovery::validate(capsule)?;
+        let fs = crate::vfs::Scope::enter(&self.files);
+        let _state = crate::scoped_state::Scope::enter();
+        let _execution = ExecutionScope::enter(Execution::default());
+        let _recovery = crate::session_recovery::Scope::enter(None);
+        let conversations = crate::conversation::Scope::enter()?;
+        crate::session_recovery::stop_owned(capsule)?;
+        crate::conversation::replay_updates(events)?;
+        crate::conversation::stop_recovered();
+        conversations.save()?;
+        self.files = fs.snapshot();
+        Ok(())
+    }
+
     /// Preserve authored membership explicitly. Merely writing a generated file
     /// does not make it source or a delivery candidate.
     pub fn projection(&self, authored_paths: &[String]) -> Result<Projection, String> {
@@ -119,8 +167,12 @@ impl Workspace {
             let fs = crate::vfs::Scope::enter(&self.files);
             let _state = crate::scoped_state::Scope::enter();
             let _execution = ExecutionScope::enter(execution.clone());
+            let _recovery = crate::session_recovery::Scope::enter(execution.resume.as_ref());
             drop_graph_snapshots();
             let conversations = crate::conversation::Scope::enter()?;
+            if execution.resume.is_some() {
+                crate::conversation::replay_updates(&execution.replay_events)?;
+            }
             let reply = dispatch(method, path, body)?;
             if method != "GET" && (path.contains("/chat/") || path.ends_with("/jobs") || path.ends_with("/compile")) {
                 conversations.save()?;
@@ -329,19 +381,78 @@ fn set_projection(
 }
 
 thread_local! { static EXECUTION: RefCell<Option<Execution>> = const { RefCell::new(None) }; }
-struct ExecutionScope(Option<Execution>);
+thread_local! { static CHECKPOINT_SEQUENCE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+struct ExecutionScope(Option<Execution>, u64);
 impl ExecutionScope {
     fn enter(execution: Execution) -> Self {
-        Self(EXECUTION.with(|e| e.replace(Some(execution))))
+        let previous = CHECKPOINT_SEQUENCE.with(|s| {
+            s.replace(
+                execution
+                    .resume
+                    .as_ref()
+                    .and_then(|r| r["sequence"].as_u64())
+                    .unwrap_or(0),
+            )
+        });
+        Self(EXECUTION.with(|e| e.replace(Some(execution))), previous)
     }
 }
 impl Drop for ExecutionScope {
     fn drop(&mut self) {
         EXECUTION.with(|e| e.replace(self.0.take()));
+        CHECKPOINT_SEQUENCE.with(|s| s.set(self.1));
     }
 }
 fn execution() -> Execution {
     EXECUTION.with(|e| e.borrow().clone().expect("hosted execution context"))
+}
+
+pub(crate) fn suspension_requested() -> bool {
+    EXECUTION.with(|e| {
+        e.borrow()
+            .as_ref()
+            .is_some_and(|e| e.suspend.load(Ordering::Acquire))
+    })
+}
+
+pub(crate) async fn checkpoint(mut capsule: Value) -> Result<u64, String> {
+    let sink = EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.checkpoint.clone()));
+    let sequence = CHECKPOINT_SEQUENCE.with(|s| s.get());
+    let Some(sink) = sink else {
+        return Ok(sequence);
+    };
+    if !crate::vfs::is_scoped() {
+        return Err("Checkpoint requires an owned hosted workspace.".into());
+    }
+    capsule["sequence"] = json!(sequence);
+    let snapshot = crate::vfs::scoped_snapshot()?;
+    let next = sink(capsule, snapshot).await?;
+    if next <= sequence {
+        return Err("Checkpoint sequence did not advance.".into());
+    }
+    CHECKPOINT_SEQUENCE.with(|s| s.set(next));
+    Ok(next)
+}
+
+pub(crate) async fn transport_async(attempt_id: &str, body: &str, deltas: Option<ModelDeltaSink>) -> Result<String, String> {
+    let e = execution();
+    if e.cancel.load(Ordering::Acquire) {
+        return Err("execution cancelled".into());
+    }
+    if e.suspend.load(Ordering::Acquire) {
+        return Err("execution suspended".into());
+    }
+    let mut request: Value =
+        serde_json::from_str(body).map_err(|e| format!("Invalid model request: {e}"))?;
+    request["_jazyk"]["requestId"] = json!(attempt_id);
+    request["_jazyk"]["checkpointSequence"] = json!(CHECKPOINT_SEQUENCE.with(|s| s.get()));
+    if let (Some(stream), Some(deltas)) = (e.transport_async_stream, deltas) {
+        return stream(request.to_string(), deltas).await;
+    }
+    let transport = e
+        .transport_async
+        .ok_or("Hosted async model transport is unavailable.")?;
+    transport(request.to_string()).await
 }
 
 pub fn runtime(request: &Value) -> Result<Value, String> {
@@ -396,29 +507,6 @@ pub fn close_inputs(session: &str) -> bool {
     EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.input_close.clone()))
         .map(|close| close(session)).unwrap_or(true)
 }
-pub(crate) fn transport_deltas(body: &str, delta: &mut dyn FnMut(&str, &str)) -> Result<String, String> {
-    let e = execution();
-    if e.cancel.load(Ordering::Relaxed) { return Err("execution cancelled".into()); }
-    let Some(stream) = e.transport_stream else { return transport(body); };
-    let reply = stream(body, delta)?;
-    if e.cancel.load(Ordering::Relaxed) { return Err("execution cancelled".into()); }
-    Ok(reply)
-}
-pub(crate) fn transport(body: &str) -> Result<String, String> {
-    let e = execution();
-    if e.cancel.load(Ordering::Relaxed) {
-        return Err("execution cancelled".into());
-    }
-    let transport = e
-        .transport
-        .ok_or("no model transport supplied for this workspace")?;
-    let reply = transport(body)?;
-    if e.cancel.load(Ordering::Relaxed) {
-        return Err("execution cancelled".into());
-    }
-    Ok(reply)
-}
-
 fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     let routed =
         match crate::webapi::sets::route(path, serde_json::from_str(body).unwrap_or(Value::Null)) {
@@ -580,17 +668,17 @@ mod tests {
         files.insert("docs/main.md".into(), b"# Main\n\nThe system shall respond.\n".to_vec());
         let mut w = Workspace::new(files).unwrap();
         let e = Execution::default();
-        let doc = w.request("GET", "/api/docs/content?path=docs/main.md", "", &e).unwrap();
+        let doc = w.request_test("GET", "/api/docs/content?path=docs/main.md", "", &e).unwrap();
         assert_eq!(doc.status, 409, "{}", String::from_utf8_lossy(&doc.body));
         assert!(String::from_utf8_lossy(&doc.body).contains("no-document-set"));
-        let job = w.request("POST", "/api/jobs", r#"{"kind":"audit"}"#, &e).unwrap();
+        let job = w.request_test("POST", "/api/jobs", r#"{"kind":"audit"}"#, &e).unwrap();
         assert_eq!(job.status, 409, "{}", String::from_utf8_lossy(&job.body));
         assert!(String::from_utf8_lossy(&job.body).contains("Add one under Document sets"));
-        let text = w.request("GET", "/api/project/text?path=docs/main.md", "", &e).unwrap();
+        let text = w.request_test("GET", "/api/project/text?path=docs/main.md", "", &e).unwrap();
         assert_eq!(text.status, 200);
         assert!(String::from_utf8_lossy(&text.body).contains("The system shall respond."));
         // The old paths come back as the first set's suggestion, and nothing is written.
-        let sets = w.request("GET", "/api/sets", "", &e).unwrap();
+        let sets = w.request_test("GET", "/api/sets", "", &e).unwrap();
         let v: Value = serde_json::from_slice(&sets.body).unwrap();
         assert_eq!(v["suggested"]["docs"], json!(["docs/**/*.md"]), "{}", v);
         assert_eq!(v["suggested"]["roots"], json!(["docs/main.md"]), "{}", v);
@@ -610,8 +698,11 @@ mod tests {
         let e = Execution {
             model: "ledger-fixture".into(),
             cancel,
-            transport: Some(Arc::new(move |body| {
-                let request: Value = serde_json::from_str(body).unwrap();
+            transport_async: Some(Arc::new(move |body| {
+                let saw = saw.clone();
+                let cancelled = cancelled.clone();
+                Box::pin(async move {
+                let request: Value = serde_json::from_str(&body).unwrap();
                 let user = request["messages"]
                     .as_array()
                     .unwrap()
@@ -626,6 +717,7 @@ mod tests {
                 saw.store(true, Ordering::SeqCst);
                 cancelled.store(true, Ordering::SeqCst);
                 Ok(model_reply("Stopped after inspecting the prompt."))
+                })
             })),
             ..Default::default()
         };
@@ -810,8 +902,29 @@ mod tests {
         assert!(!crate::vfs::is_scoped());
     }
 
+    impl Workspace {
+        // Existing fixture providers stay synchronous; every production invocation
+        // below still exercises the new owned asynchronous host interface.
+        fn request_test(&mut self, method: &str, path: &str, body: &str, execution: &Execution) -> Result<Reply, String> {
+            let mut execution = execution.clone();
+            if execution.transport_async.is_none() {
+                execution.transport_async = execution.transport.clone().map(|source| Arc::new(move |body: String| {
+                    let source = source.clone();
+                    Box::pin(async move { source(&body) }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<String,String>> + Send>>
+                }) as ModelAsyncTransport);
+            }
+            if execution.transport_async_stream.is_none() {
+                execution.transport_async_stream = execution.transport_stream.clone().map(|source| Arc::new(move |body: String, sink: ModelDeltaSink| {
+                    let source = source.clone();
+                    Box::pin(async move { source(&body, &mut |field, text| sink(field,text)) }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<String,String>> + Send>>
+                }) as ModelAsyncStreamTransport);
+            }
+            self.request(method,path,body,&execution)
+        }
+    }
+
     fn value(w: &mut Workspace, method: &str, path: &str, body: Value, e: &Execution) -> Value {
-        let reply = w.request(method, path, &body.to_string(), e).unwrap();
+        let reply = w.request_test(method, path, &body.to_string(), e).unwrap();
         assert!(
             reply.status < 400,
             "{}",
@@ -821,6 +934,270 @@ mod tests {
     }
     fn model_reply(content: &str) -> String {
         json!({"choices":[{"message":{"role":"assistant","content":content}}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string()
+    }
+    #[test]
+    fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commit() {
+        let mut workspace = workspace("Stop");
+        workspace.files.insert("docs/committed.txt".into(), b"An earlier accepted edit.\n".to_vec());
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let model_calls = calls.clone();
+        let model: ModelAsyncTransport = Arc::new(move |_| {
+            model_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(json!({"choices":[{"message":{"role":"assistant","tool_calls":[
+                {"id":"stage","type":"function","function":{"name":"set_coverage","arguments":json!({
+                    "section":"docs/main.md#/stop","state":"non-normative","note":"Staged coverage, not committed."}).to_string()}}
+            ]}}]}).to_string()) })
+        });
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+        let saved_sink = saved.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = cancel.clone();
+        let sink: CheckpointSink = Arc::new(move |capsule, files| {
+            let saved = saved_sink.clone(); let stop = stop.clone();
+            Box::pin(async move {
+                let after_tool = capsule["frames"].as_array().and_then(|v| v.last())
+                    .is_some_and(|frame| frame["boundary"]["phase"] == "after_tool");
+                if after_tool {
+                    *saved.lock().unwrap() = Some((capsule, files));
+                    stop.store(true, Ordering::SeqCst);
+                    Err("checkpoint-failed: cancellation raced with durable save".into())
+                } else { Ok(capsule["sequence"].as_u64().unwrap() + 1) }
+            })
+        });
+        let execution = Execution { model:"fixture".into(), transport_async:Some(model), checkpoint:Some(sink), cancel, ..Default::default() };
+        let reply = workspace.request("POST", "/api/jobs", &json!({"kind":"compile"}).to_string(), &execution).unwrap();
+        assert!(reply.status < 400, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "{}", String::from_utf8_lossy(&reply.body));
+        assert!(!workspace.snapshot().keys().any(|path| path.contains("/leases/")), "active cancellation retained a claim");
+        let (capsule, files) = saved.lock().unwrap().clone().expect("staged tool checkpoint");
+        assert!(capsule["frames"][0]["mcp"]["open"]["session"]["staged"].as_array().is_some_and(|v| !v.is_empty()), "{capsule}");
+        assert!(files.keys().any(|path| path.ends_with("/leases/build.yaml")));
+        assert!(files.keys().any(|path| path.contains("/leases/b")));
+        assert!(capsule["claims"].as_array().unwrap().len() >= 2);
+        let mut recovered = Workspace::new(files.clone()).unwrap();
+        recovered.stop_recovery(&capsule, &[]).unwrap();
+        let stopped = recovered.snapshot();
+        assert!(!stopped.keys().any(|path| path.contains("/leases/")));
+        assert_eq!(stopped["docs/committed.txt"], b"An earlier accepted edit.\n");
+        for (path, bytes) in &files {
+            if !path.contains("/leases/") && path != ".jazyk/conversations.json" {
+                assert_eq!(stopped.get(path), Some(bytes), "Stop changed committed bytes: {path}");
+            }
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Stop invoked the model");
+        let _fs = crate::vfs::Scope::enter(&stopped);
+        let project = crate::document_sets::Workspace::load(&root()).unwrap().resolve(Some("ds_main")).unwrap();
+        let guard = crate::control::begin_internal_build(&project, &project.out, "compile").expect("fresh build must not inherit the stopped batch lease");
+        drop(guard);
+    }
+
+    #[test]
+    fn actual_compiler_resume_hands_over_saved_claims_and_refuses_foreign_replacements() {
+        let mut workspace = workspace("Alpha");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut execution = navigation_model("Alpha", calls.clone(), None);
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+        let save = saved.clone();
+        let suspend = execution.suspend.clone();
+        execution.checkpoint = Some(Arc::new(move |mut capsule, files| {
+            let save = save.clone(); let suspend = suspend.clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                capsule["sequence"] = json!(next);
+                if capsule["frames"].as_array().and_then(|frames| frames.last())
+                    .is_some_and(|frame| frame["boundary"]["phase"] == "after_tool") {
+                    suspend.store(true, Ordering::SeqCst);
+                }
+                *save.lock().unwrap() = Some((capsule, files));
+                Ok(next)
+            })
+        }));
+        let stopped = value(&mut workspace,"POST","/api/jobs",json!({"kind":"compile","setIds":["ds_main"]}),&execution);
+        assert!(stopped.to_string().contains("suspended"), "{stopped}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let (mut capsule, mut files) = saved.lock().unwrap().clone().unwrap();
+        // Emulate a previous OS worker. Its protected receipts and VFS agree,
+        // while the replacement's fresh control identity is internal-1.
+        for claim in capsule["claims"].as_array_mut().unwrap() {
+            claim["lease"]["worker"] = json!("previous-process");
+        }
+        for (path, bytes) in files.iter_mut().filter(|(path,_)| path.contains("/leases/")) {
+            let mut lease: crate::control::Lease = serde_norway::from_slice(bytes).unwrap();
+            lease.worker = "previous-process".into();
+            *bytes = serde_norway::to_string(&lease).unwrap().into_bytes();
+            assert!(!path.is_empty());
+        }
+        let mut foreign_files = files.clone();
+        let (foreign_path, bytes) = foreign_files.iter_mut()
+            .find(|(path,_)| path.contains("/leases/") && !path.ends_with("/build.yaml")).unwrap();
+        let foreign_path = foreign_path.clone();
+        let mut lease: crate::control::Lease = serde_norway::from_slice(bytes).unwrap();
+        lease.worker = "another-execution".into();
+        *bytes = serde_norway::to_string(&lease).unwrap().into_bytes();
+        let foreign_bytes = bytes.clone();
+        let resume = Execution { resume:Some(capsule.clone()), ..navigation_model("Alpha",calls.clone(),None) };
+        let mut foreign = Workspace::new(foreign_files).unwrap();
+        let refused = value(&mut foreign,"POST","/api/jobs",json!({"kind":"compile","setIds":["ds_main"]}),&resume);
+        assert!(refused.to_string().contains("incomplete"), "{refused}");
+        assert_eq!(foreign.snapshot()[&foreign_path], foreign_bytes);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Foreign claim dispatched inference");
+        let observed = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let observe = observed.clone();
+        let checkpoint: CheckpointSink = Arc::new(move |capsule, _| {
+            let observe = observe.clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                observe.lock().unwrap().push(capsule);
+                Ok(next)
+            })
+        });
+        let resume = Execution { checkpoint:Some(checkpoint), ..resume };
+        let mut restored = Workspace::new(files).unwrap();
+        let complete = value(&mut restored,"POST","/api/jobs",json!({"kind":"compile","setIds":["ds_main"]}),&resume);
+        assert!(complete.to_string().contains("converged"), "{complete}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Saved model response was billed again");
+        assert!(!restored.snapshot().keys().any(|path| path.contains("/leases/")));
+        assert!(observed.lock().unwrap().iter().any(|capsule|
+            capsule["claims"].as_array().is_some_and(|claims| claims.iter().any(|claim|
+                claim["lease"]["task"] != "build" && claim["lease"]["worker"] == "internal-1"))),
+            "Restored MCP batch was not reclaimed by the replacement");
+    }
+
+    #[test]
+    fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
+        for phase in ["saved_model", "after_tool", "finished"] {
+            let mut w = workspace("Recovery");
+            let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
+            let path = format!("/api/chat/sessions/{}/prompt", chat["id"].as_str().unwrap());
+            let body = json!({"text":"Create the recovery document.","messageId":"accepted-1","turnId":"turn-1"});
+            let calls = Arc::new(AtomicUsize::new(0));
+            let model_calls = calls.clone();
+            let model: ModelAsyncTransport = Arc::new(move |request| {
+                let model_calls = model_calls.clone();
+                Box::pin(async move {
+                    let request: Value = serde_json::from_str(&request).unwrap();
+                    assert!(request["_jazyk"]["requestId"].is_string());
+                    let n = model_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(if n == 0 {
+                        json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"write-1","type":"function","function":{"name":"write_document","arguments":json!({"path":"docs/recovery.md","text":"# Recovered\n\nSaved once.\n"}).to_string()}}]}}],"usage":{"total_tokens":13,"prompt_tokens":10,"completion_tokens":3}}).to_string()
+                    } else {
+                        assert_eq!(n, 1, "A completed provider call was replayed at {phase}");
+                        model_reply("Recovery complete.")
+                    })
+                })
+            });
+            let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+            let checkpoint = saved.clone();
+            let injected = Arc::new(AtomicBool::new(false));
+            let inject = injected.clone();
+            let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+                let checkpoint = checkpoint.clone();
+                let inject = inject.clone();
+                Box::pin(async move {
+                    let next = capsule["sequence"].as_u64().unwrap() + 1;
+                    capsule["sequence"] = json!(next);
+                    let current_phase = capsule["frames"].as_array().and_then(|frames| frames.last())
+                        .and_then(|frame| frame["boundary"]["phase"].as_str());
+                    let fail = current_phase == Some(phase) && !inject.swap(true, Ordering::SeqCst);
+                    *checkpoint.lock().unwrap() = Some((capsule, files));
+                    if fail { Err("checkpoint-failed: injected process loss after durable save".into()) } else { Ok(next) }
+                })
+            });
+            let execution = Execution { model:"fixture".into(),transport_async:Some(model.clone()),checkpoint:Some(sink),..Default::default() };
+            let stopped = value(&mut w,"POST",&path,body.clone(),&execution);
+            assert_eq!(stopped["stop"],"suspended", "{phase}: {stopped}");
+            let (capsule, files) = saved.lock().unwrap().clone().unwrap();
+            crate::session_recovery::validate(&capsule).unwrap();
+            assert!(capsule["deliveredInputs"].as_array().unwrap().contains(&json!("accepted-1")));
+            assert_eq!(files.contains_key("docs/recovery.md"), phase != "saved_model");
+            let mut cancelled = Workspace::new(files.clone()).unwrap();
+            let prior = value(&mut cancelled,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
+            let next = prior["updates"].as_array().unwrap().last().map_or(0,|u|u["n"].as_u64().unwrap()+1);
+            let retained = json!({"type":"chat.update","sessionId":chat["id"],"n":next,
+                "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Retained partial response."}}});
+            cancelled.stop_recovery(&capsule, &[retained.clone(),retained]).unwrap();
+            let cancelled_history = value(&mut cancelled,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
+            assert_eq!(cancelled_history["state"],"idle", "{phase}: {cancelled_history}");
+            let cancelled_updates = cancelled_history["updates"].as_array().unwrap();
+            assert_eq!(cancelled_updates.iter().filter(|u|u["update"]["content"]["text"]=="Retained partial response.").count(),1,"{phase}");
+            assert_eq!(cancelled_updates.last().unwrap()["n"],json!(next+1),"{phase}");
+            assert_eq!(cancelled_updates.iter()
+                .filter(|u| u["update"]["sessionUpdate"] == "turn_end" && u["update"]["stop"] == "cancelled").count(),1,"{phase}");
+            let mut restored = Workspace::new(files).unwrap();
+            let resumed = Execution { model:"fixture".into(),transport_async:Some(model),resume:Some(capsule),..Default::default() };
+            let complete = value(&mut restored,"POST",&path,body,&resumed);
+            assert_eq!(complete["stop"],"end_turn", "{phase}: {complete}");
+            assert_eq!(calls.load(Ordering::SeqCst),2, "{phase}");
+            assert_eq!(restored.snapshot()["docs/recovery.md"], b"# Recovered\n\nSaved once.\n");
+            let timeline = value(&mut restored,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
+            let updates = timeline["updates"].as_array().unwrap();
+            assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "user_message").count(),1,"{phase}");
+            assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "turn_end").count(),1,"{phase}");
+        }
+    }
+    #[test]
+    fn task_restart_reuses_destination_intention_run_receipt_and_original_deadline() {
+        for lose_reply in [false,true] {
+            let mut initial = workspace("Tasks").snapshot();
+            initial.get_mut(".jazyk/jazyk.toml").unwrap().extend_from_slice(b"\n[[tasks]]\nid='check'\nname='Check'\ndescription='Check source'\ncommand='true'\n");
+            let saved = Arc::new(std::sync::Mutex::new(None::<(Value,Snapshot)>));
+            let effects = Arc::new(std::sync::Mutex::new(BTreeMap::<String,Value>::new()));
+            let requests = Arc::new(AtomicUsize::new(0));
+            let runtime_effects = effects.clone();
+            let runtime_requests = requests.clone();
+            let runtime: RuntimeTransport = Arc::new(move |request| match request["operation"].as_str().unwrap() {
+                "task_context" => Ok(json!({"available":true})),
+                "run_task" => {
+                    let n = runtime_requests.fetch_add(1,Ordering::SeqCst);
+                    let key = request["operation_key"].as_str().unwrap().to_owned();
+                    let mut effects = runtime_effects.lock().unwrap();
+                    if let Some(previous) = effects.get(&key) { assert_eq!(previous,request); }
+                    effects.insert(key,request.clone());
+                    if lose_reply && n == 0 { Err("reply lost after destination accepted the task".into()) }
+                    else { Ok(json!({"id":"original-run"})) }
+                }
+                "wait_run" => { assert_eq!(request["run_id"],"original-run"); Ok(json!({"terminated":true})) }
+                "result" => Ok(json!({"status":"succeeded","complete":true,"input_files":null})),
+                operation => panic!("Unexpected task operation {operation}"),
+            });
+            let checkpoint = saved.clone();
+            let failed = Arc::new(AtomicBool::new(false));
+            let fail = failed.clone();
+            let sink: CheckpointSink = Arc::new(move |mut capsule,files| {
+                let checkpoint = checkpoint.clone(); let fail = fail.clone();
+                Box::pin(async move {
+                    let next = capsule["sequence"].as_u64().unwrap()+1;
+                    capsule["sequence"] = json!(next);
+                    let has_run = capsule["parent"].as_object().unwrap().values().any(|p| p["run_id"] == "original-run");
+                    *checkpoint.lock().unwrap() = Some((capsule,files));
+                    if has_run && !lose_reply && !fail.swap(true,Ordering::SeqCst) {
+                        Err("checkpoint-failed: process lost after the run receipt was saved".into())
+                    } else { Ok(next) }
+                })
+            });
+            {
+                let _fs = crate::vfs::Scope::enter(&initial);
+                let _state = crate::scoped_state::Scope::enter();
+                let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime.clone()),checkpoint:Some(sink),..Default::default() });
+                let _recovery = crate::session_recovery::Scope::enter(None);
+                let error = crate::task_runtime::execute_with_key(&root(),"check","verify").unwrap_err();
+                assert!(crate::session_recovery::is_interruption(&error),"{error}");
+            }
+            let (capsule,files) = saved.lock().unwrap().clone().unwrap();
+            let deadline = capsule["parent"].as_object().unwrap().values().find_map(|p| p["deadline"].as_u64()).unwrap();
+            {
+                let _fs = crate::vfs::Scope::enter(&files);
+                let _state = crate::scoped_state::Scope::enter();
+                let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime),resume:Some(capsule.clone()),..Default::default() });
+                let _recovery = crate::session_recovery::Scope::enter(Some(&capsule));
+                let (id,result) = crate::task_runtime::execute_with_key(&root(),"check","verify").unwrap();
+                assert_eq!(id,"original-run"); assert_eq!(result["status"],"succeeded");
+                let key = capsule["parent"].as_object().unwrap().keys().next().unwrap();
+                assert_eq!(crate::session_recovery::parent(key).unwrap().unwrap()["deadline"],deadline);
+            }
+            assert_eq!(effects.lock().unwrap().len(),1);
+            assert_eq!(requests.load(Ordering::SeqCst),if lose_reply {2}else{1});
+        }
     }
     fn navigation_model(
         name: &'static str,
@@ -932,7 +1309,7 @@ mod tests {
             assert_eq!(scope.snapshot(), before);
         }
         let reply = w
-            .request(
+            .request_test(
                 "GET",
                 "/api/project/file?path=picture.png",
                 "",
@@ -1017,7 +1394,7 @@ mod tests {
         let id = chat["id"].as_str().unwrap();
         // A reopened workspace can lack updates already committed to the event DB.
         // Its empty conversation book is behind that DB's durable cursor of 800.
-        let result = w.request("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1,"afterN":800}).to_string(), &execution).unwrap();
+        let result = w.request_test("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1,"afterN":800}).to_string(), &execution).unwrap();
         assert_eq!(result.status, 200, "{}", String::from_utf8_lossy(&result.body));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         let timeline = value(&mut w, "GET", &format!("/api/chat/sessions/{id}"), Value::Null, &Execution::default());
@@ -1038,12 +1415,12 @@ mod tests {
     #[test]
     fn owned_jobs_reject_unknown_conversation_before_execution() {
         let mut w = workspace("Ownership");
-        let reply = w.request("POST", "/api/jobs", r#"{"kind":"compile","conversationId":"missing","jobId":42}"#, &Execution::default()).unwrap();
+        let reply = w.request_test("POST", "/api/jobs", r#"{"kind":"compile","conversationId":"missing","jobId":42}"#, &Execution::default()).unwrap();
         assert_eq!(reply.status, 404);
         let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
-        let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"]}).to_string(), &Execution::default()).unwrap();
+        let reply = w.request_test("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"]}).to_string(), &Execution::default()).unwrap();
         assert_eq!(reply.status, 400);
-        let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"],"jobId":42,"afterN":1u64 << 53}).to_string(), &Execution::default()).unwrap();
+        let reply = w.request_test("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"],"jobId":42,"afterN":1u64 << 53}).to_string(), &Execution::default()).unwrap();
         assert_eq!(reply.status, 400, "the cursor must stay within safe JSON event integers");
         assert!(!w.snapshot().keys().any(|k| k.contains("graph/")));
     }
@@ -1128,7 +1505,9 @@ mod tests {
         assert!(!w.snapshot().keys().any(|path|path.contains("graph/entity/")||path.ends_with("control.yaml")));
         let saved=value(&mut w,"GET","/api/chat/history",Value::Null,&e);
         let messages=saved["book"]["chats"][id]["history"].as_array().unwrap();
-        assert_eq!(messages.iter().filter(|message|message["role"]=="system").count(),1);
+        // Current instructions are supplied separately to GDK, not persisted as
+        // human or provider history.
+        assert_eq!(messages.iter().filter(|message|message["role"]=="system").count(),0);
         assert_eq!(messages.iter().filter(|message|message["role"]=="user").map(|message|message["content"].as_str().unwrap()).collect::<Vec<_>>(),vec![first,edit,"Try again. Do not compile; edit only hosting.md."]);
     }
 
@@ -1169,13 +1548,12 @@ mod tests {
         let panic = Execution {
             transport: Some(Arc::new(|_| {
                 crate::llm::add_tokens(999);
-                crate::llm::set_tools_mode(2);
                 panic!("test callback panic")
             })),
             ..Default::default()
         };
         assert!(restored
-            .request(
+            .request_test(
                 "POST",
                 "/api/chat/sessions/chat-1/prompt",
                 "{\"text\":\"panic\"}",
@@ -1190,7 +1568,6 @@ mod tests {
             transport: Some(Arc::new(move |_| {
                 if recovery_calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     assert_eq!(crate::llm::tokens_spent(), 0);
-                    assert_ne!(crate::llm::tools_mode(), 2);
                 }
                 Ok(model_reply("Recovered."))
             })),
@@ -1365,7 +1742,7 @@ mod tests {
             format!("version: {}\n", crate::store::STORE_VERSION).into_bytes(),
         );
         let reply = w
-            .request("GET", "/api/capabilities", "", &Execution::default())
+            .request_test("GET", "/api/capabilities", "", &Execution::default())
             .unwrap();
         assert_eq!(reply.status, 200);
         let files = w.snapshot();

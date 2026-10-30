@@ -43,7 +43,6 @@ def main():
     p.add_argument('--env-file', required=True)
     p.add_argument('--evidence', required=True)
     p.add_argument('--model', default='gemma4:31b-mlx')
-    p.add_argument('--codec', choices=['native', 'text'], default='native')
     p.add_argument('--engine', choices=['podman', 'docker'], default='podman')
     p.add_argument('--chat', action='store_true', help='Use chat tools with a manual release and binding prerequisite')
     p.add_argument('--unconfigured-source', action='store_true', help='Require chat to configure initially empty source selections')
@@ -82,8 +81,8 @@ reports=["reports/*.xml"]
     statement = 'The Python module greet.py provides greeting(), which returns exactly "Hello, Jazyk!".'
     (out / 'graph/requirements.yaml').write_text(json.dumps({'req:greeting': {'statement': statement, 'entities': ['ent:greeter']}}))
     binary = str(Path(a.binary).resolve())
-    env = environment(a.env_file, a.engine, a.model, a.codec, 32 if a.chat else 16)
-    env.update(JAZYK_CALL_TIMEOUT='600', JAZYK_READ_TIMEOUT='600')
+    env = environment(a.env_file, a.engine, a.model, 32 if a.chat else 16)
+    env.update(JAZYK_CALL_TIMEOUT='600')
     preflight = subprocess.run([a.engine, 'info'], env=env, capture_output=True, text=True, timeout=30)
     (evidence / 'engine-preflight.log').write_text(preflight.stdout + preflight.stderr)
     assert preflight.returncode == 0, 'Container engine is unavailable; no model session started'

@@ -1084,3 +1084,7 @@ discovery in 19.3 seconds. It failed the extraction and navigation capability
 benchmark (0 of 10 checks), and a task-running prompt supplied a nonexistent run
 ID instead of starting the task. Those runs do not establish compilation or task
 execution capability for that model. Gates rejected its invalid tool calls.
+
+`qwen3.8:27b-mlx` passed navigation (4 of 4 checks) through the same endpoint,
+but failed extraction (0 of 6). Its combined compilation verdict is not-capable.
+The failures included malformed tool arguments and missing entity provenance.

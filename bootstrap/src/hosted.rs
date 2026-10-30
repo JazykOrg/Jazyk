@@ -129,12 +129,15 @@ impl Workspace {
     /// Finalize Stop against a protected checkpoint without running a harness.
     /// Only committed VFS bytes exist here; staged MCP operations stay in the
     /// capsule and are discarded by the host after its fenced publication.
-    pub fn stop_recovery(&mut self, capsule: &Value) -> Result<(), String> {
+    pub fn stop_recovery(&mut self, capsule: &Value, events: &[Value]) -> Result<(), String> {
         crate::session_recovery::validate(capsule)?;
         let fs = crate::vfs::Scope::enter(&self.files);
         let _state = crate::scoped_state::Scope::enter();
+        let _execution = ExecutionScope::enter(Execution::default());
+        let _recovery = crate::session_recovery::Scope::enter(None);
         let conversations = crate::conversation::Scope::enter()?;
         crate::session_recovery::stop_owned(capsule)?;
+        crate::conversation::replay_updates(events)?;
         crate::conversation::stop_recovered();
         conversations.save()?;
         self.files = fs.snapshot();
@@ -972,7 +975,7 @@ mod tests {
         assert!(files.keys().any(|path| path.contains("/leases/b")));
         assert!(capsule["claims"].as_array().unwrap().len() >= 2);
         let mut recovered = Workspace::new(files.clone()).unwrap();
-        recovered.stop_recovery(&capsule).unwrap();
+        recovered.stop_recovery(&capsule, &[]).unwrap();
         let stopped = recovered.snapshot();
         assert!(!stopped.keys().any(|path| path.contains("/leases/")));
         assert_eq!(stopped["docs/committed.txt"], b"An earlier accepted edit.\n");
@@ -1107,6 +1110,19 @@ mod tests {
             crate::session_recovery::validate(&capsule).unwrap();
             assert!(capsule["deliveredInputs"].as_array().unwrap().contains(&json!("accepted-1")));
             assert_eq!(files.contains_key("docs/recovery.md"), phase != "saved_model");
+            let mut cancelled = Workspace::new(files.clone()).unwrap();
+            let prior = value(&mut cancelled,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
+            let next = prior["updates"].as_array().unwrap().last().map_or(0,|u|u["n"].as_u64().unwrap()+1);
+            let retained = json!({"type":"chat.update","sessionId":chat["id"],"n":next,
+                "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Retained partial response."}}});
+            cancelled.stop_recovery(&capsule, &[retained.clone(),retained]).unwrap();
+            let cancelled_history = value(&mut cancelled,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
+            assert_eq!(cancelled_history["state"],"idle", "{phase}: {cancelled_history}");
+            let cancelled_updates = cancelled_history["updates"].as_array().unwrap();
+            assert_eq!(cancelled_updates.iter().filter(|u|u["update"]["content"]["text"]=="Retained partial response.").count(),1,"{phase}");
+            assert_eq!(cancelled_updates.last().unwrap()["n"],json!(next+1),"{phase}");
+            assert_eq!(cancelled_updates.iter()
+                .filter(|u| u["update"]["sessionUpdate"] == "turn_end" && u["update"]["stop"] == "cancelled").count(),1,"{phase}");
             let mut restored = Workspace::new(files).unwrap();
             let resumed = Execution { model:"fixture".into(),transport_async:Some(model),resume:Some(capsule),..Default::default() };
             let complete = value(&mut restored,"POST",&path,body,&resumed);

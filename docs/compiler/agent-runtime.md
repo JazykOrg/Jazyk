@@ -133,6 +133,8 @@ replaying a saved complete response does not append that prefix again.
 Stopping a suspended job retains its already committed workspace changes. The
 host publishes those saved bytes under a fresh ownership fence, closes its running
 conversation and discards the staged MCP changeset without running the model.
+It replays retained job chat events after the saved cursor before closing the
+conversation. Published partial text keeps its original position and appears once.
 Stop releases the stopped execution's batch, ledger and build claims. Earlier
 commits remain. A lease is released only when its saved task, worker and claim
 time and nonempty random `claimId` still match. A replacement claim gets a new

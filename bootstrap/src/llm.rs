@@ -366,7 +366,7 @@ impl Llm {
         let response = if crate::vfs::is_scoped() {
             let mut body = request.body;
             body["_jazyk"] = json!({"requestId":request.attempt_id,"purpose":request.purpose});
-            crate::hosted::transport_async(&request.attempt_id, &body.to_string()).await?
+            crate::hosted::transport_async(&request.attempt_id, &body.to_string(), None).await?
         } else {
             use futures::StreamExt;
             // Only owned HTTP work runs on this process-shared executor. The

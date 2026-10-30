@@ -25,6 +25,12 @@ pub type ModelAsyncTransport = Arc<
         + Send
         + Sync,
 >;
+pub type ModelDeltaSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
+pub type ModelAsyncStreamTransport = Arc<
+    dyn Fn(String, ModelDeltaSink)
+        -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send + Sync,
+>;
 pub type CheckpointSink = Arc<
     dyn Fn(
             Value,
@@ -52,6 +58,7 @@ pub struct Execution {
     pub transport: Option<ModelTransport>,
     pub transport_stream: Option<ModelStreamTransport>,
     pub transport_async: Option<ModelAsyncTransport>,
+    pub transport_async_stream: Option<ModelAsyncStreamTransport>,
     pub resume: Option<Value>,
     pub checkpoint: Option<CheckpointSink>,
     pub suspend: Arc<AtomicBool>,
@@ -409,7 +416,7 @@ pub(crate) async fn checkpoint(mut capsule: Value) -> Result<u64, String> {
     Ok(next)
 }
 
-pub(crate) async fn transport_async(attempt_id: &str, body: &str) -> Result<String, String> {
+pub(crate) async fn transport_async(attempt_id: &str, body: &str, deltas: Option<ModelDeltaSink>) -> Result<String, String> {
     let e = execution();
     if e.cancel.load(Ordering::Acquire) {
         return Err("execution cancelled".into());
@@ -421,6 +428,9 @@ pub(crate) async fn transport_async(attempt_id: &str, body: &str) -> Result<Stri
         serde_json::from_str(body).map_err(|e| format!("Invalid model request: {e}"))?;
     request["_jazyk"]["requestId"] = json!(attempt_id);
     request["_jazyk"]["checkpointSequence"] = json!(CHECKPOINT_SEQUENCE.with(|s| s.get()));
+    if let (Some(stream), Some(deltas)) = (e.transport_async_stream, deltas) {
+        return stream(request.to_string(), deltas).await;
+    }
     let transport = e
         .transport_async
         .ok_or("Hosted async model transport is unavailable.")?;

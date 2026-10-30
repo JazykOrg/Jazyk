@@ -1,5 +1,5 @@
 use crate::vfs::VPathExt;
-// Binding: tie one requirement to the deliverable before generation runs. The bind
+// Binding: explicitly tie one requirement to existing source and tests. The bind
 // task searches for an implementation, finds or writes the test, runs it, and records
 // the ledger row; the verdict classifies the requirement (verified, unimplemented,
 // failing). Mirrors docs/consumers/bind.md and docs/compiler/tools.md#binding-tools.

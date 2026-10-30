@@ -122,7 +122,7 @@ pub fn repair_for(status: &str, reason: &str, rid: &str, entity: &str) -> String
         format!("jazyk gen {}", entity)
     };
     match (status, reason) {
-        ("missing", "not-generated") => format!("bind it: `{}` binds first, then generates what the bind leaves unimplemented", gen),
+        ("missing", "not-generated") => format!("develop its source and tests together: `{}`", gen),
         ("missing", "artifact-gone") => format!("the test artifact is gone or no longer contains the test name; re-bind it: `{}`", gen),
         ("missing", "requirement-gone") => "the requirement left the graph; the next record_generation prunes the row".into(),
         ("missing", "source-selection-changed") => format!("the binding names files outside current Source; re-bind it: `{}`", gen),

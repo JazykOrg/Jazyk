@@ -415,8 +415,8 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
         ),
         "gen" => format!(
             "usage: jazyk gen [entity...]\n\n\
-             Run the built-in generation worker over the ledger goals: resolve owed\n\
-             bind goals first, then the generate goals, one bounded session per\n\
+             Run the built-in worker to develop source and tests together,\n\
+             choosing their order within one bounded session per\n\
              entity, and record the manifest in the ledger. With no arguments, cover\n\
              every entity that has at least one requirement, leaf entities first,\n\
              skipping entities whose facts are unchanged.\n\n\

@@ -601,11 +601,6 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
             runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
             let store = crate::store::Store::load(&st.out);
-            // Binding first, same as `jazyk gen`: owed binds classify each requirement
-            // and the bound tests become the acceptance gates.
-            if let Err(e) = crate::bind::run_all(&store, &runner, &st.gs(), entities, trace) {
-                trace.line("bind", &e);
-            }
             crate::gen::run_all(&store, &runner, &st.gs(), entities, *force, trace)
         }
         JobKind::Verify {

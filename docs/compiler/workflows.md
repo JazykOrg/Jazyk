@@ -37,6 +37,9 @@ suspension retains the current action and does not record a failed result.
 Failure or cancellation stops subsequent actions. A failed check never counts as
 successful publication evidence. Unselected mandatory goals remain visible on the
 board. Finishing a selected workflow does not imply whole-project convergence.
+A test skipped because its binding left current Source
+(`source-selection-changed`) fails the test action and stops subsequent actions.
+Re-bind before testing again. The skipped row and its files remain unchanged.
 
 Compile completion and generation readiness are separate checks. A compile action
 finishes when no mandatory graph work remains open, parked, or failed. Ledger work

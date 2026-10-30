@@ -503,29 +503,6 @@ pub fn close_inputs(session: &str) -> bool {
     EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.input_close.clone()))
         .map(|close| close(session)).unwrap_or(true)
 }
-pub(crate) fn transport_deltas(body: &str, delta: &mut dyn FnMut(&str, &str)) -> Result<String, String> {
-    let e = execution();
-    if e.cancel.load(Ordering::Relaxed) { return Err("execution cancelled".into()); }
-    let Some(stream) = e.transport_stream else { return transport(body); };
-    let reply = stream(body, delta)?;
-    if e.cancel.load(Ordering::Relaxed) { return Err("execution cancelled".into()); }
-    Ok(reply)
-}
-pub(crate) fn transport(body: &str) -> Result<String, String> {
-    let e = execution();
-    if e.cancel.load(Ordering::Relaxed) {
-        return Err("execution cancelled".into());
-    }
-    let transport = e
-        .transport
-        .ok_or("no model transport supplied for this workspace")?;
-    let reply = transport(body)?;
-    if e.cancel.load(Ordering::Relaxed) {
-        return Err("execution cancelled".into());
-    }
-    Ok(reply)
-}
-
 fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     let routed =
         match crate::webapi::sets::route(path, serde_json::from_str(body).unwrap_or(Value::Null)) {
@@ -1425,7 +1402,6 @@ mod tests {
         let panic = Execution {
             transport: Some(Arc::new(|_| {
                 crate::llm::add_tokens(999);
-                crate::llm::set_tools_mode(2);
                 panic!("test callback panic")
             })),
             ..Default::default()
@@ -1446,7 +1422,6 @@ mod tests {
             transport: Some(Arc::new(move |_| {
                 if recovery_calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     assert_eq!(crate::llm::tokens_spent(), 0);
-                    assert_ne!(crate::llm::tools_mode(), 2);
                 }
                 Ok(model_reply("Recovered."))
             })),

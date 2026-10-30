@@ -1036,8 +1036,6 @@ mod tests {
             vec![
                 ("JAZYK_LLM_BASE_URL".into(), format!("http://{address}")),
                 ("JAZYK_MODEL".into(), "fixture".into()),
-                ("JAZYK_CODEC".into(), "native".into()),
-                ("JAZYK_MAX_RETRIES".into(), "0".into()),
                 ("JAZYK_MIN_INTERVAL_MS".into(), "0".into()),
             ],
         )
@@ -1117,10 +1115,8 @@ mod tests {
             ("JAZYK_LLM_BASE_URL".to_string(), url),
             ("JAZYK_MODEL".to_string(), "fake".to_string()),
             ("JAZYK_MIN_INTERVAL_MS".to_string(), "0".to_string()),
-            ("JAZYK_MAX_RETRIES".to_string(), "0".to_string()),
             // The probe treats a prose reply under native as a downgrade signal; with
             // no tools in the session the reply ends the turn either way.
-            ("JAZYK_CODEC".to_string(), "native".to_string()),
         ];
         let host = AcpHost::start(agent, dir.clone(), extra_env).expect("host start");
         let session = host

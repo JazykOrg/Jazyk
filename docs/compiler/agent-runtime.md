@@ -7,7 +7,8 @@ executors remain external.
 
 Jazyk owns scheduling, prompts, MCP tools, graph context, mutation gates, task
 grants, budgets, persistence and completion. The runtime does not derive goals or
-write around their gates. It does not import the Goose application facade.
+write around their gates. It does not import the Goose application facade. The former embedded loop, text
+tool protocol and handwritten streaming collector are removed.
 
 ## Models and tools
 

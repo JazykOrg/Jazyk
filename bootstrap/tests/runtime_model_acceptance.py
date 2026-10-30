@@ -16,7 +16,7 @@ import threading
 import time
 
 
-def environment(env_file, engine, model, codec, rounds):
+def environment(env_file, engine, model, rounds):
     env = dict(os.environ)
     if env_file:
         for line in Path(env_file).read_text().splitlines():
@@ -26,9 +26,9 @@ def environment(env_file, engine, model, codec, rounds):
     for key in ("JAZYK_RUNTIME_URL", "JAZYK_RUNTIME_TOKEN_FILE"):
         env.pop(key, None)
     env.update(JAZYK_CONTAINER_ENGINE=engine, JAZYK_MODEL=model,
-               JAZYK_CODEC=codec, JAZYK_ACP_AGENT="embedded",
-               JAZYK_AGENT_MAX_ROUNDS=str(rounds), JAZYK_MAX_RETRIES="0",
-               JAZYK_CALL_TIMEOUT="90", JAZYK_READ_TIMEOUT="90",
+               JAZYK_ACP_AGENT="embedded",
+               JAZYK_AGENT_MAX_ROUNDS=str(rounds),
+               JAZYK_CALL_TIMEOUT="90",
                JAZYK_MAX_COMPLETION_TOKENS="2048")
     return env
 
@@ -190,7 +190,6 @@ def main():
     parser.add_argument("--env-file")
     parser.add_argument("--engine", choices=["podman", "docker"], default="podman")
     parser.add_argument("--model", default="qwen3.8:27b-mlx")
-    parser.add_argument("--codec", choices=["native", "text"], default="native")
     parser.add_argument("--case", choices=list(PROMPTS), required=True)
     parser.add_argument("--entry", choices=["acp", "mcp"], default="acp")
     parser.add_argument("--toolsets", default="runtime")
@@ -205,8 +204,8 @@ def main():
     evidence.mkdir(parents=True, exist_ok=False)
     root = evidence / "project"
     fixture(root, args.case)
-    env = environment(args.env_file, args.engine, args.model, args.codec, args.rounds)
-    env.update(JAZYK_CALL_TIMEOUT=str(args.call_timeout), JAZYK_READ_TIMEOUT=str(args.call_timeout))
+    env = environment(args.env_file, args.engine, args.model, args.rounds)
+    env.update(JAZYK_CALL_TIMEOUT=str(args.call_timeout))
     acp = ACP(binary, root, env, evidence, args.entry == "acp")
     sid = None
     started = time.monotonic()
@@ -276,13 +275,13 @@ def main():
                 assert "search_run_log" in names and "update_tasks" not in names, names
                 assert [task["id"] for task in context["tasks"]] == ["receipt"]
         result = {"case": args.case, "engine": args.engine, "model": args.model,
-                  "codec": args.codec, "entry": args.entry, "seconds": round(time.monotonic()-started, 2),
+                  "codec": "native", "entry": args.entry, "seconds": round(time.monotonic()-started, 2),
                   "calls": names, "summary": "".join(acp.text), "passed": True}
         (evidence / "result.json").write_text(json.dumps(result, indent=2))
         print("PASS", json.dumps(result), flush=True)
     except Exception as error:
         result = {"case": args.case, "engine": args.engine, "model": args.model,
-                  "codec": args.codec, "entry": args.entry, "passed": False,
+                  "codec": "native", "entry": args.entry, "passed": False,
                   "seconds": round(time.monotonic()-started, 2), "error": str(error),
                   "calls": [call.get("title") for call in acp.calls], "summary": "".join(acp.text)}
         (evidence / "result.json").write_text(json.dumps(result, indent=2))

@@ -38,10 +38,6 @@ fn error_text(error: JsValue) -> String {
         .unwrap_or_else(|| "The page did not answer the model call.".into())
 }
 
-pub fn chat(_body: &str) -> Result<String, String> {
-    Err("Model-driven browser execution requires the async entry point.".into())
-}
-
 pub fn take_inputs(session: &str) -> Vec<serde_json::Value> {
     let values = poll_inputs_js().ok()
         .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok())
@@ -49,9 +45,3 @@ pub fn take_inputs(session: &str) -> Vec<serde_json::Value> {
     values.into_iter().filter(|v| v["sessionId"].as_str() == Some(session)).collect()
 }
 pub fn close_inputs(_session: &str) -> bool { close_inputs_js() }
-
-pub fn chat_deltas(body: &str, _delta: &mut dyn FnMut(&str, &str)) -> Result<String,String> {
-    // The page may stream directly into its event reducer; model history still
-    // waits for the single complete response through the synchronous bridge.
-    chat(body)
-}

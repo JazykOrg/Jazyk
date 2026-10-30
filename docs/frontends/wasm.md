@@ -313,7 +313,9 @@ The model:
   its line says to wait or choose another source, since a new conversation would not
   help.
 
-## A measured run
+## A prior measured run
+
+This run predates the GDK runtime and native tool requirement.
 
 On an Apple laptop with Hermes-3-Llama-3.2-3B on WebGPU, one `reconcile-section`
 session over the demo project: 15451 tokens in, prefill about 85 seconds, decode

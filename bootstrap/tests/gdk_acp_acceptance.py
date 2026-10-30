@@ -134,7 +134,6 @@ def main():
             environment = os.environ.copy()
             environment.update({'JAZYK_LLM_BASE_URL': f'http://127.0.0.1:{server.server_port}/v1',
                                 'JAZYK_MODEL': 'fixture', 'JAZYK_API_KEY': '', 'JAZYK_ACP_IDLE_TIMEOUT': '5'})
-            environment.pop('JAZYK_CODEC', None)
             process = subprocess.Popen([str(Path(arguments.binary).resolve()), 'agent'], cwd=root,
                                        env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, text=True, bufsize=1)

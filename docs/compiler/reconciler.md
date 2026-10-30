@@ -504,8 +504,10 @@ and wait for their cone instead.
 - Within tier 3, `bind` on a requirement waits until the requirement carries at least
   one [criterion](./model/criterion.md) and its entity owes no `derive-criteria` (the
   evidence must exist before a test encodes it; the goal is `blocked {on: criteria}`),
-  `generate` for an entity also waits until none of its requirements owes a `bind`
-  (the statement must be final before a test encodes it), and `verify` waits until the
+  `generate` waits for its entity's `derive-criteria`, but not for `bind`.
+  A generation batch starts before binding-only work in the same locality, so
+  source and tests can develop together. Explicit binding remains available.
+  `verify` waits until the
   row's entity is generated. `ratify` and `answer` are never ready for
   a session: they are `blocked {on: human}` and resolve through the human paths their
   pages describe.

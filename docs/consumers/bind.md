@@ -9,8 +9,9 @@ A binding ties one requirement to the deliverable: the files that carry it (poss
 none), the test that judges it, and the last verdict. The binding is the requirement's
 row in the [ledger](./gen.md#the-ledger); this page defines how rows are born.
 
-Binding runs before generation, not inside it. A requirement enters the graph knowing
-nothing about the deliverable. The bind goal answers three questions in one bounded
+Binding can run inside generation or as an explicit action over existing source.
+It is not a mandatory phase before implementation. A requirement enters the graph
+knowing nothing about the deliverable. The bind goal answers three questions in one bounded
 session: is it already implemented, is it already tested, and does the deliverable satisfy
 it. The verdict sorts the requirement into existing work, new work, or a contradiction,
 and the same goal serves every arrival: a requirement extracted from a fresh document,
@@ -190,8 +191,9 @@ goal counts in the verdict. The executor resolves per goal kind
 [dispatch](../compiler/control-plane.md#dispatch)); a coding agent is the natural choice,
 because searching a codebase is what its own tools are best at. The embedded agent
 performs the same goal in-process with file tools served over the deliverable; what
-separates the executors is model quality, never capability. `jazyk gen` resolves the owed
-`bind` goals of its targets before their `generate` goals ([command](./gen.md#command)).
+separates the executors is model quality, never capability. `jazyk gen` develops
+source and tests together and records current bindings as part of generation
+([command](./gen.md#command)).
 Over MCP, `binding_tasks` lists the open goals and `begin_binding` claims the row under a
 lease ([workers and leases](../compiler/control-plane.md#workers-and-leases)).
 

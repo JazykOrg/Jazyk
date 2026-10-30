@@ -8,19 +8,27 @@ A workflow is a job, so closing its page does not stop its engine actions.
 
 - `compile`: reconcile documents, graph, diagrams, and diagnostics. Ledger goals
   stay open. A workflow compile never releases generation as a side effect.
-- `bind`: create or update requirement tests and bindings.
-- `generate`: generate product source against existing bindings. Missing bindings
-  block this action. Select `bind` first to create them.
+- `bind`: inspect existing source and create or update requirement bindings. This
+  is an explicit action, not a prerequisite for generation.
+- `generate`: develop product source and its tests together. The coding agent
+  chooses their order, reuses existing checks, and runs checks when they can guide
+  implementation. Missing bindings are completed in this action.
 - `build`: run the ledger's artifact build once. A written product needs no build.
 - `test`: run existing programmatic bindings. Do not generate or repair files.
 - `review`: judge existing files against model criteria. Do not generate files.
 - `task`: execute one saved project task by its stable ID. Multiple tasks are
   allowed. Their selection order is their execution order.
 
+The default product workflow is `compile` → `generate` → `build` → `test` →
+`review`. It does not create and run every requirement test before source exists.
+The coding agent can start from source, a test, or a small working slice. Its
+completion gate still requires implementation and current requirement evidence.
+Related checks share a saved suite task and container run where practical.
+
 Binding and generation may run focused checks while constructing their output.
 They do not imply the final artifact build or a full test run. The editor states
-this execution permission beside generation. The legacy CLI commands retain their
-existing combined behavior. Workflow actions use the explicit boundaries above.
+this execution permission beside generation. `jazyk gen` uses the same adaptive
+development contract. Workflow actions use the explicit boundaries above.
 Tests and reviews do not implicitly rebuild artifacts. Select `build` first when
 required. Missing artifacts block a check. A standalone test run uses existing
 files and retains the requirement freshness rules of the verification ledger.

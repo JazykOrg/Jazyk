@@ -1,7 +1,8 @@
 # The generate goal
 
-`generate` produces one entity's part of the deliverable, makes the tests bound to
-its requirements pass, and records the manifest. The medium is decided once per
+`generate` develops one entity's part of the deliverable and its tests, reuses
+existing checks, and records the manifest. The agent chooses when to write source
+and tests. The medium is decided once per
 deliverable before any generation runs (below); the session implements, it never
 re-decides. See [generation](../../consumers/gen.md).
 
@@ -32,11 +33,14 @@ the [ledger](../../consumers/gen.md#the-ledger):
   row still red after a generation over the current facts reads `failing` and derives
   nothing ([status](../../consumers/gen.md#status-is-derived-never-stored)): a
   contradictory criterion once regenerated its entity on every build.
+- `unbound-requirements`: a requirement needs a current binding or criterion test.
+  Generation can inspect existing source or create implementation before selecting
+  and recording its tests. A failing test against absent source is not required.
 
 The reasons are checked in that order and the first that holds names the goal. An
-entity with no ledger entry becomes generation work through `unimplemented` rows
-only: [`bind`](./bind.md) classifies first, and an adopted entity whose rows all read
-`verified` derives nothing. An entity with no requirement derives nothing.
+entity with no ledger entry becomes generation work through missing bindings or
+`unimplemented` rows. An adopted entity whose bindings are current and whose rows
+all read `verified` or `failing` derives nothing. An entity with no requirement derives nothing.
 `jazyk gen --force` regenerates the named entities against the recorded decision
 regardless of the ledger
 ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)).
@@ -55,12 +59,12 @@ E.g.:
 
 ## Readiness
 
-- Tier 3, after binding: ready when no goal of tiers 0 to 2 is open in the entity's
-  cone and no `bind` goal is open on any of its requirements
-  ([readiness](../reconciler.md#readiness)). The bound tests define the interface
-  the product conforms to, so they exist before the product does. Over MCP,
+- Tier 3: ready when no tier 0, 1, or 2 goal is open or parked and the entity owes
+  no `derive-criteria` ([readiness](../reconciler.md#readiness)). Missing bindings
+  do not delay implementation. The requirements and criteria define the outcome;
+  the coding agent chooses source, tests, and their development order. Over MCP,
   `begin_generation` refuses an entity whose goal is not ready with the reason
-  (`not-ready`), so an agent cannot generate around its own unfinished bindings.
+  (`not-ready`). Existing bindings remain available for reuse.
 - Within the tier, goals order topologically over the derived relationships
   ([order from relationships](../../consumers/gen.md#order-from-relationships)):
   leaf entities first, then the entities that compose or depend on them.

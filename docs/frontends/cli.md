@@ -657,10 +657,9 @@ and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 3. `bi
 `generate` are gated by the generate
 [release](../compiler/control-plane.md#modes-and-releases), and `jazyk gen` is that
 release. `verify` is not release-gated (verification writes nothing into the
-deliverable). It resolves owed `bind` goals first (search the deliverable, find or write
-the test per requirement from its `statement`, record the row), then `generate` goals:
-each entity's part of the deliverable in one bounded session, making its
-`unimplemented` bound tests pass, written into the configured
+deliverable). It runs `generate` goals without an exhaustive binding phase first:
+each entity's source and tests develop together in one bounded session. The coding
+agent chooses their order and reuses existing bindings. Implementation is written into the configured
 [deliverable directory](../compiler/project-settings.md#generation) and recorded as a
 manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
 every entity that has at least one requirement, leaf entities first, grouped by

@@ -96,7 +96,7 @@ pub enum TraceEvent {
         preview: crate::live_preview::Preview,
     },
     // `summary` is the condensed line the CLI prints; `full` carries the payload
-    // behind it (capped) when condensing cut something, so the GUI expands in place.
+    // behind it when condensing cut something, so the GUI expands in place.
     #[serde(rename = "toolCall")]
     ToolCall {
         label: String,
@@ -1442,14 +1442,14 @@ pub fn condense(v: &Value, n: usize) -> String {
     llm::truncate(&v.to_string(), n)
 }
 
-// The payload behind a condensed line, only when condensing cut something, capped so
-// a huge pack cannot flood the trace file.
+// Keep the original serialized value behind a condensed line. Wire elision and
+// host event admission limits belong to the transport, not the retained JSON.
 pub fn full_payload(v: &Value) -> Option<String> {
     let s = v.to_string();
     if s.len() <= 160 {
         None
     } else {
-        Some(llm::truncate(&s, 8_000).to_string())
+        Some(s)
     }
 }
 

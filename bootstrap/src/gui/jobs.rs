@@ -1087,6 +1087,75 @@ mod tests {
         assert_eq!(elide(&small), small);
     }
 
+    #[tokio::test]
+    async fn large_tool_payload_survives_transcript_and_expanded_event_fetch() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::project::Project::load(dir.path());
+        let state = Arc::new(super::super::state::AppState {
+            root: dir.path().into(),
+            out: dir.path().join(".jazyk"),
+            gs: std::sync::RwLock::new(crate::gen::GenSettings::resolve(&project)),
+            proj: std::sync::RwLock::new(project),
+            llm: std::sync::RwLock::new(crate::llm::Llm {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: String::new(),
+                temperature: None,
+                trace: None,
+            }),
+            cli_opts: Default::default(),
+            token: None,
+            gui_origin: "https://jazyk.dev".into(),
+            dev: false,
+            shutdown: Default::default(),
+            events: super::super::events::EventHub::new(),
+            board: Default::default(),
+            last_pending: Default::default(),
+            jobs: Arc::new(JobManager::new()),
+            chat: Default::default(),
+            backoff: Default::default(),
+        });
+        let context = json!({
+            "task": {"id":"application-suite","command":"npm test","reports":["reports/junit.xml"]},
+            "baseline": {"state":"completed","stdout":format!("{}END OF BASELINE", "test \"quoted\" → passed\n".repeat(700))}
+        });
+        let payload = json!({"content":[{"type":"text","text":context.to_string()}],"isError":false});
+        assert!(payload.to_string().len() > 8_000);
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let sink = captured.clone();
+        let trace = Trace::to_sink(TraceLevel::Normal, Arc::new(move |event| {
+            sink.lock().unwrap().push(json!(event));
+        }), Default::default()).with_transcript(&state.out, "audit");
+        let stem = trace.run().unwrap();
+        trace.event(TraceEvent::ToolResult {
+            label: "generate application".into(),
+            activity: "task-1".into(),
+            name: "task_context".into(),
+            summary: crate::session::condense(&payload, 160),
+            full: crate::session::full_payload(&payload),
+        });
+
+        let stored = std::fs::read_to_string(state.out.join("trace").join(format!("{stem}.jsonl"))).unwrap();
+        let event: Value = serde_json::from_str(stored.lines().nth(1).unwrap()).unwrap();
+        let full = event["event"]["full"].as_str().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(full).unwrap(), payload);
+        assert_eq!(captured.lock().unwrap()[0], event["event"]);
+
+        let listed = get_trace(State(state.clone()), UrlPath(stem.clone())).await;
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed: Value = serde_json::from_slice(&axum::body::to_bytes(listed.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let wire = &listed["events"][0]["event"];
+        assert_eq!(wire["elided"], true);
+        assert!(wire["full"].as_str().unwrap().chars().count() < WIRE_STRING_CAP + 100);
+        assert_eq!(wire, &elide(&event["event"]));
+
+        let expanded = get_trace_event(State(state), UrlPath((stem, 1))).await;
+        assert_eq!(expanded.status(), StatusCode::OK);
+        let expanded: Value = serde_json::from_slice(&axum::body::to_bytes(expanded.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(expanded, event);
+        assert_eq!(serde_json::from_str::<Value>(expanded["event"]["full"].as_str().unwrap()).unwrap(), payload);
+    }
+
     fn finished(id: u64, state: &'static str) -> Job {
         Job {
             id,

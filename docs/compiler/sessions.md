@@ -634,15 +634,19 @@ The event kinds:
   `verifyRowStart`, `verifyRowDone`, `verifyRowStale`, `verifyRowError`: the worker
   kinds.
 
-Payloads are recorded in full and shipped condensed. A transcript keeps every prompt and
-reply as it was sent (capped per message, so one runaway payload cannot fill the disk),
-including the status block as each round rendered it; the live stream and the transcript
+Tool calls and results retain their original serialized JSON in `full` when the condensed
+line omits detail. Payloads larger than 8,000 bytes stay complete and parseable. Trace
+retention never cuts a tool payload into partial JSON.
+
+A transcript keeps every prompt and reply (subject to the model message recording cap),
+including the status block as each round rendered it. The live stream and the transcript
 listing carry the same events with long strings elided to a preview plus a byte count. A
-reader that wants the whole payload asks for that one event
+reader that wants the retained payload asks for that one event
 ([GUI jobs](../frontends/gui.md#jobs)). Terminal rendering follows the
 [trace level](../frontends/cli.md#jazyk-compile): model calls print one timing line at
 `--verbose` and nothing at the default level, where the tool rows already say what
-happened.
+happened. Host event admission and retention limits still apply. A host may omit an
+oversized event with an explicit notice instead of presenting partial JSON as `full`.
 
 ## Preview
 

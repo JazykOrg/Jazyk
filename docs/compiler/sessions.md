@@ -350,6 +350,11 @@ remaining target. A normal turn end, the round limit, cancellation, and recovery
 suspension retain their distinct outcomes. A model transport error during review
 stops further judgments without recording invented verdicts.
 
+An unfinished ledger gate after a normal turn end or the round limit is a target
+failure, not a transport failure. The worker may continue to the next target. Its
+action result retains the first failed target, the session's stop reason, and the
+unmet gate in `error`. `stopped` remains the reason an action halted early.
+
 ## Staged mutations
 
 Write tools never touch the store directly. They stage mutations into the session's

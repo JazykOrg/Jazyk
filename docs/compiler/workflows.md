@@ -50,6 +50,9 @@ model error. When required work did not land, a model or runtime error stops the
 action before the next target. The result retains that reason beside the completed
 and failed counts. Unattempted targets are not counted as failed. Review stops on a
 model transport error without inventing judgments for the remaining rows.
+An unfinished ledger target after a normal turn end or a round limit keeps its
+target, stop reason, and unmet gate in the action's `error`. Other targets may still
+run. The result's `stopped` field is reserved for an early action halt.
 
 Document changes must be compiled before binding or generating. Unfinished mandatory
 graph work blocks these actions. Goals waiting on a human answer or ratification

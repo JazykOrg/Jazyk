@@ -436,3 +436,185 @@ fn stop_interrupts_pending_local_model_future() {
     assert_eq!(stop, Stop::Cancelled);
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
 }
+
+#[test]
+fn provider_call_ids_are_scoped_to_each_durable_inference() {
+    let mut host = Host::new(vec![call(), call(), response("finished")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run twice"})];
+    let mut calls = 0;
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| {
+                calls += 1;
+                Ok("result".into())
+            },
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
+    assert_eq!(
+        calls, 2,
+        "a provider's reused call id must not hide later work"
+    );
+    assert_eq!(store.saved.as_ref().unwrap().tool_receipts.len(), 2);
+}
+
+#[test]
+fn steering_skips_stale_batch_calls_and_is_checkpointed_once() {
+    let mut batch = call();
+    let mut second = batch["choices"][0]["message"]["tool_calls"][0].clone();
+    second["id"] = json!("tool-2");
+    batch["choices"][0]["message"]["tool_calls"]
+        .as_array_mut()
+        .unwrap()
+        .push(second);
+    let mut host = Host::new(vec![batch, response("steering applied")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Original request"})];
+    let inbox = Rc::new(RefCell::new(Vec::new()));
+    let mut inputs = || std::mem::take(&mut *inbox.borrow_mut());
+    let mut calls = 0;
+    let mut events = Vec::new();
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &[tool()],
+            dispatch: &mut |_, _| {
+                calls += 1;
+                inbox
+                    .borrow_mut()
+                    .push(json!({"messageId":"input-1","text":"Use the replacement request"}));
+                Ok("first result".into())
+            },
+            emit: &mut |event| events.push(event),
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "steering".into(),
+            conversation: true,
+            inputs: Some(&mut inputs),
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(calls, 1);
+    let state = store.saved.as_ref().unwrap();
+    assert_eq!(state.delivered_inputs, vec!["input-1"]);
+    assert!(state.pending_inputs.is_empty());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::Input(_)))
+            .count(),
+        1
+    );
+    assert!(host.requests.borrow()[1].body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["content"] == "Use the replacement request"));
+    let receipts: Vec<_> = state.tool_receipts.values().collect();
+    assert_eq!(receipts.iter().filter(|receipt| receipt.ok).count(), 1);
+    assert_eq!(receipts.iter().filter(|receipt| !receipt.ok).count(), 1);
+}
+
+#[test]
+fn cancellation_at_tool_start_pairs_the_unexecuted_request() {
+    let mut host = Host::new(vec![call()]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let cancel = std::cell::Cell::new(false);
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &[tool()],
+            dispatch: &mut |_, _| panic!("cancelled tool executed"),
+            emit: &mut |event| {
+                if matches!(event, AgentEvent::ToolCallStart { .. }) {
+                    cancel.set(true);
+                }
+            },
+            cancelled: &|| cancel.get(),
+            max_rounds: 8,
+            label: "cancel".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
+    assert_eq!(stop, Stop::Cancelled);
+    let assistant = history
+        .iter()
+        .find(|message| message["tool_calls"].is_array())
+        .unwrap();
+    let call_id = assistant["tool_calls"][0]["id"].as_str().unwrap();
+    assert!(history
+        .iter()
+        .any(|message| message["role"] == "tool" && message["tool_call_id"] == call_id));
+}
+
+#[test]
+fn unavailable_tools_are_rejected_without_host_dispatch() {
+    let mut unavailable = call();
+    unavailable["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = json!("shell");
+    let mut host = Host::new(vec![unavailable, response("finished")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!("unavailable tool executed"),
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
+    assert!(host.requests.borrow()[1].body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["role"] == "tool"
+            && message["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not available")));
+}
+
+#[test]
+fn repeated_tool_failures_stop_with_paired_results() {
+    let mut host = Host::new(vec![call(); 5]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut calls = 0;
+    let stop = run(
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |_, _| {
+            calls += 1;
+            Err("gate refused".into())
+        },
+        &mut |_| {},
+    );
+    assert!(matches!(stop, Stop::Error(error) if error.contains("five consecutive")));
+    assert_eq!(calls, 5);
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .count(),
+        5
+    );
+}

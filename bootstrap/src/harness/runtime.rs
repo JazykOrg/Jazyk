@@ -599,7 +599,7 @@ async fn handle_action(
             (args.emit)(AgentEvent::Timing(
                 json!({"kind":"provider","requestId":id,"purpose":purpose,"round":state.rounds,"ms":started.elapsed().as_millis() as u64}),
             ));
-            let _ = reply.send(Ok(value));
+            let _ = reply.send(Ok((id, value)));
         }
         HostAction::Tool {
             id,

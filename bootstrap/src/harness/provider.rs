@@ -25,7 +25,7 @@ pub(crate) enum HostAction {
         body: Value,
         purpose: ModelPurpose,
         ordinal: u64,
-        reply: oneshot::Sender<Result<Value, String>>,
+        reply: oneshot::Sender<Result<(String, Value), String>>,
     },
     Tool {
         id: String,
@@ -78,12 +78,24 @@ impl Provider for ChannelProvider {
                 reply,
             })
             .map_err(|_| ProviderError::RequestFailed("model host closed".into()))?;
-        let value = response
+        let (attempt_id, value) = response
             .await
             .map_err(|_| ProviderError::RequestFailed("model host closed".into()))?
             .map_err(classify_error)?;
-        let message = openai::response_to_message(&value)
+        let mut message = openai::response_to_message(&value)
             .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+        // Providers can reuse an opaque call id in later replies. GDK tracks
+        // answered calls across the conversation, so scope ids to the durable
+        // inference identity before they enter that conversation.
+        let scope = crate::model::hash_hex(&attempt_id);
+        for content in &mut message.content {
+            if let goose_provider_types::conversation::message::MessageContent::ToolRequest(
+                request,
+            ) = content
+            {
+                request.id = format!("{}:{}", &scope[..16], request.id);
+            }
+        }
         let mut usage = ProviderUsage::new(config.model_name.clone(), openai::get_usage(&value));
         openai::record_response_metadata(&mut usage, &value);
         Ok(stream_from_single_message(message, usage))

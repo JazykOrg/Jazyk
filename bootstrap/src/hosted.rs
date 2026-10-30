@@ -17,6 +17,24 @@ pub type InputClose = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub use crate::session::TraceSink;
 pub type RuntimeTransport = Arc<dyn Fn(&Value) -> Result<Value, String> + Send + Sync>;
 pub type EventSink = Arc<dyn Fn(&Value) + Send + Sync>;
+pub type ModelAsyncTransport = Arc<
+    dyn Fn(
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync,
+>;
+pub type CheckpointSink = Arc<
+    dyn Fn(
+            Value,
+            Snapshot,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
 
 /// Text projections for authored revisions and delivery, not a verification verdict.
 #[derive(Debug, serde::Serialize)]
@@ -33,6 +51,10 @@ pub struct Execution {
     pub model: String,
     pub transport: Option<ModelTransport>,
     pub transport_stream: Option<ModelStreamTransport>,
+    pub transport_async: Option<ModelAsyncTransport>,
+    pub resume: Option<Value>,
+    pub checkpoint: Option<CheckpointSink>,
+    pub suspend: Arc<AtomicBool>,
     pub inputs: Option<InputSource>,
     pub input_close: Option<InputClose>,
     pub runtime: Option<RuntimeTransport>,
@@ -329,19 +351,79 @@ fn set_projection(
 }
 
 thread_local! { static EXECUTION: RefCell<Option<Execution>> = const { RefCell::new(None) }; }
-struct ExecutionScope(Option<Execution>);
+thread_local! { static CHECKPOINT_SEQUENCE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+struct ExecutionScope(Option<Execution>, u64);
 impl ExecutionScope {
     fn enter(execution: Execution) -> Self {
-        Self(EXECUTION.with(|e| e.replace(Some(execution))))
+        let previous = CHECKPOINT_SEQUENCE.with(|s| {
+            s.replace(
+                execution
+                    .resume
+                    .as_ref()
+                    .and_then(|r| r["sequence"].as_u64())
+                    .unwrap_or(0),
+            )
+        });
+        Self(EXECUTION.with(|e| e.replace(Some(execution))), previous)
     }
 }
 impl Drop for ExecutionScope {
     fn drop(&mut self) {
         EXECUTION.with(|e| e.replace(self.0.take()));
+        CHECKPOINT_SEQUENCE.with(|s| s.set(self.1));
     }
 }
 fn execution() -> Execution {
     EXECUTION.with(|e| e.borrow().clone().expect("hosted execution context"))
+}
+
+pub(crate) fn recovery_state() -> Option<Value> {
+    EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.resume.clone()))
+}
+
+pub(crate) fn suspension_requested() -> bool {
+    EXECUTION.with(|e| {
+        e.borrow()
+            .as_ref()
+            .is_some_and(|e| e.suspend.load(Ordering::Acquire))
+    })
+}
+
+pub(crate) async fn checkpoint(mut capsule: Value) -> Result<u64, String> {
+    let sink = EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.checkpoint.clone()));
+    let sequence = CHECKPOINT_SEQUENCE.with(|s| s.get());
+    let Some(sink) = sink else {
+        return Ok(sequence);
+    };
+    if !crate::vfs::is_scoped() {
+        return Err("Checkpoint requires an owned hosted workspace.".into());
+    }
+    capsule["sequence"] = json!(sequence);
+    let snapshot = crate::vfs::scoped_snapshot()?;
+    let next = sink(capsule, snapshot).await?;
+    if next <= sequence {
+        return Err("Checkpoint sequence did not advance.".into());
+    }
+    CHECKPOINT_SEQUENCE.with(|s| s.set(next));
+    Ok(next)
+}
+
+pub(crate) async fn transport_async(attempt_id: &str, body: &str) -> Result<String, String> {
+    let e = execution();
+    if e.cancel.load(Ordering::Acquire) {
+        return Err("execution cancelled".into());
+    }
+    if e.suspend.load(Ordering::Acquire) {
+        return Err("execution suspended".into());
+    }
+    let mut request: Value =
+        serde_json::from_str(body).map_err(|e| format!("Invalid model request: {e}"))?;
+    request["_jazyk"]["requestId"] = json!(attempt_id);
+    request["_jazyk"]["checkpointSequence"] = json!(CHECKPOINT_SEQUENCE.with(|s| s.get()));
+    let transport = e
+        .transport_async
+        .ok_or("Hosted async model transport is unavailable.")?;
+    transport(request.to_string()).await
 }
 
 pub fn runtime(request: &Value) -> Result<Value, String> {

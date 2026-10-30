@@ -410,8 +410,20 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         .map(str::to_owned)
         .unwrap_or_else(|| BOOK.with(|b| format!("{}-{}", id, b.borrow().chats[id].next_n)));
     let turn_id = body["turnId"].as_str().unwrap_or(&message_id).to_owned();
+    let recovery_key = format!("chat:{id}:{turn_id}");
+    let saved_turn = match crate::session_recovery::parent(&recovery_key) {
+        Ok(value) => value,
+        Err(error) => return (202, json!({"ok":false,"stop":"suspended","state":"running","error":error})),
+    };
+    if let Some(saved) = &saved_turn {
+        if saved["messageId"] != message_id || saved["textHash"] != crate::model::hash_hex(&text) {
+            return (409, json!({"error":"checkpoint-incompatible: accepted chat input changed"}));
+        }
+        if let Some(result) = saved.get("result") { return (202, result.clone()); }
+    }
+    let resuming = saved_turn.is_some();
     let prior = BOOK.with(|b| b.borrow().chats[id].inputs.get(&message_id).cloned());
-    if let Some(prior) = prior {
+    if let Some(prior) = prior.filter(|_| !resuming) {
         return if prior["text"].as_str() == Some(text.as_str()) {
             (
                 202,
@@ -424,7 +436,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             )
         };
     }
-    if state == "running" {
+    if state == "running" && !resuming {
         return (
             409,
             json!({"error": "a turn is already running; cancel it or wait for it to end"}),
@@ -445,10 +457,9 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         });
     }
     BOOK.with(|b| b.borrow_mut().chats.get_mut(id).unwrap().turn_id = Some(turn_id.clone()));
-    append(
-        id,
-        json!({"sessionUpdate": "user_message", "text": text,"messageId":message_id,"turnId":turn_id}),
-    );
+    if !resuming {
+        append(id, json!({"sessionUpdate":"user_message","text":text,"messageId":message_id,"turnId":turn_id}));
+    }
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
             if !c.titled {
@@ -492,6 +503,13 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             }
         },
     };
+    let mut recovery = match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
+        Ok(recovery) => recovery,
+        Err(error) => return (202, json!({"ok":false,"stop":"suspended","state":"running","error":error})),
+    };
+    let model_llm = crate::portable::llm();
+    let mut model = harness::provider::DefaultModelHost::new(&model_llm);
+    let mut mcp_tools = crate::session_recovery::McpTools(&server);
     let instruction_hash = crate::model::hash_hex(&instructions);
     let humans = BOOK.with(|b| {
         b.borrow().chats[id]
@@ -520,11 +538,11 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             String::new()
         }
     );
-    push_user(&mut history, text.clone());
-    delivered(
-        id,
-        json!({"messageId":message_id,"text":text,"turnId":turn_id}),
-    );
+    if !resuming {
+        push_user(&mut history, text.clone());
+        delivered(id, json!({"messageId":message_id,"text":text,"turnId":turn_id}));
+    }
+    crate::session_recovery::set_parent(&recovery_key, json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text)}));
 
     let generations = || {
         crate::document_sets::Workspace::load(&crate::portable::root())
@@ -627,9 +645,9 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         }).collect::<Vec<_>>()
     };
     let mut close_inputs = || crate::portable::close_inputs(id);
-    let stop = harness::run_loop_with_instructions(
+    let stop = harness::run_with_hosts(
         LoopArgs {
-            llm: &crate::portable::llm(),
+            llm: &model_llm,
             history: &mut history,
             tools: &tools,
             dispatch: &mut dispatch,
@@ -641,8 +659,10 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             inputs: Some(&mut input_source),
             input_close: Some(&mut close_inputs),
         },
-        &context,
+        &context, &mut model, &mut mcp_tools, &mut recovery,
     ).await;
+    drop(recovery);
+    drop(mcp_tools);
 
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
@@ -650,9 +670,14 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             c.serving = Some((server, tools, instructions));
         }
     });
-    if stop == Stop::Suspended {
+    let interruption = match &stop {
+        Stop::Suspended => Some("suspended".to_owned()),
+        Stop::Error(error) if crate::session_recovery::is_interruption(error) => Some(error.clone()),
+        _ => None,
+    };
+    if let Some(error) = interruption {
         set_state(id, "running");
-        return (202, json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":"suspended","state":"running"}));
+        return (202, json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":"suspended","state":"running","error":error}));
     }
     let (update, state) = match stop {
         Stop::Suspended => unreachable!("suspension returned above"),
@@ -690,10 +715,12 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let stop_reason = update["stop"].clone();
     append(id, update);
     set_state(id, state);
-    (
-        202,
-        json!({"ok": true,"messageId":message_id,"turnId":turn_id,"stop":stop_reason,"state":state}),
-    )
+    let result = json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":stop_reason,"state":state});
+    crate::session_recovery::set_parent(&recovery_key, json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text),"result":result}));
+    if let Err(error) = crate::session_recovery::checkpoint_parent().await {
+        return (202, json!({"ok":false,"stop":"suspended","state":"running","error":format!("checkpoint-failed: {error}")}));
+    }
+    (202, result)
 }
 
 // Record delivery only after the loop inserted the human text into history.

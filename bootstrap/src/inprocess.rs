@@ -88,9 +88,9 @@ impl SessionRunner for InProcessRunner {
             rounds,
             tokens,
             cached: 0,
-            failed: Some(msg),
+            failed: Some(msg.clone()),
             resolved: Vec::new(),
-            stopped: None,
+            stopped: crate::session_recovery::is_interruption(&msg).then_some(msg.clone()),
         };
 
         // The same flags the native runner gives its injected serving: it belongs
@@ -123,19 +123,23 @@ impl SessionRunner for InProcessRunner {
             Err(e) => return failed(format!("serving: {}", e), 0, 0),
         };
 
-        // Claim the batch. The reply carries the assembled session prompt, so the
-        // prompt the model reads is the one every other front door assembles.
-        let claim = match server.handle(
-            "tools/call",
-            &json!({"name": "begin_goals", "arguments": {"goals": batch.goal_ids()}}),
-        ) {
-            Ok(v) => v,
-            Err(e) => return failed(format!("begin_goals: {}", e.1), 0, 0),
+        let recovery_key = crate::session_recovery::batch_key(&self.out, &batch.id);
+        let mut recovery = match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
+            Ok(recovery) => recovery,
+            Err(error) => return failed(error, 0, 0),
         };
-        let opening = claim["content"][0]["text"]
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| claim.to_string());
+        let opening = if recovery.resumed() {
+            String::new()
+        } else {
+            let claim = match server.handle(
+                "tools/call",
+                &json!({"name": "begin_goals", "arguments": {"goals": batch.goal_ids()}}),
+            ) {
+                Ok(v) => v,
+                Err(e) => return failed(format!("begin_goals: {}", e.1), 0, 0),
+            };
+            claim["content"][0]["text"].as_str().map(str::to_owned).unwrap_or_else(|| claim.to_string())
+        };
 
         let opening = if batch.is_ledger() {
             format!(
@@ -160,33 +164,21 @@ impl SessionRunner for InProcessRunner {
             trace.event(TraceEvent::GraphPreview { preview });
         }
 
-        let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
-            if trace.is_cancelled() { return Err("the build was stopped".into()); }
-            match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
-                Ok(v) => {
-                    if let Some(preview) = server.live_preview() {
-                        if preview.revision > preview_revision {
-                            preview_revision = preview.revision;
-                            trace.event(TraceEvent::GraphPreview { preview });
-                        }
-                    }
-                    let text = v["content"][0]["text"]
-                        .as_str()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| v.to_string());
-                    if v["isError"].as_bool().unwrap_or(false) {
-                        Err(text)
-                    } else {
-                        Ok(text)
-                    }
-                }
-                Err((_, m)) => Err(m),
-            }
-        };
+        let mut dispatch = |_: &str, _: &Value| Err("MCP requires its asynchronous host".into());
+        let mut model = harness::provider::DefaultModelHost::new(&self.llm);
+        let mut mcp_tools = crate::session_recovery::McpTools(&server);
         let owner = crate::conversation::build_conversation();
         let mut emit = |ev: AgentEvent| {
             if let (Some(id), AgentEvent::Input(input)) = (&owner, &ev) {
                 crate::conversation::build_input_delivered(id, input.clone());
+            }
+            if matches!(&ev, AgentEvent::ToolCallEnd { .. }) {
+                if let Some(preview) = server.live_preview() {
+                    if preview.revision > preview_revision {
+                        preview_revision = preview.revision;
+                        trace.event(TraceEvent::GraphPreview { preview });
+                    }
+                }
             }
             lt.on_event(ev);
         };
@@ -194,7 +186,7 @@ impl SessionRunner for InProcessRunner {
             .map(crate::conversation::build_inputs).unwrap_or_default();
 
         let never_cancelled = || trace.is_cancelled();
-        let stop = harness::run_loop(LoopArgs {
+        let stop = harness::run_with_hosts(LoopArgs {
             llm: &self.llm,
             history: &mut history,
             tools: &tools,
@@ -207,9 +199,10 @@ impl SessionRunner for InProcessRunner {
         inputs: owner.as_ref().map(|_| &mut input_source as &mut dyn FnMut() -> Vec<Value>),
         // This is one worker batch, not the whole job's admission lifetime.
         input_close: None,
-        }).await;
+        }, "", &mut model, &mut mcp_tools, &mut recovery).await;
         lt.finish();
-        let (rounds, tokens, cached) = (lt.rounds, lt.tokens, lt.cached);
+        let (tokens, cached, rounds) = crate::session_recovery::saved_usage(&recovery_key)
+            .unwrap_or((lt.tokens, lt.cached, lt.rounds));
 
         // The session's word is never the verdict: what landed is read from the
         // store, exactly as the native runner reads it.
@@ -217,10 +210,15 @@ impl SessionRunner for InProcessRunner {
         let (applied, resolved) =
             crate::runner::journal_diff(&self.out, gen_before, gen_after, &batch.goal_ids());
         let committed = gen_after != gen_before;
-        if stop == Stop::Suspended {
+        let interruption = match &stop {
+            Stop::Suspended => Some("suspended".to_owned()),
+            Stop::Error(error) if crate::session_recovery::is_interruption(error) => Some(error.clone()),
+            _ => None,
+        };
+        if let Some(reason) = interruption {
             return SessionReport {
                 applied, rounds, tokens, cached, failed: None, resolved,
-                stopped: Some("suspended".into()),
+                stopped: Some(reason),
             };
         }
         // A batch the model left open never commits: drop the changeset so the goals
@@ -316,7 +314,7 @@ pub async fn run_answers(project: &Project, llm: &Llm, out: &Path, trace: &Trace
             proposals: 0,
         });
         let outcome = run_answer(project, llm, out, &id, &label, trace).await;
-        if outcome.as_ref().err().is_some_and(|error| error == "suspended") {
+        if outcome.as_ref().err().is_some_and(|error| crate::session_recovery::is_interruption(error)) {
             break;
         }
         match &outcome {
@@ -372,6 +370,10 @@ async fn run_answer(
             &json!({"protocolVersion": "2024-11-05", "clientInfo": {"name": "jazyk-wasm-answer"}}),
         )
         .map_err(|e| format!("serving: {}", e.1))?;
+    let key = format!("answer:{}:{id}", out.display());
+    let mut recovery = crate::session_recovery::McpRecovery::new(&server, key.clone())?;
+    let mut model = harness::provider::DefaultModelHost::new(llm);
+    let mut mcp_tools = crate::session_recovery::McpTools(&server);
     let tools = InProcessRunner::tools_of(&server).map_err(|e| format!("serving: {}", e))?;
     let mut history: Vec<Value> = vec![json!({"role": "user", "content": prompt})];
     let batch = BatchRun {
@@ -398,7 +400,7 @@ async fn run_answer(
     };
     let mut emit = |ev: AgentEvent| lt.on_event(ev);
     let never_cancelled = || trace.is_cancelled();
-    let stop = harness::run_loop(LoopArgs {
+    let stop = harness::run_with_hosts(LoopArgs {
         llm,
         history: &mut history,
         tools: &tools,
@@ -410,11 +412,13 @@ async fn run_answer(
         conversation: false,
         inputs: None,
         input_close: None,
-    }).await;
+    }, "", &mut model, &mut mcp_tools, &mut recovery).await;
     lt.finish();
-    let rounds = lt.rounds;
+    let rounds = crate::session_recovery::saved_usage(&key).map(|u| u.2).unwrap_or(lt.rounds);
     match stop {
         Stop::EndTurn => Ok(rounds),
+        Stop::Suspended => Err("suspended".into()),
+        Stop::Error(error) if crate::session_recovery::is_interruption(&error) => Err(error),
         other => Err(crate::runner::unlanded_reason(&other, rounds)),
     }
 }

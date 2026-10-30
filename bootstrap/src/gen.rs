@@ -488,6 +488,15 @@ pub struct TestRef {
     pub cwd: String,
 }
 
+fn same_test_ref(a: &TestRef, b: &TestRef) -> bool {
+    same_test_artifact(a, b)
+        && a.run == b.run && a.cwd == b.cwd
+}
+
+fn same_test_artifact(a: &TestRef, b: &TestRef) -> bool {
+    a.kind == b.kind && a.artifact == b.artifact && a.name == b.name
+}
+
 fn dot() -> String {
     ".".into()
 }
@@ -1365,13 +1374,13 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
 
 // Entities that are generation work, the first reason that holds naming it: the
 // entry's facts moved (`changed`), a recorded file is gone from the deliverable
-// (`files-gone`), or a bound requirement is unimplemented (`unimplemented-bindings`:
-// binding classified it as new functionality and its test is the acceptance gate).
-// An entity with no entry is work through unimplemented rows only, so adopted code
-// whose rows all read verified is never generated over.
+// (`files-gone`), a binding is incomplete, or a bound requirement is unimplemented.
+// An entity with no entry and only current adopted rows is never generated over.
 // Mirrors docs/compiler/goals/generate.md#created-when.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
+    let binding_owed: std::collections::BTreeSet<String> = crate::bind::pending(store, gs)
+        .iter().filter_map(|row| row["requirement"].as_str().map(String::from)).collect();
     let by_entity = ReqsByEntity::build(store);
     let mut out = Vec::new();
     for id in store.graph.entities.keys() {
@@ -1381,6 +1390,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         }
         let slug = slug_of(id);
         let hash = fact_hash_over(store, id, rids);
+        let incomplete: Vec<&String> = rids.iter().filter(|rid| binding_owed.contains(*rid)).collect();
         let unimplemented: Vec<&String> = rids
             .iter()
             .filter(|rid| {
@@ -1411,12 +1421,17 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                     ("files-gone".to_string(), json!(gone))
                 } else if !unimplemented.is_empty() {
                     ("unimplemented-bindings".to_string(), json!(unimplemented))
+                } else if !incomplete.is_empty() {
+                    ("incomplete-bindings".to_string(), json!(incomplete))
                 } else {
                     continue;
                 }
             }
             None if !unimplemented.is_empty() => {
                 ("unimplemented-bindings".to_string(), json!(unimplemented))
+            }
+            None if !incomplete.is_empty() => {
+                ("incomplete-bindings".to_string(), json!(incomplete))
             }
             None => continue,
         };
@@ -1498,6 +1513,14 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
             ));
         }
     }
+    let missing_tests: Vec<String> = reqs_of_sorted(store, &id).into_iter()
+        .filter(|rid| crate::bind::gate(store, gs, rid).is_err()).collect();
+    if !missing_tests.is_empty() {
+        return Err(format!(
+            "required test bindings are missing or stale for {}; record_generation with each current requirement and criterion test",
+            missing_tests.join(", ")
+        ));
+    }
     if require_run {
         let never_run: Vec<String> = reqs_of_sorted(store, &id)
             .into_iter()
@@ -1506,16 +1529,18 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
                     .requirements
                     .get(rid)
                     .map(|row| {
-                        row.test.kind == "programmatic"
+                        (row.test.kind == "programmatic"
                             && crate::verify::status_of(store, rid, row, gs)
-                                == ("unverified".to_string(), "never-run".to_string())
+                                == ("unverified".to_string(), "never-run".to_string()))
+                            || row.tests.values().any(|test| test.test.kind == "programmatic"
+                                && (test.verdict == "none" || test.last_run.is_none()))
                     })
                     .unwrap_or(false)
             })
             .collect();
         if !never_run.is_empty() {
             return Err(format!(
-                "run_tests has not run since the record: {} never ran; call run_tests, then mark the goal",
+                "run_tests has not run since the record: {} has incomplete programmatic evidence; call run_tests, then mark the goal",
                 never_run.join(", ")
             ));
         }
@@ -1524,24 +1549,17 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
 }
 
 // Why `jazyk gen` leaves an entity alone, for the person reading the trace: the
-// entity is current, a bind is still owed on it, or no row says generate.
+// entity is current, or its adopted rows need no generation.
 // Mirrors docs/consumers/gen.md#incremental-regeneration.
 pub fn skip_reason(store: &Store, gs: &GenSettings, id: &str) -> String {
-    let owed = crate::bind::pending(store, gs)
-        .iter()
-        .filter(|p| p["entity"] == id)
-        .count();
-    if owed > 0 {
-        return format!(
-            "{} requirement(s) still owe a bind; binding classifies before generation",
-            owed
-        );
+    if let Some(row) = pending(store, gs).iter().find(|row| row["entity"] == id) {
+        return format!("generation work remains ({})", row["reason"].as_str().unwrap_or("incomplete"));
     }
     let ledger = Ledger::load(&store.out);
     if ledger.entities.contains_key(&slug_of(id)) {
         "unchanged".to_string()
     } else {
-        "no ledger entry and no bound row reads unimplemented: its rows are verified or failing, so there is nothing to generate (`--force` generates it anyway)".to_string()
+        "no ledger entry and all adopted rows are current: there is nothing to generate (`--force` generates it anyway)".to_string()
     }
 }
 
@@ -1790,6 +1808,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                     json!({
                         "requirement": rid,
                         "status": status,
+                        "files": row.files,
                         "test": {"kind": row.test.kind, "artifact": row.test.artifact,
                                  "name": row.test.name, "run": row.test.run, "cwd": row.test.cwd},
                         "criteriaTests": row.tests.iter().map(|(cid, t)| json!({
@@ -1872,7 +1891,7 @@ pub fn mark(
     // row's artifact must exist, and a programmatic artifact must carry the declared
     // name: the same shape gate record_binding applies.
     // Mirrors docs/compiler/goals/generate.md#gate.
-    let mut rows: Vec<(String, TestRef, Vec<String>)> = Vec::new();
+    let mut rows: Vec<(String, Option<String>, TestRef, Vec<String>)> = Vec::new();
     if let Some(tests) = manifest["tests"].as_array() {
         for t in tests {
             // A row whose fields are all empty is a filled-in blank; drop it.
@@ -1898,6 +1917,16 @@ pub fn mark(
             let Some(r) = store.graph.requirements.get(&rid) else {
                 return Err(format!("unknown requirement `{}` in manifest", rid));
             };
+            let criterion = t["criterion"].as_str().filter(|id| !id.is_empty())
+                .map(|id| store.resolve_id(id).to_string());
+            if let Some(cid) = &criterion {
+                if !store.graph.criteria.get(cid).is_some_and(|criterion| criterion.requirement == rid) {
+                    return Err(format!("criterion `{cid}` is not a criterion of `{rid}`"));
+                }
+            }
+            if rows.iter().any(|(previous, cid, _, _)| previous == &rid && cid == &criterion) {
+                return Err(format!("duplicate test declaration for `{rid}`{}", criterion.as_deref().map(|cid| format!(" criterion `{cid}`")).unwrap_or_default()));
+            }
             let kind = t["kind"].as_str().unwrap_or("programmatic").trim().to_string();
             if kind != "programmatic" && kind != "llm" {
                 return Err(format!(
@@ -1959,19 +1988,42 @@ pub fn mark(
                     rid, test.name, test.artifact
                 ));
             }
-            if kind == "llm" { validate_criteria_file(store, &rid, None, &path)?; }
+            if kind == "llm" { validate_criteria_file(store, &rid, criterion.as_deref(), &path)?; }
             // The row's own `files`; an empty list takes the default below.
             let row_files: Vec<String> =
                 confine_list_in(gs, &str_list(&t["files"]), &mut path_notes)
                     .map_err(|e| format!("test row for {}: files {}", rid, e))?;
-            rows.push((rid, test, row_files));
+            rows.push((rid, criterion, test, row_files));
         }
     }
     // Ownership and realization, both before any side effect.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     let pre = Ledger::load(&store.out);
+    for (rid, criterion, test, _) in &rows {
+        let Some(cid) = criterion else {
+            if let Some(row) = pre.requirements.get(rid) {
+                let path = artifact_path(&store.out, gs, &row.test);
+                if row.hashes.requirement == hash_hex(&store.graph.requirements[rid].statement)
+                    && row.hashes.test == hash_file(&path) && path.vis_file()
+                    && ((row.test.kind == "llm" && path.starts_with(store.out.join("gen"))) || gs.allows_source(&row.test.artifact))
+                    && !same_test_artifact(&row.test, test) {
+                    return Err(format!("requirement `{rid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge"));
+                }
+            }
+            continue;
+        };
+        let Some(prior) = pre.requirements.get(rid).and_then(|row| row.tests.get(cid)) else { continue };
+        let path = artifact_path(&store.out, gs, &prior.test);
+        let current = prior.criterion_hash == hash_hex(&store.graph.criteria[cid].statement)
+            && prior.test_hash == hash_file(&path) && path.vis_file()
+            && ((prior.test.kind == "llm" && path.starts_with(store.out.join("gen"))) || gs.allows_source(&prior.test.artifact))
+            && (prior.test.kind != "programmatic" || crate::verify::artifact_names(&path, &prior.test.name));
+        if current && !same_test_artifact(&prior.test, test) {
+            return Err(format!("criterion `{cid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge"));
+        }
+    }
     let mut artifacts = test_artifacts(&pre);
-    for (_, t, _) in &rows {
+    for (_, _, t, _) in &rows {
         artifacts.insert(t.artifact.clone());
     }
     let outputs = build_outputs(&pre);
@@ -2001,11 +2053,11 @@ pub fn mark(
     // keeps the files other entities record for it: a shared requirement stays
     // carried where it is (docs/consumers/gen.md#file-ownership-and-conventions).
     let own_impl: Vec<String> = files.iter().filter(|f| implementing(f)).cloned().collect();
-    let rows: Vec<(String, TestRef, Vec<String>)> = rows
+    let rows: Vec<(String, Option<String>, TestRef, Vec<String>)> = rows
         .into_iter()
-        .map(|(rid, test, own)| {
+        .map(|(rid, criterion, test, own)| {
             if !own.is_empty() {
-                return (rid, test, own);
+                return (rid, criterion, test, own);
             }
             let mut v = own_impl.clone();
             if let Some(prior) = pre.requirements.get(&rid) {
@@ -2019,7 +2071,7 @@ pub fn mark(
                     }
                 }
             }
-            (rid, test, v)
+            (rid, criterion, test, v)
         })
         .collect();
     // A record realizes the entity's requirements in files: with no implementing file
@@ -2029,8 +2081,8 @@ pub fn mark(
         let uncarried: Vec<String> = reqs_of_sorted(store, id)
             .into_iter()
             .filter(|rid| {
-                let named = match rows.iter().find(|(r, _, _)| r == rid) {
-                    Some((_, _, fs)) => fs.iter().any(&implementing),
+                let named = match rows.iter().find(|(r, _, _, _)| r == rid) {
+                    Some((_, _, _, fs)) => fs.iter().any(&implementing),
                     None => pre
                         .requirements
                         .get(rid)
@@ -2165,14 +2217,43 @@ pub fn mark(
             recorded_at: Some(crate::verify::now_iso()),
         },
     );
+    let mut grouped: BTreeMap<String, Vec<(Option<String>, TestRef, Vec<String>)>> = BTreeMap::new();
+    for (rid, criterion, test, row_files) in rows {
+        grouped.entry(rid).or_default().push((criterion, test, row_files));
+    }
     let mut seeded = 0;
     // Rows landing over an open error diagnostic: named in the reply and kept in
     // the ledger, so generation never runs green over a contradiction silently.
     // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
     let mut contradicted: BTreeMap<String, Vec<String>> = BTreeMap::new();
     {
-        for (rid, test, row_files) in rows {
+        for (rid, declarations) in grouped {
             let r = &store.graph.requirements[&rid];
+            let previous = ledger.requirements.get(&rid).cloned();
+            let mut tests = previous.as_ref().map(|row| row.tests.clone()).unwrap_or_default();
+            tests.retain(|cid, _| store.graph.criteria.get(cid).is_some_and(|criterion| criterion.requirement == rid));
+            let mut headline = None;
+            let mut row_files = Vec::new();
+            for (criterion, test, files) in declarations {
+                for file in files {
+                    if !row_files.contains(&file) { row_files.push(file); }
+                }
+                if let Some(cid) = criterion {
+                    let criterion_hash = hash_hex(&store.graph.criteria[&cid].statement);
+                    let test_hash = hash_file(&artifact_path(&store.out, gs, &test));
+                    let existing = tests.get(&cid).filter(|old| old.criterion_hash == criterion_hash
+                        && old.test_hash == test_hash && same_test_ref(&old.test, &test));
+                    let value = existing.cloned().unwrap_or_else(|| CritTest {
+                        test, criterion_hash, test_hash, verdict:"none".into(), last_run:None,
+                        exit_code:None, evidence:None,
+                    });
+                    tests.insert(cid, value);
+                } else {
+                    headline = Some(test);
+                }
+            }
+            let test = headline.or_else(|| tests.values().next().map(|test| test.test.clone()))
+                .expect("each grouped row contains a test declaration");
             let hashes = RowHashes {
                 requirement: hash_hex(&r.statement),
                 test: hash_file(&artifact_path(&store.out, gs, &test)),
@@ -2186,10 +2267,8 @@ pub fn mark(
             // A re-record that changes nothing keeps its verdict: the hashes say the
             // requirement, the test, and the files are the very state the last run
             // judged, and discarding that judgment would punish an idempotent call.
-            let prior = ledger
-                .requirements
-                .get(&rid)
-                .filter(|row| row.hashes == hashes);
+            let prior = previous.as_ref()
+                .filter(|row| row.hashes == hashes && same_test_ref(&row.test, &test));
             let (verdict, last_run, exit_code, evidence) = match prior {
                 Some(row) => (
                     row.verdict.clone(),
@@ -2199,13 +2278,17 @@ pub fn mark(
                 ),
                 None => ("none".into(), None, None, None),
             };
-            // The criterion tests binding recorded ride along: generation touches the
-            // implementing files, never the evidence (docs/consumers/gen.md#the-ledger).
-            let tests = ledger
-                .requirements
-                .get(&rid)
-                .map(|row| row.tests.clone())
-                .unwrap_or_default();
+            // A declaration cannot carry an old verdict onto different source or
+            // requirement bytes. The next execution or judgment supplies evidence.
+            if previous.as_ref().is_some_and(|row| row.hashes.files != hashes.files
+                || row.hashes.requirement != hashes.requirement) {
+                for test in tests.values_mut() {
+                    test.verdict = "none".into();
+                    test.last_run = None;
+                    test.exit_code = None;
+                    test.evidence = None;
+                }
+            }
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
@@ -2761,6 +2844,7 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
         let reason = match p["reason"].as_str() {
             Some("unimplemented-bindings") => json!("unimplemented"),
             Some("files-gone") => json!("files-gone"),
+            Some("incomplete-bindings") => json!("incomplete-bindings"),
             _ => json!("facts-changed"),
         };
         push(
@@ -2881,7 +2965,12 @@ mod tests {
         fn run_item(&self, _batch: &crate::runner::BatchRun, _trace: &crate::session::Trace) -> crate::runner::SessionReport {
             if self.record {
                 crate::vfs::write(self.gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
-                mark(&self.store, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &self.gs).unwrap();
+                crate::vfs::create_dir_all(self.gs.deliverable.join("tests")).unwrap();
+                crate::vfs::write(self.gs.deliverable.join("tests/cart.rs"), "fn cart_test() {}\n").unwrap();
+                mark(&self.store, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": [{
+                    "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs",
+                    "name":"cart_test","run":"cargo test cart_test"
+                }]}), &self.gs).unwrap();
             }
             crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, cached: 0, failed: self.failed.clone(), resolved: Vec::new(), stopped: self.stopped.clone() }
         }
@@ -3132,6 +3221,77 @@ mod tests {
         assert_eq!(err.rule, "source-selection");
         let files = tools.dispatch("list_files", &json!({"path":"deliverable"})).unwrap();
         assert!(!files["files"].as_array().unwrap().iter().any(|path|path.as_str().unwrap().contains("nested/")));
+    }
+
+    #[test]
+    fn fresh_generation_records_criterion_tests_without_binding_and_keeps_them_unjudged() {
+        let out = std::env::temp_dir().join(format!("jazyk-adaptive-criteria-{}",crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut store, gs) = fixture(&out);
+        for (id, statement) in [("crit:items","Two items are retained."),("crit:empty","An empty cart has no items.")] {
+            store.graph.criteria.insert(id.into(), crate::model::Criterion {
+                requirement:"req:shop-1".into(),statement:statement.into(),kind:"positive".into(),..Default::default()
+            });
+        }
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.rs"),"pub fn count() -> usize { 2 }\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"),"fn items() {}\nfn empty() {}\nfn replacement() {}\n").unwrap();
+        assert!(Ledger::load(&out).requirements.is_empty());
+        assert_eq!(pending(&store,&gs)[0]["reason"],"incomplete-bindings");
+        let declaration = |criterion:&str,name:&str| json!({"requirement":"req:shop-1","criterion":criterion,
+            "kind":"programmatic","artifact":"tests/cart.rs","name":name,"run":"task:old-check"});
+        let mut manifest=json!({"files":["cart.rs","tests/cart.rs"],"tests":[declaration("crit:items","items")]});
+        mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
+        assert!(gate(&store,&gs,"ent:cart",false).unwrap_err().contains("test bindings"));
+        manifest["tests"]=json!([declaration("crit:items","items"),declaration("crit:empty","empty")]);
+        mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
+        let ledger=Ledger::load(&out);
+        let row=&ledger.requirements["req:shop-1"];
+        assert_eq!(row.tests.len(),2);
+        assert!(row.tests.values().all(|test|test.verdict=="none"&&test.last_run.is_none()));
+        assert_eq!(gate(&store,&gs,"ent:cart",false).unwrap(),2);
+        assert!(gate(&store,&gs,"ent:cart",true).unwrap_err().contains("run_tests"));
+        // A replacement judge is refused before changing files or the ledger.
+        let before=serde_json::to_value(&ledger).unwrap();
+        let mut replaced=manifest.clone();replaced["tests"][0]["name"]=json!("replacement");
+        assert!(mark(&store,"ent:cart",None,&replaced,&gs).unwrap_err().contains("replacing the judge"));
+        assert_eq!(serde_json::to_value(Ledger::load(&out)).unwrap(),before);
+        // Consolidating execution does not replace the judge, but loses old evidence.
+        let mut ledger=Ledger::load(&out);
+        let row=ledger.requirements.get_mut("req:shop-1").unwrap();
+        row.verdict="pass".into();row.last_run=Some("previous".into());
+        for test in row.tests.values_mut(){test.verdict="pass".into();test.last_run=Some("previous".into());}
+        ledger.save(&out);
+        for declaration in manifest["tests"].as_array_mut().unwrap(){declaration["run"]=json!("task:shared-suite");}
+        mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
+        let ledger=Ledger::load(&out);let row=&ledger.requirements["req:shop-1"];
+        assert_eq!(row.verdict,"none");
+        assert!(row.tests.values().all(|test|test.test.run=="task:shared-suite"&&test.verdict=="none"&&test.last_run.is_none()));
+        assert!(gate(&store,&gs,"ent:cart",true).is_err());
+        crate::vfs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn generated_llm_criterion_waits_for_review_without_blocking_generation() {
+        let out=std::env::temp_dir().join(format!("jazyk-adaptive-llm-{}",crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let(mut store,gs)=fixture(&out);
+        store.graph.criteria.insert("crit:items".into(),crate::model::Criterion {
+            requirement:"req:shop-1".into(),statement:"The cart clearly shows its items.".into(),kind:"positive".into(),..Default::default()
+        });
+        crate::vfs::create_dir_all(gs.deliverable.join("criteria")).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.md"),"The visible cart contains its selected items.\n").unwrap();
+        let criteria=criteria_front_matter("req:shop-1",Some("crit:items"),&store.graph.criteria["crit:items"].statement)
+            +"\nInspect cart.md. PASS when its items are clear. FAIL otherwise.\n";
+        crate::vfs::write(gs.deliverable.join("criteria/cart.md"),criteria).unwrap();
+        mark(&store,"ent:cart",None,&json!({"files":["cart.md"],"tests":[{
+            "requirement":"req:shop-1","criterion":"crit:items","kind":"llm","artifact":"criteria/cart.md","name":"clarity","run":"llm"
+        }]}),&gs).unwrap();
+        assert!(gate(&store,&gs,"ent:cart",true).is_ok());
+        let row=&Ledger::load(&out).requirements["req:shop-1"];
+        assert_eq!(row.verdict,"none");assert_eq!(row.tests["crit:items"].verdict,"none");
+        assert_ne!(crate::verify::status_of(&store,"req:shop-1",row,&gs).0,"verified");
+        crate::vfs::remove_dir_all(&out).unwrap();
     }
 
     #[test]
@@ -3588,16 +3748,15 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
     }
 
-    // An entity with no ledger entry is generation work through an unimplemented
-    // bound row only: binding classifies first, and adopted code whose rows read
-    // verified is never generated over. Mirrors docs/compiler/goals/generate.md#created-when.
+    // Fresh obligations can develop source and tests together. Fully current
+    // adopted rows stay unchanged without needing an entity generation entry.
     #[test]
     fn pending_diff_and_mark_lifecycle() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        assert!(pending(&s, &gs).is_empty(), "unbound: bind first");
-        assert!(skip_reason(&s, &gs, "ent:cart").contains("owe a bind"));
+        assert_eq!(pending(&s, &gs)[0]["reason"], "incomplete-bindings");
+        assert!(skip_reason(&s, &gs, "ent:cart").contains("generation work remains"));
 
         // Binding finds nothing: the row reads unimplemented and the entity is work.
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -4354,13 +4513,9 @@ mod tests {
         assert_eq!(bind.via, "ledger");
         assert_eq!(bind.detail["reason"], "unbound");
         assert!(bind.id.starts_with('c'), "{}", bind.id);
-        // Binding classifies first: no generate record while the requirement is
-        // unbound (docs/compiler/goals/generate.md#created-when).
-        assert!(
-            records.iter().all(|r| r.detail["goal"] != "generate"),
-            "{:?}",
-            records.iter().map(|r| r.detail.clone()).collect::<Vec<_>>()
-        );
+        let generation = records.iter().find(|record| record.detail["goal"] == "generate").unwrap();
+        assert_eq!(generation.subject, "ent:cart");
+        assert_eq!(generation.detail["reason"], "incomplete-bindings");
         // Bound and unimplemented: the entity is generation work under that reason.
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
@@ -4477,7 +4632,7 @@ pub(crate) async fn run_selected(
     // start this decision again after a later group has already begun.
     if !command.data.medium_decided {
         let mut ledger = Ledger::load(&store.out);
-        if ledger.medium.is_none() || ledger.entities.is_empty() {
+        if ledger.medium.is_none() {
             let medium = decide_medium(store, runner, &gs.deliverable).await?;
             trace.line("gen medium", &medium.line());
             ledger.medium = Some(medium);

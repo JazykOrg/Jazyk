@@ -154,15 +154,13 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
     }
     if modes.iter().any(|m| m == "generate") {
         s.push_str(
-            "BINDING LOOP (before generation): call binding_tasks; for each requirement, \
-             begin_binding, search the deliverable with YOUR OWN tools for the implementation and an \
-             existing test, write the test only when none exists (never touch implementation files), \
-             run it, then record_binding. The verdict classifies the requirement: verified, \
-             unimplemented (generation work), or failing (a contradiction for the author). \
-             GENERATION LOOP: call generation_tasks; for each entity, begin_generation, write the \
-             deliverable files using available file tools, and execute builds and tests through \
-             Jazyk tasks, making the bound tests pass, then record_generation with the manifest, then \
-             run_tests. ",
+            "GENERATION LOOP: call generation_tasks; for each entity, begin_generation, inspect \
+             existing files and develop the actual source and tests in the order the work needs. \
+             Preserve current test assertions. Reuse a suite task for related checks with separate \
+             JUnit selectors, record_generation with the complete manifest, then run_tests for \
+             programmatic evidence. LLM criteria remain unjudged until Review. A separate Bind pass \
+             or failing baseline is not required. OPTIONAL BINDING: binding_tasks and begin_binding \
+             inspect an existing deliverable, then record_binding records its observed evidence. ",
         );
     }
     if modes.iter().any(|m| m == "decompile") {
@@ -2408,7 +2406,7 @@ impl McpServer {
                         let _lock = crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock")
                             .map_err(|e| (-32602, e.1))?;
                         crate::control::release(&self.project, &self.out, Some(stage));
-                        return Ok(text_result(json!({"released":stage,"generation":Store::load(&self.out).status.generation,"next":if stage == "generate" {"binding_tasks, then generation_tasks and verification_tasks"} else {"goals"}}), false));
+                        return Ok(text_result(json!({"released":stage,"generation":Store::load(&self.out).status.generation,"next":if stage == "generate" {"generation_tasks, then verification_tasks; binding_tasks is available for explicit inspection"} else {"goals"}}), false));
                     }
                     "await_changes" => {
                         // Waiting makes no sense mid-task, and on an ephemeral
@@ -2769,9 +2767,7 @@ impl McpServer {
                     let mut reply = json!({
                         "tasks": rows,
                         "count": rows.len(),
-                        "next": if rows.is_empty() && binding > 0 {
-                            format!("{} binding goal(s) remain; call binding_tasks first. No generation goal is currently derived. This does not mean the deliverable exists or is verified.", binding)
-                        } else if rows.is_empty() {
+                        "next": if rows.is_empty() {
                             "nothing owed".to_string()
                         } else if rows.iter().all(|r| r["gated"] == json!(true)) {
                             format!("every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {} claims one", begin)
@@ -2780,13 +2776,13 @@ impl McpServer {
                         },
                     });
                     if kind == "generate" {
-                        reply["prerequisites"] = json!({"binding":binding});
+                        reply["bindingWork"] = json!(binding);
                     }
                     if matches!(kind, "bind" | "generate")
                         && !crate::gen::GenSettings::resolve(&self.project).configured
                     {
                         reply["prerequisites"]["sourceMapping"] = json!(false);
-                        reply["next"] = json!("The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then binding_tasks. An empty generation list is not a completed deliverable.");
+                        reply["next"] = json!("The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then generation_tasks. An empty generation list is not a completed deliverable.");
                     }
                     if let Some(n) = stale_note {
                         reply["staleNote"] = json!(n);
@@ -4437,9 +4433,10 @@ mod tests {
         let call = |name, args| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
         let decode = |reply: Value| serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap();
         let generation = decode(call("generation_tasks", json!({})));
-        assert_eq!(generation["count"], 0, "{generation}");
-        assert_eq!(generation["prerequisites"]["binding"], 1, "{generation}");
-        assert!(generation["next"].as_str().unwrap().contains("binding_tasks"));
+        assert_eq!(generation["count"], 1, "{generation}");
+        assert_eq!(generation["bindingWork"], 1, "{generation}");
+        assert!(generation["prerequisites"]["binding"].is_null(), "{generation}");
+        assert!(generation["next"].as_str().unwrap().contains("update_document_set"));
         assert_eq!(call("begin_binding", json!({"requirement":"req:greet"}))["isError"], true);
         let config = crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap();
         assert_eq!(call("release_work", json!({"stage":"publish"}))["isError"], true);

@@ -3295,6 +3295,106 @@ mod tests {
     }
 
     #[test]
+    fn gdk_develops_fresh_source_and_tests_before_execution() {
+        use crate::harness::{self, GenericTool, LoopArgs, ModelHost, ModelRequest, ModelResponse};
+        struct Script { replies:std::collections::VecDeque<Value>, calls:usize }
+        impl ModelHost for Script {
+            fn infer<'a>(&'a mut self, request:ModelRequest)->harness::LocalFuture<'a,Result<ModelResponse,String>> {
+                Box::pin(async move {
+                    assert!(matches!(request.purpose,harness::ModelPurpose::Inference));
+                    self.calls+=1;
+                    Ok(ModelResponse { body:self.replies.pop_front().expect("no additional model call is needed") })
+                })
+            }
+        }
+        let out=std::env::temp_dir().join(format!("jazyk-gdk-code-first-{}",crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let(mut store,gs)=fixture(&out);
+        for(id,statement)in[("crit:items","Two items remain in the cart."),("crit:empty","An empty cart contains zero items.")] {
+            store.graph.criteria.insert(id.into(),crate::model::Criterion {
+                requirement:"req:shop-1".into(),statement:statement.into(),kind:"positive".into(),..Default::default()
+            });
+        }
+        assert!(Ledger::load(&out).requirements.is_empty());
+        assert_eq!(pending(&store,&gs)[0]["reason"],"incomplete-bindings");
+        let goal=crate::model::Goal {id:"g:generate:ent:cart".into(),kind:"generate".into(),target:"ent:cart".into(),
+            mandatory:true,class:"compile".into(),..Default::default()};
+        let scope=crate::tools::WorkScope::for_batch(&goal.id,std::slice::from_ref(&goal));
+        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+        let mut session=crate::tools::ToolSession::new(store.clone(),scope,50,32000);
+        session.gen=gs.clone();
+        let source="class Cart:\n    def __init__(self, items):\n        self.items = list(items)\n    def count(self):\n        return len(self.items)\n";
+        let tests="import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parents[1]))\nfrom cart import Cart\ndef items():\n    assert Cart(['a', 'b']).count() == 2\ndef empty():\n    assert Cart([]).count() == 0\nglobals()[sys.argv[1]]()\n";
+        let manifest=json!({"files":["cart.py","tests/check.py"],"tests":[
+            {"requirement":"req:shop-1","criterion":"crit:items","kind":"programmatic","artifact":"tests/check.py","name":"items","run":"python3 tests/check.py items"},
+            {"requirement":"req:shop-1","criterion":"crit:empty","kind":"programmatic","artifact":"tests/check.py","name":"empty","run":"python3 tests/check.py empty"}
+        ]});
+        let actions=[
+            ("write_text_file",json!({"path":"cart.py","content":source})),
+            ("write_text_file",json!({"path":"tests/check.py","content":tests})),
+            ("record_generation",json!({"entity":"ent:cart","factHash":fact_hash(&store,"ent:cart"),"manifest":manifest})),
+            ("run_tests",json!({"requirements":["req:shop-1"]})),
+            ("mark_goal_done",json!({"goal":goal.id,"justification":"The implementation retains items and both criterion tests passed against it."})),
+            ("done",json!({"summary":"Implemented the cart and executed its criterion tests."})),
+        ];
+        let replies=actions.iter().enumerate().map(|(i,(name,args))|json!({
+            "choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{
+                "id":format!("adaptive-{i}"),"type":"function","function":{"name":name,"arguments":args.to_string()}
+            }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}
+        })).collect();
+        let mut model=Script {replies,calls:0};
+        let names:std::collections::BTreeSet<_>=actions.iter().map(|(name,_)|*name).collect();
+        let tools:Vec<_>=crate::tools::catalog().into_iter().filter(|tool|names.contains(tool.name)).map(|tool|GenericTool {
+            name:tool.name.into(),description:tool.description.into(),parameters:tool.parameters,
+        }).collect();
+        let llm=crate::llm::Llm {base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
+            api_key:String::new(),temperature:None,trace:None};
+        let mut history=vec![json!({"role":"user","content":"Develop the cart source and its criterion tests together."})];
+        let mut observed=Vec::new();
+        let mut dispatch=|name:&str,args:&Value| {
+            if name=="run_tests" {
+                assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("cart.py")).unwrap(),source);
+                assert!(gs.deliverable.join("tests/check.py").vis_file());
+                assert!(gate(&store,&gs,"ent:cart",true).is_err(),"declarations cannot claim execution");
+            }
+            observed.push(name.to_string());
+            let value=session.dispatch(name,args).unwrap_or_else(|error|panic!("fixture {name}: {}",error.message));
+            Ok(value.to_string())
+        };
+        let stopped=harness::run_with_host(LoopArgs {llm:&llm,history:&mut history,tools:&tools,dispatch:&mut dispatch,
+            emit:&mut |_|{},cancelled:&||false,max_rounds:8,label:"code-first".into(),conversation:false,inputs:None,input_close:None},
+            &instructions(),&mut model,&mut harness::MemoryRecovery);
+        assert_eq!(stopped,harness::Stop::EndTurn);
+        assert_eq!(observed,actions.iter().map(|(name,_)|name.to_string()).collect::<Vec<_>>());
+        assert_eq!(model.calls,6,"successful completion needs no extra inference");
+        assert!(gate(&store,&gs,"ent:cart",true).is_ok());
+        let row=&Ledger::load(&out).requirements["req:shop-1"];
+        assert_eq!(row.verdict,"pass");
+        assert!(row.tests.values().all(|test|test.verdict=="pass"&&test.last_run.is_some()));
+        assert_eq!(crate::verify::status_of(&store,"req:shop-1",row,&gs).0,"verified");
+        assert!(!observed.iter().any(|name|name=="record_binding"||name=="begin_binding"));
+        crate::vfs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn recorded_medium_is_not_decided_again_before_the_first_entity_generation() {
+        let out=std::env::temp_dir().join(format!("jazyk-medium-once-{}",crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let(store,gs)=fixture(&out);
+        Ledger { medium:Some(Medium {form:"Rust crate".into(),produced:"written".into(),
+            toolchain:"cargo".into(),artifact:String::new()}),..Default::default() }.save(&out);
+        assert!(Ledger::load(&out).entities.is_empty());
+        let runner=StubRunner {record:true,failed:None,stopped:None,store:store.clone(),gs:gs.clone()};
+        let trace=crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
+        // StubRunner refuses every ask: deciding again would fail this run.
+        let result=run_selected(&store,&runner,&gs,&["ent:cart".into()],false,&trace,false).unwrap();
+        assert_eq!(result["regenerated"],1,"{result}");
+        assert_eq!(result["failures"],0,"{result}");
+        assert_eq!(Ledger::load(&out).medium.unwrap().form,"Rust crate");
+        crate::vfs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
     fn strip_markers_and_relocate() {
         let text = "// intro\n// req:main-js-5 hash:310b7c2e\n\nfunction trim(line) {\n  return line.trim()\n}\n";
         let (clean, sites) = strip_markers(text);

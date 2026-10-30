@@ -321,7 +321,7 @@ async fn run_inner_async(
     if let Some(pending) = &state.pending_tool {
         if !state.tool_receipts.contains_key(&pending.id) {
             return Stop::Error(format!(
-                "Tool outcome is uncertain for '{}'; reconcile its intention before resuming",
+                "execution-uncertain: Tool outcome is uncertain for '{}'; reconcile its intention before resuming",
                 pending.id
             ));
         }
@@ -377,6 +377,7 @@ async fn checkpoint(
             state,
         )
         .await
+        .map_err(|error| format!("checkpoint-failed: {error}"))
 }
 
 async fn drive(

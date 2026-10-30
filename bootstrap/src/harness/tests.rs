@@ -841,3 +841,71 @@ fn native_compile_tool_can_drive_an_inner_gdk_session_on_the_same_thread() {
         .unwrap();
     });
 }
+
+#[test]
+fn native_stream_envelope_preserves_gdk_usage_and_tools() {
+    let native = goose_provider_types::formats::openai::response_to_message(&call()).unwrap();
+    let usage = goose_provider_types::conversation::token_usage::ProviderUsage::new(
+        "fixture".into(),
+        goose_provider_types::formats::openai::get_usage(&call()),
+    )
+    .with_response_id("native-response".into());
+    let mut host = Host::new(vec![
+        json!({"_jazykGdkResponse":{"message":native,"usage":usage}}),
+        response("finished"),
+    ]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut calls = 0;
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| {
+                calls += 1;
+                Ok("result".into())
+            },
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
+    assert_eq!(calls, 1);
+    assert_eq!(
+        store.saved.as_ref().unwrap().usage[0]
+            .response_id
+            .as_deref(),
+        Some("native-response")
+    );
+    assert!(host.requests.borrow()[1].body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["reasoning_content"] == "retained reasoning"));
+}
+
+#[test]
+fn checkpoint_failure_and_uncertainty_have_preservable_recovery_signals() {
+    let mut host = Host::new(vec![call()]);
+    let mut store = Store {
+        fail: Some(CheckpointPhase::BeforeTool),
+        ..Default::default()
+    };
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let stop = run(
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |_, _| panic!("uncheckpointed tool ran"),
+        &mut |_| {},
+    );
+    assert!(matches!(stop, Stop::Error(error) if error.starts_with("checkpoint-failed:")));
+    let stop = run(
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |_, _| panic!("uncertain tool reran"),
+        &mut |_| {},
+    );
+    assert!(matches!(stop, Stop::Error(error) if error.starts_with("execution-uncertain:")));
+}

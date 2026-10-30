@@ -38,6 +38,7 @@ open(sys.argv[2],'w').write('closed on EOF')
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', required=True)
+    parser.add_argument('--sse', action='store_true')
     arguments = parser.parse_args()
     requests = []
     cancelled_request = threading.Event()
@@ -61,9 +62,39 @@ def main():
         def do_GET(self):
             self.reply({'data': [{'id': 'fixture'}]})
 
+        def reply_sse(self, message, finish):
+            base = {'id': 'stream-response', 'model': 'fixture'}
+            frames = []
+            if message.get('tool_calls'):
+                call = message['tool_calls'][0]
+                frames.append({**base, 'choices': [{'delta': {
+                    'role': 'assistant', 'reasoning_content': 'retained streamed reasoning',
+                    'tool_calls': [{'index': 0, 'id': call['id'], 'type': 'function',
+                                    'function': {'name': 'fixture', 'arguments': '{"value":'}}]}}]})
+                frames.append({**base, 'choices': [{'delta': {'tool_calls': [
+                    {'index': 0, 'function': {'arguments': '7}'}}]}, 'finish_reason': finish}]})
+            else:
+                frames.append({**base, 'choices': [{'delta': {'role': 'assistant',
+                    'content': message.get('content', '')}, 'finish_reason': finish}]})
+            frames.append({**base, 'choices': [], 'usage': {
+                'prompt_tokens': 10, 'completion_tokens': 3, 'total_tokens': 13}})
+            data = ''.join('data: ' + json.dumps(frame) + '\r\n\r\n' for frame in frames)
+            data = (data + 'data: [DONE]\r\n\r\n').encode()
+            try:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                for offset in range(0, len(data), 11):
+                    self.wfile.write(data[offset:offset + 11])
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             requests.append(body)
+            assert body['stream'] is True, body
             assert body['tools'][0]['function']['name'] == 'fixture', body
             messages = body['messages']
             last = messages[-1]
@@ -74,6 +105,9 @@ def main():
                 finish = 'stop'
             elif last.get('role') == 'tool':
                 assert last['content'] == 'fixture complete', last
+                if arguments.sse:
+                    assert any(message.get('reasoning_content') == 'retained streamed reasoning'
+                               for message in messages), messages
                 message = {'role': 'assistant', 'content': 'Finished using the fixture.'}
                 finish = 'stop'
             else:
@@ -82,8 +116,11 @@ def main():
                         'name': 'fixture', 'arguments': json.dumps({'value': 7})}}
                 ]}
                 finish = 'tool_calls'
-            self.reply({'choices': [{'message': message, 'finish_reason': finish}],
-                        'usage': {'prompt_tokens': 10, 'completion_tokens': 3, 'total_tokens': 13}})
+            if arguments.sse:
+                self.reply_sse(message, finish)
+            else:
+                self.reply({'choices': [{'message': message, 'finish_reason': finish}],
+                            'usage': {'prompt_tokens': 10, 'completion_tokens': 3, 'total_tokens': 13}})
 
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()

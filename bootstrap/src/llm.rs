@@ -437,7 +437,8 @@ impl Llm {
         let response: Value = serde_json::from_str(&response).map_err(|e| format!("Invalid model response: {e}"))?;
         self.event(crate::session::TraceEvent::LlmResponse {
             label: request_id, step: purpose, ms: started.elapsed().as_millis() as u64,
-            tokens: response["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+            tokens: response["usage"]["completion_tokens"].as_u64()
+                .or_else(|| response["_jazykGdkResponse"]["usage"]["usage"]["output_tokens"].as_u64()).unwrap_or(0),
             message: response.get("_jazykGdkResponse").map(|v| v["message"].clone())
                 .unwrap_or_else(|| response["choices"][0]["message"].clone()),
         });

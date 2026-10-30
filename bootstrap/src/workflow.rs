@@ -139,7 +139,8 @@ fn successful(v: &Value) -> bool {
             rows.iter().any(|row| {
                 row["reason"]
                     .as_str()
-                    .is_some_and(|s| s.contains("stale") || s.contains("not bound"))
+                    .is_some_and(|s| s.contains("stale") || s.contains("not bound")
+                        || s.starts_with("source-selection-changed:"))
             })
         })
 }
@@ -720,6 +721,37 @@ mod tests {
         assert!(!successful(&json!({"runnerFailed":1})));
         assert!(!successful(&json!({"build":{"ok":false}})));
         assert!(successful(&json!({"passed":3,"failed":0})));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reclassified_implementation_skips_testing_and_fails_before_the_next_action() {
+        let files = {
+            let seed = pending_workspace(1, 0, false);
+            let fs = crate::vfs::Scope::enter(&seed);
+            let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+            let store = Store::load(&project.out);
+            let gs = gen::GenSettings::resolve(&project);
+            crate::vfs::create_dir_all("/project/src").unwrap();
+            crate::vfs::create_dir_all("/project/tests").unwrap();
+            crate::vfs::write("/project/src/site.rs", "// Site implementation\n").unwrap();
+            crate::vfs::write("/project/tests/site.rs", "fn site_test() {}\n").unwrap();
+            crate::bind::record(&store, "req:site-1", &["src/site.rs".into()],
+                &json!({"kind":"programmatic","artifact":"tests/site.rs","name":"site_test","run":"must-not-execute"}),
+                &Value::Null, "pass", None, &gs).unwrap();
+            crate::vfs::write("/project/.jazyk/jazyk.toml",
+                "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**', 'src/site.rs']\nroots = ['docs/main.md']\nsource = ['tests/**']\n").unwrap();
+            fs.snapshot()
+        };
+        let before = files[".jazyk/ds_main/gen/ledger.yaml"].clone();
+        let (result, files) = workflow_request(files, json!([{"action":"test"},{"action":"build"}]), &Default::default());
+        assert_eq!(result["report"]["state"], "failed", "{result}");
+        let steps = result["report"]["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1, "{result}");
+        assert_eq!(steps[0]["state"], "failed");
+        assert_eq!(steps[0]["result"]["passed"], 0);
+        assert!(steps[0]["result"]["skipped"][0]["reason"].as_str().unwrap().starts_with("source-selection-changed:"));
+        assert_eq!(files["src/site.rs"], b"// Site implementation\n");
+        assert_eq!(files[".jazyk/ds_main/gen/ledger.yaml"], before);
     }
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

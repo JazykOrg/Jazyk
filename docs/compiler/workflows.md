@@ -44,6 +44,13 @@ not selected by the action does not prevent compile completion. An incomplete
 compile keeps its report, including its verdict and counts, beside the reason the
 workflow stopped.
 
+A ledger action checks what was committed before reporting a session error. A
+completed binding or valid generation manifest remains successful after a later
+model error. When required work did not land, a model or runtime error stops the
+action before the next target. The result retains that reason beside the completed
+and failed counts. Unattempted targets are not counted as failed. Review stops on a
+model transport error without inventing judgments for the remaining rows.
+
 Document changes must be compiled before binding or generating. Unfinished mandatory
 graph work blocks these actions. Goals waiting on a human answer or ratification
 do not block compile completion, binding, or generation. Their questions and

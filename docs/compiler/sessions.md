@@ -341,6 +341,15 @@ served more than the graph tools and finish through the ledger:
   current row, no resolution (one retry, then parked), and a row recorded without a
   mark still resolves the goal at the next derivation.
 
+Ledger workers judge the committed row or manifest before the session's stop. A
+current binding or a fresh, valid generation manifest remains completed when a later
+model call fails. An unfinished ledger goal retains the model or runtime error and
+stops the action before another target is attempted. The error reaches the action
+result and the endpoint breaker. It does not become a missing-row error for every
+remaining target. A normal turn end, the round limit, cancellation, and recovery
+suspension retain their distinct outcomes. A model transport error during review
+stops further judgments without recording invented verdicts.
+
 ## Staged mutations
 
 Write tools never touch the store directly. They stage mutations into the session's

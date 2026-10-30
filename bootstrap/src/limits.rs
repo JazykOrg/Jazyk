@@ -121,6 +121,16 @@ pub const SESSION_ROUNDS: u32 = 24;
 // The embedded agent's flat runaway stop, in model round-trips (one may carry
 // several tool calls). `JAZYK_AGENT_MAX_ROUNDS` overrides.
 pub const AGENT_MAX_ROUNDS: u32 = 48;
+pub fn agent_max_rounds() -> u32 {
+    agent_rounds_from(crate::sys::env_var("JAZYK_AGENT_MAX_ROUNDS").ok().as_deref())
+}
+
+fn agent_rounds_from(value: Option<&str>) -> u32 {
+    value.and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(AGENT_MAX_ROUNDS)
+        .max(1)
+}
+
 // Also bounds a single reply containing many invalid calls outside a graph batch.
 pub const AGENT_TOOL_ERROR_LIMIT: u32 = 5;
 pub const SESSION_MUTATIONS: usize = 64;
@@ -175,6 +185,53 @@ pub fn command_timeout() -> std::time::Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_request_override_preserves_the_default_and_minimum() {
+        assert_eq!(agent_rounds_from(None), 48);
+        assert_eq!(agent_rounds_from(Some("invalid")), 48);
+        assert_eq!(agent_rounds_from(Some("4294967296")), 48);
+        assert_eq!(agent_rounds_from(Some("0")), 1);
+        assert_eq!(agent_rounds_from(Some("2")), 2);
+        assert_eq!(agent_rounds_from(Some("72")), 72);
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        assert_eq!(agent_max_rounds(), AGENT_MAX_ROUNDS);
+        assert_eq!(SESSION_ROUNDS, 24, "graph batch sizing is independent");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_low_agent_override_stops_at_its_model_admission_limit() {
+        use crate::harness::{self, GenericTool, LoopArgs, ModelHost, ModelRequest, ModelResponse, Stop};
+        use serde_json::json;
+        struct Repeating(usize);
+        impl ModelHost for Repeating {
+            fn infer<'a>(&'a mut self, _: ModelRequest) -> harness::LocalFuture<'a, Result<ModelResponse, String>> {
+                self.0 += 1;
+                let id = format!("call-{}", self.0);
+                Box::pin(async move { Ok(ModelResponse { body: json!({"choices":[{"message":{
+                    "role":"assistant", "tool_calls":[{"id":id,"type":"function",
+                    "function":{"name":"edit","arguments":"{}"}}]}}]}) }) })
+            }
+        }
+        let llm = crate::llm::Llm { base_url:"unused".into(), model:"fixture".into(), api_key:String::new(),
+            temperature:None, trace:None };
+        let mut model = Repeating(0);
+        let mut history = vec![json!({"role":"user","content":"Continue until the work is complete."})];
+        let mut edits = 0;
+        let stop = harness::run_with_host(LoopArgs {
+            llm:&llm, history:&mut history,
+            tools:&[GenericTool { name:"edit".into(), description:"Advance unfinished work".into(),
+                parameters:json!({"type":"object","properties":{}}) }],
+            dispatch:&mut |_,_| { edits += 1; Ok("More work remains.".into()) },
+            emit:&mut |_|{}, cancelled:&||false, max_rounds:agent_rounds_from(Some("2")),
+            label:"explicit low override".into(), conversation:false, inputs:None, input_close:None,
+        }, "", &mut model, &mut harness::MemoryRecovery);
+        assert_eq!(stop, Stop::MaxRounds);
+        assert_eq!((model.0, edits), (2, 2));
+        assert_eq!(crate::runner::unlanded_reason(&stop, model.0 as u32),
+            "Agent reached the session limit after 2 model requests; unfinished work remains open");
+    }
 
     #[test]
     fn registry_has_eight_rows_with_soft_below_hard() {

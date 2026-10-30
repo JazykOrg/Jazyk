@@ -69,16 +69,6 @@ struct SessionEntry {
 
 type Sessions = Arc<Mutex<HashMap<String, SessionEntry>>>;
 
-// The round cap for one prompt turn. The client's own budgets are the real bound;
-// this is the local runaway stop, reported as `max_turn_requests`.
-fn max_rounds() -> u32 {
-    std::env::var("JAZYK_AGENT_MAX_ROUNDS")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(crate::limits::AGENT_MAX_ROUNDS)
-        .max(1)
-}
-
 fn initial_history<'a>(instructions: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Value> {
     let mut history = Vec::new();
     for (name, instructions) in instructions {
@@ -339,7 +329,7 @@ pub fn run() -> i32 {
                             dispatch: &mut dispatch,
                             emit: &mut emit,
                             cancelled: &|| cancelled.load(Ordering::Relaxed),
-                            max_rounds: max_rounds(),
+                            max_rounds: crate::limits::agent_max_rounds(),
                             label,
                             conversation: state.conversation,
                             inputs: Some(&mut inputs),

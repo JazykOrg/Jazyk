@@ -643,7 +643,7 @@ impl AcpRunner {
                     .clone()
                     .unwrap_or_else(|| "the agent refused the prompt".to_string()),
             ),
-            "max_turn_requests" => Some(format!("the session ran out of rounds after {}", rounds)),
+            "max_turn_requests" => Some(crate::runner::unlanded_reason(&crate::harness::Stop::MaxRounds, rounds)),
             "cancelled" => Some("the session was cancelled".to_string()),
             other => Some(format!("the session stopped: {}", other)),
         };

@@ -201,7 +201,7 @@ impl SessionRunner for InProcessRunner {
             dispatch: &mut dispatch,
             emit: &mut emit,
             cancelled: &never_cancelled,
-            max_rounds: crate::limits::SESSION_ROUNDS,
+            max_rounds: crate::limits::agent_max_rounds(),
             label: label.clone(),
             conversation: false,
         inputs: owner.as_ref().map(|_| &mut input_source as &mut dyn FnMut() -> Vec<Value>),
@@ -312,6 +312,133 @@ impl SessionRunner for InProcessRunner {
 #[cfg(test)]
 mod ledger_failure_tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generation_can_record_after_twenty_four_requests_and_resume_without_readmission() {
+        use std::sync::{Arc, Mutex};
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use crate::hosted::{Execution, Snapshot, Workspace};
+        let (files, fact_hash, criterion) = {
+            let fs = crate::vfs::Scope::enter(&Snapshot::new());
+            crate::vfs::create_dir_all("/project/.jazyk").unwrap();
+            crate::vfs::write("/project/.jazyk/jazyk.toml",
+                "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nsource = ['src/**', 'tests/**']\n").unwrap();
+            let project = Project::load(Path::new("/project"));
+            let mut store = crate::store::Store::load(&project.out);
+            store.graph.entities.insert("ent:greeter".into(), crate::model::Entity {
+                name: "Greeter".into(), ..Default::default()
+            });
+            store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
+                statement: "The greeter says hello.".into(), entities: vec!["ent:greeter".into()], ..Default::default()
+            });
+            store.graph.criteria.insert("crit:greet".into(), crate::model::Criterion {
+                requirement: "req:greet".into(), statement: "The greeting says hello.".into(),
+                kind: "positive".into(), ..Default::default()
+            });
+            store.save();
+            let mut ledger = crate::gen::Ledger::load(&project.out);
+            ledger.medium = Some(crate::gen::Medium {
+                form: "text".into(), produced: "written".into(), toolchain: String::new(), artifact: String::new()
+            });
+            ledger.save(&project.out);
+            let mut control = crate::control::Control::load(&project, &project.out);
+            control.generate = "auto".into();
+            control.save(&project.out);
+            let criterion = crate::gen::criteria_front_matter("req:greet", Some("crit:greet"),
+                &store.graph.criteria["crit:greet"].statement)
+                + "\nRead src/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
+            (fs.snapshot(), crate::gen::fact_hash(&store, "ent:greeter"), criterion)
+        };
+        for interrupt in [false, true] {
+            let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let observed = requests.clone();
+            let fact_hash = fact_hash.clone();
+            let criterion = criterion.clone();
+            let model = Arc::new(move |body: String| {
+                let request: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(request["_jazyk"]["purpose"], "inference");
+                let mut seen = observed.lock().unwrap();
+                seen.push(request);
+                let round = seen.len();
+                let (name, args) = match round {
+                    1 => ("begin_generation", json!({"entity":"ent:greeter"})),
+                    2..=26 => ("write_text_file", json!({"path":"src/greeting.txt", "content":format!("Hello\nRevision {round}\n")})),
+                    27 => ("write_text_file", json!({"path":"tests/greeting.md", "content":criterion})),
+                    28 => ("record_generation", json!({"entity":"ent:greeter", "factHash":fact_hash,
+                        "manifest":{"files":["src/greeting.txt"], "tests":[{
+                            "requirement":"req:greet", "criterion":"crit:greet", "kind":"llm",
+                            "artifact":"tests/greeting.md", "name":"greeting", "run":"llm", "files":["src/greeting.txt"]
+                        }]}})),
+                    29 => ("done", json!({"summary":"Recorded source and its criterion after incremental edits."})),
+                    _ => panic!("successful ledger done must stop the worker"),
+                };
+                let reply = json!({"choices":[{"message":{"role":"assistant", "content":null,
+                    "tool_calls":[{"id":format!("edit-{round}"),"type":"function",
+                        "function":{"name":name,"arguments":args.to_string()}}]}}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}).to_string();
+                Box::pin(async move { Ok(reply) }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<String,String>> + Send>>
+            });
+            let checkpoint = Arc::new(Mutex::new(None::<(Value, Snapshot)>));
+            let saved = checkpoint.clone();
+            let injected = Arc::new(AtomicBool::new(false));
+            let fail = injected.clone();
+            let rounds = Arc::new(AtomicU32::new(0));
+            let observed_rounds = rounds.clone();
+            let sink = Arc::new(move |mut capsule: Value, files: Snapshot| {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                capsule["sequence"] = json!(next);
+                let frame = capsule["frames"].as_array().and_then(|frames| frames.last());
+                if let Some(rounds) = frame.and_then(|frame| frame["harness"]["rounds"].as_u64()) {
+                    observed_rounds.fetch_max(rounds as u32, Ordering::SeqCst);
+                }
+                let crash = interrupt && frame.is_some_and(|frame|
+                    frame["boundary"]["phase"] == "saved_model" && frame["harness"]["rounds"] == 25)
+                    && !fail.swap(true, Ordering::SeqCst);
+                *saved.lock().unwrap() = Some((capsule, files));
+                Box::pin(async move {
+                    if crash { Err("checkpoint-failed: fixture lost the save acknowledgement".into()) }
+                    else { Ok(next) }
+                }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<u64,String>> + Send>>
+            });
+            let mut execution = Execution { model:"scripted-generation".into(), transport_async:Some(model),
+                checkpoint:Some(sink), ..Default::default() };
+            let mut workspace = Workspace::new(files.clone()).unwrap();
+            let body = json!({"kind":"gen","entities":["ent:greeter"]}).to_string();
+            let mut result = workspace.request("POST", "/api/jobs", &body, &execution).unwrap();
+            if interrupt {
+                assert!(String::from_utf8_lossy(&result.body).contains("checkpoint-failed:"));
+                assert_eq!(requests.lock().unwrap().len(), 25);
+                let (capsule, protected) = checkpoint.lock().unwrap().clone().unwrap();
+                assert_eq!(capsule["harness"]["rounds"], 25);
+                assert_eq!(capsule["harness"]["model_requests"].as_object().unwrap().len(), 25);
+                let id = requests.lock().unwrap()[24]["_jazyk"]["requestId"].as_str().unwrap().to_string();
+                let recorded = &capsule["harness"]["model_requests"][&id];
+                let mut admitted = requests.lock().unwrap()[24].clone();
+                admitted.as_object_mut().unwrap().remove("_jazyk");
+                assert_eq!(recorded, &admitted, "the protected body owns its admitted identity");
+                execution.resume = Some(capsule);
+                workspace = Workspace::new(protected).unwrap();
+                result = workspace.request("POST", "/api/jobs", &body, &execution).unwrap();
+            }
+            assert!(result.status < 400, "{}", String::from_utf8_lossy(&result.body));
+            let result: Value = serde_json::from_slice(&result.body).unwrap();
+            assert_eq!(result["report"]["regenerated"], 1, "{result}");
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 29, "a saved response must not repeat a model request");
+            let identities: std::collections::BTreeSet<_> = requests.iter()
+                .map(|request| request["_jazyk"]["requestId"].as_str().unwrap()).collect();
+            assert_eq!(identities.len(), 29);
+            assert_eq!(rounds.load(Ordering::SeqCst), 29, "resume must retain the original request count");
+            let files = workspace.snapshot();
+            assert!(files["src/greeting.txt"].starts_with(b"Hello\n"));
+            let _fs = crate::vfs::Scope::enter(&files);
+            let project = Project::load(Path::new("/project"));
+            let store = crate::store::Store::load(&project.out);
+            assert!(crate::gen::pending(&store, &crate::gen::GenSettings::resolve(&project)).is_empty());
+            assert_eq!(crate::gen::Ledger::load(&project.out).requirements["req:greet"].tests["crit:greet"].verdict, "none");
+        }
+    }
 
     #[test]
     fn only_an_ordinary_runtime_error_is_a_fatal_ledger_failure() {
@@ -441,7 +568,7 @@ async fn run_answer(
         dispatch: &mut dispatch,
         emit: &mut emit,
         cancelled: &never_cancelled,
-        max_rounds: crate::limits::AGENT_MAX_ROUNDS,
+        max_rounds: crate::limits::agent_max_rounds(),
         label: label.to_string(),
         conversation: false,
         inputs: None,

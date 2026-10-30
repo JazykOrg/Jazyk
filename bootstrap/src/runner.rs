@@ -325,7 +325,7 @@ pub fn unlanded_reason(stop: &crate::harness::Stop, rounds: u32) -> String {
     use crate::harness::Stop;
     match stop {
         Stop::EndTurn => "the model ended its turn with the batch still open".to_string(),
-        Stop::MaxRounds => format!("the session ran out of rounds after {}", rounds),
+        Stop::MaxRounds => format!("Agent reached the session limit after {} model requests; unfinished work remains open", rounds),
         Stop::Cancelled => "the session was cancelled".to_string(),
         Stop::Suspended => "suspended".to_string(),
         Stop::Error(e) => format!("the model call failed: {}", e),
@@ -545,7 +545,7 @@ mod tests {
         );
         assert_eq!(
             unlanded_reason(&Stop::MaxRounds, 40),
-            "the session ran out of rounds after 40"
+            "Agent reached the session limit after 40 model requests; unfinished work remains open"
         );
         assert!(unlanded_reason(&Stop::Error("HTTP 400: maximum context length".into()), 1)
             .contains("maximum context length"));

@@ -118,7 +118,10 @@ job and releases ownership. No terminal finished event is emitted for suspension
 
 A replacement worker validates compatibility, claims a new lease, reconciles
 pending operations and continues automatically. Expired ownership follows the
-same recovery path. Model dispatch, task submission and checkpoint writes validate
+same recovery path. A resumed execution releases only its matching saved control
+claims before build admission. Restored MCP sessions reclaim their batch and ledger
+claims under the replacement worker. A foreign claim still refuses admission.
+Model dispatch, task submission and checkpoint writes validate
 ownership and execution sequence. A stale owner cannot claim new work.
 
 Stop is final. It wins over reclaim and does not auto-resume. Suspension does not

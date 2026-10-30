@@ -1076,8 +1076,9 @@ the 95th percentile.
 These timings measure JSON serialization. They exclude MCP state, workspace
 snapshots, database and object-store writes, real providers and network latency.
 The hosted service also has an owner thread for each active workspace operation.
-This profile is not a whole-service capacity test. There is no comparable old-loop
-baseline, so these results do not establish a performance improvement.
+This profile is not a whole-service capacity test. The old loop has no matching
+async host or suspended capsule API. The native HTTP comparison below measures
+both public synchronous wrappers separately.
 
 Real `llama3.1:8b` through the configured LocalRouter passed native ACP/MCP task
 discovery in 19.3 seconds. It failed the extraction and navigation capability
@@ -1088,3 +1089,58 @@ execution capability for that model. Gates rejected its invalid tool calls.
 `qwen3.8:27b-mlx` passed navigation (4 of 4 checks) through the same endpoint,
 but failed extraction (0 of 6). Its combined compilation verdict is not-capable.
 The failures included malformed tool arguments and missing entity provenance.
+
+## Matched native HTTP comparison, 2026-10-30
+
+The old engine `04bf562694c7ee16263b9854b1c989b2116122c8` and GDK engine
+`62a80a0f5c8caec55d1468d372d5b6a940fd3ac2` ran the same public synchronous
+loop wrapper. Both release builds used `--no-default-features`, one owner thread
+per active session and a loopback HTTP fixture. Each session made three model
+requests, executed two echo tools and returned `Complete.`. Each active response
+waited 100 ms. Responses used complete JSON and `Connection: close`.
+
+Each process retained 100 genuinely completed transcript histories. Their warmup
+responses had no artificial delay. The old codec was forced to native, with
+`JAZYK_MIN_INTERVAL_MS=0`, `JAZYK_MAX_CONCURRENCY=32` and
+`JAZYK_MAX_RETRIES=0`. These override its old 500 ms pacing and six-call admission
+defaults. The new path does not use those pacing and admission variables.
+Each case ran three times in alternating order in fresh processes.
+
+Wall time and peak RSS are medians. Thread counts are observed maxima.
+
+| Active sessions | Old wall | GDK wall | Old RSS | GDK RSS | Old threads | GDK threads |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 498.2 ms | 642.0 ms | 9.9 MiB | 43.0 MiB | 3 | 4 |
+| 8 | 635.9 ms | 385.8 ms | 11.7 MiB | 46.6 MiB | 17 | 11 |
+| 32 | 703.9 ms | 612.8 ms | 17.3 MiB | 54.9 MiB | 65 | 35 |
+
+All 36 measurements passed completion, tool-count, final-text and response-record
+checks. Cancelling eight of 32 sessions left 24 completed in every run on both
+versions. Maximum observed cancellation latency was 175.2 ms old and 24.3 ms GDK.
+Warmed processes with no active session and 100 retained histories used median
+peak RSS of 9.7 MiB old and 42.7 MiB GDK. Those histories serialized to 1,071,600
+and 2,089,270 bytes. These are completed transcripts, not suspended agents.
+Runtime and allocator initialization contribute to the memory difference. It
+does not establish a per-session memory cost.
+
+Wall times were noisy. The single-session ranges were 483.1 to 534.6 ms old and
+610.2 to 747.0 ms GDK. Eight-session ranges were 525.9 to 749.6 ms old and 354.1
+to 611.4 ms GDK. At 32 sessions the ranges were 555.0 to 764.5 ms old and 589.9
+to 690.3 ms GDK. GDK used more memory and fewer threads at higher concurrency.
+These observations do not establish a general speedup or production capacity.
+
+This comparison includes the transport change from per-request `ureq` clients to
+shared `reqwest` I/O. It excludes real inference, SSE, compaction, MCP state,
+workspace snapshots, hosted admission, durable storage and billing. Event
+callbacks count and drop events; this does not measure an event queue. Wall time
+includes owner-thread creation. First HTTP arrival has a later clock origin.
+There is no old checkpoint API to compare with the separate GDK capsule profile.
+
+Exact fixtures, binaries, build provenance, all raw records and stronger parity
+validation are retained under ignored
+`.local/deployments/gdk-20261030/native-profile/` in the sibling
+`jazyk-cloud-gdk` release worktree.
+The raw result SHA-256 is
+`42cc9b9bd20f33b328384861305d652425c11b4dfbbde4efd0527e8648169ff9`.
+No provider inference or production action was used. Scratch worktrees and mock
+processes were removed. The existing Colima profile remained stopped.

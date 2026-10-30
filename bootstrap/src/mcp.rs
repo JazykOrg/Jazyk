@@ -283,7 +283,8 @@ impl McpServer {
 
     fn worker_reply(&self, name: &str, mut reply: Value) -> Value {
         if reply["isError"] == true
-            || (!crate::task_runtime::TOOLS.contains(&name) && name != "begin_binding")
+            || (!crate::task_runtime::TOOLS.contains(&name)
+                && !matches!(name, "begin_binding" | "begin_generation"))
             || !self.has_execution_contract()
         {
             return reply;
@@ -292,6 +293,8 @@ impl McpServer {
         let Ok(mut value) = serde_json::from_str::<Value>(text) else { return reply };
         if name == "begin_binding" {
             value["instructions"] = json!(crate::bind::contract());
+        } else if name == "begin_generation" {
+            value["instructions"] = json!(crate::gen::contract());
         } else {
             value = crate::task_runtime::worker_response(name, value);
         }
@@ -3698,6 +3701,99 @@ fn result_value(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_generation_carries_each_contract_once_through_the_inprocess_harness() {
+        use crate::harness::{self, LoopArgs, ModelHost, ModelRequest, ModelResponse};
+        struct Script { requests: Vec<Value> }
+        impl ModelHost for Script {
+            fn infer<'a>(&'a mut self, request: ModelRequest) -> harness::LocalFuture<'a, Result<ModelResponse, String>> {
+                Box::pin(async move {
+                    assert!(matches!(request.purpose, harness::ModelPurpose::Inference));
+                    self.requests.push(request.body);
+                    let message = match self.requests.len() {
+                        1 => json!({"role":"assistant","content":null,"tool_calls":[{
+                            "id":"begin-generation","type":"function","function":{
+                                "name":"begin_generation","arguments":"{\"entity\":\"ent:greeter\"}"
+                            }
+                        }]}),
+                        2 => json!({"role":"assistant","content":"The package is available."}),
+                        _ => panic!("the projection check needs only two model calls"),
+                    };
+                    Ok(ModelResponse { body:json!({"choices":[{"message":message}],
+                        "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}) })
+                })
+            }
+        }
+        let dir = bare_dir("worker-generation-contract");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let mut store = Store::load(&out);
+        store.graph.entities.insert("ent:greeter".into(), crate::model::Entity {
+            name:"Greeter".into(), ..Default::default()
+        });
+        store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
+            statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default()
+        });
+        store.graph.criteria.insert("crit:greet".into(), crate::model::Criterion {
+            requirement:"req:greet".into(),statement:"The greeting says hello.".into(),kind:"positive".into(),..Default::default()
+        });
+        store.save();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.generate = "auto".into();
+        control.save(&out);
+        let batch = crate::runner::BatchRun::single(Goal {
+            id:"g:generate:ent:greeter".into(),kind:"generate".into(),target:"ent:greeter".into(),
+            class:"compile".into(),mandatory:true,..Default::default()
+        });
+        let contract = crate::gen::contract();
+        let opening = crate::runner::batch_prompt(&project, &out, &batch);
+        assert_eq!(opening.matches(crate::task_runtime::PROMPT).count(), 1);
+        assert!(!opening.contains(&contract));
+        let server = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
+            BridgeFlags { ephemeral:true, only:Some(batch.id), serve_files:true, ..Default::default() });
+        let mut tools = crate::session_recovery::McpTools(&server);
+        let mut model = Script { requests:Vec::new() };
+        let llm = crate::llm::Llm { base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
+            api_key:String::new(),temperature:None,trace:None };
+        let mut history = vec![json!({"role":"user","content":opening})];
+        let stop = harness::run_with_hosts(LoopArgs {
+            llm:&llm,history:&mut history,tools:&[],dispatch:&mut |_,_| unreachable!("MCP host owns dispatch"),
+            emit:&mut |_|{},cancelled:&||false,max_rounds:3,label:"generation-contract".into(),conversation:false,
+            inputs:None,input_close:None,
+        }, "", &mut model, &mut tools, &mut harness::MemoryRecovery);
+        assert_eq!(stop, harness::Stop::EndTurn);
+        assert_eq!(model.requests.len(), 2);
+        let wire_tool = model.requests[1]["messages"].as_array().unwrap().iter()
+            .find(|message| message["role"] == "tool").unwrap();
+        let worker:Value = serde_json::from_str(wire_tool["content"].as_str().unwrap()).unwrap();
+        assert_eq!(worker["instructions"], contract);
+        let opening = model.requests[0]["messages"].as_array().unwrap().iter()
+            .find(|message| message["role"] == "user").unwrap()["content"].as_str().unwrap();
+        let full_context = format!("{}\n{}", opening, worker["instructions"].as_str().unwrap());
+        assert_eq!(full_context.matches(crate::task_runtime::PROMPT).count(), 1);
+        assert_eq!(full_context.matches(&contract).count(), 1);
+        let original = crate::gen::task_package(&store, "ent:greeter", &crate::gen::GenSettings::resolve(&project)).unwrap();
+        let manual = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true, BridgeFlags::default());
+        let standalone = manual.worker_reply("begin_generation", text_result(original.clone(), false));
+        let standalone:Value = serde_json::from_str(standalone["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(standalone, original);
+        assert_eq!(standalone["instructions"], crate::gen::instructions());
+        let mut expected = original.clone();
+        expected["instructions"] = json!(contract);
+        assert_eq!(worker, expected, "only the repeated execution contract is omitted");
+        let restored = McpServer::with_bridge(project, out, vec!["generate".into()], true, server.bridge.clone());
+        restored.restore(server.checkpoint().unwrap()).unwrap();
+        let restored_reply = restored.worker_reply("begin_generation", text_result(original, false));
+        let restored_reply:Value = serde_json::from_str(restored_reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(restored_reply, worker);
+        let refused = text_result(json!({"error":{"rule":"not-ready","message":"Resolve graph work first."}}), true);
+        assert_eq!(restored.worker_reply("begin_generation", refused.clone()), refused);
+        drop(restored);
+        drop(manual);
+        drop(server);
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn owned_binding_carries_each_contract_once_and_standalone_keeps_full_instructions() {

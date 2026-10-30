@@ -1337,9 +1337,13 @@ pub async fn decide_medium(
 // The generation contract, identical for every worker. It never names a medium: what
 // the deliverable is (a language, a format, a genre) is a fact the documents state,
 // carried by the context pack.
-pub fn instructions() -> String {
+pub fn contract() -> String {
     include_str!("../../docs/compiler/goals/prompts/generate-contract.md")
-        .replace("{GROUP}", &GROUP.to_string()) + "\n\n" + crate::task_runtime::PROMPT
+        .replace("{GROUP}", &GROUP.to_string())
+}
+
+pub fn instructions() -> String {
+    contract() + "\n\n" + crate::task_runtime::PROMPT
 }
 
 // The change diff for one entity versus the ledger.

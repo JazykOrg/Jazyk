@@ -618,3 +618,133 @@ fn repeated_tool_failures_stop_with_paired_results() {
         5
     );
 }
+
+#[test]
+fn rejected_native_tool_capability_returns_an_explicit_error() {
+    struct Reject;
+    impl ModelHost for Reject {
+        fn infer<'a>(
+            &'a mut self,
+            _: ModelRequest,
+        ) -> LocalFuture<'a, Result<ModelResponse, String>> {
+            Box::pin(async { Err("tools-rejected: this endpoint does not support tools".into()) })
+        }
+    }
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let stop = run(
+        &mut Reject,
+        &mut Store::default(),
+        &mut history,
+        &mut |_, _| panic!("rejected tool ran"),
+        &mut |_| {},
+    );
+    assert!(
+        matches!(stop, Stop::Error(error) if error.contains("native tool calling is required"))
+    );
+}
+
+#[test]
+fn duplicate_call_ids_in_one_response_cannot_dispatch_any_tools() {
+    let mut duplicate = call();
+    let call = duplicate["choices"][0]["message"]["tool_calls"][0].clone();
+    duplicate["choices"][0]["message"]["tool_calls"]
+        .as_array_mut()
+        .unwrap()
+        .push(call);
+    let mut host = Host::new(vec![duplicate]);
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let stop = run(
+        &mut host,
+        &mut Store::default(),
+        &mut history,
+        &mut |_, _| panic!("duplicate call executed"),
+        &mut |_| {},
+    );
+    assert!(matches!(stop, Stop::Error(error) if error.contains("duplicate tool-call id")));
+}
+
+#[test]
+fn async_tool_host_awaits_without_moving_the_workspace() {
+    struct AsyncTools {
+        owner: std::thread::ThreadId,
+        calls: u32,
+    }
+    impl ToolHost for AsyncTools {
+        fn call<'a>(
+            &'a mut self,
+            name: &'a str,
+            _: &'a Value,
+        ) -> LocalFuture<'a, Result<String, String>> {
+            Box::pin(async move {
+                async_io::Timer::after(std::time::Duration::from_millis(1)).await;
+                assert_eq!(self.owner, std::thread::current().id());
+                assert_eq!(name, "fixture");
+                self.calls += 1;
+                crate::vfs::read_to_string("/project/fixture.txt").map_err(|e| e.to_string())
+            })
+        }
+    }
+    let _scope = crate::vfs::Scope::enter(&BTreeMap::from([(
+        "fixture.txt".into(),
+        b"async tenant data".to_vec(),
+    )]));
+    let mut tools = AsyncTools {
+        owner: std::thread::current().id(),
+        calls: 0,
+    };
+    let mut host = Host::new(vec![call(), response("finished")]);
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let stop = run_with_hosts(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &[tool()],
+            dispatch: &mut |_, _| panic!("sync dispatch used"),
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "async tool".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut tools,
+        &mut Store::default(),
+    );
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(tools.calls, 1);
+    assert!(host.requests.borrow()[1].body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["content"] == "async tenant data"));
+}
+
+#[test]
+fn incompatible_checkpoint_refuses_takeover_with_recovery_signal() {
+    let mut host = Host::new(vec![response("finished")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!(),
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
+    store.saved.as_mut().unwrap().version = 77;
+    let stop = run(
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |_, _| panic!(),
+        &mut |_| {},
+    );
+    assert!(matches!(stop, Stop::Error(error) if error.starts_with("checkpoint-incompatible:")));
+    assert_eq!(host.requests.borrow().len(), 1);
+}

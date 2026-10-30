@@ -345,6 +345,14 @@ impl Llm {
         &self,
         request: crate::harness::ModelRequest,
     ) -> Result<Value, String> {
+        let started = crate::sys::Instant::now();
+        let request_id = request.attempt_id.clone();
+        let purpose = format!("{:?}", request.purpose).to_ascii_lowercase();
+        let messages = request.body["messages"].as_array().cloned().unwrap_or_default();
+        self.event(crate::session::TraceEvent::LlmRequest {
+            label: request_id.clone(), step: purpose.clone(), model: self.model.clone(),
+            messages: recorded(&messages), tools: tool_names(request.body["tools"].as_array().map(Vec::as_slice)),
+        });
         #[cfg(target_arch = "wasm32")]
         let response = { crate::wasm::llm_bridge::chat_async(&request.body.to_string()).await? };
         #[cfg(not(target_arch = "wasm32"))]
@@ -367,7 +375,7 @@ impl Llm {
             let base_url = self.base_url.clone();
             let api_key = self.api_key.clone();
             let timeout = call_timeout();
-            network
+            tokio_util::task::AbortOnDropHandle::new(network
                 .spawn(async move {
                     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
                     let client = CLIENT.get_or_init(reqwest::Client::new);
@@ -400,11 +408,17 @@ impl Llm {
                         return Err(format!("HTTP {status}: {}", truncate(&body, 1000)));
                     }
                     Ok::<_, String>(body)
-                })
+                }))
                 .await
                 .map_err(|e| format!("model network task: {e}"))??
         };
-        serde_json::from_str(&response).map_err(|e| format!("Invalid model response: {e}"))
+        let response: Value = serde_json::from_str(&response).map_err(|e| format!("Invalid model response: {e}"))?;
+        self.event(crate::session::TraceEvent::LlmResponse {
+            label: request_id, step: purpose, ms: started.elapsed().as_millis() as u64,
+            tokens: response["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+            message: response["choices"][0]["message"].clone(),
+        });
+        Ok(response)
     }
 
     // A client that reports into this trace. Cheap: the trace is a handle.
@@ -726,21 +740,34 @@ impl Llm {
         Err(last)
     }
 
-    // Simple one-shot text chat (no history, no tools). Used by small utility paths.
-    #[allow(dead_code)]
-    pub fn chat(
+    // Utility inference uses the same GDK pipeline with no advertised tools.
+    #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+    pub async fn chat(
         &self,
         system: &str,
         user: &str,
         label: &str,
         step: &str,
     ) -> Result<String, String> {
-        let messages = [
-            json!({"role": "system", "content": system}),
-            json!({"role": "user", "content": user}),
-        ];
-        let (msg, _tokens) = self.chat_messages(&messages, None, label, step)?;
-        Ok(msg["content"].as_str().unwrap_or("").to_string())
+        let mut history = vec![json!({"role":"user","content":user})];
+        let mut output = String::new();
+        let cancelled = || self.trace.as_ref().is_some_and(|trace| trace.is_cancelled());
+        let mut emit = |event| {
+            if let crate::harness::AgentEvent::Message(text) = event { output.push_str(&text); }
+        };
+        let stop = crate::harness::run_loop_with_instructions(crate::harness::LoopArgs {
+            llm: self, history: &mut history, tools: &[],
+            dispatch: &mut |_, _| Err("No tools are available in this inference".into()),
+            emit: &mut emit, cancelled: &cancelled, max_rounds: 1,
+            label: format!("{label} {step}"), conversation: true, inputs: None, input_close: None,
+        }, system).await;
+        match stop {
+            crate::harness::Stop::EndTurn => Ok(output),
+            crate::harness::Stop::Error(error) => Err(error),
+            crate::harness::Stop::Cancelled => Err("execution cancelled".into()),
+            crate::harness::Stop::Suspended => Err("execution suspended".into()),
+            crate::harness::Stop::MaxRounds => Err("utility inference reached its request limit".into()),
+        }
     }
 
     fn chat_once(

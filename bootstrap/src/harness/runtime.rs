@@ -204,8 +204,29 @@ pub fn run_with_host(
     host: &mut dyn ModelHost,
     recovery: &mut dyn Recovery,
 ) -> Stop {
-    let drive =
-        || futures::executor::block_on(run_with_host_async(args, instructions, host, recovery));
+    drive_native(run_with_host_async(args, instructions, host, recovery))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_with_hosts(
+    args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    tools: &mut dyn ToolHost,
+    recovery: &mut dyn Recovery,
+) -> Stop {
+    drive_native(run_with_hosts_async(
+        args,
+        instructions,
+        host,
+        tools,
+        recovery,
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn drive_native(future: impl std::future::Future<Output = Stop>) -> Stop {
+    let drive = || futures::executor::block_on(future);
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
             tokio::task::block_in_place(drive)
@@ -215,6 +236,17 @@ pub fn run_with_host(
         }
         Err(_) => drive(),
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn run_with_hosts(
+    args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    tools: &mut dyn ToolHost,
+    recovery: &mut dyn Recovery,
+) -> Stop {
+    run_with_hosts_async(args, instructions, host, tools, recovery).await
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -228,14 +260,38 @@ pub async fn run_with_host(
 }
 
 pub async fn run_with_host_async(
-    mut args: LoopArgs<'_>,
+    args: LoopArgs<'_>,
     instructions: &str,
     host: &mut dyn ModelHost,
     recovery: &mut dyn Recovery,
 ) -> Stop {
+    run_inner_async(args, instructions, host, None, recovery).await
+}
+
+pub async fn run_with_hosts_async(
+    args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    tools: &mut dyn ToolHost,
+    recovery: &mut dyn Recovery,
+) -> Stop {
+    run_inner_async(args, instructions, host, Some(tools), recovery).await
+}
+
+async fn run_inner_async(
+    mut args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    mut tools: Option<&mut dyn ToolHost>,
+    recovery: &mut dyn Recovery,
+) -> Stop {
     let mut state = match recovery.load().await {
         Ok(Some(state)) if state.version == 1 => state,
-        Ok(Some(_)) => return Stop::Error("Unsupported GDK recovery state version".into()),
+        Ok(Some(_)) => {
+            return Stop::Error(
+                "checkpoint-incompatible: Unsupported GDK recovery state version".into(),
+            )
+        }
         Ok(None) => match initial_state(args.history) {
             Ok(state) => state,
             Err(error) => return Stop::Error(error),
@@ -251,7 +307,15 @@ pub async fn run_with_host_async(
         }
         state.pending_tool = None;
     }
-    let result = drive(&mut args, instructions, host, recovery, &mut state).await;
+    let result = drive(
+        &mut args,
+        instructions,
+        host,
+        &mut tools,
+        recovery,
+        &mut state,
+    )
+    .await;
     if result == Stop::Cancelled {
         let mut response = Message::user();
         for request in unanswered(&state.conversation) {
@@ -302,6 +366,7 @@ async fn drive(
     args: &mut LoopArgs<'_>,
     instructions: &str,
     host: &mut dyn ModelHost,
+    tools_host: &mut Option<&mut dyn ToolHost>,
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
 ) -> Stop {
@@ -330,7 +395,18 @@ async fn drive(
         }
         if let Some(last) = state.conversation.last() {
             if last.error_kind().is_some() {
-                return Stop::Error(last.as_concat_text());
+                let errors = last
+                    .content
+                    .iter()
+                    .filter_map(MessageContent::as_error)
+                    .map(|error| error.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Stop::Error(if errors.is_empty() {
+                    format!("Model inference failed: {:?}", last.error_kind())
+                } else {
+                    errors
+                });
             }
         }
         if operation::ends_turn(state.conversation.messages()) {
@@ -410,6 +486,7 @@ async fn drive(
                 &mut event_rx,
                 args,
                 host,
+                tools_host,
                 recovery,
                 state,
                 &cancellation,
@@ -437,6 +514,7 @@ async fn drive(
                 &mut event_rx,
                 args,
                 host,
+                tools_host,
                 recovery,
                 state,
                 &cancellation,
@@ -486,6 +564,7 @@ async fn drive_future<F, T>(
     events: &mut mpsc::UnboundedReceiver<GdkEvent>,
     args: &mut LoopArgs<'_>,
     host: &mut dyn ModelHost,
+    tools_host: &mut Option<&mut dyn ToolHost>,
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
     cancellation: &CancellationToken,
@@ -503,7 +582,7 @@ where
         futures::select_biased! {
             result = future => return result.map_err(|e| Stop::Error(e.to_string())),
             action = request => if let Some(action) = action {
-                handle_action(action, args, host, recovery, state, cancellation).await?;
+                handle_action(action, args, host, tools_host, recovery, state, cancellation).await?;
             },
             event = event => if let Some(event) = event { emit_gdk(args, event); },
             _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
@@ -515,6 +594,7 @@ async fn handle_action(
     action: HostAction,
     args: &mut LoopArgs<'_>,
     host: &mut dyn ModelHost,
+    tools_host: &mut Option<&mut dyn ToolHost>,
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
     cancellation: &CancellationToken,
@@ -650,6 +730,17 @@ async fn handle_action(
                 Err("Skipped: the session was cancelled before this call started".into())
             } else if state.failed_tool_transition == Some(state.transition) {
                 Err("Skipped: an earlier call in this reply failed; inspect its result before resubmitting".into())
+            } else if let Some(tools) = tools_host.as_deref_mut() {
+                let call = tools.call(&name, &parameters).fuse();
+                futures::pin_mut!(call);
+                loop {
+                    let tick = sleep_tick().fuse();
+                    futures::pin_mut!(tick);
+                    futures::select_biased! {
+                        result = call => break result,
+                        _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
+                    }
+                }
             } else {
                 (args.dispatch)(&name, &parameters)
             };
@@ -901,6 +992,9 @@ fn export_history(conversation: &Conversation) -> Vec<Value> {
                 ..Default::default()
             },
         );
+        if formatted.is_empty() {
+            history.push(json!({"role":"assistant","content":"","_jazykGdk":message}));
+        }
         for (index, mut value) in formatted.into_iter().enumerate() {
             if index == 0 {
                 value["_jazykGdk"] = serde_json::to_value(message).unwrap_or(Value::Null);

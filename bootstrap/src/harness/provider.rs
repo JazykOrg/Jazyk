@@ -88,11 +88,15 @@ impl Provider for ChannelProvider {
         // answered calls across the conversation, so scope ids to the durable
         // inference identity before they enter that conversation.
         let scope = crate::model::hash_hex(&attempt_id);
+        let mut ids = std::collections::HashSet::new();
         for content in &mut message.content {
             if let goose_provider_types::conversation::message::MessageContent::ToolRequest(
                 request,
             ) = content
             {
+                if !ids.insert(request.id.clone()) {
+                    return Err(ProviderError::RequestFailed("Model returned a duplicate tool-call id in one response; no tools executed".into()));
+                }
                 request.id = format!("{}:{}", &scope[..16], request.id);
             }
         }

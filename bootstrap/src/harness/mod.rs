@@ -11,7 +11,7 @@ mod runtime;
 
 pub use runtime::{
     run_loop, run_loop_async, run_loop_with_instructions, run_with_host, run_with_host_async,
-    MemoryRecovery,
+    run_with_hosts, run_with_hosts_async, MemoryRecovery,
 };
 
 pub type LocalFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
@@ -92,6 +92,14 @@ pub trait ModelHost {
         &'a mut self,
         request: ModelRequest,
     ) -> LocalFuture<'a, Result<ModelResponse, String>>;
+}
+
+pub trait ToolHost {
+    fn call<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: &'a Value,
+    ) -> LocalFuture<'a, Result<String, String>>;
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -18,7 +18,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-mod continuation;
+pub(crate) mod continuation;
 use continuation::{ActiveBatch, Continuation, Receipt};
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]

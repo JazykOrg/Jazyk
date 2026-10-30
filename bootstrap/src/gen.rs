@@ -1,4 +1,5 @@
 use crate::vfs::VPathExt;
+pub(crate) mod progress;
 // Generation: the shared contract between every generation worker, the built-in
 // `jazyk gen` and external MCP agents alike. One task per entity produces the entity's
 // part of the deliverable and the tests for its requirements; the ledger binds them to

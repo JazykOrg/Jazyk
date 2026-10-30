@@ -29,7 +29,7 @@ pub(super) struct Continuation {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(super) struct ActiveBatch {
+pub(crate) struct ActiveBatch {
     pub run: BatchRun,
     pub class: String,
     pub tier: Option<u8>,

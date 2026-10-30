@@ -74,6 +74,15 @@ Restoration reconstructs handles under a fresh valid lease and validates the
 recorded workspace revision. The compiler resumes its active batch before choosing
 new work. A completed batch receipt prevents duplicate parent execution.
 
+Nested compilation retains the outer tool intention and each active inner session.
+Parent progress can be checkpointed between sessions without an active model
+conversation. A running chat retains its accepted input and event cursor in the
+same workspace checkpoint. Restoring it does not append the opening input again.
+
+The capsule and workspace are one atomic host write. A local tool without a saved
+receipt can restart against that saved pre-effect workspace. Remote task submission
+or cancellation without a destination receipt pauses for reconciliation.
+
 The host saves a model response before dispatching its tools. It saves each tool
 intention before dispatch. A local mutation, result and MCP checkpoint commit
 together. A repeated operation identity returns its recorded result. A changed

@@ -141,6 +141,7 @@ impl Workspace {
             let fs = crate::vfs::Scope::enter(&self.files);
             let _state = crate::scoped_state::Scope::enter();
             let _execution = ExecutionScope::enter(execution.clone());
+            let _recovery = crate::session_recovery::Scope::enter(execution.resume.as_ref());
             drop_graph_snapshots();
             let conversations = crate::conversation::Scope::enter()?;
             let reply = dispatch(method, path, body)?;

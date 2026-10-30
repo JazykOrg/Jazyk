@@ -45,6 +45,7 @@ pub mod reconcile;
 pub mod render;
 pub mod runner;
 pub mod session;
+pub mod session_recovery;
 pub mod store;
 pub mod sys;
 pub mod tools;

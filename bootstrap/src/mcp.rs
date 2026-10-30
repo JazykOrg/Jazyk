@@ -1759,6 +1759,23 @@ impl McpServer {
             .is_some_and(|p| crate::vfs::exists(p))
     }
 
+    pub async fn handle_async(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        if method != "tools/call" || params["name"] != "compile_document_sets" {
+            return self.handle(method, params);
+        }
+        if self.cancelled() { return Err((-32602, "the build was stopped".into())); }
+        if self.bridge.reader || !(self.write || self.modes.iter().any(|m| m != "graph")) {
+            return Err((-32602, "this serving is read-only".into()));
+        }
+        if self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
+            return Err((-32602, "nested compilation is unavailable in a scoped worker".into()));
+        }
+        let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
+        let response = crate::webapi::dispatch::request_at_async(&workspace.root, "POST", "/api/compile", &params["arguments"].to_string()).await;
+        let response: Value = serde_json::from_str(&response).map_err(|e| (-32603, e.to_string()))?;
+        Ok(result_value(response))
+    }
+
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(self.bridge.cancel_file.as_deref());
         if self.cancelled() && method == "tools/call" && !matches!(params["name"].as_str(), Some("abandon_goals" | "cancel_run" | "inspect_run" | "wait_run" | "read_run_log" | "search_run_log" | "read_run_changes" | "task_context")) {
@@ -1887,6 +1904,10 @@ impl McpServer {
             if !writable {
                 return Err((-32602, "this serving is read-only".into()));
             }
+            #[cfg(target_arch = "wasm32")]
+            return Err((-32602, "compilation requires the asynchronous MCP entry point".into()));
+            #[cfg(not(target_arch = "wasm32"))]
+            {
             let response = crate::webapi::dispatch::request_at(
                 &w.root,
                 "POST",
@@ -1896,6 +1917,7 @@ impl McpServer {
             let response: Value =
                 serde_json::from_str(&response).map_err(|e| (-32603, e.to_string()))?;
             return Ok(result_value(response));
+            }
         }
         if matches!(
             name,

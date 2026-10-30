@@ -977,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    fn owned_build_steering_uses_worker_boundaries_and_preserves_conversation() {
+    fn owned_build_steering_recovers_cursor_and_preserves_conversation() {
         let mut w = workspace("Steering");
         let incoming = Arc::new(AtomicBool::new(false));
         let incoming_model = incoming.clone();
@@ -1015,11 +1015,16 @@ mod tests {
         };
         let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &execution);
         let id = chat["id"].as_str().unwrap();
-        let result = w.request("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1}).to_string(), &execution).unwrap();
+        // A reopened workspace can lack updates already committed to the event DB.
+        // Its empty conversation book is behind that DB's durable cursor of 800.
+        let result = w.request("POST", "/api/jobs", &json!({"kind":"compile","setId":"ds_main","conversationId":id,"jobId":41,"sessions":1,"afterN":800}).to_string(), &execution).unwrap();
         assert_eq!(result.status, 200, "{}", String::from_utf8_lossy(&result.body));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         let timeline = value(&mut w, "GET", &format!("/api/chat/sessions/{id}"), Value::Null, &Execution::default());
         let rows = timeline["updates"].as_array().unwrap();
+        assert_eq!(rows.len(), 2, "one workflow marker and one delivered human message");
+        assert_eq!(rows[0]["n"], 801);
+        assert_eq!(rows[1]["n"], 802);
         assert!(rows.iter().any(|v| v["update"]["sessionUpdate"] == "workflow" && v["update"]["jobId"] == 41));
         assert_eq!(rows.iter().filter(|v| v["update"]["sessionUpdate"] == "user_message" && v["update"]["messageId"] == "build-steer-1").count(), 1);
         assert!(timeline["inputs"].as_array().unwrap().iter().any(|v| v["messageId"] == "build-steer-1" && v["state"] == "delivered"));
@@ -1038,6 +1043,8 @@ mod tests {
         let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
         let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"]}).to_string(), &Execution::default()).unwrap();
         assert_eq!(reply.status, 400);
+        let reply = w.request("POST", "/api/jobs", &json!({"kind":"compile","conversationId":chat["id"],"jobId":42,"afterN":1u64 << 53}).to_string(), &Execution::default()).unwrap();
+        assert_eq!(reply.status, 400, "the cursor must stay within safe JSON event integers");
         assert!(!w.snapshot().keys().any(|k| k.contains("graph/")));
     }
 

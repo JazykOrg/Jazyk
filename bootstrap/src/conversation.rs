@@ -66,11 +66,18 @@ impl BuildScope {
         if let Some(id) = &owner {
             let job = body["jobId"].as_u64().filter(|id| *id > 0)
                 .ok_or_else(|| (400, "an owned job requires a positive numeric jobId".into()))?;
+            let after = body["afterN"].as_u64();
+            if after.is_some_and(|n| n > (1u64 << 53) - 10_000) {
+                return Err((400, "conversation event watermark is too large".into()));
+            }
             let existing = BOOK.with(|b| {
-                let book = b.borrow();
-                let chat = book.chats.get(id).ok_or_else(|| (404, "unknown conversation".into()))?;
+                let mut book = b.borrow_mut();
+                let chat = book.chats.get_mut(id).ok_or_else(|| (404, "unknown conversation".into()))?;
                 if chat.state == "running" {
                     return Err((409, "the conversation already has a running turn".into()));
+                }
+                if let Some(after) = after {
+                    chat.next_n = chat.next_n.max(after + 1);
                 }
                 Ok(chat.updates.iter().any(|(_, u)| u["sessionUpdate"] == "workflow" && u["jobId"] == job))
             })?;

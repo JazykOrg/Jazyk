@@ -131,6 +131,11 @@ same input callback. It records delivery after inserting the text into worker
 history. It keeps the batch's tools, goals, and commit gates. Steering does not
 authorize unrelated writes or a second writer.
 
+An owned job accepts the same `afterN` event watermark as a conversational prompt.
+Before appending its workflow update, it advances the conversation's next event
+number past that watermark. The host supplies the durable event cursor when an
+older workspace snapshot may trail events from a failed prior worker.
+
 Admission remains open between worker batches. Ending a batch does not call
 `Execution.input_close`. The host closes admission when the whole job ends and
 preserves any undelivered input. A job without a conversation keeps its existing

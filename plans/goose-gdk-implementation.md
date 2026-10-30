@@ -518,12 +518,8 @@ Provide the owner with:
   patch still carried locally.
 - The exact paired source-pin updates and merge order.
 
-Leave release pins and main branches untouched for this review. After separate
-merge approval, merge the engine locally into `master` and push only `master`.
-Then pin both cloud compiler inputs to the published engine revision, validate a
-clean pinned build, and merge/push the cloud change with its own authorization.
-Do not publish jazyk.dev or restart production as a side effect of this work.
-
-The plan is ready for approval when the owner accepts the component selection,
-temporary compaction patch policy, async browser boundary, recovery contract and
-parallel work packages above.
+The owner has approved this handoff and the release. After verification, merge the
+engine locally into `master` and push only `master`. Pin both cloud compiler inputs
+to that published engine revision and validate a clean pinned build. Then merge
+and push cloud `master`, deploy the API and editor, and run the post-deployment
+checks. Preserve concurrent source changes and the existing model route policies.

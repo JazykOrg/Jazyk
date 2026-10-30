@@ -29,13 +29,9 @@ field. See [cases](./cases.md#case-format).
 
 ## Runs
 
-- `jazyk benchmark` grades the `embedded` profile: every case runs under both
-  codecs, `native` first, then `text` (the embedded agent's two ways of speaking to
-  an endpoint, see [the embedded agent](../frontends/acp.md#the-embedded-agent)),
-  on the same generic loop the agent runs. A model can be capable under one codec
-  and not the other. An external agent has no codec axis; it is graded through the
-  [agent-run serving](#agent-run-benchmarks) (`jazyk mcp benchmark`), one column per
-  agent.
+- `jazyk benchmark` grades the embedded GDK runtime through native tool calls.
+  It does not execute a text codec or downgrade an unsupported model. An external
+  agent is graded through the [agent-run serving](#agent-run-benchmarks).
 - A case run is one real [session](../compiler/sessions.md#anatomy) in a sandbox
   store, holding exactly one goal: the case's kind on the case's target. Same tool
   registry, same [validation gates](../compiler/graph.md#validation-gates), same
@@ -216,7 +212,7 @@ work with the same write tools a compile session holds:
   these docs.
 
 Grading is identical to an endpoint run with two substitutions, both recorded on the
-entry: the codec is `agent` (a third column beside `native` and `text`), and rounds
+entry: the runtime is `agent` (the external-agent column), and rounds
 count the agent's tool calls per case (tokens are unknowable from outside the agent
 and stay null). Efficiency against par therefore compares call discipline, not
 context cost, and is comparable only within the `agent` codec: an in-process session

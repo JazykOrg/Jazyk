@@ -1,7 +1,8 @@
 # Goose GDK implementation approval plan
 
-Status: proposed for owner approval, 2026-10-29. This document defines the
-implementation scope. No implementation is authorized yet. The
+Status: approved for implementation, testing, merge and deployment, 2026-10-29.
+The owner also authorized live testing with Ollama or ChatGPT. This document defines
+the implementation scope. The
 [research and recovery plan](goose-gdk.md) records the supporting investigation.
 
 ## Outcome

@@ -13,6 +13,11 @@ batch from the [board](./reconciler.md#goal-derivation); the session executes as
 the prompt, the tools, the gates, and the commit; the agent owns the model and the loop
 that drives it.
 
+The embedded agent uses the shared [GDK runtime](./agent-runtime.md). Native tool
+calling is required. Its state and the open MCP batch are checkpointed together
+when the host provides durable execution. Deployment suspension resumes that same
+session; a normal new batch still starts with fresh context.
+
 One agent, many goal kinds. Variety lives in the goal kinds, which are data: a contract
 paragraph, a gate, hints, a skill. The session prompt is one fixed contract, and
 everything kind-specific arrives inside it as data. The model never creates, routes, or
@@ -294,18 +299,9 @@ A session runs as one [ACP worker session](../frontends/acp.md#worker-sessions):
 - Read tools answer immediately. Write tools stage mutations. How the agent drives its
   model between calls is the agent's business.
 
-The message loop, the tool codecs (`native` and `text`), the first-round probe, and the
-endpoint fallbacks belong to the
-[embedded agent](../frontends/acp.md#the-embedded-agent): they are how a generic loop
-speaks to a raw endpoint, not part of session semantics. An external agent brings its
-own loop. A build can also be driven by a scripted executor: a runner that resolves
-each goal through the same serving with fixed tool calls and no model, which is how
-the end-to-end tests compile `bootstrap/example/f1` to `converged`. Chat, answer, and
-follow sessions are the other session kinds
-([sessions](../frontends/acp.md#sessions)); they run on the `[acp]` agent, not on the
-executor overrides. The [benchmark](../benchmark/benchmark.md) grades an agent profile
-by running sessions through it; cases per goal kind are
-[deferred](../benchmark/benchmark.md#deferred-cases).
+The embedded message and tool execution pipeline comes from the public GDK.
+Jazyk owns its application operations, MCP session state, budgets and gates. See
+[the embedded runtime](./agent-runtime.md) for compaction and recovery.
 
 ## Generation sessions
 
@@ -643,12 +639,12 @@ The embedded loop accepts ordered human inputs at safe boundaries. Steering keep
 Native provider streams emit answer and thought deltas separately. Complete messages remain the source of history and tool arguments. The final assembled response is not emitted again. Partial output is retained when a model attempt fails. An attempt with visible output is not retried automatically. Round and tool timing events carry monotonic durations.
 
 
-Steering keeps separate input identities and delivery events. Adjacent human text is joined into one user message in model history when a template requires alternating roles. The text codec also joins steering after its user-role tool result. Native tool results retain their tool role and call identity. The embedded ACP agent applies the same shaping to initial MCP instruction blocks and the first human prompt.
+Steering keeps separate input identities and delivery events. Adjacent human text is joined into one user message in model history when a template requires alternating roles. Native tool results retain their tool role and call identity. The embedded ACP agent applies the same shaping to initial MCP instruction blocks and the first human prompt.
 
 
 ## Conversational harness context
 
-A conversational turn supplies its current serving contract through system-message assembly. The contract is replaced on the next turn and on codec fallback. It is not appended to the persisted human-message history. Human messages, tool results, provider reasoning fields, and call-result pairs retain their own identities and contents.
+A conversational turn supplies its current serving contract through system-message assembly. The contract is replaced on the next turn. It is not appended to the persisted human-message history. Human messages, tool results, provider reasoning fields, and call-result pairs retain their own identities and contents.
 
 Old conversations can contain generated contracts joined to human messages. The engine removes only a recognized exact generated prefix whose remaining text matches recorded human-message text, including consecutive merged human messages. An unrecognized prefix, missing transcript evidence, or a user quotation stays intact. Migration is idempotent and does not remove tool or assistant history.
 

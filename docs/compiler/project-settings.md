@@ -380,3 +380,9 @@ They bound the endpoint and the process; session and build budgets are
 
 The project-level `[[tasks]]` list defines finite command execution. See
 [task execution](task-runtime.md) for fields, file globs, and host limits.
+
+## Native tool capability
+
+The embedded runtime requires native tool calling. `JAZYK_CODEC=text` is rejected
+with an actionable error. No run silently switches to a text tool protocol. Older
+benchmark and transcript codec labels remain historical data.

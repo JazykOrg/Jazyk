@@ -137,131 +137,30 @@ rules it obeys:
 
 ## The embedded agent
 
-`jazyk agent` runs a minimal, generic ACP agent over stdio. It exists so jazyk works
-with no external agent installed, and it is deliberately ignorant of jazyk:
+`jazyk agent` exposes the shared [GDK runtime](../compiler/agent-runtime.md) over
+ACP stdio. It uses the configured model and the MCP servers supplied by the client.
+It does not import the Goose application facade.
 
-- It answers `initialize` with protocol version 1 and stdio MCP support.
-- On `session/new` it spawns the listed MCP servers and collects their tools and
-  initialization instructions. Each server's instructions enter the session history
-  once, before the first user prompt, labelled with the server name. These carry the
-  server's tool workflow, including task execution and result inspection. Every
-  call to a server waits at most the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`) for its
-  answer; a server that stays silent fails that call with a message naming the wait,
-  so a wedged server never pins the turn.
-- On `session/prompt` it runs a plain agentic loop against the configured
-  OpenAI-compatible endpoint ([LLM settings](../compiler/project-settings.md#llm)):
-  send the messages and the MCP tools, dispatch the calls the model makes, append the
-  results, repeat until the model stops calling tools. JSON tool results remain
-  structured JSON in both codecs, without another layer of string escaping. Plain
-  text results remain text. Within a prompt turn, a successful tool result's
-  top-level `instructions` string of at least 1,024 characters enters model history
-  in full the first time that tool returns it. An identical later string refers
-  to that tool's most recent full instruction block. Changed instructions enter
-  in full. Other fields and the outward tool transcript remain unchanged. This
-  avoids repeating large lifecycle contracts for every requirement package.
-  Five consecutive failed tool calls stop the turn. A
-  successful call resets the count. After any failed call, remaining calls in that
-  reply receive a skipped result without executing. The model sees the error before
-  more work runs, and the next prompt has complete tool history. Skipped calls do
-  not consume further failure allowance.
-  Before dispatch, the loop checks required schema fields for every call. If any
-  are absent, no call from that reply executes. Every call receives a paired result
-  naming the missing fields. This rejected reply counts as one failure, even when
-  several calls omit the same field. The model can repair its arguments after
-  seeing the result. Five consecutive rejected replies still stop the turn.
-  A reply can exhaust its completion allowance yet report `tool_calls` with empty
-  arguments. When reported completion usage reaches the requested cap and the
-  reply lacks required schema fields, its paired tool results also ask for smaller
-  complete calls with brief
-  reasoning. Long files use a first write followed by `append` writes. At most two
-  such replies per turn receive a one-request completion boost. A complete call
-  at the cap and a valid zero-argument tool still execute normally.
-  This bound also applies to MCP tools outside a graph batch. It streams thought chunks,
-  message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
-  usage. A worker prompt ends immediately after `done` confirms `committed: true`,
-  unless `beginNext: true` requested another batch. Later calls in the same reply
-  receive skipped results. A rejected `done` remains repairable. Chat prompts keep
-  their conversational reply. A prose reply in a prompt that already made tool calls gets one nudge before
-  the prompt ends: weak models forget they are mid-goal more often than they finish
-  silently, and a purely conversational answer still ends the prompt immediately. A
-  prose reply that announces an action ("I'll rewrite src/order.rs", "Now I'll record
-  the generation", a line ending in a colon) is not an answer either: it gets a nudge
-  saying announcing is not acting, up to three times per prompt, since a local model
-  ended four of ten generation sessions on such a sentence with the call never made.
-  A reply that is empty of both message and calls while carrying reasoning is a
-  stall, not an answer: reasoning models narrate the action they intend and stop, as
-  if the thinking were visible. The loop answers with a corrective nudge naming that
-  ("reasoning is not shown and does not count as acting"), at most twice per prompt,
-  before the empty reply is allowed to end it. The stalled reply goes into the history
-  with its reasoning as its message text, because an OpenAI-compatible endpoint drops
-  reasoning fields from input messages: without that, the model re-thinks from
-  nothing each round and stalls again; with it, it reads the plan it just made and
-  acts on it. A stall whose finish reason is `length` is a different case: the
-  completion cap cut the reasoning before any call, so re-thinking cannot help; the
-  nudge says so and asks for the call alone, with no further deliberation, and the
-  same two-strike fuse applies. An endpoint error that says the reply
-  itself could not be parsed (an unclosed object, an unexpected end of JSON: the
-  model's output cap cut a long tool call) is not a transport failure: the loop
-  answers it with a nudge to reply with a smaller call, writing long files in parts
-  (`append`), at most twice per prompt, since the same request retried returns the
-  same cut reply. A turn the loop cannot finish (the
-  endpoint erroring past its retries) answers as a `refusal` stop with the error
-  emitted as a message chunk, never as a protocol error: the client side treats an
-  error response to `session/prompt` as fatal to the whole connection, and one
-  rate-limited call must not take down the host and every later session with it.
-- On `session/new` it also offers the endpoint's models as a session config option,
-  so the person in the IDE picks one (below).
-- `session/cancel` stops further model requests and tool dispatch. A tool already
-  dispatched keeps its actual result. The remaining calls in that reply receive
-  skipped results without executing, so the saved conversation can resume with
-  every native call answered. The prompt returns `cancelled`, including when the
-  final dispatched call observes cancellation.
-- `session/close` (advertised in its capabilities) tears the session down: each MCP
-  server's input closes and the agent waits for it to exit before answering. An
-  ephemeral jazyk serving runs its implicit finish on that end of input, so closing
-  a worker session is what lands a batch whose agent forgot the finishing call.
+- `initialize` advertises the supported ACP and MCP capabilities.
+- `session/new` connects to the supplied MCP servers through the maintained Rust
+  SDK. Their instructions enter the session before the first human prompt.
+- `session/prompt` executes the GDK operation pipeline with native tool calling.
+  Tool results, reasoning, usage and call identities remain structured. Worker
+  turns stop after a successful `done` commit. Conversational turns retain their
+  reply. Failed tool calls remain visible and cannot bypass compiler gates.
+- Session configuration retains the existing model selector and stable option ID.
+- `session/cancel` stops new inference and tool dispatch. Already dispatched
+  effects retain their actual result or an explicit uncertain outcome.
+- `session/close` releases the session and closes its MCP clients. The serving's
+  existing finish and discard rules remain authoritative.
 
-The codecs live here: `native` (OpenAI-style `tools` and `tool_calls`, with the
-calls for one step batched into a single reply) and `text` (tools described in the
-system prompt, one JSON action object per reply, because small models cannot
-reliably emit several). A text reply containing several action objects is rejected
-without executing any of them. The repair asks for one action and its real result
-before the next action. This prevents a model from submitting a whole simulated
-interaction with invented revisions or run IDs. Native batches remain available
-for independent calls. The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md)
-and [text protocol](../compiler/goals/prompts/text-tool-protocol.md) are embedded
-payload files. A text reply that reads as a JSON action but does not parse
-is answered with a repair message naming the error, three strikes before the prompt
-fails: a dropped brace is a resend, not an answer. A native tool call whose
-`arguments` string does not parse is the same broken action: it is repaired the same
-way, never dispatched with empty arguments, and the reply enters the history with the
-call's arguments emptied, so the endpoint never sees the cut JSON again. Every
-native call in a rejected reply receives a paired skipped result before the repair
-message. None of that reply's calls execute. Before that,
-a `write_text_file` cut at the model's output cap stayed in the history verbatim and
-every later request of the session, and of every session after it in the run, was
-refused with a 400 about an unclosed object. The check reads the whole reply,
-not its first character: a sentence of prose followed by a truncated action object
-once read as an answer and ended the turn, and the batch parked. The agent probes on the first
-round: an endpoint that rejects the `tools` parameter, or a model that answers prose
-without calls, downgrades the run to `text`, sticky until it ends. A downgrade mid-turn
-(Ollama answering a tool call with a 500 about its XML) rewrites the turn's history into
-the text form too: each earlier call becomes its JSON action in the assistant's content
-and each result a `RESULT:` message, since native `tool_calls` left in the history went
-back through the same tool template and failed the same way, aborting the turn. The endpoint
-fallbacks ride along too: streaming when the endpoint demands it, dropped
-`temperature`, stripped reasoning fields ([LLM settings](../compiler/project-settings.md#llm)).
-A reasoning model's reasoning is appended back into the history unchanged, so later
-rounds see the reasoning behind earlier calls. A loop failure (a rate limit, a dead
-endpoint) ends the prompt as a refusal with `agent error: ...` in a message chunk rather
-than a protocol error, which would close the host and every session on it; the worker
-runner reads that chunk back as the session's stop reason, so the caller of a ledger
-batch names it (a generate session that never recorded once failed its entities with
-the record gate's wording while the cause was a 429). A panic inside the turn answers the same way, `agent error: the agent
-panicked: ...`, so the client never waits on a prompt nobody will answer. No jazyk prompting, no jazyk tool
-knowledge, no shortcut into the store. The same session against OpenCode or the
-embedded agent carries the same prompt and the same injected tools, which is what
-makes the embedded agent a faithful test double for the whole path.
+Provider errors end the prompt with a refusal and an actionable message. They do
+not close the ACP connection or unrelated sessions. Panics are contained at the
+host boundary. There is no text tool codec or automatic native-tool downgrade.
+
+The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md) remains a
+Jazyk payload. MCP supplies the domain prompt and tools. IDE-mediated edits still
+pass through the existing proxy and workspace contract.
 
 ### Choosing a model
 

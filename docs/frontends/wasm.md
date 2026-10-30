@@ -197,80 +197,31 @@ like any other file.
 
 ## Sessions
 
-Natively a session is an [ACP worker session](./acp.md#worker-sessions): jazyk
-spawns an agent, injects a `jazyk mcp` serving scoped to the batch, and the agent
-talks to that serving over a transport. In a tab there is nothing to spawn and
-nothing to connect over, so the same three pieces sit in one module and call each
-other directly.
+The browser uses the shared [GDK runtime](../compiler/agent-runtime.md). Its
+in-process runner opens the same MCP serving and goal batch as native execution.
+The gates, staged changeset and atomic commit are shared. What landed is read from
+the journal, never inferred from the model's final text.
 
-`crate::runner::SessionRunner` is the contract the reconciler and the ledger workers
-speak: `agent_name`, `set_build_token`, `run_item`, `ask`, `ask_traced`. Two
-implementations satisfy it.
-
-- `crate::acp::runner::AcpRunner`, natively.
-- `crate::wasm::runner::InPageRunner`, in a tab. It builds an `McpServer` in compile
-  mode, lists its tools, claims the batch with `begin_goals` (whose reply carries the
-  assembled session prompt), and drives `crate::agent_loop::run_loop` with a dispatch
-  closure that calls `tools/call` on that serving.
-
-The serving is the same one a native session gets, in the same mode, so the
-[gates](../compiler/graph.md#validation-gates), the staged changeset, and the atomic commit are
-the ones every other front door uses. What landed is read from the
-[journal](../compiler/graph.md#journal) through `crate::runner::journal_diff`, never
-from the model's word. A batch the model leaves open never commits: the changeset is
-abandoned and the goals return to open.
-
-The runner emits the session's [trace events](../compiler/sessions.md#trace-events)
-the way the ACP runner's translator does: `sessionStart`, one `toolCall` per call
-with its `toolResult` or `toolError`, a `section` event when an accepted call names
-another section, the model's text and reasoning as `modelText`, and `sessionDone`
-when the batch lands. A batch that does not land fails with the stop in words (the
-model ended its turn with the batch still open, the round budget, the model's error).
-
-`crate::agent_loop` is the generic loop the embedded agent already used: send the
-history and the tools, dispatch the calls the model makes, repeat until it stops
-calling tools. It carries the codec machinery (native tool calls, the text fallback,
-the first-round probe) and knows nothing about jazyk, which is why it serves both.
+Session execution is asynchronous. The worker serializes project operations while
+model replies, Stop and accepted steering remain deliverable independently. A
+model-driven request returns through an async WASM entry point. Deterministic reads
+retain their existing API values and routes.
 
 ## The model
 
-A session is synchronous all the way down: it calls the model and waits for the reply
-before it decides what to stage. Every model API in a browser is a promise, and a
-promise cannot be awaited from synchronous Rust. The two are joined the only way that
-composes without turning the reconciler inside out:
+The page owns inference, authentication and model loading. The engine supplies a
+native-tool request and awaits the host's response. JavaScript promises can resume
+on the worker. The model bridge does not block that worker with `Atomics.wait`.
 
-- The backend runs in a Web Worker.
-- The JavaScript host owns the model and stays on the main thread.
-- A call writes the request out and blocks the worker on `Atomics.wait`.
-- The page runs the model, writes the reply into a `SharedArrayBuffer`, and wakes the
-  worker with `Atomics.notify`.
+The host preserves native tool calls, reasoning and usage in the completed
+response. UI deltas may stream separately. The engine receives complete native
+messages for history and checkpointing. Models without verified native tool calling
+are unavailable for tool-driven work. There is no text tool fallback.
 
-`crate::llm` is unchanged above the transport: it assembles the same
-OpenAI-shaped request, and `Transported` is the one seam. Natively the transport is
-HTTP through `ureq`; in a tab it is `crate::wasm::llm_bridge`, whose `chatSync` does
-the blocking handshake above. Streaming has no transport to stream over, so the page
-answers once.
-
-`SharedArrayBuffer` requires a [cross-origin isolated](#serving) page. Without it the
-backend still serves every read; only a build or a chat turn is refused, with the
-reason. The same
-holds without WebGPU: there is no model to call, and the page says so instead of
-hanging.
-
-The backend speaks the text codec in a tab, set once at boot (the same effect as
-`JAZYK_CODEC=text`). WebLLM's native tool calling is whitelisted to a few 8B builds
-and refuses a custom system prompt beside it, so the first-round probe would fail
-every session before falling back. The text codec renders the compile serving's tool
-schemas into the prompt, about 19k tokens before the model says a word, so the
-engine's context window is set to 32k. The window is paid for in KV cache: for a 3B
-model about 3.5GB beside 2GB of weights, which a laptop with unified memory carries.
-
-The model the page loads is a small instruct model, so a first visit downloads
-gigabytes rather than tens of gigabytes, and the weights cache in the browser. A
-model this size is well under what the [benchmark](../benchmark/benchmark.md) asks
-for: the harness holds (gates bounce bad calls, junk never lands), but the judgment
-the sessions produce is poor, and a turn takes a minute or more. The demo shows the
-machinery, not the quality.
+Browser storage and effects use the same logical checkpoint contract as other
+hosts. Reload restores complete saved state or reports interruption. An uncertain
+external effect is never silently replayed. Closing a tab does not create a
+background compilation service.
 
 ## The trace
 
@@ -337,7 +288,7 @@ What the serving does in a tab:
   it is stored like any edit ([browser storage](#browser-storage)).
 - The binding, generation, and verification lifecycles are not served: each needs a
   shell. The compilation lifecycle stays. Fewer tools is also a shorter prompt, since
-  the text codec writes every tool's schema into it.
+  native tool schemas still contribute to the model context.
 - No [slash commands](./acp.md#slash-commands): the catalog lives in `acp`, which is
   gated off the wasm build. The list answers empty, and a prompt that starts with
   `/` reaches the model as text.

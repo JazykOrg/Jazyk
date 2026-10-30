@@ -150,3 +150,15 @@ or `reasoning` deltas while returning the complete model response for history an
 tool validation. A body-only transport remains supported. Streamed tool arguments
 never execute before a complete validated response. The host bounds and cancels
 model calls and coalesces small deltas before persistence.
+
+## Durable execution
+
+Hosted execution supplies a versioned resume capsule, a suspension signal distinct
+from Stop, an admitted asynchronous model transport and an asynchronous checkpoint
+callback. The callback receives owned execution state and the scoped workspace
+snapshot. It validates and advances the execution sequence before returning.
+
+The [shared runtime](./agent-runtime.md#checkpoints) defines model and tool receipts,
+MCP restoration and parent continuation. The private host owns storage, tenant
+policy, job reclaim and idempotent accounting reconciliation. Internal transport
+metadata identifies model requests and is removed before provider dispatch.

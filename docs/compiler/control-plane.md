@@ -161,3 +161,10 @@ who acts on a release from the GUI:
 - `internal`: the GUI runs its own job.
 - `any`: prefer a live registered agent, fall back to internal. Leases make the race
   harmless either way.
+
+## Deployment suspension
+
+The [embedded runtime](./agent-runtime.md#deployment-and-stop) checkpoints accepted
+work before deployment handoff. Suspension is nonterminal and distinct from Stop.
+The host fences old owners at dispatch and save boundaries. Automatic reclaim
+retains job identity, budgets, input receipts and the event cursor.

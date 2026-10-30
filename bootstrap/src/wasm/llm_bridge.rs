@@ -1,21 +1,12 @@
-// The bridge to the model in the page. The reconciler is synchronous all the way
-// down: a session calls the model and waits for the reply before it decides what to
-// stage. A browser's model APIs are all promises, and a promise cannot be awaited
-// from synchronous Rust, so the two are joined the only way that composes: the
-// backend runs in a worker, and a call blocks that worker on `Atomics.wait` until
-// the page writes the reply into the shared buffer and wakes it.
-//
-// See docs/frontends/wasm.md#the-model for the protocol and what happens without
-// cross-origin isolation.
+// Promise-based model transport. The worker event loop remains available for
+// model replies, cancellation and accepted input while the engine awaits.
 
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(module = "/src/wasm/bridge.js")]
 extern "C" {
-    // Hands one OpenAI-shaped request body to the page and blocks until the reply
-    // comes back. Returns the response body, or a message naming why there is none.
-    #[wasm_bindgen(js_name = chatSync, catch)]
-    fn chat_sync(body: &str) -> Result<String, JsValue>;
+    #[wasm_bindgen(js_name = chatAsync, catch)]
+    async fn chat_async_js(body: &str) -> Result<JsValue, JsValue>;
 
     // Whether the page cancelled the running chat turn, and the reset at its start.
     // See docs/frontends/wasm.md#chat.
@@ -37,18 +28,18 @@ pub fn clear_cancel() {
     clear_cancel_js()
 }
 
-pub fn chat(body: &str) -> Result<String, String> {
-    chat_sync(body).map_err(|e| {
-        // What comes back is a JS Error, whose text is on `message`; `as_string`
-        // answers None for it and would throw away the only thing worth reading.
-        if let Some(s) = e.as_string() {
-            return s;
-        }
-        js_sys::Reflect::get(&e, &JsValue::from_str("message"))
-            .ok()
-            .and_then(|m| m.as_string())
-            .unwrap_or_else(|| "the page did not answer the model call".to_string())
-    })
+pub async fn chat_async(body: &str) -> Result<String, String> {
+    let reply = chat_async_js(body).await.map_err(error_text)?;
+    reply.as_string().ok_or_else(|| "The page returned an invalid model response.".into())
+}
+
+fn error_text(error: JsValue) -> String {
+    error.as_string().or_else(|| js_sys::Reflect::get(&error, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()))
+        .unwrap_or_else(|| "The page did not answer the model call.".into())
+}
+
+pub fn chat(_body: &str) -> Result<String, String> {
+    Err("Model-driven browser execution requires the async entry point.".into())
 }
 
 pub fn take_inputs(session: &str) -> Vec<serde_json::Value> {

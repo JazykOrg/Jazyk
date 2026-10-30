@@ -1072,8 +1072,8 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     assert!(errors.is_empty(), "{:?}", errors);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert!(store.status.parked.is_empty() && store.status.failed.is_empty());
-    // What rides blocked is the ledger: one bind goal per requirement, gated behind
-    // the manual generate release, never compile work.
+    // What rides blocked is the ledger: binding and adaptive development are both
+    // gated behind the manual generate release, never compile work.
     let control = crate::control::Control::load(&project, &out);
     let board = crate::board::Board::derive(&store, &project, &control);
     let blocked: Vec<&Goal> = board
@@ -1082,8 +1082,11 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
         .filter(|g| matches!(g.state, GoalState::Blocked { .. }))
         .collect();
     assert_eq!(blocked.len(), report.blocked, "{:?}", blocked);
-    assert_eq!(blocked.len(), store.graph.requirements.len());
-    assert!(blocked.iter().all(|g| g.kind == "bind"), "{:?}", blocked);
+    let expected_blocked: BTreeSet<String> = store.graph.requirements.keys()
+        .map(|id| format!("g:bind:{}", id))
+        .chain(store.graph.entities.keys().map(|id| format!("g:generate:{}", id)))
+        .collect();
+    assert_eq!(blocked.iter().map(|g| g.id.clone()).collect::<BTreeSet<_>>(), expected_blocked);
     // Compile work was released by the typed command.
     assert_eq!(control.released.compile.len(), 2, "{:?}", control.released.compile);
 

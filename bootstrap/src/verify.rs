@@ -2121,7 +2121,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reclassification_reopens_binding_without_treating_tests_as_implementation() {
+    fn test_reclassification_reopens_development_without_treating_tests_as_implementation() {
         let _vfs = crate::vfs::Scope::enter(&Default::default());
         let (store, gs) = scoped_fixture();
         scoped_mapping(&["tests/cart.rs"]);
@@ -2129,9 +2129,15 @@ mod tests {
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(status_of(&store, "req:shop-1", row, &gs).1, "source-selection-changed");
         assert_eq!(crate::bind::pending(&store, &gs).len(), 1);
-        assert!(crate::gen::pending(&store, &gs).is_empty());
+        // Development can repair the missing current test binding. Its implementing
+        // file remains Source, so this is incomplete coverage rather than lost code.
+        assert_eq!(crate::gen::pending(&store, &gs), vec![json!({
+            "entity":"ent:cart", "reason":"incomplete-bindings", "changed":["req:shop-1"]
+        })]);
+        assert_eq!(row.files, ["src/cart.rs"]);
         scoped_mapping(&[]);
         assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
+        assert!(crate::gen::pending(&store, &gs).is_empty());
         // Internal LLM criteria are metadata, not an implementing path that must be
         // added to Source. Criterion artifacts outside it still need rebinding.
         let mut internal = row.clone();

@@ -330,7 +330,11 @@ serving; what it claims is a batch:
 - Write tools and goal tools outside an open batch are rejected toward
   `begin_goals`. Identity, provenance, and scope rules hold because they are the
   same code path.
-- `done({summary, beginNext?})` runs the batch gates (every goal resolved or failed,
+- `done({summary, goals?, beginNext?})` accepts final goal claims with the same
+  `{goal, justification, evidence?}` shape and gates as `mark_goal_done`. It checks
+  every inline claim before accepting the combined finish. A rejected claim or
+  batch gate leaves none of this call's claims or staged effects behind. Earlier
+  work remains available for repair. It runs the batch gates (every goal resolved or failed,
   coverage contract, stale anchors), commits atomically, writes the journal entry
   with `resolved_goals` and `opened_goals`, and re-derives the board. A gate failure
   leaves the changeset open and names the repair. The reply is `{committed, next}`,

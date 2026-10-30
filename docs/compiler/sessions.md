@@ -403,7 +403,14 @@ goal state: the node's own limit is raised with decree provenance
 
 ## Commit
 
-Calling `done({summary})` runs the batch gates:
+Calling `done({summary, goals?})` runs the batch gates. `goals` is a list of final
+`{goal, justification, evidence?}` claims, validated by the same code as
+`mark_goal_done`. A session can claim its final resolutions and request commit in
+one call. Earlier claims can still use `mark_goal_done` when later work depends on
+their result. A refused inline claim or batch gate rolls back this call's claims
+and staged effects, leaving earlier work intact for repair.
+
+The batch gates check:
 
 - every goal in the batch is resolved or failed,
 - every resolution's gate still holds over the final changeset,

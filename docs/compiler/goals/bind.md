@@ -30,6 +30,8 @@ disagree about a requirement, with the reason in `detail.reason`:
 - `requirement-changed`: the row's `hashes.requirement` differs from the live
   statement hash. The recorded test judges a sentence the documents have dropped.
 - `artifact-gone`: the row's test artifact is missing from disk.
+- `source-selection-changed`: a recorded implementing file or deliverable test
+  artifact is outside current Source, including any set's Documents.
 
 E.g.:
 
@@ -74,6 +76,8 @@ never bound.
 A ledger row recorded for the requirement by `record_binding` and current: the row's
 `hashes.requirement` equals the live statement hash, and the test artifact exists and
 contains the declared test name (for an `llm` row, the criteria file exists). The
+harness also checks current Source membership for implementing files and
+deliverable test artifacts. Internal criteria remain metadata. The
 harness checks the ledger, not the model's word:
 
 - `mark_goal_done({goal, justification})` is validated against the row. A claim with

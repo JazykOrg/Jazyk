@@ -22,6 +22,10 @@ the [ledger](../../consumers/gen.md#the-ledger):
 - `files-gone`: the entity has a ledger entry whose facts match, but a file it records
   is gone from the deliverable (deleted by hand). `detail.changed` lists the missing
   files. The part has to be written again before its rows can be judged.
+- `source-selection-changed`: a recorded implementing file left current Source,
+  including a file assigned to Documents in any set. Re-bind first, then write
+  the entity's part inside current Source. Test artifacts and build outputs do
+  not count as implementing files. Reclassification preserves every file.
 - `unimplemented`: a requirement of the entity has a bound row whose derived status
   is `unimplemented` or `partial` (a test fails and nothing, or only part, implements
   it). The bound test is the acceptance gate; generation is the work that clears it. A
@@ -111,7 +115,7 @@ ledger, not the model's word:
   ([the build](../../consumers/gen.md#the-build)). A record that lands removes the
   files the entity's previous record listed and this manifest omits
   ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)) and
-  names them in its reply.
+  names them in its reply. A file outside current Source is preserved.
 - A session that recorded and ended without marking still resolves the goal at the
   next derivation (the run reads the record's `recordedAt` to tell the two apart). A
   session that never recorded has not resolved it: retry once with

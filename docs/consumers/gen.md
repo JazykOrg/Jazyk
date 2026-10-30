@@ -639,8 +639,9 @@ requirements:
 
 ### Status is derived, never stored
 
-A requirement's verification status is a pure function of the row, the live graph, and
-the files on disk, recomputed at every read. First match wins:
+A requirement's verification status is a pure function of the row, the live graph,
+the current Source selection, and the files on disk, recomputed at every read.
+First match wins:
 
 1. No row → `missing` (reason `not-generated`). The test artifact is gone from disk,
    or a programmatic artifact no longer contains the declared test `name` → `missing`
@@ -648,6 +649,12 @@ the files on disk, recomputed at every read. First match wins:
    is a [re-bind](./bind.md#when-binding-runs). A row whose requirement id is absent
    from the graph is also `missing` (reason `requirement-gone`), but it is never
    actionable work: see [deletion](#deletion-prunes-the-ledger).
+   A recorded implementing file or deliverable test artifact outside the set's
+   current Source selection also reads `missing` (reason
+   `source-selection-changed`). A file assigned to Documents in any set is outside
+   Source. Re-bind against the current selection. The old ledger row and files
+   remain; rerunning or recording a verdict cannot make the old binding current.
+   Internal criteria under the set's output directory remain test metadata.
 2. The live `statement` hash differs from `hashes.requirement` → `stale-requirement`.
    The test verifies a sentence the graph does not hold. The repair is a re-bind, then
    generation if the re-bind reads `unimplemented` ([the cascade](#the-cascade));
@@ -666,7 +673,8 @@ the files on disk, recomputed at every read. First match wins:
    (a Product with a name and a price that no constructor refuses without them) is the
    common case. Generation gets one turn per set of facts: when the entity's ledger
    entry records a generation over the current facts (its `factHash` equals the live
-   one) and a criterion test is still red after it, the row reads `failing` (reason
+   one and its implementing files remain in Source) and a criterion test is still
+   red after it, the row reads `failing` (reason
    `criteria-failing-after-generation`), a finding for the author, not more generation
    work. Without the rule a criterion that contradicts its neighbors (sort's example
    that lists unsorted output) regenerated its entity on every build.
@@ -688,13 +696,19 @@ Hashes are written at exactly four moments: generation resolves a goal (all thre
 binding records a row (`record_binding` writes all three), a test run completes
 (`test` and `files` rebaseline, never `requirement`), and
 [`jazyk test --audit`](#runners) rebaselines `test` and `files` against the artifacts
-on disk. Every staleness flip is a deterministic hash comparison. The model owns three
+on disk. Byte staleness is a deterministic hash comparison. The model owns three
 judgments only: the test kind, the test itself, and the verdict of an `llm` run.
 
 Every row a status surface lists carries its `reason` beside the status and a
 `repair`: one sentence naming the command or goal that clears it (`jazyk gen <entity>`
 for a re-bind and regeneration, `jazyk test <requirement>` for a rerun, nothing for a
 `failing` row, which is a finding). `jazyk test --list` prints both.
+
+Source membership is checked separately from byte hashes. A scope change loses
+fresh evidence even when the file bytes do not change. Test artifacts and build
+outputs never count as implementation. A generation entry whose implementing
+files left Source is generation work, after its requirements are re-bound. Its
+gate rejects the old manifest. Reclassification never deletes or rewrites a file.
 
 Each status that says action is a goal on the board, derived from a `ledger-stale`
 change record: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
@@ -889,8 +903,10 @@ set: files the previous generation recorded that the new manifest omits are remo
 from the deliverable (snapshotted first, see below), so a test file under a new name
 does not leave its predecessor behind. `record_generation` does the removal, whichever
 worker records, and names the removed files in its reply; a file another entity also
-records, a support file, or another row's test artifact is never removed. Entity ids
-are stable ([identifiers](../compiler/model.md#identifiers)):
+records, a support file, or another row's test artifact is never removed. A file
+outside current Source, including any set's Documents, is never removed by
+predecessor cleanup. Entity ids are stable
+([identifiers](../compiler/model.md#identifiers)):
 
 - A merged entity leaves a redirect ([mutations](../compiler/graph.md#mutations)); the
   generator follows it and folds the absorbed files into the survivor's.

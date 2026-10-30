@@ -168,6 +168,10 @@ by name; the board notices the gap, with the reason in the record:
 - `artifact-gone`: the test artifact is gone from disk, or a programmatic artifact no
   longer contains the declared test name (the test was renamed or deleted by hand).
   Nothing judges the requirement, so the session searches for the test again.
+- `source-selection-changed`: a recorded implementing file or deliverable test
+  artifact left this set's current Source selection, including a file assigned to
+  Documents by another set. Re-bind to allowed files or record no implementation.
+  The previous files and row remain until the binding is replaced.
 
 The goal exists exactly while the row is absent or stale and disappears the moment a
 current row lands. A requirement that left the graph derives nothing: its row is

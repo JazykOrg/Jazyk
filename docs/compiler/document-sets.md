@@ -257,6 +257,10 @@ prompt. Graph access stays explicit and subject to existing context budgets.
   mappings, followed by revalidation. Name-only changes can apply immediately.
 
 Source writes must check current content hashes and allowed paths at write time.
+Changing Source membership invalidates a binding that names an excluded
+implementing file or deliverable test artifact, even when its bytes stay the same.
+Assigning it to Documents in any set has the same effect. The row needs binding
+again and cannot retain verified evidence. Files and ledger history are preserved.
 After a shared source file changes, every set with relevant bindings loses its
 previously fresh evidence. Project serialization prevents simultaneous Jazyk writes;
 it does not prove two sets agree semantically. Rebinding and verification establish

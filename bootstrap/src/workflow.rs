@@ -73,6 +73,25 @@ pub fn parse(value: &Value) -> Result<Vec<Step>, String> {
     }
     Ok(steps)
 }
+fn mandatory_graph_goal(goal: &crate::model::Goal) -> bool {
+    goal.mandatory && !crate::board::LEDGER_KINDS.contains(&goal.kind.as_str())
+}
+
+fn graph_complete(board: &crate::board::Board) -> Result<(), String> {
+    if board.goals.iter().any(|goal| {
+        mandatory_graph_goal(goal)
+            && matches!(
+                goal.state,
+                crate::model::GoalState::Open
+                    | crate::model::GoalState::Parked
+                    | crate::model::GoalState::Failed { .. }
+            )
+    }) {
+        return Err("Mandatory graph work remains. Compile documents before continuing.".into());
+    }
+    Ok(())
+}
+
 fn graph_ready(proj: &Project, store: &Store) -> Result<(), String> {
     let hashes = crate::control::current_doc_hashes(proj);
     if hashes.len() != store.docs.len()
@@ -84,15 +103,12 @@ fn graph_ready(proj: &Project, store: &Store) -> Result<(), String> {
     }
     let control = crate::control::Control::load(proj, &proj.out);
     let board = crate::board::Board::derive(store, proj, &control);
-    if board
-        .goals
-        .iter()
-        .any(|g| g.mandatory && !crate::board::LEDGER_KINDS.contains(&g.kind.as_str()))
-    {
-        return Err(
-            "Mandatory graph work remains. Compile documents and resolve its questions first."
-                .into(),
-        );
+    graph_complete(&board)?;
+    if board.goals.iter().any(|goal| {
+        mandatory_graph_goal(goal)
+            && matches!(&goal.state, crate::model::GoalState::Blocked { on } if !on.starts_with("human"))
+    }) {
+        return Err("Mandatory graph work is waiting on a release. Compile documents before continuing.".into());
     }
     Ok(())
 }
@@ -109,7 +125,8 @@ fn artifact_exists(store: &Store, gs: &gen::GenSettings) -> Result<(), String> {
     Ok(())
 }
 fn successful(v: &Value) -> bool {
-    !["failures", "failed", "failing", "runnerFailed", "stale"]
+    v["error"].is_null()
+        && !["failures", "failed", "failing", "runnerFailed", "stale"]
         .iter()
         .any(|key| v[key].as_u64().unwrap_or(0) > 0)
         && v["ok"] != false
@@ -257,11 +274,22 @@ async fn run_step(
     if matches!(step, Step::Compile) {
         let _scope = GraphScope::enter();
         let report = crate::reconcile::compile(proj, llm, &proj.out, trace).await;
+        let mut result = json!(report);
         if report.suspend_reason.is_none() {
-            let store = Store::load(&proj.out);
-            graph_ready(proj, &store)?;
+            // Admission refusals return before the compiler derives a counted
+            // verdict. The previously saved graph may already be complete.
+            if report.verdict == "incomplete" {
+                result["error"] = json!("Compilation could not start. Inspect the build trace for the refusal.");
+            } else {
+                let store = Store::load(&proj.out);
+                let control = crate::control::Control::load(proj, &proj.out);
+                let board = crate::board::Board::derive(&store, proj, &control);
+                if let Err(error) = graph_complete(&board) {
+                    result["error"] = json!(error);
+                }
+            }
         }
-        return Ok(json!(report));
+        return Ok(result);
     }
     if let Step::Task { task_id } = step {
         let current = crate::task_runtime::load(&proj.root)?.1;
@@ -350,6 +378,237 @@ async fn run_step(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::path::Path;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pending_workspace(requirements: usize, criteria: usize, question: bool) -> crate::hosted::Snapshot {
+        use crate::model::*;
+        let config = "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nroots = ['docs/main.md']\nsource = ['src/**', 'tests/**']\n";
+        let document = format!("# Site\n\n{}\n", (1..=requirements)
+            .map(|index| format!("Site shows item {index}."))
+            .collect::<Vec<_>>().join("\n"));
+        let files = std::collections::BTreeMap::from([
+            (".jazyk/jazyk.toml".into(), config.as_bytes().to_vec()),
+            ("docs/main.md".into(), document.as_bytes().to_vec()),
+        ]);
+        let fs = crate::vfs::Scope::enter(&files);
+        let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+        let mut store = Store { out: project.out.clone(), ..Default::default() };
+        store.sync_docs(&crate::reconcile::parse_all(&project).0);
+        store.status.generation = 33;
+        store.status.changes.clear();
+        for record in store.docs.values_mut() {
+            for section in record.sections.keys() {
+                record.coverage.insert(section.clone(), Coverage {
+                    state: "covered".into(), note: Some("Every item statement is recorded.".into()), claimed_by: None,
+                });
+            }
+        }
+        let source = |index: usize| SourceRef { doc: "docs/main.md".into(), section: "/site".into(), quote: format!("Site shows item {index}.") };
+        store.graph.entities.insert("ent:site".into(), Entity {
+            name: "Site".into(), mentions: vec![source(1)], ..Default::default()
+        });
+        for index in 1..=requirements {
+            store.graph.requirements.insert(format!("req:site-{index}"), Requirement {
+                statement: format!("Site shows item {index}."), entities: vec!["ent:site".into()],
+                source: Some(source(index)), provenance: Some(Provenance::Quote(source(index))), ..Default::default()
+            });
+        }
+        for index in 1..=criteria {
+            let rid = format!("req:site-{}", (index - 1) % requirements + 1);
+            let cid = format!("crit:site-{index}");
+            store.graph.criteria.insert(cid.clone(), Criterion {
+                requirement: rid.clone(), statement: format!("Item {index} is visible."), kind: "positive".into(),
+                provenance: Some(Provenance::Derived { from: vec![rid], reasoning: "A visible item witnesses its requirement.".into() }),
+                ..Default::default()
+            });
+            store.graph.diagnostics.insert(format!("diag:ratification-pending-{index}"), Diagnostic {
+                rule: "ratification-pending".into(), severity: "info".into(), lifecycle: "open".into(), subjects: vec![cid],
+                message: format!("Accept criterion {index}."), created: Some("g33".into()),
+                prompt: Some(DiagnosticPrompt { question: format!("Accept criterion {index}?"), options: vec![], freeform: true }),
+                reasoning: None, triage: None, answer: None, updated: None,
+            });
+        }
+        if question {
+            let id = "diag:contradiction-1";
+            store.graph.diagnostics.insert(id.into(), Diagnostic {
+                rule: "contradiction".into(), severity: "error".into(), lifecycle: "open".into(), subjects: vec!["req:site-1".into()],
+                message: "The item wording needs a human decision.".into(),
+                prompt: Some(DiagnosticPrompt { question: "Which item wording holds?".into(), options: vec![], freeform: true }),
+                reasoning: None, triage: None, answer: None, created: None, updated: None,
+            });
+            store.status.changes.push(ChangeRecord::new(33, 1, 0, crate::store::CHANGE_PROMPT_UNANSWERED, id, "report_diagnostic"));
+        }
+        crate::derive::record_ledger_stale(&mut store, &gen::GenSettings::resolve(&project));
+        store.save();
+        gen::Ledger { medium: Some(gen::Medium { form: "Markdown page".into(), produced: "written".into(), toolchain: "text".into(), artifact: "src/site.md".into() }), ..Default::default() }.save(&project.out);
+        crate::vfs::write(project.out.join("control.yaml"), "compile: manual\ngenerate: manual\nreleased:\n  compile: {}\n  generate: 0\n").unwrap();
+        fs.snapshot()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn workflow_request(files: crate::hosted::Snapshot, steps: Value, execution: &crate::hosted::Execution) -> (Value, crate::hosted::Snapshot) {
+        let mut workspace = crate::hosted::Workspace::new(files).unwrap();
+        let reply = workspace.request("POST", "/api/jobs", &json!({"kind":"workflow", "setId":"ds_main", "steps":steps}).to_string(), execution).unwrap();
+        (serde_json::from_slice(&reply.body).unwrap(), workspace.snapshot())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn compile_accepts_thirty_three_ratifications_and_twenty_nine_gated_bindings() {
+        let files = pending_workspace(29, 33, false);
+        {
+            let _fs = crate::vfs::Scope::enter(&files);
+            let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+            let store = Store::load(&project.out);
+            let control = crate::control::Control::load(&project, &project.out);
+            let board = crate::board::Board::derive(&store, &project, &control);
+            assert_eq!(board.goals.iter().filter(|goal| goal.kind == "ratify").count(), 33);
+            assert_eq!(board.goals.iter().filter(|goal| goal.kind == "bind" && board.gated.contains(&goal.id)).count(), 29);
+            assert_eq!(board.counts().blocked, 62);
+            assert!(board.verdict().converged());
+            graph_ready(&project, &store).unwrap();
+        }
+        let (result, _) = workflow_request(files, json!([{"action":"compile"}]), &crate::hosted::Execution::default());
+        assert_eq!(result["report"]["state"], "done", "{result}");
+        let report = &result["report"]["steps"][0]["result"];
+        assert!(report["verdict"].as_str().unwrap().starts_with("converged"), "{report}");
+        assert_eq!(report["sessions"], 0);
+        assert_eq!(report["blocked"], 62);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn downstream_readiness_rejects_changed_documents_and_unfinished_graph_states() {
+        use crate::model::*;
+        let files = pending_workspace(1, 1, false);
+        let _fs = crate::vfs::Scope::enter(&files);
+        let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+        let mut store = Store::load(&project.out);
+        graph_ready(&project, &store).unwrap();
+        crate::vfs::write(project.root.join("docs/main.md"), "# Site\n\nThe documents changed.\n").unwrap();
+        assert!(graph_ready(&project, &store).unwrap_err().starts_with("Documents changed."));
+        crate::vfs::write(project.root.join("docs/main.md"), "# Site\n\nSite shows item 1.\nSite shows another item.\n").unwrap();
+        store.sync_docs(&crate::reconcile::parse_all(&project).0);
+        assert!(graph_ready(&project, &store).unwrap_err().contains("waiting on a release"));
+        let mut board = crate::board::Board::derive(&store, &project, &crate::control::Control::load(&project, &project.out));
+        for state in [GoalState::Open, GoalState::Parked, GoalState::Failed { reason: "Needs repair.".into() }] {
+            board.goals = vec![Goal { id: "g:review-entity:ent:site".into(), kind: "review-entity".into(), mandatory: true, state, ..Default::default() }];
+            assert!(graph_complete(&board).is_err());
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn incomplete_compile_keeps_its_report_and_stops_the_next_action() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let files = std::collections::BTreeMap::from([
+            (".jazyk/jazyk.toml".into(), b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nsource = ['src/**']\n".to_vec()),
+            ("docs/main.md".into(), b"# Site\n\nSite shows an item.\n".to_vec()),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let execution = crate::hosted::Execution { transport_async: Some(Arc::new(move |_| {
+            observed.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Ok(json!({"choices":[{"message":{"role":"assistant","content":"The graph work remains unfinished."}}]}).to_string()) })
+        })), ..Default::default() };
+        let (result, _) = workflow_request(files, json!([{"action":"compile"},{"action":"generate"}]), &execution);
+        assert_eq!(result["report"]["state"], "failed", "{result}");
+        assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 1);
+        let report = &result["report"]["steps"][0]["result"];
+        assert!(report["verdict"].as_str().unwrap().starts_with("incomplete"), "{report}");
+        assert!(report["parked"].as_u64().unwrap() > 0);
+        assert!(report["sessions"].as_u64().unwrap() > 0);
+        assert!(report["error"].as_str().unwrap().contains("Mandatory graph work remains"));
+        assert!(calls.load(Ordering::Relaxed) > 0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_refused_compile_cannot_advance_a_ready_board_to_generation() {
+        let files = pending_workspace(1, 1, false);
+        let files = {
+            let fs = crate::vfs::Scope::enter(&files);
+            crate::control::claim(Path::new("/project/.jazyk/ds_main"), "external-batch", "another-worker").unwrap();
+            fs.snapshot()
+        };
+        let (result, files) = workflow_request(files, json!([{"action":"compile"},{"action":"generate"}]), &crate::hosted::Execution::default());
+        assert_eq!(result["report"]["state"], "failed", "{result}");
+        assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 1);
+        let report = &result["report"]["steps"][0]["result"];
+        assert_eq!(report["verdict"], "incomplete");
+        assert_eq!(report["errors"], 1);
+        assert!(report["error"].as_str().unwrap().contains("could not start"));
+        assert!(files.keys().any(|path| path.contains("/leases/external-batch")));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn selected_binding_and_generation_write_a_deliverable_with_open_human_questions() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let files = pending_workspace(1, 1, true);
+        let (fact_hash, test_name, criteria_file) = {
+            let _fs = crate::vfs::Scope::enter(&files);
+            let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
+            let store = Store::load(&project.out);
+            let settings = gen::GenSettings::resolve(&project);
+            let binding = crate::bind::task(&store, "req:site-1", &settings).unwrap();
+            assert_eq!(binding["openDiagnostics"][0]["id"], "diag:contradiction-1");
+            let package = gen::task_package(&store, "ent:site", &settings).unwrap();
+            assert!(package.to_string().contains("diag:contradiction-1"));
+            let criterion = &store.graph.criteria["crit:site-1"];
+            (gen::fact_hash(&store, "ent:site"), gen::crit_test_name("crit:site-1", &criterion.statement),
+                format!("{}\nInspect src/site.md.\nPASS when Item 1 is visible.\nFAIL when Item 1 is absent.\n", gen::criteria_front_matter("req:site-1", Some("crit:site-1"), &criterion.statement)))
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let execution = crate::hosted::Execution { transport_async: Some(Arc::new(move |body| {
+            let round = observed.fetch_add(1, Ordering::Relaxed);
+            let actions = match round {
+                0 => vec![
+                    ("begin_binding", json!({"requirement":"req:site-1"})),
+                    ("write_text_file", json!({"path":"tests/site.md","content":criteria_file})),
+                    ("record_binding", json!({"requirement":"req:site-1","files":[],"verdict":"fail","tests":[{
+                        "criterion":"crit:site-1","kind":"llm","label":"Visible item","artifact":"tests/site.md","name":test_name,"run":"llm","verdict":"fail","evidence":"No product exists yet."
+                    }]})),
+                    ("done", json!({"summary":"Bound the visible-item criterion; the product is unimplemented."})),
+                ],
+                1 => vec![],
+                2 => vec![
+                    ("begin_generation", json!({"entity":"ent:site"})),
+                    ("write_text_file", json!({"path":"src/site.md","content":"# Site\n\nItem 1 is visible.\n"})),
+                    ("record_generation", json!({"entity":"ent:site","factHash":fact_hash,"manifest":{
+                        "files":["src/site.md"],"tests":[{"requirement":"req:site-1","kind":"llm","label":"Visible item","artifact":"tests/site.md","name":test_name,"run":"llm"}]
+                    }})),
+                    ("done", json!({"summary":"Wrote and recorded the site page against the bound criterion."})),
+                ],
+                _ => panic!("Unexpected model request {round}: {body}"),
+            };
+            let message = if round == 1 {
+                json!({"role":"assistant","content":json!({"form":"Markdown page","produced":"written","toolchain":"text","artifact":""}).to_string()})
+            } else {
+                json!({"role":"assistant","content":null,"tool_calls":actions.iter().enumerate().map(|(index,(name,args))|
+                    json!({"id":format!("workflow-{round}-{index}"),"type":"function","function":{"name":name,"arguments":args.to_string()}})).collect::<Vec<_>>()})
+            };
+            let reply = json!({"choices":[{"message":message}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}).to_string();
+            Box::pin(async move { Ok(reply) })
+        })), ..Default::default() };
+        let (result, files) = workflow_request(files, json!([{"action":"compile"},{"action":"bind"},{"action":"generate"}]), &execution);
+        assert_eq!(result["report"]["state"], "done", "{result}");
+        assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 3);
+        assert_eq!(result["report"]["steps"][1]["result"]["bound"], 1);
+        assert_eq!(result["report"]["steps"][2]["result"]["regenerated"], 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        assert_eq!(files["src/site.md"], b"# Site\n\nItem 1 is visible.\n");
+        let _fs = crate::vfs::Scope::enter(&files);
+        let out = Path::new("/project/.jazyk/ds_main");
+        let ledger = gen::Ledger::load(out);
+        assert_eq!(ledger.contradicted["req:site-1"], vec!["diag:contradiction-1"]);
+        let store = Store::load(out);
+        assert_eq!(store.graph.diagnostics["diag:contradiction-1"].lifecycle, "open");
+        assert_eq!(store.graph.diagnostics["diag:ratification-pending-1"].lifecycle, "open");
+    }
     #[test]
     fn refuses_empty_unknown_duplicate_and_malformed_actions() {
         for v in [
@@ -370,6 +629,7 @@ mod tests {
     }
     #[test]
     fn failed_evidence_blocks_following_steps() {
+        assert!(!successful(&json!({"error":"Graph work remains.","verdict":"incomplete","sessions":2})));
         assert!(!successful(&json!({"failed":1})));
         assert!(!successful(&json!({"runnerFailed":1})));
         assert!(!successful(&json!({"build":{"ok":false}})));

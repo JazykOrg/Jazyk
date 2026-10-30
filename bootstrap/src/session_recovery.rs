@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeMap};
 
 const GDK_VERSION: &str = "0.1.0-alpha.13";
-const OPERATIONS: &str = "jazyk-gdk-1";
+const OPERATIONS: &str = "jazyk-gdk-2";
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Frame {
@@ -164,6 +164,19 @@ pub(crate) fn command_key(base: &str) -> String {
             Some(tool) => format!("{base}:{}", tool.id),
             None => base.to_string(),
         }
+    })
+}
+
+// A task belongs to the model tool invocation that caused it, not every later
+// invocation in the same compiler command. The run id also separates batches
+// whose providers reuse a tool id. Both ids survive exact checkpoint replay.
+pub(crate) fn task_key(base: &str) -> String {
+    let command = command_key(base);
+    STATE.with(|s| {
+        s.borrow().frames.iter().rev().find_map(|frame| {
+            frame.harness.pending_tool.as_ref().map(|tool|
+                format!("{command}:tool:{}:{}", frame.harness.run_id, tool.id))
+        }).unwrap_or(command)
     })
 }
 
@@ -368,6 +381,13 @@ mod tests {
         let saved = capsule().unwrap();
         assert!(saved["harness"].is_null());
         validate(&saved).unwrap();
+        let mut legacy = saved.clone();
+        legacy["operationSet"] = json!("jazyk-gdk-1");
+        assert!(validate(&legacy).unwrap_err().starts_with("checkpoint-incompatible:"));
+        {
+            let _legacy = Scope::enter(Some(&legacy));
+            assert!(parent("compile:one").is_err());
+        }
         { let _inner = Scope::enter(Some(&saved));
           assert_eq!(parent("compile:one").unwrap().unwrap()["sessions"], 7);
           set_parent("compile:one", json!({"sessions":8})); }

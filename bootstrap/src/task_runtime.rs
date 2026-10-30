@@ -1092,7 +1092,7 @@ fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String,
         recovery::set_parent(key, serde_json::to_value(pending).map_err(|e| e.to_string())?);
         recovery::checkpoint_parent().map_err(|e| format!("checkpoint-failed: {e}"))
     }
-    let key = recovery::command_key(&format!("task:{}:{id}:{identity}",root.display()));
+    let key = recovery::task_key(&format!("task:{}:{id}:{identity}",root.display()));
     let mut pending: Pending = match recovery::parent(&key)? {
         Some(value) => serde_json::from_value(value).map_err(|e| format!("checkpoint-incompatible: task continuation: {e}"))?,
         None => Pending {

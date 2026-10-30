@@ -1137,6 +1137,7 @@ mod tests {
     #[test]
     fn shared_task_suite_dispatches_once_per_pass_and_keeps_case_and_owner_evidence_separate() {
         use base64::Engine;
+        use crate::harness::Recovery;
         use crate::{gen::{GenSettings, Ledger, mark as gen_mark}, model::{Criterion, Entity, Requirement, hash_hex}, store::Store, verify::{run_selected, status_of}};
         use std::{collections::BTreeMap, sync::{Arc, Mutex}};
 
@@ -1218,11 +1219,36 @@ mod tests {
                     operation => panic!("Unexpected suite operation {operation}"),
                 }
             });
-            let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime), ..Default::default() });
+            let saved = Arc::new(Mutex::new(None::<(Value, Snapshot)>));
+            let checkpoint = saved.clone();
+            let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+                let checkpoint = checkpoint.clone();
+                Box::pin(async move {
+                    let next = capsule["sequence"].as_u64().unwrap()+1;
+                    capsule["sequence"] = json!(next);
+                    *checkpoint.lock().unwrap() = Some((capsule, files));
+                    Ok(next)
+                })
+            });
+            let _execution = ExecutionScope::enter(Execution { runtime:Some(runtime), checkpoint:Some(sink), ..Default::default() });
+            let _recovery = crate::session_recovery::Scope::enter(None);
+            let parent_key = crate::session_recovery::command_key("compiler-progress");
             for revision in [1, 2] {
                 crate::vfs::write(root.join("src/cart.rs"), format!("// {owner}: revision {revision}\n")).unwrap();
                 let before = submissions.lock().unwrap().len();
-                let _recovery = crate::session_recovery::Scope::enter(None);
+                // Deliberately reuse these ids in the other owner's scope.
+                let invocation = format!("run-tests-{revision}");
+                let state: crate::harness::HarnessState = serde_json::from_value(json!({
+                    "version":1,"run_id":"suite-worker","transition":revision,"rounds":revision,
+                    "conversation":[],"model_receipts":{},"tool_receipts":{},
+                    "pending_tool":{"id":invocation,"name":"run_tests","args":{}},
+                    "delivered_inputs":[],"usage":[]
+                })).unwrap();
+                let mut recovery = crate::session_recovery::McpRecovery::utility("suite-worker".into()).unwrap();
+                async_io::block_on(recovery.checkpoint(crate::harness::CheckpointBoundary {
+                    phase:crate::harness::CheckpointPhase::BeforeTool, operation_id:Some(invocation),
+                }, &state)).unwrap();
+                assert_eq!(crate::session_recovery::command_key("compiler-progress"), parent_key);
                 let result = run_selected(&store, &gs, &["req:shop-1".into(), "req:shop-2".into()]).unwrap();
                 assert_eq!(submissions.lock().unwrap().len(), before+1, "one shared suite, not one run per requirement or criterion");
                 assert_eq!(result["runs"].as_array().unwrap().len(), 1);
@@ -1237,11 +1263,23 @@ mod tests {
                 assert_eq!(second.tests["crit:ambiguous"].verdict, "none");
                 assert_ne!(status_of(&store, "req:shop-2", second, &gs).0, "verified");
                 assert_eq!(serde_json::to_value(&ledger.requirements["req:unrelated"]).unwrap(), unrelated);
+                let before_replay = submissions.lock().unwrap().len();
+                let original = saved.lock().unwrap().as_ref().unwrap().0["parent"].clone();
+                run_selected(&store, &gs, &["req:shop-1".into(), "req:shop-2".into()]).unwrap();
+                assert_eq!(submissions.lock().unwrap().len(), before_replay, "same invocation reuses its destination receipt");
+                assert_eq!(saved.lock().unwrap().as_ref().unwrap().0["parent"], original, "same intention, destination run and deadline survive replay");
                 let requests = submissions.lock().unwrap();
                 let submitted = requests.values().last().unwrap();
                 let source = base64::engine::general_purpose::STANDARD.decode(submitted["files"]["src/cart.rs"].as_str().unwrap()).unwrap();
                 assert_eq!(source, format!("// {owner}: revision {revision}\n").as_bytes());
             }
+            let (capsule, files) = saved.lock().unwrap().clone().unwrap();
+            let before_restore = submissions.lock().unwrap().len();
+            let _restored_fs = crate::vfs::Scope::enter(&files);
+            let _restored_recovery = crate::session_recovery::Scope::enter(Some(&capsule));
+            run_selected(&store, &gs, &["req:shop-1".into(), "req:shop-2".into()]).unwrap();
+            assert_eq!(submissions.lock().unwrap().len(), before_restore, "restoring the same tool checkpoint does not dispatch another task");
+            assert_eq!(saved.lock().unwrap().as_ref().unwrap().0["parent"], capsule["parent"]);
         }
         let requests = submissions.lock().unwrap();
         assert_eq!(requests.len(), 4, "two owners each run once against each of two source revisions");

@@ -3005,10 +3005,10 @@ mod tests {
         let idle = StubRunner { failed: None, record: false, stopped: Some("http error: HTTP 429 :: rate limit".into()), store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &idle, &gs, "ent:cart", &ids, &trace);
         let err = r.results[0].1.as_ref().unwrap_err();
-        assert!(err.contains("no record landed") && err.contains("429"), "{}", err);
+        assert!(err.contains("429"), "{}", err);
         let quiet = StubRunner { failed: None, record: false, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &quiet, &gs, "ent:cart", &ids, &trace);
-        assert!(r.results[0].1.as_ref().unwrap_err().contains("without record_generation"), "{:?}", r.results[0].1);
+        assert!(r.results[0].1.as_ref().unwrap_err().contains("before recording completion"), "{:?}", r.results[0].1);
         // recordedAt has one-second resolution; a real session spans seconds.
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let writer = StubRunner { failed: None, record: true, stopped: None, store: s.clone(), gs: gs.clone() };
@@ -3110,7 +3110,8 @@ mod tests {
         assert_eq!(result["failures"],1);
         assert!(result["stopped"].is_null());
         let error = result["error"].as_str().unwrap();
-        assert!(error.contains("ent:cart") && error.contains("no record landed") && error.contains("24"),"{result}");
+        assert!(error.contains("Cart was not completed") && error.contains("24"), "{result}");
+        assert!(!error.contains("ent:cart") && !error.contains("record_generation"), "{result}");
         let mut old = serde_json::to_value(GenCommand::default()).unwrap();
         old.as_object_mut().unwrap().remove("first_error");
         let restored:GenCommand = serde_json::from_value(old).unwrap();
@@ -5011,7 +5012,9 @@ pub(crate) async fn run_selected(
                 Err(error) => {
                     if outcome.failed.is_none() {
                         command.data.first_error.get_or_insert_with(||
-                            format!("Generation {id} incomplete: {error}"));
+                            format!("{} was not completed: {error}", store.graph.entities.get(&id)
+                                .map(|entity| entity.name.as_str()).filter(|name| !name.is_empty())
+                                .unwrap_or("This part of the project")));
                     }
                     trace.event(TraceEvent::GenEntityFailed {
                         entity: id,
@@ -5173,10 +5176,8 @@ async fn gen_session(
                 .and_then(|row| row.recorded_at.clone())
                 == *before
             {
-                Err(report.failed.clone().unwrap_or_else(|| format!(
-                    "no record landed for `{id}` in this session: {}",
-                    report.stopped.as_deref().unwrap_or("the session ended without record_generation")
-                )))
+                Err(report.failed.clone().or_else(|| report.stopped.clone()).unwrap_or_else(||
+                    "The agent ended its session before recording completion".into()))
             } else {
                 gate(store, gs, id, false)
                     .map_err(|error| report.failed.clone().unwrap_or(error))

@@ -3705,7 +3705,7 @@ mod tests {
     #[test]
     fn owned_generation_carries_each_contract_once_through_the_inprocess_harness() {
         use crate::harness::{self, LoopArgs, ModelHost, ModelRequest, ModelResponse};
-        struct Script { requests: Vec<Value> }
+        struct Script { requests: Vec<Value>, fact_hash: String, manifest: Value }
         impl ModelHost for Script {
             fn infer<'a>(&'a mut self, request: ModelRequest) -> harness::LocalFuture<'a, Result<ModelResponse, String>> {
                 Box::pin(async move {
@@ -3717,8 +3717,18 @@ mod tests {
                                 "name":"begin_generation","arguments":"{\"entity\":\"ent:greeter\"}"
                             }
                         }]}),
-                        2 => json!({"role":"assistant","content":"The package is available."}),
-                        _ => panic!("the projection check needs only two model calls"),
+                        2 => json!({"role":"assistant","content":null,"tool_calls":[{
+                            "id":"record-generation","type":"function","function":{
+                                "name":"record_generation","arguments":json!({"entity":"ent:greeter",
+                                    "factHash":self.fact_hash,"manifest":self.manifest}).to_string()
+                            }
+                        }]}),
+                        3 => json!({"role":"assistant","content":null,"tool_calls":[{
+                            "id":"finish-generation","type":"function","function":{
+                                "name":"done","arguments":"{\"summary\":\"Recorded the greeting and its criterion for review.\"}"
+                            }
+                        }]}),
+                        _ => panic!("successful ledger done needs no extra model call"),
                     };
                     Ok(ModelResponse { body:json!({"choices":[{"message":message}],
                         "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}) })
@@ -3726,6 +3736,8 @@ mod tests {
             }
         }
         let dir = bare_dir("worker-generation-contract");
+        crate::vfs::write(dir.join(".jazyk/jazyk.toml"),
+            "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nsource = ['src/**', 'tests/**']\n").unwrap();
         let project = crate::project::Project::load(&dir);
         let out = project.out.clone();
         let mut store = Store::load(&out);
@@ -3739,6 +3751,11 @@ mod tests {
             requirement:"req:greet".into(),statement:"The greeting says hello.".into(),kind:"positive".into(),..Default::default()
         });
         store.save();
+        let mut ledger = crate::gen::Ledger::load(&out);
+        ledger.medium = Some(crate::gen::Medium {
+            form:"text".into(),produced:"written".into(),toolchain:String::new(),artifact:String::new()
+        });
+        ledger.save(&out);
         let mut control = crate::control::Control::load(&project, &out);
         control.generate = "auto".into();
         control.save(&out);
@@ -3750,20 +3767,50 @@ mod tests {
         let opening = crate::runner::batch_prompt(&project, &out, &batch);
         assert_eq!(opening.matches(crate::task_runtime::PROMPT).count(), 1);
         assert!(!opening.contains(&contract));
+        assert!(opening.contains("For a ledger batch (bind, generate or verify)"));
+        assert!(opening.contains("`summary` only"));
+        for kind in ["bind", "generate", "verify"] {
+            let paragraph = crate::goals::kind(kind).unwrap().prompt();
+            assert!(!paragraph.contains("then mark_goal_done"), "{kind}");
+            assert!(!paragraph.contains("Call mark_goal_done"), "{kind}");
+            assert!(paragraph.contains("no separate goal-mark call"), "{kind}");
+        }
+        crate::vfs::create_dir_all(dir.join("src")).unwrap();
+        crate::vfs::create_dir_all(dir.join("tests")).unwrap();
+        crate::vfs::write(dir.join("src/greeting.txt"), "Hello\n").unwrap();
+        let criterion = crate::gen::criteria_front_matter("req:greet", Some("crit:greet"),
+            &store.graph.criteria["crit:greet"].statement)
+            + "\nRead src/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
+        crate::vfs::write(dir.join("tests/greeting.md"), criterion).unwrap();
+        let settings = crate::gen::GenSettings::resolve(&project);
+        let original = crate::gen::task_package(&store, "ent:greeter", &settings).unwrap();
         let server = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
             BridgeFlags { ephemeral:true, only:Some(batch.id), serve_files:true, ..Default::default() });
         let mut tools = crate::session_recovery::McpTools(&server);
-        let mut model = Script { requests:Vec::new() };
+        let mut model = Script { requests:Vec::new(), fact_hash:crate::gen::fact_hash(&store,"ent:greeter"),
+            manifest:json!({"files":["src/greeting.txt","tests/greeting.md"],"tests":[{
+                "requirement":"req:greet","criterion":"crit:greet","kind":"llm",
+                "artifact":"tests/greeting.md","name":"greeting","run":"llm","files":["src/greeting.txt"]
+            }]}) };
         let llm = crate::llm::Llm { base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
             api_key:String::new(),temperature:None,trace:None };
         let mut history = vec![json!({"role":"user","content":opening})];
         let stop = harness::run_with_hosts(LoopArgs {
             llm:&llm,history:&mut history,tools:&[],dispatch:&mut |_,_| unreachable!("MCP host owns dispatch"),
-            emit:&mut |_|{},cancelled:&||false,max_rounds:3,label:"generation-contract".into(),conversation:false,
+            emit:&mut |_|{},cancelled:&||false,max_rounds:4,label:"generation-contract".into(),conversation:false,
             inputs:None,input_close:None,
         }, "", &mut model, &mut tools, &mut harness::MemoryRecovery);
         assert_eq!(stop, harness::Stop::EndTurn);
-        assert_eq!(model.requests.len(), 2);
+        assert_eq!(model.requests.len(), 3);
+        let definitions = model.requests[0]["tools"].as_array().unwrap();
+        assert!(!definitions.iter().any(|tool| tool["function"]["name"] == "mark_goal_done"));
+        let done = definitions.iter().find(|tool| tool["function"]["name"] == "done").unwrap();
+        assert_eq!(done["function"]["parameters"]["properties"], json!({"summary":{"type":"string"}}));
+        assert!(crate::gen::gate(&store, &settings, "ent:greeter", true).is_ok());
+        assert!(crate::gen::pending(&store, &settings).is_empty());
+        let ledger = crate::gen::Ledger::load(&out);
+        assert_eq!(ledger.requirements["req:greet"].tests["crit:greet"].verdict, "none",
+            "generation completion does not pretend the later LLM review passed");
         let wire_tool = model.requests[1]["messages"].as_array().unwrap().iter()
             .find(|message| message["role"] == "tool").unwrap();
         let worker:Value = serde_json::from_str(wire_tool["content"].as_str().unwrap()).unwrap();
@@ -3773,7 +3820,6 @@ mod tests {
         let full_context = format!("{}\n{}", opening, worker["instructions"].as_str().unwrap());
         assert_eq!(full_context.matches(crate::task_runtime::PROMPT).count(), 1);
         assert_eq!(full_context.matches(&contract).count(), 1);
-        let original = crate::gen::task_package(&store, "ent:greeter", &crate::gen::GenSettings::resolve(&project)).unwrap();
         let manual = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true, BridgeFlags::default());
         let standalone = manual.worker_reply("begin_generation", text_result(original.clone(), false));
         let standalone:Value = serde_json::from_str(standalone["content"][0]["text"].as_str().unwrap()).unwrap();

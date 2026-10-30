@@ -339,6 +339,74 @@ fn tool_names(tools: Option<&[Value]>) -> Vec<String> {
 }
 
 impl Llm {
+    /// Send a public-GDK-formatted request. Policy and durable identities live in
+    /// the harness and host; this boundary never retries or changes tool codecs.
+    pub async fn request_async(
+        &self,
+        request: crate::harness::ModelRequest,
+    ) -> Result<Value, String> {
+        #[cfg(target_arch = "wasm32")]
+        let response = { crate::wasm::llm_bridge::chat_async(&request.body.to_string()).await? };
+        #[cfg(not(target_arch = "wasm32"))]
+        let response = if crate::vfs::is_scoped() {
+            let mut body = request.body;
+            body["_jazyk"] = json!({"requestId":request.attempt_id,"purpose":request.purpose});
+            crate::hosted::transport_async(&request.attempt_id, &body.to_string()).await?
+        } else {
+            use futures::StreamExt;
+            // Only owned HTTP work runs on this process-shared executor. The
+            // harness and every MCP/VFS callback stay on their owning thread.
+            static NETWORK: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+            let network = NETWORK.get_or_init(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .expect("native model network runtime")
+            });
+            let base_url = self.base_url.clone();
+            let api_key = self.api_key.clone();
+            let timeout = call_timeout();
+            network
+                .spawn(async move {
+                    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+                    let client = CLIENT.get_or_init(reqwest::Client::new);
+                    let mut call = client
+                        .post(format!(
+                            "{}/chat/completions",
+                            base_url.trim_end_matches('/')
+                        ))
+                        .timeout(timeout)
+                        .json(&request.body);
+                    if !api_key.is_empty() {
+                        call = call.bearer_auth(&api_key);
+                    }
+                    let response = call
+                        .send()
+                        .await
+                        .map_err(|e| format!("model transport: {e}"))?;
+                    let status = response.status();
+                    let mut stream = response.bytes_stream();
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = stream.next().await {
+                        let chunk = chunk.map_err(|e| format!("model response: {e}"))?;
+                        if bytes.len().saturating_add(chunk.len()) > 16 * 1024 * 1024 {
+                            return Err("model response exceeds 16 MiB".into());
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    let body = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+                    if !status.is_success() {
+                        return Err(format!("HTTP {status}: {}", truncate(&body, 1000)));
+                    }
+                    Ok::<_, String>(body)
+                })
+                .await
+                .map_err(|e| format!("model network task: {e}"))??
+        };
+        serde_json::from_str(&response).map_err(|e| format!("Invalid model response: {e}"))
+    }
+
     // A client that reports into this trace. Cheap: the trace is a handle.
     pub fn with_trace(&self, trace: &crate::session::Trace) -> Llm {
         Llm {

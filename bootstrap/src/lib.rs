@@ -23,6 +23,7 @@ pub mod feedback;
 pub mod bind;
 pub mod gen;
 pub mod goals;
+pub mod harness;
 pub mod limits;
 pub mod live_preview;
 pub mod llm;

@@ -130,6 +130,16 @@ fn tool_result(text: String, ok: bool) -> CallToolResult {
     }
 }
 
+fn interruption_stop(error: &str) -> Option<Stop> {
+    if matches!(error, "suspended" | "execution suspended") {
+        Some(Stop::Suspended)
+    } else if crate::session_recovery::is_interruption(error) {
+        Some(Stop::Error(error.into()))
+    } else {
+        None
+    }
+}
+
 struct Policy {
     system: String,
     names: Vec<String>,
@@ -792,7 +802,10 @@ async fn handle_action(
                             flush_deltas(&pending, live, args)?;
                             match result {
                                 Ok(response) => break response,
-                                Err(error) => { let _ = reply.send(Err(error)); return Ok(()); }
+                                Err(error) => {
+                                    if let Some(stop) = interruption_stop(&error) { return Err(stop); }
+                                    let _ = reply.send(Err(error)); return Ok(());
+                                }
                             }
                         },
                         _ = notice => flush_deltas(&pending, live, args)?,
@@ -887,17 +900,24 @@ async fn handle_action(
             } else {
                 (args.dispatch)(&name, &parameters)
             };
-            if result.is_err() && !skipped && state.failed_tool_transition != Some(state.transition)
-            {
+            if let Err(error) = &result {
+                if let Some(stop) = interruption_stop(error) {
+                    return Err(stop);
+                }
+            }
+            let ok = result
+                .as_ref()
+                .is_ok_and(|text| tool_result(text.clone(), true).is_error != Some(true));
+            if !ok && !skipped && state.failed_tool_transition != Some(state.transition) {
                 state.consecutive_tool_errors += 1;
                 state.failed_tool_transition = Some(state.transition);
-            } else if result.is_ok() {
+            } else if ok {
                 state.consecutive_tool_errors = 0;
             }
             let receipt = match &result {
                 Ok(result) => ToolReceipt {
                     result: result.clone(),
-                    ok: true,
+                    ok,
                 },
                 Err(error) => ToolReceipt {
                     result: error.clone(),

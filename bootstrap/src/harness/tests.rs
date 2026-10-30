@@ -1352,3 +1352,87 @@ fn host_response_replay_retains_a_durable_prefix_before_the_engine_receipt() {
     assert_eq!(content, "Hello there");
     assert_eq!(host.requests.borrow().len(), 1);
 }
+
+#[test]
+fn interrupted_tool_host_preserves_intention_and_stops_without_another_inference() {
+    let mut host = Host::new(vec![call(), response("must not retry")]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| Err("checkpoint-failed: nested compiler checkpoint unavailable".into()),
+            &mut |_| {}
+        ),
+        Stop::Error("checkpoint-failed: nested compiler checkpoint unavailable".into())
+    );
+    assert_eq!(host.requests.borrow().len(), 1);
+    assert_eq!(store.phases.last(), Some(&CheckpointPhase::BeforeTool));
+    let state = store.saved.unwrap();
+    assert!(state.pending_tool.is_some());
+    assert!(state.tool_receipts.is_empty());
+}
+
+#[test]
+fn mcp_error_results_count_as_tool_failures_even_with_a_successful_transport() {
+    let mut host = Host::new((0..5).map(|_| call()).collect());
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut failed = 0;
+    let stop = run(
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |_, _| {
+            Ok(
+                json!({"content":[{"type":"text","text":"Gate refused"}],"isError":true})
+                    .to_string(),
+            )
+        },
+        &mut |event| {
+            if let AgentEvent::ToolCallEnd { ok, .. } = event {
+                assert!(!ok);
+                failed += 1;
+            }
+        },
+    );
+    assert!(
+        matches!(stop,Stop::Error(ref error) if error.contains("five consecutive tool errors"))
+    );
+    assert_eq!(failed, 5);
+    assert_eq!(store.saved.unwrap().consecutive_tool_errors, 5);
+}
+
+#[test]
+fn interrupted_model_host_leaves_only_the_durable_request_intention() {
+    struct Interrupted;
+    impl ModelHost for Interrupted {
+        fn infer<'a>(
+            &'a mut self,
+            _: ModelRequest,
+        ) -> LocalFuture<'a, Result<ModelResponse, String>> {
+            Box::pin(async {
+                Err("execution-uncertain: provider request outcome is unknown".into())
+            })
+        }
+    }
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    assert_eq!(
+        run(
+            &mut Interrupted,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!(),
+            &mut |_| {}
+        ),
+        Stop::Error("execution-uncertain: provider request outcome is unknown".into())
+    );
+    assert_eq!(store.phases.last(), Some(&CheckpointPhase::BeforeModel));
+    let state = store.saved.unwrap();
+    assert_eq!(state.model_requests.len(), 1);
+    assert!(state.model_receipts.is_empty());
+    assert_eq!(state.conversation.len(), 1);
+}

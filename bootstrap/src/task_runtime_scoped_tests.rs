@@ -191,6 +191,68 @@ fn submission_and_import_receipts_resume_with_the_execution_checkpoint() {
 }
 
 #[test]
+fn waiting_run_task_polls_in_code_and_interrupts_with_ordinary_status_replies() {
+    let fixture = Fixture::new();
+    let waits = Arc::new(AtomicUsize::new(0));
+    let cancels = Arc::new(AtomicUsize::new(0));
+    let (inner, ready, counted, cancelled) = (fixture.runtime.clone(), fixture.ready.clone(), waits.clone(), cancels.clone());
+    let runtime: RuntimeTransport = Arc::new(move |request: &Value| match request["operation"].as_str().unwrap() {
+        "wait_run" => {
+            if counted.fetch_add(1, Ordering::SeqCst) == 2 { ready.store(true, Ordering::SeqCst); }
+            inner(request)
+        }
+        "cancel_run" => {
+            cancelled.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"id":request["run_id"],"terminated":false,"state":"cancelling"}))
+        }
+        _ => inner(request),
+    });
+    let execution = Execution { runtime:Some(runtime), ..Default::default() };
+    let (suspend, cancel) = (execution.suspend.clone(), execution.cancel.clone());
+    let _fs = crate::vfs::Scope::enter(&fixture.files);
+    let _state = crate::scoped_state::Scope::enter();
+    let _execution = crate::hosted::test_execution_scope(execution);
+    let _recovery = crate::session_recovery::Scope::enter(None);
+    let root = Path::new("/project");
+    let revision = call(root, "task_context", &json!({})).unwrap()["revision"].clone();
+    let start = json!({"task_id":"copy","expected_revision":revision,"operation_key":"copy-run","wait":true});
+
+    // A suspension request returns the current status, so the call leaves a receipt.
+    suspend.store(true, Ordering::SeqCst);
+    let pending = call(root, "run_task", &start).unwrap();
+    assert_eq!(pending["terminated"], false);
+    assert_eq!(waits.load(Ordering::SeqCst), 0);
+    suspend.store(false, Ordering::SeqCst);
+
+    // Replaying the same key waits for the same run, imports once, and returns terminal.
+    let terminal = call(root, "run_task", &start).unwrap();
+    assert_eq!(terminal["terminated"], true);
+    assert_eq!(terminal["result"]["import"]["products"], json!(["deliverable/logo.svg"]));
+    assert_eq!(crate::vfs::read(root.join("deliverable/logo.svg")).unwrap(), LOGO);
+    assert_eq!(waits.load(Ordering::SeqCst), 3);
+    assert_eq!(fixture.reads.load(Ordering::SeqCst), 1);
+    let submitted = fixture.submitted.lock().unwrap();
+    assert_eq!(submitted.len(), 1);
+    assert!(submitted["copy-run"].get("wait").is_none(), "waiting is never part of the submitted request");
+    drop(submitted);
+
+    // Cancellation of the owning operation stops the run and returns its status.
+    fixture.ready.store(false, Ordering::SeqCst);
+    cancel.store(true, Ordering::SeqCst);
+    let start = json!({"task_id":"check","expected_revision":revision,"operation_key":"check-run","wait":true});
+    let stopping = call(root, "run_task", &start).unwrap();
+    assert_eq!(stopping["state"], "cancelling");
+    assert_eq!(cancels.load(Ordering::SeqCst), 1);
+
+    // Without wait, run_task keeps returning immediately.
+    cancel.store(false, Ordering::SeqCst);
+    let before = waits.load(Ordering::SeqCst);
+    let start = json!({"task_id":"check","expected_revision":revision,"operation_key":"check-later"});
+    assert_eq!(call(root, "run_task", &start).unwrap()["terminated"], false);
+    assert_eq!(waits.load(Ordering::SeqCst), before);
+}
+
+#[test]
 fn internal_task_execution_fetches_and_imports_one_retained_result() {
     let fixture = Fixture::new();
     let _fs = crate::vfs::Scope::enter(&fixture.files);

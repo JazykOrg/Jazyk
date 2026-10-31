@@ -31,7 +31,7 @@ report. Adding a criterion does not require editing the saved task. A single
 task once. A later call starts a new run, even when the task is unchanged.
 
 `run_task` accepts `task_id`, `expected_revision`, `operation_key`, and optional
-`size` and `timeout_seconds`. It has no per-run arguments or environment override.
+`size`, `timeout_seconds`, and `wait`. It has no per-run arguments or environment override.
 Test selection belongs to the saved command and runner today. Do not invent an
 `args`, `inputs` or `env` field, clone a task per criterion to simulate one, or
 rewrite a task between criteria when its normal suite already covers them.
@@ -71,6 +71,16 @@ host executes one command in a fresh isolated environment, captures bounded resu
 and destroys the environment. No interactive shell, appended command, or deadline
 extension exists. A retry is a new run. Repeated operation IDs return the original
 run and cannot dispatch twice.
+
+By default `run_task` returns the run ID immediately. With `wait = true`, the host
+waits for the run in code and returns its terminal status in the same reply. Waiting
+makes no model inference per state change. It ends early, with the current
+non-terminal status, when the owning operation is cancelled, the worker is asked to
+suspend, or the wait outlasts the task timeout plus 600 seconds. Cancellation also
+stops the run. Suspension leaves the run running. A non-terminal reply means: continue
+with `wait_run`. The reply is an ordinary tool result, so a suspended worker resumes
+after it without an uncertain pending call. Waiting adds no saved state and does not
+change the run's fixed deadline.
 
 Inputs include documentation, source, tests, assets, and project settings with credential fields removed. They exclude credentials, Git internals, runtime history, conversations,
 and other projects. A nested `.jazyk/jazyk.toml` stops the input walk. Private

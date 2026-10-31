@@ -34,7 +34,9 @@ for their owning entity before writing. Recording ends that claim; a later repai
 claims the entity again, even if generation_tasks lists no new work.
 After changing generated files, refresh the manifest with record_generation, then
 run_tests again so the final evidence describes the recorded files.
-Use wait_run while work is pending. Confirm terminated before claiming shutdown.
+Pass wait=true to run_task to receive the terminal status in one reply. If its
+reply is not terminated, or a run is otherwise pending, use wait_run.
+Confirm terminated before claiming shutdown.
 The command can have state succeeded while cleanup is still running. If terminated
 is false, wait again before ending the execution request.
 

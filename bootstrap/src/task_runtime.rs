@@ -428,6 +428,10 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
         request = json!({});
     }
     request["operation"] = json!(name);
+    // Waiting is the engine's choice, never part of the submitted request.
+    let wait = name == "run_task" && args["wait"] == true;
+    if let Some(fields) = request.as_object_mut() { fields.remove("wait"); }
+    let mut wait_seconds = 0;
     if name == "run_task" {
         if operation_cancelled() {
             return Err("The owning operation was cancelled.".into());
@@ -448,6 +452,7 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
             task.timeout_seconds = seconds;
         };
         task.validate()?;
+        wait_seconds = task.timeout_seconds + 600;
         if args["expected_revision"].as_str() != Some(digest(source.as_bytes()).as_str()) {
             return Err("Task settings changed. Reload task_context before running.".into());
         }
@@ -472,12 +477,37 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
         }
         finish_status(root, name, args, value, import_terminal)
     });
+    if wait {
+        return host.and_then(|status| wait_terminal(root, status, wait_seconds, import_terminal));
+    }
     if name == "task_context" {
         return Ok(
             json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}}),
         );
     }
     host
+}
+
+// Poll in code so a long run costs no inference per state change. Every early
+// exit is an ordinary status reply: a suspended worker records it as the tool's
+// receipt instead of leaving an uncertain pending call. The run keeps its deadline.
+fn wait_terminal(root: &Path, mut status: Value, limit_seconds: u64, import_terminal: bool) -> Result<Value, String> {
+    let id = status["id"].as_str().ok_or("Run ID missing")?.to_owned();
+    let deadline = crate::sys::now_unix() + limit_seconds;
+    while status["terminated"] != true {
+        #[cfg(not(target_arch = "wasm32"))]
+        let cancelled = crate::hosted::cancelled() || operation_cancelled();
+        #[cfg(target_arch = "wasm32")]
+        let cancelled = operation_cancelled();
+        if cancelled {
+            return call_impl(root, "cancel_run", &json!({"run_id":id}), import_terminal);
+        }
+        if crate::session_recovery::suspension_requested() || crate::sys::now_unix() >= deadline {
+            break;
+        }
+        status = call_impl(root, "wait_run", &json!({"run_id":id,"wait_ms":5000}), import_terminal)?;
+    }
+    Ok(status)
 }
 
 // The host owns execution. The active scoped worker owns publication into its

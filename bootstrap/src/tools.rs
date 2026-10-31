@@ -609,8 +609,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "task_context",
-            description: "Read existing reusable project tasks, descriptions, configuration revision, execution capabilities and recent runs. Inspect this and project runner configuration before defining a task. Criterion identities belong in JUnit cases, not one task per criterion. Pass next_cursor as before for older runs.",
-            parameters: obj(json!({"before":{"type":"string"}}), &[]),
+            description: "Read existing reusable project tasks, descriptions, configuration revision, execution capabilities and recent runs. Inspect this and project runner configuration before defining a task. Criterion identities belong in JUnit cases, not one task per criterion. Pass next_cursor as before for older runs. task_ids limits full definitions to those tasks and indexes the rest by id, name and description; omit it before update_tasks.",
+            parameters: obj(json!({"before":{"type":"string"},"task_ids":{"type":"array","items":{"type":"string"}}}), &[]),
         },
         ToolDef {
             name: "update_tasks",
@@ -619,8 +619,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "run_task",
-            description: "Run one saved project task in a fresh isolated environment. Returns a durable run ID immediately. No per-run args, inputs or environment overrides exist. Reuse a suite task for related checks; run_tests imports its independent JUnit case evidence. The command and fixed timeout cannot change mid-run.",
-            parameters: obj(json!({"task_id": {"type": "string"}, "expected_revision": {"type": "string"}, "operation_key": {"type": "string"}, "size": {"type": "string", "enum": ["small", "medium", "large"]}, "timeout_seconds": {"type": "integer"}}), &["task_id", "expected_revision", "operation_key"]),
+            description: "Run one saved project task in a fresh isolated environment. Returns a durable run ID immediately; wait=true waits in the host and returns the terminal status, or the current status if interrupted (then use wait_run). No per-run args, inputs or environment overrides exist. Reuse a suite task for related checks; run_tests imports its independent JUnit case evidence. The command and fixed timeout cannot change mid-run.",
+            parameters: obj(json!({"task_id": {"type": "string"}, "expected_revision": {"type": "string"}, "operation_key": {"type": "string"}, "size": {"type": "string", "enum": ["small", "medium", "large"]}, "timeout_seconds": {"type": "integer"}, "wait": {"type": "boolean"}}), &["task_id", "expected_revision", "operation_key"]),
         },
         ToolDef {
             name: "inspect_run",

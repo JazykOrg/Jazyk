@@ -31,7 +31,7 @@ report. Adding a criterion does not require editing the saved task. A single
 task once. A later call starts a new run, even when the task is unchanged.
 
 `run_task` accepts `task_id`, `expected_revision`, `operation_key`, and optional
-`size` and `timeout_seconds`. It has no per-run arguments or environment override.
+`size`, `timeout_seconds`, and `wait`. It has no per-run arguments or environment override.
 Test selection belongs to the saved command and runner today. Do not invent an
 `args`, `inputs` or `env` field, clone a task per criterion to simulate one, or
 rewrite a task between criteria when its normal suite already covers them.
@@ -71,6 +71,18 @@ host executes one command in a fresh isolated environment, captures bounded resu
 and destroys the environment. No interactive shell, appended command, or deadline
 extension exists. A retry is a new run. Repeated operation IDs return the original
 run and cannot dispatch twice.
+
+By default `run_task` returns the run ID immediately. With `wait = true`, the host
+waits for the run in code and returns its terminal status in the same reply. Waiting
+makes no model inference per state change. It ends early, with the current
+non-terminal status, when the owning operation is cancelled, the worker is asked to
+suspend, or the wait outlasts the task timeout plus 600 seconds. Cancellation also
+stops the run. Suspension leaves the run running. A poll that fails, including a
+hosted poll interrupted by suspension or cancellation, ends the wait the same way:
+the reply keeps the run ID and its last status and adds `wait_error`. A
+non-terminal reply means: continue with `wait_run`. The reply is an ordinary tool result, so a suspended worker resumes
+after it without an uncertain pending call. Waiting adds no saved state and does not
+change the run's fixed deadline.
 
 Inputs include documentation, source, tests, assets, and project settings with credential fields removed. They exclude credentials, Git internals, runtime history, conversations,
 and other projects. A nested `.jazyk/jazyk.toml` stops the input walk. Private
@@ -186,9 +198,17 @@ input identity, termination, error, and result fields remain available. Saved ta
 definitions and the retained execution result do not change. HTTP task views keep
 their full response. A standalone MCP serving also keeps the full response.
 
+`task_context` accepts optional `task_ids`. Without it, the reply carries every task
+definition. With it, `tasks` carries full definitions only for the named IDs and
+`index` lists every other task by `id`, `name`, and `description`. An empty list
+returns the index alone. An unknown ID is an error that names it. The revision,
+defaults, execution capabilities, and run history are unchanged. `update_tasks`
+replaces the whole list, so read the full default before editing tasks.
+
 An owned worker's `task_context` returns at most five recent runs. `before` and
-`next_cursor` page through older runs. It still returns every current task definition,
-the configuration revision, defaults, and execution capabilities. A standalone
+`next_cursor` page through older runs. It still returns every current task definition
+(or the `task_ids` selection and index), the configuration revision, defaults, and
+execution capabilities. A standalone
 serving keeps the normal history page. Status polls never include source snapshots
 or file contents.
 

@@ -1196,7 +1196,25 @@ fn spend_at(out: &Path, generation: u64, tokens: u64, cached: Option<u64>) -> Re
 }
 
 pub fn run_status(opts: &Options) -> i32 {
-    if opts.set.is_none() { return run_sets(&["list".into()], opts); }
+    // No set: the aggregate read over every set, as text unless JSON is asked for.
+    // Mirrors docs/frontends/cli.md#jazyk-status.
+    if opts.set.is_none() {
+        if opts.json || opts.costs {
+            return run_sets(&["list".into()], opts);
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = project::find_root(&cwd).unwrap_or(cwd);
+        return match crate::document_sets::Workspace::load(&root) {
+            Ok(workspace) => {
+                print!("{}", render_sets_overview(&workspace.summary()));
+                0
+            }
+            Err((_, e)) => {
+                eprintln!("jazyk: {}", e);
+                2
+            }
+        };
+    }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (proj, _llm, out) = resolve(&[], opts);
@@ -1229,6 +1247,36 @@ pub fn run_status(opts: &Options) -> i32 {
         print!("{}", render_status(&report));
     }
     0
+}
+
+// The aggregate status: one line per document set from the sets summary, then its
+// selection warnings. Mirrors docs/frontends/cli.md#jazyk-status.
+pub(crate) fn render_sets_overview(summary: &serde_json::Value) -> String {
+    let sets = summary["sets"].as_array().cloned().unwrap_or_default();
+    if sets.is_empty() {
+        return "no document sets yet; `jazyk sets add NAME --docs GLOB` creates one\n".into();
+    }
+    let mut out = String::new();
+    for set in &sets {
+        let n = |k: &str| set["counts"][k].as_u64().unwrap_or(0);
+        let verdict = set["verdict"]["state"].as_str().filter(|v| !v.is_empty()).unwrap_or("none");
+        out.push_str(&format!(
+            "{}: {}, generation {}, verdict {}; {} open, {} ready, {} blocked, {} parked, {} failed\n",
+            set["name"].as_str().unwrap_or("?"),
+            set["state"].as_str().unwrap_or("?"),
+            set["generation"].as_u64().unwrap_or(0),
+            verdict,
+            n("open"),
+            n("ready"),
+            n("blocked"),
+            n("parked"),
+            n("failed"),
+        ));
+        for w in set["warnings"].as_array().into_iter().flatten() {
+            out.push_str(&format!("  warning: {}\n", w.as_str().unwrap_or("")));
+        }
+    }
+    out
 }
 
 // Everything `jazyk status` prints, gathered once: the text and the JSON render the
@@ -2340,6 +2388,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    // The aggregate status reads as one line per set, never as JSON.
+    // Mirrors docs/frontends/cli.md#jazyk-status.
+    #[test]
+    fn status_without_a_set_is_one_line_per_set() {
+        let summary = serde_json::json!({"sets": [
+            {"name": "Documents", "state": "clean", "generation": 32, "verdict": {"state": ""},
+             "counts": {"open": 0, "ready": 0, "blocked": 33, "parked": 0, "failed": 0}, "warnings": []},
+            {"name": "Orders", "state": "dirty", "generation": 4, "verdict": {"state": "converged"},
+             "counts": {"open": 2, "ready": 1}, "warnings": ["No files match x/**"]}
+        ]});
+        assert_eq!(
+            render_sets_overview(&summary),
+            "Documents: clean, generation 32, verdict none; 0 open, 0 ready, 33 blocked, 0 parked, 0 failed\n\
+             Orders: dirty, generation 4, verdict converged; 2 open, 1 ready, 0 blocked, 0 parked, 0 failed\n  \
+             warning: No files match x/**\n"
+        );
+        assert!(render_sets_overview(&serde_json::json!({"sets": []})).contains("jazyk sets add"));
     }
 
     // `jazyk spend` stamps an agent's report on a session entry that carries no figure

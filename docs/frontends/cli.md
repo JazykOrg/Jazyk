@@ -22,8 +22,8 @@ on the project in three groups and starts the one picked:
   ACP agents.
 - Coding agents: the agent with jazyk's tools over [MCP](./mcp.md).
 
-Inside a project it prints the [status](#jazyk-status) lines (the store, the verdict,
-the board, coverage) first. The list follows: a heading per group, then one row per
+Inside a project it prints the [status](#jazyk-status) overview first: one line per
+document set. The list follows: a heading per group, then one row per
 choice with its short name and full name, and a dim `not installed` beside a choice
 whose program jazyk cannot find. The up and down arrows (or `j` and `k`) move, a
 letter jumps to the next row whose name starts with it, enter starts the choice, and
@@ -374,11 +374,27 @@ refused retract with its reason, a failed answer session), `2` on a usage error.
 
 ### jazyk status
 
-`jazyk status [--json] [--costs]` summarizes `status.yaml` and `build.yaml` (see
-[storage layout](../compiler/graph.md#storage-layout)) and the board. It reads only and
-takes no arguments; outside a project (no `jazyk.toml` above the working directory) it
-says so on stderr and reads the ad hoc store at the working directory. The lines, in
-order:
+`jazyk status [--set ID] [--json] [--costs]` reads only and takes no arguments.
+
+Without `--set` it is the aggregate read over every
+[document set](../compiler/document-sets.md#cli-and-lsp): one line per set with its
+name, its state (`clean`, `dirty`, or `empty`), the generation, the last verdict
+(`none` before the first build), and the board counts (open, ready, blocked, parked,
+failed), then one indented `warning:` line per selection that matches no file. A
+project without sets says so and names `jazyk sets add`. `--json` prints the
+[sets summary](../compiler/document-sets.md#cli-and-lsp) instead, the same object
+`jazyk sets list` prints. E.g.:
+
+```
+Documents: clean, generation 32, verdict converged; 0 open, 0 ready, 33 blocked, 0 parked, 0 failed
+Orders: dirty, generation 4, verdict none; 12 open, 12 ready, 0 blocked, 0 parked, 0 failed
+  warning: No files match docs/orders/**/*.md
+```
+
+With `--set` it summarizes that set's `status.yaml` and `build.yaml` (see
+[storage layout](../compiler/graph.md#storage-layout)) and the board. Outside a project
+(no `jazyk.toml` above the working directory) it says so on stderr and reads the ad hoc
+store at the working directory. The lines, in order:
 
 - the store `version` and the generation counter,
 - the last verdict with its counts,

@@ -1,8 +1,11 @@
 use crate::vfs::VPathExt;
 pub(crate) mod progress;
 mod pipeline;
+mod assets;
 #[cfg(test)]
 mod matcher_recovery_tests;
+#[cfg(test)]
+mod asset_workflow_tests;
 // Generation: the shared contract between every generation worker, the built-in
 // `jazyk gen` and external MCP agents alike. One task per entity produces the entity's
 // part of the deliverable and the tests for its requirements; the ledger binds them to
@@ -422,11 +425,15 @@ pub struct EntityGen {
     // Mirrors docs/consumers/gen.md#the-unattached-remainder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattached: Option<Unattached>,
-    // When record_generation last landed for the entity: a run tells a record its
-    // session wrote from one that predates it. Mirrors docs/consumers/gen.md#the-ledger.
+    // Display time only. Completion uses the sequence because timestamps have
+    // one-second resolution. Mirrors docs/consumers/gen.md#the-ledger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded_at: Option<String>,
+    #[serde(default, skip_serializing_if = "record_sequence_is_zero")]
+    pub record_sequence: u64,
 }
+
+fn record_sequence_is_zero(sequence: &u64) -> bool { *sequence == 0 }
 
 // Generated mass attached to no requirement: owned files no row names, significant
 // lines outside every site's run, and their share of the entity's significant lines.
@@ -1121,6 +1128,10 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
 
 // `fact_hash` with the entity's sorted requirement ids already in hand.
 pub fn fact_hash_over(store: &Store, id: &str, rids: &[String]) -> String {
+    assets::fingerprint(&fact_hash_base(store, id, rids), &assets::referenced_assets(store, id, rids))
+}
+
+fn fact_hash_base(store: &Store, id: &str, rids: &[String]) -> String {
     let e = &store.graph.entities[id];
     let mut facts = format!(
         "{}|{}|{}|",
@@ -1411,7 +1422,8 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             continue;
         }
         let slug = slug_of(id);
-        let hash = fact_hash_over(store, id, rids);
+        let referenced_assets = assets::referenced_assets(store, id, rids);
+        let hash = assets::fingerprint(&fact_hash_base(store, id, rids), &referenced_assets);
         let incomplete: Vec<&String> = rids.iter().filter(|rid| binding_owed.contains(*rid)).collect();
         let unimplemented: Vec<&String> = rids
             .iter()
@@ -1455,6 +1467,10 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             None if !incomplete.is_empty() => {
                 ("incomplete-bindings".to_string(), json!(incomplete))
             }
+            None if referenced_assets.iter().any(|asset| asset.is_input()) => {
+                ("referenced-inputs".to_string(), json!(referenced_assets.iter()
+                    .filter(|asset| asset.is_input()).map(|asset| &asset.path).collect::<Vec<_>>()))
+            }
             None => continue,
         };
         out.push(json!({
@@ -1476,6 +1492,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     if !store.graph.entities.contains_key(&id) {
         return Err(format!("`{}` is not in the graph; nothing generates it", id));
     }
+    assets::ensure_available(&assets::referenced_assets(store, &id, &reqs_of_sorted(store, &id)))?;
     let ledger = Ledger::load(&store.out);
     let Some(e) = ledger.entities.get(&slug_of(&id)) else {
         return Err(format!(
@@ -1647,6 +1664,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
     let e = &store.graph.entities[id];
     let slug = slug_of(id);
     let rids = reqs_of_sorted(store, id);
+    let referenced_assets = assets::referenced_assets(store, id, &rids);
     let (_, changed) = change_diff(&ledger, &slug, &rids);
     let groups: Vec<Vec<Value>> = rids
         .chunks(GROUP)
@@ -1769,7 +1787,8 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         "name": e.name,
         "deliverable": gs.deliverable.to_string_lossy(),
         "sourceSelection": gs.code,
-        "factHash": fact_hash(store, id),
+        "factHash": assets::fingerprint(&fact_hash_base(store, id, &rids), &referenced_assets),
+        "referencedAssets": referenced_assets,
         "instructions": instructions(),
         "context": pack,
         "relationships": rels,
@@ -1868,6 +1887,14 @@ pub fn mark(
 ) -> Result<Value, String> {
     if !store.graph.entities.contains_key(id) {
         return Err(format!("unknown entity `{}`", id));
+    }
+    let rids = reqs_of_sorted(store, id);
+    let referenced_assets = assets::referenced_assets(store, id, &rids);
+    assets::ensure_available(&referenced_assets)?;
+    let base_hash = fact_hash_base(store, id, &rids);
+    let current_hash = assets::fingerprint(&base_hash, &referenced_assets);
+    if current_hash != base_hash && fact_hash_seen.is_some_and(|seen| seen != current_hash) {
+        return Err("The facts or referenced input bytes moved since begin_generation. Reload the package, use the current exact inputs and record its current factHash.".into());
     }
     let slug = slug_of(id);
     // Every path the manifest names is confined before any side effect: a path that
@@ -2021,6 +2048,8 @@ pub fn mark(
     // Ownership and realization, both before any side effect.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     let pre = Ledger::load(&store.out);
+    let record_sequence = pre.entities.get(&slug).map(|row| row.record_sequence).unwrap_or(0)
+        .checked_add(1).ok_or("The entity generation record sequence is exhausted; no record was changed.")?;
     for (rid, criterion, test, _) in &rows {
         let Some(cid) = criterion else {
             if let Some(row) = pre.requirements.get(rid) {
@@ -2237,6 +2266,7 @@ pub fn mark(
             files: files.clone(),
             unattached: None,
             recorded_at: Some(crate::verify::now_iso()),
+            record_sequence,
         },
     );
     let mut grouped: BTreeMap<String, Vec<(Option<String>, TestRef, Vec<String>)>> = BTreeMap::new();
@@ -2869,6 +2899,7 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
             Some("unimplemented-bindings") => json!("unimplemented"),
             Some("files-gone") => json!("files-gone"),
             Some("incomplete-bindings") => json!("incomplete-bindings"),
+            Some("referenced-inputs") => json!("referenced-inputs"),
             _ => json!("facts-changed"),
         };
         push(
@@ -2896,6 +2927,7 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::SessionRunner;
 
     #[test]
     fn task_build_requires_promised_products() {
@@ -3024,13 +3056,98 @@ mod tests {
         let quiet = StubRunner { failed: None, record: false, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &quiet, &gs, "ent:cart", &ids, &trace);
         assert!(r.results[0].1.as_ref().unwrap_err().contains("before recording completion"), "{:?}", r.results[0].1);
-        // recordedAt has one-second resolution; a real session spans seconds.
-        std::thread::sleep(std::time::Duration::from_millis(1100));
         let writer = StubRunner { failed: None, record: true, stopped: None, store: s.clone(), gs: gs.clone() };
         let r = gen_session(&s, &writer, &gs, "ent:cart", &ids, &trace);
         assert_eq!(r.results[0].1.as_ref().unwrap(), &1, "{:?}", r.results[0].1);
         assert!(Ledger::load(&out).entities["cart"].recorded_at.is_some());
         crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn repeated_generation_in_the_same_timestamp_second_proves_completion() {
+        let _scope = crate::vfs::Scope::enter(&BTreeMap::new());
+        let out = Path::new("/project/.jazyk/same-second");
+        let (store, gs) = fixture(out);
+        let writer = StubRunner { record:true, failed:None, stopped:None, store:store.clone(), gs:gs.clone() };
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}), Default::default());
+        let batch = crate::runner::BatchRun { id:"same-second".into(), goals:vec![], executor:None };
+        writer.run_item(&batch, &trace);
+        let timestamp = "2026-10-30T12:00:00Z";
+        let mut ledger = Ledger::load(out);
+        ledger.entities.get_mut("cart").unwrap().recorded_at = Some(timestamp.into());
+        ledger.save(out);
+        assert_eq!(ledger.entities["cart"].record_sequence, 1);
+
+        struct SameSecondRunner(StubRunner);
+        impl crate::runner::SessionRunner for SameSecondRunner {
+            fn agent_name(&self) -> String { self.0.agent_name() }
+            fn set_build_token(&self, token: Option<String>) { self.0.set_build_token(token); }
+            fn run_item(&self, batch: &crate::runner::BatchRun, trace: &crate::session::Trace) -> crate::runner::SessionReport {
+                let report = self.0.run_item(batch, trace);
+                // Pin the display time after a real successful mark. The two
+                // records deterministically share a second without sleeping.
+                let mut ledger = Ledger::load(&self.0.store.out);
+                ledger.entities.get_mut("cart").unwrap().recorded_at = Some("2026-10-30T12:00:00Z".into());
+                ledger.save(&self.0.store.out);
+                report
+            }
+            fn ask(&self, system: &str, user: &str, label: &str, stage: &str) -> Result<String, String> {
+                self.0.ask(system, user, label, stage)
+            }
+            fn ask_traced(&self, system: &str, user: &str, label: &str, stage: &str, trace: Option<&crate::session::Trace>) -> Result<String, String> {
+                self.0.ask_traced(system, user, label, stage, trace)
+            }
+        }
+        let result = gen_session(&store, &SameSecondRunner(writer), &gs, "ent:cart", &["ent:cart".into()], &trace);
+        assert!(result.results[0].1.is_ok(), "{:?}", result.results);
+        let after = Ledger::load(out);
+        assert_eq!(after.entities["cart"].record_sequence, 2);
+        assert_eq!(after.entities["cart"].recorded_at.as_deref(), Some(timestamp));
+    }
+
+    #[test]
+    fn old_generation_checkpoint_and_ledger_keep_their_completion_semantics() {
+        let old = json!({
+            "session":{"batch":{"id":"g:generate:ent:cart","goals":[],"executor":null},"generation":1,"report":null},
+            "before":["2026-10-30T12:00:00Z"],"result":null
+        });
+        let mut state: GenSessionState = serde_json::from_value(old.clone()).unwrap();
+        assert!(state.before_sequences.is_none());
+        assert_eq!(serde_json::to_value(&state).unwrap(), old);
+        let mut row: EntityGen = serde_json::from_value(json!({
+            "factHash":"old", "recordedAt":"2026-10-30T12:00:00Z"
+        })).unwrap();
+        assert_eq!(row.record_sequence, 0);
+        assert!(serde_json::to_value(&row).unwrap().get("recordSequence").is_none());
+        row.record_sequence = 1;
+        assert!(!state.recorded(0, Some(&row)), "old sessions still compare their admitted timestamps");
+        row.recorded_at = Some("2026-10-30T12:00:01Z".into());
+        assert!(state.recorded(0, Some(&row)));
+        state.before_sequences = Some(vec![Some(1)]);
+        assert!(!state.recorded(0, Some(&row)), "new sessions ignore display time changes");
+        row.record_sequence = 2;
+        assert!(state.recorded(0, Some(&row)));
+    }
+
+    #[test]
+    fn exhausted_generation_receipt_refuses_before_mutating_source_or_ledger() {
+        let _scope = crate::vfs::Scope::enter(&BTreeMap::new());
+        let out = Path::new("/project/.jazyk/exhausted-generation-receipt");
+        let (store, gs) = fixture(out);
+        let file = gs.deliverable.join("cart.rs");
+        crate::vfs::write(&file, "fn cart() {}\n").unwrap();
+        let manifest = json!({"files":["cart.rs"],"tests":[]});
+        mark(&store, "ent:cart", None, &manifest, &gs).unwrap();
+        let mut ledger = Ledger::load(out);
+        ledger.entities.get_mut("cart").unwrap().record_sequence = u64::MAX;
+        ledger.save(out);
+        let before = crate::vfs::read(Ledger::path(out)).unwrap();
+        let source = "// req:shop-1 hash:abcdef12\nfn cart() {}\n";
+        crate::vfs::write(&file, source).unwrap();
+        assert!(mark(&store, "ent:cart", None, &manifest, &gs).unwrap_err().contains("sequence is exhausted"));
+        assert_eq!(crate::vfs::read_to_string(&file).unwrap(), source);
+        assert_eq!(crate::vfs::read(Ledger::path(out)).unwrap(), before);
     }
 
     #[test]
@@ -5108,7 +5225,25 @@ pub(crate) async fn run_selected(
 struct GenSessionState {
     session: progress::BatchProgress,
     before: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before_sequences: Option<Vec<Option<u64>>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    completed: std::collections::BTreeSet<usize>,
+    #[serde(default, skip_serializing_if = "record_sequence_is_zero")]
+    prior_tokens: u64,
     result: Option<GenSessionOutcome>,
+}
+
+impl GenSessionState {
+    fn recorded(&self, index: usize, row: Option<&EntityGen>) -> bool {
+        if self.completed.contains(&index) { return true; }
+        match &self.before_sequences {
+            Some(sequences) => sequences.get(index).is_some_and(|before| {
+                row.is_some_and(|row| row.record_sequence > before.unwrap_or(0))
+            }),
+            None => row.and_then(|row| row.recorded_at.as_ref()) != self.before[index].as_ref(),
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
@@ -5125,8 +5260,11 @@ async fn gen_session(
         tokens: 0,
         failed: Some(reason),
     };
+    // The admitted group keeps the pre-input fingerprint identity. Referenced
+    // bytes can change while a run is suspended, or become dependencies after a
+    // release. They belong to its current gate, never its recovery lookup key.
     let signature = json!({"settings":gs,"root":root,"ids":ids,
-        "facts":ids.iter().map(|id| fact_hash(store,id)).collect::<Vec<_>>()});
+        "facts":ids.iter().map(|id| fact_hash_base(store,id,&reqs_of_sorted(store,id))).collect::<Vec<_>>()});
     let key = progress::command_key("generation-session", &store.out, &signature);
     let mut saved = match progress::Progress::load(key, signature, || {
         let batch = crate::runner::BatchRun {
@@ -5158,6 +5296,10 @@ async fn gen_session(
                         .and_then(|row| row.recorded_at.clone())
                 })
                 .collect(),
+            before_sequences: Some(ids.iter().map(|id| ledger.entities.get(&slug_of(id))
+                .map(|row| row.record_sequence)).collect()),
+            completed: Default::default(),
+            prior_tokens: 0,
             result: None,
         }
     }) {
@@ -5170,54 +5312,85 @@ async fn gen_session(
     if let Err(reason) = saved.save().await {
         return error(reason);
     }
-    let report = match saved.data.session.report.clone() {
-        Some(report) => report,
-        None => match saved.data.session.committed_report(&store.out) {
+    loop {
+        let report = match saved.data.session.report.clone() {
             Some(report) => report,
-            None => runner.run_item(&saved.data.session.batch, trace).await,
-        },
-    };
-    if let Some(reason) = progress::interruption(&report) {
-        return error(reason);
+            None => match saved.data.session.committed_report(&store.out) {
+                Some(report) => report,
+                None => runner.run_item(&saved.data.session.batch, trace).await,
+            },
+        };
+        if let Some(reason) = progress::interruption(&report) {
+            return error(reason);
+        }
+        saved.data.session.report = Some(report.clone());
+        if let Err(reason) = saved.save().await {
+            return error(reason);
+        }
+        let after = Ledger::load(&store.out);
+        let current_settings = gs.current_for_store(store);
+        let results = ids
+            .iter()
+            .zip(&saved.data.before)
+            .enumerate()
+            .map(|(index, (id, _))| {
+                let result = if !saved.data.recorded(index, after.entities.get(&slug_of(id))) {
+                    Err(report.failed.clone().or_else(|| report.stopped.clone()).unwrap_or_else(||
+                        "The agent ended its session before recording completion".into()))
+                } else {
+                    gate(store, &current_settings, id, false)
+                        .map_err(|error| report.failed.clone().unwrap_or(error))
+                };
+                (id.clone(), result)
+            })
+            .collect::<Vec<_>>();
+        // A pre-input-fingerprint worker may have committed just before suspension.
+        // Its receipt survives, but its old base hash cannot prove the supplied input
+        // was used. Continue only those newly stale members in a fresh current batch.
+        // Save the transition before admitting any replacement tool/model operation.
+        if saved.data.before_sequences.is_none() && report.failed.is_none() && report.stopped.is_none() {
+            let failed: Vec<usize> = results.iter().enumerate()
+                .filter_map(|(index,(_, result))| result.is_err().then_some(index)).collect();
+            let refresh: Vec<usize> = failed.iter().copied().filter(|index| {
+                let id = &ids[*index];
+                let rids = reqs_of_sorted(store,id);
+                let base = fact_hash_base(store,id,&rids);
+                after.entities.get(&slug_of(id)).is_some_and(|row| row.fact_hash == base)
+                    && assets::referenced_assets(store,id,&rids).iter().any(|asset| asset.is_input())
+                    && fact_hash(store,id) != base
+            }).collect();
+            if !refresh.is_empty() && refresh.len() == failed.len() {
+                saved.data.completed.extend(results.iter().enumerate()
+                    .filter_map(|(index,(_,result))| result.is_ok().then_some(index)));
+                let targets: std::collections::BTreeSet<&str> = refresh.iter().map(|index| ids[*index].as_str()).collect();
+                let mut batch = saved.data.session.batch.clone();
+                batch.goals.retain(|goal| targets.contains(goal.target.as_str()));
+                saved.data.before = ids.iter().map(|id| after.entities.get(&slug_of(id))
+                    .and_then(|row| row.recorded_at.clone())).collect();
+                saved.data.before_sequences = Some(ids.iter().map(|id| after.entities.get(&slug_of(id))
+                    .map(|row| row.record_sequence)).collect());
+                saved.data.prior_tokens = saved.data.prior_tokens.saturating_add(report.tokens);
+                saved.data.session = progress::BatchProgress::new(batch,&store.out);
+                crate::session_recovery::remove_frame(&crate::session_recovery::batch_key(
+                    &store.out,&saved.data.session.batch.id));
+                if let Err(reason) = saved.save().await { return error(reason); }
+                continue;
+            }
+        }
+        let failed = if results.iter().any(|(_, result)| result.is_err()) {
+            report.failed
+        } else { None };
+        let outcome = GenSessionOutcome {
+            results,
+            tokens: saved.data.prior_tokens.saturating_add(report.tokens),
+            failed,
+        };
+        saved.data.result = Some(outcome.clone());
+        if let Err(reason) = saved.save().await {
+            return error(reason);
+        }
+        return outcome;
     }
-    saved.data.session.report = Some(report.clone());
-    if let Err(reason) = saved.save().await {
-        return error(reason);
-    }
-    let after = Ledger::load(&store.out);
-    let current_settings = gs.current_for_store(store);
-    let results = ids
-        .iter()
-        .zip(&saved.data.before)
-        .map(|(id, before)| {
-            let result = if after
-                .entities
-                .get(&slug_of(id))
-                .and_then(|row| row.recorded_at.clone())
-                == *before
-            {
-                Err(report.failed.clone().or_else(|| report.stopped.clone()).unwrap_or_else(||
-                    "The agent ended its session before recording completion".into()))
-            } else {
-                gate(store, &current_settings, id, false)
-                    .map_err(|error| report.failed.clone().unwrap_or(error))
-            };
-            (id.clone(), result)
-        })
-        .collect::<Vec<_>>();
-    let failed = if results.iter().any(|(_, result)| result.is_err()) {
-        report.failed
-    } else { None };
-    let outcome = GenSessionOutcome {
-        results,
-        tokens: report.tokens,
-        failed,
-    };
-    saved.data.result = Some(outcome.clone());
-    if let Err(reason) = saved.save().await {
-        return error(reason);
-    }
-    outcome
 }
 
 // What one generate session came to: the per-entity results, and what the session

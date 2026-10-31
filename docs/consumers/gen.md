@@ -9,7 +9,8 @@ Generation makes the semantic graph into the end product and the tests that hold
 its spec, in one workflow. It reads the graph through the
 [loaded set](../compiler/context.md#the-loaded-set) and the
 [read tools](../compiler/tools.md#read-tools), never the raw source files. The graph, not
-the prose, is the spec.
+the prose, is the spec. Local assets named by quoted facts are generation inputs.
+The worker receives their paths and digests with the graph.
 
 The end product is called the deliverable. It is usually code, but the workflow does not
 assume software: a book, a schematic, a course. Whatever the requirements describe,
@@ -579,6 +580,51 @@ anchor judgment.
 
 The trail is test or site → requirement id → `quote` → section.
 
+## Referenced assets
+
+Quoted requirements, their criteria, entity mentions and quoted attributes can name
+local input files. Markdown links and images, including reference-style links, name
+these inputs. The quote limits which references belong to the fact. Reference
+definitions may occur elsewhere in the same document. Inline code, fenced code and
+raw HTML do not declare inputs.
+Directory navigation links do not declare input files.
+
+- A relative URL resolves against its document. A leading `/` resolves against the
+  project root. Query strings and fragments do not select different file bytes.
+  Percent-encoded filenames retain their exact case.
+- A format handled as a document remains a document link. A non-document path in
+  the current set's Source, or a recorded generated file or build output, is an
+  output reference. Output references do not contribute input hashes. This keeps
+  links to generated pages and assets from reopening generation after its own writes.
+- Every other local non-document reference is an input. Its resolved project-relative
+  path, availability and SHA-256 digest of the exact bytes contribute to the owning
+  entity's `factHash`. A link target change or input byte change reopens generation
+  even when the extracted statement stays the same. Entities with no input references
+  retain their existing fingerprint.
+- References stay inside the selected project. Credentials, hidden files, Git and
+  compiler internals, nested projects and symlinks outside the project are blocked.
+  A public symlink into a nested project does not turn its files into parent inputs.
+  Cache trees such as `target` and `node_modules` cannot supply inputs. Recorded build
+  outputs there remain output references and their bytes are not read as inputs.
+  External URLs are not fetched and do not become local dependencies.
+- A missing, unreadable or blocked input remains explicit in the package. Generation
+  cannot record success while it remains unavailable. It must not invent a substitute.
+
+When a quote requires creating a linked output, such as `Home` linking to `index.html`,
+declare its intended project path in Source with the existing scoped matcher tools
+before recording generation. Then it is an output reference. Reload `begin_generation`
+after changing roles to obtain the current package and `factHash`. Supplied input
+assets stay inputs. Never reclassify one as Source to bypass a missing or unsafe input.
+
+`begin_generation` supplies `referencedAssets`, with each resolved path, `status`,
+`sha256` when readable, and the fact and document references that name it. The package
+contains metadata, not binary file contents. Read the exact input with the existing
+file tools. Copy it into the generated product when its layout needs another location.
+Preserve the supplied appearance and content. Saved project tasks can copy binary
+inputs through the project snapshot when text file tools cannot carry them, or when
+an older deliverable layout places the input outside its directory. Source write
+boundaries still apply.
+
 ## The ledger
 
 `gen/ledger.yaml` in the out directory is the single generation and verification
@@ -629,12 +675,14 @@ contradicted:                             # rows recorded over an open error dia
 entities:
   catalog:
     factHash: 9f2ab4c1d0e77a3b            # hash of name, definition, stereotype, attributes,
-                                          # and every referencing statement with its edges
+                                          # every referencing statement with its edges,
+                                          # and referenced input paths and byte digests
     requirements: [req:catalog-1, req:catalog-2, req:catalog-3]
     files:                                # deliverable-relative files this entity's
       - src/catalog.rs                    # generation produced or touched
       - tests/catalog.rs
     recordedAt: 2026-09-26T16:58:02Z      # when record_generation last landed for it
+    recordSequence: 4                    # advances on every accepted entity record
     unattached:                           # the unattached remainder, measured at record time
       files: 0                            # owned files no requirement row names
       lines: 14                           # significant lines outside every site's run
@@ -926,19 +974,35 @@ that pass, is exactly what verification is for.
 
 ## Incremental regeneration
 
-A rerun skips entities whose `factHash` is unchanged and whose recorded files still
+A rerun skips entities whose `factHash`, including [referenced inputs](#referenced-assets),
+is unchanged and whose recorded files still
 exist, so a docs edit regenerates only the entities it touched; a group session
 regenerates only the members whose facts moved
 ([grouping by component](#grouping-by-component)). An entity with no ledger entry is
 generation work through a missing or stale binding, or an `unimplemented` row
 ([the generate goal](../compiler/goals/generate.md#created-when)), so adopted code whose
-rows all read `verified` is never regenerated over. `jazyk gen` names the reason for
+rows all read `verified` is never regenerated over unless it names referenced inputs
+without an entity fingerprint. That entity generates once to establish its input
+baseline. `jazyk gen` names the reason for
 every entity it skips: unchanged, or current adopted rows with no generation work. It
-counts an entity as generated only when its record's `recordedAt` moved during the
-session; an entity whose session ended without recording is a failure naming why the
+counts an entity as generated only when its monotonic `recordSequence` advances during
+the session. `recordedAt` remains the display timestamp. Records without a sequence
+start at zero. Saved sessions from before sequence receipts keep their timestamp-based
+completion check; new sessions save the admitted sequences. Two records in the same
+clock second remain distinct completions. An entity whose session ended without
+recording is a failure naming why the
 session stopped (a rate limit, the round budget, a cancel), never a regeneration, since a
 run under an exhausted quota once printed "generated" for an entity whose record was the
 day before's.
+An admitted generation session keeps its identity across referenced input changes and
+releases that add input fingerprints. Its identity uses the graph facts admitted for
+the group. Input bytes are checked by the current generation gate, not by the saved
+session's lookup key. A resumed tool call keeps its retained reply and request identity.
+An old completed session whose records lack newly recognized input fingerprints
+continues with a checkpointed generation session for those entities. Already current
+members remain complete. The old record does not count as current input evidence.
+The new session must read the supplied inputs and record their current fingerprint.
+
 `--force` regenerates everything. A regeneration overwrites the entity's recorded file
 set: files the previous generation recorded that the new manifest omits are removed
 from the deliverable (snapshotted first, see below), so a test file under a new name

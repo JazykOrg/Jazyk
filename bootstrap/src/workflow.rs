@@ -484,6 +484,18 @@ mod tests {
         let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
         let mut store = Store::load(&project.out);
         graph_ready(&project, &store).unwrap();
+        crate::vfs::write(project.root.join("docs/new.md"), [0xff]).unwrap();
+        assert!(graph_ready(&project, &store).unwrap_err().starts_with("Documents changed."),
+            "A new unreadable document cannot disappear from readiness");
+        store.sync_docs(&crate::reconcile::parse_all(&project).0);
+        assert!(graph_ready(&project, &store).unwrap_err().starts_with("Documents changed."));
+        crate::vfs::remove_file(project.root.join("docs/new.md")).unwrap();
+        crate::vfs::write(project.root.join("docs/main.md"), [0xff]).unwrap();
+        store.sync_docs(&crate::reconcile::parse_all(&project).0);
+        assert!(graph_ready(&project, &store).unwrap_err().starts_with("Documents changed."),
+            "Retaining the previous section tree does not make unreadable input current");
+        crate::vfs::write(project.root.join("docs/main.md"), "# Site\n\nSite shows item 1.\n").unwrap();
+        graph_ready(&project, &store).unwrap();
         crate::vfs::write(project.root.join("docs/main.md"), "# Site\n\nThe documents changed.\n").unwrap();
         assert!(graph_ready(&project, &store).unwrap_err().starts_with("Documents changed."));
         crate::vfs::write(project.root.join("docs/main.md"), "# Site\n\nSite shows item 1.\nSite shows another item.\n").unwrap();
@@ -520,7 +532,12 @@ mod tests {
     #[test]
     fn a_fresh_workflow_writes_source_before_tests_without_a_binding_phase() {
         use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-        let files = pending_workspace(1, 1, false);
+        let mut files = pending_workspace(1, 1, false);
+        let config = String::from_utf8(files[".jazyk/jazyk.toml"].clone()).unwrap()
+            .replace("docs = ['docs/**']", "docs = ['**', '!src/**', '!tests/**']");
+        files.insert(".jazyk/jazyk.toml".into(), config.into_bytes());
+        files.insert("logo.svg".into(), br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec());
+        files.insert("metadata.json".into(), br#"{"name":"UTF-8 asset"}"#.to_vec());
         let (fact_hash, test_name, criteria_file) = {
             let _fs = crate::vfs::Scope::enter(&files);
             let project = crate::document_sets::Workspace::load(Path::new("/project")).unwrap().resolve(None).unwrap();
@@ -550,6 +567,10 @@ mod tests {
         let (result, files) = workflow_request(files, json!([{"action":"compile"},{"action":"generate"}]), &execution);
         assert_eq!(result["report"]["state"], "done", "{result}");
         assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 2);
+        assert!(result["report"]["steps"][0]["result"]["verdict"].as_str().unwrap().starts_with("converged"));
+        assert_eq!(result["report"]["steps"][0]["result"]["sessions"], 0);
+        assert_eq!(result["report"]["steps"][0]["result"]["warnings"], 2,
+            "Unsupported assets keep their warnings without blocking generation freshness");
         assert_eq!(result["report"]["steps"][1]["result"]["regenerated"], 1);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(files["src/site.md"], b"# Site\n\nItem 1 is visible.\n");

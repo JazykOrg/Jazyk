@@ -17,7 +17,8 @@ whose `detail.goal` is `generate`, written whenever the entity's facts differ fr
 the [ledger](../../consumers/gen.md#the-ledger):
 
 - `facts-changed`: the entity has a ledger entry whose `factHash` (name, definition,
-  stereotype, attributes, every referencing statement with its edges) differs from
+  stereotype, attributes, every referencing statement with its edges, and
+  [referenced input paths and byte digests](../../consumers/gen.md#referenced-assets)) differs from
   the live graph. `detail.changed` lists
   the requirement ids added, removed, or reworded since the last generation.
 - `files-gone`: the entity has a ledger entry whose facts match, but a file it records
@@ -36,11 +37,15 @@ the [ledger](../../consumers/gen.md#the-ledger):
 - `unbound-requirements`: a requirement needs a current binding or criterion test.
   Generation can inspect existing source or create implementation before selecting
   and recording its tests. A failing test against absent source is not required.
+- `referenced-inputs`: an adopted entity names local input assets but has no entity
+  fingerprint. Generate once to establish the input baseline, even when its bindings
+  already pass. Later input path or byte changes use `facts-changed`.
 
 The reasons are checked in that order and the first that holds names the goal. An
 entity with no ledger entry becomes generation work through missing bindings or
 `unimplemented` rows. An adopted entity whose bindings are current and whose rows
-all read `verified` or `failing` derives nothing. An entity with no requirement derives nothing.
+all read `verified` or `failing` derives nothing unless it needs that referenced-input
+baseline. An entity with no requirement derives nothing.
 `jazyk gen --force` regenerates the named entities against the recorded decision
 regardless of the ledger
 ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)).
@@ -121,7 +126,9 @@ ledger, not the model's word:
   ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)) and
   names them in its reply. A file outside current Source is preserved.
 - A session that recorded and ended without marking still resolves the goal at the
-  next derivation (the run reads the record's `recordedAt` to tell the two apart). A
+  next derivation. The run compares the entity's monotonic `recordSequence`, so a
+  second record within the same timestamp second still proves completion. An older
+  saved session without sequence receipts keeps its `recordedAt` comparison. A
   session that never recorded has not resolved it: retry once with
   a fresh session, then park
   ([resolving, failing, parking](../sessions.md#resolving-failing-parking)).
@@ -278,8 +285,9 @@ serves these:
   `truncatedLine` names that line. The reply states that the rest of the line was
   omitted. `nextLine` advances to a following line only when one exists.
   Reads reject hidden paths, credential paths, Git internals and private compiler
-  state, even under a broad Source selection. The same rule checks the resolved
-  symlink target. Ordinary documents, build evidence and explicit `.github` files
+  state and nested projects, even under a broad Source selection. The same rule
+  checks the resolved symlink target and its owning project. Ordinary documents,
+  build evidence and explicit `.github` files
   remain readable without requiring them to be Source.
 - `write_text_file({path, content, append?})`: write one file, or append to it when
   `append` is true, so a long file is written in parts that fit a model's reply cap.

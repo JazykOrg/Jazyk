@@ -4874,6 +4874,7 @@ mod tests {
                 files: vec!["handbook/claim.md".into()],
                 unattached: None,
                 recorded_at: None,
+                record_sequence: 0,
             },
         );
         ledger.save(&out);

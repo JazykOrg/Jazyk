@@ -1385,6 +1385,7 @@ mod tests {
                 files: vec!["tests/shop.rs".into()],
                 unattached: None,
                 recorded_at: None,
+                record_sequence: 0,
             },
         );
         ledger.save(&s.out);

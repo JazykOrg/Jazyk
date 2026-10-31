@@ -1137,16 +1137,41 @@ pub fn safe_relative(root: &Path, relative: &str) -> bool {
     if !eligible(relative) {
         return false;
     }
+    contained_relative(root, relative)
+}
+
+// Readers of recorded outputs need containment without treating build caches as
+// authored inputs. Callers still apply their credential and role-specific policy.
+pub(crate) fn contained_relative(root: &Path, relative: &str) -> bool {
+    if !allowed_components(relative) {
+        return false;
+    }
     let Ok(base) = root.vcanonicalize() else {
         return false;
     };
     let path = root.join(relative);
+    let mut checked_destination = false;
     for ancestor in path.ancestors().take_while(|p| *p != root) {
         if ancestor.vis_dir() && ancestor.join(CONFIG).vexists() {
             return false;
         }
-        if ancestor.vexists() && !ancestor.vcanonicalize().is_ok_and(|p| p.starts_with(&base)) {
-            return false;
+        if ancestor.vexists() {
+            let Ok(resolved) = ancestor.vcanonicalize() else { return false };
+            if !resolved.starts_with(&base) { return false; }
+            if !checked_destination {
+                let relative = resolved.strip_prefix(&base).expect("contained destination");
+                if !relative.as_os_str().is_empty()
+                    && !allowed_components(&relative.to_string_lossy().replace('\\', "/")) {
+                    return false;
+                }
+                // The deepest existing destination also owns files reached through
+                // a public alias. Its real project boundary survives the alias.
+                if resolved.ancestors().take_while(|p| *p != base.as_path()).any(|ancestor|
+                    ancestor.vis_dir() && ancestor.join(CONFIG).vexists()) {
+                    return false;
+                }
+                checked_destination = true;
+            }
         }
     }
     true
@@ -1491,6 +1516,30 @@ mod tests {
             assert!(!safe_relative(&f.0, "deliverable/.github/escape/new.yml"));
             assert!(!gs.allows_source("deliverable/.github/escape/new.yml"));
             assert!(!Workspace::load(&f.0).unwrap().files().iter().any(|p| p.contains("/escape/")));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn public_aliases_keep_nested_project_source_boundaries_for_existing_and_new_files() {
+        let f = Fixture::new();
+        crate::vfs::create_dir_all(f.0.join(".jazyk")).unwrap();
+        crate::vfs::write(f.0.join(CONFIG), "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['docs/**']\nsource = ['deliverable/**']\n").unwrap();
+        let nested = f.0.join("deliverable/nested");
+        crate::vfs::create_dir_all(nested.join(".jazyk")).unwrap();
+        crate::vfs::write(nested.join(CONFIG), "version = 1\nsets = []\n").unwrap();
+        crate::vfs::write(nested.join("logo.svg"), "NESTED_PROJECT_INPUT").unwrap();
+        std::os::unix::fs::symlink(nested.join("logo.svg"), f.0.join("deliverable/public.svg")).unwrap();
+        std::os::unix::fs::symlink(&nested, f.0.join("deliverable/alias")).unwrap();
+        crate::vfs::write(f.0.join("deliverable/.env"), "PRIVATE_INPUT").unwrap();
+        std::os::unix::fs::symlink(f.0.join("deliverable/.env"), f.0.join("deliverable/private.svg")).unwrap();
+        let project = Workspace::load(&f.0).unwrap().resolve(Some("ds_a")).unwrap();
+        let gs = crate::gen::GenSettings::resolve(&project);
+        for path in ["deliverable/nested/logo.svg", "deliverable/nested/new.svg", "deliverable/public.svg",
+            "deliverable/alias/logo.svg", "deliverable/alias/new.svg", "deliverable/private.svg"] {
+            assert!(!contained_relative(&f.0, path), "{path}");
+            assert!(!safe_relative(&f.0, path), "{path}");
+            assert!(!gs.allows_source(path), "{path}");
         }
     }
 

@@ -4319,15 +4319,17 @@ impl ToolSession {
                 let path = self.deliverable_path(&rel)?;
                 // Listing and task snapshots exclude credentials and internal state.
                 // A guessed path, including an alias through a symlink, keeps that fence.
+                let base = self.deliverable_root();
                 let readable = |relative: &str| crate::task_runtime::safe_path(relative)
                     && crate::document_sets::allowed_components(relative)
-                    && !crate::task_runtime::protected(relative);
-                let resolved = path.strip_prefix(self.deliverable_root())
+                    && !crate::task_runtime::protected(relative)
+                    && crate::document_sets::contained_relative(&base, relative);
+                let resolved = path.strip_prefix(&base)
                     .map(|relative| relative.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default();
                 if !readable(rel.trim().trim_start_matches("./")) || !readable(&resolved) {
                     return Err(ToolError::new("protected-path", format!(
-                        "`{rel}` is a protected path; file reads exclude credentials, hidden paths, Git internals and private compiler state"
+                        "`{rel}` is a protected path; file reads exclude credentials, hidden paths, Git internals, private compiler state and nested projects"
                     )));
                 }
                 let text = crate::vfs::read_to_string(&path).map_err(|e| {
@@ -12545,6 +12547,26 @@ mod tests {
         crate::vfs::remove_dir_all(root).ok();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn public_source_alias_cannot_overwrite_or_read_private_environment() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".jazyk")).unwrap();
+        std::fs::create_dir_all(root.path().join("deliverable")).unwrap();
+        std::fs::write(root.path().join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['docs/**']\nsource = ['deliverable/**']\n").unwrap();
+        let private = root.path().join("deliverable/.env");
+        std::fs::write(&private, "PRIVATE_ENVIRONMENT").unwrap();
+        std::os::unix::fs::symlink(&private, root.path().join("deliverable/public.svg")).unwrap();
+        let project = crate::document_sets::Workspace::load(root.path()).unwrap().resolve(Some("ds_a")).unwrap();
+        let mut tools = ToolSession::new(Store::load(&project.out), WorkScope::serving("generate"), 20, 8000);
+        tools.gen = crate::gen::GenSettings::resolve(&project);
+        let error = tools.dispatch("write_text_file", &json!({"path":"deliverable/public.svg", "content":"changed"})).unwrap_err();
+        assert_eq!(error.rule, "source-selection");
+        let error = tools.dispatch("read_text_file", &json!({"path":"deliverable/public.svg"})).unwrap_err();
+        assert_eq!(error.rule, "protected-path");
+        assert_eq!(std::fs::read_to_string(&private).unwrap(), "PRIVATE_ENVIRONMENT");
+    }
+
     #[test]
     fn file_reads_bound_single_utf8_lines_and_resume_at_following_lines() {
         let root = std::env::temp_dir().join(format!("jazyk-read-bound-{}-{}",
@@ -12612,6 +12634,7 @@ mod tests {
                 files: vec!["departments.md".into()],
                 unattached: None,
                 recorded_at: None,
+                record_sequence: 0,
             },
         );
         ledger.save(&s.out);

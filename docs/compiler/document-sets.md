@@ -103,7 +103,9 @@ folder names.
   file tools. They still need a source selection and cannot overwrite any set's
   documents. Other hidden components remain excluded, including `.git`, `.jazyk`,
   `.env`, `.ssh`, and `.aws`. Traversal, escaping symlinks, and nested project
-  boundaries remain excluded. This allowance does not change document discovery.
+  boundaries remain excluded. A symlink alias retains its resolved nested-project
+  boundary, including when the target file is new. This allowance does not change
+  document discovery.
 - A document can belong to several sets. Preview lists these overlaps and explains
   that compilation and cost occur separately. Saving deliberately retains them.
   Editing that file dirties every claiming set.

@@ -137,18 +137,22 @@ pub fn consume_decompile(proj: &Project, out: &Path, scope: &str) {
     c.save(out);
 }
 
-// The current content hash of every matched document, the compile approval unit.
+// The current content hash of every supported document, the compile approval unit.
+// Read failures stay present with a non-hash marker so a missing or retained tree
+// cannot make unreadable current input ready. Mirrors parsing.md#format-handlers.
 pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
     proj.doc_files()
         .iter()
-        .filter_map(|f| {
+        .filter(|f| crate::md::supported_format(f))
+        .map(|f| {
             let rel = f
                 .strip_prefix(&proj.root)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| f.to_string_lossy().to_string());
-            crate::md::read_doc(f)
-                .ok()
-                .map(|t| (rel, crate::model::hash_hex(&t)))
+            let hash = crate::md::read_doc(f)
+                .map(|t| crate::model::hash_hex(&t))
+                .unwrap_or_else(|_| "unreadable".into());
+            (rel, hash)
         })
         .collect()
 }
@@ -536,6 +540,69 @@ pub fn task_leases(out: &Path) -> BTreeMap<String, Lease> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_hash_inventory_uses_the_same_handlers_as_parsing() {
+        let _fs = crate::vfs::Scope::enter(&BTreeMap::from([
+            (".jazyk/jazyk.toml".into(), b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['**']\n".to_vec()),
+            ("main.md".into(), b"# Site\n\nA site.\n".to_vec()),
+            ("notes.MARKDOWN".into(), b"# Notes\n\nDetails.\n".to_vec()),
+            ("example.txt".into(), br#"{"name":"supported text document"}"#.to_vec()),
+            ("example.json".into(), br#"{"name":"unsupported asset"}"#.to_vec()),
+            ("logo.svg".into(), br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec()),
+        ]));
+        let project = crate::document_sets::Workspace::load(Path::new("/project"))
+            .unwrap().resolve(None).unwrap();
+        let hashes = current_doc_hashes(&project);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let parsed_hashes: BTreeMap<_, _> = parsed.into_iter()
+            .map(|(path, (hash, _))| (path, hash)).collect();
+        assert_eq!(hashes, parsed_hashes);
+        assert_eq!(hashes.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["example.txt", "main.md", "notes.MARKDOWN"]);
+        release(&project, &project.out, Some("compile"));
+        assert_eq!(Control::load(&project, &project.out).released.compile, hashes);
+        let findings = crate::reconcile::checks(&crate::store::Store::default(), &project);
+        for path in ["example.json", "logo.svg"] {
+            assert!(findings.iter().any(|finding| finding.0 == "unsupported-format"
+                && finding.2 == "warning" && finding.1 == [path]), "{path}");
+        }
+    }
+
+    #[test]
+    fn document_hash_inventory_keeps_new_and_stored_unreadable_inputs() {
+        let _fs = crate::vfs::Scope::enter(&BTreeMap::from([
+            (".jazyk/jazyk.toml".into(), b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\n".to_vec()),
+            ("docs/main.md".into(), b"# Site\n\nA site.\n".to_vec()),
+        ]));
+        let mut project = crate::document_sets::Workspace::load(Path::new("/project"))
+            .unwrap().resolve(None).unwrap();
+        let mut store = crate::store::Store { out: project.out.clone(), ..Default::default() };
+        store.sync_docs(&crate::reconcile::parse_all(&project).0);
+        store.save();
+        let before = current_doc_hashes(&project);
+        crate::vfs::write(project.root.join("docs/main.md"), [0xff, 0xfe]).unwrap();
+        crate::vfs::write(project.root.join("docs/new.txt"), [0xff]).unwrap();
+        project.explicit_files = Some(vec![project.root.join("docs/main.md"),
+            project.root.join("docs/new.txt"), project.root.join("docs/missing.md")]);
+        let hashes = current_doc_hashes(&project);
+        assert_eq!(hashes.len(), 3, "A failed read must not disappear from freshness checks");
+        assert_ne!(hashes["docs/main.md"], before["docs/main.md"]);
+        assert!(hashes.values().all(|hash| hash.chars().any(|c| !c.is_ascii_hexdigit())),
+            "Unreadable markers cannot equal any actual content hash");
+        let parsed = crate::reconcile::parse_all(&project).0;
+        assert_eq!(parsed.len(), 1, "Parsing must preserve the previous tree only");
+        assert_eq!(parsed["docs/main.md"].0, before["docs/main.md"]);
+        let findings = crate::reconcile::checks(&store, &project);
+        for path in hashes.keys() {
+            assert!(findings.iter().any(|finding| finding.0 == "parse-error"
+                && finding.2 == "error" && finding.1 == [path.as_str()]), "{path}");
+        }
+        release(&project, &project.out, Some("compile"));
+        assert_ne!(Control::load(&project, &project.out).released.compile["docs/main.md"],
+            store.docs["docs/main.md"].content_hash,
+            "A release must not approve an unreadable file's retained content");
+    }
 
     #[test]
     fn replacement_build_has_a_new_token_and_cannot_be_renewed_by_its_predecessor() {

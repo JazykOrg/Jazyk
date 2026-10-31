@@ -27,6 +27,11 @@ The service owns project scheduling and snapshot persistence.
   generation and [binding](../consumers/bind.md). `released.decompile`: the list of
   scopes approved for [decompilation](../consumers/decompile.md#triggering).
 
+The document hash inventory follows the parser's
+[format handlers](./parsing.md#format-handlers). Unsupported matched files are not
+documents. Supported files that cannot be read carry an unreadable marker instead
+of a content hash, so a release cannot make their stored content current.
+
 In `auto` mode nothing is gated. In `manual` mode a change still updates the board
 (dirty sets are hashing, no model runs), but its goals carry `blocked {on: release}`
 until a release approves them:

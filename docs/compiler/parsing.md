@@ -30,6 +30,14 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
   `empty-file` the same way: with no sections there is nothing for parsing to attach a
   diagnostic to.
 
+Compile approvals and downstream readiness use the same format eligibility as
+parsing. A readable asset matched by a broad docs glob does not become a document
+because its bytes are UTF-8. Unsupported files remain warnings, outside the document
+hash inventory. A supported file that cannot be read stays in the inventory as
+unreadable. It cannot match a stored content hash, including when parsing retains
+its previous section tree. A new unreadable document also blocks downstream work.
+The file must read successfully before the graph can be current with its input.
+
 ## Section tree
 
 A heading is one to six `#` followed by a space, a tab, or the end of the line,

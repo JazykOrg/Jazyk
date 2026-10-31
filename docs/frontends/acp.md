@@ -8,7 +8,8 @@ configuration, aggregate reads, management commands, and grouped compilation.
 Jazyk speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) and
 sits between ACP clients and ACP agents. An ACP client is an editor or IDE (Zed,
 JetBrains, or jazyk's own [GUI](./gui.md)). An ACP agent is a coding agent (OpenCode,
-Claude Code, Codex through `codex-acp`, or jazyk's [embedded agent](#the-embedded-agent)).
+Claude Code through `claude-agent-acp`, Codex through `codex-acp`, or jazyk's
+[embedded agent](#the-embedded-agent)).
 
 ACP is the single AI path. Compilation, [binding](../consumers/bind.md),
 [generation](../consumers/gen.md), verification judgment, and chat all run as ACP
@@ -45,14 +46,43 @@ jazyk is specific to any agent.
 A profile names a command, arguments, extra environment, and whether jazyk must serve
 file tools to it (`serve_files`, for agents that bring no editor of their own).
 
+Some profiles are built in, so naming them is enough (`[acp] agent = "claude"`):
+
+| name | agent | command |
+|---|---|---|
+| `embedded` | jazyk's [embedded agent](#the-embedded-agent) | `jazyk agent` |
+| `claude` | Claude Code | `npx --yes @agentclientprotocol/claude-agent-acp@0.99.0`, with `CLAUDECODE` cleared |
+| `codex` | Codex | `npx --yes @agentclientprotocol/codex-acp@2.4.0` |
+| `opencode` | OpenCode | `opencode acp` |
+
+The adapters are pinned to the versions whose steering contract the host knows
+([steering](#steering-adapter-compatibility)). An `[acp.agents.<name>]` table in the
+project or the global config shadows the built-in profile of the same name.
+
+### Switching agents
+
+The IDE proxy holds one downstream connection per agent, spawned the first time a
+conversation needs it. A conversation stays on the agent it opened on for its whole
+life; only new conversations follow a switch. `/agent <name>` in a chat records the
+name in `[acp] agent` and makes it the agent new conversations open on, at once,
+without restarting the IDE's Jazyk agent. The reply names both agents: the one new
+conversations run on and the one the current conversation stays on. The IDE's
+`initialize` request is replayed to each agent spawned after the first; the
+capabilities the IDE saw are the first agent's. A reopened conversation
+([session store](#session-store)) continues on the current agent.
+
 ### Claude Code
 
-Claude Code runs as an ACP agent through Zed's adapter. The profile:
+Claude Code runs as an ACP agent through the `claude-agent-acp` adapter. The
+built-in `claude` profile is equivalent to:
 
 ```toml
 [acp.agents.claude]
 command = "npx"
-args = ["--yes", "@zed-industries/claude-code-acp"]
+args = ["--yes", "@agentclientprotocol/claude-agent-acp@0.99.0"]
+
+[acp.agents.claude.env]
+CLAUDECODE = ""
 ```
 
 What the adapter does that a session must account for:
@@ -62,20 +92,9 @@ What the adapter does that a session must account for:
   drives it, and the adapter's Claude Code inherits it. The refusal reaches jazyk as
   `session/new` answering `Query closed before response received`; the reason is
   on the adapter's stderr (`Claude Code cannot be launched inside another Claude
-  Code session`), which the session failure now quotes. The profile clears the
-  variable, which is what Claude Code itself says to do:
-
-  ```toml
-  [acp.agents.claude]
-  command = "npx"
-  args = ["--yes", "@zed-industries/claude-code-acp"]
-
-  [acp.agents.claude.env]
-  CLAUDECODE = ""
-  ```
-
-  The settings reader takes `env` as a subtable, as above; an inline table on the
-  `env` key is not read.
+  Code session`), which the session failure quotes. The profile clears the
+  variable, which is what Claude Code itself says to do. A profile written by hand
+  takes `env` as a subtable, as above; an inline table on the `env` key is not read.
 
 - Its `initialize` reply advertises `mcpCapabilities: {http: true, sse: true}`, so
   worker sessions on this profile get the serving over
@@ -490,7 +509,7 @@ what setup remains. The catalog:
 | `/init` | Set the project up: scaffold what is missing, then state what is still unanswered (agent, model) and the command that answers it. |
 | `/config` | The project's settings and where each came from. With arguments (`/config llm.model qwen3`), a minimal edit to `jazyk.toml`. |
 | `/model` | The models the endpoint serves, the current one marked. With a name, pins it in `jazyk.toml` and applies it to this session where the agent takes the `model` config option. |
-| `/agent` | The agents jazyk can drive (built-in and configured), the current one marked. With a name, records it in `jazyk.toml`; the switch takes effect when the IDE restarts the jazyk agent. |
+| `/agent` | The agents jazyk can drive (built-in and configured), the current one marked. With a name, records it in `jazyk.toml`; in the IDE proxy new conversations open on it at once ([switching agents](#switching-agents)), in the GUI once its settings reload. |
 | `/status` | The last build: verdict with its counts, graph size, open findings, board counts. |
 | `/board` | The goal board as `jazyk compile` would derive it now: open goals by class and kind, the batches the scheduler would form, blocked goals with their reasons, parked and failed goals. The verdict when the board is empty. |
 | `/preview` | The next session's prompt, exactly as the model would receive it. With a goal or target (`/preview ent:order`), the batch that goal would join. What [`jazyk preview`](../compiler/sessions.md#preview) prints. |
@@ -619,8 +638,8 @@ The clients jazyk writes config for:
   its kind: `"type": "custom"` alongside `command` and `args`.
 - `jetbrains`: `~/.jetbrains/acp.json`, under `agent_servers`, with `command` and
   `args` and no kind.
-- `vscode`: the user `settings.json`, under `acp.agents`, read by the ACP client
-  extension (VS Code hosts no agent of its own).
+- `vscode`: the user `settings.json`, under `acp.agents`, read by the ACP Client
+  extension (`formulahendry.acp-client`; VS Code hosts no agent of its own).
 
 The clients jazyk prints a snippet for, because their config is a program (Neovim's
 Lua, Emacs' Lisp) or another application's private state (the Obsidian plugin's vault

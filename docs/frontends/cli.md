@@ -13,38 +13,100 @@ build, inspects the [graph store](../compiler/graph.md) and the
 
 ### jazyk
 
-Bare `jazyk`, no command, is the launcher, not the help:
+Bare `jazyk`, no command, is the launcher, not the help. It lists every way to work
+on the project in three groups and starts the one picked:
 
-- Outside a project (no `jazyk.toml` above the working directory) it runs
-  [`jazyk init`](#jazyk-init). A non-interactive stdin prints the one-line hint (`no
-  jazyk.toml above <dir>; run jazyk init`) and exits `1` instead, so a script never
-  lands in a prompt.
-- Inside a project it prints the [status](#jazyk-status) lines (the store, the
-  verdict, the board, coverage), then a numbered list of ways to start working, and
-  runs the chosen one. Each choice verifies its own setup first and then starts the
-  program, so one pick is the whole path from a fresh checkout to a running tool:
+- Web: the jazyk.dev page over the local API.
+- IDEs: the editor with the language server ([LSP](./lsp.md)) where the editor has
+  the Jazyk extension, and the Jazyk agent ([ACP](./acp.md)) where the editor hosts
+  ACP agents.
+- Coding agents: the agent with jazyk's tools over [MCP](./mcp.md).
 
-  | choice | verifies | then runs |
-  |---|---|---|
-  | `gui` | nothing | `jazyk gui` |
-  | `claude` | `.mcp.json` carries the `jazyk` server (the [init MCP step](#jazyk-init) for Claude Code) | `claude` |
-  | `codex` | `codex mcp list` names `jazyk`, else `codex mcp add jazyk -- jazyk mcp all` | `codex` |
-  | `gemini` | `.gemini/settings.json` carries the server | `gemini` |
-  | `cursor` | `.cursor/mcp.json` carries the server | `cursor .` |
-  | `vscode` | `.vscode/mcp.json` carries the server, the ACP entry is registered ([`jazyk acp install vscode`](#jazyk-acp)), and the Jazyk extension is installed (`code --list-extensions` names `jazyk.jazyk`; when it does not, the path to its `.vsix` and the `code --install-extension` line are printed and the launch goes on) | `code .` |
-  | `jetbrains` | the ACP entry is registered (`jazyk acp install jetbrains`) | `idea .` |
-  | `zed` | the ACP entry is registered (`jazyk acp install zed`) | `zed .` |
-  | `compile` | nothing | `jazyk compile` |
+Inside a project it prints the [status](#jazyk-status) lines (the store, the verdict,
+the board, coverage) first. The list follows: a heading per group, then one row per
+choice with its short name and full name, and a dim `not installed` beside a choice
+whose program jazyk cannot find. The up and down arrows (or `j` and `k`) move, a
+letter jumps to the next row whose name starts with it, enter starts the choice, and
+`q`, escape, or control-C quit with exit `0`. A list taller than the terminal scrolls
+with the cursor.
 
-  A program that is not on `PATH` is named with where to get it, exit `1`; the
-  setup it would have needed is still written, so the next pick after installing it
-  starts straight away. The launched program inherits the terminal and its exit code
-  is jazyk's. A non-interactive stdin prints the status and the list with the command
-  each choice runs, and exits `0`.
+Every short name is also a command: `jazyk claude` starts Claude Code without the
+menu. Picking a row and typing its name do the same thing: set the choice up, then
+start it. The setup is idempotent. An entry that is already current is left alone;
+a stale one (another command, other arguments) is corrected in place; every file is
+merged, keeping its comments, formatting, and other entries. Each written or corrected
+file is named on its own line. The `jazyk` command in every entry is the name the user
+runs when it resolves to this binary on `PATH`, the absolute path otherwise (the
+[registration rule](./acp.md#registration)). Every MCP entry serves
+`jazyk mcp all`, every lifecycle toolset in one serving
+([toolsets](./mcp.md#toolsets)).
 
-`jazyk launch [choice]` is the same launcher by name, for scripts and for skipping the
-menu: `jazyk launch claude`. Without a choice it behaves as bare `jazyk` inside a
-project. A choice jazyk does not know is a usage error.
+| choice | name | sets up | then runs |
+|---|---|---|---|
+| `gui` | jazyk.dev web UI | nothing | [`jazyk gui`](#jazyk-gui) |
+| `vscode` | Visual Studio Code | the Jazyk extension (LSP), the ACP Client extension (`formulahendry.acp-client`), and the ACP registration ([`jazyk acp install vscode`](#jazyk-acp)) | `code <root>` |
+| `cursor` | Cursor | the Jazyk extension (LSP), and `.cursor/mcp.json` for Cursor's own agent | `cursor <root>` |
+| `zed` | Zed | the ACP registration (`jazyk acp install zed`) | `zed <root>` |
+| `idea` | IntelliJ IDEA | the ACP registration (`jazyk acp install jetbrains`) | the IDE on `<root>` |
+| `phpstorm` | PhpStorm | the same | the same |
+| `webstorm` | WebStorm | the same | the same |
+| `pycharm` | PyCharm | the same | the same |
+| `goland` | GoLand | the same | the same |
+| `rustrover` | RustRover | the same | the same |
+| `clion` | CLion | the same | the same |
+| `rider` | Rider | the same | the same |
+| `rubymine` | RubyMine | the same | the same |
+| `claude` | Claude Code | `.mcp.json`, and `jazyk` in `enabledMcpjsonServers` of `.claude/settings.local.json` | `claude` |
+| `codex` | Codex CLI | `.codex/config.toml` (`[mcp_servers.jazyk]`) | `codex` |
+| `gemini` | Gemini CLI | `.gemini/settings.json` | `gemini` |
+| `opencode` | OpenCode | `opencode.json` (`opencode.jsonc` when that is the file the project has) | `opencode` |
+| `pi` | Pi | `.pi/mcp.json` | `pi` |
+| `droid` | Factory Droid | `.factory/mcp.json` | `droid` |
+
+What each choice needs to know about its program:
+
+- The Jazyk extension is installed from the newest `jazyk-<version>.vsix` in the
+  checkout the binary was built in (`bootstrap/editors/vscode/`), when the editor
+  lists no `jazyk.jazyk` or an older version of it. A binary with no checkout beside
+  it says how to build the extension and goes on: the editor still starts, without
+  the language server.
+- A JetBrains IDE starts through its Toolbox script (`idea`, `phpstorm`, ...) on
+  `PATH` or in the Toolbox scripts folder, else, on macOS, through its application
+  bundle in `/Applications` or `~/Applications`. All JetBrains IDEs share one ACP
+  registration (`~/.jetbrains/acp.json`).
+- Claude Code, Codex, and Pi read project configuration only in a folder the person
+  trusts, and each asks for that trust on its first start in the folder. Claude Code
+  honors the approval in `.claude/settings.local.json` after it, so it asks nothing
+  more. Every entry is project-scoped: no choice writes a coding agent's global MCP
+  configuration.
+
+An IDE runs the Jazyk agent, and the Jazyk agent drives a coding agent of its own
+([agents](./acp.md#agents)). When the project's `jazyk.toml` names none (`[acp]
+agent`), an IDE choice asks which one first, in the same kind of list: the built-in
+agents and the profiles the project or the global config defines, the default
+(`embedded`) under the cursor. The answer lands in `[acp] agent`, so the question is
+asked once per project. `--agent NAME` answers it without the list, and records the
+name even when one is set. Quitting the question starts nothing. Later,
+`/agent <name>` in the IDE's Jazyk chat switches it
+([switching agents](./acp.md#switching-agents)).
+
+Outside a project (no `jazyk.toml` above the working directory) the list is the same,
+headed by a line saying that a choice initializes the working directory: the
+`jazyk.toml` and `.jazyk/` that [`jazyk init`](#jazyk-init) writes, without its
+questions. `gui` needs no project and initializes nothing. The home directory and the
+file system root are never initialized: a choice there says to run it from a project
+folder and exits `1`.
+
+The launched program inherits the terminal and its exit code is jazyk's. A program
+that cannot be found is named with where to get it, exit `1`; the setup it would have
+needed is still written, so the next start after installing it works straight away.
+A setup step that fails (an unreadable config file, a command that exits non-zero)
+names the file or the command and exits `1` without starting the program.
+
+When stdin or stdout is not a terminal, bare `jazyk` prints the status (inside a
+project) and the list with the command each choice runs, and exits `0`, so a script
+never lands in a prompt. A choice command off a terminal never asks either: an IDE
+choice without a recorded agent keeps the default.
 
 ### jazyk init
 
@@ -63,18 +125,14 @@ project. A choice jazyk does not know is a usage error.
   existed, the scaffold step is skipped: the layout is that project's own
   business.
 - Offers [MCP](./mcp.md) integration for a coding agent: a numbered choice of
-  `none`, Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`), VS Code
-  (`.vscode/mcp.json`), or Gemini CLI (`.gemini/settings.json`). The chosen file
-  gains a `jazyk` server entry running `jazyk mcp all`, every lifecycle toolset in
-  one serving ([toolsets](./mcp.md#toolsets)); an existing file is merged, never
-  overwritten, and an existing `jazyk` entry warns and stays. `--mcp AGENT`
-  (`claude`, `cursor`, `vscode`, `gemini`, `none`) skips the prompt, and a
-  non-interactive stdin skips it too, so scripts never hang.
-- Asks which [agent](./acp.md#agents) does the AI work: the `embedded` one, or an
-  external agent whose command line jazyk knows (`codex`, `claude`, `opencode`). The
-  answer lands in the project's `[acp]` section, with the command line recorded for
-  an external agent. `--agent NAME` (or `none`) skips the prompt, and a
-  non-interactive stdin keeps the default.
+  `none` or one of the [launcher's](#jazyk) MCP choices (`claude`, `codex`,
+  `gemini`, `opencode`, `pi`, `droid`, `cursor`), set up exactly as the launcher sets
+  it up, without starting the program. `--mcp AGENT` (one of those, or `none`) skips
+  the prompt, and a non-interactive stdin skips it too, so scripts never hang.
+- Asks which [agent](./acp.md#agents) does the AI work: the `embedded` one, or a
+  built-in external agent (`claude`, `codex`, `opencode`). The name lands
+  in the project's `[acp] agent`; a built-in agent needs no profile. `--agent NAME`
+  (or `none`) skips the prompt, and a non-interactive stdin keeps the default.
 - For the embedded agent, asks which model. Jazyk asks the configured endpoint what
   it serves and lists that, so the choice is between models that exist rather than
   remembered names; a blank answer keeps the resolved one, and a typed name is taken
@@ -809,7 +867,8 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `jazyk --help` (or `-h`, or `jazyk help`) prints the top-level usage: one line per
   command, in four groups in this order, plus the common options. The groups put what
   a person types most at the top and what programs spawn at the bottom:
-  - Start here: `init`, `launch`, `gui`, `status`, `compile`, `benchmark`.
+  - Start here: `init`, `gui`, `status`, `compile`, `benchmark`, and one line naming
+    the [launcher's](#jazyk) choices, each a command.
   - Actions on the project: `check`, `watch`, `gen`, `test`, `decompile`, `docsgen`,
     `release`, `answer`, `spend`.
   - Inspect: `preview`, `explain`, `ripple`, `context`, `query`, `viewer`.

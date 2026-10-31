@@ -6,6 +6,7 @@ use crate::project::{self, Project};
 use crate::reconcile;
 use crate::session::{Trace, TraceLevel};
 use crate::store::Store;
+use crate::acp::config::BUILTIN_AGENTS as ACP_AGENTS;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
@@ -146,11 +147,11 @@ pub fn run_init(opts: &Options) -> i32 {
 // Mirrors docs/frontends/cli.md#jazyk-init.
 fn init_flags_known(opts: &Options) -> Result<(), String> {
     if let Some(m) = opts.mcp.as_deref() {
-        if m != "none" && !MCP_AGENTS.iter().any(|a| a.0 == m) {
+        if m != "none" && !crate::start::MCP_CHOICES.contains(&m) {
             return Err(format!(
                 "unknown MCP agent `{}`; one of {}, none",
                 m,
-                MCP_AGENTS.iter().map(|a| a.0).collect::<Vec<_>>().join(", ")
+                crate::start::MCP_CHOICES.join(", ")
             ));
         }
     }
@@ -189,98 +190,38 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String
     Ok(vec![])
 }
 
-// The agents init knows how to wire: display name, config path, and the JSON key that
-// holds the server map.
-const MCP_AGENTS: &[(&str, &str, &str, &str)] = &[
-    ("claude", "Claude Code", ".mcp.json", "mcpServers"),
-    ("cursor", "Cursor", ".cursor/mcp.json", "mcpServers"),
-    ("vscode", "VS Code", ".vscode/mcp.json", "servers"),
-    (
-        "gemini",
-        "Gemini CLI",
-        ".gemini/settings.json",
-        "mcpServers",
-    ),
-];
-
-// Offer MCP integration: `--mcp` skips the prompt, a non-interactive stdin skips the
-// whole step so scripts never hang. Existing files are merged, never overwritten.
+// Offer MCP integration: one of the launcher's MCP choices, set up exactly as the
+// launcher does. `--mcp` skips the prompt, a non-interactive stdin skips the whole
+// step so scripts never hang. Mirrors docs/frontends/cli.md#jazyk-init.
 fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
     use std::io::IsTerminal;
+    let choices = crate::start::MCP_CHOICES;
     let choice = match flag {
         Some("none") => return Ok(false),
         Some(a) => a.to_string(),
         None => {
             if !std::io::stdin().is_terminal() {
-                println!("jazyk: skipping MCP setup (no interactive stdin); rerun with --mcp claude|cursor|vscode|gemini");
+                println!("jazyk: skipping MCP setup (no interactive stdin); rerun with --mcp {}", choices.join("|"));
                 return Ok(false);
             }
             println!(
                 "\nSet up MCP integration? The agent gets every lifecycle toolset over `jazyk mcp all`."
             );
             println!("  1) none");
-            for (i, (_, name, file, _)) in MCP_AGENTS.iter().enumerate() {
-                println!("  {}) {:<12} ({})", i + 2, name, file);
+            for (i, id) in choices.iter().enumerate() {
+                let name = crate::start::choice(id).map(|c| c.name).unwrap_or(id);
+                println!("  {}) {}", i + 2, name);
             }
-            print!("choose [1-{}] (default 1): ", MCP_AGENTS.len() + 1);
-            use std::io::Write;
-            std::io::stdout().flush().ok();
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line).ok();
-            match line.trim().parse::<usize>() {
-                Ok(n) if (2..=MCP_AGENTS.len() + 1).contains(&n) => MCP_AGENTS[n - 2].0.to_string(),
+            match ask(&format!("choose [1-{}] (default 1): ", choices.len() + 1))
+                .trim()
+                .parse::<usize>()
+            {
+                Ok(n) if (2..=choices.len() + 1).contains(&n) => choices[n - 2].to_string(),
                 _ => return Ok(false),
             }
         }
     };
-    let Some((_, name, rel, key)) = MCP_AGENTS.iter().find(|(id, ..)| *id == choice) else {
-        return Err(format!(
-            "unknown MCP agent `{}`; one of claude, cursor, vscode, gemini, none",
-            choice
-        ));
-    };
-    let path = cwd.join(rel);
-    let mut root: serde_json::Value = match crate::vfs::read_to_string(&path) {
-        Ok(text) => {
-            serde_json::from_str(&text).map_err(|e| format!("{} is not valid JSON: {}", rel, e))?
-        }
-        Err(_) => serde_json::json!({}),
-    };
-    if !root.is_object() {
-        return Err(format!("{} does not hold a JSON object", rel));
-    }
-    let servers = root
-        .as_object_mut()
-        .unwrap()
-        .entry(key.to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    if !servers.is_object() {
-        return Err(format!("{}.{} does not hold a JSON object", rel, key));
-    }
-    if servers.get("jazyk").is_some() {
-        eprintln!(
-            "jazyk: {} already has a `jazyk` server entry; leaving it unchanged",
-            rel
-        );
-        return Ok(false);
-    }
-    // Every lifecycle toolset in one serving (docs/frontends/mcp.md#toolsets); raw
-    // writes outside a batch are a second `jazyk mcp graph --write` entry by hand.
-    let mut entry = serde_json::json!({ "command": "jazyk", "args": ["mcp", "all"] });
-    if *key == "servers" {
-        entry["type"] = serde_json::json!("stdio"); // the VS Code shape names the transport
-    }
-    servers["jazyk"] = entry;
-    if let Some(parent) = path.parent() {
-        crate::vfs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
-    }
-    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    crate::vfs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
-    println!(
-        "jazyk: wrote a `jazyk` MCP server (`jazyk mcp all`) into {} for {}",
-        rel, name
-    );
+    crate::start::setup_mcp(cwd, &choice)?;
     Ok(true)
 }
 
@@ -388,31 +329,6 @@ pub(crate) fn resolve_llm(
     }
 }
 
-// The agents init can wire without being told anything else: the built-in one, and
-// the external ones whose command line is public and stable.
-// Mirrors docs/frontends/acp.md#agents.
-pub const ACP_AGENTS: &[(&str, &str, &str, &[&str])] = &[
-    (
-        crate::acp::config::EMBEDDED,
-        "Embedded (jazyk's own agent, over your LLM endpoint)",
-        "",
-        &[],
-    ),
-    (
-        "codex",
-        "Codex",
-        "npx",
-        &["--yes", "@zed-industries/codex-acp"],
-    ),
-    (
-        "claude",
-        "Claude Code",
-        "npx",
-        &["--yes", "@zed-industries/claude-code-acp"],
-    ),
-    ("opencode", "OpenCode", "opencode", &["acp"]),
-];
-
 // Choose the agent that performs AI work, and for the embedded agent the model it
 // prompts. Both land in jazyk.toml, so the project carries its own answer and no
 // later command has to ask again. `--agent` skips the prompt; a non-interactive
@@ -433,7 +349,7 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
                 return false;
             }
             println!("\nWhich agent should do the AI work? Jazyk drives it over ACP.");
-            for (i, (_, label, cmd, args)) in ACP_AGENTS.iter().enumerate() {
+            for (i, (_, label, cmd, args, _)) in ACP_AGENTS.iter().enumerate() {
                 let how = if cmd.is_empty() {
                     String::new()
                 } else {
@@ -464,20 +380,10 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
         );
         return false;
     };
+    // A built-in agent resolves by name, so only the name is recorded.
     let old = crate::vfs::read_to_string(&path).unwrap_or_default();
     let mut full = crate::mcp::toml_set(&old, "acp", "agent", agent.0);
-    // An external agent needs its command line recorded; the embedded one is built in.
-    if !agent.2.is_empty() {
-        let section = format!("acp.agents.{}", agent.0);
-        full = crate::mcp::toml_set(&full, &section, "command", agent.2);
-        let args = agent
-            .3
-            .iter()
-            .map(|a| format!("\"{}\"", a))
-            .collect::<Vec<_>>()
-            .join(", ");
-        full = toml_set_raw(&full, &section, "args", &format!("[{}]", args));
-    } else if interactive {
+    if agent.0 == crate::acp::config::EMBEDDED && interactive {
         // The embedded agent prompts a model, so init asks which one. The endpoint is
         // whatever the config ladder resolves; asking it what it serves beats making
         // the user recall model names. Mirrors docs/frontends/acp.md#choosing-a-model.
@@ -535,16 +441,6 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
             false
         }
     }
-}
-
-// A TOML value that is not a string (an array, a number): same minimal edit, no
-// quoting. Kept next to its caller because nothing else needs it.
-fn toml_set_raw(text: &str, section: &str, key: &str, raw: &str) -> String {
-    let quoted = crate::mcp::toml_set(text, section, key, "\u{0}");
-    quoted.replace(
-        &format!("{} = \"\u{0}\"", key),
-        &format!("{} = {}", key, raw),
-    )
 }
 
 fn ask(prompt: &str) -> String {
@@ -613,160 +509,6 @@ pub fn run_acp_install(ide: Option<&str>) -> i32 {
         return 2;
     };
     crate::acp::install::install(ide)
-}
-
-// The launcher's choices, in menu order: id, what it starts, the program it runs
-// and where to get it. Mirrors docs/frontends/cli.md#jazyk.
-const LAUNCH_CHOICES: &[(&str, &str, &str, &str)] = &[
-    ("gui", "the local GUI", "jazyk gui", ""),
-    ("claude", "Claude Code with jazyk over MCP", "claude", "https://claude.com/claude-code"),
-    ("codex", "Codex with jazyk over MCP", "codex", "https://github.com/openai/codex"),
-    ("gemini", "Gemini CLI with jazyk over MCP", "gemini", "https://github.com/google-gemini/gemini-cli"),
-    ("cursor", "Cursor with jazyk over MCP", "cursor .", "https://cursor.com"),
-    ("vscode", "VS Code with the Jazyk extension, ACP and MCP", "code .", "https://code.visualstudio.com"),
-    ("jetbrains", "a JetBrains IDE with jazyk over ACP", "idea .", "https://www.jetbrains.com"),
-    ("zed", "Zed with jazyk over ACP", "zed .", "https://zed.dev"),
-    ("compile", "one build now", "jazyk compile", ""),
-];
-
-// Bare `jazyk`: init outside a project; inside one the status, then a verified way to
-// start. Mirrors docs/frontends/cli.md#jazyk.
-pub fn run_launch(opts: &Options, choice: Option<&str>) -> i32 {
-    use std::io::IsTerminal;
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(root) = project::find_root(&cwd) else {
-        if std::io::stdin().is_terminal() {
-            return run_init(opts);
-        }
-        eprintln!("jazyk: no jazyk.toml above {}; run jazyk init", cwd.display());
-        return 1;
-    };
-    if let Some(c) = choice {
-        if !LAUNCH_CHOICES.iter().any(|(id, ..)| *id == c) {
-            eprintln!(
-                "jazyk: unknown launch choice `{}`; one of {}",
-                c,
-                LAUNCH_CHOICES.iter().map(|(id, ..)| *id).collect::<Vec<_>>().join(", ")
-            );
-            return 2;
-        }
-    }
-    run_status(opts);
-    let picked = match choice {
-        Some(c) => c.to_string(),
-        None => {
-            println!("\nStart with:");
-            for (i, (id, what, cmd, _)) in LAUNCH_CHOICES.iter().enumerate() {
-                println!("  {:>2}) {:<10} {} (`{}`)", i + 1, id, what, cmd);
-            }
-            if !std::io::stdin().is_terminal() {
-                println!("\n`jazyk launch <choice>` starts one.");
-                return 0;
-            }
-            print!("choose [1-{}] (enter to quit): ", LAUNCH_CHOICES.len());
-            use std::io::Write;
-            std::io::stdout().flush().ok();
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line).ok();
-            let line = line.trim();
-            match line.parse::<usize>() {
-                Ok(n) if (1..=LAUNCH_CHOICES.len()).contains(&n) => LAUNCH_CHOICES[n - 1].0.to_string(),
-                _ if LAUNCH_CHOICES.iter().any(|(id, ..)| *id == line) => line.to_string(),
-                _ => return 0,
-            }
-        }
-    };
-    let (_, _, cmd, url) = LAUNCH_CHOICES.iter().find(|(id, ..)| *id == picked).unwrap();
-    // Verify the setup the choice needs; a refusal to write is fatal, an entry that is
-    // already there is fine (init_mcp says so and returns Ok(false)).
-    let mcp = |agent: &str| -> Result<(), i32> {
-        match init_mcp(&root, Some(agent)) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                eprintln!("jazyk: {}", e);
-                Err(1)
-            }
-        }
-    };
-    let acp = |ide: &str| -> Result<(), i32> {
-        match crate::acp::install::install(ide) {
-            0 => Ok(()),
-            code => Err(code),
-        }
-    };
-    let setup: Result<(), i32> = match picked.as_str() {
-        "claude" => mcp("claude"),
-        "gemini" => mcp("gemini"),
-        "cursor" => mcp("cursor"),
-        "vscode" => mcp("vscode").and_then(|_| acp("vscode")).map(|_| {
-            let installed = std::process::Command::new("code")
-                .arg("--list-extensions")
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "jazyk.jazyk"))
-                .unwrap_or(false);
-            if !installed {
-                eprintln!(
-                    "jazyk: the Jazyk extension is not installed; from the jazyk checkout run: code --install-extension bootstrap/editors/vscode/jazyk-0.2.1.vsix"
-                );
-            }
-        }),
-        "jetbrains" => acp("jetbrains"),
-        "zed" => acp("zed"),
-        "codex" => {
-            let listed = std::process::Command::new("codex")
-                .args(["mcp", "list"])
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).contains("jazyk"))
-                .unwrap_or(false);
-            if listed {
-                Ok(())
-            } else {
-                match std::process::Command::new("codex")
-                    .args(["mcp", "add", "jazyk", "--", "jazyk", "mcp", "all"])
-                    .status()
-                {
-                    Ok(s) if s.success() => Ok(()),
-                    Ok(s) => {
-                        eprintln!("jazyk: `codex mcp add` exited {}", s);
-                        Err(1)
-                    }
-                    Err(_) => Err(1), // not on PATH: the run below names it
-                }
-            }
-        }
-        _ => Ok(()),
-    };
-    if let Err(code) = setup {
-        if picked != "codex" {
-            return code;
-        }
-    }
-    // Run it: jazyk's own commands through this binary, the rest from PATH, all
-    // inheriting the terminal; the program's exit code is ours.
-    let mut parts = cmd.split(' ');
-    let prog = parts.next().unwrap_or(cmd);
-    let args: Vec<&str> = parts.collect();
-    let mut command = if prog == "jazyk" {
-        std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("jazyk")))
-    } else {
-        std::process::Command::new(prog)
-    };
-    command.args(&args).current_dir(&root);
-    match command.status() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "jazyk: `{}` is not on PATH{}; the setup for it is written, so it starts once installed",
-                prog,
-                if url.is_empty() { String::new() } else { format!(" (get it at {})", url) }
-            );
-            1
-        }
-        Err(e) => {
-            eprintln!("jazyk: cannot start `{}`: {}", prog, e);
-            1
-        }
-    }
 }
 
 // Spawn the run's ACP runner (docs/frontends/acp.md#worker-sessions), or explain why not.
@@ -2579,6 +2321,13 @@ mod tests {
             let Some(cmd) = line.split_whitespace().next() else {
                 continue; // bare `jazyk`, the launcher
             };
+            if cmd == "<choice>" {
+                // One line for every launcher choice; each is its own command.
+                for c in crate::start::CHOICES.iter().filter(|c| c.id != "gui") {
+                    assert!(crate::launcher::cmd_usage(c.id).is_some(), "no help for `{}`", c.id);
+                }
+                continue;
+            }
             let (_, extra) = crate::launcher::command_shape(cmd).unwrap_or_else(|| panic!("no shape for `{}`", cmd));
             let u = crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
             assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);

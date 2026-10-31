@@ -185,11 +185,12 @@ serve_files = false
 
 [acp.agents.codex]
 command = "npx"
-args = ["--yes", "@zed-industries/codex-acp"]
+args = ["--yes", "@agentclientprotocol/codex-acp@2.4.0"]
 ```
 
 - `agent`: the name of the profile to use. `embedded` is built in: it runs
-  `jazyk agent` with `serve_files = true` and needs no profile.
+  `jazyk agent` with `serve_files = true` and needs no profile. `claude`, `codex`,
+  and `opencode` are built in too ([agents](../frontends/acp.md#agents)).
 - `[acp.agents.<name>]`: one profile per agent. `command` and `args` launch it;
   `env` adds environment variables; `serve_files` (default `false`) makes jazyk
   serve the [file and command tools](./goals/generate.md#file-and-command-tools) into

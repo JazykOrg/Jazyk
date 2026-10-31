@@ -4348,14 +4348,13 @@ impl ToolSession {
                     .as_u64()
                     .map(|l| l as usize)
                     .unwrap_or(Self::READ_FILE_LINES);
-                let total = text.lines().count();
+                let total = text.split_inclusive('\n').count();
                 let mut content = String::new();
                 let mut taken = 0usize;
                 let mut truncated = false;
                 let mut truncated_line = None;
-                for line in text.lines().skip(start).take(limit) {
-                    let separator = usize::from(taken > 0);
-                    if content.len() + separator + line.len() > Self::READ_FILE_BYTES {
+                for line in text.split_inclusive('\n').skip(start).take(limit) {
+                    if content.len() + line.len() > Self::READ_FILE_BYTES {
                         truncated = true;
                         if taken == 0 {
                             let mut end = Self::READ_FILE_BYTES.min(line.len());
@@ -4365,9 +4364,6 @@ impl ToolSession {
                             taken = 1;
                         }
                         break;
-                    }
-                    if taken > 0 {
-                        content.push('\n');
                     }
                     content.push_str(line);
                     taken += 1;
@@ -12586,7 +12582,7 @@ mod tests {
         assert_eq!(first["nextLine"], 2);
         assert!(first["notice"].as_str().unwrap().contains("omitted"));
         let next = t.dispatch("read_text_file", &json!({"path":"minified.json","line":first["nextLine"]})).unwrap();
-        assert_eq!(next["content"], "following line");
+        assert_eq!(next["content"], "following line\n");
         assert!(next["truncated"].is_null());
         crate::vfs::write(root.join("minified.json"), &line).unwrap();
         let only = t.dispatch("read_text_file", &json!({"path":"minified.json"})).unwrap();
@@ -12595,10 +12591,80 @@ mod tests {
         let regular = "a".repeat(1023) + "\n";
         crate::vfs::write(root.join("many.txt"), regular.repeat(100)).unwrap();
         let page = t.dispatch("read_text_file", &json!({"path":"many.txt","limit":400})).unwrap();
-        assert!(page["content"].as_str().unwrap().len() <= ToolSession::READ_FILE_BYTES);
+        assert_eq!(page["content"].as_str().unwrap().as_bytes(), regular.repeat(64).as_bytes());
         assert_eq!(page["nextLine"], 65);
         assert!(page["truncatedLine"].is_null());
         crate::vfs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn svg_reads_copy_exact_utf8_line_endings_and_final_newlines() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let root = std::path::Path::new("/project");
+        crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+        crate::vfs::create_dir_all(root.join("assets")).unwrap();
+        crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_svg'\nname = 'SVG'\ndocs = ['docs/**']\nsource = ['product/**']\n").unwrap();
+        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_svg")).unwrap();
+        let mut tools = ToolSession::new(Store::load(&project.out), WorkScope::serving("generate"), 100, 24000);
+        tools.gen = crate::gen::GenSettings::resolve(&project);
+        let lines = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 20\">",
+            "  <title>Jazyk, žluťoučký ✓</title>",
+            "  <path fill=\"#112233\" d=\"M1 1H99V19H1Z\"/>",
+            "</svg>",
+        ];
+        for (name, ending) in [("lf", "\n"), ("crlf", "\r\n")] {
+            for final_newline in [false, true] {
+                let source = lines.join(ending) + if final_newline { ending } else { "" };
+                let input = format!("assets/{name}-{final_newline}.svg");
+                crate::vfs::write(root.join(&input), source.as_bytes()).unwrap();
+                for limit in [None, Some(2)] {
+                    let output = format!("product/{name}-{final_newline}-{limit:?}.svg");
+                    let mut line = 1;
+                    let mut append = false;
+                    loop {
+                        let read = tools.dispatch("read_text_file", &json!({"path":input,"line":line,"limit":limit})).unwrap();
+                        assert_eq!(read["totalLines"], lines.len());
+                        assert!(read["truncatedLine"].is_null());
+                        tools.dispatch("write_text_file", &json!({"path":output,"content":read["content"],"append":append})).unwrap();
+                        let Some(next) = read["nextLine"].as_u64() else { break };
+                        assert!(next > line);
+                        line = next;
+                        append = true;
+                    }
+                    assert_eq!(crate::vfs::read(root.join(&output)).unwrap(), source.as_bytes(), "{output}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn complete_file_pages_preserve_delimiters_at_line_and_byte_caps() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let root = std::path::Path::new("/project");
+        crate::vfs::create_dir_all(root).unwrap();
+        let mut tools = session();
+        tools.gen.deliverable = root.into();
+        // Both replies span pages. The first reaches the unchanged default line
+        // count; the second reaches exactly 64 KiB including its CRLF delimiters.
+        for (path, source, first_next, first_bytes) in [
+            ("lines.txt", "line\r\n".repeat(401), 401, "line\r\n".len() * ToolSession::READ_FILE_LINES),
+            ("bytes.txt", ("x".repeat(1022) + "\r\n").repeat(100), 65, ToolSession::READ_FILE_BYTES),
+        ] {
+            crate::vfs::write(root.join(path), source.as_bytes()).unwrap();
+            let first = tools.dispatch("read_text_file", &json!({"path":path})).unwrap();
+            assert_eq!(first["nextLine"], first_next);
+            assert_eq!(first["truncated"], true);
+            let prefix = first["content"].as_str().unwrap();
+            assert_eq!(prefix.len(), first_bytes);
+            assert!(source.starts_with(prefix));
+            assert!(prefix.ends_with("\r\n"));
+            let last = tools.dispatch("read_text_file", &json!({"path":path,"line":first["nextLine"]})).unwrap();
+            assert!(last["nextLine"].is_null());
+            assert!(last["truncated"].is_null());
+            assert_eq!(format!("{prefix}{}", last["content"].as_str().unwrap()).as_bytes(), source.as_bytes());
+        }
     }
 
     // write_text_file shares a file across the component group and refuses it to

@@ -278,8 +278,11 @@ own editor and shell
 serves these:
 
 - `read_text_file({path, line?, limit?})`: one file's content, path relative to the
-  deliverable. `limit` defaults to 400 lines and the content is capped at 64 KiB;
-  when more lines remain the reply carries `truncated: true` and `nextLine`, so a
+  deliverable. `limit` defaults to 400 lines and the content is capped at 64 KiB.
+  Content preserves the original UTF-8 bytes, including LF or CRLF line endings
+  and a final newline. Delimiters count toward the byte cap. Concatenating complete
+  pages reproduces the file exactly.
+  When more lines remain the reply carries `truncated: true` and `nextLine`, so a
   bundle or a lockfile never floods the history the session resends every round.
   A single longer line returns a UTF-8-safe prefix within the same byte cap and
   `truncatedLine` names that line. The reply states that the rest of the line was

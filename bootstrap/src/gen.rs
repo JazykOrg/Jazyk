@@ -3333,7 +3333,7 @@ mod tests {
             (artifact, "def test_workflow():\n    pass\n"),
         ] {
             tools.dispatch("write_text_file", &json!({"path":path,"content":content})).unwrap();
-            assert_eq!(tools.dispatch("read_text_file", &json!({"path":path})).unwrap()["content"], content.trim_end());
+            assert_eq!(tools.dispatch("read_text_file", &json!({"path":path})).unwrap()["content"], content);
         }
         let files = tools.dispatch("list_files", &json!({})).unwrap();
         assert!(files["files"].as_array().unwrap().contains(&json!(workflow)));

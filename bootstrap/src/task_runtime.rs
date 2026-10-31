@@ -15,6 +15,9 @@ mod local;
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "task_runtime_remote.rs"]
 mod remote;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "task_runtime_scoped_tests.rs"]
+mod scoped_tests;
 
 thread_local! { static CANCEL_FILE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) }; }
 pub struct CancellationScope(Option<std::path::PathBuf>);
@@ -200,7 +203,7 @@ pub fn protected(s: &str) -> bool {
         || s.split('/').any(|p| {
             matches!(
                 p,
-                ".git" | ".ssh" | ".aws" | ".env" | "id_rsa" | "id_ed25519" | ".worktrees"
+                ".jazyk" | ".git" | ".ssh" | ".aws" | ".env" | "id_rsa" | "id_ed25519" | ".worktrees"
             ) || p.ends_with(".env")
                 || p.ends_with(".pem")
                 || p.ends_with(".key")
@@ -315,6 +318,9 @@ pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
                 continue;
             }
             if entry.is_dir() {
+                if crate::vfs::exists(&path.join(".jazyk/jazyk.toml")) {
+                    continue;
+                }
                 let product_only = product_only
                     || matches!(
                         entry.file_name().to_str(),
@@ -389,6 +395,10 @@ fn legacy_tasks(source: &str) -> Vec<Task> {
     }).collect()
 }
 pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
+    call_impl(root, name, args, true)
+}
+
+fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Result<Value, String> {
     if !TOOLS.contains(&name) {
         return Err("Unknown runtime operation.".into());
     }
@@ -398,7 +408,8 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
             request = json!({});
         }
         request["operation"] = json!(name);
-        return dispatch(root, &request).map(|value| metadata_response(name, value));
+        let value = dispatch(root, &request)?;
+        return finish_status(root, name, args, value, import_terminal);
     }
     let (source, tasks) = load(root)?;
     if name == "update_tasks" {
@@ -417,6 +428,10 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
         request = json!({});
     }
     request["operation"] = json!(name);
+    // Waiting is the engine's choice, never part of the submitted request.
+    let wait = name == "run_task" && args["wait"] == true;
+    if let Some(fields) = request.as_object_mut() { fields.remove("wait"); fields.remove("task_ids"); }
+    let mut wait_seconds = 0;
     if name == "run_task" {
         if operation_cancelled() {
             return Err("The owning operation was cancelled.".into());
@@ -437,6 +452,7 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
             task.timeout_seconds = seconds;
         };
         task.validate()?;
+        wait_seconds = task.timeout_seconds + 600;
         if args["expected_revision"].as_str() != Some(digest(source.as_bytes()).as_str()) {
             return Err("Task settings changed. Reload task_context before running.".into());
         }
@@ -455,13 +471,152 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
         request["files"] = json!(files);
         request["task"] = json!(task);
     }
-    let host = dispatch(root, &request).map(|value| metadata_response(name, value));
-    if name == "task_context" {
-        return Ok(
-            json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}}),
-        );
+    let selection = if name == "task_context" { Some(select_tasks(tasks, &args["task_ids"])?) } else { None };
+    let host = dispatch(root, &request).and_then(|value| {
+        if name == "run_task" && crate::vfs::is_scoped() {
+            save_submission(root, &request, &value)?;
+        }
+        finish_status(root, name, args, value, import_terminal)
+    });
+    if wait {
+        return host.and_then(|status| wait_terminal(root, status, wait_seconds, import_terminal));
+    }
+    if let Some((tasks, index)) = selection {
+        let mut context = json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}});
+        if let Some(index) = index { context["index"] = index; }
+        return Ok(context);
     }
     host
+}
+
+// Selected definitions in full, the rest by name. No selection keeps the full list.
+fn select_tasks(tasks: Vec<Task>, selection: &Value) -> Result<(Vec<Task>, Option<Value>), String> {
+    if selection.is_null() { return Ok((tasks, None)); }
+    let ids: Vec<&str> = selection.as_array().ok_or("task_ids must be a list of task IDs")?
+        .iter().map(|id| id.as_str().ok_or("task_ids must be a list of task IDs")).collect::<Result<_, _>>()?;
+    if let Some(unknown) = ids.iter().find(|id| !tasks.iter().any(|t| t.id == **id)) {
+        return Err(format!("Unknown task ID '{unknown}' in task_ids. Omit task_ids for the full list."));
+    }
+    let (selected, rest): (Vec<Task>, Vec<Task>) = tasks.into_iter().partition(|t| ids.contains(&t.id.as_str()));
+    let index = rest.iter().map(|t| json!({"id":t.id,"name":t.name,"description":t.description})).collect();
+    Ok((selected, Some(Value::Array(index))))
+}
+
+// Poll in code so a long run costs no inference per state change. Every early
+// exit is an ordinary status reply: a suspended worker records it as the tool's
+// receipt instead of leaving an uncertain pending call. The run keeps its deadline.
+fn wait_terminal(root: &Path, mut status: Value, limit_seconds: u64, import_terminal: bool) -> Result<Value, String> {
+    let id = status["id"].as_str().ok_or("Run ID missing")?.to_owned();
+    let deadline = crate::sys::now_unix() + limit_seconds;
+    fn cancelled() -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        { crate::hosted::cancelled() || operation_cancelled() }
+        #[cfg(target_arch = "wasm32")]
+        { operation_cancelled() }
+    }
+    while status["terminated"] != true {
+        if cancelled() { return Ok(cancel_waiting(root, &id, status, import_terminal)); }
+        if crate::session_recovery::suspension_requested() || crate::sys::now_unix() >= deadline {
+            break;
+        }
+        match call_impl(root, "wait_run", &json!({"run_id":id,"wait_ms":5000}), import_terminal) {
+            Ok(next) => status = next,
+            // A hosted poll fails when the execution is suspended or cancelled
+            // mid-wait. Any failure keeps the submitted run's identity.
+            Err(error) => {
+                if cancelled() { return Ok(cancel_waiting(root, &id, status, import_terminal)); }
+                status["wait_error"] = json!(error);
+                break;
+            }
+        }
+    }
+    Ok(status)
+}
+
+fn cancel_waiting(root: &Path, id: &str, mut status: Value, import_terminal: bool) -> Value {
+    match call_impl(root, "cancel_run", &json!({"run_id":id}), import_terminal) {
+        Ok(stopping) => stopping,
+        Err(error) => { status["wait_error"] = json!(error); status }
+    }
+}
+
+// The host owns execution. The active scoped worker owns publication into its
+// private snapshot, which its existing lease and checkpoint publish atomically.
+#[derive(Serialize, Deserialize)]
+struct Submission {
+    task: Task,
+    input_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    import: Option<Value>,
+}
+
+fn submission_key(root: &Path, id: &str) -> Result<String, String> {
+    if !valid_id(id) { return Err("Invalid run ID in submission receipt.".into()); }
+    Ok(format!("task-submission:{}:{id}", root.display()))
+}
+
+fn save_submission(root: &Path, request: &Value, status: &Value) -> Result<(), String> {
+    if !crate::session_recovery::active() { return Ok(()); }
+    let id = status["id"].as_str().ok_or("Run ID missing")?;
+    let key = submission_key(root, id)?;
+    let receipt = Submission {
+        task: serde_json::from_value(request["task"].clone()).map_err(|e| e.to_string())?,
+        input_digest: request["input_digest"].as_str().ok_or("Task input identity missing")?.into(),
+        import: None,
+    };
+    if let Some(previous) = crate::session_recovery::parent(&key)? {
+        let previous: Submission = serde_json::from_value(previous).map_err(|e| e.to_string())?;
+        if previous.task != receipt.task || previous.input_digest != receipt.input_digest {
+            return Err("Run receipt identifies a different submitted task or input.".into());
+        }
+        return Ok(());
+    }
+    crate::session_recovery::set_parent(&key, serde_json::to_value(receipt).unwrap());
+    Ok(())
+}
+
+fn import_scoped_result(root: &Path, id: &str, result: Option<&Value>, terminal_state: Option<&str>) -> Result<Option<Value>, String> {
+    if !crate::session_recovery::active() { return Ok(None); }
+    let key = submission_key(root, id)?;
+    let Some(value) = crate::session_recovery::parent(&key)? else { return Ok(None) };
+    let mut receipt: Submission = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    if let Some(import) = receipt.import { return Ok(Some(import)); }
+    let fetched;
+    let result = if let Some(result) = result { result } else {
+        fetched = dispatch(root, &json!({"operation":"result","run_id":id}))?;
+        &fetched
+    };
+    if terminal_state.is_some_and(|state| result["status"].as_str() != Some(state)) {
+        return Err("Retained task result does not match its terminal run state.".into());
+    }
+    let input: BTreeMap<String, String> = serde_json::from_value(result["input_files"].clone())
+        .map_err(|_| "Retained task result has no frozen inputs.")?;
+    if input_hash(&input) != receipt.input_digest {
+        return Err("Retained task result does not match its submitted input identity.".into());
+    }
+    let validated = validate_result(&receipt.task, &input, result.clone())?;
+    let imported = apply_result(root, &receipt.task, &input, &validated, id)?;
+    receipt.import = Some(imported.clone());
+    crate::session_recovery::set_parent(&key, serde_json::to_value(receipt).unwrap());
+    Ok(Some(imported))
+}
+
+fn finish_status(root: &Path, operation: &str, args: &Value, mut status: Value, import_terminal: bool) -> Result<Value, String> {
+    if import_terminal && crate::vfs::is_scoped() && status["terminated"] == true
+        && matches!(operation, "run_task" | "inspect_run" | "wait_run")
+    {
+        let id = status["id"].as_str().or_else(|| args["run_id"].as_str()).ok_or("Run ID missing")?;
+        if let Some(import) = import_scoped_result(root, id, None, status["state"].as_str())? {
+            let repeats_summary = status.get("result").is_none() || status.get("result") == status.get("summary");
+            if !status["result"].is_object() {
+                status["result"] = if status["summary"].is_object() { status["summary"].clone() } else { json!({}) };
+            }
+            status["result"]["import_pending"] = json!(false);
+            status["result"]["import"] = import;
+            if repeats_summary && status.get("summary").is_some() { status["summary"] = status["result"].clone(); }
+        }
+    }
+    Ok(metadata_response(operation, status))
 }
 // Enforce the response contract at the common boundary, including adapters that
 // return saved state directly for history, idempotent starts, or cancellation.
@@ -649,6 +804,24 @@ mod tests {
         assert!(changed.contains("# retained comment"), "{changed}");
         assert!(changed.contains("existing"));
         assert_eq!(definitions(&changed).unwrap(), tasks);
+    }
+    #[test]
+    fn task_selection_keeps_full_default_and_indexes_unselected_tasks() {
+        let mut tasks = definitions(CONFIG).unwrap();
+        let mut other = tasks[0].clone();
+        other.id = "lint".into();
+        other.name = "Lint".into();
+        tasks.push(other);
+        assert_eq!(select_tasks(tasks.clone(), &Value::Null).unwrap(), (tasks.clone(), None));
+        let (selected, index) = select_tasks(tasks.clone(), &json!(["lint"])).unwrap();
+        assert_eq!(selected, vec![tasks[1].clone()]);
+        assert_eq!(index.unwrap(), json!([{"id":tasks[0].id,"name":tasks[0].name,"description":tasks[0].description}]));
+        let (selected, index) = select_tasks(tasks.clone(), &json!([])).unwrap();
+        assert!(selected.is_empty());
+        assert_eq!(index.unwrap().as_array().unwrap().len(), 2);
+        let error = select_tasks(tasks.clone(), &json!(["missing"])).unwrap_err();
+        assert!(error.contains("'missing'"), "{error}");
+        assert!(select_tasks(tasks, &json!("lint")).is_err());
     }
     #[test]
     fn task_updates_share_the_config_lock_and_preserve_matcher_edits() {
@@ -1141,7 +1314,7 @@ fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String,
     save(&key, &pending)?;
     if recovery::suspension_requested() { return Err("suspended".into()); }
     if pending.run_id.is_none() {
-        let run = call(root, "run_task", &json!({"task_id":id,"expected_revision":pending.context["revision"],"operation_key":pending.operation_key}))
+        let run = call_impl(root, "run_task", &json!({"task_id":id,"expected_revision":pending.context["revision"],"operation_key":pending.operation_key}), false)
             .map_err(|error| format!("execution-uncertain: Task submission needs its saved destination receipt: {error}"))?;
         pending.run_id = Some(run["id"].as_str().ok_or("Run ID missing")?.to_owned());
         save(&key, &pending)?;
@@ -1153,16 +1326,10 @@ fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String,
             return Err(format!("Execution cancelled; run {run_id} is stopping."));
         }
         if recovery::suspension_requested() { save(&key,&pending)?; return Err("suspended".into()); }
-        let status = call(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}))?;
+        let status = call_impl(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}), false)?;
         if status["terminated"] == true {
             let result = dispatch(root, &json!({"operation":"result","run_id":run_id}))?;
-            if let (Ok(input), Some(definition)) = (
-                serde_json::from_value::<BTreeMap<String,String>>(result["input_files"].clone()),
-                pending.context["tasks"].as_array().and_then(|tasks| tasks.iter().find(|task| task["id"] == id)),
-            ) {
-                let task: Task = serde_json::from_value(definition.clone()).map_err(|e| e.to_string())?;
-                apply_result(root, &task, &input, &result, &run_id)?;
-            }
+            apply_execution_result(root, id, &run_id, &pending.context, &status, &result)?;
             pending.result = Some(result.clone());
             save(&key,&pending)?;
             return Ok((run_id,result));
@@ -1189,10 +1356,11 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
             .as_bytes()
         )[..32]
     );
-    let run = call(
+    let run = call_impl(
         root,
         "run_task",
         &json!({"task_id":id,"expected_revision":context["revision"],"operation_key":key}),
+        false,
     )?;
     let run_id = run["id"].as_str().ok_or("Run ID missing")?.to_owned();
     let deadline = crate::sys::now_unix() + 8100;
@@ -1202,19 +1370,10 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
             let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
             return Err(format!("Execution cancelled; run {run_id} is stopping."));
         }
-        let status = call(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}))?;
+        let status = call_impl(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}), false)?;
         if status["terminated"] == true {
             let result = dispatch(root, &json!({"operation":"result","run_id":run_id}))?;
-            if let (Ok(input), Some(definition)) = (
-                serde_json::from_value::<BTreeMap<String, String>>(result["input_files"].clone()),
-                context["tasks"]
-                    .as_array()
-                    .and_then(|a| a.iter().find(|t| t["id"] == id)),
-            ) {
-                let task: Task =
-                    serde_json::from_value(definition.clone()).map_err(|e| e.to_string())?;
-                apply_result(root, &task, &input, &result, &run_id)?;
-            }
+            apply_execution_result(root, id, &run_id, &context, &status, &result)?;
             return Ok((run_id, result));
         }
         if crate::sys::now_unix() >= deadline {
@@ -1225,6 +1384,22 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
         }
         crate::sys::sleep(std::time::Duration::from_millis(1000));
     }
+}
+
+fn apply_execution_result(root: &Path, task_id: &str, run_id: &str, context: &Value, status: &Value, result: &Value) -> Result<(), String> {
+    if crate::vfs::is_scoped() && import_scoped_result(root, run_id, Some(result), status["state"].as_str())?.is_some() {
+        return Ok(());
+    }
+    // Local adapters already import during finalization. Saved continuations
+    // from before submission receipts use their original frozen task context.
+    if let (Ok(input), Some(definition)) = (
+        serde_json::from_value::<BTreeMap<String, String>>(result["input_files"].clone()),
+        context["tasks"].as_array().and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id)),
+    ) {
+        let task: Task = serde_json::from_value(definition.clone()).map_err(|e| e.to_string())?;
+        apply_result(root, &task, &input, result, run_id)?;
+    }
+    Ok(())
 }
 pub(crate) fn case_verdict(result: &Value, name: &str) -> (&'static str, String) {
     let found: Vec<_> = result["tests"]
@@ -1342,6 +1517,16 @@ pub fn apply_result(
             .any(|p| !matches(&task.reports, p) && !matches(&task.products, p))
     });
     let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
+    if result["status"] == "succeeded" && result["complete"] == true {
+        for path in result["products"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            if !safe_path(path) || protected(path) || !matches(&task.products, path)
+                || !crate::document_sets::contained_relative_with_policy(root, path, |path| safe_path(path) && !protected(path))
+                || workspace.sets.iter().any(|set| crate::document_sets::included(&set.docs, path))
+            {
+                return Ok(json!({"applied":false,"reason":format!("Product {path} cannot replace Documents, protected paths, or nested projects. Results remain in run history.")}));
+            }
+        }
+    }
     let mut cases = 0;
     if !changed_input && !deleted_input {
         for set in &workspace.sets {

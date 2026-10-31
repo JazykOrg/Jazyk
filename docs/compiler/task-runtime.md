@@ -31,7 +31,7 @@ report. Adding a criterion does not require editing the saved task. A single
 task once. A later call starts a new run, even when the task is unchanged.
 
 `run_task` accepts `task_id`, `expected_revision`, `operation_key`, and optional
-`size` and `timeout_seconds`. It has no per-run arguments or environment override.
+`size`, `timeout_seconds`, and `wait`. It has no per-run arguments or environment override.
 Test selection belongs to the saved command and runner today. Do not invent an
 `args`, `inputs` or `env` field, clone a task per criterion to simulate one, or
 rewrite a task between criteria when its normal suite already covers them.
@@ -72,8 +72,23 @@ and destroys the environment. No interactive shell, appended command, or deadlin
 extension exists. A retry is a new run. Repeated operation IDs return the original
 run and cannot dispatch twice.
 
+By default `run_task` returns the run ID immediately. With `wait = true`, the host
+waits for the run in code and returns its terminal status in the same reply. Waiting
+makes no model inference per state change. It ends early, with the current
+non-terminal status, when the owning operation is cancelled, the worker is asked to
+suspend, or the wait outlasts the task timeout plus 600 seconds. Cancellation also
+stops the run. Suspension leaves the run running. A poll that fails, including a
+hosted poll interrupted by suspension or cancellation, ends the wait the same way:
+the reply keeps the run ID and its last status and adds `wait_error`. A
+non-terminal reply means: continue with `wait_run`. The reply is an ordinary tool result, so a suspended worker resumes
+after it without an uncertain pending call. Waiting adds no saved state and does not
+change the run's fixed deadline.
+
 Inputs include documentation, source, tests, assets, and project settings with credential fields removed. They exclude credentials, Git internals, runtime history, conversations,
-and other projects. The command runs through `/bin/sh -c`. Arguments and environment
+and other projects. A nested `.jazyk/jazyk.toml` stops the input walk. Private
+`.jazyk` paths at any depth stay excluded, except the owning project's redacted
+configuration and generated ignore file. Symlink aliases cannot expose another
+project. The command runs through `/bin/sh -c`. Arguments and environment
 are passed as data. Concurrent source edits do not change the input snapshot.
 
 Local Docker, Podman, and hosted execution share task, manifest, result, and
@@ -170,6 +185,12 @@ remain binary files. Historical results remain readable after container teardown
 `cancel_run` replies omit log text, including idempotent starts and cleanup.
 Repeated context requests do not reload historical logs into the model context.
 `read_run_log` and `search_run_log` read the retained log in bounded parts.
+`read_run_log.offset` is a zero-based Unicode character offset. Its `limit` counts
+characters, not bytes or lines. Continue with the returned `next_offset`.
+`search_run_log.offset` skips lines from zero and `limit` bounds the matching lines.
+Each match's `line` is one-based. A search match's line number is not a read offset.
+Search for a failure message first. Read a bounded character page when more log
+context is needed.
 
 An owned worker's MCP status replies name the frozen task by `id` and `name` instead
 of repeating its definition. They carry one `result`, without a duplicate `summary`. All lifecycle,
@@ -177,9 +198,17 @@ input identity, termination, error, and result fields remain available. Saved ta
 definitions and the retained execution result do not change. HTTP task views keep
 their full response. A standalone MCP serving also keeps the full response.
 
+`task_context` accepts optional `task_ids`. Without it, the reply carries every task
+definition. With it, `tasks` carries full definitions only for the named IDs and
+`index` lists every other task by `id`, `name`, and `description`. An empty list
+returns the index alone. An unknown ID is an error that names it. The revision,
+defaults, execution capabilities, and run history are unchanged. `update_tasks`
+replaces the whole list, so read the full default before editing tasks.
+
 An owned worker's `task_context` returns at most five recent runs. `before` and
-`next_cursor` page through older runs. It still returns every current task definition,
-the configuration revision, defaults, and execution capabilities. A standalone
+`next_cursor` page through older runs. It still returns every current task definition
+(or the `task_ids` selection and index), the configuration revision, defaults, and
+execution capabilities. A standalone
 serving keeps the normal history page. Status polls never include source snapshots
 or file contents.
 
@@ -211,6 +240,28 @@ eligible input still matches the frozen snapshot. An intervening edit leaves the
 result in run history. Source changes from a command remain reviewable changes;
 they do not silently overwrite source. Existing files outside `products` stay as
 run output until an agent or person applies them through ordinary file edits.
+
+An owned hosted worker imports its submitted run's terminal result into its active
+workspace before returning `run_task`, `wait_run`, or `inspect_run`. A following
+tool or task sees those products while the worker still owns the project lease.
+The worker uses the frozen task and input identity, validates the retained result,
+and applies the same input comparison as other imports. It does not acquire a
+second lease or write the server filesystem. Browser-only execution stays unavailable.
+
+The submission and import receipt live in the protected execution capsule and
+enter the ordinary checkpoint with the workspace. Repeated polls reuse the import
+outcome. They do not overwrite a later edit to an imported product or reimport old
+test evidence.
+Historical runs without that worker's submission receipt remain read-only. A
+resumed worker uses the same run and receipt. Status replies include the import
+outcome without retained file bytes. Internal build and test calls use this same
+import path and fetch a terminal result once. Completed executions retain no
+submission files in the workspace.
+
+Product selection does not grant writes to Documents, protected paths, or nested
+projects. Submitted input changes outside `products` stay reviewable. Public
+artifacts such as `target/*.jar` can be retained and replaced by a later run
+without becoming Source.
 
 ## Local supervision and ownership
 

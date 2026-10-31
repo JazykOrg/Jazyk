@@ -1143,7 +1143,13 @@ pub fn safe_relative(root: &Path, relative: &str) -> bool {
 // Readers of recorded outputs need containment without treating build caches as
 // authored inputs. Callers still apply their credential and role-specific policy.
 pub(crate) fn contained_relative(root: &Path, relative: &str) -> bool {
-    if !allowed_components(relative) {
+    contained_relative_with_policy(root, relative, allowed_components)
+}
+
+// Task products may explicitly include build caches. Canonical ancestry and
+// nested project boundaries stay shared; each caller keeps its path policy.
+pub(crate) fn contained_relative_with_policy(root: &Path, relative: &str, allowed: impl Fn(&str) -> bool) -> bool {
+    if !allowed(relative) {
         return false;
     }
     let Ok(base) = root.vcanonicalize() else {
@@ -1161,7 +1167,7 @@ pub(crate) fn contained_relative(root: &Path, relative: &str) -> bool {
             if !checked_destination {
                 let relative = resolved.strip_prefix(&base).expect("contained destination");
                 if !relative.as_os_str().is_empty()
-                    && !allowed_components(&relative.to_string_lossy().replace('\\', "/")) {
+                    && !allowed(&relative.to_string_lossy().replace('\\', "/")) {
                     return false;
                 }
                 // The deepest existing destination also owns files reached through

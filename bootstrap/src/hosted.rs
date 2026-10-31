@@ -1320,7 +1320,11 @@ mod tests {
                     else { Ok(json!({"id":"original-run"})) }
                 }
                 "wait_run" => { assert_eq!(request["run_id"],"original-run"); Ok(json!({"terminated":true})) }
-                "result" => Ok(json!({"status":"succeeded","complete":true,"input_files":null})),
+                "result" => {
+                    let input = runtime_effects.lock().unwrap().values().next().unwrap()["files"].clone();
+                    Ok(json!({"status":"succeeded","complete":true,"input_files":input,
+                        "log":"done","files":{},"reports":{},"cache":{},"deleted":[],"products":[]}))
+                }
                 operation => panic!("Unexpected task operation {operation}"),
             });
             let checkpoint = saved.clone();
@@ -1355,7 +1359,8 @@ mod tests {
                 let _recovery = crate::session_recovery::Scope::enter(Some(&capsule));
                 let (id,result) = crate::task_runtime::execute_with_key(&root(),"check","verify").unwrap();
                 assert_eq!(id,"original-run"); assert_eq!(result["status"],"succeeded");
-                let key = capsule["parent"].as_object().unwrap().keys().next().unwrap();
+                let key = capsule["parent"].as_object().unwrap().iter()
+                    .find(|(_, value)| value["deadline"].as_u64().is_some()).unwrap().0;
                 assert_eq!(crate::session_recovery::parent(key).unwrap().unwrap()["deadline"],deadline);
             }
             assert_eq!(effects.lock().unwrap().len(),1);

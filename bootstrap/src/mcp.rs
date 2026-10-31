@@ -667,6 +667,24 @@ impl McpServer {
         if let Some(names) = self.active_tools() {
             tools.retain(|tool| names.contains(tool["name"].as_str().unwrap_or_default()));
         }
+        if tools.iter().any(|tool| matches!(tool["name"].as_str(), Some("read_text_file" | "write_text_file" | "list_files"))) {
+            let root = self.current_gen_settings().deliverable;
+            let base = if root == self.project.root.join(".") {
+                "project root"
+            } else {
+                "deliverable directory"
+            };
+            for tool in tools {
+                let action = match tool["name"].as_str() {
+                    Some("read_text_file") => "Read an eligible file, capped at 64 KiB. line is one-based and limit counts lines. Private state and credentials are excluded.",
+                    Some("write_text_file") => "Write a Source file, creating parents. append adds content. Source selection and entity ownership are enforced.",
+                    Some("list_files") => "List eligible files. path narrows to a subdirectory; returned paths use the same root.",
+                    _ => continue,
+                };
+                tool["description"] = json!(format!("{action} Paths are relative to the {base} `{}`. Keep Source subdirectory names. Markdown hrefs are document-relative; use referencedAssets.path for supplied inputs.", root.display()));
+                tool["inputSchema"]["properties"]["path"]["description"] = json!(format!("Relative to the {base} `{}`; use paths from list_files or referencedAssets.path, without `..`.", root.display()));
+            }
+        }
     }
 
     fn current_project(&self) -> crate::project::Project {
@@ -3908,6 +3926,52 @@ mod tests {
         }
         assert!(instructions_for(&["compile".into()],false,true).contains("upsert_entity"));
         assert!(instructions_for(&["graph".into()],true,true).contains("manual graph surgery"));
+    }
+
+    #[test]
+    fn served_file_coordinates_match_nested_source_reads_and_writes() {
+        let dir = bare_dir("file-coordinates");
+        let config_path = dir.join(crate::document_sets::CONFIG);
+        let config = crate::vfs::read_to_string(&config_path).unwrap()
+            .replace("source = []", "source = ['deliverable/**']");
+        crate::vfs::write(&config_path, config).unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap()
+            .resolve(Some("ds_main")).unwrap();
+        let mut store = Store::load(&project.out);
+        store.graph.entities.insert("ent:page".into(), crate::model::Entity {
+            name: "Page".into(), ..Default::default()
+        });
+        store.save();
+        let server = McpServer::with_bridge(project.clone(), project.out,
+            vec!["generate".into()], false,
+            BridgeFlags { ephemeral: true, serve_files: true, ..Default::default() });
+        let catalog = server.handle("tools/list", &json!({})).unwrap();
+        for name in ["read_text_file", "write_text_file", "list_files"] {
+            let tool = catalog["tools"].as_array().unwrap().iter()
+                .find(|tool| tool["name"] == name).unwrap();
+            let description = tool["description"].as_str().unwrap();
+            assert!(description.contains("relative to the project root"), "{description}");
+            assert!(description.contains(&dir.display().to_string()), "{description}");
+            assert!(tool["inputSchema"]["properties"]["path"]["description"]
+                .as_str().unwrap().contains("project root"));
+        }
+        let call = |name: &str, arguments: Value| {
+            let reply = server.handle("tools/call", &json!({"name": name, "arguments": arguments})).unwrap();
+            assert_ne!(reply["isError"], true, "{reply}");
+            serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap()
+        };
+        call("write_text_file", json!({"path":"deliverable/index.html", "content":"<p>Jazyk</p>\n"}));
+        assert_eq!(crate::vfs::read_to_string(dir.join("deliverable/index.html")).unwrap(), "<p>Jazyk</p>\n");
+        assert!(!dir.join("index.html").vexists());
+        assert!(!dir.join("deliverable/deliverable/index.html").vexists());
+        let read = call("read_text_file", json!({"path":"deliverable/index.html"}));
+        assert_eq!(read["content"], "<p>Jazyk</p>\n");
+        let files = call("list_files", json!({"path":"deliverable"}));
+        assert!(files["files"].as_array().unwrap().contains(&json!("deliverable/index.html")));
+        let refused = server.handle("tools/call", &json!({"name":"write_text_file", "arguments":{"path":"index.html", "content":"wrong root"}})).unwrap();
+        assert_eq!(refused["isError"], true);
+        assert!(!dir.join("index.html").vexists());
+        crate::vfs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

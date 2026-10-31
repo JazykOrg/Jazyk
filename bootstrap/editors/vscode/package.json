@@ -2,7 +2,7 @@
   "name": "jazyk",
   "displayName": "Jazyk",
   "description": "Language support for Jazyk: natural language compiled into a semantic graph.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "jazyk",
   "engines": {
     "vscode": "^1.76.0"

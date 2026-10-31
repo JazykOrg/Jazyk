@@ -639,13 +639,13 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_run_log",
-            description: "Read a bounded run log slice, including after container teardown.",
-            parameters: obj(json!({"run_id": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}), &["run_id"]),
+            description: "Read a bounded run log slice, including after teardown. Offsets and limits count Unicode characters, not bytes or lines. Continue with next_offset; search match line numbers are not read offsets.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "offset": {"type": "integer", "description": "Zero-based Unicode character offset; default 0. Reuse next_offset from the preceding read."}, "limit": {"type": "integer", "description": "Maximum Unicode characters; default 16000, capped at 64000."}}), &["run_id"]),
         },
         ToolDef {
             name: "search_run_log",
-            description: "Search retained run logs for literal text. Returns bounded matching lines.",
-            parameters: obj(json!({"run_id": {"type": "string"}, "query": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}), &["run_id", "query"]),
+            description: "Search retained run logs for literal failure text before reading more log context. Returns bounded matching lines with one-based line numbers, not read_run_log character offsets.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "query": {"type": "string"}, "offset": {"type": "integer", "description": "Zero-based number of log lines to skip; default 0."}, "limit": {"type": "integer", "description": "Maximum matching lines; default and cap 100."}}), &["run_id", "query"]),
         },
         ToolDef {
             name: "read_run_changes",
@@ -8606,6 +8606,28 @@ impl ToolSession {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn log_tool_coordinates_match_unicode_paging_and_search_lines() {
+        let tools = catalog();
+        let read = tools.iter().find(|tool| tool.name == "read_run_log").unwrap();
+        assert!(read.parameters["properties"]["offset"]["description"].as_str().unwrap()
+            .contains("Unicode character"));
+        let search = tools.iter().find(|tool| tool.name == "search_run_log").unwrap();
+        assert!(search.parameters["properties"]["offset"]["description"].as_str().unwrap()
+            .contains("lines to skip"));
+        let state = json!({"terminated":true, "log":"α\nЖ💡\nFAIL: x\n"});
+        let page = crate::task_runtime::present(&state, &Value::Null,
+            &json!({"operation":"read_run_log", "offset":2, "limit":2})).unwrap();
+        assert_eq!(page["text"], "Ж💡");
+        assert_eq!(page["next_offset"], 4);
+        let next = crate::task_runtime::present(&state, &Value::Null,
+            &json!({"operation":"read_run_log", "offset":page["next_offset"], "limit":6})).unwrap();
+        assert_eq!(next["text"], "\nFAIL:");
+        let matches = crate::task_runtime::present(&state, &Value::Null,
+            &json!({"operation":"search_run_log", "query":"FAIL", "offset":1, "limit":1})).unwrap();
+        assert_eq!(matches["matches"], json!([{"line":3, "text":"FAIL: x"}]));
+    }
 
     fn session() -> ToolSession {
         let mut s = Store::default();

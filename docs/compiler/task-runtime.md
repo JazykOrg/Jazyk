@@ -170,6 +170,12 @@ remain binary files. Historical results remain readable after container teardown
 `cancel_run` replies omit log text, including idempotent starts and cleanup.
 Repeated context requests do not reload historical logs into the model context.
 `read_run_log` and `search_run_log` read the retained log in bounded parts.
+`read_run_log.offset` is a zero-based Unicode character offset. Its `limit` counts
+characters, not bytes or lines. Continue with the returned `next_offset`.
+`search_run_log.offset` skips lines from zero and `limit` bounds the matching lines.
+Each match's `line` is one-based. A search match's line number is not a read offset.
+Search for a failure message first. Read a bounded character page when more log
+context is needed.
 
 An owned worker's MCP status replies name the frozen task by `id` and `name` instead
 of repeating its definition. They carry one `result`, without a duplicate `summary`. All lifecycle,

@@ -636,11 +636,9 @@ too. Any agent that speaks MCP can be the generation worker; `jazyk gen` is one 
 worker in-process (the [`generate`](./goals/generate.md) goal; its session runs in
 the `generate` serving, see [toolsets](./sessions.md#toolsets)). These tools read the graph and the
 [ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they never mutate the
-graph. The agent edits deliverable files and runs commands with its own tools; jazyk
-serves no file editing over MCP. For an agent that brings none (the embedded agent),
-the serving adds `read_text_file`, `write_text_file`, `list_files`, and `run_command`,
-sandboxed to the deliverable, when the profile sets
-[`serve_files`](./project-settings.md#acp)
+graph. An agent may edit deliverable files with its own tools. When the profile sets
+[`serve_files`](./project-settings.md#acp), the serving adds `read_text_file`,
+`write_text_file`, and `list_files`, sandboxed to the deliverable
 ([file and command tools](./goals/generate.md#file-and-command-tools)). The sandbox
 holds after symlinks resolve: a path is relative, carries no `..`, and its deepest
 existing ancestor canonicalizes under the canonical deliverable directory, so a link
@@ -652,6 +650,12 @@ the root, and the reply's `note` says so
 The file inventory includes `.github` and `.gitignore` within the selected source
 scope. Other hidden paths keep the shared
 [file-role exclusions](./document-sets.md#matching-and-file-roles).
+For named document sets, the deliverable root is the project root. File tool paths
+are project-relative, including Source subdirectories. `deliverable/index.html`
+stays `deliverable/index.html` when Source includes `deliverable/**`. A quoted
+Markdown link is relative to its document; use the package's `referencedAssets.path`
+for a file tool call. The served schemas name the current path root. A direct tool
+session with an explicit deliverable directory keeps paths relative to that directory.
 
 - `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
   the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where

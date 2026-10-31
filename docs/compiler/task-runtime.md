@@ -73,7 +73,10 @@ extension exists. A retry is a new run. Repeated operation IDs return the origin
 run and cannot dispatch twice.
 
 Inputs include documentation, source, tests, assets, and project settings with credential fields removed. They exclude credentials, Git internals, runtime history, conversations,
-and other projects. The command runs through `/bin/sh -c`. Arguments and environment
+and other projects. A nested `.jazyk/jazyk.toml` stops the input walk. Private
+`.jazyk` paths at any depth stay excluded, except the owning project's redacted
+configuration and generated ignore file. Symlink aliases cannot expose another
+project. The command runs through `/bin/sh -c`. Arguments and environment
 are passed as data. Concurrent source edits do not change the input snapshot.
 
 Local Docker, Podman, and hosted execution share task, manifest, result, and
@@ -217,6 +220,28 @@ eligible input still matches the frozen snapshot. An intervening edit leaves the
 result in run history. Source changes from a command remain reviewable changes;
 they do not silently overwrite source. Existing files outside `products` stay as
 run output until an agent or person applies them through ordinary file edits.
+
+An owned hosted worker imports its submitted run's terminal result into its active
+workspace before returning `run_task`, `wait_run`, or `inspect_run`. A following
+tool or task sees those products while the worker still owns the project lease.
+The worker uses the frozen task and input identity, validates the retained result,
+and applies the same input comparison as other imports. It does not acquire a
+second lease or write the server filesystem. Browser-only execution stays unavailable.
+
+The submission and import receipt live in the protected execution capsule and
+enter the ordinary checkpoint with the workspace. Repeated polls reuse the import
+outcome. They do not overwrite a later edit to an imported product or reimport old
+test evidence.
+Historical runs without that worker's submission receipt remain read-only. A
+resumed worker uses the same run and receipt. Status replies include the import
+outcome without retained file bytes. Internal build and test calls use this same
+import path and fetch a terminal result once. Completed executions retain no
+submission files in the workspace.
+
+Product selection does not grant writes to Documents, protected paths, or nested
+projects. Submitted input changes outside `products` stay reviewable. Public
+artifacts such as `target/*.jar` can be retained and replaced by a later run
+without becoming Source.
 
 ## Local supervision and ownership
 

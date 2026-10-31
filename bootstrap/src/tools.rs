@@ -565,7 +565,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "run_tests",
-            description: "Run the recorded programmatic tests: the build once, then each selected row's command, verdicts recorded as a side effect. requirements selects rows (requirement or entity ids); empty runs every non-verified row; all: true reruns every programmatic row, verified ones included (the green-light check). llm rows are skipped here; judge them and record_verdict.",
+            description: "Run recorded programmatic tests: the build once, then each referenced saved task once for the selected rows, importing separate exact JUnit case verdicts. Reuse ordinary project suite tasks across requirements and criteria. Each later call starts fresh task runs. requirements selects rows (requirement or entity ids); empty runs every non-verified row; all: true reruns every programmatic row, verified ones included. llm rows are skipped here; judge them and record_verdict.",
             parameters: obj(json!({"requirements": {"type": "array", "items": {"type": "string"}}, "all": {"type": "boolean"}}), &[]),
         },
         ToolDef {
@@ -591,7 +591,7 @@ pub fn catalog() -> Vec<ToolDef> {
         // Mirrors docs/compiler/turns.md#generation-turns.
         ToolDef {
             name: "read_text_file",
-            description: "One deliverable file's content. path is relative to the deliverable directory; line (1-based) and limit select a slice of a large file.",
+            description: "One eligible deliverable file's content, capped at 64 KiB including a long first line. Credentials and private compiler/Git state are excluded. path is relative to the deliverable directory; line (1-based) and limit select lines. truncatedLine identifies a line whose remainder was omitted.",
             parameters: obj(
                 json!({"path": {"type": "string"}, "line": {"type": "integer"}, "limit": {"type": "integer"}}),
                 &["path"],
@@ -609,7 +609,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "task_context",
-            description: "Read the flat task list, descriptions, configuration revision, execution capabilities and recent runs. Pass next_cursor as before for older runs.",
+            description: "Read existing reusable project tasks, descriptions, configuration revision, execution capabilities and recent runs. Inspect this and project runner configuration before defining a task. Criterion identities belong in JUnit cases, not one task per criterion. Pass next_cursor as before for older runs.",
             parameters: obj(json!({"before":{"type":"string"}}), &[]),
         },
         ToolDef {
@@ -619,7 +619,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "run_task",
-            description: "Run one task in a fresh isolated environment. Returns a durable run ID immediately. The command and fixed timeout cannot change mid-run.",
+            description: "Run one saved project task in a fresh isolated environment. Returns a durable run ID immediately. No per-run args, inputs or environment overrides exist. Reuse a suite task for related checks; run_tests imports its independent JUnit case evidence. The command and fixed timeout cannot change mid-run.",
             parameters: obj(json!({"task_id": {"type": "string"}, "expected_revision": {"type": "string"}, "operation_key": {"type": "string"}, "size": {"type": "string", "enum": ["small", "medium", "large"]}, "timeout_seconds": {"type": "integer"}}), &["task_id", "expected_revision", "operation_key"]),
         },
         ToolDef {
@@ -4317,6 +4317,19 @@ impl ToolSession {
             "read_text_file" => {
                 let (rel, note) = self.unroot_rel(&Self::str_arg(args, "path")?);
                 let path = self.deliverable_path(&rel)?;
+                // Listing and task snapshots exclude credentials and internal state.
+                // A guessed path, including an alias through a symlink, keeps that fence.
+                let readable = |relative: &str| crate::task_runtime::safe_path(relative)
+                    && crate::document_sets::allowed_components(relative)
+                    && !crate::task_runtime::protected(relative);
+                let resolved = path.strip_prefix(self.deliverable_root())
+                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                if !readable(rel.trim().trim_start_matches("./")) || !readable(&resolved) {
+                    return Err(ToolError::new("protected-path", format!(
+                        "`{rel}` is a protected path; file reads exclude credentials, hidden paths, Git internals and private compiler state"
+                    )));
+                }
                 let text = crate::vfs::read_to_string(&path).map_err(|e| {
                     ToolError::new(
                         "not-found",
@@ -4337,9 +4350,18 @@ impl ToolSession {
                 let mut content = String::new();
                 let mut taken = 0usize;
                 let mut truncated = false;
+                let mut truncated_line = None;
                 for line in text.lines().skip(start).take(limit) {
-                    if content.len() + line.len() + 1 > Self::READ_FILE_BYTES && taken > 0 {
+                    let separator = usize::from(taken > 0);
+                    if content.len() + separator + line.len() > Self::READ_FILE_BYTES {
                         truncated = true;
+                        if taken == 0 {
+                            let mut end = Self::READ_FILE_BYTES.min(line.len());
+                            while !line.is_char_boundary(end) { end -= 1; }
+                            content.push_str(&line[..end]);
+                            truncated_line = Some(start + 1);
+                            taken = 1;
+                        }
                         break;
                     }
                     if taken > 0 {
@@ -4348,13 +4370,14 @@ impl ToolSession {
                     content.push_str(line);
                     taken += 1;
                 }
-                if start + taken < total {
-                    truncated = true;
-                }
+                let more_lines = start + taken < total;
+                truncated |= more_lines;
                 let mut reply = json!({"content": content, "totalLines": total});
-                if truncated {
-                    reply["truncated"] = json!(true);
-                    reply["nextLine"] = json!(start + taken + 1);
+                if truncated { reply["truncated"] = json!(true); }
+                if more_lines { reply["nextLine"] = json!(start + taken + 1); }
+                if let Some(line) = truncated_line {
+                    reply["truncatedLine"] = json!(line);
+                    reply["notice"] = json!(format!("Line {line} exceeds the 64 KiB response limit. Only a UTF-8-safe prefix is returned; the rest of that line is omitted."));
                 }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
@@ -12485,6 +12508,75 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "bad-path");
         crate::vfs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn guessed_file_reads_keep_protected_paths_private_under_broad_source() {
+        let root = std::env::temp_dir().join(format!("jazyk-read-fence-{}-{}",
+            crate::sys::process_id(), crate::verify::now_iso().replace([':', '.'], "-")));
+        let mut t = session();
+        t.gen.deliverable = root.clone();
+        t.gen.configured = true;
+        t.gen.code = vec!["**".into()];
+        for path in [".env", ".jazyk/jazyk.toml", ".git/config", ".aws/credentials",
+            ".ssh/id_ed25519", "src/secret.pem", "src/private.key", "src/local.env", ".hidden/state"] {
+            let full = root.join(path);
+            crate::vfs::create_dir_all(full.parent().unwrap()).unwrap();
+            crate::vfs::write(&full, "private fixture").unwrap();
+            let error = t.dispatch("read_text_file", &json!({"path":path})).unwrap_err();
+            assert_eq!(error.rule, "protected-path", "{path}");
+        }
+        for path in ["docs/notes.md", "target/build-evidence.json", ".github/workflows/deploy.yml"] {
+            let full = root.join(path);
+            crate::vfs::create_dir_all(full.parent().unwrap()).unwrap();
+            crate::vfs::write(&full, "ordinary evidence").unwrap();
+            let result = t.dispatch("read_text_file", &json!({"path":path})).unwrap();
+            assert_eq!(result["content"], "ordinary evidence", "{path}");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join(".env"), root.join("environment.txt")).unwrap();
+            std::os::unix::fs::symlink(root.join(".git"), root.join("repository")).unwrap();
+            for path in ["environment.txt", "repository/config"] {
+                let error = t.dispatch("read_text_file", &json!({"path":path})).unwrap_err();
+                assert_eq!(error.rule, "protected-path", "{path}");
+            }
+        }
+        crate::vfs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn file_reads_bound_single_utf8_lines_and_resume_at_following_lines() {
+        let root = std::env::temp_dir().join(format!("jazyk-read-bound-{}-{}",
+            crate::sys::process_id(), crate::verify::now_iso().replace([':', '.'], "-")));
+        crate::vfs::create_dir_all(&root).unwrap();
+        let mut t = session();
+        t.gen.deliverable = root.clone();
+        // 3-byte characters put the boundary inside a scalar value at 64 KiB.
+        let line = "界".repeat(ToolSession::READ_FILE_BYTES);
+        crate::vfs::write(root.join("minified.json"), format!("{line}\nfollowing line\n")).unwrap();
+        let first = t.dispatch("read_text_file", &json!({"path":"minified.json"})).unwrap();
+        let content = first["content"].as_str().unwrap();
+        assert!(content.len() <= ToolSession::READ_FILE_BYTES);
+        assert!(line.starts_with(content));
+        assert_eq!(first["truncated"], true);
+        assert_eq!(first["truncatedLine"], 1);
+        assert_eq!(first["nextLine"], 2);
+        assert!(first["notice"].as_str().unwrap().contains("omitted"));
+        let next = t.dispatch("read_text_file", &json!({"path":"minified.json","line":first["nextLine"]})).unwrap();
+        assert_eq!(next["content"], "following line");
+        assert!(next["truncated"].is_null());
+        crate::vfs::write(root.join("minified.json"), &line).unwrap();
+        let only = t.dispatch("read_text_file", &json!({"path":"minified.json"})).unwrap();
+        assert_eq!(only["truncatedLine"], 1);
+        assert!(only["nextLine"].is_null(), "a partial last line has no following line");
+        let regular = "a".repeat(1023) + "\n";
+        crate::vfs::write(root.join("many.txt"), regular.repeat(100)).unwrap();
+        let page = t.dispatch("read_text_file", &json!({"path":"many.txt","limit":400})).unwrap();
+        assert!(page["content"].as_str().unwrap().len() <= ToolSession::READ_FILE_BYTES);
+        assert_eq!(page["nextLine"], 65);
+        assert!(page["truncatedLine"].is_null());
+        crate::vfs::remove_dir_all(root).ok();
     }
 
     // write_text_file shares a file across the component group and refuses it to

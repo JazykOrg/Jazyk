@@ -799,6 +799,8 @@ pub fn mint_id() -> String {
 /// A short filesystem lock protects optimistic config replacement. Hosted callers
 /// already hold their project lease; WASM requests are serialized by their worker.
 pub struct ProjectLock {
+    root: PathBuf,
+    name: String,
     #[cfg(not(target_arch = "wasm32"))]
     _file: Option<std::fs::File>,
 }
@@ -828,14 +830,13 @@ impl ProjectLock {
                     .map_err(|e| (500, e.to_string()))?;
                 fs2::FileExt::try_lock_exclusive(&file)
                     .map_err(|_| (409, "another project operation is in progress".into()))?;
-                return Ok(Self { _file: Some(file) });
+                return Ok(Self { root: root.into(), name: name.into(), _file: Some(file) });
             }
-            Ok(Self { _file: None })
+            Ok(Self { root: root.into(), name: name.into(), _file: None })
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (root, name);
-            Ok(Self {})
+            Ok(Self { root: root.into(), name: name.into() })
         }
     }
 }
@@ -860,6 +861,30 @@ pub fn atomic_config(root: &Path, text: &str, base_hash: &str) -> Result<()> {
 
 /// Create/update/remove one set, or preview the exact same edit without writing.
 pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
+    edit_locked(root, body, preview, false, None)
+}
+
+pub(crate) fn edit_current_set(root: &Path, body: &Value, preview: bool, id: &str) -> Result<Value> {
+    edit_locked(root, body, preview, false, Some(id))
+}
+
+pub(crate) fn edit_current_set_with_lock(root: &Path, body: &Value, preview: bool, id: &str, lock: &ProjectLock) -> Result<Value> {
+    if lock.root != root || lock.name != "project.lock" {
+        return Err((409, "the matcher edit does not hold this project's lock".into()));
+    }
+    edit_locked(root, body, preview, true, Some(id))
+}
+
+/// An internal build already holds project.lock. Only its current lease owner
+/// can reuse it; optimistic replacement still takes config.lock.
+pub(crate) fn edit_in_build(root: &Path, out: &Path, token: &str, body: &Value, preview: bool, id: &str) -> Result<Value> {
+    if !crate::control::build_lease(out).is_some_and(|lease| lease.worker == token) {
+        return Err((409, "the document-set edit does not own the running build lease".into()));
+    }
+    edit_locked(root, body, preview, true, Some(id))
+}
+
+fn edit_locked(root: &Path, body: &Value, preview: bool, owns_project_lock: bool, only_set: Option<&str>) -> Result<Value> {
     let before = Workspace::load(root)?;
     if body["baseHash"].as_str() != Some(before.hash.as_str()) {
         return Err((409, "configuration changed; reload before saving".into()));
@@ -1062,6 +1087,11 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
         })
         .map(|set| &set.id)
         .collect::<Vec<_>>());
+    if let Some(id) = only_set {
+        if value["affectedSetIds"].as_array().is_some_and(|ids| ids.iter().any(|affected| affected.as_str() != Some(id))) {
+            return Err((409, "this matcher repair would change another document set; resolve that assignment through the project settings".into()));
+        }
+    }
     let files = after.files();
     value["overlaps"] = json!(files
         .iter()
@@ -1080,7 +1110,7 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
             "sourceRemoved": files.iter().filter(|f| !included(&set.source, f) && old.is_some_and(|o| included(&o.source, f))).collect::<Vec<_>>()})
     }).collect::<Vec<_>>());
     if !preview {
-        let _build = ProjectLock::acquire(root, "project.lock")?;
+        let _build = if owns_project_lock { None } else { Some(ProjectLock::acquire(root, "project.lock")?) };
         if removal.is_some() {
             let set = before.select(&id)?;
             let folder = root.join(".jazyk/removed-sets");

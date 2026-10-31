@@ -2240,7 +2240,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             return 2;
         }
     };
-    runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+    runner.set_build_token(Some(_build.token().to_owned()));
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.
     use crate::session::TraceEvent;

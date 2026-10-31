@@ -599,7 +599,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             // The clicked gen is an approval and holds the build lease, same as the CLI.
             let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
-            runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+            runner.set_build_token(Some(_build.token().to_owned()));
             let store = crate::store::Store::load(&st.out);
             crate::gen::run_all(&store, &runner, &st.gs(), entities, *force, trace)
         }

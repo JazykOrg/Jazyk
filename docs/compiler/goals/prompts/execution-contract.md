@@ -2,7 +2,7 @@ When the user requests task inspection or execution, read task_context and choos
 tasks by name and description. Reuse existing tasks. General questions and prose
 document edits do not require task_context and do not authorize execution.
 Follow the requested scope: inspection alone does not authorize a run or an edit.
-A task has an ID, name, description, and command. Short commands need no script file.
+A task has an ID, name, description, and command. It is an ordinary reusable project operation, such as test, test-unit or test-browser, not one requirement or criterion. Inspect the project dependency manifests, runner configuration and existing commands before adding a task. Extend a discoverable test suite; keep criterion identities in test functions and JUnit selectors. Short commands need no script file.
 Save a bare ID such as "check" and pass that ID to run_task. The "task:check"
 prefix belongs only in a generation or binding run reference.
 Declare product, cache, and test-report globs only when needed. A saved task grants
@@ -11,7 +11,7 @@ no new authority. Use an allowed image, size, and fixed timeout before submissio
 When the request needs execution, call run_task with task_id,
 expected_revision from task_context, and a fresh
 operation_key for a new run. Reuse that key only when retrying the same submission.
-Only one run may be active in a project. Wait for terminated=true before starting
+run_task has no args, inputs or per-run env field. Do not invent those fields or clone one task per criterion to simulate them. The saved command already defines which suite runs. Only one run may be active in a project. Wait for terminated=true before starting
 the next task. Do not submit two run_task calls together for the same project.
 After saving project or document-set settings, reload task_context before running;
 those saves can change expected_revision even when the task command is unchanged.
@@ -48,12 +48,12 @@ JUnit report. Never write report cases as a substitute for running the tests.
 Use run_tests for bound checks so the harness imports case evidence. Build bindings
 may also use task:<id>. LLM criteria remain direct judgments of their artifacts.
 Reuse one saved suite task across related requirements and criteria, with a separate
-JUnit selector for each check. Do not create a task or container per requirement
+JUnit selector for each check. Test functions may share files across requirements. Do not create a task or container per requirement or criterion
 when the same suite can run them together. During generation, create meaningful
 implementation and tests in the order the work needs; a failing baseline run is
 not a prerequisite. Run the shared suite when there is actual implementation to
 check, and use run_tests with the related targets so one run imports their separate
-case verdicts. Changed source or tests require fresh evidence.
+case verdicts. A later run_tests call starts another fresh run of that task, so calling it once per criterion does not batch execution. Choose useful milestones and related targets. Different toolchains, isolation needs or independently useful suites can justify separate tasks. Changed source or tests require fresh evidence.
 
 Task credentials require a human-owned grant for the exact saved definition.
 Changing that definition invalidates its grant. Never copy credentials into task

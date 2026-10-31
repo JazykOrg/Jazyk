@@ -346,13 +346,27 @@ pub(crate) fn claim_restored(out: &Path, task: &str, worker: &str, goals: &[Stri
 pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let path = lease_file(&saved.out, &saved.lease.task);
     let Some(current) = read_lease(&path) else { return Ok(false); };
-    if saved.lease.claim_id.is_empty() || current.claim_id != saved.lease.claim_id
-        || current.task != saved.lease.task || current.worker != saved.lease.worker
-        || current.claimed_at != saved.lease.claimed_at || current.goals != saved.lease.goals {
+    if !same_claim(&saved.lease, &current) {
         return Ok(false);
     }
     crate::vfs::remove_file(path).map_err(|e| e.to_string())?;
     crate::session_recovery::released(&saved.out, &saved.lease.task);
+    Ok(true)
+}
+
+fn same_claim(saved: &Lease, current: &Lease) -> bool {
+    !saved.claim_id.is_empty() && current.claim_id == saved.claim_id
+        && current.task == saved.task && current.worker == saved.worker
+        && current.claimed_at == saved.claimed_at && current.goals == saved.goals
+}
+
+fn refresh_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
+    let path = lease_file(&saved.out, &saved.lease.task);
+    let Some(mut current) = read_lease(&path) else { return Ok(false) };
+    if !same_claim(&saved.lease, &current) { return Ok(false); }
+    current.expires_at = now() + LEASE_TTL_SECS;
+    crate::vfs::write(path, serde_norway::to_string(&current).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -456,8 +470,12 @@ pub fn build_lease(out: &Path) -> Option<Lease> {
 // long build never loses it; drop frees it. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub struct BuildGuard {
     _project_lock: Option<crate::document_sets::ProjectLock>,
-    out: PathBuf,
+    claim: OwnedLease,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl BuildGuard {
+    pub fn token(&self) -> &str { &self.claim.lease.worker }
 }
 
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
@@ -472,20 +490,18 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
             l.worker, task
         ));
     }
-    claim(
-        out,
-        BUILD_LEASE,
-        &format!("internal-{}", crate::sys::process_id()),
-    )
+    let token = format!("internal-{}-{}", crate::sys::process_id(), crate::document_sets::mint_id());
+    claim(out, BUILD_LEASE, &token)
     .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
+    let claim = owned_lease(out, BUILD_LEASE, &token).ok_or("the build lease lost its ownership receipt")?;
     release(proj, out, Some(stage));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let (out2, stop2) = (out.to_path_buf(), stop.clone());
+    let (heartbeat_claim, stop2) = (claim.clone(), stop.clone());
     // The heartbeat keeps a long build's lease fresh so a watchdog does not reclaim
     // it. A browser tab runs one backend on one thread, with nothing to reclaim it
     // and no thread to spare (docs/frontends/wasm.md#the-seams).
     #[cfg(target_arch = "wasm32")]
-    let _ = (&out2, &stop2);
+    let _ = (&heartbeat_claim, &stop2);
     #[cfg(not(target_arch = "wasm32"))]
     if !crate::vfs::is_scoped() { std::thread::spawn(move || {
         while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
@@ -493,12 +509,12 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
             if stop2.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
             }
-            refresh_lease(&out2, BUILD_LEASE);
+            if !refresh_owned_lease(&heartbeat_claim).unwrap_or(false) { break; }
         }
     }); }
     Ok(BuildGuard {
         _project_lock: project_lock,
-        out: out.to_path_buf(),
+        claim,
         stop,
     })
 }
@@ -506,7 +522,7 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
 impl Drop for BuildGuard {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        release_lease(&self.out, BUILD_LEASE);
+        let _ = release_owned_lease(&self.claim);
     }
 }
 
@@ -520,6 +536,23 @@ pub fn task_leases(out: &Path) -> BTreeMap<String, Lease> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_build_has_a_new_token_and_cannot_be_renewed_by_its_predecessor() {
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let project = Project::default();
+        let out = Path::new("/project/.jazyk/ds_main");
+        let first = begin_internal_build(&project, out, "generate").unwrap();
+        let old = first.claim.clone();
+        drop(first);
+        let replacement = begin_internal_build(&project, out, "generate").unwrap();
+        assert_ne!(old.lease.worker, replacement.token());
+        let path = lease_file(out, BUILD_LEASE);
+        let before = crate::vfs::read(&path).unwrap();
+        assert!(!refresh_owned_lease(&old).unwrap());
+        assert!(!release_owned_lease(&old).unwrap());
+        assert_eq!(crate::vfs::read(path).unwrap(), before);
+    }
 
     fn tmp() -> PathBuf {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

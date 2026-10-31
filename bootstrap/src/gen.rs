@@ -1,6 +1,8 @@
 use crate::vfs::VPathExt;
 pub(crate) mod progress;
 mod pipeline;
+#[cfg(test)]
+mod matcher_recovery_tests;
 // Generation: the shared contract between every generation worker, the built-in
 // `jazyk gen` and external MCP agents alike. One task per entity produces the entity's
 // part of the deliverable and the tests for its requirements; the ledger binds them to
@@ -34,6 +36,19 @@ pub struct GenSettings {
 }
 
 impl GenSettings {
+    pub(crate) fn current_for_store(&self, store: &Store) -> Self {
+        let Some(root) = crate::project::find_root(&store.out) else { return self.clone() };
+        let workspace = match crate::document_sets::Workspace::load(&root) {
+            Ok(workspace) if workspace.exists => workspace,
+            Ok(_) => return self.clone(),
+            Err(_) => return Self { configured:false, code:vec![], ..self.clone() },
+        };
+        // Match the selected store, never the project-wide union of Source roles.
+        workspace.sets.iter().filter_map(|set| workspace.resolve(Some(&set.id)).ok())
+            .find(|project| project.out == store.out)
+            .map(|project| Self::resolve(&project))
+            .unwrap_or_else(|| Self { configured:false, code:vec![], ..self.clone() })
+    }
     pub fn resolve(proj: &crate::project::Project) -> GenSettings {
         let deliverable = match &proj.gen_deliverable {
             Some(d) => proj.root.join(d),
@@ -4823,7 +4838,9 @@ pub(crate) async fn run_selected(
     build_product: bool,
 ) -> Result<Value, String> {
     use crate::session::TraceEvent;
-    let signature = json!({"settings": gs, "entities": entities, "force": force, "buildProduct": build_product});
+    let admitted = progress::admitted_settings("generate", &store.out,
+        json!({"entities":entities,"force":force,"buildProduct":build_product}),gs).await?;
+    let signature = json!({"settings": admitted, "entities": entities, "force": force, "buildProduct": build_product});
     let key = progress::command_key("generate", &store.out, &signature);
     let mut command = progress::Progress::load(key, signature, GenCommand::default)?;
     if let Some(result) = &command.data.result {
@@ -4874,6 +4891,8 @@ pub(crate) async fn run_selected(
     }
     crate::vfs::create_dir_all(&gs.deliverable).ok();
     while command.data.cursor < command.data.groups.as_ref().unwrap().len() {
+        let current_settings = gs.current_for_store(store);
+        let gs = &current_settings;
         if command.data.stopped.is_some() {
             break;
         }
@@ -4988,7 +5007,7 @@ pub(crate) async fn run_selected(
                 failed: command.data.active.as_ref().unwrap().pipeline_failed.clone(),
             }
         } else {
-            gen_session(store, runner, gs, &root, &ready, trace).await
+            gen_session(store, runner, &admitted, &root, &ready, trace).await
         };
         if let Some(reason) = outcome
             .failed
@@ -5166,6 +5185,7 @@ async fn gen_session(
         return error(reason);
     }
     let after = Ledger::load(&store.out);
+    let current_settings = gs.current_for_store(store);
     let results = ids
         .iter()
         .zip(&saved.data.before)
@@ -5179,7 +5199,7 @@ async fn gen_session(
                 Err(report.failed.clone().or_else(|| report.stopped.clone()).unwrap_or_else(||
                     "The agent ended its session before recording completion".into()))
             } else {
-                gate(store, gs, id, false)
+                gate(store, &current_settings, id, false)
                     .map_err(|error| report.failed.clone().unwrap_or(error))
             };
             (id.clone(), result)

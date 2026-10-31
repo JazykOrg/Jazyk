@@ -468,9 +468,12 @@ cannot close with missing or stale required test declarations, or incomplete req
 programmatic execution. Programmatic verdicts come from `run_tests`. Valid judgment
 test declarations remain unjudged until the separate Review action. Generation
 does not invent a passing verdict or require Review before producing the artifact.
-Related requirements and criteria can share one saved suite task with distinct JUnit
-selectors. Run it against meaningful source, rather than starting a container for
-each requirement or requiring a failing baseline before implementation.
+Related requirements and criteria share ordinary project test tasks with distinct
+JUnit selectors. Inspect the saved tasks and existing runner configuration before
+adding one. Extend a discoverable suite rather than creating a command, task or
+container for each criterion. Different toolchains, isolation needs or independently
+useful suites can justify separate tasks. Run a useful group against meaningful
+source. A failing baseline is not required before implementation.
 
 A run of the row's headline test records its verdict on the criterion entry that is
 the same test (the same test name; two criteria may share one runner command), so the

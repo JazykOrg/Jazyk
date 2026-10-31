@@ -82,6 +82,33 @@ mutating reply carries its condensed status block. A reply's text content is the
 object pretty-printed ([tools](../compiler/tools.md)), so the agent's user reads it in
 the client's tool call view the way the model does.
 
+Set-scoped Bind and Generate workers also receive `list_document_sets`,
+`preview_document_set` and `update_document_set`. They can repair the current
+set's `docs`, `source` and `roots` selections without leaving the worker. Updates
+use `baseHash` from the list reply and the singular `set.source` field. They keep
+the selected set's id. Creating, removing, restoring or directly editing another
+set is refused. The normal role resolver still excludes overlapping source and
+document selections within this set. A repair that would change another set's
+selection is refused toward project settings. A preview does not write.
+
+The same worker uses the updated selections on its next file, ledger or board
+call. Recovery checkpoints record that configuration hash. Resuming after an owned
+matcher repair accepts the saved configuration and preserves the session's work.
+An unrelated configuration change still refuses restoration.
+The parent binding and generation gates also read the current selected set's Source
+mapping.
+The command retains its admitted settings for checkpoint identity. Matcher repairs
+do not restart completed groups, including a forced generation. Current settings
+still govern execution and file authorization. Existing checkpoints without an
+admission record use their current unchanged settings.
+A source-pattern repair does not authorize a document write, a file outside
+the project, or a file owned by another entity. Read-only, graph, verification and
+runtime workers do not gain these matcher writes. An owned build can edit under
+its existing project lock only when its unique attempt token matches the current
+build lease. A replacement build never inherits the previous attempt's token.
+The short configuration lock and `baseHash` comparison still protect replacement.
+Other callers retain the normal project-lock and build-lease refusals.
+
 On a compile serving, `done` is the one finishing call: the session prompt says
 `done`, so the model never translates a verb.
 
@@ -115,8 +142,8 @@ this spawning path and are not for standalone servings:
   `begin_goals` answers with a short ack instead of repeating it.
 - `--serve-files`: adds the file and command tools
   ([generation tools](../compiler/goals/generate.md#tools)) for agents whose
-  profile sets [`serve_files`](../compiler/project-settings.md#acp). Agents with
-  their own editor never get them.
+  profile sets [`serve_files`](../compiler/project-settings.md#acp). Verify workers
+  receive only file reads and listing. Agents with their own editor never get them.
 - `--edit-sink <path>`: delegate document and settings writes to the spawning
   process ([doc edit delegation](./acp.md#doc-edit-delegation)). Absent, or with
   nothing listening, writes land on disk directly.
@@ -129,6 +156,8 @@ that send it out of LSP habit; it does nothing. The prompting lives in three pla
 most specific wins: server instructions carry the loop, each `begin_*` reply carries
 the batch's own assembled prompt (or the package, for binding and generation), and
 each tool description names what to call next.
+Graph-write guidance appears only for a graph-writing toolset. A ledger serving's
+instructions do not advertise graph mutations or an unavailable long poll.
 
 The injected serving reaches the agent over one of two transports. Stdio is the
 default: the `session/new` entry names the `jazyk mcp` command and the agent spawns
@@ -193,7 +222,13 @@ only where the agent asks for it.
 catalog so clients can discover its lifecycle. After `begin_goals`, it advertises
 the batch's toolset. Embedded native, ACP and browser runners refresh this list
 before each model step. External clients can list again after a batch change.
-The server's write gates remain authoritative even when a client caches schemas.
+File reads and the current-set matcher repair tools remain available during a
+Bind or Generate batch when that serving supports them. Verify retains file reads
+and listing without gaining file writes or matcher repair.
+The same capability checks guard discovery and calls. The server's write gates
+remain authoritative even when a client caches schemas.
+A compile-only serving refuses a ledger batch whose tools it does not serve.
+Bind and Generate use a generation serving. Verify uses a verification serving.
 
 The agent-facing loop, common to the compile, generate, and verify toolsets:
 

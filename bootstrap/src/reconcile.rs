@@ -2223,7 +2223,7 @@ pub(crate) async fn compile_under(
     runner: &dyn crate::runner::SessionRunner,
     _build: crate::control::BuildGuard,
 ) -> BuildReport {
-    runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+    runner.set_build_token(Some(_build.token().to_owned()));
     trace.line("build", &format!("agent: {}", runner.agent_name()));
 
     let command_key = continuation::key(out);

@@ -293,11 +293,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "requirement": rid,
         "entity": entity,
         "criteria": criteria,
-        "criteriaNote": if criteria.is_empty() {
-            "no criteria on this requirement; one test encodes the statement"
-        } else {
-            "one test per criterion, named by suggestedTestName; record them under tests in record_binding. One file per requirement may hold them all, but each entry's run must select its own test by name (cargo test <name>, npx tsx --test --test-name-pattern <name>, python3 tests/<file>.py <name>): a run of the whole file judges every criterion at once"
-        },
+        "criteriaNote": include_str!("../../docs/compiler/goals/prompts/bind-criteria-note.md").trim(),
         "existingTests": existing_tests,
         "pathsNote": "existingTests, files, and test artifact paths are relative to the deliverable directory",
         "reason": reason,
@@ -353,7 +349,7 @@ fn parse_test_ref(
     }
     if kind == "programmatic" && run.is_empty() {
         return Err(format!(
-            "a programmatic test needs {}.run: the command whose exit code is the verdict",
+            "a programmatic test needs {}.run: a saved task:<id> with JUnit evidence or a legacy command whose exit code supplies the verdict",
             label
         ));
     }
@@ -484,7 +480,7 @@ pub fn record(
     }
     if kind == "programmatic" && run.is_empty() {
         return Err(
-            "a programmatic test needs test.run: the command whose exit code is the verdict".into(),
+            "a programmatic test needs test.run: a saved task:<id> with JUnit evidence or a legacy command whose exit code supplies the verdict".into(),
         );
     }
     // Every path the binding names stays under the deliverable
@@ -757,7 +753,9 @@ pub async fn run_all(
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
     use crate::gen::progress::{self, BatchProgress, Progress};
-    let signature = json!({"settings":gs,"targets":targets});
+    let admitted = crate::gen::progress::admitted_settings("bind", &store.out,
+        json!({"targets":targets}),gs).await?;
+    let signature = json!({"settings":admitted,"targets":targets});
     let key = progress::command_key("bind", &store.out, &signature);
     let mut command = Progress::load(key, signature, || BindCommand {
         owed: pending(store, gs)
@@ -841,7 +839,7 @@ pub async fn run_all(
         let rid = command.data.active.as_ref().unwrap().batch.goals[0]
             .target
             .clone();
-        let gate = gate(store, gs, &rid);
+        let gate = gate(store, &gs.current_for_store(store), &rid);
         let failure = gate.as_ref().err().and(report.failed.as_deref());
         let (next, _) = crate::reconcile::breaker_step(
             command.data.streak,

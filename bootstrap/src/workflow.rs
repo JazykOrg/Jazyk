@@ -351,7 +351,7 @@ async fn run_step(
             )?)
         }
     };
-    runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+    runner.set_build_token(Some(_lease.token().to_owned()));
     match step {
         Step::Bind => crate::bind::run_all(&store, runner.as_ref(), &gs, &[], trace).await,
         Step::Generate => {

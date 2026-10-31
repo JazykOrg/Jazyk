@@ -17,6 +17,25 @@ image = "maven:3.9-eclipse-temurin-21"
 reports = ["target/surefire-reports/*.xml"]
 ```
 
+A test task is a reusable project operation, such as `test`, `test-unit` or
+`test-browser`. A requirement or criterion identifies a test case, not a task or
+container. Related checks extend the existing suite and use its ordinary runner.
+Different toolchains, isolation needs or independently useful suites can justify
+separate tasks. The agent chooses the useful execution boundary.
+
+Before defining a task, inspect `task_context`, the dependency and runner
+configuration, and existing test commands. Prefer a stable command that discovers
+the suite and emits fresh JUnit cases. Each binding selects its own case from that
+report. Adding a criterion does not require editing the saved task. A single
+`run_tests` call can select several requirements or entities and runs each shared
+task once. A later call starts a new run, even when the task is unchanged.
+
+`run_task` accepts `task_id`, `expected_revision`, `operation_key`, and optional
+`size` and `timeout_seconds`. It has no per-run arguments or environment override.
+Test selection belongs to the saved command and runner today. Do not invent an
+`args`, `inputs` or `env` field, clone a task per criterion to simulate one, or
+rewrite a task between criteria when its normal suite already covers them.
+
 ## Settings
 
 Optional fields are `image`, `cwd`, `size`, `timeout_seconds`, `env`, `products`,
@@ -29,7 +48,10 @@ enter task environments. Arbitrary publication credentials are not granted by TO
 IDs contain up to 60 ASCII letters, digits, underscores, and hyphens. A project
 supports 100 tasks. Names, descriptions, commands, and environment values are bounded.
 Unknown fields and duplicate IDs are rejected. Edits preserve unrelated settings
-and compare the configuration hash. A task edit cannot change a submitted run.
+and compare the configuration hash. Task and document-set edits share the short
+configuration lock and atomic replacement. The hash is checked again while that
+lock is held, so a concurrent edit cannot replace a newer matcher or task list.
+A task edit cannot change a submitted run.
 
 File globs are project-relative. `products` retain generated outputs. `cache` marks
 disposable files restored before execution and saved only after command success.
@@ -112,7 +134,11 @@ is not a path prefix inside the snapshot. Product, cache, and report globs remai
 relative to that root even when the command uses another `cwd`.
 
 Generation and binding receive the execution prompt and task descriptions. They
-reuse tasks, repair owned files, and run focused checks within a cumulative budget.
+reuse ordinary project suites, repair owned files, and run useful checks within a
+cumulative budget. A bind goal's one-requirement scope does not define a task or
+container boundary. Generation chooses the order of implementation and test work.
+Focused test-first work remains available when it is useful. Missing implementation
+does not require an expensive failing baseline before source can be developed.
 Graph extraction and judgment do not receive execution authority by default.
 Existing goal gates still apply. The model does not schedule compiler goals.
 

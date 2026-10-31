@@ -383,6 +383,10 @@ fn set_projection(
 thread_local! { static EXECUTION: RefCell<Option<Execution>> = const { RefCell::new(None) }; }
 thread_local! { static CHECKPOINT_SEQUENCE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 struct ExecutionScope(Option<Execution>, u64);
+#[cfg(test)]
+pub(crate) fn test_execution_scope(execution: Execution) -> impl Drop {
+    ExecutionScope::enter(execution)
+}
 impl ExecutionScope {
     fn enter(execution: Execution) -> Self {
         let previous = CHECKPOINT_SEQUENCE.with(|s| {
@@ -585,7 +589,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
                 use crate::runner::SessionRunner;
                 let _build = crate::control::begin_internal_build(&p, &p.out, "generate")?;
                 let runner = crate::inprocess::InProcessRunner::start(&p, &llm(), &p.out)?;
-                runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+                runner.set_build_token(Some(_build.token().to_owned()));
                 let entities = request["entities"]
                     .as_array()
                     .map(|a| {
@@ -1015,8 +1019,11 @@ mod tests {
         assert!(stopped.to_string().contains("suspended"), "{stopped}");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let (mut capsule, mut files) = saved.lock().unwrap().clone().unwrap();
-        // Emulate a previous OS worker. Its protected receipts and VFS agree,
-        // while the replacement's fresh control identity is internal-1.
+        let original_token = capsule["claims"].as_array().unwrap().iter()
+            .find(|claim| claim["lease"]["task"] == "build").unwrap()["lease"]["worker"]
+            .as_str().unwrap().to_owned();
+        // Emulate a previous OS worker. Its protected receipts and VFS agree.
+        // The replacement must acquire a fresh build identity and use it for its batch.
         for claim in capsule["claims"].as_array_mut().unwrap() {
             claim["lease"]["worker"] = json!("previous-process");
         }
@@ -1057,9 +1064,14 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1, "Saved model response was billed again");
         assert!(!restored.snapshot().keys().any(|path| path.contains("/leases/")));
         assert!(observed.lock().unwrap().iter().any(|capsule|
-            capsule["claims"].as_array().is_some_and(|claims| claims.iter().any(|claim|
-                claim["lease"]["task"] != "build" && claim["lease"]["worker"] == "internal-1"))),
-            "Restored MCP batch was not reclaimed by the replacement");
+            capsule["claims"].as_array().is_some_and(|claims| {
+                let Some(token) = claims.iter().find(|claim| claim["lease"]["task"] == "build")
+                    .and_then(|claim| claim["lease"]["worker"].as_str()) else { return false };
+                !token.is_empty() && token != original_token && token != "previous-process"
+                    && token != "another-execution" && claims.iter().any(|claim|
+                        claim["lease"]["task"] != "build" && claim["lease"]["worker"] == token)
+            })),
+            "Restored MCP batch was not reclaimed under the replacement's fresh build token");
     }
 
     #[test]

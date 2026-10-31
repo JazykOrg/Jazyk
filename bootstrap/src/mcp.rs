@@ -14,6 +14,7 @@ use std::path::PathBuf;
 pub struct McpServer {
     children: std::sync::Mutex<BTreeMap<String, McpServer>>,
     project: crate::project::Project,
+    config_revision: std::sync::Mutex<String>,
     out: PathBuf,
     // The toolsets served: any of "compile", "generate", "verify", "graph".
     modes: Vec<String>,
@@ -228,14 +229,21 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
     if modes.iter().any(|m| m == "graph") && write {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
     }
-    if !modes.iter().any(|m| m == "chat") {
-    s.push_str(
-        "The write tools are: upsert_entity, update_entity, delete_entity, merge_entities, \
+    if !modes.iter().any(|m| m == "chat")
+        && modes.iter().any(|mode| matches!(mode.as_str(), "compile" | "benchmark"))
+    {
+        s.push_str(
+            "The write tools are: upsert_entity, update_entity, delete_entity, merge_entities, \
          upsert_requirement, update_requirement, delete_requirement, set_coverage, \
          report_diagnostic, resolve_diagnostic, and the view tools upsert_view, update_view, \
          delete_view. They stage into the open batch's changeset; outside one they are rejected \
-         toward begin_goals. To wait for new work, call await_changes (a long poll). A gated \
-         batch says `awaiting release`; `jazyk release` (or the GUI) approves it. A tool error \
+         toward begin_goals. A gated batch says `awaiting release`; `jazyk release` \
+         (or the GUI) approves it. ",
+        );
+    }
+    if !modes.iter().any(|m| m == "chat") {
+        s.push_str(
+            "A tool error \
          names the violated rule and how to repair the call; repair and continue. If any \
          instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
          report_feedback: it appends a line to the project's local .jazyk/feedback.jsonl for \
@@ -243,7 +251,7 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
          not a substitute for the work. If you know what your run billed for a batch, \
          report_spend records it on the batch's journal entry (your own figure, never an \
          estimate).",
-    );
+        );
     }
     #[cfg(not(target_arch = "wasm32"))]
     if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "runtime")) {
@@ -420,6 +428,7 @@ impl McpServer {
             });
         McpServer {
             children: Default::default(),
+            config_revision: std::sync::Mutex::new(project.config_hash.clone()),
             mutation_limit: crate::limits::SESSION_MUTATIONS,
             context_budget: crate::limits::CONTEXT_BUDGET,
             project,
@@ -442,13 +451,15 @@ impl McpServer {
 
     /// Protected owned session state. It is not a project file or a tool result.
     pub(crate) fn checkpoint(&self) -> Result<Value, String> {
+        let project = self.current_project();
+        if let Some(error) = &project.config_error { return Err(error.clone()); }
         let children = self.children.lock().map_err(|_| "MCP child state poisoned")?
             .iter().map(|(id, child)| Ok((id.clone(), child.checkpoint()?)))
             .collect::<Result<BTreeMap<_, _>, String>>()?;
         Ok(json!({
             "version": 1,
             "setId": self.project.set_id,
-            "configHash": self.project.config_hash,
+            "configHash": project.config_hash,
             "open": &*self.open.lock().map_err(|_| "MCP batch state poisoned")?,
             "delivered": &*self.delivered.lock().map_err(|_| "MCP delivery state poisoned")?,
             "finished": &*self.finished.lock().map_err(|_| "MCP completion state poisoned")?,
@@ -459,8 +470,10 @@ impl McpServer {
     }
 
     pub(crate) fn restore(&self, value: Value) -> Result<(), String> {
+        let project = self.current_project();
+        if let Some(error) = &project.config_error { return Err(error.clone()); }
         if value["version"] != 1 || value["setId"] != json!(self.project.set_id)
-            || value["configHash"] != json!(self.project.config_hash) {
+            || value["configHash"] != json!(project.config_hash) {
             return Err("MCP checkpoint is incompatible with this project configuration.".into());
         }
         let mut open: Option<OpenBatch> = serde_json::from_value(value["open"].clone()).map_err(|e| e.to_string())?;
@@ -511,7 +524,7 @@ impl McpServer {
         let timeout = params["arguments"]["timeout_seconds"]
             .as_u64()
             .unwrap_or(300);
-        let gs = crate::gen::GenSettings::resolve(&self.project);
+        let gs = self.current_gen_settings();
         let fingerprint = |path: &std::path::Path| -> String {
             crate::vfs::entry_metadata(path)
                 .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
@@ -520,7 +533,7 @@ impl McpServer {
         // Watched surfaces: docs, the ledger, every file the ledger names, and the
         // control file, so a release or mode change wakes the poll.
         let watched = |gs: &crate::gen::GenSettings| -> Vec<std::path::PathBuf> {
-            let mut v = self.project.doc_files();
+            let mut v = self.current_project().doc_files();
             v.push(crate::gen::Ledger::path(&self.out));
             v.push(crate::control::Control::path(&self.out));
             let ledger = crate::gen::Ledger::load(&self.out);
@@ -570,8 +583,8 @@ impl McpServer {
                 break;
             }
         }
-        let board = crate::board::Board::compute(&self.project, &self.out);
-        let c = crate::control::Control::load(&self.project, &self.out);
+        let board = crate::board::Board::compute(&self.current_project(), &self.out);
+        let c = crate::control::Control::load(&self.current_project(), &self.out);
         let graph_kinds = crate::board::Board::graph_kinds();
         let (c_act, b_act, g_act, v_act) = (
             board.ready_of(&graph_kinds),
@@ -631,6 +644,15 @@ impl McpServer {
             let refs = kinds.iter().map(String::as_str).collect::<Vec<_>>();
             let mut names = toolset_for_kinds(&refs).into_iter().collect::<BTreeSet<_>>();
             names.extend(LIFECYCLE);
+            if kinds.iter().any(|kind| matches!(kind.as_str(), "bind" | "generate" | "verify")) {
+                names.extend(["read_text_file", "list_files"]);
+                if kinds.iter().any(|kind| matches!(kind.as_str(), "bind" | "generate")) {
+                    names.insert("write_text_file");
+                }
+            }
+            if kinds.iter().any(|kind| matches!(kind.as_str(), "bind" | "generate")) {
+                names.extend(["list_document_sets", "preview_document_set", "update_document_set"]);
+            }
             active = Some(names);
         }
         for child in self.children.lock().unwrap().values() {
@@ -645,6 +667,119 @@ impl McpServer {
         if let Some(names) = self.active_tools() {
             tools.retain(|tool| names.contains(tool["name"].as_str().unwrap_or_default()));
         }
+    }
+
+    fn current_project(&self) -> crate::project::Project {
+        match crate::document_sets::Workspace::load(&self.project.root) {
+            Ok(workspace) if workspace.exists => match self.project.set_id.as_deref() {
+                Some(id) => match workspace.resolve(Some(id)) {
+                    Ok(project) => project,
+                    Err((_, error)) => {
+                        let mut project = self.project.clone();
+                        project.config_error = Some(error);
+                        project
+                    }
+                },
+                None => workspace.files_project(),
+            },
+            Ok(_) => self.project.clone(),
+            Err((_, error)) => {
+                let mut project = self.project.clone();
+                project.config_error = Some(error);
+                project
+            }
+        }
+    }
+
+    fn current_gen_settings(&self) -> crate::gen::GenSettings {
+        let project = self.current_project();
+        let mut settings = crate::gen::GenSettings::resolve(&project);
+        if project.config_error.is_some() {
+            settings.configured = false;
+            settings.code.clear();
+        }
+        settings
+    }
+
+    fn serves_matcher_repairs(&self) -> bool {
+        !self.bridge.reader && (self.modes.iter().any(|mode| mode == "generate")
+            || (self.modes.iter().any(|mode| mode == "chat")
+                && self.open.lock().unwrap().as_ref().is_some_and(|batch|
+                    batch.session.scope.kinds().iter().any(|kind| matches!(kind.as_str(), "bind" | "generate")))))
+    }
+
+    fn serves_project_writes(&self) -> bool {
+        !self.bridge.reader && (self.write || self.modes.iter().any(|mode|
+            matches!(mode.as_str(), "compile" | "generate" | "chat")))
+    }
+
+    fn accept_task_revision(&self, reply: &Value, previous: Option<&str>) {
+        let Some(previous) = previous else { return };
+        if reply["isError"] == true { return; }
+        let Some(text) = reply["content"][0]["text"].as_str() else { return };
+        let Ok(value) = serde_json::from_str::<Value>(text) else { return };
+        let Ok(source) = crate::vfs::read_to_string(self.project.root.join(crate::document_sets::CONFIG)) else { return };
+        if value["revision"].as_str() != Some(crate::task_runtime::digest(source.as_bytes()).as_str()) { return; }
+        self.accept_config_revision(previous, &crate::model::hash_hex(&source));
+    }
+
+    fn accept_config_revision(&self, previous: &str, hash: &str) {
+        let mut revision = self.config_revision.lock().unwrap();
+        if revision.as_str() == previous { *revision = hash.into(); }
+        drop(revision);
+        for child in self.children.lock().unwrap().values() { child.accept_config_revision(previous, hash); }
+    }
+
+    fn matcher_catalog() -> Vec<Value> {
+        let schema = json!({"type":"object","properties":{
+            "baseHash":{"type":"string"},
+            "roleIntents":{"type":"array","items":{"type":"object","properties":{
+                "role":{"type":"string","enum":["docs","source"]},"patterns":{"type":"array","items":{"type":"string"}}},
+                "required":["role","patterns"],"additionalProperties":false}},
+            "set":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},
+                "docs":{"type":"array","items":{"type":"string"}},"roots":{"type":"array","items":{"type":"string"}},
+                "source":{"type":"array","items":{"type":"string"}}},"required":["id"],"additionalProperties":false}},
+            "required":["baseHash","set"],"additionalProperties":false});
+        let mut tools = vec![json!({"name":"list_document_sets","description":"Inspect document-set selections and their current configuration hash before repairing this worker's Source mapping.",
+            "inputSchema":{"type":"object","properties":{},"additionalProperties":false}})];
+        for (name,description) in [
+            ("preview_document_set","Preview matcher changes to this worker's current document set without writing. Use its id, baseHash from list_document_sets, and singular set.source."),
+            ("update_document_set","Repair docs, source or roots matchers on this worker's current document set. Preserve its id and unrelated selections; use baseHash from list_document_sets. New Source patterns apply to the next file write.")
+        ] { tools.push(json!({"name":name,"description":description,"inputSchema":schema})); }
+        tools
+    }
+
+    fn scoped_matcher_call(&self, name: &str, args: &Value) -> Result<Value, (i64,String)> {
+        if !self.serves_matcher_repairs() { return Err((-32602,"matcher edits are unavailable in this worker".into())); }
+        let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e|(-32602,e.1))?;
+        if name == "list_document_sets" { return Ok(result_value(workspace.summary())); }
+        if self.finished.lock().unwrap().is_some() { return Err((-32602,"this worker session is complete".into())); }
+        let project = workspace.resolve(self.project.set_id.as_deref()).map_err(|e|(-32602,e.1))?;
+        let id = project.set_id.as_deref().ok_or((-32602,"this worker has no selected document set".into()))?;
+        if args["set"]["id"].as_str() != Some(id) { return Err((-32602,"this worker can update only its current document set".into())); }
+        let allowed = ["baseHash","set","roleIntents"];
+        let set_fields = ["id","name","docs","source","roots"];
+        if !args.as_object().is_some_and(|fields|fields.keys().all(|key|allowed.contains(&key.as_str())))
+            || !args["set"].as_object().is_some_and(|fields|fields.keys().all(|key|set_fields.contains(&key.as_str()))) {
+            return Err((-32602,"a scoped matcher edit changes only the current set's name, docs, source and roots".into()));
+        }
+        let preview = name == "preview_document_set";
+        let result = if let Some(token) = self.bridge.build_token.as_deref() {
+            crate::document_sets::edit_in_build(&workspace.root,&self.out,token,args,preview,id)
+        } else {
+            if crate::control::build_lease(&self.out).is_some() { return Err((-32602,"a running build owns this document set".into())); }
+            let open = self.open.lock().unwrap();
+            if let Some(lock) = open.as_ref().and_then(|batch| batch._project_lock.as_ref()) {
+                crate::document_sets::edit_current_set_with_lock(&workspace.root,args,preview,id,lock)
+            } else {
+                crate::document_sets::edit_current_set(&workspace.root,args,preview,id)
+            }
+        }.map_err(|e|(-32602,e.1))?;
+        if !preview {
+            *self.config_revision.lock().unwrap() = self.current_project().config_hash;
+            if let Some(open) = self.open.lock().unwrap().as_mut() { open.session.gen = self.current_gen_settings(); }
+        }
+        Ok(result_value(result))
     }
 
     fn enabled_tools(&self) -> Vec<&'static str> {
@@ -854,7 +989,7 @@ impl McpServer {
     // batches the scheduler would form, and the verdict with its counts when nothing
     // is open. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     fn goals_answer(&self, full: bool) -> Value {
-        let mut board = crate::board::Board::compute(&self.project, &self.out);
+        let mut board = crate::board::Board::compute(&self.current_project(), &self.out);
         // An empty board with a stale `incomplete` verdict settles here: the tail is
         // deterministic and idempotent, and a lister that finds nothing to do may as
         // well say so truthfully. A dangling judged diagnostic settles the same way.
@@ -866,12 +1001,12 @@ impl McpServer {
             let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
             crate::reconcile::finalize(
                 &mut s,
-                &self.project,
+                &self.current_project(),
                 Vec::new(),
                 &crate::model::Costs::default(),
                 &quiet,
             );
-            board = crate::board::Board::compute(&self.project, &self.out);
+            board = crate::board::Board::compute(&self.current_project(), &self.out);
         }
         board.mark_own(&self.worker_id());
         let mut v = if full {
@@ -949,10 +1084,11 @@ impl McpServer {
         };
         // The snapshot and the board derive from the same synced store.
         let mut store = Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let project = self.current_project();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
         store.sync_docs(&parsed);
-        let control = crate::control::Control::load(&self.project, &self.out);
-        let board = crate::board::Board::derive(&store, &self.project, &control);
+        let control = crate::control::Control::load(&project, &self.out);
+        let board = crate::board::Board::derive(&store, &project, &control);
         let args = &params["arguments"];
         let wanted_batch = args["batch"].as_str();
         let wanted_goals: Vec<String> = args["goals"]
@@ -990,6 +1126,14 @@ impl McpServer {
             return v;
         };
         let batch = batch.clone();
+        let enabled = self.enabled_tools();
+        if let Some(kind) = batch.goals.iter().filter_map(|id| board.goal(id)).find_map(|goal| {
+            crate::goals::kind(&goal.kind).filter(|kind|
+                kind.toolset().iter().any(|tool| !enabled.contains(tool))).map(|_| goal.kind.as_str())
+        }) {
+            return json!({"error":{"rule":"wrong-toolset","message":format!(
+                "this serving cannot execute the {kind} batch; connect the generate, verify or all toolset for that work")}});
+        }
         // A bridge serving scoped to one batch (or one of its goals) refuses
         // everything else, so a confused agent cannot claim the rest of the board.
         if let Some(only) = &self.bridge.only {
@@ -1118,7 +1262,7 @@ impl McpServer {
         let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
         session.loaded = loaded;
         session.skills = skills;
-        session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.gen = self.current_gen_settings();
         session.lint = self.project.linting.clone();
         session.caller = self.caller(&kinds.join("+"), &batch.id);
         let goal_rows: Vec<Value> = goals
@@ -1185,7 +1329,7 @@ impl McpServer {
         // The consumer that empties the board of mandatory work runs the deterministic
         // tail; optional goals stand aside, as blocked ones do.
         // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
-        let board = crate::board::Board::compute(&self.project, &self.out);
+        let board = crate::board::Board::compute(&self.current_project(), &self.out);
         let graph_kinds = crate::board::Board::graph_kinds();
         let mandatory_ready = |b: &crate::board::Board| {
             b.ready_goals()
@@ -1198,7 +1342,7 @@ impl McpServer {
             let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
             let report = crate::reconcile::finalize(
                 &mut s2,
-                &self.project,
+                &self.current_project(),
                 Vec::new(),
                 &crate::model::Costs::default(),
                 &quiet,
@@ -1219,7 +1363,7 @@ impl McpServer {
                     "open diagnostics stand in the graph; the diagnostics read tool lists them"
                 );
             }
-            let board2 = crate::board::Board::compute(&self.project, &self.out);
+            let board2 = crate::board::Board::compute(&self.current_project(), &self.out);
             if mandatory_ready(&board2) == 0 {
                 // The generation rows that became ready ride under `ready`
                 // (docs/frontends/mcp.md#compilation-over-mcp).
@@ -1327,7 +1471,7 @@ impl McpServer {
         let commit = o.session.commit(o.rounds, None);
         let resolved_ids: Vec<String> = commit.resolved.iter().map(|r| r.goal.clone()).collect();
         let mut s = Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let (parsed, _) = crate::reconcile::parse_all(&self.current_project());
         s.sync_docs(&parsed);
         let mut reply = json!({"committed": true, "batch": o.id, "applied": 0});
         let mut generation = None;
@@ -1381,7 +1525,7 @@ impl McpServer {
         }
         // The board re-derives; the goals this commit opened land on its journal
         // entry. Mirrors docs/compiler/graph.md#journal.
-        let board = crate::board::Board::compute(&self.project, &self.out);
+        let board = crate::board::Board::compute(&self.current_project(), &self.out);
         let opened: Vec<OpenedGoal> = board
             .open_goals()
             .iter()
@@ -1861,7 +2005,7 @@ impl McpServer {
             return self.handle(method, params);
         }
         if self.cancelled() { return Err((-32602, "the build was stopped".into())); }
-        if self.bridge.reader || !(self.write || self.modes.iter().any(|m| m != "graph")) {
+        if !self.serves_project_writes() {
             return Err((-32602, "this serving is read-only".into()));
         }
         if self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
@@ -1876,6 +2020,9 @@ impl McpServer {
 
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(self.bridge.cancel_file.as_deref());
+        if method == "tools/call" {
+            if let Some(error) = self.current_project().config_error { return Err((-32602, error)); }
+        }
         if self.cancelled() && method == "tools/call" && !matches!(params["name"].as_str(), Some("abandon_goals" | "cancel_run" | "inspect_run" | "wait_run" | "read_run_log" | "search_run_log" | "read_run_changes" | "task_context")) {
             return Err((-32602, "the build was stopped; this session cannot commit".into()));
         }
@@ -1891,6 +2038,14 @@ impl McpServer {
                     -32602,
                     "this worker is scoped to another document set".into(),
                 ));
+            }
+            if method == "tools/list" {
+                let mut result = self.handle_local(method,params)?;
+                if self.serves_matcher_repairs() { result["tools"].as_array_mut().unwrap().extend(Self::matcher_catalog()); }
+                return Ok(result);
+            }
+            if method == "tools/call" && matches!(params["name"].as_str(),Some("list_document_sets"|"preview_document_set"|"update_document_set")) {
+                return self.scoped_matcher_call(params["name"].as_str().unwrap(),&params["arguments"]);
             }
             return self.handle_local(method, params);
         }
@@ -1913,8 +2068,7 @@ impl McpServer {
                 "instructions":format!("This project has independent document sets. Use list_document_sets when a set-local operation needs a set ID. General answers and named document reads need no set discovery. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)})}),
             );
         }
-        let writable =
-            !self.bridge.reader && (self.write || self.modes.iter().any(|m| m != "graph"));
+        let writable = self.serves_project_writes();
         if method == "tools/list" {
             let mut result = self.handle_local(method, params)?;
             let tools = result["tools"].as_array_mut().unwrap();
@@ -2032,6 +2186,15 @@ impl McpServer {
             if !writable {
                 return Err((-32602, "this serving is read-only".into()));
             }
+            if matches!(name, "preview_document_set" | "update_document_set") {
+                if let Some(id) = params["arguments"]["set"]["id"].as_str() {
+                    let children = self.children.lock().unwrap();
+                    if let Some(child) = children.get(id).filter(|child|
+                        child.serves_matcher_repairs() && child.open.lock().unwrap().is_some()) {
+                        return child.scoped_matcher_call(name, &params["arguments"]);
+                    }
+                }
+            }
             return crate::document_sets::edit(
                 &w.root,
                 &params["arguments"],
@@ -2073,7 +2236,7 @@ impl McpServer {
             if name != "abandon_goals"
                 && children
                     .get(&id)
-                    .is_some_and(|s| s.project.config_hash != w.hash)
+                    .is_some_and(|s| *s.config_revision.lock().unwrap() != w.hash)
             {
                 if children[&id].open.lock().unwrap().is_some() {
                     return Err((
@@ -2361,6 +2524,9 @@ impl McpServer {
             }
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or_default().to_string();
+                let previous_config = (name == "update_tasks").then(||
+                    crate::vfs::read_to_string(self.project.root.join(crate::document_sets::CONFIG))
+                        .ok().map(|source| crate::model::hash_hex(&source))).flatten();
                 // The transcript row: the call under its task's label, condensed the
                 // same way a turn's rows are. Mirrors docs/frontends/mcp.md#transcripts.
                 let label = match self.open.lock().unwrap().as_ref() {
@@ -2375,7 +2541,10 @@ impl McpServer {
                     full: crate::session::full_payload(&params["arguments"]),
                 });
                 let reply = self.tool_call(&name, params, &label)
-                    .map(|reply| self.worker_reply(&name, reply));
+                    .map(|reply| {
+                        if name == "update_tasks" { self.accept_task_revision(&reply, previous_config.as_deref()); }
+                        self.worker_reply(&name, reply)
+                    });
                 if let Ok(v) = &reply {
                     let is_err = v["isError"] == true;
                     let text = v["content"][0]["text"].as_str().unwrap_or_default();
@@ -2505,7 +2674,7 @@ impl McpServer {
                                 "note": "the ledger records are the commit for this batch; a row recorded resolves its goal"}),
                             "abandon_goals" => json!({"abandoned": only,
                                 "note": "nothing was staged here; unrecorded rows stay owed"}),
-                            _ => crate::board::Board::compute(&self.project, &self.out).answer(),
+                            _ => crate::board::Board::compute(&self.current_project(), &self.out).answer(),
                         };
                         return Ok(text_result(v, false));
                     }
@@ -2523,7 +2692,7 @@ impl McpServer {
                     }
                     "decompile_tasks" if self.modes.iter().any(|m| m == "decompile") => {
                         let store = Store::load(&self.out);
-                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let gs = self.current_gen_settings();
                         let control = crate::control::Control::load(&self.project, &self.out);
                         let tasks = crate::decompile::pending(&self.project, &store, &gs, &control);
                         let reply = if tasks.is_empty() {
@@ -2541,7 +2710,7 @@ impl McpServer {
                             ));
                         };
                         let store = Store::load(&self.out);
-                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let gs = self.current_gen_settings();
                         let control = crate::control::Control::load(&self.project, &self.out);
                         let released = control
                             .released
@@ -2682,6 +2851,9 @@ impl McpServer {
                 let mut open = self.open.lock().unwrap();
                 if let Some(o) = open.as_mut() {
                     let kinds = o.session.scope.kinds();
+                    if kinds.iter().all(|kind| kind == "verify") && matches!(name.as_str(), "write_text_file" | "run_command") {
+                        return Ok(text_result(json!({"error":{"rule":"wrong-toolset","message":"verification may read implementing files but cannot write them"}}),true));
+                    }
                     let kind_refs: Vec<&str> = kinds.iter().map(String::as_str).collect();
                     let allowed = toolset_for_kinds(&kind_refs);
                     if is_graph_write && !allowed.contains(&name.as_str()) {
@@ -2734,7 +2906,7 @@ impl McpServer {
                         "generation_tasks" => "generate",
                         _ => "verify",
                     };
-                    let board = crate::board::Board::compute(&self.project, &self.out);
+                    let board = crate::board::Board::compute(&self.current_project(), &self.out);
                     let rows: Vec<Value> = board
                         .goals
                         .iter()
@@ -2769,7 +2941,7 @@ impl McpServer {
                     // re-baselines them; say so instead of letting the list read as
                     // complete (docs/frontends/mcp.md#generation-and-verification-over-mcp).
                     let stale_note = if kind == "generate" {
-                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let gs = self.current_gen_settings();
                         let ledger = crate::gen::Ledger::load(&self.out);
                         let store = Store::load(&self.out);
                         let stale = ledger
@@ -2806,7 +2978,7 @@ impl McpServer {
                         reply["bindingWork"] = json!(binding);
                     }
                     if matches!(kind, "bind" | "generate")
-                        && !crate::gen::GenSettings::resolve(&self.project).configured
+                        && !self.current_gen_settings().configured
                     {
                         reply["prerequisites"]["sourceMapping"] = json!(false);
                         reply["next"] = json!("The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then generation_tasks. An empty generation list is not a completed deliverable.");
@@ -2846,7 +3018,7 @@ impl McpServer {
                         // the board's reason: a Codex session once bound one requirement
                         // and generated the whole entity next.
                         // Mirrors docs/compiler/goals/generate.md#readiness.
-                        let mut board = crate::board::Board::compute(&self.project, &self.out);
+                        let mut board = crate::board::Board::compute(&self.current_project(), &self.out);
                         board.mark_own(&self.worker_id());
                         let gid = format!("g:generate:{}", ent);
                         // A lease (this serving's own retry, or another worker's) is the
@@ -2967,7 +3139,7 @@ impl McpServer {
                 }
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
-                session.gen = crate::gen::GenSettings::resolve(&self.project);
+                session.gen = self.current_gen_settings();
                 session.lint = self.project.linting.clone();
                 session.caller =
                     self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
@@ -3076,7 +3248,7 @@ impl McpServer {
         scope.target = target.to_string();
         let mut session =
             ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
-        session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.gen = self.current_gen_settings();
         session.lint = self.project.linting.clone();
         session.caller = self.caller("chat", target);
         session
@@ -3360,7 +3532,7 @@ impl McpServer {
         scope.target = target.clone();
         let mut session =
             ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
-        session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.gen = self.current_gen_settings();
         session.lint = self.project.linting.clone();
         session.caller = self.caller("chat", &target);
         if let Err(e) = session.dispatch("update_diagnostic", args) {
@@ -3725,6 +3897,213 @@ fn result_value(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ledger_initializers_do_not_name_unavailable_graph_writes_or_long_polls() {
+        for mode in ["generate","verify","graph","decompile"] {
+            let instructions = instructions_for(&[mode.into()],false,true);
+            assert!(!instructions.contains("upsert_entity"),"{mode}");
+            assert!(!instructions.contains("call await_changes"),"{mode}");
+            assert!(instructions.contains("report_feedback"));
+        }
+        assert!(instructions_for(&["compile".into()],false,true).contains("upsert_entity"));
+        assert!(instructions_for(&["graph".into()],true,true).contains("manual graph surgery"));
+    }
+
+    #[test]
+    fn active_ledger_file_calls_and_owned_task_saves_follow_the_batch_scope() {
+        let dir = bare_dir("ledger-active-capabilities");
+        crate::vfs::write(dir.join("docs/a.md"),"# A\n\nNavigation index.\n").unwrap();
+        let mut config = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
+        config = config.replace("source = []","source = ['src/**']");
+        crate::vfs::write(dir.join(crate::document_sets::CONFIG),&config).unwrap();
+        let workspace = crate::document_sets::Workspace::load(&dir).unwrap();
+        let project = workspace.resolve(Some("ds_main")).unwrap();
+        let mut control = crate::control::Control::load(&project,&project.out);
+        control.compile = "auto".into();control.save(&project.out);
+        let child = McpServer::with_bridge(project.clone(),project.out.clone(),vec!["chat".into()],false,BridgeFlags{ephemeral:true,..Default::default()});
+        let begun = child.handle("tools/call",&json!({"name":"begin_goals","arguments":{}})).unwrap();
+        assert_ne!(begun["isError"],true,"{begun}");
+        child.open.lock().unwrap().as_mut().unwrap().session.scope.goals[0].kind = "verify".into();
+        let names = tool_names(&child);
+        assert!(names.iter().any(|name|name == "read_text_file"));
+        assert!(!names.iter().any(|name|name == "write_text_file"));
+        let refused = child.handle("tools/call",&json!({"name":"write_text_file","arguments":{"path":"src/must-not-exist.txt","content":"Changed"}})).unwrap();
+        assert_eq!(refused["isError"],true);
+        assert!(refused["content"][0]["text"].as_str().unwrap().contains("wrong-toolset"));
+        assert!(!dir.join("src/must-not-exist.txt").vexists());
+        child.open.lock().unwrap().as_mut().unwrap().session.scope.goals[0].kind = "generate".into();
+        let names = tool_names(&child);
+        for name in ["read_text_file","write_text_file","list_files","update_document_set"] { assert!(names.iter().any(|tool|tool == name),"{name}"); }
+        let files_project = workspace.files_project();
+        let parent = McpServer::with_bridge(files_project.clone(),files_project.out,vec!["chat".into()],false,BridgeFlags{ephemeral:true,..Default::default()});
+        parent.children.lock().unwrap().insert("ds_main".into(),child);
+        let call = |name:&str,args:Value|parent.handle("tools/call",&json!({"name":name,"arguments":args}));
+        let repaired = call("update_document_set",json!({"baseHash":workspace.hash,"set":{"id":"ds_main","source":["src/**","generated/**"]}})).unwrap();
+        assert_ne!(repaired["isError"],true,"{repaired}");
+        let context = crate::task_runtime::call(&dir,"task_context",&json!({})).unwrap();
+        let updated = call("update_tasks",json!({"expected_revision":context["revision"],"tasks":[]})).unwrap();
+        assert_ne!(updated["isError"],true,"{updated}");
+        let written = call("write_text_file",json!({"setId":"ds_main","path":"generated/hello.txt","content":"Hello"})).unwrap();
+        assert_ne!(written["isError"],true,"{written}");
+        // A task save must not acknowledge an earlier unrelated mapping edit.
+        let current = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
+        let changed = current.replace("generated/**","other/**");
+        crate::document_sets::atomic_config(&dir,&changed,&crate::model::hash_hex(&current)).unwrap();
+        let context = crate::task_runtime::call(&dir,"task_context",&json!({})).unwrap();
+        call("update_tasks",json!({"expected_revision":context["revision"],"tasks":[]})).unwrap();
+        let refused = call("write_text_file",json!({"setId":"ds_main","path":"generated/foreign.txt","content":"Changed"}));
+        assert!(refused.unwrap_err().1.contains("configuration changed"));
+        assert!(!dir.join("generated/foreign.txt").vexists());
+        drop(parent);
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn first_source_repair_refreshes_the_board_and_recovery_configuration() {
+        let dir = bare_dir("first-source-repair");
+        let project = crate::project::Project::load(&dir);
+        let mut store = Store::load(&project.out);
+        store.graph.entities.insert("ent:greeter".into(), crate::model::Entity { name:"Greeter".into(), ..Default::default() });
+        store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
+            statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default()
+        });
+        store.save();
+        let make = |project:crate::project::Project| McpServer::with_bridge(project.clone(), project.out.clone(),
+            vec!["generate".into()], false, BridgeFlags { ephemeral:true, serve_files:true, ..Default::default() });
+        let server = make(project.clone());
+        let call = |server:&McpServer,name:&str,args:Value| server.handle("tools/call",&json!({"name":name,"arguments":args})).unwrap();
+        let before = crate::document_sets::Workspace::load(&dir).unwrap();
+        assert!(!server.goals_answer(true).to_string().contains("g:derive-criteria:ent:greeter"));
+        let reply = call(&server,"update_document_set",json!({"baseHash":before.hash,"set":{"id":"ds_main","source":["src/**","tests/**"]}}));
+        assert_ne!(reply["isError"],true,"{reply}");
+        assert!(server.goals_answer(true).to_string().contains("g:derive-criteria:ent:greeter"));
+        let reply = call(&server,"write_text_file",json!({"path":"src/hello.txt","content":"Hello"}));
+        assert_ne!(reply["isError"],true,"{reply}");
+        let saved = server.checkpoint().unwrap();
+        let after = crate::document_sets::Workspace::load(&dir).unwrap();
+        assert_eq!(saved["configHash"],after.hash);
+        let restored = make(after.resolve(Some("ds_main")).unwrap());
+        restored.restore(saved.clone()).unwrap();
+        let reply = call(&restored,"update_document_set",json!({"baseHash":after.hash,"set":{"id":"ds_main","name":"Renamed"}}));
+        assert_ne!(reply["isError"],true,"{reply}");
+        let fresh = make(crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap());
+        assert!(fresh.restore(saved).unwrap_err().contains("incompatible"));
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn project_verification_refuses_configuration_and_compilation_calls() {
+        let dir = bare_dir("verify-project-authority");
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let server = McpServer::with_bridge(project.clone(),project.out,vec!["verify".into()],false,BridgeFlags::default());
+        let before = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
+        let names = tool_names(&server);
+        for name in ["update_document_set","create_document_set","remove_document_set","compile_document_sets"] {
+            assert!(!names.iter().any(|tool| tool == name),"{name}");
+            assert!(server.handle("tools/call",&json!({"name":name,"arguments":{}})).is_err(),"{name}");
+        }
+        let result = futures::executor::block_on(server.handle_async("tools/call",&json!({"name":"compile_document_sets","arguments":{}})));
+        assert!(result.is_err());
+        assert_eq!(crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap(),before);
+        crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn owned_gdk_worker_repairs_source_matchers_and_uses_them_in_the_same_session() {
+        use crate::harness::{self, LoopArgs, ModelHost, ModelRequest, ModelResponse};
+        struct Script { calls:Vec<(&'static str,Value)>, next:usize }
+        impl ModelHost for Script {
+            fn infer<'a>(&'a mut self, request:ModelRequest)->harness::LocalFuture<'a,Result<ModelResponse,String>> {
+                Box::pin(async move {
+                    let names:Vec<_> = request.body["tools"].as_array().unwrap().iter()
+                        .filter_map(|tool|tool["function"]["name"].as_str()).collect();
+                    for name in ["list_document_sets","preview_document_set","update_document_set"] { assert!(names.contains(&name),"missing {name}"); }
+                    for name in ["create_document_set","remove_document_set","save_document_set","write_document"] { assert!(!names.contains(&name),"unexpected {name}"); }
+                    let message = if let Some((name,args)) = self.calls.get(self.next) {
+                        json!({"role":"assistant","content":null,"tool_calls":[{"id":format!("matcher-{}",self.next),"type":"function",
+                            "function":{"name":name,"arguments":args.to_string()}}]})
+                    } else { json!({"role":"assistant","content":"Source selection repaired and real source written."}) };
+                    self.next += 1;
+                    Ok(ModelResponse{body:json!({"choices":[{"message":message}],"usage":{"prompt_tokens":10,"completion_tokens":10}})})
+                })
+            }
+        }
+        let dir = bare_dir("worker-matcher-repair");
+        let config = "version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['**']\nsource=['src/**']\n[[sets]]\nid='ds_other'\nname='Other'\ndocs=['other/**','!src/**','!generated/**']\nsource=[]\n";
+        crate::vfs::write(dir.join(".jazyk/jazyk.toml"),config).unwrap();
+        crate::vfs::write(dir.join("main.md"),"# Main\n\nThe project greets the reader.\n").unwrap();
+        let workspace = crate::document_sets::Workspace::load(&dir).unwrap();
+        let project = workspace.resolve(Some("ds_main")).unwrap();
+        let out = project.out.clone();
+        let mut store = Store::load(&out);
+        store.graph.entities.insert("ent:greeter".into(),crate::model::Entity{name:"Greeter".into(),..Default::default()});
+        store.graph.requirements.insert("req:greet".into(),crate::model::Requirement{
+            statement:"The project greets the reader.".into(),entities:vec!["ent:greeter".into()],..Default::default()});
+        store.graph.criteria.insert("crit:greet".into(),crate::model::Criterion{
+            requirement:"req:greet".into(),statement:"The greeting says hello.".into(),kind:"positive".into(),..Default::default()});
+        store.save();
+        // This takes the real native project.lock, not a flag that bypasses it.
+        let guard = crate::control::begin_internal_build(&project,&out,"generate").unwrap();
+        let token = crate::control::build_lease(&out).unwrap().worker;
+        let flags = BridgeFlags{ephemeral:true,serve_files:true,only:Some("g:generate:ent:greeter".into()),build_token:Some(token),..Default::default()};
+        let server = McpServer::with_bridge(project.clone(),out.clone(),vec!["generate".into()],true,flags.clone());
+        let edit = json!({"baseHash":workspace.hash,"set":{"id":"ds_main","source":["src/**","generated/**"]},
+            "roleIntents":[{"role":"source","patterns":["src/**","generated/**"]}]});
+        let source = "def greeting():\n    return 'Hello'\n";
+        let write = json!({"path":"generated/greeting.py","content":source});
+        let mut model = Script{next:0,calls:vec![
+            ("list_document_sets",json!({})),("preview_document_set",edit.clone()),
+            // A preview cannot authorize a write. This remains a source-selection error.
+            ("write_text_file",write.clone()),("update_document_set",edit.clone()),
+            ("begin_generation",json!({"entity":"ent:greeter"})),("write_text_file",write),
+            ("write_text_file",json!({"path":"main.md","content":"not a document edit"})),
+        ]};
+        let llm = crate::llm::Llm{base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),api_key:String::new(),temperature:None,trace:None};
+        let mut tools = crate::session_recovery::McpTools(&server);
+        let mut history = vec![json!({"role":"user","content":"Repair the Source matcher, then implement the greeting."})];
+        let mut receipts = Vec::new();
+        let stop = harness::run_with_hosts(LoopArgs{
+            llm:&llm,history:&mut history,tools:&[],dispatch:&mut |_,_|unreachable!(),
+            emit:&mut |event|if let harness::AgentEvent::ToolCallEnd{result,ok,..}=event{receipts.push((result,ok));},
+            cancelled:&||false,max_rounds:12,label:"matcher-repair".into(),conversation:false,inputs:None,input_close:None,
+        },"",&mut model,&mut tools,&mut harness::MemoryRecovery);
+        assert_eq!(stop,harness::Stop::EndTurn);
+        assert_eq!(receipts.len(),7);
+        assert!(receipts[0].1 && receipts[1].1);
+        assert!(!receipts[2].1 && receipts[2].0.contains("source-selection"),"preview wrote configuration");
+        assert!(receipts[3].1 && receipts[4].1 && receipts[5].1,"{receipts:?}");
+        assert!(!receipts[6].1 && receipts[6].0.contains("source-selection"));
+        assert_eq!(crate::vfs::read_to_string(dir.join("generated/greeting.py")).unwrap(),source);
+        assert!(crate::vfs::read_to_string(dir.join("main.md")).unwrap().starts_with("# Main"));
+        let after = crate::document_sets::Workspace::load(&dir).unwrap();
+        let current = after.resolve(Some("ds_main")).unwrap();
+        assert!(!current.doc_files().contains(&dir.join("generated/greeting.py")));
+        assert_eq!(after.select("ds_other").unwrap().source,workspace.select("ds_other").unwrap().source);
+        let call = |s:&McpServer,name:&str,args:Value|s.handle("tools/call",&json!({"name":name,"arguments":args}));
+        assert!(call(&server,"update_document_set",edit.clone()).unwrap_err().1.contains("configuration changed"));
+        let mut cross = edit.clone(); cross["baseHash"]=json!(after.hash);cross["set"]["id"]=json!("ds_other");
+        assert!(call(&server,"update_document_set",cross).unwrap_err().1.contains("only its current"));
+        let other_config = crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap();
+        let overlap = json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**","other/**"]},
+            "roleIntents":[{"role":"source","patterns":["other/**"]}]});
+        for name in ["preview_document_set","update_document_set"] {
+            assert!(call(&server,name,overlap.clone()).unwrap_err().1.contains("another document set"));
+            assert_eq!(crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap(),other_config);
+        }
+        let mut foreign_flags = flags.clone();foreign_flags.build_token=Some("another-owner".into());
+        let foreign=McpServer::with_bridge(project.clone(),out.clone(),vec!["generate".into()],true,foreign_flags);
+        let current_edit=json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**"]}});
+        assert!(call(&foreign,"update_document_set",current_edit.clone()).unwrap_err().1.contains("does not own"));
+        for (mode,reader) in [("verify",false),("compile",false),("graph",true),("runtime",false)] {
+            let s=McpServer::with_bridge(project.clone(),out.clone(),vec![mode.into()],false,BridgeFlags{ephemeral:true,reader,..flags.clone()});
+            let names=tool_names(&s);
+            assert!(!names.contains(&"update_document_set".to_string()),"{mode}");
+            assert!(call(&s,"update_document_set",current_edit.clone()).is_err(),"{mode}");
+        }
+        drop(guard);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
 
     #[test]
     fn owned_generation_carries_each_contract_once_through_the_inprocess_harness() {

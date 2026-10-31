@@ -69,9 +69,11 @@ steps:
   but must be one an implementation can pass: it asserts the refusal or outcome the
   criterion states, never a contradiction of its own input (the embedded agent once
   asserted that an order built from no items has items, a gate nothing could clear). One test per criterion, keyed by the criterion id and its
-  statement hash; the requirement's row groups them. One file per requirement may hold
-  every criterion's test, and each entry's `run` then selects its own test by name, since
-  a command that runs the whole file judges every criterion at once. A test carrying this statement's hash in its name or marker
+  statement hash; the requirement's row groups them. Test functions can share source
+  files and a project suite across requirements. For `run = "task:<id>"`, every
+  entry can name the same saved task. Its `name` selects its exact JUnit case, so
+  one suite run still judges each criterion independently. Only a legacy command
+  whose exit code supplies the verdict must select its own case. A test carrying this statement's hash in its name or marker
   under another requirement id is this requirement's test (ids renumber between
   compiles, the hash follows the statement): rename it to the suggested name and bind
   to it. A test named with this id but another hash belongs to the statement that hash
@@ -82,8 +84,18 @@ steps:
   - Implementation absent: the test encodes the criterion and fails by design. The
     failing tests are the spec, and they are the acceptance gate
     [generation](./gen.md) later has to clear.
-- Run the test and record the binding with `record_binding`: the files, the test row,
+- Inspect `task_context` and the existing runner before defining execution. Reuse
+  an ordinary project task, such as `test` or `test-unit`, and extend its suite.
+  One requirement per bind goal does not mean one task, test file or container per
+  requirement. Separate suites are useful when their toolchain or isolation differs.
+- Run the useful suite and record the binding with `record_binding`: the files, the test row,
   the verdict, the evidence.
+
+Binding is an explicit inspection workflow. Its acceptance tests do not require
+generation to use test-first development. Generation can implement source before
+execution. A deliberately chosen failing baseline remains useful for focused
+bug fixes or acceptance work. It is not a reason to launch one empty-source run
+per criterion.
 
 The session observes and judges; it never changes implementation files. Test and
 criteria files are the only files it writes: a write to a path the ledger records as an

@@ -110,7 +110,9 @@ Two directories make the actors and their claims visible:
   reading serving itself shows `claimedBy: you`.
 
 The internal loop holds one coarse `build` lease for a whole run instead of per-batch
-leases. The two granularities exclude each other: `begin_goals` refuses while a live
+leases. Each build attempt has a unique owner token, including consecutive builds
+in the same process. A token from an ended attempt cannot authorize a later build.
+The two granularities exclude each other: `begin_goals` refuses while a live
 build lease exists (`build-running`), and a build refuses to start while any live batch
 lease exists, naming the holder. The store's commit lock stays underneath as the
 correctness backstop; leases exist so work is not duplicated, not to make commits safe

@@ -408,7 +408,8 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
         let tasks: Vec<Task> =
             serde_json::from_value(args["tasks"].clone()).map_err(|e| e.to_string())?;
         let next = edit(&source, &tasks)?;
-        crate::vfs::write(root.join(".jazyk/jazyk.toml"), &next).map_err(|e| e.to_string())?;
+        crate::document_sets::atomic_config(root, &next, &crate::model::hash_hex(&source))
+            .map_err(|(_, error)| error)?;
         return Ok(json!({"tasks":tasks,"revision":digest(next.as_bytes())}));
     }
     let mut request = args.clone();
@@ -649,6 +650,38 @@ mod tests {
         assert!(changed.contains("existing"));
         assert_eq!(definitions(&changed).unwrap(), tasks);
     }
+    #[test]
+    fn task_updates_share_the_config_lock_and_preserve_matcher_edits() {
+        let root = std::env::temp_dir().join(format!("jazyk-task-cas-{}-{}",
+            crate::sys::process_id(), crate::sys::now_millis()));
+        crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+        let source = format!("version=1\n{CONFIG}");
+        crate::vfs::write(root.join(".jazyk/jazyk.toml"), &source).unwrap();
+        let mut tasks = definitions(&source).unwrap();
+        tasks[0].description = "Run the ordinary project suite".into();
+        let args = json!({"expected_revision":digest(source.as_bytes()),"tasks":tasks});
+        // A task save and a matcher save cannot both pass independent locks.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let lock = crate::document_sets::ProjectLock::acquire(&root, "config.lock").unwrap();
+            assert!(call(&root, "update_tasks", &args).unwrap_err().contains("another project operation"));
+            assert_eq!(crate::vfs::read_to_string(root.join(".jazyk/jazyk.toml")).unwrap(), source);
+            drop(lock);
+        }
+        let next = format!("{source}\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n");
+        crate::document_sets::atomic_config(&root, &next, &crate::model::hash_hex(&source)).unwrap();
+        assert!(call(&root, "update_tasks", &args).unwrap_err().contains("settings changed"));
+        assert_eq!(crate::vfs::read_to_string(root.join(".jazyk/jazyk.toml")).unwrap(), next);
+        let saved = call(&root, "update_tasks", &json!({"expected_revision":digest(next.as_bytes()),"tasks":tasks})).unwrap();
+        let (actual, actual_tasks) = load(&root).unwrap();
+        assert_eq!(saved["revision"], digest(actual.as_bytes()));
+        assert_eq!(actual_tasks, tasks);
+        assert!(actual.contains("# retained comment"));
+        let workspace = crate::document_sets::Workspace::load(&root).unwrap();
+        assert_eq!(workspace.select("ds_main").unwrap().source, ["src/**"]);
+        crate::vfs::remove_dir_all(root).ok();
+    }
+
     #[test]
     fn bad_settings() {
         assert!(definitions(&CONFIG.replace("id='test'", "id='../bad'")).is_err());

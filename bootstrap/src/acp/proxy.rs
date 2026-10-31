@@ -927,7 +927,7 @@ fn run_command(
                 };
                 st.building
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+                runner.set_build_token(Some(_guard.token().to_owned()));
                 crate::gen::run_all(&store, &runner, &gs, &[], false, &trace)
             } else {
                 st.building

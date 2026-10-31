@@ -57,6 +57,19 @@ impl InProcessRunner {
         })
     }
 
+    fn serving_for(&self, batch: &BatchRun) -> McpServer {
+        McpServer::with_bridge(
+            self.project.clone(), self.out.clone(), vec![batch.serving_mode().into()], true,
+            crate::mcp::BridgeFlags {
+                ephemeral: true,
+                serve_files: matches!(batch.serving_mode(), "generate" | "verify"),
+                only: Some(batch.id.clone()),
+                build_token: self.build_token.take_clone(),
+                ..Default::default()
+            },
+        )
+    }
+
     // The tools the serving offers, in the shape the loop hands the model.
     fn tools_of(server: &McpServer) -> Result<Vec<GenericTool>, String> {
         let list = server
@@ -107,19 +120,7 @@ impl SessionRunner for InProcessRunner {
         // runs under the build's token so the build lease does not refuse it. The
         // prompt is not pre-packaged: begin_goals answers with it, and the loop
         // opens on that.
-        let server = McpServer::with_bridge(
-            self.project.clone(),
-            self.out.clone(),
-            vec![batch.serving_mode().to_string()],
-            true,
-            crate::mcp::BridgeFlags {
-                ephemeral: true,
-                serve_files: batch.serving_mode() == "generate",
-                only: Some(batch.id.clone()),
-                build_token: self.build_token.take_clone(),
-                ..Default::default()
-            },
-        );
+        let server = self.serving_for(batch);
         if let Err(e) = server.handle(
             "initialize",
             &json!({"protocolVersion": "2024-11-05", "clientInfo": {"name": "jazyk-wasm"}}),
@@ -313,6 +314,32 @@ impl SessionRunner for InProcessRunner {
 mod ledger_failure_tests {
     use super::*;
 
+    #[test]
+    fn verification_runner_can_read_implementing_files_without_file_or_matcher_writes() {
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        crate::vfs::create_dir_all("/project/.jazyk").unwrap();
+        crate::vfs::create_dir_all("/project/src").unwrap();
+        crate::vfs::write("/project/.jazyk/jazyk.toml", "version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n").unwrap();
+        crate::vfs::write("/project/src/greeting.txt", "Hello").unwrap();
+        let project = Project::load(Path::new("/project"));
+        let mut store = crate::store::Store::load(&project.out);
+        store.graph.entities.insert("ent:greeter".into(), crate::model::Entity { name:"Greeter".into(), ..Default::default() });
+        store.save();
+        let llm = Llm { base_url:"http://127.0.0.1:1/v1".into(), model:"unused".into(), api_key:String::new(), temperature:None, trace:None };
+        let runner = InProcessRunner::start(&project,&llm,&project.out).unwrap();
+        let batch = BatchRun::single(crate::model::Goal { id:"g:verify:req:greet".into(),kind:"verify".into(),target:"req:greet".into(),..Default::default() });
+        let server = runner.serving_for(&batch);
+        let tools = InProcessRunner::tools_of(&server).unwrap();
+        for name in ["read_text_file","list_files"] { assert!(tools.iter().any(|tool| tool.name == name)); }
+        for name in ["write_text_file","update_document_set","run_command"] { assert!(!tools.iter().any(|tool| tool.name == name)); }
+        let read = server.handle("tools/call",&json!({"name":"read_text_file","arguments":{"path":"src/greeting.txt"}})).unwrap();
+        assert_ne!(read["isError"],true,"{read}");
+        assert!(read["content"][0]["text"].as_str().unwrap().contains("Hello"));
+        assert!(server.handle("tools/call",&json!({"name":"write_text_file","arguments":{"path":"src/greeting.txt","content":"Changed"}})).is_err());
+        assert!(server.handle("tools/call",&json!({"name":"update_document_set","arguments":{}})).is_err());
+        assert_eq!(crate::vfs::read_to_string("/project/src/greeting.txt").unwrap(),"Hello");
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn generation_can_record_after_twenty_four_requests_and_resume_without_readmission() {
@@ -347,7 +374,7 @@ mod ledger_failure_tests {
             control.save(&project.out);
             let criterion = crate::gen::criteria_front_matter("req:greet", Some("crit:greet"),
                 &store.graph.criteria["crit:greet"].statement)
-                + "\nRead src/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
+                + "\nRead generated/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
             (fs.snapshot(), crate::gen::fact_hash(&store, "ent:greeter"), criterion)
         };
         for interrupt in [false, true] {
@@ -355,6 +382,7 @@ mod ledger_failure_tests {
             let observed = requests.clone();
             let fact_hash = fact_hash.clone();
             let criterion = criterion.clone();
+            let config_hash = crate::model::hash_hex(std::str::from_utf8(&files[".jazyk/jazyk.toml"]).unwrap());
             let model = Arc::new(move |body: String| {
                 let request: Value = serde_json::from_str(&body).unwrap();
                 assert_eq!(request["_jazyk"]["purpose"], "inference");
@@ -363,12 +391,13 @@ mod ledger_failure_tests {
                 let round = seen.len();
                 let (name, args) = match round {
                     1 => ("begin_generation", json!({"entity":"ent:greeter"})),
-                    2..=26 => ("write_text_file", json!({"path":"src/greeting.txt", "content":format!("Hello\nRevision {round}\n")})),
+                    2 => ("update_document_set", json!({"baseHash":config_hash,"set":{"id":"ds_main","source":["src/**","generated/**","tests/**"]}})),
+                    3..=26 => ("write_text_file", json!({"path":"generated/greeting.txt", "content":format!("Hello\nRevision {round}\n")})),
                     27 => ("write_text_file", json!({"path":"tests/greeting.md", "content":criterion})),
                     28 => ("record_generation", json!({"entity":"ent:greeter", "factHash":fact_hash,
-                        "manifest":{"files":["src/greeting.txt"], "tests":[{
+                        "manifest":{"files":["generated/greeting.txt"], "tests":[{
                             "requirement":"req:greet", "criterion":"crit:greet", "kind":"llm",
-                            "artifact":"tests/greeting.md", "name":"greeting", "run":"llm", "files":["src/greeting.txt"]
+                            "artifact":"tests/greeting.md", "name":"greeting", "run":"llm", "files":["generated/greeting.txt"]
                         }]}})),
                     29 => ("done", json!({"summary":"Recorded source and its criterion after incremental edits."})),
                     _ => panic!("successful ledger done must stop the worker"),
@@ -431,7 +460,7 @@ mod ledger_failure_tests {
             assert_eq!(identities.len(), 29);
             assert_eq!(rounds.load(Ordering::SeqCst), 29, "resume must retain the original request count");
             let files = workspace.snapshot();
-            assert!(files["src/greeting.txt"].starts_with(b"Hello\n"));
+            assert!(files["generated/greeting.txt"].starts_with(b"Hello\n"));
             let _fs = crate::vfs::Scope::enter(&files);
             let project = Project::load(Path::new("/project"));
             let store = crate::store::Store::load(&project.out);

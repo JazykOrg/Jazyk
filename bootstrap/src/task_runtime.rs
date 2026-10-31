@@ -430,7 +430,7 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
     request["operation"] = json!(name);
     // Waiting is the engine's choice, never part of the submitted request.
     let wait = name == "run_task" && args["wait"] == true;
-    if let Some(fields) = request.as_object_mut() { fields.remove("wait"); }
+    if let Some(fields) = request.as_object_mut() { fields.remove("wait"); fields.remove("task_ids"); }
     let mut wait_seconds = 0;
     if name == "run_task" {
         if operation_cancelled() {
@@ -481,11 +481,25 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
         return host.and_then(|status| wait_terminal(root, status, wait_seconds, import_terminal));
     }
     if name == "task_context" {
-        return Ok(
-            json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}}),
-        );
+        let (tasks, index) = select_tasks(tasks, &args["task_ids"])?;
+        let mut context = json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}});
+        if let Some(index) = index { context["index"] = index; }
+        return Ok(context);
     }
     host
+}
+
+// Selected definitions in full, the rest by name. No selection keeps the full list.
+fn select_tasks(tasks: Vec<Task>, selection: &Value) -> Result<(Vec<Task>, Option<Value>), String> {
+    if selection.is_null() { return Ok((tasks, None)); }
+    let ids: Vec<&str> = selection.as_array().ok_or("task_ids must be a list of task IDs")?
+        .iter().map(|id| id.as_str().ok_or("task_ids must be a list of task IDs")).collect::<Result<_, _>>()?;
+    if let Some(unknown) = ids.iter().find(|id| !tasks.iter().any(|t| t.id == **id)) {
+        return Err(format!("Unknown task ID '{unknown}' in task_ids. Omit task_ids for the full list."));
+    }
+    let (selected, rest): (Vec<Task>, Vec<Task>) = tasks.into_iter().partition(|t| ids.contains(&t.id.as_str()));
+    let index = rest.iter().map(|t| json!({"id":t.id,"name":t.name,"description":t.description})).collect();
+    Ok((selected, Some(Value::Array(index))))
 }
 
 // Poll in code so a long run costs no inference per state change. Every early
@@ -774,6 +788,24 @@ mod tests {
         assert!(changed.contains("# retained comment"), "{changed}");
         assert!(changed.contains("existing"));
         assert_eq!(definitions(&changed).unwrap(), tasks);
+    }
+    #[test]
+    fn task_selection_keeps_full_default_and_indexes_unselected_tasks() {
+        let mut tasks = definitions(CONFIG).unwrap();
+        let mut other = tasks[0].clone();
+        other.id = "lint".into();
+        other.name = "Lint".into();
+        tasks.push(other);
+        assert_eq!(select_tasks(tasks.clone(), &Value::Null).unwrap(), (tasks.clone(), None));
+        let (selected, index) = select_tasks(tasks.clone(), &json!(["lint"])).unwrap();
+        assert_eq!(selected, vec![tasks[1].clone()]);
+        assert_eq!(index.unwrap(), json!([{"id":tasks[0].id,"name":tasks[0].name,"description":tasks[0].description}]));
+        let (selected, index) = select_tasks(tasks.clone(), &json!([])).unwrap();
+        assert!(selected.is_empty());
+        assert_eq!(index.unwrap().as_array().unwrap().len(), 2);
+        let error = select_tasks(tasks.clone(), &json!(["missing"])).unwrap_err();
+        assert!(error.contains("'missing'"), "{error}");
+        assert!(select_tasks(tasks, &json!("lint")).is_err());
     }
     #[test]
     fn task_updates_share_the_config_lock_and_preserve_matcher_edits() {

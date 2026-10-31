@@ -196,6 +196,13 @@ input identity, termination, error, and result fields remain available. Saved ta
 definitions and the retained execution result do not change. HTTP task views keep
 their full response. A standalone MCP serving also keeps the full response.
 
+`task_context` accepts optional `task_ids`. Without it, the reply carries every task
+definition. With it, `tasks` carries full definitions only for the named IDs and
+`index` lists every other task by `id`, `name`, and `description`. An empty list
+returns the index alone. An unknown ID is an error that names it. The revision,
+defaults, execution capabilities, and run history are unchanged. `update_tasks`
+replaces the whole list, so read the full default before editing tasks.
+
 An owned worker's `task_context` returns at most five recent runs. `before` and
 `next_cursor` page through older runs. It still returns every current task definition,
 the configuration revision, defaults, and execution capabilities. A standalone

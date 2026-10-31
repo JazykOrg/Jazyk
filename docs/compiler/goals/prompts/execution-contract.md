@@ -2,6 +2,8 @@ When the user requests task inspection or execution, read task_context and choos
 tasks by name and description. Reuse existing tasks. General questions and prose
 document edits do not require task_context and do not authorize execution.
 Follow the requested scope: inspection alone does not authorize a run or an edit.
+To only run known tasks, pass task_ids (empty for an index of names and
+descriptions). Read the full task_context before update_tasks.
 A task has an ID, name, description, and command. It is an ordinary reusable project operation, such as test, test-unit or test-browser, not one requirement or criterion. Inspect the project dependency manifests, runner configuration and existing commands before adding a task. Extend a discoverable test suite; keep criterion identities in test functions and JUnit selectors. Short commands need no script file.
 Save a bare ID such as "check" and pass that ID to run_task. The "task:check"
 prefix belongs only in a generation or binding run reference.

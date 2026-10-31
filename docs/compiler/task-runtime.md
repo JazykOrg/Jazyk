@@ -77,8 +77,10 @@ waits for the run in code and returns its terminal status in the same reply. Wai
 makes no model inference per state change. It ends early, with the current
 non-terminal status, when the owning operation is cancelled, the worker is asked to
 suspend, or the wait outlasts the task timeout plus 600 seconds. Cancellation also
-stops the run. Suspension leaves the run running. A non-terminal reply means: continue
-with `wait_run`. The reply is an ordinary tool result, so a suspended worker resumes
+stops the run. Suspension leaves the run running. A poll that fails, including a
+hosted poll interrupted by suspension or cancellation, ends the wait the same way:
+the reply keeps the run ID and its last status and adds `wait_error`. A
+non-terminal reply means: continue with `wait_run`. The reply is an ordinary tool result, so a suspended worker resumes
 after it without an uncertain pending call. Waiting adds no saved state and does not
 change the run's fixed deadline.
 
@@ -204,8 +206,9 @@ defaults, execution capabilities, and run history are unchanged. `update_tasks`
 replaces the whole list, so read the full default before editing tasks.
 
 An owned worker's `task_context` returns at most five recent runs. `before` and
-`next_cursor` page through older runs. It still returns every current task definition,
-the configuration revision, defaults, and execution capabilities. A standalone
+`next_cursor` page through older runs. It still returns every current task definition
+(or the `task_ids` selection and index), the configuration revision, defaults, and
+execution capabilities. A standalone
 serving keeps the normal history page. Status polls never include source snapshots
 or file contents.
 

@@ -195,20 +195,28 @@ fn waiting_run_task_polls_in_code_and_interrupts_with_ordinary_status_replies() 
     let fixture = Fixture::new();
     let waits = Arc::new(AtomicUsize::new(0));
     let cancels = Arc::new(AtomicUsize::new(0));
+    // 1: the poll is suspended mid-call, 2: cancelled mid-call, 3: the transport fails.
+    let interrupt = Arc::new(AtomicUsize::new(0));
+    let (suspend, cancel) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
     let (inner, ready, counted, cancelled) = (fixture.runtime.clone(), fixture.ready.clone(), waits.clone(), cancels.clone());
+    let (mode, suspending, cancelling) = (interrupt.clone(), suspend.clone(), cancel.clone());
     let runtime: RuntimeTransport = Arc::new(move |request: &Value| match request["operation"].as_str().unwrap() {
-        "wait_run" => {
-            if counted.fetch_add(1, Ordering::SeqCst) == 2 { ready.store(true, Ordering::SeqCst); }
-            inner(request)
-        }
+        "wait_run" => match mode.swap(0, Ordering::SeqCst) {
+            1 => { suspending.store(true, Ordering::SeqCst); Err("execution suspended".into()) }
+            2 => { cancelling.store(true, Ordering::SeqCst); Err("execution cancelled".into()) }
+            3 => Err("connection reset".into()),
+            _ => {
+                if counted.fetch_add(1, Ordering::SeqCst) == 2 { ready.store(true, Ordering::SeqCst); }
+                inner(request)
+            }
+        },
         "cancel_run" => {
             cancelled.fetch_add(1, Ordering::SeqCst);
             Ok(json!({"id":request["run_id"],"terminated":false,"state":"cancelling"}))
         }
         _ => inner(request),
     });
-    let execution = Execution { runtime:Some(runtime), ..Default::default() };
-    let (suspend, cancel) = (execution.suspend.clone(), execution.cancel.clone());
+    let execution = Execution { runtime:Some(runtime), suspend:suspend.clone(), cancel:cancel.clone(), ..Default::default() };
     let _fs = crate::vfs::Scope::enter(&fixture.files);
     let _state = crate::scoped_state::Scope::enter();
     let _execution = crate::hosted::test_execution_scope(execution);
@@ -223,6 +231,17 @@ fn waiting_run_task_polls_in_code_and_interrupts_with_ordinary_status_replies() 
     assert_eq!(pending["terminated"], false);
     assert_eq!(waits.load(Ordering::SeqCst), 0);
     suspend.store(false, Ordering::SeqCst);
+
+    // A hosted poll suspended mid-call or a failed transport also returns status.
+    for (case, message) in [(1, "execution suspended"), (3, "connection reset")] {
+        interrupt.store(case, Ordering::SeqCst);
+        let pending = call(root, "run_task", &start).unwrap();
+        assert_eq!(pending["id"], "copy-run");
+        assert_eq!(pending["terminated"], false);
+        assert_eq!(pending["wait_error"], message);
+        suspend.store(false, Ordering::SeqCst);
+    }
+    assert_eq!(waits.load(Ordering::SeqCst), 0);
 
     // Replaying the same key waits for the same run, imports once, and returns terminal.
     let terminal = call(root, "run_task", &start).unwrap();
@@ -243,6 +262,14 @@ fn waiting_run_task_polls_in_code_and_interrupts_with_ordinary_status_replies() 
     let stopping = call(root, "run_task", &start).unwrap();
     assert_eq!(stopping["state"], "cancelling");
     assert_eq!(cancels.load(Ordering::SeqCst), 1);
+
+    // Cancellation that interrupts a hosted poll still stops the run.
+    cancel.store(false, Ordering::SeqCst);
+    interrupt.store(2, Ordering::SeqCst);
+    let start = json!({"task_id":"check","expected_revision":revision,"operation_key":"check-cancelled","wait":true});
+    let stopping = call(root, "run_task", &start).unwrap();
+    assert_eq!(stopping["state"], "cancelling");
+    assert_eq!(cancels.load(Ordering::SeqCst), 2);
 
     // Without wait, run_task keeps returning immediately.
     cancel.store(false, Ordering::SeqCst);

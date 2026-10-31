@@ -471,6 +471,7 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
         request["files"] = json!(files);
         request["task"] = json!(task);
     }
+    let selection = if name == "task_context" { Some(select_tasks(tasks, &args["task_ids"])?) } else { None };
     let host = dispatch(root, &request).and_then(|value| {
         if name == "run_task" && crate::vfs::is_scoped() {
             save_submission(root, &request, &value)?;
@@ -480,8 +481,7 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
     if wait {
         return host.and_then(|status| wait_terminal(root, status, wait_seconds, import_terminal));
     }
-    if name == "task_context" {
-        let (tasks, index) = select_tasks(tasks, &args["task_ids"])?;
+    if let Some((tasks, index)) = selection {
         let mut context = json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}});
         if let Some(index) = index { context["index"] = index; }
         return Ok(context);
@@ -508,20 +508,36 @@ fn select_tasks(tasks: Vec<Task>, selection: &Value) -> Result<(Vec<Task>, Optio
 fn wait_terminal(root: &Path, mut status: Value, limit_seconds: u64, import_terminal: bool) -> Result<Value, String> {
     let id = status["id"].as_str().ok_or("Run ID missing")?.to_owned();
     let deadline = crate::sys::now_unix() + limit_seconds;
-    while status["terminated"] != true {
+    fn cancelled() -> bool {
         #[cfg(not(target_arch = "wasm32"))]
-        let cancelled = crate::hosted::cancelled() || operation_cancelled();
+        { crate::hosted::cancelled() || operation_cancelled() }
         #[cfg(target_arch = "wasm32")]
-        let cancelled = operation_cancelled();
-        if cancelled {
-            return call_impl(root, "cancel_run", &json!({"run_id":id}), import_terminal);
-        }
+        { operation_cancelled() }
+    }
+    while status["terminated"] != true {
+        if cancelled() { return Ok(cancel_waiting(root, &id, status, import_terminal)); }
         if crate::session_recovery::suspension_requested() || crate::sys::now_unix() >= deadline {
             break;
         }
-        status = call_impl(root, "wait_run", &json!({"run_id":id,"wait_ms":5000}), import_terminal)?;
+        match call_impl(root, "wait_run", &json!({"run_id":id,"wait_ms":5000}), import_terminal) {
+            Ok(next) => status = next,
+            // A hosted poll fails when the execution is suspended or cancelled
+            // mid-wait. Any failure keeps the submitted run's identity.
+            Err(error) => {
+                if cancelled() { return Ok(cancel_waiting(root, &id, status, import_terminal)); }
+                status["wait_error"] = json!(error);
+                break;
+            }
+        }
     }
     Ok(status)
+}
+
+fn cancel_waiting(root: &Path, id: &str, mut status: Value, import_terminal: bool) -> Value {
+    match call_impl(root, "cancel_run", &json!({"run_id":id}), import_terminal) {
+        Ok(stopping) => stopping,
+        Err(error) => { status["wait_error"] = json!(error); status }
+    }
 }
 
 // The host owns execution. The active scoped worker owns publication into its

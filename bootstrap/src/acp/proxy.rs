@@ -15,7 +15,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 struct ProxyState {
     up: OnceLock<ConnectionTo<Client>>,
-    down: OnceLock<ConnectionTo<Agent>>,
+    // One connection per downstream agent, spawned on first use. A conversation
+    // stays on the agent it opened on; `/agent` moves new ones to another.
+    // Mirrors docs/frontends/acp.md#switching-agents.
+    downs: Mutex<std::collections::HashMap<String, ConnectionTo<Agent>>>,
+    // The IDE's initialize, replayed to every agent spawned after the first.
+    initialize: Mutex<Option<InitializeRequest>>,
+    // The [acp] settings when no project is open, so a bare directory still resolves.
+    acp_settings: crate::project::AcpSettings,
     // The IDE's file-system capabilities, learned at initialize.
     client_fs_write: Mutex<bool>,
     // The session the IDE is talking in: where delegated edits and command output go.
@@ -25,10 +32,12 @@ struct ProxyState {
     // None outside a jazyk project. `/jazyk-init` fills it in without a restart, so
     // it is behind a lock. Mirrors docs/frontends/acp.md#the-ide-proxy.
     project: Mutex<Option<crate::project::Project>>,
-    // Which downstream agent this proxy drives, recorded with each conversation.
-    agent_name: String,
-    // Whether that agent can reopen one of its own sessions, learned at initialize.
-    down_loads: Mutex<bool>,
+    // The agent new conversations open on.
+    agent_name: Mutex<String>,
+    // The agent each conversation runs on, by the id the IDE knows it by.
+    session_agents: Mutex<std::collections::HashMap<String, String>>,
+    // Whether each agent can reopen one of its own sessions, learned at initialize.
+    down_loads: Mutex<std::collections::HashMap<String, bool>>,
     // A loaded conversation continues on a fresh downstream session when the agent
     // cannot reopen its own: the loaded id routes onto the new one, and back.
     // Mirrors docs/frontends/acp.md#session-store.
@@ -47,6 +56,44 @@ struct ProxyState {
 impl ProxyState {
     fn in_project(&self) -> bool {
         self.project.lock().unwrap().is_some()
+    }
+
+    // The agent a conversation runs on: the one it opened on, else the current one.
+    fn agent_of(&self, sid: &str) -> String {
+        self.session_agents
+            .lock()
+            .unwrap()
+            .get(sid)
+            .cloned()
+            .unwrap_or_else(|| self.agent_name.lock().unwrap().clone())
+    }
+
+    fn down_of(&self, sid: &str) -> Result<ConnectionTo<Agent>, agent_client_protocol::Error> {
+        let name = self.agent_of(sid);
+        self.downs.lock().unwrap().get(&name).cloned().ok_or_else(not_initialized)
+    }
+
+    // The spawn configuration of a named agent (None: the configured one), resolved
+    // from the settings as they are on disk now, so `/agent` sees its own write.
+    fn agent_config(
+        &self,
+        name: Option<&str>,
+    ) -> Result<(String, AcpAgentConfig), String> {
+        let proj_acp = self
+            .project
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|p| crate::project::Project::load(&p.root).acp)
+            .unwrap_or_else(|| self.acp_settings.clone());
+        let agent = crate::acp::config::resolve_acp(
+            name,
+            &proj_acp,
+            &crate::project::load_global_acp(),
+            |n| if name.is_some() { None } else { std::env::var(n).ok() },
+        )?;
+        let llm = self.llm.lock().unwrap().clone();
+        Ok((agent.name.clone(), spawn_config(&agent, &llm)))
     }
 
     fn add_route(&self, up: &str, down: &str) {
@@ -125,40 +172,18 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             out = proj.out.clone();
         }
     }
-    let agent = match crate::acp::config::resolve_acp(
-        None,
-        &proj.acp,
-        &crate::project::load_global_acp(),
-        |n| std::env::var(n).ok(),
-    ) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("jazyk acp: {}", e);
-            return 2;
-        }
-    };
-    let mut config = AcpAgentConfig::new(&agent.command).args(agent.args.clone());
-    for (k, v) in &agent.env {
-        config = config.env(k, v);
-    }
-    if agent.name == crate::acp::config::EMBEDDED {
-        config = config
-            .env("JAZYK_LLM_BASE_URL", &llm.base_url)
-            .env("JAZYK_MODEL", &llm.model);
-        if !llm.api_key.is_empty() {
-            config = config.env("JAZYK_API_KEY", &llm.api_key);
-        }
-    }
-
     let state = Arc::new(ProxyState {
         up: OnceLock::new(),
-        down: OnceLock::new(),
+        downs: Mutex::new(std::collections::HashMap::new()),
+        initialize: Mutex::new(None),
+        acp_settings: proj.acp.clone(),
         client_fs_write: Mutex::new(false),
         last_session: Mutex::new(None),
         sink_path: Mutex::new(None),
         project: Mutex::new(in_project.then(|| proj.clone())),
-        agent_name: agent.name.clone(),
-        down_loads: Mutex::new(false),
+        agent_name: Mutex::new(String::new()),
+        session_agents: Mutex::new(std::collections::HashMap::new()),
+        down_loads: Mutex::new(std::collections::HashMap::new()),
         routes: Mutex::new(std::collections::HashMap::new()),
         llm: Mutex::new(llm),
         building: std::sync::atomic::AtomicBool::new(false),
@@ -166,6 +191,14 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         runtime_fences: Mutex::new(Default::default()),
         out,
     });
+    let (agent_name, config) = match state.agent_config(None) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("jazyk acp: {}", e);
+            return 2;
+        }
+    };
+    *state.agent_name.lock().unwrap() = agent_name.clone();
     if state.in_project() {
         start_sink(&state);
     }
@@ -193,16 +226,18 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     let _ = st_init.up.set(cx.clone());
                     *st_init.client_fs_write.lock().unwrap() =
                         req.client_capabilities.fs.write_text_file;
-                    let down = ensure_down(&st_init, &cx, config.clone())?;
+                    *st_init.initialize.lock().unwrap() = Some(req.clone());
+                    let down = ensure_down(&st_init, &cx, &agent_name, config.clone())?;
                     let mirror = st_init.in_project();
                     let st_caps = st_init.clone();
+                    let name = agent_name.clone();
                     down.send_request(req).on_receiving_result(async move |result| {
                         // Inside a project the proxy answers session/list and
                         // session/load itself, mirroring recorded runs; advertise it
                         // whatever the downstream agent supports.
                         // Mirrors docs/frontends/acp.md#mirroring-into-ides.
                         let result = result.map(|mut r| {
-                            *st_caps.down_loads.lock().unwrap() = r.agent_capabilities.load_session;
+                            st_caps.down_loads.lock().unwrap().insert(name, r.agent_capabilities.load_session);
                             if mirror {
                                 r.agent_capabilities.load_session = true;
                                 r.agent_capabilities.session_capabilities = r
@@ -224,14 +259,14 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         let text=req.prompt.iter().filter_map(|block|match block {ContentBlock::Text(text)=>Some(text.text.as_str()),_=>None}).collect::<Vec<_>>().join("\n");
                         crate::acp::sessions::append_checked(&st_steer.out,&req.session_id,json!({"kind":"user","at":crate::verify::now_iso(),"text":text,"steering":true,"request":req})).map_err(|error|agent_client_protocol::Error::internal_error().data(error))?;
                     }
+                    let down = st_steer.down_of(&req.session_id)?;
                     req.session_id = st_steer.route_down(&req.session_id);
-                    let down = st_steer.down.get().cloned().ok_or_else(not_initialized)?;
                     down.send_request(req).on_receiving_result(async move |result| responder.respond_with_result(result))
                 },
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |mut req: NewSessionRequest, responder, _cx| {
+                async move |mut req: NewSessionRequest, responder, cx: ConnectionTo<Client>| {
                     let mut meta = req.meta.take().unwrap_or_default();
                     meta.insert("jazyk".into(), json!({"purpose":"chat"}));
                     req.meta = Some(meta);
@@ -240,45 +275,30 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     let fence = runtime_fence(&st_new);
                     let servers = with_jazyk_serving(&st_new, req.mcp_servers.clone(), &fence);
                     req = req.mcp_servers(servers);
-                    let down = st_new.down.get().cloned().ok_or_else(not_initialized)?;
+                    // A new conversation opens on the current agent, spawning its
+                    // connection the first time `/agent` points at it.
+                    // Mirrors docs/frontends/acp.md#switching-agents.
+                    let name = st_new.agent_name.lock().unwrap().clone();
+                    let existing = st_new.downs.lock().unwrap().get(&name).cloned();
                     let st = st_new.clone();
-                    let cwd = req.cwd.clone();
-                    down.send_request(req).on_receiving_result(async move |result| {
-                        let sid = result.as_ref().ok().map(|r| r.session_id.to_string());
-                        if let Some(sid) = &sid {
-                            st.runtime_fences.lock().unwrap().insert(sid.clone(), fence.clone());
-                            *st.last_session.lock().unwrap() = Some(sid.clone());
-                            // A conversation in a project is recorded from its first
-                            // moment, so it can be listed and reopened later.
-                            // Mirrors docs/frontends/acp.md#session-store.
-                            if st.in_project() {
-                                crate::acp::sessions::open(&st.out, sid, &cwd, &st.agent_name);
+                    let Some(down) = existing else {
+                        let (_, config) = st.agent_config(Some(&name)).map_err(|e| {
+                            agent_client_protocol::Error::internal_error().data(e)
+                        })?;
+                        let down = ensure_down(&st, &cx, &name, config)?;
+                        let init = st.initialize.lock().unwrap().clone().ok_or_else(not_initialized)?;
+                        let fresh = down.clone();
+                        return down.send_request(init).on_receiving_result(async move |result| {
+                            match result {
+                                Ok(r) => {
+                                    st.down_loads.lock().unwrap().insert(name.clone(), r.agent_capabilities.load_session);
+                                    open_session(st, fresh, name, req, fence, responder)
+                                }
+                                Err(e) => responder.respond_with_result(Err(e)),
                             }
-                        }
-                        responder.respond_with_result(result)?;
-                        // Inside a project, the session advertises the jazyk commands;
-                        // outside one it advertises the way in, and nothing else.
-                        // Mirrors docs/frontends/acp.md#slash-commands.
-                        if let (Some(sid), Some(up)) = (sid, st.up.get()) {
-                            advertise_commands(&st, up, &sid);
-                            // Opening a project with standing questions re-surfaces
-                            // them without any request.
-                            // Mirrors docs/frontends/acp.md#questions-in-chat.
-                            if let Some(q) = st
-                                .in_project()
-                                .then(|| crate::answer::questions_summary(&st.out))
-                                .flatten()
-                            {
-                                let _ = up.send_notification(SessionNotification::new(
-                                    sid_of(&sid),
-                                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                                        ContentBlock::from(q),
-                                    )),
-                                ));
-                            }
-                        }
-                        Ok(())
-                    })
+                        });
+                    };
+                    open_session(st, down, name, req, fence, responder)
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -381,7 +401,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             return Ok(());
                         }
                     }
-                    let down = st_prompt.down.get().cloned().ok_or_else(not_initialized)?;
+                    let down = st_prompt.down_of(&req.session_id.to_string())?;
                     let mut req = req;
                     req.session_id = sid_of(&st_prompt.route_down(&req.session_id.to_string()));
                     down.send_request(req).on_receiving_result(async move |result| {
@@ -437,13 +457,15 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     *st_load.last_session.lock().unwrap() = Some(sid.clone());
                     let fence=runtime_fence(&st_load);
                     st_load.runtime_fences.lock().unwrap().insert(sid.clone(),fence.clone());
-                    let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
+                    // A reopened conversation continues on the current agent.
+                    let name = st_load.agent_name.lock().unwrap().clone();
+                    let down = st_load.down_of(&sid)?;
                     // An agent that keeps its own sessions owns the replay: its
                     // history is the real one, and replaying jazyk's copy too would
                     // show the conversation twice. The forwarded load keeps the
                     // jazyk serving, the same way session/new gains it.
                     // Mirrors docs/frontends/acp.md#session-store.
-                    if *st_load.down_loads.lock().unwrap() {
+                    if st_load.down_loads.lock().unwrap().get(&name).copied().unwrap_or(false) {
                         let mut req = req;
                         let servers = with_jazyk_serving(&st_load, req.mcp_servers.clone(), &fence);
                         req = req.mcp_servers(servers);
@@ -453,6 +475,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             let ok = result.is_ok();
                             responder.respond_with_result(result)?;
                             if ok {
+                                st.session_agents.lock().unwrap().insert(sid.clone(), name);
                                 advertise_commands(&st, &up, &sid);
                             }
                             Ok(())
@@ -475,9 +498,10 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             Err(e) => return responder.respond_with_result(Err(e)),
                         };
                         st.add_route(&sid, &down_sid);
+                        st.session_agents.lock().unwrap().insert(sid.clone(), name.clone());
                         let records = crate::acp::sessions::read(&st.out, &sid);
                         if st.in_project() {
-                            crate::acp::sessions::open(&st.out, &sid, &cwd, &st.agent_name);
+                            crate::acp::sessions::open(&st.out, &sid, &cwd, &name);
                         }
                         let replay = replay_conversation(&records);
                         let empty = replay.is_empty();
@@ -517,7 +541,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 async move |mut req: agent_client_protocol::schema::v1::SetSessionConfigOptionRequest,
                             responder,
                             _cx| {
-                    let down = st_config.down.get().cloned().ok_or_else(not_initialized)?;
+                    let down = st_config.down_of(&req.session_id.to_string())?;
                     req.session_id = sid_of(&st_config.route_down(&req.session_id.to_string()));
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
@@ -529,7 +553,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 async move |mut req: agent_client_protocol::schema::v1::SetSessionModeRequest,
                             responder,
                             _cx| {
-                    let down = st_mode.down.get().cloned().ok_or_else(not_initialized)?;
+                    let down = st_mode.down_of(&req.session_id.to_string())?;
                     req.session_id = sid_of(&st_mode.route_down(&req.session_id.to_string()));
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
@@ -545,7 +569,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         // Persist ownership cancellation before forwarding. Observers do not own runs.
                         if let Err(error)=crate::task_runtime::cancel_owned(&project.root,&fence) { eprintln!("jazyk: child run cancellation failed: {error}"); }
                     }
-                    if let Some(down) = st_cancel.down.get() {
+                    if let Ok(down) = st_cancel.down_of(&n.session_id.to_string()) {
                         n.session_id = sid_of(&st_cancel.route_down(&n.session_id.to_string()));
                         let _ = down.send_notification(n);
                     }
@@ -562,6 +586,57 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             1
         }
     }
+}
+
+// Forward a new conversation to the agent it opens on, then record it, pin it to
+// that agent, and advertise the jazyk commands into it.
+// Mirrors docs/frontends/acp.md#switching-agents.
+fn open_session(
+    st: Arc<ProxyState>,
+    down: ConnectionTo<Agent>,
+    name: String,
+    req: NewSessionRequest,
+    fence: std::path::PathBuf,
+    responder: agent_client_protocol::Responder<agent_client_protocol::schema::v1::NewSessionResponse>,
+) -> Result<(), agent_client_protocol::Error> {
+    let cwd = req.cwd.clone();
+    down.send_request(req).on_receiving_result(async move |result| {
+        let sid = result.as_ref().ok().map(|r| r.session_id.to_string());
+        if let Some(sid) = &sid {
+            st.session_agents.lock().unwrap().insert(sid.clone(), name.clone());
+            st.runtime_fences.lock().unwrap().insert(sid.clone(), fence.clone());
+            *st.last_session.lock().unwrap() = Some(sid.clone());
+            // A conversation in a project is recorded from its first
+            // moment, so it can be listed and reopened later.
+            // Mirrors docs/frontends/acp.md#session-store.
+            if st.in_project() {
+                crate::acp::sessions::open(&st.out, sid, &cwd, &name);
+            }
+        }
+        responder.respond_with_result(result)?;
+        // Inside a project, the session advertises the jazyk commands;
+        // outside one it advertises the way in, and nothing else.
+        // Mirrors docs/frontends/acp.md#slash-commands.
+        if let (Some(sid), Some(up)) = (sid, st.up.get()) {
+            advertise_commands(&st, up, &sid);
+            // Opening a project with standing questions re-surfaces
+            // them without any request.
+            // Mirrors docs/frontends/acp.md#questions-in-chat.
+            if let Some(q) = st
+                .in_project()
+                .then(|| crate::answer::questions_summary(&st.out))
+                .flatten()
+            {
+                let _ = up.send_notification(SessionNotification::new(
+                    sid_of(&sid),
+                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                        ContentBlock::from(q),
+                    )),
+                ));
+            }
+        }
+        Ok(())
+    })
 }
 
 fn sid_of(s: &str) -> SessionId {
@@ -653,9 +728,10 @@ fn not_initialized() -> agent_client_protocol::Error {
 fn ensure_down(
     state: &Arc<ProxyState>,
     cx: &ConnectionTo<Client>,
+    name: &str,
     config: AcpAgentConfig,
 ) -> Result<ConnectionTo<Agent>, agent_client_protocol::Error> {
-    if let Some(d) = state.down.get() {
+    if let Some(d) = state.downs.lock().unwrap().get(name) {
         return Ok(d.clone());
     }
     let up_n = state.up.get().cloned();
@@ -721,8 +797,26 @@ fn ensure_down(
             agent_client_protocol::on_receive_request!(),
         );
     let down = cx.spawn_connection(backend, AcpAgent::new(config))?;
-    let _ = state.down.set(down.clone());
+    state.downs.lock().unwrap().insert(name.to_string(), down.clone());
     Ok(down)
+}
+
+// How to spawn a resolved agent. The embedded one prompts the configured endpoint,
+// so it inherits the resolved LLM settings.
+fn spawn_config(agent: &crate::acp::config::ResolvedAgent, llm: &crate::llm::Llm) -> AcpAgentConfig {
+    let mut config = AcpAgentConfig::new(&agent.command).args(agent.args.clone());
+    for (k, v) in &agent.env {
+        config = config.env(k, v);
+    }
+    if agent.name == crate::acp::config::EMBEDDED {
+        config = config
+            .env("JAZYK_LLM_BASE_URL", &llm.base_url)
+            .env("JAZYK_MODEL", &llm.model);
+        if !llm.api_key.is_empty() {
+            config = config.env("JAZYK_API_KEY", &llm.api_key);
+        }
+    }
+    config
 }
 
 // A delegated edit lands in the IDE's buffer when the client can take it, and on
@@ -834,7 +928,7 @@ fn run_command(
             // session gets it through the protocol's config option where the agent
             // takes one. Mirrors docs/frontends/acp.md#choosing-a-model.
             st.llm.lock().unwrap().model = args.to_string();
-            if let Some(down) = st.down.get() {
+            if let Ok(down) = st.down_of(sid) {
                 use agent_client_protocol::schema::v1::{
                     SessionConfigId, SessionConfigValueId, SetSessionConfigOptionRequest,
                 };
@@ -854,7 +948,23 @@ fn run_command(
             reply
         }
         "agent" if args.is_empty() => commands::agent_text(proj),
-        "agent" => commands::agent_set(proj, args),
+        "agent" => {
+            // Recorded in jazyk.toml, and new conversations open on it from now on;
+            // this one stays on the agent it started with.
+            // Mirrors docs/frontends/acp.md#switching-agents.
+            let reply = commands::agent_set(proj, args);
+            match st.agent_config(Some(args)) {
+                Ok((name, _)) => {
+                    let was = st.agent_of(sid);
+                    *st.agent_name.lock().unwrap() = name.clone();
+                    format!(
+                        "{}\n\nNew conversations run on {}. This one stays on {}; start a new conversation to switch.",
+                        reply, name, was
+                    )
+                }
+                Err(_) => reply,
+            }
+        }
         "questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
             "no standing questions; every open finding is either unprompted or already answered"
                 .into()

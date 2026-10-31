@@ -895,8 +895,14 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
         "agent" if rest.is_empty() => Some(crate::acp::commands::agent_text(&proj)),
         "agent" => {
             let reply = crate::acp::commands::agent_set(&proj, rest);
+            if !crate::acp::commands::known_agents(&proj).iter().any(|(n, _)| n == rest) {
+                return Some(reply);
+            }
             st.events.emit("settings.changed", json!({}));
-            Some(reply)
+            Some(format!(
+                "{}\n\nNew conversations and jobs use it once settings reload; open conversations keep theirs.",
+                reply
+            ))
         }
         "compile" => {
             let id = st.jobs.submit(st, super::jobs::JobKind::Compile);

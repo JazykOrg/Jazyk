@@ -30,22 +30,7 @@ pub fn resolve_acp(
         .or_else(|| proj.agent.clone())
         .or_else(|| global.agent.clone())
         .unwrap_or_else(|| EMBEDDED.to_string());
-    let profile = proj.agents.get(&name).or_else(|| global.agents.get(&name));
-    match profile {
-        Some(p) if !p.command.is_empty() => Ok(ResolvedAgent {
-            name: name.clone(),
-            command: p.command.clone(),
-            args: p.args.clone(),
-            env: p.env.clone(),
-            serve_files: p.serve_files,
-        }),
-        Some(_) => Err(format!("agent profile `{}` has no command", name)),
-        None if name == EMBEDDED => Ok(embedded_profile()),
-        None => Err(format!(
-            "unknown agent profile `{}`; define [acp.agents.{}] in jazyk.toml or the global config",
-            name, name
-        )),
-    }
+    profile_named(&name, proj, global)
 }
 
 // The executor for one goal batch: the profile a session of this kind runs on.
@@ -85,8 +70,8 @@ pub fn resolve_executor(
     }
 }
 
-// One named profile from the project or global [acp.agents] tables, or the embedded
-// built-in.
+// One named profile from the project or global [acp.agents] tables, or a built-in
+// one. A table entry shadows the built-in of the same name.
 fn profile_named(
     name: &str,
     proj: &AcpSettings,
@@ -102,12 +87,42 @@ fn profile_named(
             serve_files: p.serve_files,
         }),
         Some(_) => Err(format!("agent profile `{}` has no command", name)),
-        None if name == EMBEDDED => Ok(embedded_profile()),
-        None => Err(format!(
-            "unknown agent profile `{}`; define [acp.agents.{}] in jazyk.toml or the global config",
-            name, name
-        )),
+        None => builtin_profile(name).ok_or_else(|| {
+            format!(
+                "unknown agent profile `{}`; define [acp.agents.{}] in jazyk.toml or the global config",
+                name, name
+            )
+        }),
     }
+}
+
+// The agents jazyk can drive with no profile written: name, label, command, args,
+// extra environment. The adapters are pinned to the versions whose steering contract
+// the host knows (docs/frontends/acp.md#steering-active-turns). Claude Code refuses to
+// start inside another Claude Code session, so its profile clears `CLAUDECODE`.
+// Mirrors docs/frontends/acp.md#agents.
+pub const BUILTIN_AGENTS: &[(&str, &str, &str, &[&str], &[(&str, &str)])] = &[
+    (EMBEDDED, "Embedded (jazyk's own agent, over your LLM endpoint)", "", &[], &[]),
+    ("claude", "Claude Code", "npx", &["--yes", "@agentclientprotocol/claude-agent-acp@0.99.0"], &[("CLAUDECODE", "")]),
+    ("codex", "Codex", "npx", &["--yes", "@agentclientprotocol/codex-acp@2.4.0"], &[]),
+    ("opencode", "OpenCode", "opencode", &["acp"], &[]),
+];
+
+// A built-in profile by name. Mirrors docs/frontends/acp.md#agents.
+pub fn builtin_profile(name: &str) -> Option<ResolvedAgent> {
+    if name == EMBEDDED {
+        return Some(embedded_profile());
+    }
+    BUILTIN_AGENTS
+        .iter()
+        .find(|a| a.0 == name)
+        .map(|(name, _, command, args, env)| ResolvedAgent {
+            name: name.to_string(),
+            command: command.to_string(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            serve_files: false,
+        })
 }
 
 // The built-in profile: this binary serving `jazyk agent` over stdio. It has no
@@ -238,6 +253,21 @@ mod tests {
         let global = settings(Some("shared"), &[("shared", "global-cmd")]);
         let r = resolve_acp(None, &proj, &global, |_| None).unwrap();
         assert_eq!(r.command, "project-cmd");
+    }
+
+    // A built-in agent resolves by name alone; a table entry of the same name shadows
+    // it. Mirrors docs/frontends/acp.md#agents.
+    #[test]
+    fn builtin_agents_resolve_without_a_profile() {
+        let none = settings(None, &[]);
+        let claude = resolve_acp(Some("claude"), &none, &none, |_| None).unwrap();
+        assert_eq!(claude.command, "npx");
+        assert!(claude.args.iter().any(|a| a == "@agentclientprotocol/claude-agent-acp@0.99.0"));
+        assert!(claude.env.contains(&("CLAUDECODE".to_string(), String::new())));
+        let opencode = resolve_acp(Some("opencode"), &none, &none, |_| None).unwrap();
+        assert_eq!((opencode.command.as_str(), opencode.args.clone()), ("opencode", vec!["acp".to_string()]));
+        let own = settings(None, &[("codex", "my-codex")]);
+        assert_eq!(resolve_acp(Some("codex"), &own, &none, |_| None).unwrap().command, "my-codex");
     }
 
     // Executor precedence: the kind's key over the class's key over the [acp] agent,

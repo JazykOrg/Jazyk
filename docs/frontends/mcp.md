@@ -168,7 +168,7 @@ it. An agent that speaks MCP only over HTTP gets the same serving over
 ## MCP over HTTP
 
 Some agents advertise their MCP clients as URL clients. Claude Code through
-`claude-code-acp` answers `initialize` with `mcpCapabilities: {http: true, sse: true}`;
+`claude-agent-acp` answers `initialize` with `mcpCapabilities: {http: true, sse: true}`;
 protocol version 1 has no stdio flag, so the reply says nothing about stdio either
 way. Jazyk takes the advertisement at its word: for such an agent it serves the
 session's toolset over the MCP streamable HTTP transport, in its own process, and the

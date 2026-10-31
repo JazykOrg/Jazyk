@@ -67,6 +67,10 @@ pub mod jsonrpc;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod launcher;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod menu;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod start;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod parallel;

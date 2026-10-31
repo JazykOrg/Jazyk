@@ -31,9 +31,9 @@ fn load_dotenv() {
 // spawn last, in the order docs/frontends/cli.md#help lists them.
 pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("start here", &[
-        ("", "the launcher: status, then a numbered way to start (init outside a project)"),
+        ("", "the launcher: status, then pick a web UI, IDE, or coding agent to set up and start"),
+        ("<choice> [--agent NAME]", "set up and start one launcher choice: vscode, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
         ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
-        ("launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]", "verify a tool's setup, then start it"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--json] [--costs]", "the store version, the last verdict, the board counts, what to do next"),
@@ -163,7 +163,7 @@ const VALUE_OPTIONS: &[&str] = &[
 pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'static str])> {
     Some(match cmd {
         "init" => (Some(0), &["--mcp", "--acp"]),
-        "launch" => (Some(1), &[]),
+        c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
         "compile" => (None, &["--sessions", "--dirty"]),
         "sets" => (Some(2), &["--docs", "--source", "--roots", "--name", "--json"]),
         "check" | "watch" | "decompile" => (None, &[]),
@@ -213,14 +213,21 @@ const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
         "sets" => "usage: jazyk sets list|add|update|remove|preview [NAME] [--docs GLOB] [--source GLOB] [--roots GLOB] [--name NAME]\n\nSelections are repeatable. Paths are relative to the project folder. Output is JSON (--json).".to_string(),
-        "launch" => "usage: jazyk launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]\n\n\
-             The launcher, what bare `jazyk` runs inside a project: print the status, then\n\
-             verify the chosen tool's setup (the MCP server entry, the ACP registration,\n\
-             the editor extension) and start it. Without a choice, a numbered menu on an\n\
-             interactive terminal; the list with each choice's command otherwise.\n\n\
-             exit: the launched program's code; 1 when it is not on PATH; 2 on an unknown choice\n"
-            .to_string(),
-        "init" => "usage: jazyk init [--mcp claude|cursor|vscode|gemini|none] [--agent NAME] [--acp IDE]\n\n\
+        c if c != "gui" && crate::start::choice(c).is_some() => {
+            let ch = crate::start::choice(c).unwrap();
+            format!(
+                "usage: jazyk {} [--agent NAME]\n\n\
+                 Set up {} for this project, then start it: the launcher choice of that\n\
+                 name (bare `jazyk` lists them all). Setup is idempotent and corrects a\n\
+                 stale entry in place. Outside a project the working directory is\n\
+                 initialized first.\n\n\
+                 options:\n  \
+                 --agent NAME   for an IDE: the coding agent the Jazyk agent drives, recorded in [acp] agent\n\n\
+                 exit: the started program's code; 1 when it is not installed or a setup step failed\n",
+                c, ch.name
+            )
+        }
+        "init" => "usage: jazyk init [--mcp claude|codex|gemini|opencode|pi|droid|cursor|none] [--agent NAME] [--acp IDE]\n\n\
              Initialize the current directory as a project root: write a minimal\n\
              jazyk.toml, scaffold docs/ (with a placeholder README.md) and\n\
              deliverable/, and offer MCP integration, the agent choice, and ACP\n\
@@ -229,7 +236,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              non-interactive stdin skips or defaults the rest.\n\n\
              options:\n  \
              --mcp AGENT    the coding agent whose MCP config gains a jazyk entry (or none)\n  \
-             --agent NAME   the ACP agent that does the AI work (embedded, codex, claude, opencode, none)\n  \
+             --agent NAME   the ACP agent that does the AI work (embedded, claude, codex, opencode, none)\n  \
              --acp IDE      the ACP client to register jazyk with (or none)\n\n\
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
@@ -699,7 +706,7 @@ pub fn run() {
         if let Some(e) = errors.first() {
             usage_error("", e);
         }
-        std::process::exit(cli::run_launch(&opts, None));
+        std::process::exit(crate::start::run(&opts, None));
     }
     let Some((arity, extra)) = command_shape(&cmd) else {
         usage_error("", &format!("unknown command `{}`", cmd));
@@ -732,7 +739,7 @@ pub fn run() {
         }
     }
 
-    if !["watch","query","init","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","launch","replay"].contains(&cmd.as_str()) {
+    if !["watch","query","init","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
         let (proj,_,_)=cli::resolve(&[],&opts);
         if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
         if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
@@ -740,7 +747,7 @@ pub fn run() {
     let code = match cmd.as_str() {
         "sets" => cli::run_sets(&positional, &opts),
         "init" => cli::run_init(&opts),
-        "launch" => cli::run_launch(&opts, positional.first().map(|s| s.as_str())),
+        c if c != "gui" && crate::start::choice(c).is_some() => crate::start::run(&opts, Some(c)),
         "compile" => cli::run_compile(&positional, &opts),
         "check" => cli::run_check(&positional, &opts),
         "watch" => cli::run_watch(&positional, &opts),

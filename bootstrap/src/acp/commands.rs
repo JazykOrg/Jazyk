@@ -450,9 +450,9 @@ pub fn model_set(proj: &Project, llm: &crate::llm::Llm, name: &str) -> String {
 // Every agent jazyk can drive: the built-ins, then the profiles the project or the
 // global config defines. Mirrors docs/frontends/acp.md#slash-commands.
 pub fn known_agents(proj: &Project) -> Vec<(String, String)> {
-    let mut v: Vec<(String, String)> = crate::cli::ACP_AGENTS
+    let mut v: Vec<(String, String)> = crate::acp::config::BUILTIN_AGENTS
         .iter()
-        .map(|(name, label, _, _)| (name.to_string(), label.to_string()))
+        .map(|(name, label, ..)| (name.to_string(), label.to_string()))
         .collect();
     let global = crate::project::load_global_acp();
     for (name, p) in proj.acp.agents.iter().chain(global.agents.iter()) {
@@ -500,12 +500,9 @@ pub fn agent_set(proj: &Project, name: &str) -> String {
             name
         );
     }
-    let mut s = config_set(proj, &format!("acp.agent {}", name));
-    s.push_str(
-        "\n\nThe switch takes effect when the jazyk agent restarts: reopen the window, \
-         or restart the agent in the IDE.",
-    );
-    s
+    // Each frontend says when the switch applies: the proxy at once for new
+    // conversations, the GUI once settings reload.
+    config_set(proj, &format!("acp.agent {}", name))
 }
 
 // What a fresh project still needs answered, as prose plus the command that answers

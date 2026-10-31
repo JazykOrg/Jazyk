@@ -36,7 +36,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
-        ("status [--json] [--costs]", "the store version, the last verdict, the board counts, what to do next"),
+        ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
         ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
@@ -282,8 +282,10 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "status" => format!(
-            "usage: jazyk status [--json] [--costs]\n\n\
-             Summarize status.yaml and the board: the store version and generation, the\n\
+            "usage: jazyk status [--set ID] [--json] [--costs]\n\n\
+             Without --set: one line per document set (state, generation, verdict, board\n\
+             counts); --json prints the sets summary instead. With --set:\n\
+             summarize status.yaml and the board: the store version and generation, the\n\
              last verdict with its counts, the live board counts (derived from disk the\n\
              way compile derives them), coverage, open diagnostics by severity, the\n\
              medium warning, the shape line (entities per depth, the fan-out histogram),\n\

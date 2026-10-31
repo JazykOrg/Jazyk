@@ -144,6 +144,12 @@ The diagnostics line names how many of its counts are ratification proposals for
 derived facts (criteria, groupings), so a session that just committed fourteen derived
 criteria does not read fourteen new warnings as defects of its own making.
 
+The shared agent contract states session rules once. Goal paragraphs, active skills,
+tool schemas, and loaded packages carry the details of their own operation. The
+contract does not repeat their field catalogs or examples. A worker acts on sufficient
+evidence without restating the instructions or rehearsing its next tool call. Independent
+calls share a reply. A dependent call waits for the earlier result.
+
 Contract paragraphs are short and imperative: what the goal means, what evidence the
 gate wants, what not to do, and that justifications and failure reasons are one or two
 sentences, never essays. Each goal kind's page under [`goals/`](./goals/reconcile-section.md)

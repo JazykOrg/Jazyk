@@ -131,6 +131,9 @@ pub struct Ledger {
 pub struct TaskOwner {
     pub created_by: String,
     pub created_at: String,
+    // The task definition's hash when the session last saved it. A different
+    // current definition is an author's edit: the task is the author's.
+    pub definition: String,
 }
 
 impl Ledger {

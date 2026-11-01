@@ -398,22 +398,37 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value, String> {
     call_impl(root, name, args, true)
 }
 
-// Record the tasks a ledger session's update_tasks added as that session's.
+thread_local! { static SWEEP_DEFERRED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+// A workflow sweeps once when it ends, so its compile action leaves the task list
+// alone for the workflow's later actions.
+pub struct DeferSweep(bool);
+impl DeferSweep {
+    pub fn enter() -> Self { Self(SWEEP_DEFERRED.with(|d| d.replace(true))) }
+}
+impl Drop for DeferSweep {
+    fn drop(&mut self) { SWEEP_DEFERRED.with(|d| d.set(self.0)); }
+}
+pub fn sweep_deferred() -> bool { SWEEP_DEFERRED.with(|d| d.get()) }
+
+// Record what a ledger session's update_tasks did to the tasks it owns: an added
+// task becomes the session's with its definition hash; an owned task the session
+// edits keeps ownership under its new hash; records of tasks no longer listed end.
 // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-pub fn record_owned(out: &Path, before: &[Task], after: &Value, owner: &str) -> Result<(), String> {
-    let added: Vec<String> = after.as_array().into_iter().flatten()
-        .filter_map(|t| t["id"].as_str())
-        .filter(|id| !before.iter().any(|t| t.id == *id))
-        .map(String::from).collect();
-    if added.is_empty() { return Ok(()); }
+pub fn record_owned(out: &Path, before: &[Task], after: &[Task], owner: &str) -> Result<(), String> {
     let mut ledger = crate::gen::Ledger::load(out);
     if let Some(why) = &ledger.unreadable { return Err(format!("The ledger did not load: {why}")); }
-    for id in added {
-        ledger.tasks.entry(id).or_insert_with(|| crate::gen::TaskOwner {
-            created_by: owner.to_owned(), created_at: crate::verify::now_iso(),
-        });
+    let original = ledger.tasks.clone();
+    ledger.tasks.retain(|id, _| after.iter().any(|t| t.id == *id));
+    for task in after {
+        match before.iter().find(|t| t.id == task.id) {
+            None => { ledger.tasks.insert(task.id.clone(), crate::gen::TaskOwner {
+                created_by: owner.to_owned(), created_at: crate::verify::now_iso(), definition: task.hash() }); }
+            Some(previous) => if let Some(record) = ledger.tasks.get_mut(&task.id) {
+                if record.definition == previous.hash() { record.definition = task.hash(); }
+            },
+        }
     }
-    ledger.save(out);
+    if ledger.tasks != original { ledger.save(out); }
     Ok(())
 }
 
@@ -431,37 +446,36 @@ fn ledger_uses(ledger: &crate::gen::Ledger) -> std::collections::BTreeSet<String
     used
 }
 
-// Remove session-owned tasks no set's ledger uses, through the configuration
-// lock and revision check. An author's task is never removed. Runs at the close
-// of a build, never inside a session. Returns the removed ids.
+// Remove session-owned tasks no ledger uses, through the configuration lock and
+// revision check. A task is session-owned only while its definition still matches
+// the recorded one, so an author's edit or re-creation makes it the author's. The
+// sweep reads ledgers and never writes them. `out` adds a build's own ledger when it
+// is not a set's default. Returns the removed ids.
 // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-pub fn sweep_unused(root: &Path) -> Result<Vec<String>, String> {
+pub fn sweep_unused(root: &Path, out: Option<&Path>) -> Result<Vec<String>, String> {
     let workspace = crate::document_sets::Workspace::load(root).map_err(|(_, e)| e)?;
-    let mut ledgers = Vec::new();
+    let mut outs = Vec::new();
     for set in &workspace.sets {
-        let out = workspace.resolve(Some(&set.id)).map_err(|(_, e)| e)?.out;
-        let ledger = crate::gen::Ledger::load(&out);
+        outs.push(workspace.resolve(Some(&set.id)).map_err(|(_, e)| e)?.out);
+    }
+    if let Some(out) = out { if !outs.iter().any(|o| o == out) { outs.push(out.to_path_buf()); } }
+    let mut ledgers = Vec::new();
+    for out in &outs {
+        let ledger = crate::gen::Ledger::load(out);
         // An unreadable ledger's references are unknown: nothing is provably unused.
         if ledger.unreadable.is_some() { return Ok(Vec::new()); }
-        ledgers.push((out, ledger));
+        ledgers.push(ledger);
     }
-    if ledgers.iter().all(|(_, l)| l.tasks.is_empty()) { return Ok(Vec::new()); }
-    let used: std::collections::BTreeSet<String> = ledgers.iter().flat_map(|(_, l)| ledger_uses(l)).collect();
+    if ledgers.iter().all(|l| l.tasks.is_empty()) { return Ok(Vec::new()); }
+    let used: std::collections::BTreeSet<String> = ledgers.iter().flat_map(ledger_uses).collect();
     let (source, tasks) = load(root)?;
-    let removed: Vec<String> = tasks.iter()
-        .filter(|t| !used.contains(&t.id) && ledgers.iter().any(|(_, l)| l.tasks.contains_key(&t.id)))
-        .map(|t| t.id.clone()).collect();
-    let kept: Vec<Task> = tasks.iter().filter(|t| !removed.contains(&t.id)).cloned().collect();
+    let owned = |t: &Task| ledgers.iter().any(|l| l.tasks.get(&t.id).is_some_and(|o| o.definition == t.hash()));
+    let removed: Vec<String> = tasks.iter().filter(|t| !used.contains(&t.id) && owned(t)).map(|t| t.id.clone()).collect();
     if !removed.is_empty() {
+        let kept: Vec<Task> = tasks.iter().filter(|t| !removed.contains(&t.id)).cloned().collect();
         let next = edit(&source, &kept)?;
         crate::document_sets::atomic_config(root, &next, &crate::model::hash_hex(&source))
             .map_err(|(_, error)| error)?;
-    }
-    // Ownership of a task no longer in the list (swept, or removed by its author) ends.
-    for (out, mut ledger) in ledgers {
-        let before = ledger.tasks.len();
-        ledger.tasks.retain(|id, _| kept.iter().any(|t| t.id == *id));
-        if ledger.tasks.len() != before { ledger.save(&out); }
     }
     Ok(removed)
 }
@@ -895,38 +909,48 @@ mod tests {
     fn sweep_removes_only_unused_session_tasks_and_keeps_author_tasks() {
         let root = std::env::temp_dir().join(format!("jazyk-task-sweep-{}-{}",
             crate::sys::process_id(), crate::sys::now_millis()));
-        let task = |id: &str| format!("[[tasks]]\nid='{id}'\nname='{id}'\ndescription='d'\ncommand='true'\n");
-        let source = format!("version=1\n# kept comment\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n{}{}{}{}{}",
-            task("author"), task("suite"), task("old"), task("util"), task("fresh"));
+        let task = |id: &str, command: &str| format!("[[tasks]]\nid='{id}'\nname='{id}'\ndescription='d'\ncommand='{command}'\n");
+        let base = format!("version=1\n# kept comment\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n{}", task("author", "true"));
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
-        crate::vfs::write(root.join(".jazyk/jazyk.toml"), &source).unwrap();
+        crate::vfs::write(root.join(".jazyk/jazyk.toml"), &base).unwrap();
         let out = crate::document_sets::Workspace::load(&root).unwrap().resolve(Some("ds_main")).unwrap().out;
         let row = |run: &str| format!("    entity: ent:page\n    test: {{kind: programmatic, label: l, artifact: t.py, name: n, run: '{run}'}}\n    hashes: {{requirement: r, test: t, files: f}}\n");
-        let ledger = format!("tasks:\n  suite: {{createdBy: 'g:bind:req:a-1', createdAt: x}}\n  old: {{createdBy: 'g:bind:req:a-2', createdAt: x}}\n  util: {{createdBy: 'g:generate:ent:page', createdAt: x}}\n  gone: {{createdBy: 'g:bind:req:a-3', createdAt: x}}\nentities:\n  page: {{factHash: x, tasks: [util]}}\nrequirements:\n  req:a-1:\n{}  req:a-2:\n{}",
-            row("task:suite"), row("task:author"));
         crate::vfs::create_dir_all(out.join("gen")).unwrap();
-        crate::vfs::write(out.join("gen/ledger.yaml"), &ledger).unwrap();
-        // A ledger session's update_tasks records only what it added.
+        crate::vfs::write(out.join("gen/ledger.yaml"), format!("entities:\n  page: {{factHash: x, tasks: [util]}}\nrequirements:\n  req:a-1:\n{}  req:a-2:\n{}",
+            row("task:suite"), row("task:author"))).unwrap();
+        // A ledger session adds four tasks; they become its own with their hashes.
         let before = load(&root).unwrap().1;
-        let added: Vec<Task> = before.iter().cloned().chain([Task { id: "fresh2".into(), ..before[0].clone() }]).collect();
-        record_owned(&out, &before, &json!(added), "g:generate:ent:page").unwrap();
-        let recorded = crate::gen::Ledger::load(&out);
-        assert!(recorded.unreadable.is_none(), "{:?}", recorded.unreadable);
-        assert_eq!(recorded.tasks["fresh2"].created_by, "g:generate:ent:page");
-        assert!(!recorded.tasks.contains_key("author"));
-        // Unused session tasks go; author, bound, and generation-listed tasks stay.
-        assert_eq!(sweep_unused(&root).unwrap(), vec!["old".to_string()]);
+        let session = format!("{base}{}{}{}{}", task("suite", "true"), task("old", "true"), task("util", "true"), task("adopted", "true"));
+        crate::vfs::write(root.join(".jazyk/jazyk.toml"), &session).unwrap();
+        let after = load(&root).unwrap().1;
+        record_owned(&out, &before, &after, "g:bind:req:a-1").unwrap();
+        let ledger = crate::gen::Ledger::load(&out);
+        assert!(ledger.unreadable.is_none(), "{:?}", ledger.unreadable);
+        assert_eq!(ledger.tasks.keys().cloned().collect::<Vec<_>>(), ["adopted", "old", "suite", "util"]);
+        assert_eq!(ledger.tasks["old"].definition, after.iter().find(|t| t.id == "old").unwrap().hash());
+        // The author edits "adopted": a different definition is the author's.
+        crate::vfs::write(root.join(".jazyk/jazyk.toml"), session.replace("id='adopted'\nname='adopted'\ndescription='d'\ncommand='true'", "id='adopted'\nname='adopted'\ndescription='d'\ncommand='make lint'")).unwrap();
+        let ledger_bytes = crate::vfs::read(out.join("gen/ledger.yaml")).unwrap();
+        // Only the unused session task goes; the sweep never writes the ledger.
+        assert_eq!(sweep_unused(&root, None).unwrap(), vec!["old".to_string()]);
         let (text, kept) = load(&root).unwrap();
-        assert_eq!(kept.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["author", "suite", "util", "fresh"]);
+        assert_eq!(kept.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["author", "suite", "util", "adopted"]);
         assert!(text.contains("# kept comment"));
-        let after = crate::gen::Ledger::load(&out);
-        assert_eq!(after.tasks.keys().cloned().collect::<Vec<_>>(), ["suite", "util"]);
-        // A second sweep converges: nothing left to remove.
-        assert!(sweep_unused(&root).unwrap().is_empty());
+        assert_eq!(crate::vfs::read(out.join("gen/ledger.yaml")).unwrap(), ledger_bytes);
+        assert!(sweep_unused(&root, None).unwrap().is_empty(), "a second sweep converges");
+        // A later session save prunes the record of the swept task.
+        record_owned(&out, &kept, &kept, "g:bind:req:a-1").unwrap();
+        assert!(!crate::gen::Ledger::load(&out).tasks.contains_key("old"));
+        // A build's own --out ledger counts as a use.
+        crate::vfs::write(out.join("gen/ledger.yaml"), format!("tasks:\n  suite: {{createdBy: x, createdAt: x, definition: '{}'}}\n", kept[1].hash())).unwrap();
+        let other = root.join("elsewhere");
+        crate::vfs::create_dir_all(other.join("gen")).unwrap();
+        crate::vfs::write(other.join("gen/ledger.yaml"), format!("requirements:\n  req:a-1:\n{}", row("task:suite"))).unwrap();
+        assert!(sweep_unused(&root, Some(&other)).unwrap().is_empty());
         // An unreadable ledger proves nothing unused.
-        crate::vfs::write(out.join("gen/ledger.yaml"), "tasks: [unclosed").unwrap();
-        assert!(sweep_unused(&root).unwrap().is_empty());
-        assert_eq!(load(&root).unwrap().1.len(), 4);
+        crate::vfs::write(other.join("gen/ledger.yaml"), "tasks: [unclosed").unwrap();
+        assert!(sweep_unused(&root, Some(&other)).unwrap().is_empty());
+        assert_eq!(sweep_unused(&root, None).unwrap(), vec!["suite".to_string()]);
         crate::vfs::remove_dir_all(root).ok();
     }
     #[test]

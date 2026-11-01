@@ -265,9 +265,10 @@ without becoming Source.
 
 ## Unused session tasks
 
-Tasks a binding, generation, or verification session adds are session-owned. The
-next compile removes a session-owned task once no ledger row, build, or generation
-record uses it. Tasks an author writes are never removed. See
+Tasks a binding, generation, or verification session adds are session-owned while
+their definition is unchanged. When a build ends, a session-owned task that no ledger
+row, build, or generation record uses is removed. Tasks an author writes or edits are
+never removed. See
 [session tasks are swept when unused](../consumers/gen.md#session-tasks-are-swept-when-unused).
 
 ## Local supervision and ownership

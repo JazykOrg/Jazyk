@@ -220,6 +220,9 @@ pub async fn run(
         None => Progress::fresh(proj, steps)?,
     };
     if let Some(state) = &progress.finished { return Ok(progress.result(state)); }
+    // The compile action leaves the task list alone for later actions; the
+    // workflow sweeps once when it ends (docs/consumers/gen.md#session-tasks-are-swept-when-unused).
+    let _defer = crate::task_runtime::DeferSweep::enter();
     while progress.next < steps.len() {
         if trace.is_cancelled() {
             progress.finished = Some("cancelled".into());
@@ -259,7 +262,16 @@ pub async fn run(
         else if state == "failed" { progress.finished = Some("failed".into()); }
         else if progress.next == steps.len() { progress.finished = Some("done".into()); }
         progress.save(&key).await?;
-        if let Some(state) = &progress.finished { return Ok(progress.result(state)); }
+        if let Some(state) = &progress.finished {
+            let mut result = progress.result(state);
+            if state != "cancelled" {
+                if let Ok(_lease) = crate::control::begin_internal_build(proj, &proj.out, "sweep") {
+                    let retired = crate::reconcile::sweep_tasks(proj, &proj.out, trace);
+                    if !retired.is_empty() { result["retiredTasks"] = json!(retired); }
+                }
+            }
+            return Ok(result);
+        }
     }
     Ok(progress.result("done"))
 }

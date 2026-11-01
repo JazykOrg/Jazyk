@@ -678,6 +678,7 @@ tasks:                                    # project tasks a ledger session creat
   test-unit:                              # the task id in .jazyk/jazyk.toml
     createdBy: g:bind:req:catalog-3       # the goal (or serving) whose update_tasks added it
     createdAt: 2026-09-26T16:40:11Z
+    definition: 5c0e9f7a...               # the definition's hash; a different one is the author's
 
 entities:
   catalog:
@@ -846,13 +847,19 @@ keep deriving a repair (regenerate) that provably does not clear it.
 
 ### Session tasks are swept when unused
 
-A binding, generation, or verification session can add tasks with `update_tasks`. The
-harness records each task it adds under the set's `tasks` key, with the goal or serving
-that added it. A task with that record is session-owned. Every other task is the
-author's: one written in `.jazyk/jazyk.toml`, saved from the editor, added in a chat,
-or saved before ownership was recorded. The sweep never touches an author's task.
+A binding, generation, or verification session can add tasks with `update_tasks`: a
+goal batch whose goals include `bind`, `generate`, or `verify`, or a `generate` or
+`verify` MCP serving. The harness records each task it adds under the set's `tasks`
+key, with the goal or serving that added it and the hash of the task's definition. A
+later save by such a session keeps the hash current for the tasks it owns and drops
+records of tasks no longer listed.
 
-A session-owned task is used while any set's ledger names it:
+A task is session-owned while its current definition matches the recorded hash.
+Every other task is the author's: one written in `.jazyk/jazyk.toml`, saved from the
+editor, added in a chat, saved before ownership was recorded, or a session task the
+author has since edited or written again. The sweep never touches an author's task.
+
+A session-owned task is used while a ledger names it:
 
 - a requirement row's `test` or a criterion's test has `run = "task:<id>"`;
 - the `build` has `run = "task:<id>"`;
@@ -860,19 +867,24 @@ A session-owned task is used while any set's ledger names it:
   `manifest.tasks` for a utility the generation runs beyond its tests, such as a task
   that copies a supplied asset into the deliverable.
 
-When a compile closes, beside the checks (a build, `jazyk check`, or a workflow's
-`compile` action), the sweep removes each session-owned task that no ledger uses. It
-edits the task list through the same configuration lock and revision check as
-`update_tasks`, so a concurrent edit is never overwritten. The build report lists the
-removed task ids under `retiredTasks`. An ownership record whose task is no longer in
-the list is dropped. The sweep never runs inside a session, so a task added for a
-binding still in progress survives, and a task a workflow's `generate` action added
-is judged at the next compile. A removed task that a later session needs is added
-again. Retained runs of a removed task stay readable. An unreadable ledger stops the
-sweep: its references are unknown, so no task is provably unused.
+Every set's ledger counts, and a build with `--out` counts its own ledger too.
+
+The sweep runs once at the end of a build, under the build's lease: when a standalone
+compile closes, or when a workflow job ends done or failed. A workflow's `compile`
+action does not sweep, so a later `task` action in the same workflow still finds its
+task. The sweep never runs inside a session or at a batch's `done`, so a task added
+for a binding still in progress survives until the build ends.
+
+The sweep removes each session-owned task that no ledger uses. It edits the task list
+through the same configuration lock and revision check as `update_tasks`, so a
+concurrent edit is never overwritten. It reads ledgers and never writes them. The
+build report lists the removed task ids under `retiredTasks`. An unreadable ledger
+stops the sweep: its references are unknown, so no task is provably unused. A removed
+task that a later session needs is added again. Retained runs of a removed task stay
+readable.
 
 The sweep makes no model call. A task whose last binding a session moved or pruned
-leaves the list at the next compile, so the task list converges with the ledger.
+leaves the list when that build ends, so the task list converges with the ledger.
 
 ### Rows recorded over an open contradiction
 

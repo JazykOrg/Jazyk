@@ -3118,8 +3118,22 @@ impl McpServer {
                     }
                 }
                 if crate::task_runtime::TOOLS.contains(&name.as_str()) {
+                    // A generation or verification serving owns the tasks it adds; a
+                    // chat adds the author's. Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+                    let owner = (name == "update_tasks" && !self.modes.iter().any(|m| m == "chat"))
+                        .then(|| self.modes.iter().find(|m| matches!(m.as_str(), "generate" | "verify")).map(|m| format!("mcp-{m}")))
+                        .flatten();
+                    let before = owner.as_ref().and_then(|_| crate::task_runtime::load(&self.project.root).ok()).map(|(_, t)| t);
                     return match crate::task_runtime::call(&self.project.root,&name,&args) {
-                        Ok(value)=>Ok(text_result(value,false)),
+                        Ok(mut value)=>{
+                            if let (Some(owner), Some(before)) = (owner, before) {
+                                let after: Vec<crate::task_runtime::Task> = serde_json::from_value(value["tasks"].clone()).unwrap_or_default();
+                                if let Err(e) = crate::task_runtime::record_owned(&self.out, &before, &after, &owner) {
+                                    value["ownershipNote"] = json!(format!("Tasks saved; ownership was not recorded, so they are kept: {e}"));
+                                }
+                            }
+                            Ok(text_result(value,false))
+                        }
                         Err(error)=>Ok(text_result(json!({"error":{"rule":"task-runtime","message":error}}),true)),
                     };
                 }

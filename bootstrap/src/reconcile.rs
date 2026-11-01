@@ -2292,6 +2292,10 @@ pub(crate) async fn compile_under(
         );
     }
     let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
+    // A standalone build sweeps under its own lease; a workflow sweeps once at its end.
+    if !crate::task_runtime::sweep_deferred() {
+        report.retired_tasks = sweep_tasks(proj, out, trace);
+    }
     report.goals = run.derived;
     report.sessions = run.sessions;
     report.applied = run.applied;
@@ -2924,6 +2928,19 @@ fn sweep(store: &mut Store, trace: &Trace) {
 // counts, costs, rendering, docsgen, status. No model anywhere, so whichever consumer
 // empties the board runs it, the internal loop and the MCP serving alike.
 // Mirrors docs/compiler/compilation.md#a-build.
+// Session-owned tasks no ledger uses leave the task list when a build closes.
+// Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+pub fn sweep_tasks(proj: &Project, out: &Path, trace: &Trace) -> Vec<String> {
+    let removed = crate::task_runtime::sweep_unused(&proj.root, Some(out)).unwrap_or_else(|e| {
+        trace.line("build", &format!("task sweep skipped: {}", e));
+        Vec::new()
+    });
+    if !removed.is_empty() {
+        trace.line("build", &format!("tasks retired: {}", removed.join(", ")));
+    }
+    removed
+}
+
 pub fn finalize(
     s: &mut Store,
     proj: &Project,
@@ -3053,16 +3070,6 @@ pub fn finalize(
         s.save_status();
     }
 
-    // Session-owned tasks no ledger uses leave the task list, beside the checks.
-    // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-    let retired_tasks = match crate::task_runtime::sweep_unused(&proj.root) {
-        Ok(removed) => removed,
-        Err(e) => { trace.line("build", &format!("task sweep skipped: {}", e)); Vec::new() }
-    };
-    if !retired_tasks.is_empty() {
-        trace.line("build", &format!("tasks retired: {}", retired_tasks.join(", ")));
-    }
-
     // The verdict: the board after the checks, blocked and optional riding as counts.
     crate::derive::record_ledger_stale(s, &crate::gen::GenSettings::resolve(proj));
     let control = Control::load(proj, &proj.out);
@@ -3153,7 +3160,7 @@ pub fn finalize(
             .unwrap_or(100),
         tokens: s.status.costs.tokens,
         suspend_reason: None,
-        retired_tasks,
+        retired_tasks: Vec::new(),
     }
 }
 

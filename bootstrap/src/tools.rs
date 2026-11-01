@@ -5148,6 +5148,18 @@ impl ToolSession {
             .filter(|s| !s.trim().is_empty())
     }
 
+    // The owner recorded for tasks this session adds: a binding, generation, or
+    // verification goal, or the generation serving. Chat and other scopes add the
+    // author's tasks. Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+    fn task_owner(&self) -> Option<String> {
+        let goals: Vec<&str> = self.scope.goals.iter()
+            .filter(|g| matches!(g.kind.as_str(), "bind" | "generate" | "verify"))
+            .map(|g| g.goal.as_str()).collect();
+        if !goals.is_empty() { return Some(goals.join(",")); }
+        matches!(self.scope.serving.as_str(), "mcp-generate" | "mcp-verify" | "generate-entity" | "bind-requirement" | "verify-requirement")
+            .then(|| self.scope.serving.clone())
+    }
+
     fn str_list(args: &Value, key: &str) -> Vec<String> {
         // Empty means absent (docs/compiler/tools.md#validation-and-errors): every
         // caller is an id or name list, where "" is a filled-in blank, never data.
@@ -7734,8 +7746,20 @@ impl ToolSession {
                 let root = crate::project::find_root(&self.gen.deliverable)
                     .or_else(|| crate::project::find_root(&self.snapshot.out))
                     .ok_or_else(|| ToolError::new("runtime-unavailable", "Project root not found".into()))?;
-                crate::task_runtime::call(&root, name, args)
-                    .map_err(|e| ToolError::new("task-runtime", e))
+                // A ledger session owns the tasks it adds; the build sweeps them once
+                // unused. Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+                let owner = if name == "update_tasks" { self.task_owner() } else { None };
+                let before = match owner {
+                    Some(_) => Some(crate::task_runtime::load(&root).map_err(|e| ToolError::new("task-runtime", e))?.1),
+                    None => None,
+                };
+                let reply = crate::task_runtime::call(&root, name, args)
+                    .map_err(|e| ToolError::new("task-runtime", e))?;
+                if let (Some(owner), Some(before)) = (owner, before) {
+                    crate::task_runtime::record_owned(&self.snapshot.out, &before, &reply["tasks"], &owner)
+                        .map_err(|e| ToolError::new("task-runtime", e))?;
+                }
+                Ok(reply)
             }
             "read_text_file" | "write_text_file" | "list_files" | "run_command" => {
                 self.file_tool(name, args)
@@ -11532,6 +11556,26 @@ mod tests {
         }
     }
 
+    // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+    #[test]
+    fn ledger_sessions_own_the_tasks_they_add_and_other_scopes_do_not() {
+        let task = |id: &str| json!({"id":id,"name":id,"description":"d","command":"true"});
+        for (serving, owned) in [("mcp-generate", true), ("mcp-write", false)] {
+            let files = std::collections::BTreeMap::from([
+                (".jazyk/jazyk.toml".into(), b"version=1\nsets=[]\n".to_vec()),
+            ]);
+            let _scope = crate::vfs::Scope::enter(&files);
+            let mut tool = session();
+            tool.gen.deliverable = "/project".into();
+            tool.snapshot.out = "/project/.jazyk/ds_main".into();
+            tool.scope.serving = serving.into();
+            let revision = tool.dispatch("task_context", &json!({})).unwrap()["revision"].clone();
+            tool.dispatch("update_tasks", &json!({"expected_revision":revision,"tasks":[task("suite")]})).unwrap();
+            let ledger = crate::gen::Ledger::load(std::path::Path::new("/project/.jazyk/ds_main"));
+            assert_eq!(ledger.tasks.get("suite").map(|o| o.created_by.as_str()), owned.then_some("mcp-generate"), "{serving}");
+        }
+    }
+
     #[test]
     fn runtime_observation_is_not_a_repeated_graph_mutation() {
         let files = std::collections::BTreeMap::from([
@@ -12720,6 +12764,7 @@ mod tests {
                 fact_hash: String::new(),
                 requirements: Vec::new(),
                 files: vec!["departments.md".into()],
+                tasks: Vec::new(),
                 unattached: None,
                 recorded_at: None,
                 record_sequence: 0,

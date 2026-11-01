@@ -4936,6 +4936,7 @@ mod tests {
                 fact_hash: String::new(),
                 requirements: Vec::new(),
                 files: vec!["handbook/claim.md".into()],
+                tasks: Vec::new(),
                 unattached: None,
                 recorded_at: None,
                 record_sequence: 0,

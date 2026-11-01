@@ -39,6 +39,10 @@ pub struct BuildReport {
     pub tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspend_reason: Option<String>,
+    // Session-owned tasks the build's sweep removed.
+    // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired_tasks: Vec<String>,
 }
 
 impl BuildReport {
@@ -3049,6 +3053,16 @@ pub fn finalize(
         s.save_status();
     }
 
+    // Session-owned tasks no ledger uses leave the task list, beside the checks.
+    // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+    let retired_tasks = match crate::task_runtime::sweep_unused(&proj.root) {
+        Ok(removed) => removed,
+        Err(e) => { trace.line("build", &format!("task sweep skipped: {}", e)); Vec::new() }
+    };
+    if !retired_tasks.is_empty() {
+        trace.line("build", &format!("tasks retired: {}", retired_tasks.join(", ")));
+    }
+
     // The verdict: the board after the checks, blocked and optional riding as counts.
     crate::derive::record_ledger_stale(s, &crate::gen::GenSettings::resolve(proj));
     let control = Control::load(proj, &proj.out);
@@ -3139,6 +3153,7 @@ pub fn finalize(
             .unwrap_or(100),
         tokens: s.status.costs.tokens,
         suspend_reason: None,
+        retired_tasks,
     }
 }
 

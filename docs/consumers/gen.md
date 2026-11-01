@@ -637,12 +637,14 @@ metadata file. Two maps:
   requirement, one test per criterion under `tests`, keyed by criterion id. Rows are
   born by `record_binding` and updated by `record_generation` and test runs.
 
-Four more keys sit beside them: `support`, the deliverable-wide files any session may
+Five more keys sit beside them: `support`, the deliverable-wide files any session may
 rewrite; `medium`, the deliverable's
 [decided form](#the-medium-is-decided-once-before-anything-is-generated), written by
 the first run; `build`, present only when that medium must be produced by a tool
-([the build](#the-build)); and `contradicted`, the rows recorded over an open error
-diagnostic ([rows recorded over an open contradiction](#rows-recorded-over-an-open-contradiction)).
+([the build](#the-build)); `contradicted`, the rows recorded over an open error
+diagnostic ([rows recorded over an open contradiction](#rows-recorded-over-an-open-contradiction));
+and `tasks`, the project tasks a ledger session created
+([session tasks are swept when unused](#session-tasks-are-swept-when-unused)).
 
 The file is written through a sibling temporary file renamed into place, so a reader
 or a crash never sees a half-written ledger, the same way the
@@ -672,6 +674,12 @@ contradicted:                             # rows recorded over an open error dia
   req:catalog-3:                          # the diagnostic ids open at record time
     - diag:contradiction-1
 
+tasks:                                    # project tasks a ledger session created
+  test-unit:                              # the task id in .jazyk/jazyk.toml
+    createdBy: g:bind:req:catalog-3       # the goal (or serving) whose update_tasks added it
+    createdAt: 2026-09-26T16:40:11Z
+    definition: 5c0e9f7a...               # the definition's hash; a different one is the author's
+
 entities:
   catalog:
     factHash: 9f2ab4c1d0e77a3b            # hash of name, definition, stereotype, attributes,
@@ -681,6 +689,7 @@ entities:
     files:                                # deliverable-relative files this entity's
       - src/catalog.rs                    # generation produced or touched
       - tests/catalog.rs
+    tasks: [copy-assets]                  # saved tasks this generation uses beyond its tests
     recordedAt: 2026-09-26T16:58:02Z      # when record_generation last landed for it
     recordSequence: 4                    # advances on every accepted entity record
     unattached:                           # the unattached remainder, measured at record time
@@ -835,6 +844,53 @@ Deleting a requirement ends its obligation, and its ledger row must not outlive 
 Without pruning, a compilation that deletes a requirement leaves a row no tool can
 remove: the manifest only adds and updates, reruns skip the row, and the board would
 keep deriving a repair (regenerate) that provably does not clear it.
+
+### Session tasks are swept when unused
+
+A binding, generation, or verification session can add tasks with `update_tasks`: a
+goal batch whose goals include `bind`, `generate`, or `verify`, a `generate` or
+`verify` MCP serving, or any serving whose worker holds a binding or generation claim
+(`begin_binding`, `begin_generation`). The harness records each task it adds under the set's `tasks`
+key, with the goal or serving that added it and the hash of the task's definition. A
+later save by such a session keeps the hash current for the tasks it owns and drops
+records of tasks no longer listed.
+
+A task is session-owned while its current definition matches the recorded hash.
+Every other task is the author's: one written in `.jazyk/jazyk.toml`, saved from the
+editor, added in a chat, saved before ownership was recorded, or a session task the
+author has since edited or written again. The sweep never touches an author's task.
+
+A session-owned task is used while a ledger names it:
+
+- a requirement row's `test` or a criterion's test has `run = "task:<id>"`;
+- the `build` has `run = "task:<id>"`;
+- an entity's generation record lists it under `tasks`. `record_generation` takes
+  `manifest.tasks` for a utility the generation runs beyond its tests, such as a task
+  that copies a supplied asset into the deliverable.
+
+Every set's ledger counts, and a build with `--out` counts its own ledger too. Every
+task owned by another set with a session at work (a goal or entity claim, or a build
+lease) counts as used, since that session may be about to bind it.
+
+The sweep runs once at the end of a build, under the build's lease: when a standalone
+compile closes, or when a workflow job ends done or failed. A cancelled build does not
+sweep. A workflow's `compile`
+action does not sweep, so a later `task` action in the same workflow still finds its
+task. The sweep never runs inside a session or at a batch's `done`, so a task added
+for a binding still in progress survives until the build ends.
+
+The sweep removes each session-owned task that no ledger uses. It edits the task list
+through the same configuration lock and revision check as `update_tasks`, so a
+concurrent edit is never overwritten. It then drops the ownership records of the
+tasks it removed, so an author who restores one owns it. Only sets with no session at
+work own a removed task, so no session's ledger write races that update. The build
+report lists the removed task ids under `retiredTasks`. An unreadable ledger
+stops the sweep: its references are unknown, so no task is provably unused. A removed
+task that a later session needs is added again. Retained runs of a removed task stay
+readable.
+
+The sweep makes no model call. A task whose last binding a session moved or pruned
+leaves the list when that build ends, so the task list converges with the ledger.
 
 ### Rows recorded over an open contradiction
 

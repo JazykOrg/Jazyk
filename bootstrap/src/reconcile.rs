@@ -39,6 +39,10 @@ pub struct BuildReport {
     pub tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspend_reason: Option<String>,
+    // Session-owned tasks the build's sweep removed.
+    // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired_tasks: Vec<String>,
 }
 
 impl BuildReport {
@@ -2288,6 +2292,11 @@ pub(crate) async fn compile_under(
         );
     }
     let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
+    // A standalone build sweeps under its own lease; a workflow sweeps once at its end.
+    // A cancelled build leaves the task list as its sessions left it.
+    if !crate::task_runtime::sweep_deferred() && !trace.is_cancelled() {
+        report.retired_tasks = sweep_tasks(proj, out, trace);
+    }
     report.goals = run.derived;
     report.sessions = run.sessions;
     report.applied = run.applied;
@@ -2920,6 +2929,19 @@ fn sweep(store: &mut Store, trace: &Trace) {
 // counts, costs, rendering, docsgen, status. No model anywhere, so whichever consumer
 // empties the board runs it, the internal loop and the MCP serving alike.
 // Mirrors docs/compiler/compilation.md#a-build.
+// Session-owned tasks no ledger uses leave the task list when a build closes.
+// Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+pub fn sweep_tasks(proj: &Project, out: &Path, trace: &Trace) -> Vec<String> {
+    let removed = crate::task_runtime::sweep_unused(&proj.root, Some(out)).unwrap_or_else(|e| {
+        trace.line("build", &format!("task sweep skipped: {}", e));
+        Vec::new()
+    });
+    if !removed.is_empty() {
+        trace.line("build", &format!("tasks retired: {}", removed.join(", ")));
+    }
+    removed
+}
+
 pub fn finalize(
     s: &mut Store,
     proj: &Project,
@@ -3139,6 +3161,7 @@ pub fn finalize(
             .unwrap_or(100),
         tokens: s.status.costs.tokens,
         suspend_reason: None,
+        retired_tasks: Vec::new(),
     }
 }
 

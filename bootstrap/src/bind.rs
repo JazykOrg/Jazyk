@@ -1383,6 +1383,7 @@ mod tests {
                 fact_hash: "x".into(),
                 requirements: vec!["req:shop-1".into()],
                 files: vec!["tests/shop.rs".into()],
+                tasks: Vec::new(),
                 unattached: None,
                 recorded_at: None,
                 record_sequence: 0,

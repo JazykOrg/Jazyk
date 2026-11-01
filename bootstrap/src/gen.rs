@@ -115,10 +115,25 @@ pub struct Ledger {
     // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contradicted: BTreeMap<String, Vec<String>>,
+    // Project tasks a ledger session added, keyed by task id. Only these are
+    // swept once no ledger names them.
+    // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<String, TaskOwner>,
     #[serde(default)]
     pub entities: BTreeMap<String, EntityGen>,
     #[serde(default)]
     pub requirements: BTreeMap<String, ReqRow>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskOwner {
+    pub created_by: String,
+    pub created_at: String,
+    // The task definition's hash when the session last saved it. A different
+    // current definition is an author's edit: the task is the author's.
+    pub definition: String,
 }
 
 impl Ledger {
@@ -420,6 +435,9 @@ pub struct EntityGen {
     pub requirements: Vec<String>,
     #[serde(default)]
     pub files: Vec<String>,
+    // Saved tasks this generation uses beyond its tests and the build.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<String>,
     // The unattached remainder, measured at record time: how much of what this
     // entity's generation produced no requirement claims.
     // Mirrors docs/consumers/gen.md#the-unattached-remainder.
@@ -2264,6 +2282,7 @@ pub fn mark(
                 .unwrap_or_else(|| fact_hash(store, id)),
             requirements: reqs_of_sorted(store, id),
             files: files.clone(),
+            tasks: str_list(&manifest["tasks"]),
             unattached: None,
             recorded_at: Some(crate::verify::now_iso()),
             record_sequence,

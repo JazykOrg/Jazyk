@@ -263,6 +263,14 @@ projects. Submitted input changes outside `products` stay reviewable. Public
 artifacts such as `target/*.jar` can be retained and replaced by a later run
 without becoming Source.
 
+## Unused session tasks
+
+Tasks a binding, generation, or verification session adds are session-owned while
+their definition is unchanged. When a build ends, a session-owned task that no ledger
+row, build, or generation record uses is removed. Tasks an author writes or edits are
+never removed. See
+[session tasks are swept when unused](../consumers/gen.md#session-tasks-are-swept-when-unused).
+
 ## Local supervision and ownership
 
 A local run stores its owning operation separately from its observer. MCP build

@@ -686,9 +686,11 @@ session with an explicit deliverable directory keeps paths relative to that dire
 - `record_generation({entity, factHash, manifest, choices?})`: record the entity
   generated. The worker writes the deliverable files itself; the `manifest` binds
   them to the graph: `{files: [...], supportFiles?: [...], tests: [{requirement, criterion?, kind,
-  label, artifact, name, run, cwd}], build?}`, `supportFiles` the deliverable-wide
+  label, artifact, name, run, cwd}], build?, tasks?}`, `supportFiles` the deliverable-wide
   files ownership never applies to
-  ([file ownership](../consumers/gen.md#file-ownership-and-conventions)). A `files`
+  ([file ownership](../consumers/gen.md#file-ownership-and-conventions)), `tasks` the
+  saved task ids the generation uses beyond its tests, which keeps a session-owned
+  utility task from being [swept](../consumers/gen.md#session-tasks-are-swept-when-unused). A `files`
   path an entity outside the entity's component group records is refused
   (`bad-manifest`) naming the owner, and so is a `files` list with no implementing
   file while a requirement of the entity has no row naming one. A path that restates

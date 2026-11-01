@@ -725,6 +725,34 @@ contains `base64` and `contentType`. Native and hosted servers return raw bytes.
 Text reads without `binary=true` retain their existing response shape.
 
 
+## Turn effects
+
+A chat turn ends with one `turn_end` update. When the turn's loop ends it (an
+answer, a cancel, a limit, or an error), the update carries `effects`, the turn's
+receipt: one entry per tool call the turn made, other than reads, in call order. Each
+entry has `tool`, `ok`, and `target` when the call named one (the first of
+`requirement`, `entity`, `criterion`, `id`, `task_id`, `run_id`, `path`, `goal`,
+`view` in its arguments). A refused or failed call has `ok: false` and its first line
+of error as `error`. The harness builds the receipt from the turn's own tool results,
+never from the reply text.
+
+E.g.:
+
+```json
+{"sessionUpdate": "turn_end", "stop": "end_turn", "effects": [
+  {"tool": "record_binding", "target": "req:footer-1", "ok": true},
+  {"tool": "update_tasks", "ok": false, "error": "Task settings changed. Reload task_context before saving."}
+]}
+```
+
+Reads are `load`, `expand`, `unload`, `graph_status`, `search`, `read_section`,
+`get_entity`, `get_view`, `diagnostics`, the read-only task and file tools,
+`list_document_sets`, the `binding_tasks`, `generation_tasks`, and
+`verification_tasks` work lists, and the `begin_*` packages. A turn
+with no other call has an empty `effects`. The editor shows the receipt under the
+reply, so a reply that claims an effect the receipt lacks is visible. The reply text
+is the model's account; the receipt is the record.
+
 ## Chat input admission
 
 `POST /api/chat/sessions/{id}/inputs` accepts `messageId`, `expectedTurnId`, and `text`. Inputs retain their identity, sequence, state, and delivery mode in snapshots and transcript events. An ID reused with different content fails. A late input queues a next turn. Stop cancels pending inputs. Restored running turns are interrupted until explicitly resumed.

@@ -139,6 +139,52 @@ fn snapshot() -> Vec<Value> {
     })
 }
 
+// The turn's receipt: every call other than a read, from the turn's own tool
+// results, never from the reply. Mirrors docs/frontends/gui.md#turn-effects.
+fn turn_effects(id: &str, message_id: &str) -> Value {
+    fn read(tool: &str) -> bool {
+        crate::tools::toolset("mcp-read").contains(&tool)
+            || matches!(tool, "read_text_file" | "list_files" | "list_document_sets")
+            || matches!(tool, "binding_tasks" | "generation_tasks" | "verification_tasks")
+            || tool.starts_with("begin_")
+    }
+    BOOK.with(|b| {
+        let b = b.borrow();
+        let Some(c) = b.chats.get(id) else { return json!([]) };
+        let start = c.updates.iter().rposition(|(_, u)| u["sessionUpdate"] == "user_message" && u["messageId"] == message_id)
+            .unwrap_or(c.updates.len());
+        let mut effects: Vec<Value> = Vec::new();
+        let mut calls: Vec<(String, usize)> = Vec::new();
+        for (_, u) in &c.updates[start..] {
+            match u["sessionUpdate"].as_str() {
+                Some("tool_call") => {
+                    let tool = u["title"].as_str().unwrap_or_default();
+                    if read(tool) { continue; }
+                    let mut effect = json!({"tool": tool, "ok": false});
+                    if let Some(target) = ["requirement", "entity", "criterion", "id", "task_id", "run_id", "path", "goal", "view"]
+                        .iter().find_map(|key| u["rawInput"][*key].as_str()) {
+                        effect["target"] = json!(target);
+                    }
+                    calls.push((u["toolCallId"].as_str().unwrap_or_default().to_owned(), effects.len()));
+                    effects.push(effect);
+                }
+                Some("tool_call_update") => {
+                    let call = u["toolCallId"].as_str().unwrap_or_default();
+                    let Some(&(_, i)) = calls.iter().find(|(c, _)| c == call) else { continue };
+                    let ok = u["status"] == "completed";
+                    effects[i]["ok"] = json!(ok);
+                    if !ok {
+                        let text = match &u["rawOutput"] { Value::String(t) => t.clone(), other => other.to_string() };
+                        effects[i]["error"] = json!(text.lines().next().unwrap_or_default());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Value::Array(effects)
+    })
+}
+
 fn publish_sessions() {
     crate::portable::emit_event("chat.sessions", json!({"sessions": snapshot()}));
 }
@@ -738,6 +784,8 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     } else {
         (update, state)
     };
+    let mut update = update;
+    update["effects"] = turn_effects(id, &message_id);
     let stop_reason = update["stop"].clone();
     append(id, update);
     set_state(id, state);
@@ -863,6 +911,33 @@ impl Drop for Scope {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+
+    // Mirrors docs/frontends/gui.md#turn-effects.
+    #[test]
+    fn turn_receipt_lists_this_turns_non_read_calls_from_their_results() {
+        let call = |n: &str, tool: &str, input: Value| json!({"sessionUpdate":"tool_call","toolCallId":n,"title":tool,"rawInput":input});
+        let done = |n: &str, ok: bool, out: &str| json!({"sessionUpdate":"tool_call_update","toolCallId":n,"status":if ok {"completed"} else {"failed"},"rawOutput":out});
+        let updates = vec![
+            json!({"sessionUpdate":"user_message","messageId":"m1"}),
+            call("a", "record_binding", json!({"requirement":"req:old"})), done("a", true, "{}"),
+            json!({"sessionUpdate":"user_message","messageId":"m2"}),
+            call("b", "begin_binding", json!({"requirement":"req:footer-1"})), done("b", true, "{}"),
+            call("c", "record_binding", json!({"requirement":"req:footer-1","setId":"ds"})), done("c", true, "{}"),
+            call("d", "search", json!({"query":"x"})), done("d", true, "{}"),
+            call("e", "update_tasks", json!({"tasks":[]})), done("e", false, "Task settings changed.\nReload."),
+            call("f", "record_binding", json!({"requirement":"req:landing-6"})),
+        ];
+        let chat: Chat = serde_json::from_value(json!({"id":"t","title":"t","titled":true,"state":"running",
+            "updates":updates.into_iter().enumerate().map(|(n,u)| json!([n,u])).collect::<Vec<_>>(),
+            "next_n":20,"history":[],"reader":false})).unwrap();
+        BOOK.with(|b| b.borrow_mut().chats.insert("t".into(), chat));
+        assert_eq!(turn_effects("t", "m2"), json!([
+            {"tool":"record_binding","target":"req:footer-1","ok":true},
+            {"tool":"update_tasks","ok":false,"error":"Task settings changed."},
+            {"tool":"record_binding","target":"req:landing-6","ok":false},
+        ]));
+        BOOK.with(|b| b.borrow_mut().chats.remove("t"));
+    }
 
     #[test]
     fn exact_legacy_context_is_removed_only_with_recorded_human_suffix() {

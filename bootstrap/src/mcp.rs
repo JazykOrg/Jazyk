@@ -3120,9 +3120,14 @@ impl McpServer {
                 if crate::task_runtime::TOOLS.contains(&name.as_str()) {
                     // A generation or verification serving owns the tasks it adds; a
                     // chat adds the author's. Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-                    let owner = (name == "update_tasks" && !self.modes.iter().any(|m| m == "chat"))
-                        .then(|| self.modes.iter().find(|m| matches!(m.as_str(), "generate" | "verify")).map(|m| format!("mcp-{m}")))
-                        .flatten();
+                    // A worker holding a binding or generation claim is a ledger session
+                    // whatever its serving (the default `all` includes chat).
+                    let claimed = crate::control::leases(&self.out).values().any(|l| l.worker == self.worker_id());
+                    let owner = (name == "update_tasks").then(|| {
+                        if claimed { return Some(format!("mcp:{}", self.worker_id())); }
+                        if self.modes.iter().any(|m| m == "chat") { return None; }
+                        self.modes.iter().find(|m| matches!(m.as_str(), "generate" | "verify")).map(|m| format!("mcp-{m}"))
+                    }).flatten();
                     let before = owner.as_ref().and_then(|_| crate::task_runtime::load(&self.project.root).ok()).map(|(_, t)| t);
                     return match crate::task_runtime::call(&self.project.root,&name,&args) {
                         Ok(mut value)=>{

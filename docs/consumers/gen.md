@@ -848,8 +848,9 @@ keep deriving a repair (regenerate) that provably does not clear it.
 ### Session tasks are swept when unused
 
 A binding, generation, or verification session can add tasks with `update_tasks`: a
-goal batch whose goals include `bind`, `generate`, or `verify`, or a `generate` or
-`verify` MCP serving. The harness records each task it adds under the set's `tasks`
+goal batch whose goals include `bind`, `generate`, or `verify`, a `generate` or
+`verify` MCP serving, or any serving whose worker holds a binding or generation claim
+(`begin_binding`, `begin_generation`). The harness records each task it adds under the set's `tasks`
 key, with the goal or serving that added it and the hash of the task's definition. A
 later save by such a session keeps the hash current for the tasks it owns and drops
 records of tasks no longer listed.
@@ -867,18 +868,23 @@ A session-owned task is used while a ledger names it:
   `manifest.tasks` for a utility the generation runs beyond its tests, such as a task
   that copies a supplied asset into the deliverable.
 
-Every set's ledger counts, and a build with `--out` counts its own ledger too.
+Every set's ledger counts, and a build with `--out` counts its own ledger too. Every
+task owned by another set with a session at work (a goal or entity claim, or a build
+lease) counts as used, since that session may be about to bind it.
 
 The sweep runs once at the end of a build, under the build's lease: when a standalone
-compile closes, or when a workflow job ends done or failed. A workflow's `compile`
+compile closes, or when a workflow job ends done or failed. A cancelled build does not
+sweep. A workflow's `compile`
 action does not sweep, so a later `task` action in the same workflow still finds its
 task. The sweep never runs inside a session or at a batch's `done`, so a task added
 for a binding still in progress survives until the build ends.
 
 The sweep removes each session-owned task that no ledger uses. It edits the task list
 through the same configuration lock and revision check as `update_tasks`, so a
-concurrent edit is never overwritten. It reads ledgers and never writes them. The
-build report lists the removed task ids under `retiredTasks`. An unreadable ledger
+concurrent edit is never overwritten. It then drops the ownership records of the
+tasks it removed, so an author who restores one owns it. Only sets with no session at
+work own a removed task, so no session's ledger write races that update. The build
+report lists the removed task ids under `retiredTasks`. An unreadable ledger
 stops the sweep: its references are unknown, so no task is provably unused. A removed
 task that a later session needs is added again. Retained runs of a removed task stay
 readable.

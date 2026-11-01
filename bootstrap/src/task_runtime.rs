@@ -448,34 +448,46 @@ fn ledger_uses(ledger: &crate::gen::Ledger) -> std::collections::BTreeSet<String
 
 // Remove session-owned tasks no ledger uses, through the configuration lock and
 // revision check. A task is session-owned only while its definition still matches
-// the recorded one, so an author's edit or re-creation makes it the author's. The
-// sweep reads ledgers and never writes them. `out` adds a build's own ledger when it
-// is not a set's default. Returns the removed ids.
+// the recorded one, so an author's edit or re-creation makes it the author's. `own`
+// is the sweeping build's out (its ledger counts even under --out); every other set
+// with a session at work keeps its tasks. Returns the removed ids.
 // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-pub fn sweep_unused(root: &Path, out: Option<&Path>) -> Result<Vec<String>, String> {
+pub fn sweep_unused(root: &Path, own: Option<&Path>) -> Result<Vec<String>, String> {
     let workspace = crate::document_sets::Workspace::load(root).map_err(|(_, e)| e)?;
     let mut outs = Vec::new();
     for set in &workspace.sets {
         outs.push(workspace.resolve(Some(&set.id)).map_err(|(_, e)| e)?.out);
     }
-    if let Some(out) = out { if !outs.iter().any(|o| o == out) { outs.push(out.to_path_buf()); } }
+    if let Some(own) = own { if !outs.iter().any(|o| o == own) { outs.push(own.to_path_buf()); } }
     let mut ledgers = Vec::new();
     for out in &outs {
         let ledger = crate::gen::Ledger::load(out);
         // An unreadable ledger's references are unknown: nothing is provably unused.
         if ledger.unreadable.is_some() { return Ok(Vec::new()); }
-        ledgers.push(ledger);
+        // A set with a session at work (a goal or entity lease, or another build)
+        // may be about to bind the tasks it owns: they all count as used.
+        let busy = Some(out.as_path()) != own
+            && (!crate::control::leases(out).is_empty() || crate::control::build_lease(out).is_some());
+        ledgers.push((out, ledger, busy));
     }
-    if ledgers.iter().all(|l| l.tasks.is_empty()) { return Ok(Vec::new()); }
-    let used: std::collections::BTreeSet<String> = ledgers.iter().flat_map(ledger_uses).collect();
+    if ledgers.iter().all(|(_, l, _)| l.tasks.is_empty()) { return Ok(Vec::new()); }
+    let mut used: std::collections::BTreeSet<String> = ledgers.iter().flat_map(|(_, l, _)| ledger_uses(l)).collect();
+    used.extend(ledgers.iter().filter(|(_, _, busy)| *busy).flat_map(|(_, l, _)| l.tasks.keys().cloned()));
     let (source, tasks) = load(root)?;
-    let owned = |t: &Task| ledgers.iter().any(|l| l.tasks.get(&t.id).is_some_and(|o| o.definition == t.hash()));
+    let owned = |t: &Task| ledgers.iter().any(|(_, l, _)| l.tasks.get(&t.id).is_some_and(|o| o.definition == t.hash()));
     let removed: Vec<String> = tasks.iter().filter(|t| !used.contains(&t.id) && owned(t)).map(|t| t.id.clone()).collect();
-    if !removed.is_empty() {
-        let kept: Vec<Task> = tasks.iter().filter(|t| !removed.contains(&t.id)).cloned().collect();
-        let next = edit(&source, &kept)?;
-        crate::document_sets::atomic_config(root, &next, &crate::model::hash_hex(&source))
-            .map_err(|(_, error)| error)?;
+    if removed.is_empty() { return Ok(removed); }
+    let kept: Vec<Task> = tasks.iter().filter(|t| !removed.contains(&t.id)).cloned().collect();
+    let next = edit(&source, &kept)?;
+    crate::document_sets::atomic_config(root, &next, &crate::model::hash_hex(&source))
+        .map_err(|(_, error)| error)?;
+    // The removed tasks' records end, so an author who restores one owns it. Only
+    // idle sets own a removed task, and no session writes an idle set's ledger.
+    for (out, _, _) in ledgers.iter().filter(|(_, l, busy)| !busy && removed.iter().any(|id| l.tasks.contains_key(id))) {
+        let mut fresh = crate::gen::Ledger::load(out);
+        if fresh.unreadable.is_some() { continue; }
+        fresh.tasks.retain(|id, _| !removed.contains(id));
+        fresh.save(out);
     }
     Ok(removed)
 }
@@ -930,17 +942,21 @@ mod tests {
         assert_eq!(ledger.tasks["old"].definition, after.iter().find(|t| t.id == "old").unwrap().hash());
         // The author edits "adopted": a different definition is the author's.
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), session.replace("id='adopted'\nname='adopted'\ndescription='d'\ncommand='true'", "id='adopted'\nname='adopted'\ndescription='d'\ncommand='make lint'")).unwrap();
-        let ledger_bytes = crate::vfs::read(out.join("gen/ledger.yaml")).unwrap();
-        // Only the unused session task goes; the sweep never writes the ledger.
+        // A set with a session at work keeps every task it owns.
+        crate::control::claim(&out, "req:a-9", "worker-b").unwrap();
+        assert!(sweep_unused(&root, Some(&root.join("other-build"))).unwrap().is_empty());
+        crate::control::release_lease(&out, "req:a-9");
+        // Only the unused session task goes, and its record ends with it.
         assert_eq!(sweep_unused(&root, None).unwrap(), vec!["old".to_string()]);
         let (text, kept) = load(&root).unwrap();
         assert_eq!(kept.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["author", "suite", "util", "adopted"]);
         assert!(text.contains("# kept comment"));
-        assert_eq!(crate::vfs::read(out.join("gen/ledger.yaml")).unwrap(), ledger_bytes);
-        assert!(sweep_unused(&root, None).unwrap().is_empty(), "a second sweep converges");
-        // A later session save prunes the record of the swept task.
-        record_owned(&out, &kept, &kept, "g:bind:req:a-1").unwrap();
         assert!(!crate::gen::Ledger::load(&out).tasks.contains_key("old"));
+        assert!(sweep_unused(&root, None).unwrap().is_empty(), "a second sweep converges");
+        // An author who restores the removed task unchanged owns it.
+        crate::vfs::write(root.join(".jazyk/jazyk.toml"), format!("{text}{}", task("old", "true"))).unwrap();
+        assert!(sweep_unused(&root, None).unwrap().is_empty());
+        crate::vfs::write(root.join(".jazyk/jazyk.toml"), &text).unwrap();
         // A build's own --out ledger counts as a use.
         crate::vfs::write(out.join("gen/ledger.yaml"), format!("tasks:\n  suite: {{createdBy: x, createdAt: x, definition: '{}'}}\n", kept[1].hash())).unwrap();
         let other = root.join("elsewhere");

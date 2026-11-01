@@ -2293,7 +2293,8 @@ pub(crate) async fn compile_under(
     }
     let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
     // A standalone build sweeps under its own lease; a workflow sweeps once at its end.
-    if !crate::task_runtime::sweep_deferred() {
+    // A cancelled build leaves the task list as its sessions left it.
+    if !crate::task_runtime::sweep_deferred() && !trace.is_cancelled() {
         report.retired_tasks = sweep_tasks(proj, out, trace);
     }
     report.goals = run.derived;

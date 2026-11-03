@@ -12,11 +12,17 @@ use std::path::PathBuf;
 // Derived status, first match wins. Mirrors
 // docs/consumers/gen.md#status-is-derived-never-stored.
 pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (String, String) {
+    status_with(store, rid, row, gs, &Ledger::load(&store.out))
+}
+
+// `status_of` against a ledger already loaded: the loops over many rows load it once,
+// not once per row.
+pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, ledger: &Ledger) -> (String, String) {
     let live = store.graph.requirements.get(store.resolve_id(rid));
     let Some(r) = live else {
         return ("missing".into(), "requirement-gone".into());
     };
-    if !crate::gen::binding_source_current(&store.out, gs, &Ledger::load(&store.out), row) {
+    if !crate::gen::binding_source_current(&store.out, gs, ledger, row) {
         return ("missing".into(), "source-selection-changed".into());
     }
     let artifact = artifact_path(&store.out, gs, &row.test);
@@ -153,7 +159,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
             rid
         ));
     };
-    let (status, reason) = status_of(store, &rid, row, gs);
+    let (status, reason) = status_with(store, &rid, row, gs, &ledger);
     match status.as_str() {
         "verified" | "failing" | "unimplemented" | "partial" => Ok(()),
         "unverified" => Err(format!(
@@ -200,7 +206,7 @@ pub fn pending(
                 continue;
             }
         }
-        let (status, reason) = status_of(store, rid, row, gs);
+        let (status, reason) = status_with(store, rid, row, gs, &ledger);
         // A row whose requirement left the graph is not work: no repair applies, and
         // the next record_generation prunes it. Listing it as actionable is a livelock
         // (docs/consumers/gen.md#deletion-prunes-the-ledger).
@@ -271,7 +277,7 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
     for rid in store.graph.requirements.keys() {
         let entry = match ledger.requirements.get(rid) {
             Some(row) => {
-                let (status, reason) = status_of(store, rid, row, gs);
+                let (status, reason) = status_with(store, rid, row, gs, &ledger);
                 json!({
                     "status": status,
                     "reason": reason,
@@ -328,7 +334,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     let Some(r) = store.graph.requirements.get(&rid) else {
         return Err(format!("unknown requirement `{}`", rid));
     };
-    let (status, reason) = status_of(store, &rid, row, gs);
+    let (status, reason) = status_with(store, &rid, row, gs, &ledger);
     // A row nothing can run says so with its repair, instead of packaging a test that
     // judges a dropped sentence or an artifact that is not there.
     if status == "stale-requirement" || status == "missing" {
@@ -917,7 +923,7 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             }
             continue;
         }
-        let (status, reason) = status_of(store, rid, row, gs);
+        let (status, reason) = status_with(store, rid, row, gs, &ledger);
         // A dead row is not repairable work; regenerating cannot bring its
         // requirement back (docs/consumers/gen.md#deletion-prunes-the-ledger).
         if reason == "requirement-gone" {

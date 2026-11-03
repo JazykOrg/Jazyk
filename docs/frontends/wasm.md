@@ -88,6 +88,22 @@ mutation is posted to the page, which writes it to
 [a folder on disk](#a-folder-on-disk) or to [browser storage](#browser-storage),
 depending on where the project came from.
 
+The tree changes only through the backend's own calls, so it keeps a change count,
+raised by every write, removal, rename, copy, seed, and reset. Reads of an unchanged
+tree reuse their last answer:
+
+- Loading a set's store returns a copy of the last load of that out directory while
+  the count holds still.
+- Computing a set's [board](../compiler/reconciler.md#goal-derivation) returns a
+  copy of the last board for the same out directory and resolved project settings
+  while the count holds still. A board that holds a lease is never reused: a lease
+  lapses with time, not with a write.
+
+A page that opens a large project asks for the board several times over one
+unchanged tree (the sets, the project, the status, the documents). Each is derived
+once. The native engine reads a real file system that other processes change, so it
+never reuses a load.
+
 ## The product
 
 A project that carries its product carries it into the tab: the

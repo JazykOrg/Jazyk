@@ -646,6 +646,17 @@ fn is_batch_id(s: &str) -> bool {
     !g.is_empty() && !n.is_empty() && g.bytes().all(|c| c.is_ascii_digit()) && n.bytes().all(|c| c.is_ascii_digit())
 }
 
+// What a board depends on besides the files: the project's resolved settings.
+#[cfg(target_arch = "wasm32")]
+fn memo_key(proj: &Project, out: &Path) -> String {
+    format!(
+        "{:?}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}|{:?}|{:?}",
+        proj.root, out, proj.set_id, proj.config_hash, proj.config_error, proj.docs_glob, proj.roots,
+        proj.gen_deliverable, proj.gen_code, proj.workflow.compile, proj.workflow.generate, proj.workflow.worker,
+        proj.explicit_files, proj.set_docs,
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct Board {
     pub generation: u64,
@@ -1031,6 +1042,36 @@ impl Board {
     // project's section tree through this call).
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn compute(proj: &Project, out: &Path) -> Board {
+        // The browser engine's tree changes only through its own writes, and a page
+        // opening asks for the board several times over one tree: a board of an
+        // unchanged tree and project is the last one's copy. A board holding leases is
+        // never reused, since a lease lapses with time, not with a write.
+        #[cfg(target_arch = "wasm32")]
+        {
+            thread_local! {
+                static LAST: std::cell::RefCell<BTreeMap<String, (u64, Board)>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+            }
+            let key = memo_key(proj, out);
+            let now = crate::vfs::memory_generation();
+            if let Some(board) = LAST.with(|l| l.borrow().get(&key).filter(|(g, _)| *g == now).map(|(_, b)| b.clone())) {
+                return board;
+            }
+            let board = Self::compute_uncached(proj, out);
+            let now = crate::vfs::memory_generation();
+            LAST.with(|l| {
+                let mut l = l.borrow_mut();
+                l.retain(|_, (g, _)| *g == now);
+                if board.claimed.is_empty() && board.held_batches.is_empty() {
+                    l.insert(key, (now, board.clone()));
+                }
+            });
+            board
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Self::compute_uncached(proj, out)
+    }
+
+    fn compute_uncached(proj: &Project, out: &Path) -> Board {
         let mut store = Store::load(out);
         let (parsed, _) = crate::reconcile::parse_all(proj);
         store.sync_docs_in_memory(&parsed);

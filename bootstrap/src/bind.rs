@@ -33,11 +33,12 @@ fn bind_reason(
     _rid: &str,
     r: &crate::model::Requirement,
     row: &ReqRow,
+    ledger: &Ledger,
 ) -> Option<&'static str> {
     if hash_hex(&r.statement) != row.hashes.requirement {
         return Some("requirement-changed");
     }
-    if !crate::gen::binding_source_current(&store.out, gs, &Ledger::load(&store.out), row) {
+    if !crate::gen::binding_source_current(&store.out, gs, ledger, row) {
         return Some("source-selection-changed");
     }
     let artifact = artifact_path(&store.out, gs, &row.test);
@@ -172,7 +173,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
             rid
         ));
     };
-    match bind_reason(store, gs, &rid, r, row) {
+    match bind_reason(store, gs, &rid, r, row, &ledger) {
         None => Ok(()),
         Some("requirement-changed") => Err(format!(
             "the row for `{}` records statement hash {} but the live statement hashes {}: the statement moved since the row was recorded; begin_binding again and record_binding against the current package",
@@ -208,7 +209,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     for (rid, r) in &store.graph.requirements {
         let reason = match ledger.requirements.get(rid) {
             None => "unbound",
-            Some(row) => match bind_reason(store, gs, rid, r, row) {
+            Some(row) => match bind_reason(store, gs, rid, r, row, &ledger) {
                 Some(reason) => reason,
                 None => continue,
             },
@@ -262,7 +263,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     // so the session knows it is re-binding by choice, not by the board's word.
     let reason = match ledger.requirements.get(&rid) {
         None => "unbound",
-        Some(row) => bind_reason(store, gs, &rid, r, row).unwrap_or("current"),
+        Some(row) => bind_reason(store, gs, &rid, r, row, &ledger).unwrap_or("current"),
     };
     // The deliverable files that already name this requirement: by id (a marker
     // comment), by test-name slug (an earlier hash), or by statement hash (an earlier

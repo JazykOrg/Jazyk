@@ -187,6 +187,34 @@ Project and store reads:
   its level view id when it has one (`null` on a leaf). The tree panel and the
   breadcrumb draw from it ([levels](../compiler/concepts/levels.md#the-scope-root)).
 - `GET /api/search?q=`: the [search tool](../compiler/tools.md#read-tools).
+- `GET /api/find?q=`: the editor's project-wide search. It is not the model's
+  search tool, whose results stay as they are. A hit is every word of the query,
+  matched case-insensitively anywhere in a field. Each hit carries `kind`,
+  `title`, a one-line `detail` around the first match, and where it opens:
+  - `file`: a project file, by its path (`path`), and by its text (`path` and
+    `line`). Only UTF-8 files of at most 512 KB are read, at most 16 MB in all;
+    document set inputs are left to their sections. Under `.jazyk/` only the
+    project's own files (`.jazyk/jazyk.toml`, `.jazyk/.gitignore`) are searched:
+    the compiled state is searched through its nodes.
+  - `section`: a document section, by its title or its text (`path`, `section`,
+    and `line`, one-based in the document).
+  - `entity`: by its name, an alias, or its definition (`id`).
+  - `requirement` and `criterion`: by statement (`id`; a criterion also names its
+    `requirement`, whose page lists it).
+  - `view`: a diagram, by its title (`id`).
+
+  A name match ranks before a text match. Hits order by rank, then kind (files,
+  sections, entities, requirements, criteria, views), then their path or id. Each
+  kind keeps at most 8 hits. `more` names the kinds with more hits than that, and
+  `truncated` is true when the text budget ran out before every file was read.
+  E.g.:
+
+  ```json
+  {"hits": [{"kind": "file", "path": "docs/main.md", "title": "main.md", "detail": "docs/main.md"},
+            {"kind": "section", "path": "docs/main.md", "section": "/main/overview", "line": 5,
+             "title": "Overview", "detail": "This is a script written in javascript."}],
+   "more": [], "truncated": false}
+  ```
 - `GET /api/context?target=&depth=`: what [`load`](../compiler/context.md#tools)
   renders for the target: the loaded set of that one load, with its expansion handles.
 - `GET /api/coverage`: per document, the section tree and the

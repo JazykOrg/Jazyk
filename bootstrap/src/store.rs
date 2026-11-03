@@ -1276,6 +1276,32 @@ pub fn snapshot_graph(out: &Path, label: &str) {
 
 impl Store {
     pub fn load(out: &Path) -> Store {
+        // The browser engine's tree changes only through its own writes: a load of an
+        // unchanged tree is the last one's copy (docs/frontends/wasm.md#filesystem).
+        #[cfg(target_arch = "wasm32")]
+        {
+            thread_local! {
+                static LAST: std::cell::RefCell<std::collections::BTreeMap<PathBuf, (u64, Store)>> =
+                    const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+            }
+            let now = crate::vfs::memory_generation();
+            if let Some(store) = LAST.with(|l| l.borrow().get(out).filter(|(g, _)| *g == now).map(|(_, s)| s.clone())) {
+                return store;
+            }
+            let store = Self::load_uncached(out);
+            let now = crate::vfs::memory_generation();
+            LAST.with(|l| {
+                let mut l = l.borrow_mut();
+                l.retain(|_, (g, _)| *g == now);
+                l.insert(out.to_path_buf(), (now, store.clone()));
+            });
+            store
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Self::load_uncached(out)
+    }
+
+    fn load_uncached(out: &Path) -> Store {
         // Readers never take the lock: read the generation counter, load every shard,
         // and retry if the counter moved mid-read (a commit landed between shards).
         // A store of another version reads as empty; only a build archives it.

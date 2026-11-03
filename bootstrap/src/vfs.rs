@@ -267,10 +267,22 @@ mod memory {
     thread_local! {
         static FILES: RefCell<BTreeMap<PathBuf, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
         static DIRS: RefCell<BTreeSet<PathBuf>> = const { RefCell::new(BTreeSet::new()) };
+        // Raised by every change to the tree, so a value computed from it stays
+        // valid exactly while this holds still.
+        static GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    fn changed() {
+        GENERATION.with(|g| g.set(g.get() + 1));
+    }
+
+    pub fn generation() -> u64 {
+        GENERATION.with(|g| g.get())
     }
 
     pub(super) type Tree = (BTreeMap<PathBuf, Vec<u8>>, BTreeSet<PathBuf>);
     pub(super) fn replace(tree: Tree) -> Tree {
+        changed();
         (
             FILES.with(|f| f.replace(tree.0)),
             DIRS.with(|d| d.replace(tree.1)),
@@ -315,6 +327,7 @@ mod memory {
     }
 
     pub fn write(p: impl AsRef<Path>, c: impl AsRef<[u8]>) -> io::Result<()> {
+        changed();
         let p = norm(p.as_ref());
         if let Some(parent) = p.parent() {
             create_dir_all(parent)?;
@@ -326,11 +339,13 @@ mod memory {
     }
 
     pub fn create_dir(p: impl AsRef<Path>) -> io::Result<()> {
+        changed();
         DIRS.with(|d| d.borrow_mut().insert(norm(p.as_ref())));
         Ok(())
     }
 
     pub fn create_dir_all(p: impl AsRef<Path>) -> io::Result<()> {
+        changed();
         let p = norm(p.as_ref());
         DIRS.with(|d| {
             let mut d = d.borrow_mut();
@@ -344,6 +359,7 @@ mod memory {
     }
 
     pub fn remove_file(p: impl AsRef<Path>) -> io::Result<()> {
+        changed();
         let p = norm(p.as_ref());
         FILES
             .with(|f| f.borrow_mut().remove(&p))
@@ -355,6 +371,7 @@ mod memory {
     }
 
     pub fn remove_dir(p: impl AsRef<Path>) -> io::Result<()> {
+        changed();
         let p = norm(p.as_ref());
         DIRS.with(|d| d.borrow_mut().remove(&p));
         #[cfg(target_arch = "wasm32")]
@@ -363,6 +380,7 @@ mod memory {
     }
 
     pub fn remove_dir_all(p: impl AsRef<Path>) -> io::Result<()> {
+        changed();
         let p = norm(p.as_ref());
         FILES.with(|f| f.borrow_mut().retain(|k, _| !k.starts_with(&p)));
         DIRS.with(|d| {
@@ -380,6 +398,7 @@ mod memory {
     }
 
     pub fn rename(a: impl AsRef<Path>, b: impl AsRef<Path>) -> io::Result<()> {
+        changed();
         let (a, b) = (norm(a.as_ref()), norm(b.as_ref()));
         // A file move, or a directory move carrying everything under it.
         let moved: Vec<(PathBuf, Vec<u8>)> = FILES.with(|f| {
@@ -429,6 +448,7 @@ mod memory {
     }
 
     pub fn copy(a: impl AsRef<Path>, b: impl AsRef<Path>) -> io::Result<u64> {
+        changed();
         let v = read(a)?;
         let n = v.len() as u64;
         write(b, &v)?;
@@ -529,6 +549,7 @@ mod memory {
     // Seeding and draining the tree. The wasm backend fills it from the bundled
     // demo project on boot and hands edited documents back to the page.
     pub fn seed(path: &Path, bytes: Vec<u8>) {
+        changed();
         let p = norm(path);
         if let Some(parent) = p.parent() {
             let _ = create_dir_all(parent);
@@ -544,12 +565,19 @@ mod memory {
     // than over the first one's files. The browser engine's reset calls it.
     #[cfg(target_arch = "wasm32")]
     pub fn reset() {
+        changed();
         FILES.with(|f| f.borrow_mut().clear());
         DIRS.with(|d| d.borrow_mut().clear());
     }
 }
 
 pub use imp::*;
+
+// The in-memory tree's change count (the browser engine's files): a value computed
+// from the tree stays valid while this holds still.
+pub fn memory_generation() -> u64 {
+    memory::generation()
+}
 #[cfg(target_arch = "wasm32")]
 use memory as imp;
 
@@ -632,5 +660,40 @@ impl Drop for Scope {
     fn drop(&mut self) {
         memory::replace(std::mem::take(&mut self.previous));
         SCOPED.with(|s| s.set(self.scoped));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Every change to the in-memory tree raises its change count, so a load or a
+    // board reused while it holds still never misses a write
+    // (docs/frontends/wasm.md#filesystem).
+    #[test]
+    fn every_change_to_the_memory_tree_raises_its_count() {
+        use std::path::Path;
+        let dir = Path::new("/vfs-generation-test");
+        let mut last = super::memory_generation();
+        let mut raised = |what: &str| {
+            let now = super::memory_generation();
+            assert!(now > last, "{what} kept the count at {now}");
+            last = now;
+        };
+        super::memory::seed(&dir.join("a.md"), b"a".to_vec());
+        raised("seed");
+        super::memory::write(dir.join("b.md"), b"b").unwrap();
+        raised("write");
+        super::memory::rename(dir.join("b.md"), dir.join("c.md")).unwrap();
+        raised("rename");
+        super::memory::copy(dir.join("c.md"), dir.join("d.md")).unwrap();
+        raised("copy");
+        super::memory::remove_file(dir.join("d.md")).unwrap();
+        raised("remove_file");
+        super::memory::create_dir_all(dir.join("sub")).unwrap();
+        raised("create_dir_all");
+        super::memory::remove_dir_all(dir).unwrap();
+        raised("remove_dir_all");
+        let reads = super::memory_generation();
+        let _ = super::memory::read(dir.join("a.md"));
+        assert_eq!(super::memory_generation(), reads, "a read changed the count");
     }
 }

@@ -576,7 +576,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             if !store.graph.requirements.contains_key(rid) {
                 continue;
             }
-            let (status, reason) = crate::verify::status_of(store, rid, row, &gs);
+            let (status, reason) = crate::verify::status_with(store, rid, row, &gs, &ledger);
             if status == "failing" {
                 let red: Vec<&str> = row
                     .tests

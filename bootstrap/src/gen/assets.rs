@@ -310,27 +310,59 @@ fn inspect(
     }
 }
 
+// What a scan of many entities' referenced assets reads once against one store: the
+// project, its selected documents, its outputs, and each document it parsed. Built on
+// first need, so entities without local links never load project files.
+#[derive(Default)]
+pub struct AssetScan {
+    context: std::cell::OnceCell<Option<ScanContext>>,
+}
+
+struct ScanContext {
+    project: crate::project::Project,
+    selected_docs: BTreeSet<String>,
+    outputs: BTreeSet<String>,
+    documents: std::cell::RefCell<BTreeMap<String, Option<Document>>>,
+}
+
+impl AssetScan {
+    fn context(&self, store: &Store) -> Option<&ScanContext> {
+        self.context
+            .get_or_init(|| {
+                let project = project(store)?;
+                let selected_docs = project
+                    .doc_files()
+                    .into_iter()
+                    .filter_map(|path| {
+                        path.strip_prefix(&project.root)
+                            .ok()
+                            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                    })
+                    .collect::<BTreeSet<_>>();
+                let outputs = output_paths(store, &project);
+                Some(ScanContext { project, selected_docs, outputs, documents: Default::default() })
+            })
+            .as_ref()
+    }
+}
+
 pub fn referenced_assets(store: &Store, id: &str, rids: &[String]) -> Vec<ReferencedAsset> {
+    referenced_assets_in(&AssetScan::default(), store, id, rids)
+}
+
+// `referenced_assets` within a scan of many entities, reading the project once.
+pub fn referenced_assets_in(scan: &AssetScan, store: &Store, id: &str, rids: &[String]) -> Vec<ReferencedAsset> {
     let quotes = quotes(store, id, rids);
     // Local Markdown links and images require a bracket. Most authored facts have
     // none, so they keep the old cheap fingerprint without loading project files.
     if !quotes.iter().any(|(_, source)| source.quote.contains('[')) {
         return vec![];
     }
-    let Some(project) = project(store) else {
+    let Some(context) = scan.context(store) else {
         return vec![];
     };
-    let selected_docs = project
-        .doc_files()
-        .into_iter()
-        .filter_map(|path| {
-            path.strip_prefix(&project.root)
-                .ok()
-                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-        })
-        .collect::<BTreeSet<_>>();
-    let outputs = output_paths(store, &project);
-    let mut documents = BTreeMap::<String, Option<Document>>::new();
+    let (project, selected_docs, outputs) = (&context.project, &context.selected_docs, &context.outputs);
+    let mut documents = context.documents.borrow_mut();
     let mut assets = BTreeMap::<String, ReferencedAsset>::new();
     for (fact, source) in quotes {
         if !selected_docs.contains(&source.doc) || !contained_path(&project.root, &source.doc) {
@@ -360,7 +392,7 @@ pub fn referenced_assets(store: &Store, id: &str, rids: &[String]) -> Vec<Refere
                         Some("The reference is not a safe project-local input path."),
                     )
                 } else {
-                    inspect(&project.root, &path, &project.gen_code, &outputs)
+                    inspect(&project.root, &path, &project.gen_code, outputs)
                 }
             });
             asset.references.insert(Reference {

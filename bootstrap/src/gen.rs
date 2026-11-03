@@ -1433,6 +1433,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let binding_owed: std::collections::BTreeSet<String> = crate::bind::pending(store, gs)
         .iter().filter_map(|row| row["requirement"].as_str().map(String::from)).collect();
     let by_entity = ReqsByEntity::build(store);
+    let scan = assets::AssetScan::default();
     let mut out = Vec::new();
     for id in store.graph.entities.keys() {
         let rids = by_entity.of(id);
@@ -1440,7 +1441,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             continue;
         }
         let slug = slug_of(id);
-        let referenced_assets = assets::referenced_assets(store, id, rids);
+        let referenced_assets = assets::referenced_assets_in(&scan, store, id, rids);
         let hash = assets::fingerprint(&fact_hash_base(store, id, rids), &referenced_assets);
         let incomplete: Vec<&String> = rids.iter().filter(|rid| binding_owed.contains(*rid)).collect();
         let unimplemented: Vec<&String> = rids
@@ -1449,7 +1450,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                 ledger
                     .requirements
                     .get(*rid)
-                    .map(|row| matches!(crate::verify::status_of(store, rid, row, gs).0.as_str(), "unimplemented" | "partial"))
+                    .map(|row| matches!(crate::verify::status_with(store, rid, row, gs, &ledger).0.as_str(), "unimplemented" | "partial"))
                     .unwrap_or(false)
             })
             .collect();
@@ -1587,7 +1588,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
                     .get(rid)
                     .map(|row| {
                         (row.test.kind == "programmatic"
-                            && crate::verify::status_of(store, rid, row, gs)
+                            && crate::verify::status_with(store, rid, row, gs, &ledger)
                                 == ("unverified".to_string(), "never-run".to_string()))
                             || row.tests.values().any(|test| test.test.kind == "programmatic"
                                 && (test.verdict == "none" || test.last_run.is_none()))
@@ -1863,7 +1864,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
             .iter()
             .filter_map(|rid| {
                 ledger.requirements.get(rid).map(|row| {
-                    let (status, _) = crate::verify::status_of(store, rid, row, gs);
+                    let (status, _) = crate::verify::status_with(store, rid, row, gs, &ledger);
                     json!({
                         "requirement": rid,
                         "status": status,

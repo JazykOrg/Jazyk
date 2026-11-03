@@ -137,6 +137,7 @@ fn api_router(st: SharedState) -> Router {
         .route("/entities/{id}/card", get(card_api::entity_card_handler))
         .route("/requirements/{id}", get(api::requirement))
         .route("/search", get(api::search))
+        .route("/find", get(api::find))
         .route("/context", get(api::context))
         .route("/coverage", get(api::coverage))
         .route("/overview", get(api::overview))

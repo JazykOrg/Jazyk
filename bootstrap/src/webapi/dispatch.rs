@@ -555,6 +555,18 @@ pub(crate) async fn request_scoped(
             ok(json!({ "hits": hits }))
         }
 
+        ("GET", "/find") => {
+            let p = project();
+            let g = crate::gen::GenSettings::resolve(&p);
+            let listing = super::projfiles::project_files(&p.root, &g.deliverable, &p.out, &p.docs_glob);
+            ok(super::find::find(
+                &Store::load(&out()),
+                &p.root,
+                &super::find::file_paths(&listing),
+                &param(&q, "q").unwrap_or_default(),
+            ))
+        }
+
         ("GET", p) if p.starts_with("/requirements/") => {
             let id = decode(p.trim_start_matches("/requirements/"));
             let store = Store::load(&out());
@@ -883,6 +895,29 @@ pub(crate) async fn request_scoped(
 
 #[cfg(test)]
 mod tests {
+    // The browser transport serves the editor's project-wide search
+    // (docs/frontends/gui.md#api): a file by its name and by its text.
+    #[test]
+    fn find_answers_files_by_name_and_text() {
+        let dir = std::env::temp_dir().join(format!("jazyk-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in [".jazyk", "docs", "code"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        crate::vfs::write(dir.join(".jazyk/jazyk.toml"), "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\n").unwrap();
+        crate::vfs::write(dir.join("docs/main.md"), "# Main\n\nA sort utility.\n").unwrap();
+        crate::vfs::write(dir.join("code/main.js"), "export {}\n").unwrap();
+        crate::vfs::write(dir.join("code/util.js"), "// the main loop\n").unwrap();
+        // Compiled state under the set's out directory is not a file to find.
+        std::fs::create_dir_all(dir.join(".jazyk/ds_main/graph/entity")).unwrap();
+        crate::vfs::write(dir.join(".jazyk/ds_main/graph/entity/ent~main.yaml"), "name: Main\n").unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&super::request_at(&dir, "GET", "/api/find?q=main", "")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let hits = reply["body"]["hits"].as_array().unwrap_or_else(|| panic!("{reply}"));
+        let found: Vec<(&str, Option<u64>)> = hits.iter().map(|h| (h["path"].as_str().unwrap(), h["line"].as_u64())).collect();
+        assert_eq!(found, vec![("code/main.js", None), ("docs/main.md", None), (".jazyk/jazyk.toml", Some(4)), ("code/util.js", Some(1))], "{reply}");
+    }
+
     #[test]
     fn project_raw_answers_any_file_as_base64_and_file_keeps_text_only() {
         let dir = std::env::temp_dir().join(format!("jazyk-project-raw-{}", std::process::id()));

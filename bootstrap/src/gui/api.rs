@@ -342,6 +342,23 @@ pub async fn search(State(st): State<SharedState>, Query(p): Query<SearchQ>) -> 
     Json(json!({ "hits": hits }))
 }
 
+// The editor's project-wide search (docs/frontends/gui.md#api): files, sections, and
+// the graph, through crate::webapi::find.
+pub async fn find(State(st): State<SharedState>, Query(p): Query<SearchQ>) -> Json<Value> {
+    let store = load_store(&st).await;
+    let root = st.root.clone();
+    let out = st.out.clone();
+    let deliverable = st.gs.read().expect("settings").deliverable.clone();
+    let glob = st.proj.read().expect("project").docs_glob.clone();
+    let v = tokio::task::spawn_blocking(move || {
+        let listing = crate::webapi::projfiles::project_files(&root, &deliverable, &out, &glob);
+        crate::webapi::find::find(&store, &root, &crate::webapi::find::file_paths(&listing), &p.q)
+    })
+    .await
+    .expect("project search");
+    Json(v)
+}
+
 #[derive(Deserialize)]
 pub struct ContextQ {
     target: String,

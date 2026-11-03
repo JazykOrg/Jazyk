@@ -8,6 +8,7 @@ pub mod card;
 pub mod deliverable;
 pub mod docs;
 pub mod facts;
+pub mod find;
 pub mod inbox;
 pub mod outfiles;
 pub mod overview;

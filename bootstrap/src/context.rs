@@ -1115,7 +1115,14 @@ impl LoadedSet {
             .changes
             .iter()
             .any(|c| c.kind == "section-dirty" && c.subject == target);
-        let body = if dirty {
+        let recorded = if dirty {
+            crate::goals::section_diff(store, doc, sec)
+        } else {
+            None
+        };
+        let body = if let Some((added, removed)) = recorded {
+            mark_recorded_diff(&s.raw, &added, &removed)
+        } else if dirty {
             match self.previous_body(store, doc, sec) {
                 Some(prev) if prev != s.raw => mark_diff(&prev, &s.raw),
                 Some(_) => s.raw.clone(),
@@ -1316,6 +1323,29 @@ fn edge_lines_among(store: &Store, ids: &[String]) -> Vec<String> {
     }
     out.sort();
     out.dedup();
+    out
+}
+
+// The body with the diff its records carry marked: each added line prefixed `+ `, the
+// removed lines listed under it. Mirrors docs/compiler/context.md#policy.
+fn mark_recorded_diff(cur: &str, added: &[String], removed: &[String]) -> String {
+    let added: BTreeSet<&str> = added.iter().map(String::as_str).collect();
+    let mut out = String::new();
+    for l in cur.lines() {
+        if added.contains(l.trim()) {
+            out.push_str("+ ");
+        }
+        out.push_str(l);
+        out.push('\n');
+    }
+    if !removed.is_empty() {
+        out.push_str("removed since last reconcile:\n");
+        for l in removed {
+            out.push_str("- ");
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
     out
 }
 

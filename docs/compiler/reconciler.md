@@ -45,8 +45,10 @@ journaled when it has something to record, each with a fresh generation number (
 The `edit` entry records what a save did to the sections. A human save is a generation
 like any commit, the root of every ripple. It writes:
 
-- `section-dirty`: the subject is the section reference. `detail` carries the alignment
-  outcome (`added`, `edited`, `split`, `merged`) and the previous hash.
+- `section-dirty`: the subject is the section reference. `detail` carries the previous
+  hash and the line diff against the previous body: the counts `added` and `removed`
+  and the lines `addedLines` and `removedLines`
+  ([created when](./goals/reconcile-section.md#created-when)).
 - `section-removed`: the subject is the reference the section had. `detail` lists the
   nodes anchored there. It derives no goal of its own; the records that follow from it
   (`anchor-stale`, `node-deleted`, `view-member-gone`) carry the trail onward.

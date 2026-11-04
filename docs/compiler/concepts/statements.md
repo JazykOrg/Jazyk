@@ -220,6 +220,11 @@ states that the parent includes the User Management sub-system. The link is navi
 the item's text is a fact. A four-department list once yielded nine statements where
 five carry the same information.
 
+A lead-in prescribing layout, such as "Written as separate paragraphs:", carries
+a separate obligation. Its statement retains the count, order and content of
+each source block. Quoting its individual sentences does not preserve grouping.
+The layout lead-in is checked independently before coverage is marked.
+
 ## Code blocks state obligations
 
 Pseudo code, step lists, and algorithm sketches in fenced code blocks are claims about

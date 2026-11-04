@@ -13,9 +13,10 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 31] = [
+const CASE_FILES: [&str; 32] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
+    include_str!("../../docs/benchmark/cases/paragraph-layout.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
     include_str!("../../docs/benchmark/cases/criteria-density.md"),
     include_str!("../../docs/benchmark/cases/extract.md"),
@@ -2937,9 +2938,9 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Thirty-one files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Thirty-two files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 37);
+        assert_eq!(cases.len(), 38);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");

@@ -271,6 +271,8 @@ Extraction tier:
 - [repair](./cases/repair.md): repair.
 - [enumeration](./cases/enumeration.md): a parts list is one membership statement
   with an edge per part, and each part's own description its own statement.
+- [paragraph-layout](./cases/paragraph-layout.md): preserve the layout lead-in,
+  the three ordered paragraphs and the content grouped inside each one.
 - [properties](./cases/properties.md): a sentence listing several properties of one
   subject is one statement with attributes.
 - [criteria-density](./cases/criteria-density.md): one criterion on a plain fact, the

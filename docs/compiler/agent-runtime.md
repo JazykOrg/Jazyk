@@ -79,6 +79,11 @@ asks the model to resume its pending work. The summary and continuation are save
 together before another inference. Completed tool outcomes and goal gates remain
 authoritative. Compaction does not authorize their replay.
 
+A summary preserves exact identifiers, file roots, fact hashes, active claims and
+test binding objects needed by pending writes. It distinguishes observed results
+from hypotheses. Missing package details require a fresh read before a recording
+call. The continuation never reconstructs paths or selectors from a summary.
+
 The fixed agent contract applies the same boundary to restored summaries. Saved
 model requests retain their admitted bytes. A runtime update does not rewrite an
 inference already admitted before the update.

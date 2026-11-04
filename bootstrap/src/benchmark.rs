@@ -2587,9 +2587,9 @@ mod tests {
             requirement: "req:test".into(), message: "provider unavailable".into(),
         });
         assert_eq!(replies.load(Ordering::Relaxed), 0);
-        trace.event(TraceEvent::ModelText { label: "judge".into(), text: "FAIL: wrong output".into() });
+        trace.event(TraceEvent::ModelText { label: "judge".into(), text: "FAIL: wrong output".into(), reply: true });
         assert_eq!(replies.load(Ordering::Relaxed), 1);
-        trace.event(TraceEvent::ModelText { label: "judge".into(), text: "not a parseable verdict".into() });
+        trace.event(TraceEvent::ModelText { label: "judge".into(), text: "not a parseable verdict".into(), reply: true });
         assert_eq!(replies.load(Ordering::Relaxed), 2, "an invalid judgment was still received");
     }
 

@@ -742,6 +742,7 @@ impl AcpRunner {
             t.event(crate::session::TraceEvent::ModelText {
                 label: label.to_string(),
                 text: crate::llm::truncate(&text, 2_000),
+                reply: true,
             });
         }
         Ok(text)

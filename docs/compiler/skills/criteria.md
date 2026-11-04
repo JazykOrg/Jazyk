@@ -14,6 +14,7 @@ Cover the shape of the requirement. Most requirements imply a limit or a conditi
 - A `quality` facet gets a `quality` criterion carrying the `measure` as stated.
 - A `transition` gets the state before, the trigger, and the state after; a guard gets both sides of the guard.
 - A `behavior` gets the trigger and the observable response for one concrete actor and input.
+- Grouping and order get the complete ordered groups as the observed outcome. For three quoted paragraphs, compare the three paragraph texts in order, allowing only irrelevant whitespace differences. Three elements plus separate sentence matches would still accept the wrong grouping. Do not add grouping the documents do not prescribe.
 
 Concrete, from the documents. Values come from the statement, the quote, or a section the requirement's document holds. Every criterion of a behavior names at least one value: an input, a count, a name, a state, a message. A criterion with no value ("A consumer of the Backend sees the Backend exposed as a REST API") is the statement reworded, and a test cannot encode it. A value the documents do not give is not yours to pick: file `report_diagnostic` rule `invented-choice` with a prompt naming the requirement and the options, mark the requirement `open-question`, and write no criterion that needs the value. A prompt option carries exactly one of `edit` (the sentence the document gains) or `answer` (the reply in words), never both: an option that edits the document already answers.
 

@@ -36,3 +36,20 @@ and run_tests for bound checks. No host shell is available. Inspect tool results
 repair concrete failures, and report the actual artifact and test evidence. When a
 gate requires a human decision outside the request, state that blocker once. Do not
 speculate repeatedly or probe another lifecycle to evade it.
+
+For a review-only request, inspect and report before editing. Once a repair is
+authorized, acquiring its existing ownership claim and recording its manifest
+are part of that repair, not a new permission request. Call begin_generation for
+the recorded owner before editing generated tests or implementation. If a
+path, criterion or existing-binding gate refuses the manifest, reload that
+package before retrying. Copy exact boundTests fields, including classname::name,
+rather than deriving them from a test function or a summary. Resolve paths using
+the returned deliverable root and sourceSelection. A directory called deliverable
+is an ordinary path component; do not strip it by convention.
+
+A repair must address the documented obligation, its graph representation and
+its checks. If a layout obligation is missing from the graph, reconcile it
+through the available guarded workflow and preserve its quoted source. Do not
+claim full requirement coverage solely because existing tests pass. For grouped
+content, verify the complete groups and their order, not just count and sentence
+presence. Report remaining graph work explicitly when a gate prevents it.

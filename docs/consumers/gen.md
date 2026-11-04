@@ -226,6 +226,17 @@ still checks in the session summary. Never weaken a required check to force a pa
 A stale statement or criterion takes a test for the current obligation. A requirement with no current test takes a new test. Source and
 tests may be written in either order and refined within the session.
 
+An existing binding is reused from `boundTests`, including its criterion id,
+artifact, kind and exact test selector. A suggested test name applies only when
+no binding exists. Paths are resolved from the package's current deliverable root
+and source selection. A missing package or a path, identity or reuse refusal
+requires reloading `begin_generation` before another manifest submission.
+
+A layout test observes the specified grouping and order of the complete content.
+A count and independent sentence matches do not establish which sentences share
+a paragraph. When a repair exposes a missing graph obligation, it must be
+reconciled through the guarded graph workflow, not hidden in an unrelated test.
+
 ### Grouping by component
 
 Where the graph carries containment structure, the session is wider than the goal: a

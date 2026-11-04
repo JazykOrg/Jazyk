@@ -119,7 +119,8 @@ The policy is deterministic and budget-driven. Loading `A` brings:
   stubs, `excluded`, `collapse`, `query`, `limits`, and the relationships among the
   members with a count. For a section: the body (`raw`), the coverage state, the
   requirements sourced from it, and the entities it mentions; a dirty section renders
-  with the diff against its last reconciled body marked. For a diagnostic: its fields
+  with the diff its `section-dirty` records carry marked: each added line prefixed
+  `+ `, the removed lines listed under the body. For a diagnostic: its fields
   and its subjects as stubs.
 - `A`'s edges: every reference `A` stores or is stored on, by [axis](#axes), with a
   count per axis.

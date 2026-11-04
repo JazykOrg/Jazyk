@@ -1052,7 +1052,7 @@ pub fn gate_line(kind: &str) -> &'static str {
     match kind {
         "place-anchors" => "every proposal decided: place_anchor or orphan_anchor staged for each",
         "reconcile-section" => {
-            "a coverage mark staged or recorded; stale anchors addressed; every covered claim honest"
+            "a coverage mark staged or recorded; stale anchors addressed; every covered claim honest; every + line accounted for"
         }
         "rejudge-pair" => {
             "a verdict for the pair in evidence; for an acting verdict, the mutation or diagnostic that carried it"

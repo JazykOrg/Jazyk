@@ -920,6 +920,185 @@ pub(crate) fn linked_subjects_scan(store: &Store, doc: &str) -> Vec<(String, Str
     out
 }
 
+// Folds one `section-dirty` record's detail into the goal's: the line lists join
+// without repeats, an added line the body no longer holds drops out, and each count is
+// its list's length plus the lines the record cap left out.
+// Mirrors docs/compiler/goals/reconcile-section.md#created-when.
+fn fold_dirty_detail(acc: Option<Value>, rec: &Value, body: &str) -> Value {
+    // Lines a record counted but did not list (past the cap).
+    let overflow = |d: &Value, count: &str, list: &str| {
+        d[count]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(str_list(&d[list]).len() as u64)
+    };
+    let mut out = match &acc {
+        None => rec.clone(),
+        Some(a) => {
+            let mut out = a.clone();
+            if out.get("previous").is_none() {
+                if let Some(p) = rec.get("previous") {
+                    out["previous"] = p.clone();
+                }
+            }
+            out
+        }
+    };
+    let in_body: BTreeSet<&str> = body.lines().map(str::trim).collect();
+    for (count, list) in [("added", "addedLines"), ("removed", "removedLines")] {
+        if rec.get(list).is_none() && acc.as_ref().is_none_or(|a| a.get(list).is_none()) {
+            continue;
+        }
+        let mut lines = acc.as_ref().map(|a| str_list(&a[list])).unwrap_or_default();
+        for l in str_list(&rec[list]) {
+            if !lines.contains(&l) {
+                lines.push(l);
+            }
+        }
+        if list == "addedLines" {
+            lines.retain(|l| in_body.contains(l.as_str()));
+        }
+        let extra = overflow(rec, count, list)
+            + acc.as_ref().map(|a| overflow(a, count, list)).unwrap_or(0);
+        out[count] = json!(lines.len() as u64 + extra);
+        out[list] = json!(lines);
+    }
+    out
+}
+
+// The added prose lines of a section that nothing in the session accounts for: no
+// staged quote for the section overlaps the line, and the coverage note does not repeat
+// it. Mirrors docs/compiler/goals/reconcile-section.md#gate.
+fn unaccounted_added_lines(
+    store: &Store,
+    staged: &[Op],
+    doc: &str,
+    section: &str,
+    note: &str,
+) -> Vec<String> {
+    let added = section_added_lines(store, doc, section);
+    if added.is_empty() {
+        return Vec::new();
+    }
+    let mut quotes = Vec::new();
+    for op in staged {
+        if let Ok(v) = serde_json::to_value(op) {
+            staged_quotes(&v, doc, section, &mut quotes);
+        }
+    }
+    added
+        .into_iter()
+        .filter(|l| {
+            let text = prose_text(l);
+            if text.is_empty() {
+                return false;
+            }
+            let carried = quotes
+                .iter()
+                .any(|q| store::text_contains(&text, q) || store::text_contains(q, &text));
+            !carried && !store::text_contains(note, &text)
+        })
+        .collect()
+}
+
+// Every quote in a staged op that names the section, or names no section at all.
+fn staged_quotes(v: &Value, doc: &str, section: &str, out: &mut Vec<String>) {
+    match v {
+        Value::Object(o) => {
+            if let Some(q) = o.get("quote").and_then(Value::as_str) {
+                let doc_ok = o.get("doc").and_then(Value::as_str).is_none_or(|d| d == doc);
+                let sec_ok = o
+                    .get("section")
+                    .and_then(Value::as_str)
+                    .is_none_or(|s| s == section);
+                if doc_ok && sec_ok {
+                    out.push(q.to_string());
+                }
+            }
+            for v in o.values() {
+                staged_quotes(v, doc, section, out);
+            }
+        }
+        Value::Array(a) => {
+            for v in a {
+                staged_quotes(v, doc, section, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+// An added line as prose: the markdown prefix (quote marker, bullet, ordered number)
+// stripped; empty for a heading, a fence, or a line without a letter or digit.
+fn prose_text(line: &str) -> String {
+    let t = line.trim();
+    if t.starts_with('#') || t.starts_with("```") || t.starts_with("~~~") {
+        return String::new();
+    }
+    let mut t = t;
+    loop {
+        let before = t;
+        t = t.trim_start_matches(['>', '-', '*', '+', '|']).trim_start();
+        let digits = t.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 && t[digits..].starts_with(['.', ')']) {
+            t = t[digits + 1..].trim_start();
+        }
+        if t == before {
+            break;
+        }
+    }
+    if !t.chars().any(char::is_alphanumeric) {
+        return String::new();
+    }
+    t.to_string()
+}
+
+// The diff a section's records carry, folded: (added lines still in the body, removed
+// lines). None when no record carries line lists (a record written before they did).
+pub fn section_diff(store: &Store, doc: &str, section: &str) -> Option<(Vec<String>, Vec<String>)> {
+    let d = section_dirty_detail(store, doc, section)?;
+    if d.get("addedLines").is_none() && d.get("removedLines").is_none() {
+        return None;
+    }
+    Some((str_list(&d["addedLines"]), str_list(&d["removedLines"])))
+}
+
+// The lines an edit added to a section, still in its body, as its records carry them.
+pub fn section_added_lines(store: &Store, doc: &str, section: &str) -> Vec<String> {
+    section_dirty_detail(store, doc, section)
+        .map(|d| str_list(&d["addedLines"]))
+        .unwrap_or_default()
+}
+
+fn section_dirty_detail(store: &Store, doc: &str, section: &str) -> Option<Value> {
+    let full = format!("{}#{}", doc, section);
+    let body = store
+        .docs
+        .get(doc)
+        .and_then(|r| r.sections.get(section))
+        .map(|s| s.raw.as_str())
+        .unwrap_or("");
+    let claimed = store
+        .docs
+        .get(doc)
+        .and_then(|r| r.coverage.get(section))
+        .map(|c| c.claimed_by.clone());
+    let mut acc: Option<Value> = None;
+    for rec in records_of(store, &[store::CHANGE_SECTION_DIRTY]) {
+        // A record a later coverage claim already answered is spent, as in derivation.
+        if claimed
+            .as_ref()
+            .is_some_and(|c| claimed_after(c, rec.generation))
+        {
+            continue;
+        }
+        if rec.subject == full {
+            acc = Some(fold_dirty_detail(acc, &rec.detail, body));
+        }
+    }
+    acc
+}
+
 impl GoalKind for ReconcileSection {
     fn kind(&self) -> &'static str {
         "reconcile-section"
@@ -957,8 +1136,9 @@ impl GoalKind for ReconcileSection {
             {
                 continue;
             }
+            let body = record.sections.get(&sec).map(|s| s.raw.as_str()).unwrap_or("");
             let w = work.entry(format!("{}#{}", doc, sec)).or_default();
-            w.dirty = Some(rec.detail.clone());
+            w.dirty = Some(fold_dirty_detail(w.dirty.take(), &rec.detail, body));
             w.causes.push(rec.cause());
         }
         for rec in records_of(store, &[store::CHANGE_ANCHOR_STALE]) {
@@ -1252,6 +1432,29 @@ impl GoalKind for ReconcileSection {
                                 format!(
                                     "{}#{} is claimed covered but no requirement is sourced from it",
                                     doc, section
+                                ),
+                            ));
+                        }
+                        let missing = unaccounted_added_lines(
+                            store,
+                            staged,
+                            doc,
+                            section,
+                            note.as_deref().unwrap_or(""),
+                        );
+                        if !missing.is_empty() {
+                            out.push(Violation::new(
+                                "added-line-unaccounted",
+                                format!(
+                                    "{}#{} is claimed covered but the edit added {} that no quote staged in this session carries: {}. The requirements recorded before the edit never carry an added line. Extract what each states, or repeat the line in the coverage note and say why it states nothing.",
+                                    doc,
+                                    section,
+                                    if missing.len() == 1 { "a line" } else { "lines" },
+                                    missing
+                                        .iter()
+                                        .map(|l| format!("\"{}\"", truncate(l, 160)))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
                                 ),
                             ));
                         }

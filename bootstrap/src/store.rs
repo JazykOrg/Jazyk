@@ -290,6 +290,44 @@ pub const STORE_VERSION: u32 = 3;
 
 // Change record kinds. Mirrors docs/compiler/graph.md#change-records.
 pub const CHANGE_SECTION_DIRTY: &str = "section-dirty";
+
+// The most lines of each side a `section-dirty` record keeps.
+pub const SECTION_DIFF_LINES: usize = 20;
+
+// A line that counts in a section diff: not blank. Lines compare trimmed.
+fn diff_lines(raw: &str) -> Vec<&str> {
+    raw.lines().map(str::trim).filter(|l| !l.is_empty()).collect()
+}
+
+// The diff a `section-dirty` record carries: the previous hash, the counts, and the
+// added and removed lines (a multiset difference of trimmed, non-blank lines), each list
+// capped. Mirrors docs/compiler/goals/reconcile-section.md#created-when.
+pub fn section_diff_detail(prev: &crate::model::Section, cur: &str) -> serde_json::Value {
+    let one_side = |from: &str, minus: &str| -> Vec<String> {
+        let mut pool: BTreeMap<&str, usize> = BTreeMap::new();
+        for l in diff_lines(minus) {
+            *pool.entry(l).or_default() += 1;
+        }
+        let mut out = Vec::new();
+        for l in diff_lines(from) {
+            match pool.get_mut(l) {
+                Some(n) if *n > 0 => *n -= 1,
+                _ => out.push(l.to_string()),
+            }
+        }
+        out
+    };
+    let added = one_side(cur, &prev.raw);
+    let removed = one_side(&prev.raw, cur);
+    let cap = |v: &[String]| v.iter().take(SECTION_DIFF_LINES).cloned().collect::<Vec<_>>();
+    serde_json::json!({
+        "previous": prev.hash,
+        "added": added.len(),
+        "removed": removed.len(),
+        "addedLines": cap(&added),
+        "removedLines": cap(&removed),
+    })
+}
 pub const CHANGE_SECTION_REMOVED: &str = "section-removed";
 pub const CHANGE_ANCHOR_STALE: &str = "anchor-stale";
 pub const CHANGE_ALIGNMENT_PENDING: &str = "alignment-pending";
@@ -5992,6 +6030,9 @@ impl Store {
         let mut stale_at: Vec<(String, String)> = Vec::new();
         let mut removed_refs: Vec<String> = Vec::new();
         let mut dirty_refs: Vec<String> = Vec::new();
+        // The line diff each dirtied section carries in its record, against its stored
+        // body. Mirrors docs/compiler/goals/reconcile-section.md#created-when.
+        let mut dirty_detail: BTreeMap<String, serde_json::Value> = BTreeMap::new();
 
         // Documents that disappeared from the project entirely.
         let gone: Vec<String> = self
@@ -6071,6 +6112,9 @@ impl Store {
                 let at = Full::new(doc, r);
                 dirty_refs.push(at.render());
                 let Some(sec) = sections.get(r) else { continue };
+                if let Some(prev) = old.sections.get(r) {
+                    dirty_detail.insert(at.render(), section_diff_detail(prev, &sec.raw));
+                }
                 for a in self.anchors_in_doc(doc, Some(r)) {
                     if covered(&a, &at) {
                         continue;
@@ -6181,13 +6225,13 @@ impl Store {
                     CHANGE_SECTION_DIRTY
                 };
                 mutations.push(serde_json::json!({"op": kind, "doc": doc, "section": section}));
-                batch.push(
-                    i + 1,
-                    kind,
-                    full,
-                    "section",
-                    serde_json::json!({"doc": doc, "section": section}),
-                );
+                let mut detail = serde_json::json!({"doc": doc, "section": section});
+                if let Some(serde_json::Value::Object(diff)) = dirty_detail.get(full) {
+                    for (k, v) in diff {
+                        detail[k] = v.clone();
+                    }
+                }
+                batch.push(i + 1, kind, full, "section", detail);
             }
             let mut entry = self.journal_entry(&build, &Commit::store("edit"), mutations);
             entry.dirtied = dirty_refs
@@ -11422,6 +11466,97 @@ mod tests {
 
     // An entity mention whose quote stopped locating in a changed section is a stale
     // anchor too, not only a requirement source.
+    // An edit that adds a line to a reconciled section: the record carries the line, the
+    // loaded body marks it, and a covered claim that stages nothing for it bounces until
+    // a staged quote or the coverage note accounts for it. The case that motivated the
+    // rule: a layout lead-in added above three quoted paragraphs whose sentences were
+    // already extracted. Mirrors docs/compiler/goals/reconcile-section.md#gate.
+    #[test]
+    fn an_added_line_rides_the_record_and_gates_the_covered_claim() {
+        use crate::goals::GoalKind;
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        let parse = |text: &str| {
+            let mut parsed = BTreeMap::new();
+            parsed.insert(
+                "t.md".to_string(),
+                (hash_hex(text), crate::md::parse_sections(text)),
+            );
+            parsed
+        };
+        let v1 = "# T\nintro\n\n## Content\n\n> First. Second.\n\n> Third.\n";
+        s.sync_docs(&parse(v1));
+        let req = |quote: &str| Requirement {
+            statement: format!("The page displays \"{}\"", quote),
+            source: Some(SourceRef {
+                doc: "t.md".into(),
+                section: "/t/content".into(),
+                quote: quote.into(),
+            }),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:t-1".into(), req("First."));
+        s.graph.requirements.insert("req:t-2".into(), req("Second."));
+        s.graph.requirements.insert("req:t-3".into(), req("Third."));
+        let v2 = "# T\nintro\n\n## Content\n\nWritten as separate paragraphs:\n\n> First. Second.\n\n> Third.\n";
+        s.sync_docs(&parse(v2));
+        let rec = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_SECTION_DIRTY && c.subject == "t.md#/t/content")
+            .expect("a section-dirty record");
+        assert_eq!(rec.detail["added"], 1, "{}", rec.detail);
+        assert_eq!(rec.detail["removed"], 0, "{}", rec.detail);
+        assert_eq!(
+            rec.detail["addedLines"],
+            serde_json::json!(["Written as separate paragraphs:"])
+        );
+        assert!(rec.detail["previous"].is_string(), "{}", rec.detail);
+
+        // The loaded body marks the line from the record, though the store on disk
+        // already holds the new body.
+        let mut set = crate::context::LoadedSet::new(20_000);
+        let text = set.load(&s, "t.md#/t/content", 1).unwrap();
+        assert!(text.contains("+ Written as separate paragraphs:"), "{}", text);
+        assert!(!text.contains("+ > First."), "{}", text);
+
+        let gate = |staged: Vec<Op>| -> Vec<String> {
+            crate::goals::ReconcileSection
+                .gates(&s, &staged)
+                .into_iter()
+                .map(|v| v.rule.clone())
+                .collect()
+        };
+        let cover = |note: &str| Op::SetCoverage {
+            doc: "t.md".into(),
+            section: "/t/content".into(),
+            state: "covered".into(),
+            note: Some(note.into()),
+        };
+        // The claim from the failed build: nothing staged, the old requirements cited.
+        assert!(
+            gate(vec![cover("All sentences are already extracted. No new sentences.")])
+                .contains(&"added-line-unaccounted".to_string())
+        );
+        // A requirement quoting the added line accounts for it.
+        let staged = vec![
+            Op::CreateRequirement {
+                id: "req:t-4".into(),
+                requirement: req("Written as separate paragraphs:"),
+            },
+            cover("req:t-4 carries the layout."),
+        ];
+        assert!(gate(staged).is_empty());
+        // So does a note that repeats the line and says why it states nothing.
+        assert!(gate(vec![cover(
+            "\"Written as separate paragraphs:\" restates how the quotes already render."
+        )])
+        .is_empty());
+    }
+
     #[test]
     fn dirty_section_checks_entity_mention_quotes() {
         let mut s = Store {

@@ -23,9 +23,11 @@ section, and from one coverage state:
 - `section-dirty`: the `edit` journal entry of a build writes it for every section the
   [dirty set](../reconciler.md#dirty-set) marks: added, or changed in title or body. An
   exact move is not dirty; references are rewritten mechanically
-  ([section diffing](../parsing.md#section-diffing)). `detail` carries the diff summary
-  (lines added, removed, changed) and the previous hash, so the loaded body can mark
-  the diff.
+  ([section diffing](../parsing.md#section-diffing)). `detail` carries the diff: the
+  previous hash, the counts of lines `added` and `removed`, and the lines themselves
+  (`addedLines`, `removedLines`, blank lines left out, twenty of each at most). The
+  record is the diff's only copy: the `edit` entry writes the new body to the store
+  before any session runs, so the loaded body marks the diff from the record.
 - `anchor-stale`: written by the `align` entry for a requirement `source` or an entity
   mention whose stored quote stops locating in the section, and by a `place_anchor`
   with `reevaluate: true` or with a quote that does not locate in its new section
@@ -40,7 +42,8 @@ section, and from one coverage state:
   left unmarked.
 
 Several records on one section fold into one goal whose `change` merges their details
-and whose `cause` is the earliest ([change records](../reconciler.md#change-records)).
+(the line lists join, a line the body no longer holds drops out of `addedLines`) and
+whose `cause` is the earliest ([change records](../reconciler.md#change-records)).
 A section without a body of its own (a bare heading, a document title whose content
 sits in child sections) derives no goal from its dirt or from unprocessed coverage:
 there is nothing to extract and nothing to mark, and the coverage meter does not count
@@ -63,7 +66,14 @@ E.g.:
   kind: section-dirty
   subject: docs/orders.md#/orders/holds
   via: section
-  detail: {added: 1, removed: 1, changed: 0, previous: 8f3a1c}
+  detail:
+    doc: docs/orders.md
+    section: /orders/holds
+    previous: 8f3a1c
+    added: 1
+    removed: 1
+    addedLines: [Held orders expire after 14 days.]
+    removedLines: [Held orders expire after 21 days.]
 ```
 
 ## Readiness
@@ -138,6 +148,16 @@ what the session has staged:
 - A `covered` claim has a requirement sourced from the section behind it, staged in this
   session or already recorded, or, for a test-case or examples section, a criterion
   sourced from it ([criterion](../model/criterion.md)).
+- A `covered` claim accounts for every line the edit added (`addedLines` in the
+  goal's `change`, still in the body, prose only: not a heading, a fence, or a line
+  without a letter or digit). A line is accounted for when a quote staged in this
+  session for the section overlaps it (the quote sits inside the line, or the line
+  inside the quote), or when the coverage note repeats the line, saying why it states
+  nothing. A requirement recorded before the edit never accounts for an added line:
+  that is the claim the gate exists to stop (`added-line-unaccounted`). A section
+  edited by adding "Written as separate paragraphs:" above three quoted paragraphs was
+  once marked covered with the note "no new or changed sentences", and the deliverable
+  kept one paragraph per sentence.
 - A `non-normative` note is not one of the three rejected reasons ("it states a fact,
   not a requirement", "it describes content or appearance, not behavior", "it is not a
   requirement on the system"). The `suspicious-non-normative` check judges the rest
@@ -183,7 +203,7 @@ requirements need them. An entity that no statement needs is noise
 
 Computed by the harness and rendered under the goal block:
 
-- The diff summary from the record: lines added, removed, changed; or `unprocessed`.
+- The diff summary from the record: lines added and removed; or `unprocessed`.
 - The count of requirements already sourced from the section, with the note that an
   unchanged statement is a no-op, not a re-extraction.
 - Each stale anchor: the id, its `statement` or the entity's name, and the dead quote.
@@ -229,8 +249,8 @@ behind it is [statements](../concepts/statements.md).
 
 The initially loaded set for the batch holds, per section:
 
-- The section body, whole, with the diff marked (the lines removed and added since the
-  previous hash), or truncated with `read_section` pointers when it exceeds its share
+- The section body, whole, with the diff marked from the record (each added line
+  prefixed `+ `, the removed lines listed under it), or truncated with `read_section` pointers when it exceeds its share
   of the budget; its parent chain as titles, for orientation.
 - Under the body, the requirements already sourced from the section: id, `statement`,
   quote, entities, edges, transition, facets. An unchanged statement is a no-op, and a
@@ -251,7 +271,8 @@ E.g.:
 - [g:reconcile-section:docs/orders.md#/orders/holds] mandatory
   [contract paragraph]
   Change: 1 line added, 1 removed (edit g412); 1 stale anchor.
-  Gate: coverage mark staged or recorded; stale anchors addressed; every quote locates.
+  Gate: coverage mark staged or recorded; stale anchors addressed; every quote locates;
+  every added line accounted for.
   Hints: 3 requirements already sourced; stale req:orders-6 "held orders expire after
   21 days"; primarySubject: ent:order (Order); 14 known entities, search before create;
   skill extraction

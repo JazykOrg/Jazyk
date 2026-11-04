@@ -121,8 +121,15 @@ pub enum TraceEvent {
         rule: String,
         message: String,
     },
+    // `reply` marks the model's reply; a reasoning chunk omits it
+    // (docs/compiler/sessions.md#trace-events).
     #[serde(rename = "modelText")]
-    ModelText { label: String, text: String },
+    ModelText {
+        label: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reply: bool,
+    },
     // mode: "done" (explicit, with the model's summary), "implicit" (the model went
     // silent with staged work), or "budget" (implicit at the round budget).
     #[serde(rename = "sessionDone")]
@@ -332,7 +339,7 @@ fn render_stderr(ev: &TraceEvent) {
             rule,
             message,
         } => eprintln!("[{}] ✗ {}: {}", label, rule, message),
-        TraceEvent::ModelText { label, text } => {
+        TraceEvent::ModelText { label, text, .. } => {
             eprintln!("[{}] · {}", label, llm::truncate(text, 200))
         }
         TraceEvent::SessionDone {

@@ -167,6 +167,8 @@ pub struct LoopTrace<'a> {
     doc: Option<String>,
     at_section: Option<String>,
     text: String,
+    // Whether `text` holds reasoning rather than reply text.
+    text_thought: bool,
     text_flushed: Option<crate::sys::Instant>,
     // The name and arguments of each call in flight, by call id: a `section` event
     // waits for the call to be accepted.
@@ -184,6 +186,7 @@ impl<'a> LoopTrace<'a> {
             doc: batch_doc(batch),
             at_section: None,
             text: String::new(),
+            text_thought: false,
             text_flushed: None,
             calls: Default::default(),
             rounds: 0,
@@ -197,13 +200,19 @@ impl<'a> LoopTrace<'a> {
             self.trace.event(crate::session::TraceEvent::ModelText {
                 label: self.label.clone(),
                 text: std::mem::take(&mut self.text),
+                reply: !self.text_thought,
             });
         }
     }
 
-    fn buffer_text(&mut self, text: &str, now: crate::sys::Instant) {
+    fn buffer_text(&mut self, text: &str, thought: bool, now: crate::sys::Instant) {
         if text.is_empty() {
             return;
+        }
+        // One chunk never mixes reasoning with a reply.
+        if thought != self.text_thought {
+            self.finish();
+            self.text_thought = thought;
         }
         // Split on UTF-8 boundaries, keeping every byte and bounding each event.
         for ch in text.chars() {
@@ -233,8 +242,11 @@ impl<'a> LoopTrace<'a> {
                 self.tokens = self.tokens.saturating_add(tokens);
                 self.cached += cached;
             }
-            AgentEvent::Message(text) | AgentEvent::Thought(text) => {
-                self.buffer_text(&text, crate::sys::Instant::now());
+            AgentEvent::Message(text) => {
+                self.buffer_text(&text, false, crate::sys::Instant::now());
+            }
+            AgentEvent::Thought(text) => {
+                self.buffer_text(&text, true, crate::sys::Instant::now());
             }
             AgentEvent::ToolCallStart { id, name, args } => {
                 self.trace.event(TraceEvent::ToolCall {
@@ -415,7 +427,7 @@ mod tests {
             }
             other => panic!("expected sessionStart, got {:?}", other),
         }
-        assert!(matches!(&ev[1], TraceEvent::ModelText { text, .. } if text.contains("read the section")));
+        assert!(matches!(&ev[1], TraceEvent::ModelText { text, reply: false, .. } if text.contains("read the section")));
         assert!(matches!(&ev[2], TraceEvent::ToolCall { name, .. } if name == "read_section"));
         assert!(matches!(&ev[3], TraceEvent::ToolResult { name, .. } if name == "read_section"));
         assert!(matches!(&ev[4], TraceEvent::Section { section, doc, .. } if section == "/hello-world" && doc == "docs/README.md"));
@@ -428,8 +440,36 @@ mod tests {
             }
             other => panic!("expected toolError, got {:?}", other),
         }
-        assert!(matches!(&ev[7], TraceEvent::ModelText { text, .. } if text == "I cannot find the quote."));
+        assert!(matches!(&ev[7], TraceEvent::ModelText { text, reply: true, .. } if text == "I cannot find the quote."));
         assert_eq!(ev.len(), 8);
+    }
+
+    // Reasoning and the reply that restates it stay separate chunks, so a reader
+    // never joins them into one paragraph (docs/compiler/sessions.md#trace-events).
+    #[test]
+    fn reasoning_and_reply_never_share_a_chunk() {
+        let (trace, events) = capture();
+        let b = batch();
+        let mut lt = LoopTrace::new(&trace, &b);
+        lt.on_event(AgentEvent::Thought("All sentences covered, done".into()));
+        lt.on_event(AgentEvent::Message("Nothing new to extract.".into()));
+        lt.on_event(AgentEvent::Thought("Next.".into()));
+        lt.finish();
+        let ev = events.lock().unwrap();
+        let chunks: Vec<(&str, bool)> = ev
+            .iter()
+            .filter_map(|e| match e {
+                TraceEvent::ModelText { text, reply, .. } => Some((text.as_str(), !*reply)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            chunks,
+            vec![("All sentences covered, done", true), ("Nothing new to extract.", false), ("Next.", true)]
+        );
+        let json = serde_json::to_value(&ev[0]).unwrap();
+        assert!(json.get("reply").is_none(), "a reasoning chunk omits the flag: {json}");
+        assert_eq!(serde_json::to_value(&ev[1]).unwrap()["reply"], true);
     }
 
     #[test]
@@ -438,10 +478,10 @@ mod tests {
         let b = batch();
         let mut lt = LoopTrace::new(&trace, &b);
         let now = crate::sys::Instant::now();
-        lt.buffer_text("First ", now);
+        lt.buffer_text("First ", false, now);
         assert_eq!(events.lock().unwrap().len(), 1);
         for _ in 0..5_000 {
-            lt.buffer_text("x ", now);
+            lt.buffer_text("x ", false, now);
         }
         lt.on_event(AgentEvent::ToolCallStart {
             id: "load".into(),
@@ -470,12 +510,12 @@ mod tests {
         let b = batch();
         let mut lt = LoopTrace::new(&trace, &b);
         let now = crate::sys::Instant::now();
-        lt.buffer_text("First ", now);
-        lt.buffer_text("next", now + std::time::Duration::from_millis(249));
+        lt.buffer_text("First ", false, now);
+        lt.buffer_text("next", false, now + std::time::Duration::from_millis(249));
         assert_eq!(events.lock().unwrap().len(), 1);
-        lt.buffer_text(" ", now + std::time::Duration::from_millis(250));
+        lt.buffer_text(" ", false, now + std::time::Duration::from_millis(250));
         assert_eq!(events.lock().unwrap().len(), 2);
-        lt.buffer_text("last\n", now + std::time::Duration::from_millis(251));
+        lt.buffer_text("last\n", false, now + std::time::Duration::from_millis(251));
         lt.finish();
         lt.finish();
         let events = events.lock().unwrap();

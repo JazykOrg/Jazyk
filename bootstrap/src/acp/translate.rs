@@ -60,14 +60,31 @@ impl UpdateTranslator {
     }
 
     fn flush_into(&mut self, trace: &Trace) {
-        for buf in [&mut self.thought, &mut self.message] {
-            let text = std::mem::take(buf);
-            if !text.is_empty() {
-                trace.event(TraceEvent::ModelText {
-                    label: self.label.clone(),
-                    text,
-                });
-            }
+        self.flush_text(trace, true);
+        self.flush_text(trace, false);
+    }
+
+    // Emit one buffer as a `modelText` chunk; `thought` picks the reasoning buffer.
+    fn flush_text(&mut self, trace: &Trace, thought: bool) {
+        let buf = if thought { &mut self.thought } else { &mut self.message };
+        let text = std::mem::take(buf);
+        if !text.is_empty() {
+            trace.event(TraceEvent::ModelText {
+                label: self.label.clone(),
+                text,
+                reply: !thought,
+            });
+        }
+    }
+
+    // Buffer text of one kind. Switching kinds flushes the other buffer first, so
+    // chunks keep their order and one chunk never mixes reasoning with a reply.
+    fn push_text(&mut self, trace: &Trace, thought: bool, t: &str) {
+        self.flush_text(trace, !thought);
+        let buf = if thought { &mut self.thought } else { &mut self.message };
+        buf.push_str(t);
+        if buf.len() > FLUSH_AT {
+            self.flush_text(trace, thought);
         }
     }
 
@@ -75,26 +92,12 @@ impl UpdateTranslator {
         match update {
             SessionUpdate::AgentThoughtChunk(c) => {
                 if let Some(t) = content_text(&c.content) {
-                    self.thought.push_str(t);
-                    if self.thought.len() > FLUSH_AT {
-                        let text = std::mem::take(&mut self.thought);
-                        trace.event(TraceEvent::ModelText {
-                            label: self.label.clone(),
-                            text,
-                        });
-                    }
+                    self.push_text(trace, true, t);
                 }
             }
             SessionUpdate::AgentMessageChunk(c) => {
                 if let Some(t) = content_text(&c.content) {
-                    self.message.push_str(t);
-                    if self.message.len() > FLUSH_AT {
-                        let text = std::mem::take(&mut self.message);
-                        trace.event(TraceEvent::ModelText {
-                            label: self.label.clone(),
-                            text,
-                        });
-                    }
+                    self.push_text(trace, false, t);
                 }
             }
             SessionUpdate::ToolCall(call) => {
@@ -249,12 +252,35 @@ mod tests {
             let text: String = events
                 .iter()
                 .map(|event| match event {
-                    TraceEvent::ModelText { text, .. } => text.as_str(),
+                    TraceEvent::ModelText { text, reply, .. } if *reply != thought => text.as_str(),
                     other => panic!("expected modelText, got {:?}", other),
                 })
                 .collect();
             assert_eq!(text, chunks.concat());
             events.clear();
         }
+        // Switching between reasoning and reply flushes, keeping the order.
+        let mut translator = UpdateTranslator::new("batch");
+        for (thought, chunk) in [(true, "think"), (false, "reply"), (true, "more")] {
+            let content = ContentChunk::new(chunk.to_string().into());
+            translator.on_update(
+                &if thought { SessionUpdate::AgentThoughtChunk(content) } else { SessionUpdate::AgentMessageChunk(content) },
+                &trace,
+            );
+        }
+        translator.finish(&trace);
+        let chunks: Vec<(String, bool)> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                TraceEvent::ModelText { text, reply, .. } => Some((text.clone(), !*reply)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            chunks,
+            vec![("think".into(), true), ("reply".into(), false), ("more".into(), true)]
+        );
     }
 }

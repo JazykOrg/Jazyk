@@ -621,9 +621,12 @@ The event kinds:
   count against the limit (`gc burst: abstract-entity ent:order (54 > 50)` on the
   terminal).
 - `toolCall`, `toolResult`, `toolError`: one row per tool call, condensed.
-- `modelText`: prose or reasoning the model produced. Streamed chunks retain their
+- `modelText`: prose or reasoning the model produced. A chunk of the model's reply
+  carries `reply: true`; a chunk of reasoning omits the field. One chunk never mixes
+  the two. Streamed chunks retain their
   exact whitespace, including chunks containing only spaces or newlines. Consumers
-  concatenate adjacent chunks without inserting or removing characters. In-process workers
+  concatenate adjacent chunks of the same kind without inserting or removing
+  characters, and never join reasoning to a reply. In-process workers
   coalesce text into chunks of at most 2,000 bytes or flush after 250 milliseconds
   while deltas arrive. The first delta is visible immediately. Pending text flushes
   before tool events, usage and session completion. Coalescing never drops text.

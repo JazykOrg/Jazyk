@@ -143,7 +143,9 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
     }
     let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and requirements \
-         reconciled from prose documentation, consumed by generation and verification. ",
+         reconciled from prose documentation, consumed by generation and verification. \
+         The jazyk section of the project's AGENTS.md is orientation; these instructions \
+         and tool replies take precedence over it. ",
     );
     if modes.iter().any(|m| m == "compile") {
         s.push_str(
@@ -3866,6 +3868,7 @@ impl McpServer {
         if let Err(e) = self.write_edit(crate::document_sets::CONFIG, &old_full, &full, &full) {
             return json!({"error": {"rule": "write-failed", "message": e}});
         }
+        crate::agents_md::sync(&self.project.root, crate::agents_md::Mode::Update).report();
         json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
                "note": "jazyk.toml edited in place; a running GUI reloads it live"})
     }
@@ -4223,7 +4226,7 @@ mod tests {
             ("write_text_file",json!({"path":"main.md","content":"not a document edit"})),
         ]};
         let llm = crate::llm::Llm{ api: "chat_completions".into(), reasoning_summary: None, base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),api_key:String::new(),temperature:None,trace:None};
-        let mut tools = crate::session_recovery::McpTools(&server);
+        let mut tools = crate::session_recovery::McpTools::plain(&server);
         let mut history = vec![json!({"role":"user","content":"Repair the Source matcher, then implement the greeting."})];
         let mut receipts = Vec::new();
         let stop = harness::run_with_hosts(LoopArgs{
@@ -4400,7 +4403,7 @@ mod tests {
         let direct = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
             BridgeFlags { ephemeral:true, only:Some("g:generate:ent:greeter".into()), ..Default::default() });
         assert!(direct.has_generation_contract());
-        let mut tools = crate::session_recovery::McpTools(&server);
+        let mut tools = crate::session_recovery::McpTools::plain(&server);
         let mut model = Script { requests:Vec::new(), inference:0, compactions:0,
             fact_hash:crate::gen::fact_hash(&store,"ent:greeter"),
             manifest:json!({"files":["src/greeting.txt","tests/greeting.md"],"tests":[{
@@ -4422,7 +4425,7 @@ mod tests {
         let checkpoint = server.checkpoint().unwrap();
         let restored = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true, server.bridge.clone());
         restored.restore(checkpoint).unwrap();
-        let mut restored_tools = crate::session_recovery::McpTools(&restored);
+        let mut restored_tools = crate::session_recovery::McpTools::plain(&restored);
         saved.suspended = false;
         saved.suspend_after_compaction = false;
         // Recovery owns the admitted opening, even if a caller assembles a new one.
@@ -4701,6 +4704,33 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or_default().to_string())
             .collect()
+    }
+
+    // Every tool the AGENTS.md section names is one `jazyk mcp all` serves, so a
+    // rename breaks this test, not the agents that read the section.
+    // Mirrors docs/frontends/agent-context.md#the-jazyk-section-of-agentsmd.
+    #[test]
+    fn the_agents_md_section_names_only_served_tools() {
+        let dir = bare_dir("agents-md-tools");
+        // The project-level serving `jazyk mcp all` runs without --set.
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let modes = ["compile", "generate", "verify", "decompile", "chat"].map(String::from).to_vec();
+        let server = McpServer::with_bridge(project, dir.join(".jazyk"), modes, false, BridgeFlags::default());
+        let names = tool_names(&server);
+        let payload = include_str!("../../docs/compiler/goals/prompts/project-agents.md");
+        let named: Vec<&str> = payload
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|t| t.contains('_') && t.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            .collect();
+        assert!(named.len() >= 8, "{named:?}");
+        for name in named {
+            assert!(names.iter().any(|n| n == name), "`{name}` is not served: {names:?}");
+        }
+        let init = server.handle("initialize", &json!({})).unwrap();
+        assert!(init["instructions"].as_str().unwrap().contains("take precedence over it"));
+        crate::vfs::remove_dir_all(dir).ok();
     }
 
     #[test]

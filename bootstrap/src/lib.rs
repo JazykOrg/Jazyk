@@ -22,6 +22,8 @@ pub mod feedback;
 pub mod bind;
 pub mod gen;
 pub mod goals;
+pub mod agents_md;
+pub mod agent_context;
 pub mod harness;
 pub mod limits;
 pub mod live_preview;

@@ -317,22 +317,40 @@ impl Recovery for McpRecovery<'_> {
     fn suspend_requested(&self) -> bool { suspension_requested() }
 }
 
-pub(crate) struct McpTools<'a>(pub &'a McpServer);
+// The in-process serving's tools, plus the conversation's extra tools: skills and the
+// host's remote MCP servers (docs/frontends/agent-context.md#hosted-context).
+pub(crate) struct McpTools<'a>(pub &'a McpServer, pub &'a crate::agent_context::Extras);
+impl<'a> McpTools<'a> {
+    // The serving alone: worker sessions stay hermetic.
+    pub(crate) fn plain(server: &'a McpServer) -> Self {
+        static NONE: std::sync::OnceLock<crate::agent_context::Extras> = std::sync::OnceLock::new();
+        Self(server, NONE.get_or_init(Default::default))
+    }
+}
 impl ToolHost for McpTools<'_> {
     fn catalog(&mut self) -> LocalFuture<'_, Result<Option<Vec<crate::harness::GenericTool>>, String>> {
         Box::pin(async move {
             let reply = self.0.handle_async("tools/list", &json!({})).await
                 .map_err(|(_, message)| message)?;
-            Ok(Some(reply["tools"].as_array().ok_or("Invalid MCP tool catalog")?.iter()
+            let mut tools: Vec<crate::harness::GenericTool> = reply["tools"].as_array().ok_or("Invalid MCP tool catalog")?.iter()
                 .map(|tool| crate::harness::GenericTool {
                     name: tool["name"].as_str().unwrap_or_default().into(),
                     description: tool["description"].as_str().unwrap_or_default().into(),
                     parameters: tool["inputSchema"].clone(),
-                }).collect()))
+                }).collect();
+            for extra in self.1.tools() {
+                if !tools.iter().any(|t| t.name == extra.name) {
+                    tools.push(extra);
+                }
+            }
+            Ok(Some(tools))
         })
     }
     fn call<'a>(&'a mut self, name: &'a str, args: &'a Value) -> LocalFuture<'a, Result<String, String>> {
         Box::pin(async move {
+            if self.1.handles(name) {
+                return self.1.call(name, args);
+            }
             let result = self.0.handle_async("tools/call", &json!({"name":name,"arguments":args}))
                 .await.map_err(|(_, message)| message)?;
             // Preserve structured content and metadata as well as display text.

@@ -73,6 +73,36 @@ impl McpServerConn {
         }, timeout + Duration::from_secs(1)).map_err(|e| format!("MCP {name}: {e}"))
     }
 
+    /// Connect a streamable HTTP server. Every request carries the hop header, so a
+    /// jazyk-hosted endpoint can refuse a loop (docs/frontends/agent-context.md#hosted-context).
+    pub fn connect_http(name: &str, url: &str, headers: &[(String, String)]) -> Result<Self, String> {
+        use rmcp::transport::streamable_http_client::{StreamableHttpClientTransport, StreamableHttpClientTransportConfig};
+        use reqwest::header::{HeaderName, HeaderValue};
+        let mut map = std::collections::HashMap::new();
+        for (k, v) in headers.iter().cloned().chain([(crate::agent_context::HOP_HEADER.to_string(), "1".to_string())]) {
+            let key = HeaderName::from_bytes(k.as_bytes()).map_err(|e| format!("MCP {name}: header `{k}`: {e}"))?;
+            let value = HeaderValue::from_str(&v).map_err(|e| format!("MCP {name}: header `{k}`: {e}"))?;
+            map.insert(key, value);
+        }
+        let name = name.to_string();
+        let operation_name = name.clone();
+        let config = StreamableHttpClientTransportConfig::with_uri(url.to_string()).custom_headers(map);
+        let timeout = crate::acp::config::idle_timeout();
+        io(async move {
+            let start = async {
+                let transport = StreamableHttpClientTransport::from_config(config);
+                let client = ClientConfig::new(ClientCapabilities::default(), Implementation::new("jazyk-agent", env!("CARGO_PKG_VERSION")));
+                let service = client.serve(transport).await.map_err(|e| e.to_string())?;
+                let instructions = service.peer_info().and_then(|info| info.instructions.clone()).filter(|text| !text.trim().is_empty());
+                let tools = service.list_all_tools().await.map_err(|e| e.to_string())?.into_iter()
+                    .map(|tool| GenericTool { name: tool.name.into_owned(), description: tool.description.map(|d| d.into_owned()).unwrap_or_default(), parameters: Value::Object((*tool.input_schema).clone()) }).collect();
+                Ok(Self { name: operation_name.clone(), service: Some(service), child: None, tools, instructions })
+            };
+            tokio::time::timeout(timeout, start).await
+                .map_err(|_| format!("MCP {operation_name}: initialization exceeded {}s (JAZYK_ACP_IDLE_TIMEOUT)", timeout.as_secs()))?
+        }, timeout + Duration::from_secs(1)).map_err(|e| format!("MCP {name}: {e}"))
+    }
+
     /// Fetch the current catalog after a batch claim or completion.
     pub fn refresh_tools(&mut self) -> Result<(), String> {
         let peer = self.service.as_ref().ok_or("MCP server is closed")?.peer().clone();

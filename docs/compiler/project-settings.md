@@ -312,6 +312,44 @@ These are defaults; the live values sit in `control.yaml` in the out directory,
 where a GUI toggle or CLI flag changes them at runtime without editing the project
 file. Deleting `control.yaml` returns to the defaults.
 
+## Agents
+
+How jazyk treats the project's agent instruction files
+([agent context](../frontends/agent-context.md)).
+
+```toml
+[agents]
+block = false
+```
+
+- `block` (default `true`): keep the
+  [jazyk section of `AGENTS.md`](../frontends/agent-context.md#the-jazyk-section-of-agentsmd)
+  and the `CLAUDE.md` and `GEMINI.md` imports. `false` stops every create and
+  update. Nothing already written is removed.
+
+## MCP servers
+
+Extra MCP servers for the embedded agent's conversational sessions, alongside the
+project's `.mcp.json` ([MCP servers](../frontends/agent-context.md#mcp-servers)).
+The same table in `~/.jazyk/config.toml` is the user's global list.
+
+```toml
+[mcp.servers.docs]
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${EXAMPLE_TOKEN}" }
+
+[mcp.servers.local-db]
+command = "db-mcp"
+args = ["--readonly"]
+```
+
+- `command`, `args`, `env`: a stdio server.
+- `url`, `headers`: a streamable HTTP server.
+- `enabled = false` skips the entry.
+- Secrets belong in environment variables, referenced as `${VAR}`.
+- A project entry is used only once the project is
+  [trusted](../frontends/agent-context.md#trust).
+
 ## Environment tuning
 
 Run-level knobs are environment variables only, since they tune one run, not the project.

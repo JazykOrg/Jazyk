@@ -94,6 +94,15 @@ pub fn run_init(opts: &Options) -> i32 {
             "jazyk: jazyk.toml already exists in {}; leaving it unchanged",
             cwd.display()
         );
+        // An existing project still gets its AGENTS.md section on an explicit init.
+        let outcome = crate::agents_md::sync(&cwd, crate::agents_md::Mode::Create);
+        for item in &outcome.items {
+            println!("jazyk: wrote {}", item);
+        }
+        for w in &outcome.warnings {
+            eprintln!("jazyk: {w}");
+        }
+        wrote_something |= !outcome.items.is_empty();
     } else {
         let previous = project::find_root(&cwd);
         if let Err((_, e)) = crate::document_sets::atomic_config(&cwd, INIT_TOML, &crate::model::hash_hex("")) {
@@ -182,7 +191,13 @@ pub(crate) const INIT_TOML: &str = crate::document_sets::EMPTY_CONFIG;
 pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String> {
     crate::vfs::create_dir_all(cwd.join(".jazyk")).map_err(|e| e.to_string())?;
     crate::document_sets::ensure_ignore(cwd).map_err(|e| e.to_string())?;
-    Ok(vec![])
+    // The jazyk section of AGENTS.md (docs/frontends/agent-context.md#when-it-is-written).
+    // Warnings go to stderr, which never carries a protocol.
+    let outcome = crate::agents_md::sync(cwd, crate::agents_md::Mode::Create);
+    for w in &outcome.warnings {
+        eprintln!("jazyk: {w}");
+    }
+    Ok(outcome.items)
 }
 
 // Agent setup for everything installed: one checklist of the Jazyk agent per

@@ -104,6 +104,17 @@ The snapshot stores their history and numbered updates in
 instructs the model to reload handles. Conversation ids belong to the workspace.
 Chat events use the editor's `chat.sessions` and `chat.update` shapes.
 
+Hosted conversations receive the project's
+[agent context](../frontends/agent-context.md) from the snapshot: instruction files
+and skills. The host's global layer and its remote MCP servers arrive through
+`Execution.agent_context` ([hosted context](../frontends/agent-context.md#hosted-context)).
+The engine opens no connection for a remote server and never runs a skill script.
+The host creates the
+[jazyk section of `AGENTS.md`](../frontends/agent-context.md#the-jazyk-section-of-agentsmd)
+in a new project with `Workspace::sync_agents_md(true)` and refreshes it with
+`Workspace::sync_agents_md(false)` before a writable job. Configuration writes
+inside the engine refresh it as they do natively.
+
 The hosted profile does not read the host filesystem, global configuration, or
 external renderer configuration. Diagram rendering stays in process. It uses the
 renderer's parser, layout, and SVG stages directly, with no filesystem preprocessor. Image markup and

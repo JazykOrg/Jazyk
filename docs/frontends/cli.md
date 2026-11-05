@@ -160,7 +160,15 @@ installed IDE and every detected agent, as in [`jazyk init`](#jazyk-init).
 - `--remove NAMES`: remove the named rows without the checklist. Names are the
   [agent setup names](./mcp.md#agent-setup), `jazyk` for the Jazyk agent (with an
   IDE; `jazyk-vscode`, `jazyk-cursor`, `jazyk-zed`, `jazyk-jetbrains` without one),
-  or `all`.
+  `agents-md`, `trust`, or `all` (every agent and Jazyk agent row; `agents-md` and
+  `trust` are only removed by name).
+- `jazyk setup agents-md`: create or refresh the
+  [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd)
+  and the `CLAUDE.md` and `GEMINI.md` imports. `--remove agents-md` deletes them.
+- `jazyk setup trust`: list the project's MCP servers and skills and record them as
+  [trusted](./agent-context.md#trust). `--remove trust` revokes the trust.
+- `--list` also prints an `agents-md` line (`installed`, `missing`, `stale`, or
+  `off`) and a `trust` line (`trusted`, `untrusted`, `changed`, or `none`).
 
 Removing an entry deletes the `jazyk` server (or the `Jazyk` agent) from its file and
 leaves everything else in the file as it was. A file left holding nothing else is
@@ -186,6 +194,9 @@ removed by hand: the line names where. Exit `0` when the command did what it ask
   Existing directories and files stay untouched. When `jazyk.toml` already
   existed, the scaffold step is skipped: the layout is that project's own
   business.
+- Writes the [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd),
+  creating the file when it is missing, and the `@AGENTS.md` import into an existing
+  `CLAUDE.md` or `GEMINI.md`.
 - Offers [agent setup](./mcp.md#agent-setup) for everything installed: the same
   checklist as [IDE agents](#ide-agents), across every installed IDE. One row per
   detected coding agent (jazyk's tools over MCP), then one row per installed IDE that

@@ -234,14 +234,17 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
                 c, ch.name
             )
         }
-        "setup" => "usage: jazyk setup [ide] [--list] [--remove NAMES|all]\n\n\
+        "setup" => "usage: jazyk setup [ide|agents-md|trust] [--list] [--remove NAMES|all]\n\n\
              Check, add, and remove jazyk in IDEs (the Jazyk agent) and coding agents\n\
              (jazyk tools over MCP). With an IDE (e.g. idea), that IDE's agents;\n\
              without one, everything installed. On a terminal it shows a checklist,\n\
-             ticked where jazyk is set up: tick to add, untick to remove.\n\n\
+             ticked where jazyk is set up: tick to add, untick to remove.\n\
+             `agents-md` writes the jazyk section of AGENTS.md; `trust` trusts the\n\
+             project's MCP servers and skills for the Jazyk agent.\n\n\
              options:\n  \
              --list           each agent's state (installed, stale, missing) and file\n  \
-             --remove NAMES   comma-separated setup names (claude, codex, ..., jazyk), or all\n\n\
+             --remove NAMES   comma-separated setup names (claude, codex, ..., jazyk,\n                   \
+             agents-md, trust), or all\n\n\
              exit: 0 when done, 1 when a file could not be written, 2 on a usage error"
             .to_string(),
         "init" => "usage: jazyk init [--mcp LIST|all|none] [--agent NAME] [--acp LIST|all|none]\n\n\

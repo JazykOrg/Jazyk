@@ -357,7 +357,6 @@ fn specs(item: &Item, root: &Path, cmd: &str) -> Vec<Spec> {
         entry,
     };
     let stdio = stdio_entry(cmd);
-    let typed = json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]});
     match item {
         Item::Jazyk(h) => match crate::acp::install::ide(h, cmd).map(|i| i.registry) {
             Some(crate::acp::install::Registry::Map { path, key, entry }) => {
@@ -366,7 +365,30 @@ fn specs(item: &Item, root: &Path, cmd: &str) -> Vec<Spec> {
             _ => Vec::new(),
         },
         Item::Unsupported(_) => Vec::new(),
-        Item::Agent(n) => match *n {
+        // `.mcp.json` is the canonical project file: every project row writes it too.
+        // Mirrors docs/frontends/mcp.md#agent-setup.
+        Item::Agent(n) if *n != "claude" && agent_by_name(n).is_some_and(|a| a.method == Method::Project) => {
+            let mut out = vec![json_at(CANONICAL, "mcpServers", stdio.clone())];
+            out.extend(own_specs(n, root, cmd));
+            out
+        }
+        Item::Agent(n) => own_specs(n, root, cmd),
+    }
+}
+
+const CANONICAL: &str = ".mcp.json";
+
+// A row's own file, without the canonical `.mcp.json` its project setup adds.
+fn own_specs(n: &str, root: &Path, cmd: &str) -> Vec<Spec> {
+    let json_at = |rel: &str, key: &'static str, entry: serde_json::Value| Spec::Json {
+        path: root.join(rel),
+        key,
+        name: "jazyk",
+        entry,
+    };
+    let stdio = stdio_entry(cmd);
+    let typed = json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]});
+    match n {
             "claude" => vec![json_at(".mcp.json", "mcpServers", stdio)],
             "cursor" => vec![json_at(".cursor/mcp.json", "mcpServers", stdio)],
             "gemini" => vec![json_at(".gemini/settings.json", "mcpServers", stdio)],
@@ -390,8 +412,18 @@ fn specs(item: &Item, root: &Path, cmd: &str) -> Vec<Spec> {
                 Some(path) => vec![Spec::Json { path, key: "mcpServers", name: "jazyk", entry: stdio }],
                 None => Vec::new(),
             },
-        },
     }
+}
+
+// Whether another agent row still relies on the canonical `.mcp.json` entry.
+fn canonical_in_use(except: &str, root: &Path) -> bool {
+    let cmd = spawn_command();
+    AGENTS.iter().filter(|a| a.name != except && a.method == Method::Project).any(|a| {
+        if a.name == "claude" {
+            return claude_approved(root);
+        }
+        own_specs(a.name, root, &cmd).iter().any(|s| spec_state(s) != State::Missing)
+    })
 }
 
 fn read_json(path: &Path) -> Option<serde_json::Value> {
@@ -442,8 +474,17 @@ pub fn state(item: &Item, root: &Path) -> State {
         }
     }
     let cmd = spawn_command();
-    let states: Vec<State> = specs(item, root, &cmd).iter().map(spec_state).collect();
+    // A row's own file decides; the shared `.mcp.json` only completes it.
+    let own = match item {
+        Item::Agent(n) => own_specs(n, root, &cmd),
+        _ => specs(item, root, &cmd),
+    };
+    let states: Vec<State> = own.iter().map(spec_state).collect();
     if states.is_empty() {
+        return State::Missing;
+    }
+    // Claude Code's own part is its approval: the shared entry alone is another row's.
+    if *item == Item::Agent("claude") && !claude_approved(root) && canonical_in_use("claude", root) {
         return State::Missing;
     }
     let mut s = if states.iter().all(|s| *s == State::Installed) {
@@ -453,10 +494,12 @@ pub fn state(item: &Item, root: &Path) -> State {
     } else {
         State::Stale
     };
-    // Parts beyond the entry: the Claude approval, the ACP Client extension.
+    // Parts beyond the entry: the shared `.mcp.json`, the Claude approval, the ACP
+    // Client extension.
     if s == State::Installed {
         let incomplete = match item {
             Item::Agent("claude") => !claude_approved(root),
+            Item::Agent(_) => specs(item, root, &cmd).iter().any(|spec| spec_state(spec) != State::Installed),
             Item::Jazyk(h @ ("vscode" | "cursor")) => !has_extension(&extensions(h), "formulahendry.acp-client"),
             _ => false,
         };
@@ -511,7 +554,12 @@ pub fn install(item: &Item, root: &Path, tty: bool, consented: bool) -> Result<(
 pub fn remove(item: &Item, root: &Path) -> Result<bool, String> {
     let cmd = spawn_command();
     let mut removed = false;
+    // The canonical `.mcp.json` entry stays while another agent row relies on it.
+    let keep_canonical = matches!(item, Item::Agent(n) if canonical_in_use(n, root));
     for spec in specs(item, root, &cmd) {
+        if keep_canonical && matches!(&spec, Spec::Json { path, .. } if path == &root.join(CANONICAL)) {
+            continue;
+        }
         let path = match &spec {
             Spec::Json { path, .. } | Spec::Codex { path, .. } => path.clone(),
         };
@@ -523,6 +571,7 @@ pub fn remove(item: &Item, root: &Path) -> Result<bool, String> {
         prune_empty_dirs(&path, root);
     }
     if let Item::Agent("claude") = item {
+        removed |= claude_approved(root);
         crate::start::unapprove_claude(root)?;
     }
     Ok(removed)
@@ -631,6 +680,12 @@ fn named(name: &str, host: Option<&'static str>) -> Option<Item> {
 pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
     use std::io::IsTerminal;
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match positional.first().map(String::as_str) {
+        Some("agents-md") => return run_agents_md(&cwd),
+        Some("trust") => return run_trust(&cwd),
+        _ => {}
+    }
     let (host, ide_name) = match positional.first() {
         None => (None, None),
         Some(id) => match host_of(id) {
@@ -641,7 +696,6 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
             }
         },
     };
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let Some(root) = crate::project::find_root(&cwd) else {
         eprintln!("jazyk: no jazyk project here; `jazyk init` makes one");
         return 1;
@@ -655,6 +709,38 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
     let one_host = host.is_some();
 
     if let Some(list) = opts.remove.as_deref() {
+        let mut code = 0;
+        let mut rest = Vec::new();
+        for n in list.split(',').map(str::trim) {
+            match n {
+                "agents-md" => match crate::agents_md::remove(&root) {
+                    Ok(true) => println!("jazyk: removed the jazyk section of AGENTS.md"),
+                    Ok(false) => println!("jazyk: no jazyk section in AGENTS.md"),
+                    Err(e) => {
+                        eprintln!("jazyk: {e}");
+                        code = 1;
+                    }
+                },
+                "trust" => match crate::agent_context::home() {
+                    Some(home) => match crate::agent_context::save_trust(&home, &root, None) {
+                        Ok(()) => println!("jazyk: revoked trust for this project's MCP servers and skills"),
+                        Err(e) => {
+                            eprintln!("jazyk: {e}");
+                            code = 1;
+                        }
+                    },
+                    None => {
+                        eprintln!("jazyk: no home directory to keep trust in");
+                        code = 1;
+                    }
+                },
+                other => rest.push(other),
+            }
+        }
+        if rest.is_empty() {
+            return code;
+        }
+        let list = rest.join(",");
         let targets: Vec<Item> = if list == "all" {
             items.iter().filter(|i| state(i, &root).present()).cloned().collect()
         } else {
@@ -670,7 +756,7 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
             }
             out
         };
-        return remove_all(&targets, &root);
+        return remove_all(&targets, &root).max(code);
     }
 
     let states: Vec<State> = items.iter().map(|i| state(i, &root)).collect();
@@ -681,6 +767,9 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
             let word = if i.enabled() { s.word() } else { "unsupported" };
             println!("  {:w$}  {:11} {}", row.name, word, if i.enabled() { row.note } else { String::new() }, w = width);
         }
+        println!("  {:w$}  {:11} {}", "agents-md", crate::agents_md::state(&root), "AGENTS.md jazyk section", w = width);
+        let trust = crate::agent_context::home().map(|h| crate::agent_context::trust_state(&h, &root)).unwrap_or("none");
+        println!("  {:w$}  {:11} {}", "trust", trust, "project MCP servers and skills", w = width);
         if !tty && !opts.list {
             println!("\n`{} --remove NAMES` removes; on a terminal, `{}` adds and removes.", change, change);
         }
@@ -756,6 +845,79 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
         }
     }
     if failed.is_empty() { 0 } else { 1 }
+}
+
+// `jazyk setup agents-md`: create or refresh the section and the imports.
+// Mirrors docs/frontends/cli.md#jazyk-setup.
+fn run_agents_md(cwd: &Path) -> i32 {
+    let Some(root) = crate::project::find_root(cwd) else {
+        eprintln!("jazyk: no jazyk project here; `jazyk init` makes one");
+        return 1;
+    };
+    if !crate::agents_md::enabled(&root) {
+        println!("jazyk: [agents] block = false in jazyk.toml; nothing written");
+        return 0;
+    }
+    let outcome = crate::agents_md::sync(&root, crate::agents_md::Mode::Create);
+    for line in &outcome.changed {
+        println!("jazyk: {line}");
+    }
+    for w in &outcome.warnings {
+        eprintln!("jazyk: {w}");
+    }
+    if outcome.changed.is_empty() && outcome.warnings.is_empty() {
+        println!("jazyk: the jazyk section of AGENTS.md is current");
+    }
+    if outcome.warnings.is_empty() { 0 } else { 1 }
+}
+
+fn describe(t: &crate::agent_context::Transport) -> String {
+    match t {
+        crate::agent_context::Transport::Stdio { command, args, .. } => {
+            std::iter::once(command.as_str()).chain(args.iter().map(String::as_str)).collect::<Vec<_>>().join(" ")
+        }
+        crate::agent_context::Transport::Http { url, .. } => url.clone(),
+    }
+}
+
+// `jazyk setup trust`: show what the project would run and record it as trusted.
+// Mirrors docs/frontends/agent-context.md#trust.
+fn run_trust(cwd: &Path) -> i32 {
+    let Some(root) = crate::project::find_root(cwd) else {
+        eprintln!("jazyk: no jazyk project here; `jazyk init` makes one");
+        return 1;
+    };
+    let Some(home) = crate::agent_context::home() else {
+        eprintln!("jazyk: no home directory to keep trust in");
+        return 1;
+    };
+    let env = |n: &str| crate::sys::env_var(n).ok();
+    let (servers, warnings) = crate::agent_context::servers(&root, None, &env);
+    let (skills, skill_warnings) = crate::agent_context::skills(&root, None);
+    for w in warnings.iter().chain(&skill_warnings) {
+        eprintln!("jazyk: {w}");
+    }
+    let trust = crate::agent_context::current_trust(&servers, &skills);
+    if trust == crate::agent_context::Trust::default() {
+        println!("jazyk: nothing to trust: the project names no MCP servers or skills");
+        return 0;
+    }
+    for s in servers.iter().filter(|s| s.project) {
+        println!("  server {}  {}  ({})", s.name, describe(&s.transport), s.source);
+    }
+    for s in skills.iter().filter(|s| s.project) {
+        println!("  skill  {}  {}", s.name, s.source);
+    }
+    match crate::agent_context::save_trust(&home, &root, Some(&trust)) {
+        Ok(()) => {
+            println!("jazyk: trusted for the Jazyk agent's conversations; an edited entry asks again");
+            0
+        }
+        Err(e) => {
+            eprintln!("jazyk: {e}");
+            1
+        }
+    }
 }
 
 fn remove_all(targets: &[Item], root: &Path) -> i32 {
@@ -864,6 +1026,17 @@ mod tests {
         }
         let left = std::fs::read_to_string(dir.join(".mcp.json")).unwrap();
         assert!(left.contains("// mine") && left.contains("\"other\"") && !left.contains("jazyk"), "{}", left);
+        // `.mcp.json` is canonical: a codex setup writes it, and it stays while
+        // another row relies on it.
+        install(&codex, &dir, false, false).unwrap();
+        install(&copilot, &dir, false, false).unwrap();
+        assert!(std::fs::read_to_string(dir.join(".mcp.json")).unwrap().contains("jazyk"));
+        assert_eq!(state(&claude, &dir), State::Missing, "the shared entry is not Claude's setup");
+        remove(&codex, &dir).unwrap();
+        assert!(std::fs::read_to_string(dir.join(".mcp.json")).unwrap().contains("jazyk"));
+        assert_eq!(state(&codex, &dir), State::Missing);
+        remove(&copilot, &dir).unwrap();
+        assert!(!std::fs::read_to_string(dir.join(".mcp.json")).unwrap().contains("jazyk"));
         assert!(!dir.join(".vscode/mcp.json").exists(), "an emptied file is deleted");
         assert!(!dir.join(".codex/config.toml").exists(), "an emptied codex file is deleted");
         assert!(!dir.join(".claude/settings.local.json").exists(), "the approval goes with the entry");

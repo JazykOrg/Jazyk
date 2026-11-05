@@ -11,8 +11,14 @@ use std::sync::Arc;
 
 pub const INSTRUCTION_CAP: usize = 32 * 1024;
 const IMPORT_DEPTH: usize = 4;
-// The first of these that exists in a directory is that directory's instructions.
-const CANDIDATES: [&str; 4] = ["AGENTS.md", ".agents/AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"];
+// In each directory, the first file of each family that exists is read. A file
+// already read (the same file through a link, or through an import) is not read twice.
+const FAMILIES: [[&str; 2]; 2] = [["AGENTS.md", ".agents/AGENTS.md"], ["CLAUDE.md", ".claude/CLAUDE.md"]];
+
+// The identity `seen` records: the real file behind any link.
+fn identity(path: &Path) -> PathBuf {
+    path.vcanonicalize().unwrap_or_else(|_| crate::agents_md::normalize(path))
+}
 // The name of the session's own serving; a discovered entry never takes it.
 pub const RESERVED: &str = "jazyk";
 pub const READ_SKILL: &str = "read_skill";
@@ -89,7 +95,7 @@ fn expand(
                 continue;
             }
             let Some(content) = read(&target) else { continue };
-            if !seen.insert(target.clone()) {
+            if !seen.insert(identity(&target)) {
                 replaced = replaced.replacen(&format!("@{token}"), "", 1);
                 continue;
             }
@@ -128,19 +134,20 @@ pub fn instructions(root: &Path, cwd: &Path, home: Option<&Path>) -> Option<Stri
     if let Some(h) = home {
         let global = h.join(".jazyk/AGENTS.md");
         if let Some(text) = read(&global) {
-            seen.insert(global.clone());
+            seen.insert(identity(&global));
             parts.push(("~/.jazyk/AGENTS.md".into(), expand(&text, global.parent().unwrap(), root, home, 0, &mut seen)));
         }
     }
     for dir in chain(root, cwd) {
-        for name in CANDIDATES {
-            let path = dir.join(name);
+        for family in FAMILIES {
+            let Some(path) = family.iter().map(|name| dir.join(name)).find(|p| p.vis_file()) else { continue };
             let Some(text) = read(&path) else { continue };
-            seen.insert(path.clone());
+            if !seen.insert(identity(&path)) {
+                continue;
+            }
             let text = crate::agents_md::strip(&text);
             let base = path.parent().unwrap_or(&dir).to_path_buf();
             parts.push((rel(root, &path), expand(&text, &base, root, home, 0, &mut seen)));
-            break;
         }
     }
     let parts: Vec<(String, String)> = parts.into_iter().filter(|(_, t)| !t.trim().is_empty()).collect();
@@ -861,12 +868,16 @@ mod tests {
         std::fs::write(root.join("docs/style.md"), "Style: short.").unwrap();
         std::fs::write(root.join("docs/CLAUDE.md"), "Docs rule from CLAUDE.md, see @types/node").unwrap();
         std::fs::write(root.join("docs/api/AGENTS.md"), "API rule").unwrap();
-        std::fs::write(root.join("docs/api/CLAUDE.md"), "never read: AGENTS.md wins").unwrap();
+        std::fs::write(root.join("docs/api/CLAUDE.md"), "API Claude rule. @AGENTS.md").unwrap();
+        std::fs::create_dir_all(root.join("docs/.claude")).unwrap();
+        std::fs::write(root.join("docs/.claude/CLAUDE.md"), "never read: docs/CLAUDE.md comes first").unwrap();
         let text = instructions(root, &root.join("docs/api"), None).unwrap();
         let a = text.find("Root rule. Style: short.").unwrap();
         let b = text.find("Docs rule from CLAUDE.md, see @types/node").unwrap();
         let c = text.find("API rule").unwrap();
-        assert!(a < b && b < c, "{text}");
+        let d = text.find("API Claude rule.").unwrap();
+        assert!(a < b && b < c && c < d, "{text}");
+        assert_eq!(text.matches("API rule").count(), 1, "an import of a file already read adds nothing: {text}");
         assert!(!text.contains("Jazyk text"));
         assert!(!text.contains("never read"));
         assert!(text.contains("```\n@docs/style.md\n```"), "imports stay as written inside code");
@@ -875,6 +886,17 @@ mod tests {
         std::fs::write(root.join("AGENTS.md"), "@../outside.md").unwrap();
         std::fs::write(root.parent().unwrap().join("outside.md"), "secret").ok();
         assert!(!instructions(root, root, None).unwrap_or_default().contains("secret"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_claude_md_linked_to_agents_md_is_read_once() {
+        let dir = project();
+        let root = dir.path();
+        std::fs::write(root.join("AGENTS.md"), "Shared rule.").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", root.join("CLAUDE.md")).unwrap();
+        let text = instructions(root, root, None).unwrap();
+        assert_eq!(text.matches("Shared rule.").count(), 1, "{text}");
     }
 
     #[test]

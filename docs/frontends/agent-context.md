@@ -33,14 +33,16 @@ name.
 ## Instructions
 
 In each directory from the project root down to the session's working
-directory, the first of these files that exists is read:
+directory, jazyk reads the first file of each family that exists:
 
-1. `AGENTS.md`
-2. `.agents/AGENTS.md`
-3. `CLAUDE.md`
-4. `.claude/CLAUDE.md`
+- `AGENTS.md`, else `.agents/AGENTS.md`.
+- `CLAUDE.md`, else `.claude/CLAUDE.md`.
 
-- Files are concatenated root first, after `~/.jazyk/AGENTS.md` (native only).
+- A file already read is not read again, whether it is reached through a link
+  (a `CLAUDE.md` linked to `AGENTS.md`) or through an import (the `@AGENTS.md`
+  import in `CLAUDE.md`).
+- Files are concatenated root first, `AGENTS.md` before `CLAUDE.md` within a
+  directory, after `~/.jazyk/AGENTS.md` (native only).
 - The [jazyk section](#the-jazyk-section-of-agentsmd) is left out. The jazyk
   serving's own instructions already carry it.
 - `@path` imports a file in place. The token starts a line or follows

@@ -982,3 +982,16 @@ embedded from `goals/prompts/chat-conversation.md`. Detailed lifecycle packages
 apply to requested lifecycle work. A document edit does not authorize compilation,
 generation, task execution, or a workflow release. A tool repair hint grants no
 new authority.
+
+## Conversational repairs
+
+A source read reports its recorded owner and the `begin_generation` call needed
+before repair when the current session does not already own that component group. The agent claims that entity before writing and records generation
+after the requested files and their directly affected tests are repaired. Recording
+ends the claim. A narrow repair does not authorize unrelated goals or deployment.
+
+Chat exposes `update_criterion` as a committed single-call edit when no goal batch
+is open. It validates the same fields as a compiler criterion update and keeps
+existing evidence links. The call requires at least one field to change. With an open batch, the update stays staged behind its
+gates. `edit_fact` names its supported node kinds explicitly and directs criterion
+edits to `update_criterion`. No compile batch is needed solely to edit a criterion.

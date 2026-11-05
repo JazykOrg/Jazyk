@@ -561,3 +561,18 @@ An internal worker serving accepts `--cancel-file PATH`. The runner creates this
 attempt-specific file before stopping the worker. Once it exists, tool calls are
 refused and end of input discards staged work. An ordinary session end still uses
 the implicit finish. A subsequent build uses new session fences.
+
+## Project integration context
+
+Every serving exposes read-only `project_context`, without a document-set ID.
+The initialize instructions include the same context. ACP consumes these MCP
+instructions too. Context identifies the project, repository URL, selected branch,
+default branch, base commit, local changes, and available integration actions.
+Unknown values remain null. Context never contains credentials or grants approval
+to push, merge, dispatch, or deploy. Call `project_context` to refresh it.
+
+Cloud supplies context from the authenticated project's current GitHub binding and
+workspace. Native clients connected to Cloud use that same project-scoped adapter.
+A local serving reads local Git metadata without contacting a remote. Browser-only
+projects report that no GitHub integration is attached. A metadata failure is
+reported as unavailable, never as proof that the project is unlinked.

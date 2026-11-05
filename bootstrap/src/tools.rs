@@ -303,7 +303,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_criterion",
-            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; a field given replaces the stored one. The id and the owning requirement stay.",
+            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; a field given replaces the stored one. The id and the owning requirement stay. In chat without an open compiler batch, commits immediately; no begin_goals is needed. Within a batch, remains staged until done.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -422,7 +422,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "edit_fact",
-            description: "Set one authored field on one node: a requirement's statement, edges, transition, or facets; an entity's definition, stereotype, parent, or an attribute's type or value (field attributes.<name>.type or attributes.<name>.value); a view's members. On a quote-provenanced fact, note carries the sentence rewrite the person accepted in conversation: the prose replacement and the graph mutation commit as one dual write. Without an accepted sentence, or on a derived or decreed fact, the edit lands graph-only with decree provenance (note becomes the decree's note) and a ratification proposal follows. value is the field's new content: a string, or the array or object the write tools take.",
+            description: "Requires id, field, value. Criterion IDs use update_criterion instead. Set one authored field on one requirement, entity, or view: a requirement's statement, edges, transition, or facets; an entity's definition, stereotype, parent, or an attribute's type or value (field attributes.<name>.type or attributes.<name>.value); a view's members. On a quote-provenanced fact, note carries the sentence rewrite the person accepted in conversation: the prose replacement and the graph mutation commit as one dual write. Without an accepted sentence, or on a derived or decreed fact, the edit lands graph-only with decree provenance (note becomes the decree's note) and a ratification proposal follows. value is the field's new content: a string, or the array or object the write tools take.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -4379,8 +4379,24 @@ impl ToolSession {
                 let more_lines = start + taken < total;
                 truncated |= more_lines;
                 let mut reply = json!({"content": content, "totalLines": total});
-                if truncated { reply["truncated"] = json!(true); }
-                if more_lines { reply["nextLine"] = json!(start + taken + 1); }
+                let ledger = crate::gen::Ledger::load(&self.snapshot.out);
+                if let Some(owner) = crate::gen::file_owner(&self.snapshot, &ledger, "", &rel) {
+                    let entity = format!("ent:{owner}");
+                    reply["owner"] = json!(entity);
+                    let needs_claim = crate::gen::file_owner(&self.snapshot, &ledger, &self.scope.gen_target(), &rel).is_some();
+                    reply["requires_generation"] = json!(needs_claim);
+                    if needs_claim {
+                        reply["begin_generation"] = json!({"entity":entity});
+                        reply["repair"] = json!("Call begin_generation for this owner before write_text_file. Repair only the requested files and affected tests, then record_generation. Recording ends the claim.");
+                    }
+                }
+
+                if truncated {
+                    reply["truncated"] = json!(true);
+                }
+                if more_lines {
+                    reply["nextLine"] = json!(start + taken + 1);
+                }
                 if let Some(line) = truncated_line {
                     reply["truncatedLine"] = json!(line);
                     reply["notice"] = json!(format!("Line {line} exceeds the 64 KiB response limit. Only a UTF-8-safe prefix is returned; the rest of that line is omitted."));
@@ -6722,6 +6738,10 @@ impl ToolSession {
             "upsert_criterion" => self.upsert_criterion(args),
             "update_criterion" => {
                 let id = Self::str_arg(args, "id")?;
+                if !["statement", "kind", "measure", "given", "when", "then", "entities"].iter().any(|field| args.get(*field).is_some_and(|v| !v.is_null())) {
+                    return Err(ToolError::new("bad-args", "Pass id and at least one criterion field to change: statement, kind, measure, given, when, then, entities.".into()));
+                }
+
                 if !self.criterion_known(&id) {
                     return Err(ToolError::new(
                         "unknown-id",
@@ -8629,7 +8649,7 @@ impl ToolSession {
         Err(ToolError::new(
             "unknown-id",
             format!(
-                "unknown id `{}`; edit_fact takes a requirement (req:), entity (ent:), or view (view:) id",
+                "unknown id `{}`; edit_fact takes a requirement (req:), entity (ent:), or view (view:) id. For a criterion (crit:) use update_criterion with id and the fields to change; chat needs no begin_goals",
                 raw_id
             ),
         ))
@@ -12798,8 +12818,16 @@ mod tests {
         let mut t = session_for("ent:store-manager");
         t.dispatch("write_text_file", &json!({"path": "departments.md", "content": "# Departments\n"}))
             .unwrap();
+        let read = t.dispatch("read_text_file", &json!({"path":"departments.md"})).unwrap();
+        assert_eq!(read["owner"],"ent:operations");
+        assert_eq!(read["requires_generation"],false);
+        assert!(read.get("begin_generation").is_none());
         // Another group is refused, the owner named.
         let mut t = session_for("ent:sales");
+        let read = t.dispatch("read_text_file", &json!({"path":"departments.md"})).unwrap();
+        assert_eq!(read["owner"],"ent:operations");
+        assert_eq!(read["begin_generation"]["entity"],"ent:operations");
+
         let err = t
             .dispatch("write_text_file", &json!({"path": "departments.md", "content": "x"}))
             .unwrap_err();

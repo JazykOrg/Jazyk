@@ -169,13 +169,12 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
     })
 }
 
-// A checklist: an `All` row, then one row per item, every enabled row ticked to
-// start. Space toggles the row under the cursor, `a` toggles all, enter confirms.
+// A checklist: an `All` row, then one row per item, ticked as `initial` says. Space toggles the row under the cursor, `a` toggles all, enter confirms.
 // A disabled row (e.g. `unsupported`) is shown dim and never ticks. Returns the
 // ticked flags, or None when the person quits (q, esc, ctrl-c).
 // Mirrors docs/frontends/cli.md#ide-agents.
-pub fn check(heading: &str, rows: &[Row], enabled: &[bool]) -> Option<Vec<bool>> {
-    let mut ticked: Vec<bool> = enabled.to_vec();
+pub fn check(heading: &str, rows: &[Row], enabled: &[bool], initial: &[bool]) -> Option<Vec<bool>> {
+    let mut ticked: Vec<bool> = initial.iter().zip(enabled).map(|(i, e)| *i && *e).collect();
     // Cursor 0 is the `All` row; 1.. are the items.
     let mut at = 0usize;
     let n = rows.len() + 1;

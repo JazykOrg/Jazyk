@@ -2,7 +2,6 @@ use crate::vfs::VPathExt;
 // The launcher: bare `jazyk` lists every way to work on the project, and each short
 // name is a command that sets that way up and starts it.
 // Mirrors docs/frontends/cli.md#jazyk.
-use crate::acp::install::{merge_into, spawn_command, Merge};
 use crate::cli::Options;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -144,37 +143,58 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
     }
 }
 
-// An IDE choice: the agents checklist, the driver, then the IDE and the summary.
-// Mirrors docs/frontends/cli.md#ide-agents.
+// An IDE choice: the setup check, the checklist the first time, the driver, then
+// the IDE and a short summary. Mirrors docs/frontends/cli.md#ide-agents.
 fn ide_flow(choice: &Choice, host: &'static str, root: &Path, opts: &Options, tty: bool) -> i32 {
+    use crate::setup::{Item, State};
     let machine = crate::setup::Machine::scan();
     let items = crate::setup::items(&machine, Some(host));
-    let heading = format!("Set up jazyk for which agents in {}?", choice.name);
-    let Some(picked) = crate::setup::choose(&items, &heading, tty, true) else {
-        return 0;
-    };
-    crate::setup::warn_if_absolute();
-    let mut outcomes = Vec::new();
-    for item in &picked {
-        if let crate::setup::Item::Jazyk(_) = item {
-            match choose_agent(root, opts, tty) {
-                Ok(true) => {}
-                Ok(false) => return 0,
-                Err(e) => {
-                    eprintln!("jazyk: {}", e);
-                    return 1;
+    let states: Vec<State> = items.iter().map(|i| crate::setup::state(i, root)).collect();
+    let mut failed: Vec<(Item, String)> = Vec::new();
+    let set_up: Vec<Item> = if states.iter().any(|s| s.present()) {
+        // Already set up: correct stale entries, ask nothing.
+        let mut kept = Vec::new();
+        for (item, s) in items.iter().zip(&states) {
+            if *s == State::Stale {
+                if let Err(e) = crate::setup::install(item, root, tty, true) {
+                    failed.push((item.clone(), e));
+                    continue;
                 }
             }
+            if s.present() {
+                kept.push(item.clone());
+            }
         }
-        outcomes.push(crate::setup::apply(item, root, tty, false));
+        kept
+    } else {
+        let heading = format!("Set up jazyk for which agents in {}?", choice.name);
+        let Some(picked) = crate::setup::choose(&items, &heading, tty, true) else {
+            return 0;
+        };
+        crate::setup::warn_if_absolute();
+        let mut kept = Vec::new();
+        for item in picked {
+            match crate::setup::install(&item, root, tty, false) {
+                Ok(()) => kept.push(item),
+                Err(e) => failed.push((item, e)),
+            }
+        }
+        kept
+    };
+    if set_up.iter().any(|i| matches!(i, Item::Jazyk(_))) {
+        match choose_agent(root, opts, tty) {
+            Ok(true) => {}
+            Ok(false) => return 0,
+            Err(e) => {
+                eprintln!("jazyk: {}", e);
+                return 1;
+            }
+        }
     }
     let code = start(choice, root);
     if code == 0 {
-        println!("\njazyk: started {} on {}", choice.name, root.display());
-        if outcomes.is_empty() {
-            println!("  nothing was set up");
-        }
-        crate::setup::print_summary(&outcomes);
+        println!("jazyk: started {}", choice.name);
+        crate::setup::print_summary(&set_up, &failed, &format!("jazyk setup {}", choice.id));
     }
     code
 }
@@ -241,10 +261,9 @@ pub fn host_installed(host: &str) -> bool {
     }
 }
 
-// The Jazyk agent in one host: the ACP registration, and for VS Code and Cursor the
-// ACP Client extension that hosts it. Mirrors docs/frontends/acp.md#registration.
-pub fn setup_jazyk_agent(host: &str) -> Result<(), String> {
-    acp_register(host)?;
+// The ACP Client extension that hosts the Jazyk agent in VS Code and Cursor.
+// Mirrors docs/frontends/acp.md#registration.
+pub fn jazyk_agent_extension(host: &str) -> Result<(), String> {
     match host {
         "vscode" => extension("code", "formulahendry.acp-client", None),
         "cursor" => extension("cursor", "formulahendry.acp-client", None),
@@ -282,62 +301,21 @@ pub fn setup(choice: &Choice, root: &Path, _opts: &Options, _tty: bool) -> Resul
     }
 }
 
-fn acp_register(ide: &str) -> Result<(), String> {
-    match crate::acp::install::install(ide) {
-        0 => Ok(()),
-        _ => Err(format!("cannot register the Jazyk agent with {}", ide)),
-    }
-}
-
 // The MCP entry one coding agent reads. Mirrors docs/frontends/cli.md#jazyk.
 pub fn setup_mcp(root: &Path, id: &str) -> Result<(), String> {
-    let cmd = spawn_command();
-    let stdio = json!({"command": cmd, "args": ["mcp", "all"]});
-    let (rel, key, entry): (String, &str, Value) = match id {
-        "claude" => (".mcp.json".into(), "mcpServers", stdio),
-        "cursor" => (".cursor/mcp.json".into(), "mcpServers", stdio),
-        "gemini" => (".gemini/settings.json".into(), "mcpServers", stdio),
-        "pi" => (".pi/mcp.json".into(), "mcpServers", stdio),
-        "junie" => (".junie/mcp/mcp.json".into(), "mcpServers", stdio),
-        "roo" => (".roo/mcp.json".into(), "mcpServers", stdio),
-        "zed" => (".zed/settings.json".into(), "context_servers", stdio),
-        "copilot" => (
-            ".vscode/mcp.json".into(),
-            "servers",
-            json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]}),
-        ),
-        "droid" => (
-            ".factory/mcp.json".into(),
-            "mcpServers",
-            json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]}),
-        ),
-        "opencode" => (
-            if root.join("opencode.jsonc").vexists() && !root.join("opencode.json").vexists() {
-                "opencode.jsonc".into()
-            } else {
-                "opencode.json".into()
-            },
-            "mcp",
-            json!({"type": "local", "command": [cmd, "mcp", "all"], "enabled": true}),
-        ),
-        "codex" => return setup_codex(root, &cmd),
-        _ => return Err(format!("`{}` takes no MCP entry", id)),
-    };
-    let path = root.join(&rel);
-    match merge_into(&path, key, "jazyk", &entry) {
-        Ok(Merge::Written) => println!("jazyk: wrote the `jazyk` MCP server into {}", rel),
-        Ok(Merge::Unchanged) => {}
-        Err(e) => return Err(format!("cannot write {}: {}", rel, e)),
+    let a = crate::setup::agent_by_name(id).ok_or_else(|| format!("`{}` takes no MCP entry", id))?;
+    let item = crate::setup::Item::Agent(a.name);
+    if crate::setup::state(&item, root) == crate::setup::State::Installed {
+        return Ok(());
     }
-    if id == "claude" {
-        approve_claude(root)?;
-    }
+    crate::setup::install(&item, root, interactive(), false)?;
+    println!("jazyk: set up jazyk tools for {} ({})", a.label, a.file);
     Ok(())
 }
 
 // Claude Code connects to a `.mcp.json` server once it is approved; the approval in
 // `.claude/settings.local.json` holds once the folder is trusted.
-fn approve_claude(root: &Path) -> Result<(), String> {
+pub fn approve_claude(root: &Path) -> Result<(), String> {
     let rel = ".claude/settings.local.json";
     let path = root.join(rel);
     let mut doc: Value = match crate::vfs::read_to_string(&path) {
@@ -362,15 +340,38 @@ fn approve_claude(root: &Path) -> Result<(), String> {
     }
     let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     crate::vfs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
-    println!("jazyk: approved the `jazyk` MCP server in {}", rel);
     Ok(())
+}
+
+// The approval goes with its entry; a file left empty is deleted.
+// Mirrors docs/frontends/cli.md#jazyk-setup.
+pub fn unapprove_claude(root: &Path) -> Result<(), String> {
+    let rel = ".claude/settings.local.json";
+    let path = root.join(rel);
+    let Ok(text) = crate::vfs::read_to_string(&path) else { return Ok(()) };
+    let Ok(mut doc) = serde_json::from_str::<Value>(&text) else { return Ok(()) };
+    let Some(obj) = doc.as_object_mut() else { return Ok(()) };
+    let Some(list) = obj.get_mut("enabledMcpjsonServers").and_then(|v| v.as_array_mut()) else { return Ok(()) };
+    let before = list.len();
+    list.retain(|v| v != "jazyk");
+    if list.len() == before {
+        return Ok(());
+    }
+    if list.is_empty() {
+        obj.remove("enabledMcpjsonServers");
+    }
+    if obj.is_empty() {
+        return crate::vfs::remove_file(&path).map_err(|e| format!("cannot remove {}: {}", rel, e));
+    }
+    let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    crate::vfs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))
 }
 
 // Codex reads `.codex/config.toml` in a folder it trusts, and asks for that trust on
 // its first start there. The merge edits one table and keeps the rest of the file.
-fn setup_codex(root: &Path, cmd: &str) -> Result<(), String> {
-    let rel = ".codex/config.toml";
-    let path = root.join(rel);
+pub fn setup_codex(path: &Path, cmd: &str) -> Result<(), String> {
+    let rel = path.display().to_string();
+    let path = path.to_path_buf();
     let old = crate::vfs::read_to_string(&path).unwrap_or_default();
     let mut doc: toml_edit::DocumentMut =
         old.parse().map_err(|e| format!("{} is not valid TOML: {}", rel, e))?;
@@ -403,8 +404,29 @@ fn setup_codex(root: &Path, cmd: &str) -> Result<(), String> {
     servers.insert("jazyk", toml_edit::Item::Table(entry));
     crate::vfs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     crate::vfs::write(&path, doc.to_string()).map_err(|e| format!("cannot write {}: {}", rel, e))?;
-    println!("jazyk: wrote the `jazyk` MCP server into {}", rel);
     Ok(())
+}
+
+// Remove `[mcp_servers.jazyk]`; an emptied table goes too, and an emptied file.
+// Mirrors docs/frontends/cli.md#jazyk-setup.
+pub fn remove_codex(path: &Path) -> Result<bool, String> {
+    let Ok(old) = crate::vfs::read_to_string(path) else { return Ok(false) };
+    let mut doc: toml_edit::DocumentMut =
+        old.parse().map_err(|e| format!("{} is not valid TOML: {}", path.display(), e))?;
+    let Some(servers) = doc.get_mut("mcp_servers").and_then(|t| t.as_table_mut()) else { return Ok(false) };
+    if servers.remove("jazyk").is_none() {
+        return Ok(false);
+    }
+    if servers.is_empty() {
+        doc.remove("mcp_servers");
+    }
+    let text = doc.to_string();
+    if text.trim().is_empty() {
+        crate::vfs::remove_file(path).map_err(|e| format!("cannot remove {}: {}", path.display(), e))?;
+    } else {
+        crate::vfs::write(path, text).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+    }
+    Ok(true)
 }
 
 // The installed version of an editor extension, None when it is not installed or the
@@ -655,6 +677,7 @@ fn start(choice: &Choice, root: &Path) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acp::install::spawn_command;
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-start-{}-{}", name, crate::sys::process_id()));

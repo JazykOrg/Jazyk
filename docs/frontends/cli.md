@@ -101,19 +101,25 @@ choice takes every row that needs no consent and keeps the default driver.
 
 ### IDE agents
 
-An IDE choice sets up every agent that works inside that IDE, then starts it:
+An IDE choice sets up the agents that work inside that IDE the first time, then
+starts it. Each later start opens the IDE at once.
 
-1. Agents. A checklist of what to set up: the Jazyk agent ([ACP](./acp.md)), and one
-   row per coding agent jazyk detects for that IDE, each with the file or step its
-   setup takes ([agent setup](./mcp.md#agent-setup)). A coding agent counts as
-   detected when its program is on `PATH` or its extension or plugin is installed in
-   that IDE. A detected agent jazyk has no setup for is listed dim as `unsupported`
-   and cannot be ticked. Every row starts ticked: space toggles a row, `a` toggles
-   all, enter confirms, and `q`, escape, or control-C start nothing. When only one row
-   can be ticked there is nothing to choose: it is taken without asking, and a line
-   says so.
-2. Driver. The Jazyk agent drives a coding agent of its own ([agents](./acp.md#agents)).
-   When the Jazyk agent is ticked and the project's `jazyk.toml` names none
+1. Setup check. Each agent's setup has a state: `installed` (the entry is there and
+   current), `stale` (the entry is there with another command or arguments),
+   `missing`, or `unknown` (a [guided step](./mcp.md#agent-setup), which jazyk cannot
+   read back). When any row for this IDE is `installed` or `stale`, the IDE is
+   already set up: stale entries are corrected without asking, the checklist is
+   skipped, and the start follows.
+2. Agents. Only when nothing is set up yet: a checklist of the Jazyk agent
+   ([ACP](./acp.md)) and one row per coding agent jazyk detects for that IDE, each
+   with the file its setup writes ([agent setup](./mcp.md#agent-setup)). A coding
+   agent counts as detected when its program is on `PATH` or its extension or plugin
+   is installed in that IDE. A detected agent jazyk has no setup for is listed dim
+   as `unsupported` and cannot be ticked. Every row starts ticked: space toggles a
+   row, `a` toggles all, enter confirms, and `q`, escape, or control-C start nothing.
+   When only one row can be ticked it is taken without asking.
+3. Driver. The Jazyk agent drives a coding agent of its own ([agents](./acp.md#agents)).
+   When the Jazyk agent is set up and the project's `jazyk.toml` names none
    (`[acp] agent`), a list asks which: `embedded`, the built-in agents whose program
    is found, and the profiles the project or the global config defines, the default
    (`embedded`) under the cursor. With one option it is taken without asking. The
@@ -122,21 +128,47 @@ An IDE choice sets up every agent that works inside that IDE, then starts it:
    set. Later, `/agent <name>` in the IDE's Jazyk chat switches it
    ([switching agents](./acp.md#switching-agents)). A built-in profile shadowed by an
    `[acp.agents.<name>]` table is named with the file that defines it.
-3. Start. The setup is written, the IDE starts on the root, and a summary follows:
-   that the IDE started, then one line per ticked row saying how to reach that agent
-   in this IDE (e.g. in IntelliJ IDEA, the Jazyk agent is picked in the agent selector
-   at the bottom of the AI Chat window), and the text to paste for any
-   [guided step](./mcp.md#agent-setup). A row whose setup failed says so with the
-   reason.
+4. Start. The IDE starts on the root, and a short summary follows: that it started,
+   where the Jazyk agent is reached in this IDE, the coding agents that have jazyk's
+   tools, the text to paste for any guided step, a line per setup that failed with
+   the reason, and the [`jazyk setup`](#jazyk-setup) command that changes the setup.
+   Files written along the way are not listed one by one.
 
 E.g.:
 
 ```
-jazyk: started IntelliJ IDEA on ~/dev/site
-  Jazyk agent  the AI Chat window, the agent selector at the bottom: Jazyk
-  Claude Code  ready (.mcp.json); jazyk tools load once Claude Code trusts the folder
-  Junie        ready (.junie/mcp/mcp.json); Junie's MCP servers: jazyk
+jazyk: started IntelliJ IDEA
+  Jazyk agent: the AI Chat window, the agent selector at the bottom: Jazyk
+  jazyk tools: Claude Code, Codex, JetBrains AI Assistant
+  change with `jazyk setup idea`
 ```
+
+### jazyk setup
+
+`jazyk setup [ide] [--list] [--remove NAMES]` checks, adds, and removes
+[agent setup](./mcp.md#agent-setup). With an IDE (any launcher IDE name, e.g.
+`idea`) it covers that IDE's rows, as in [IDE agents](#ide-agents); without one, every
+installed IDE and every detected agent, as in [`jazyk init`](#jazyk-init).
+
+- Bare, on a terminal: the checklist, each row ticked when its setup is `installed`
+  or `stale` and labeled with its state. When nothing is set up yet every row starts
+  ticked. Enter applies the difference: a ticked row that is `missing` or `stale` is
+  set up, an unticked row that is `installed` or `stale` is removed. The result is one
+  line each for what was added and what was removed.
+- `--list`: one line per row with its state and its file, nothing written. Off a
+  terminal, bare `jazyk setup` does the same.
+- `--remove NAMES`: remove the named rows without the checklist. Names are the
+  [agent setup names](./mcp.md#agent-setup), `jazyk` for the Jazyk agent (with an
+  IDE; `jazyk-vscode`, `jazyk-cursor`, `jazyk-zed`, `jazyk-jetbrains` without one),
+  or `all`.
+
+Removing an entry deletes the `jazyk` server (or the `Jazyk` agent) from its file and
+leaves everything else in the file as it was. A file left holding nothing else is
+deleted, and so is a folder inside the project that this leaves empty. The Claude Code approval in `.claude/settings.local.json` goes with its
+entry. The Jazyk agent's registration is global, so removing it removes it from that
+IDE for every project; the ACP Client extension stays installed. A guided step is
+removed by hand: the line names where. Exit `0` when the command did what it asked,
+`1` when a file could not be read or written, `2` on a usage error.
 
 ### jazyk init
 

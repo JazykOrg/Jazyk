@@ -34,6 +34,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("", "the launcher: status, then pick a web UI, IDE, or coding agent to set up and start"),
         ("<choice> [--agent NAME]", "set up and start one launcher choice: vscode, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
         ("init [--mcp LIST] [--agent NAME] [--acp LIST]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
+        ("setup [ide] [--list] [--remove NAMES]", "check, add, or remove jazyk in IDEs and coding agents"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
@@ -149,6 +150,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--agent",
     "--acp",
     "--ide",
+    "--remove",
     "--only",
     "--project",
     "--goal",
@@ -167,6 +169,7 @@ const VALUE_OPTIONS: &[&str] = &[
 pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'static str])> {
     Some(match cmd {
         "init" => (Some(0), &["--mcp", "--acp"]),
+        "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
         "compile" => (None, &["--sessions", "--dirty"]),
         "sets" => (Some(2), &["--docs", "--source", "--roots", "--name", "--json"]),
@@ -231,6 +234,16 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
                 c, ch.name
             )
         }
+        "setup" => "usage: jazyk setup [ide] [--list] [--remove NAMES|all]\n\n\
+             Check, add, and remove jazyk in IDEs (the Jazyk agent) and coding agents\n\
+             (jazyk tools over MCP). With an IDE (e.g. idea), that IDE's agents;\n\
+             without one, everything installed. On a terminal it shows a checklist,\n\
+             ticked where jazyk is set up: tick to add, untick to remove.\n\n\
+             options:\n  \
+             --list           each agent's state (installed, stale, missing) and file\n  \
+             --remove NAMES   comma-separated setup names (claude, codex, ..., jazyk), or all\n\n\
+             exit: 0 when done, 1 when a file could not be written, 2 on a usage error"
+            .to_string(),
         "init" => "usage: jazyk init [--mcp LIST|all|none] [--agent NAME] [--acp LIST|all|none]\n\n\
              Initialize the current directory as a project root: write a minimal\n\
              jazyk.toml, scaffold docs/ (with a placeholder README.md) and\n\
@@ -634,6 +647,7 @@ pub fn run() {
                 // `--acp` names the editor during init; `--ide` is the same argument
                 // spelled for `acp install`. Mirrors docs/frontends/cli.md#jazyk-acp.
                 "--acp" | "--ide" => opts.acp_ide = Some(v),
+                "--remove" => opts.remove = Some(v),
                 "--only" => opts.only = Some(v),
                 "--project" => opts.project = Some(v),
                 "--goal" => opts.goal = Some(v),
@@ -751,7 +765,7 @@ pub fn run() {
         }
     }
 
-    if !["watch","query","init","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
+    if !["watch","query","init","setup","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
         let (proj,_,_)=cli::resolve(&[],&opts);
         if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
         if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
@@ -759,6 +773,7 @@ pub fn run() {
     let code = match cmd.as_str() {
         "sets" => cli::run_sets(&positional, &opts),
         "init" => cli::run_init(&opts),
+        "setup" => crate::setup::run(&positional, &opts),
         c if c != "gui" && crate::start::choice(c).is_some() => crate::start::run(&opts, Some(c)),
         "compile" => cli::run_compile(&positional, &opts),
         "check" => cli::run_check(&positional, &opts),

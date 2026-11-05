@@ -110,12 +110,15 @@ kind, the transport chosen from `initialize`). Chat needs `--ephemeral`,
 `--cancel-file`, `--edit-sink` and the `chat` toolset. Cloud and fresh GUI
 sessions have no file.
 
-One assembly path keeps the injected entry: `agent_context::servers(purpose,
-layers)` returns discovered servers (global, project, client; none for
-workers) plus the session-scoped jazyk serving, which replaces any discovered
-`jazyk` by name. The proxy, GUI chat and runner call it. The embedded agent
-connects whatever list it gets, gaining HTTP MCP and warnings for servers that
-fail to start.
+Discovery lives in the embedded agent, not in the clients that open sessions.
+External agents (Claude Code, Codex) already read their own configuration, so a
+client injecting discovered servers would hand them duplicates. The embedded
+agent connects the client's servers (all must connect), then adds discovered
+servers outside worker sessions: a client name wins, a discovered `jazyk` is
+dropped when the client supplied one, and a discovered server that fails,
+collides, or is untrusted is skipped with a warning. The embedded agent accepts
+HTTP entries but does not advertise MCP over HTTP, so jazyk's own sessions keep
+the stdio serving.
 
 ## Setup
 
@@ -141,11 +144,12 @@ Lifecycle:
 - Broken markers: leave the file alone and warn.
 - Atomic writes, line endings and everything outside the markers preserved,
   one stderr line.
-- `CLAUDE.md` and `GEMINI.md` shim: when the file exists and does not import
-  `AGENTS.md`, append a marked block holding `@AGENTS.md`. Skip a symlink to or
-  hard link of `AGENTS.md`.
-- Never compiler input: parsing strips any jazyk block, and a set whose `docs`
-  matches an agent instruction file gets a warning.
+- `CLAUDE.md`, `.claude/CLAUDE.md` and `GEMINI.md` shim: when the file exists
+  and does not import `AGENTS.md`, append a marked block holding the relative
+  import. Same lifecycle as the section. Skip a link to `AGENTS.md`. An
+  `AGENTS.md` that is itself a link is written through the link.
+- Never compiler input: agent instruction files are matched only by a literal
+  pattern, so `**/*.md` sets skip them.
 
 Content: orientation and pointers only, no workflow. It defers to the MCP
 server instructions and tool replies, never asks the user, and never tells an

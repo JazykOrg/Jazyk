@@ -221,7 +221,8 @@ carry that, and the section says they take precedence.
 
 Claude Code reads `AGENTS.md` only where no `CLAUDE.md` exists. When a project's
 `CLAUDE.md` (or `.claude/CLAUDE.md`, or `GEMINI.md`) exists and does not already
-import `AGENTS.md`, jazyk appends:
+import `AGENTS.md`, jazyk appends the import (`@../AGENTS.md` from
+`.claude/CLAUDE.md`):
 
 ```markdown
 <!-- JAZYK:BEGIN -->
@@ -233,6 +234,10 @@ import `AGENTS.md`, jazyk appends:
   counts, outside code.
 - A file that is a symbolic link to `AGENTS.md`, or the same file, is left alone.
 - No file is created: an agent that finds no `CLAUDE.md` reads `AGENTS.md`.
+- The import follows the section's lifecycle: it is appended on create and
+  refreshed on update, and deleting it opts that file out.
+- An `AGENTS.md` that is a link (e.g. to `CLAUDE.md`) is written through the
+  link, so it stays a link.
 - The same opt-outs apply.
 
 ### Not compiler input

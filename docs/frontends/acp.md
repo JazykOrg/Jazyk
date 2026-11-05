@@ -57,7 +57,11 @@ Some profiles are built in, so naming them is enough (`[acp] agent = "claude"`):
 
 The adapters are pinned to the versions whose steering contract the host knows
 ([steering](#steering-adapter-compatibility)). An `[acp.agents.<name>]` table in the
-project or the global config shadows the built-in profile of the same name.
+project or the global config shadows the built-in profile of the same name. A
+shadowed built-in is easy to forget (an old adapter, a forced model the account no
+longer serves), so the [launcher](./cli.md#jazyk), [`jazyk init`](./cli.md#jazyk-init),
+and `jazyk acp` at startup (on standard error, into the IDE's agent log) name the file
+whose table shadows it.
 
 ### Switching agents
 
@@ -568,7 +572,12 @@ the protocol on stdio; downstream it drives the configured agent. In between:
 - `initialize` passes through, recording the IDE's capabilities (file system support
   decides whether [doc edit delegation](#doc-edit-delegation) is available).
 - `session/new` gains the injected `jazyk mcp chat` entry in `mcpServers` before it
-  reaches the agent.
+  reaches the agent. A client-supplied server named `jazyk` (an IDE that forwards its
+  own MCP servers, e.g. a Zed `context_servers` entry from
+  [agent setup](./mcp.md#agent-setup)) is dropped first, so the session carries one
+  jazyk serving: the proxy's own, scoped to the session. The injected server keeps the
+  name `jazyk`, the name every agent setup entry uses, so an agent that merges session
+  servers over its configured ones by name replaces its configured entry with it.
 - Updates pass through verbatim. Jazyk decorates where it has something to add, and
   its own additions use namespaced tool call ids so they never collide with the
   agent's.
@@ -640,6 +649,8 @@ The clients jazyk writes config for:
   `args` and no kind.
 - `vscode`: the user `settings.json`, under `acp.agents`, read by the ACP Client
   extension (`formulahendry.acp-client`; VS Code hosts no agent of its own).
+- `cursor`: Cursor's user `settings.json`, under `acp.agents`, read by the same ACP
+  Client extension installed from Open VSX (Cursor hosts no ACP agent of its own).
 
 The clients jazyk prints a snippet for, because their config is a program (Neovim's
 Lua, Emacs' Lisp) or another application's private state (the Obsidian plugin's vault

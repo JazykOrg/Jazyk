@@ -166,6 +166,14 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     // An arbitrary folder can acquire its first document set through project tools.
     let in_project = true;
     let (mut proj, llm, mut out) = crate::cli::resolve(&[], opts);
+    // Stderr reaches the IDE's agent log; stdout carries the protocol.
+    for note in crate::acp::config::shadow_notes(
+        &proj.acp,
+        Some(&proj.root.join(crate::document_sets::CONFIG)),
+        &crate::project::load_global_acp(),
+    ) {
+        eprintln!("jazyk acp: {}", note);
+    }
     if opts.set.is_none() {
         if let Ok(workspace) = crate::document_sets::Workspace::load(&proj.root) {
             proj = workspace.files_project();
@@ -663,6 +671,10 @@ fn with_jazyk_serving(
     if !st.in_project() {
         return servers;
     }
+    // One jazyk serving per session: an IDE that forwards its own `jazyk` MCP entry
+    // (agent setup) would otherwise hand the agent an unscoped second one.
+    // Mirrors docs/frontends/acp.md#the-ide-proxy.
+    servers.retain(|s| mcp_server_name(s) != Some("jazyk"));
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
@@ -682,6 +694,17 @@ fn with_jazyk_serving(
         McpServerStdio::new("jazyk", exe).args(args),
     ));
     servers
+}
+
+fn mcp_server_name(server: &agent_client_protocol::schema::v1::McpServer) -> Option<&str> {
+    use agent_client_protocol::schema::v1::McpServer;
+    match server {
+        McpServer::Stdio(s) => Some(s.name.as_str()),
+        McpServer::Http(s) => Some(s.name.as_str()),
+        McpServer::Sse(s) => Some(s.name.as_str()),
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
 }
 
 // Mirrors docs/frontends/acp.md#slash-commands.

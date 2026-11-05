@@ -105,7 +105,13 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
                 return 0;
             }
             let groups = menu_groups();
-            let Some((g, r)) = crate::menu::pick(&groups, (0, 0)) else {
+            // The cursor starts on the first installed IDE: the usual pick.
+            let first = groups
+                .iter()
+                .position(|g| g.rows.iter().any(|r| choice(&r.key).is_some_and(|c| c.kind == Kind::Ide)))
+                .map(|g| (g, 0))
+                .unwrap_or((0, 0));
+            let Some((g, r)) = crate::menu::pick(&groups, first) else {
                 return 0;
             };
             groups[g].rows[r].key.clone()
@@ -132,17 +138,45 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
         eprintln!("jazyk: {}", e);
         return 1;
     }
-    if choice.kind == Kind::Ide && choice.id != "cursor" {
-        match choose_agent(&root, opts, tty) {
-            Ok(true) => {}
-            Ok(false) => return 0,
-            Err(e) => {
-                eprintln!("jazyk: {}", e);
-                return 1;
+    match crate::setup::host_of(choice.id) {
+        Some(host) => ide_flow(choice, host, &root, opts, tty),
+        None => start(choice, &root),
+    }
+}
+
+// An IDE choice: the agents checklist, the driver, then the IDE and the summary.
+// Mirrors docs/frontends/cli.md#ide-agents.
+fn ide_flow(choice: &Choice, host: &'static str, root: &Path, opts: &Options, tty: bool) -> i32 {
+    let machine = crate::setup::Machine::scan();
+    let items = crate::setup::items(&machine, Some(host));
+    let heading = format!("Set up jazyk for which agents in {}?", choice.name);
+    let Some(picked) = crate::setup::choose(&items, &heading, tty, true) else {
+        return 0;
+    };
+    crate::setup::warn_if_absolute();
+    let mut outcomes = Vec::new();
+    for item in &picked {
+        if let crate::setup::Item::Jazyk(_) = item {
+            match choose_agent(root, opts, tty) {
+                Ok(true) => {}
+                Ok(false) => return 0,
+                Err(e) => {
+                    eprintln!("jazyk: {}", e);
+                    return 1;
+                }
             }
         }
+        outcomes.push(crate::setup::apply(item, root, tty, false));
     }
-    start(choice, &root)
+    let code = start(choice, root);
+    if code == 0 {
+        println!("\njazyk: started {} on {}", choice.name, root.display());
+        if outcomes.is_empty() {
+            println!("  nothing was set up");
+        }
+        crate::setup::print_summary(&outcomes);
+    }
+    code
 }
 
 // The menu: one group per kind, a row per choice, `not installed` beside a program
@@ -154,18 +188,15 @@ fn menu_groups() -> Vec<crate::menu::Group> {
             heading: heading.to_string(),
             rows: CHOICES
                 .iter()
-                .filter(|c| c.kind == *kind)
+                .filter(|c| c.kind == *kind && program(c.id, Path::new(".")).is_some())
                 .map(|c| crate::menu::Row {
                     key: c.id.to_string(),
                     name: c.name.to_string(),
-                    note: if program(c.id, Path::new(".")).is_some() {
-                        String::new()
-                    } else {
-                        "not installed".to_string()
-                    },
+                    note: String::new(),
                 })
                 .collect(),
         })
+        .filter(|g: &crate::menu::Group| !g.rows.is_empty())
         .collect()
 }
 
@@ -192,8 +223,33 @@ fn runs(id: &str) -> String {
     }
 }
 
-fn is_jetbrains(id: &str) -> bool {
+pub fn is_jetbrains(id: &str) -> bool {
     JETBRAINS.iter().any(|(s, _)| *s == id)
+}
+
+// An application bundle name of a JetBrains IDE.
+pub fn is_jetbrains_app(name: &str) -> bool {
+    JETBRAINS.iter().any(|(_, prefixes)| prefixes.iter().any(|p| name.starts_with(p)))
+}
+
+// Whether an ACP host family has an installed, startable IDE.
+pub fn host_installed(host: &str) -> bool {
+    let here = Path::new(".");
+    match host {
+        "jetbrains" => JETBRAINS.iter().any(|(id, _)| program(id, here).is_some()),
+        h => program(h, here).is_some(),
+    }
+}
+
+// The Jazyk agent in one host: the ACP registration, and for VS Code and Cursor the
+// ACP Client extension that hosts it. Mirrors docs/frontends/acp.md#registration.
+pub fn setup_jazyk_agent(host: &str) -> Result<(), String> {
+    acp_register(host)?;
+    match host {
+        "vscode" => extension("code", "formulahendry.acp-client", None),
+        "cursor" => extension("cursor", "formulahendry.acp-client", None),
+        _ => Ok(()),
+    }
 }
 
 // `jazyk.toml` and `.jazyk/`, what `jazyk init` writes, without its questions. Never
@@ -218,17 +274,10 @@ fn init_here(cwd: &Path) -> Result<(), String> {
 pub fn setup(choice: &Choice, root: &Path, _opts: &Options, _tty: bool) -> Result<(), String> {
     match choice.id {
         "gui" => Ok(()),
-        "vscode" => {
-            acp_register("vscode")?;
-            extension("code", "formulahendry.acp-client", None)?;
-            jazyk_extension("code")
-        }
-        "cursor" => {
-            setup_mcp(root, "cursor")?;
-            jazyk_extension("cursor")
-        }
-        "zed" => acp_register("zed"),
-        id if is_jetbrains(id) => acp_register("jetbrains"),
+        "vscode" => jazyk_extension("code"),
+        "cursor" => jazyk_extension("cursor"),
+        "zed" => Ok(()),
+        id if is_jetbrains(id) => Ok(()),
         id => setup_mcp(root, id),
     }
 }
@@ -249,6 +298,14 @@ pub fn setup_mcp(root: &Path, id: &str) -> Result<(), String> {
         "cursor" => (".cursor/mcp.json".into(), "mcpServers", stdio),
         "gemini" => (".gemini/settings.json".into(), "mcpServers", stdio),
         "pi" => (".pi/mcp.json".into(), "mcpServers", stdio),
+        "junie" => (".junie/mcp/mcp.json".into(), "mcpServers", stdio),
+        "roo" => (".roo/mcp.json".into(), "mcpServers", stdio),
+        "zed" => (".zed/settings.json".into(), "context_servers", stdio),
+        "copilot" => (
+            ".vscode/mcp.json".into(),
+            "servers",
+            json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]}),
+        ),
         "droid" => (
             ".factory/mcp.json".into(),
             "mcpServers",
@@ -448,12 +505,27 @@ fn newest_vsix() -> Option<(PathBuf, String)> {
 // Mirrors docs/frontends/cli.md#jazyk.
 fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> {
     let proj = crate::project::Project::load(root);
+    for note in crate::acp::config::shadow_notes(
+        &proj.acp,
+        Some(&root.join(crate::document_sets::CONFIG)),
+        &crate::project::load_global_acp(),
+    ) {
+        eprintln!("jazyk: {}", note);
+    }
     let name = match opts.agent.as_deref() {
         Some(name) => name.to_string(),
         None if proj.acp.agent.is_some() || !tty => return Ok(true),
         None => {
+            // Only agents that can run: a built-in whose program is missing is left out.
+            let agents: Vec<(String, String)> = crate::acp::commands::known_agents(&proj)
+                .into_iter()
+                .filter(|(name, _)| agent_note(name).is_empty())
+                .collect();
+            if agents.len() == 1 {
+                println!("jazyk: the Jazyk agent drives {}, the only agent found", agents[0].1);
+                return record_agent(root, &proj, &agents[0].0).map(|_| true);
+            }
             println!("\nWhich coding agent should the Jazyk agent drive? `/agent` in the IDE's chat switches it later.");
-            let agents = crate::acp::commands::known_agents(&proj);
             let group = crate::menu::Group {
                 heading: "Agents".into(),
                 rows: agents
@@ -471,6 +543,12 @@ fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> 
             agents[r].0.clone()
         }
     };
+    record_agent(root, &proj, &name).map(|_| true)
+}
+
+// Record the driver in `[acp] agent`, after checking it resolves.
+fn record_agent(root: &Path, proj: &crate::project::Project, name: &str) -> Result<(), String> {
+    let name = name.to_string();
     crate::acp::config::resolve_acp(
         Some(&name),
         &proj.acp,
@@ -485,7 +563,7 @@ fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> 
             .map_err(|(_, e)| format!("cannot write {}: {}", path.display(), e))?;
         println!("jazyk: the Jazyk agent drives {} ([acp] agent in {})", name, path.display());
     }
-    Ok(true)
+    Ok(())
 }
 
 // `not installed` beside a built-in agent whose program is missing.
@@ -598,7 +676,7 @@ mod tests {
         let cmd = spawn_command();
         std::fs::create_dir_all(dir.join(".codex")).unwrap();
         std::fs::write(dir.join(".codex/config.toml"), "# mine\nmodel = \"o3\"\n\n[mcp_servers.other]\ncommand = \"x\"\n").unwrap();
-        for id in ["claude", "codex", "cursor", "gemini", "pi", "droid", "opencode"] {
+        for id in ["claude", "codex", "cursor", "gemini", "pi", "droid", "opencode", "copilot", "zed", "junie", "roo"] {
             setup_mcp(&dir, id).unwrap();
         }
         let codex = std::fs::read_to_string(dir.join(".codex/config.toml")).unwrap();
@@ -614,6 +692,13 @@ mod tests {
         assert_eq!(read(dir.join(".gemini/settings.json"))["mcpServers"]["jazyk"], stdio);
         assert_eq!(read(dir.join(".pi/mcp.json"))["mcpServers"]["jazyk"], stdio);
         assert_eq!(read(dir.join(".factory/mcp.json"))["mcpServers"]["jazyk"]["type"], "stdio");
+        assert_eq!(
+            read(dir.join(".vscode/mcp.json"))["servers"]["jazyk"],
+            json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]})
+        );
+        assert_eq!(read(dir.join(".zed/settings.json"))["context_servers"]["jazyk"], stdio);
+        assert_eq!(read(dir.join(".junie/mcp/mcp.json"))["mcpServers"]["jazyk"], stdio);
+        assert_eq!(read(dir.join(".roo/mcp.json"))["mcpServers"]["jazyk"], stdio);
         assert_eq!(
             read(dir.join("opencode.json"))["mcp"]["jazyk"],
             json!({"type": "local", "command": [cmd, "mcp", "all"], "enabled": true})

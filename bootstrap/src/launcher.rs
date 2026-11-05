@@ -33,7 +33,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("start here", &[
         ("", "the launcher: status, then pick a web UI, IDE, or coding agent to set up and start"),
         ("<choice> [--agent NAME]", "set up and start one launcher choice: vscode, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
-        ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
+        ("init [--mcp LIST] [--agent NAME] [--acp LIST]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
@@ -231,17 +231,21 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
                 c, ch.name
             )
         }
-        "init" => "usage: jazyk init [--mcp claude|codex|gemini|opencode|pi|droid|cursor|none] [--agent NAME] [--acp IDE]\n\n\
+        "init" => "usage: jazyk init [--mcp LIST|all|none] [--agent NAME] [--acp LIST|all|none]\n\n\
              Initialize the current directory as a project root: write a minimal\n\
              jazyk.toml, scaffold docs/ (with a placeholder README.md) and\n\
-             deliverable/, and offer MCP integration, the agent choice, and ACP\n\
-             registration. Existing files are merged or left unchanged with a\n\
+             deliverable/, and offer agent setup (one checklist of every detected\n\
+             coding agent and every installed IDE's Jazyk agent) and the agent\n\
+             choice. Existing files are merged or left unchanged with a\n\
              warning, never overwritten. Each flag skips its prompt; a\n\
              non-interactive stdin skips or defaults the rest.\n\n\
              options:\n  \
-             --mcp AGENT    the coding agent whose MCP config gains a jazyk entry (or none)\n  \
+             --mcp LIST     comma-separated agents whose MCP config gains a jazyk entry\n                 \
+                (claude, codex, gemini, opencode, pi, droid, cursor, copilot, zed,\n                 \
+                junie, roo, copilot-cli, ai-assistant, cline), all, or none\n  \
              --agent NAME   the ACP agent that does the AI work (embedded, claude, codex, opencode, none)\n  \
-             --acp IDE      the ACP client to register jazyk with (or none)\n\n\
+             --acp LIST     comma-separated ACP clients to register the Jazyk agent with\n                 \
+                (vscode, cursor, zed, jetbrains, neovim, ...), all, or none\n\n\
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(

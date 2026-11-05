@@ -108,6 +108,36 @@ pub const BUILTIN_AGENTS: &[(&str, &str, &str, &[&str], &[(&str, &str)])] = &[
     ("opencode", "OpenCode", "opencode", &["acp"], &[]),
 ];
 
+// Built-in profiles an `[acp.agents.<name>]` table replaces, one line each naming the
+// file that does it. A stale override (an old adapter, a forced model) is invisible
+// otherwise. Mirrors docs/frontends/acp.md#agents.
+pub fn shadow_notes(
+    project: &crate::project::AcpSettings,
+    project_file: Option<&std::path::Path>,
+    global: &crate::project::AcpSettings,
+) -> Vec<String> {
+    let global_file = crate::sys::env_var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".jazyk/config.toml").display().to_string())
+        .unwrap_or_else(|_| "the global config".to_string());
+    let mut out = Vec::new();
+    for (name, ..) in BUILTIN_AGENTS.iter().filter(|a| a.0 != EMBEDDED) {
+        let file = if project.agents.contains_key(*name) {
+            project_file
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "the project's jazyk.toml".to_string())
+        } else if global.agents.contains_key(*name) {
+            global_file.clone()
+        } else {
+            continue;
+        };
+        out.push(format!(
+            "note: [acp.agents.{}] in {} replaces the built-in `{}` profile; remove it to use the built-in one",
+            name, file, name
+        ));
+    }
+    out
+}
+
 // A built-in profile by name. Mirrors docs/frontends/acp.md#agents.
 pub fn builtin_profile(name: &str) -> Option<ResolvedAgent> {
     if name == EMBEDDED {
@@ -182,6 +212,22 @@ pub fn idle_timeout() -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
+
+    // A table named after a built-in is reported with its file; others are not.
+    #[test]
+    fn shadowed_builtins_name_their_file() {
+        let mut project = crate::project::AcpSettings::default();
+        let mut global = crate::project::AcpSettings::default();
+        let profile = |cmd: &str| crate::project::AcpAgentProfile { command: cmd.into(), ..Default::default() };
+        global.agents.insert("codex".into(), profile("npx"));
+        global.agents.insert("mine".into(), profile("x"));
+        project.agents.insert("claude".into(), profile("npx"));
+        let notes = shadow_notes(&project, Some(std::path::Path::new("/p/jazyk.toml")), &global);
+        assert_eq!(notes.len(), 2, "{:?}", notes);
+        assert!(notes[0].contains("[acp.agents.claude] in /p/jazyk.toml"));
+        assert!(notes[1].contains("[acp.agents.codex]") && notes[1].contains(".jazyk/config.toml"));
+    }
+
     use super::*;
     use crate::project::AcpAgentProfile;
     use std::collections::BTreeMap;

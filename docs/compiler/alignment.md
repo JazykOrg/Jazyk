@@ -163,3 +163,10 @@ commits; a parked `place-anchors` goal parks the document's ingest with it. A bu
 no proposals derives no `place-anchors` goal, so a no-op rebuild still makes zero LLM
 calls. The store never reaps an anchor named by a pending proposal:
 [garbage collection](./graph.md#garbage-collection) waits for the decision.
+
+## Opaque inputs
+
+A blob participates in change detection by its envelope hash and stable file
+reference. Alignment never searches its generated context as a quote home or
+matches its contents as prose. A referring sentence remains anchored in its
+authored document even when repeated in an input envelope.

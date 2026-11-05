@@ -157,6 +157,7 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
 // sees.
 pub fn doc_baseline(store: &Store, rel: &str) -> Option<Value> {
     let rec = store.docs.get(rel)?;
+    if rec.sections.values().any(|s| s.kind == "blob") { return None; }
     let mut secs: Vec<_> = rec.sections.values().collect();
     secs.sort_by_key(|s| s.lines[0]);
     let mut parts: Vec<&str> = Vec::new();
@@ -168,7 +169,7 @@ pub fn doc_baseline(store: &Store, rel: &str) -> Option<Value> {
         expected = s.lines[1];
     }
     let text = parts.join("\n");
-    Some(json!({ "path": rel, "text": text, "hash": rec.content_hash }))
+    Some(json!({ "path": rel, "hash": crate::model::hash_hex(&text), "text": text }))
 }
 
 pub enum DocWrite {

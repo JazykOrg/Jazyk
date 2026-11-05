@@ -2,7 +2,8 @@
 
 Parsing turns a source document into a section tree. It is deterministic, format-specific
 code. No LLM is involved. Parsing is the only stage that reads source files; everything
-downstream works on sections in the [graph store](./graph.md#storage-layout).
+downstream works on sections in the [graph store](./graph.md#storage-layout),
+including whole-file envelopes for opaque inputs.
 
 ## Format handlers
 
@@ -11,32 +12,37 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 - Plain text (`.txt`) is built in and read by the Markdown handler. Plain prose parses
   as paragraphs; a line that happens to look like Markdown reads as Markdown.
 - Native builds also read [DOCX and PDF](./binary-documents.md), within the documented
-  extraction profile. The browser-only engine currently reads Markdown.
+  extraction profile. The browser-only engine projects Markdown and plain text.
+  Other files compile as opaque inputs.
 - Custom handlers per project are planned. The
   configuration format is specified in
   [project settings](./project-settings.md).
-- A handler claims a file by its extension. A file matched by the docs glob that no
-  handler claims yields an `unsupported-format` diagnostic on the document and is not
-  parsed; it contributes no sections and is absent from the parse like a deleted
-  document. A file its handler cannot read (not valid UTF-8, or unreadable) yields
-  `parse-error` on the document. An unreadable file that has a stored record keeps it:
-  the build sees the document unchanged and ingests the new text once the file reads
-  again, so a read that fails for a moment (an editor mid-save, a lock on a network
-  drive) never removes a document's facts. An unreadable file never seen before
-  contributes nothing. Both diagnostics are filed by the
-  [deterministic checks](./compilation.md#checks) at the end of every build, on the
-  document path, and resolve when the condition clears (the file reads again, gains a
-  handler, or leaves the glob). A no-op rebuild re-files nothing. An empty file yields
-  `empty-file` the same way: with no sections there is nothing for parsing to attach a
-  diagnostic to.
-
-Compile approvals and downstream readiness use the same format eligibility as
-parsing. A readable asset matched by a broad docs glob does not become a document
-because its bytes are UTF-8. Unsupported files remain warnings, outside the document
-hash inventory. A supported file that cannot be read stays in the inventory as
-unreadable. It cannot match a stored content hash, including when parsing retains
-its previous section tree. A new unreadable document also blocks downstream work.
-The file must read successfully before the graph can be current with its input.
+- Every selected file is a whole-file input. The inventory hashes its original
+  bytes. A handler may project those bytes into sections. A file without a handler
+  compiles as one opaque `blob` section at `/`, including formats that happen to be
+  valid UTF-8. Its contents are never decoded as prose.
+- A blob section carries a compiler-generated envelope: project-relative path,
+  byte size, SHA-256, and incoming references with their surrounding document
+  sections. The envelope is context, never quoted source. Requirements about the
+  file quote the referring document. No fact may quote the envelope.
+- `reconcile-section` compiles the whole blob. The model decides its role from the
+  referring documents and existing facts. A covered mark names requirements that
+  reference the input. An input with no stated obligation may be non-normative
+  with a specific justification. An unknown format alone is not a warning.
+- Byte changes reopen compilation. Changes to a referring section also reopen
+  blob compilation. The blob follows its referring documents in ingest order.
+  Unchanged inputs derive no new work. Selected input bytes participate in compile
+  approvals and downstream readiness, even when no requirement references them.
+- A handler failure or unreadable input yields `parse-error`. A previously stored
+  input keeps its last section tree while unreadable. A new unreadable input
+  contributes no sections. Neither may pass downstream readiness. The diagnostic
+  resolves when the input is readable again or leaves the selection.
+- Text projection hashes remain section hashes. Whole-file inventory hashes
+  identify original bytes. UTF-8 prose retains its existing SipHash identity. DOCX and PDF use SHA-256 of their original package
+  bytes, including formatting changes. Blob inventory revisions hash their envelope
+  so referring context also invalidates compilation. `sha256` in that envelope
+  identifies the exact original bytes. An empty prose document yields `empty-file`;
+  an empty blob still requires a decision.
 
 ## Section tree
 

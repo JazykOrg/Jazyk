@@ -562,7 +562,12 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         let execution = crate::hosted::Execution { transport_async: Some(Arc::new(move |body| {
-            assert_eq!(observed.fetch_add(1, Ordering::Relaxed), 0, "unexpected extra model request: {body}");
+            let round = observed.fetch_add(1, Ordering::Relaxed);
+            let request = serde_json::from_str(&body).unwrap();
+            if let Some(reply) = crate::input::scripted_blob_reply(&request, None) {
+                return Box::pin(async move { Ok(reply.to_string()) });
+            }
+            assert_eq!(round, 2, "unexpected extra model request: {body}");
             let actions = [
                 ("begin_generation", json!({"entity":"ent:site"})),
                 ("write_text_file", json!({"path":"src/site.md","content":"# Site\n\nItem 1 is visible.\n"})),
@@ -580,11 +585,11 @@ mod tests {
         assert_eq!(result["report"]["state"], "done", "{result}");
         assert_eq!(result["report"]["steps"].as_array().unwrap().len(), 2);
         assert!(result["report"]["steps"][0]["result"]["verdict"].as_str().unwrap().starts_with("converged"));
-        assert_eq!(result["report"]["steps"][0]["result"]["sessions"], 0);
-        assert_eq!(result["report"]["steps"][0]["result"]["warnings"], 2,
-            "Unsupported assets keep their warnings without blocking generation freshness");
+        assert_eq!(result["report"]["steps"][0]["result"]["sessions"], 2);
+        assert_eq!(result["report"]["steps"][0]["result"]["warnings"], 0,
+            "Opaque inputs compile with justified decisions rather than unsupported-format warnings");
         assert_eq!(result["report"]["steps"][1]["result"]["regenerated"], 1);
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
         assert_eq!(files["src/site.md"], b"# Site\n\nItem 1 is visible.\n");
         let _fs = crate::vfs::Scope::enter(&files);
         let ledger = gen::Ledger::load(Path::new("/project/.jazyk/ds_main"));

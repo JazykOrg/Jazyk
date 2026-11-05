@@ -89,15 +89,14 @@ folder names.
 
 - Exact file paths and globs can be mixed. `!` excludes. Later matches override
   earlier matches, as in current docs matching. Matches are deduplicated.
-- The folder picker expands a documents folder to supported Markdown globs, and a
-  source folder to `path/**`. An advanced editor exposes the actual patterns and
-  exclusions. A literal path picker escapes glob metacharacters.
+- The folder picker expands both document and source folders to `path/**`.
+  Document folders include opaque files as whole-file inputs. An advanced editor
+  exposes the actual patterns and exclusions. A literal path picker escapes glob metacharacters.
 - Normalize paths relative to the project. Reject absolute paths, traversal outside
   it, and symlinks escaping it. External folders require a later mount contract;
   choosing a common parent project is the initial way to include sibling folders.
 - Compiler state, archives, `.git`, build caches, and existing mandatory exclusions
-  remain ineligible. An explicit unsupported doc file gets a format error, never a
-  successful compile with zero content. Config is a project file, not doc input.
+  remain ineligible. A selected file with no text handler compiles as an opaque whole-file input. Config is a project file, not doc input.
 - Source can include the `.github` subtree and `.gitignore` files, including under
   a selected source folder. These paths appear in file inventories and generation
   file tools. They still need a source selection and cannot overwrite any set's

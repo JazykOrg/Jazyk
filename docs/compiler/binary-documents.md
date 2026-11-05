@@ -38,10 +38,10 @@ annotations are a viewer concern.
 
 ## Hashing
 
-The compiler hashes the extracted text for dirtiness, alignment, release gates,
-and document status. File saves use a SHA-256 revision of the original bytes.
-Formatting changes therefore invalidate an editor's save revision without forcing
-semantic reconciliation when the extracted prose is unchanged.
+The compiler hashes original bytes for input dirtiness, release gates, and document
+status. File saves use the same SHA-256 revision. Extracted section hashes drive
+alignment. Formatting-only changes update the input inventory without forcing
+semantic reconciliation when the extracted sections are unchanged.
 
 ## Native PDF runtime
 

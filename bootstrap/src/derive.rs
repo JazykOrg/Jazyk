@@ -116,6 +116,7 @@ pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usiz
     for (doc, rec) in &store.docs {
         let mut targets: Vec<String> = Vec::new();
         for sec in rec.sections.values() {
+            if sec.kind == "blob" { continue; }
             for l in md::doc_links(&sec.raw, doc) {
                 if store.docs.contains_key(&l) && !targets.contains(&l) {
                     targets.push(l);

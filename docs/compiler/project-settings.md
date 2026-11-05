@@ -59,7 +59,7 @@ to the containing project in `.jazyk/jazyk.toml`.
 a set's `docs` is an ordered list of glob patterns selecting the documentation files. A
 pattern starting with `!` excludes. Later patterns override earlier ones: a file is
 included when the last pattern to match it is an inclusion. A matched file with no
-[format handler](./parsing.md#format-handlers) yields an `unsupported-format` diagnostic.
+[format handler](./parsing.md#format-handlers) compiles as an opaque whole-file input.
 
 ```toml
 [[sets]]

@@ -2117,6 +2117,13 @@ impl ToolSession {
                 if state != "covered" {
                     continue;
                 }
+                if crate::input::is_blob(&self.snapshot, doc, section) {
+                    if let Some(v) = crate::goals::kind("reconcile-section").expect("registered kind")
+                        .gates(&self.snapshot, &self.staged).into_iter().next() {
+                        return Some(ToolError::new(&v.rule, v.message));
+                    }
+                    continue;
+                }
                 // A test-case or examples section is covered by the criterion sourced
                 // from it (docs/compiler/goals/reconcile-section.md#gate).
                 let crit_at = |s: &Option<SourceRef>| {

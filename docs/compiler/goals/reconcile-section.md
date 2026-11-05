@@ -319,3 +319,14 @@ changed and the session revises it with the new `statement` and `quote`; the fac
 gone and the session deletes it. A revised statement opens `rejudge-pair` goals at
 commit, and a deleted one opens `retrace` goals on what pointed at it; the tool reply
 previews both ([bubbling](../reconciler.md#bubbling)).
+
+## Whole-file inputs
+
+An opaque input has one `blob` section at `/`. Its envelope contains byte identity
+and incoming document context. The session decides its role as a whole file.
+`covered` requires an existing or staged requirement whose quoted reference names that input,
+and a coverage note naming the requirement ID. The envelope cannot source a quote.
+The blob follows prose documents in ingest order and waits for referring documents. Its coverage is invalidated when its bytes
+or referring section context changes. A `non-normative` mark requires a specific
+reason and is rejected while a requirement references the input. Delivery remains
+[referenced-asset generation](../../consumers/gen.md#referenced-assets).

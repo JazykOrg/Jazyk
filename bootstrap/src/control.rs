@@ -137,24 +137,11 @@ pub fn consume_decompile(proj: &Project, out: &Path, scope: &str) {
     c.save(out);
 }
 
-// The current content hash of every supported document, the compile approval unit.
-// Read failures stay present with a non-hash marker so a missing or retained tree
-// cannot make unreadable current input ready. Mirrors parsing.md#format-handlers.
+// Current whole-file revisions, including opaque inputs and unreadable markers.
 pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
-    proj.doc_files()
-        .iter()
-        .filter(|f| crate::md::supported_format(f))
-        .map(|f| {
-            let rel = f
-                .strip_prefix(&proj.root)
-                .map(|r| r.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| f.to_string_lossy().to_string());
-            let hash = crate::md::read_doc(f)
-                .map(|t| crate::model::hash_hex(&t))
-                .unwrap_or_else(|_| "unreadable".into());
-            (rel, hash)
-        })
-        .collect()
+    crate::input::scan(proj).into_iter().map(|(path, input)| {
+        (path, input.map(|(hash, _)| hash).unwrap_or_else(|_| "unreadable".into()))
+    }).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +529,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn document_hash_inventory_uses_the_same_handlers_as_parsing() {
+    fn document_hash_inventory_includes_opaque_inputs() {
         let _fs = crate::vfs::Scope::enter(&BTreeMap::from([
             (".jazyk/jazyk.toml".into(), b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['**']\n".to_vec()),
             ("main.md".into(), b"# Site\n\nA site.\n".to_vec()),
@@ -559,14 +546,11 @@ mod tests {
             .map(|(path, (hash, _))| (path, hash)).collect();
         assert_eq!(hashes, parsed_hashes);
         assert_eq!(hashes.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["example.txt", "main.md", "notes.MARKDOWN"]);
+            vec!["example.json", "example.txt", "logo.svg", "main.md", "notes.MARKDOWN"]);
         release(&project, &project.out, Some("compile"));
         assert_eq!(Control::load(&project, &project.out).released.compile, hashes);
         let findings = crate::reconcile::checks(&crate::store::Store::default(), &project);
-        for path in ["example.json", "logo.svg"] {
-            assert!(findings.iter().any(|finding| finding.0 == "unsupported-format"
-                && finding.2 == "warning" && finding.1 == [path]), "{path}");
-        }
+        assert!(!findings.iter().any(|finding| finding.0 == "unsupported-format"));
     }
 
     #[test]

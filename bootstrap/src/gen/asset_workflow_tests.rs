@@ -40,7 +40,8 @@ fn project() -> crate::project::Project {
 fn cover(store: &mut Store) {
     store.status.changes.clear();
     for record in store.docs.values_mut() {
-        for section in record.sections.keys() {
+        for (section, body) in &record.sections {
+            if body.kind == "blob" { continue; }
             record.coverage.insert(
                 section.clone(),
                 Coverage {
@@ -168,6 +169,8 @@ fn reanchor(files: &Snapshot, quote: &str, extra: &[(&str, &[u8])]) -> Snapshot 
         requirement.statement, SITE,
         "Only the verbatim provenance changes"
     );
+    // The fixture directly re-anchors the fact above, settling its old proposal.
+    store.status.alignment.clear();
     cover(&mut store);
     crate::derive::record_ledger_stale(&mut store, &GenSettings::resolve(&project));
     store.save();
@@ -199,7 +202,7 @@ fn footer_row(files: &Snapshot) -> Value {
     serde_json::to_value(&Ledger::load(&project().out).entities["footer"]).unwrap()
 }
 
-fn workflow(files: Snapshot, execution: &Execution) -> (Value, Snapshot) {
+fn workflow(files: Snapshot, execution: &Execution, compile_sessions: u64) -> (Value, Snapshot) {
     let mut workspace = crate::hosted::Workspace::new(files).unwrap();
     let reply = workspace
         .request(
@@ -215,7 +218,7 @@ fn workflow(files: Snapshot, execution: &Execution) -> (Value, Snapshot) {
     assert_eq!(reply.status, 200, "{result}");
     assert_eq!(result["report"]["state"], "done", "{result}");
     assert_eq!(
-        result["report"]["steps"][0]["result"]["sessions"], 0,
+        result["report"]["steps"][0]["result"]["sessions"], compile_sessions,
         "{result}"
     );
     (result, workspace.snapshot())
@@ -260,12 +263,17 @@ fn previous_tool(request: &Value, key: &str) -> Value {
 fn logo_model(expected: &'static str) -> (Execution, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = calls.clone();
+    let generation_round = AtomicUsize::new(0);
     let hash = Mutex::new(String::new());
     let execution = Execution {
         model: "scripted-supplied-logo".into(),
         transport_async: Some(Arc::new(move |body| {
             let request: Value = serde_json::from_str(&body).unwrap();
-            let round = seen.fetch_add(1, Ordering::SeqCst) + 1;
+            seen.fetch_add(1, Ordering::SeqCst);
+            if let Some(reply) = crate::input::scripted_blob_reply(&request, Some("req:site")) {
+                return Box::pin(async move { Ok(reply.to_string()) });
+            }
+            let round = generation_round.fetch_add(1, Ordering::SeqCst) + 1;
             let (tool, args) = match round {
                 1 => ("begin_generation", json!({"entity":"ent:site"})),
                 2 => {
@@ -335,9 +343,9 @@ fn uploaded_logo_survives_real_gdk_workflow_noop_and_same_path_replacement() {
     assert_ne!(package(&changed)["factHash"], original_hash);
     assert_eq!(pending_ids(&changed), ["ent:site"]);
     let (execution, calls) = logo_model(SVG_A);
-    let (report, generated) = workflow(changed, &execution);
+    let (report, generated) = workflow(changed, &execution, 1);
     assert_eq!(report["report"]["steps"][1]["result"]["regenerated"], 1);
-    assert_eq!(calls.load(Ordering::SeqCst), 6);
+    assert_eq!(calls.load(Ordering::SeqCst), 7);
     assert_eq!(generated["src/logo.svg"], SVG_A.as_bytes());
     assert_eq!(generated["docs/assets/logo.svg"], SVG_A.as_bytes());
     assert!(String::from_utf8_lossy(&generated["src/site.html"]).contains("src=\"logo.svg\""));
@@ -354,7 +362,7 @@ fn uploaded_logo_survives_real_gdk_workflow_noop_and_same_path_replacement() {
         })),
         ..Default::default()
     };
-    let (report, unchanged) = workflow(generated.clone(), &noop);
+    let (report, unchanged) = workflow(generated.clone(), &noop, 0);
     assert_eq!(report["report"]["steps"][1]["result"]["regenerated"], 0);
     assert_eq!(no_calls.load(Ordering::SeqCst), 0);
     assert_eq!(unchanged["src/logo.svg"], SVG_A.as_bytes());
@@ -367,9 +375,9 @@ fn uploaded_logo_survives_real_gdk_workflow_noop_and_same_path_replacement() {
     );
     assert_eq!(pending_ids(&replaced), ["ent:site"]);
     let (execution, calls) = logo_model(SVG_B);
-    let (report, final_files) = workflow(replaced, &execution);
+    let (report, final_files) = workflow(replaced, &execution, 1);
     assert_eq!(report["report"]["steps"][1]["result"]["regenerated"], 1);
-    assert_eq!(calls.load(Ordering::SeqCst), 6);
+    assert_eq!(calls.load(Ordering::SeqCst), 7);
     assert_eq!(final_files["src/logo.svg"], SVG_B.as_bytes());
     assert_eq!(final_files["src/footer.html"], original["src/footer.html"]);
     assert_eq!(footer_row(&final_files), footer);

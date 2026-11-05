@@ -340,6 +340,7 @@ pub fn owning_section(store: &Store, doc: &str, sec: &str) -> String {
 }
 
 pub fn section_has_body(sec: &Section) -> bool {
+    if sec.kind == "blob" { return true; }
     if sec.kind == "code-block" {
         return false;
     }
@@ -1308,6 +1309,10 @@ impl GoalKind for ReconcileSection {
             }
             hints.push(lines.known.clone());
             hints.push(format!("load {}", full));
+            if sec.kind == "blob" {
+                hints.push("Whole-file input: envelope metadata is not prose. Never quote it. Reconcile its role against incoming document context; a covered note names linked requirement IDs.".into());
+                hints.push(format!("linked requirements: {}", crate::input::requirement_links(store, &doc).into_iter().collect::<Vec<_>>().join(", ")));
+            }
             if sec.kind == "code" {
                 hints.push(format!(
                     "code block: {} lines; coverage needs a requirement per behavioral step",
@@ -1333,6 +1338,15 @@ impl GoalKind for ReconcileSection {
                 "alignment pending: g:place-anchors:{} decides the anchors first",
                 doc
             ));
+        }
+        if let Some(section) = board.blob_inputs.get(&doc) {
+            for referring in section {
+                if board.goals.iter().any(|g| g.kind == "reconcile-section"
+                    && crate::model::split_section_ref(&g.target).is_some_and(|(d, _)| &d == referring)
+                    && board.open(&g.id)) {
+                    return Ready::Blocked(format!("referring document {referring} reconciles before its whole-file input"));
+                }
+            }
         }
         if let Some(level) = board.level_waiting(&doc) {
             return Ready::Blocked(format!("level {} documents reconcile first", level));
@@ -1404,6 +1418,20 @@ impl GoalKind for ReconcileSection {
                     state,
                     note,
                 } => {
+                    if crate::input::is_blob(store, doc, section) {
+                        let linked = crate::input::staged_requirement_links(store, doc, staged);
+                        let note = note.as_deref().unwrap_or("");
+                        if note.trim().is_empty() {
+                            out.push(Violation::new("note-required", format!("{doc}#{section}: explain the whole-file compilation decision")));
+                        }
+                        if state == "covered" && (linked.is_empty() || !linked.iter().all(|id| note.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '`' | '(' | ')')).any(|word| word.trim_end_matches('.') == id))) {
+                            out.push(Violation::new("uncovered-claim", format!("{doc}#{section}: name each requirement whose quoted reference selects this input: {linked:?}")));
+                        }
+                        if state == "non-normative" && !linked.is_empty() {
+                            out.push(Violation::new("referenced-input", format!("{doc}#{section}: requirements {linked:?} reference this input; reconcile it as covered")));
+                        }
+                        continue;
+                    }
                     if state == "covered" {
                         // A criterion sourced from the section covers it too
                         // (docs/compiler/goals/reconcile-section.md#gate).

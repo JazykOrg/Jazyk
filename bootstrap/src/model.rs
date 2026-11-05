@@ -627,7 +627,7 @@ pub struct DiagnosticAnswer {
 }
 
 // The section kinds parsing produces. Mirrors docs/compiler/model/section.md#fields.
-pub const SECTION_KINDS: [&str; 5] = ["preamble", "root", "heading", "code-block", "diagram"];
+pub const SECTION_KINDS: [&str; 6] = ["preamble", "root", "heading", "code-block", "diagram", "blob"];
 
 // The coverage states a section carries; `set_coverage` sets the last two.
 // Mirrors docs/compiler/model/section.md#coverage.
@@ -635,7 +635,8 @@ pub const COVERAGE_STATES: [&str; 3] = ["unprocessed", "covered", "non-normative
 // The states a session may set: every state but the initial one.
 pub const SETTABLE_COVERAGE: [&str; 2] = ["covered", "non-normative"];
 
-// One section of a parsed document. `raw` is verbatim; `hash` is the content hash of raw.
+// One section of a projected document, or a whole-file blob envelope.
+// Prose `raw` is verbatim; a blob envelope is generated and cannot source quotes.
 // Mirrors docs/compiler/model/section.md.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Section {

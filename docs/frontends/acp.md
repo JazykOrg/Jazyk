@@ -161,12 +161,21 @@ rules it obeys:
 ## The embedded agent
 
 `jazyk agent` exposes the shared [GDK runtime](../compiler/agent-runtime.md) over
-ACP stdio. It uses the configured model and the MCP servers supplied by the client.
-It does not import the Goose application facade.
+ACP stdio. It uses the configured model, the MCP servers supplied by the client,
+and, outside worker sessions, the project's and the user's
+[agent context](./agent-context.md). It does not import the Goose application
+facade.
 
-- `initialize` advertises the supported ACP and MCP capabilities.
-- `session/new` connects to the supplied MCP servers through the maintained Rust
-  SDK. Their instructions enter the session before the first human prompt.
+- `initialize` advertises the supported ACP and MCP capabilities, including MCP
+  over HTTP.
+- `session/new` connects to the supplied MCP servers, stdio or streamable HTTP,
+  through the maintained Rust SDK. A session whose `_meta.jazyk.purpose` is not
+  `worker` also reads the session `cwd`'s
+  [instructions](./agent-context.md#instructions),
+  [MCP servers](./agent-context.md#mcp-servers), and
+  [skills](./agent-context.md#skills). Server instructions, then project
+  instructions, then the skill list enter the session before the first human
+  prompt. A worker session reads none of them.
 - `session/prompt` executes the GDK operation pipeline with native tool calling.
   Tool results, reasoning, usage and call identities remain structured. Worker
   turns stop after a successful `done` commit. Conversational turns retain their
@@ -181,7 +190,9 @@ Provider errors end the prompt with a refusal and an actionable message. They do
 not close the ACP connection or unrelated sessions. Panics are contained at the
 host boundary. There is no text tool codec or automatic native-tool downgrade.
 Injected MCP servers must expose unique tool names within one session. Session
-creation refuses an ambiguous name before any tool can execute.
+creation refuses an ambiguous name among client-supplied servers before any tool
+can execute. A discovered server that collides, fails to start, or is untrusted is
+skipped with a warning instead.
 
 The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md) remains a
 Jazyk payload. MCP supplies the domain prompt and tools. IDE-mediated edits still

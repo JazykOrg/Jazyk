@@ -150,7 +150,9 @@ this spawning path and are not for standalone servings:
 
 The `initialize` reply carries server instructions describing the work loop for the
 toolsets served, so an agent that reads nothing else still knows the entry point, the
-order of calls, and that a tool error names its own repair. A serving ends when its
+order of calls, and that a tool error names its own repair. They also say that the
+[jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd) is
+orientation and that these instructions and tool replies take precedence over it. A serving ends when its
 input ends: close stdin to tear it down. `shutdown` is answered with null for agents
 that send it out of LSP habit; it does nothing. The prompting lives in three places,
 most specific wins: server instructions carry the loop, each `begin_*` reply carries
@@ -169,7 +171,12 @@ it. An agent that speaks MCP only over HTTP gets the same serving over
 
 Every coding agent that reads MCP configuration can run jazyk's tools without the
 [IDE proxy](./acp.md#the-ide-proxy): its config gets one server entry named `jazyk`
-serving `jazyk mcp all`. The [launcher](./cli.md#ide-agents) and
+serving `jazyk mcp all`. `.mcp.json` is the canonical project file: every project
+setup writes the `jazyk` entry there too, whichever agents are chosen, because
+Claude Code, VS Code, and jazyk's own [agent context](./agent-context.md#mcp-servers)
+read it. A row's own file is written only for an agent that does not read
+`.mcp.json`. The setup also keeps the [jazyk section of
+`AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd) current. The [launcher](./cli.md#ide-agents) and
 [`jazyk init`](./cli.md#jazyk-init) write these entries, and
 [`jazyk setup`](./cli.md#jazyk-setup) lists and removes them; each agent has a setup
 name.

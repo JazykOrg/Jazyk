@@ -146,6 +146,7 @@ Frontends embed the compiler and expose the graph to different consumers.
 - [CLI](./frontends/cli.md)
 - [ACP Bridge](./frontends/acp.md)
 - [MCP Server](./frontends/mcp.md)
+- [Agent Context](./frontends/agent-context.md)
 - [Language Server](./frontends/lsp.md)
 - [Viewer](./frontends/viewer.md)
 - [GUI](./frontends/gui.md)

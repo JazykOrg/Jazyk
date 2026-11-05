@@ -21,6 +21,12 @@ paths resolve from the project folder. Machine settings stay in
   the first one added later) or temporarily match zero files, e.g. a newly selected
   empty folder. A list of exclusions alone is rejected. A warning names every
   positive pattern that currently matches nothing. It does not silently expand the selection.
+- Agent instruction files (`AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`,
+  `CLAUDE.local.md`, `GEMINI.md`, in any folder) are matched only by a pattern that
+  names the file without a wildcard, e.g. `docs/AGENTS.md`. Wildcard patterns in
+  `docs` and `source` skip them: they are instructions to agents
+  ([agent context](../frontends/agent-context.md#not-compiler-input)), not prose
+  about the project or its deliverable.
 - `roots` is an optional ordered list of entry-point globs over that set's effective
   documents. Report unmatched positive patterns. Omission retains the current
   no-roots behavior, including document scheduling in path order.

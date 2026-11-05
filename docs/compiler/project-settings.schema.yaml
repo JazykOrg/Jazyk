@@ -187,6 +187,47 @@ properties:
           type: string
           description: Path to the handler implementation
       additionalProperties: false
+  agents:
+    type: object
+    description: How jazyk treats the project's agent instruction files
+    properties:
+      block:
+        type: boolean
+        description: Keep the jazyk section of AGENTS.md and the CLAUDE.md and GEMINI.md imports
+        default: true
+    additionalProperties: false
+  mcp:
+    type: object
+    description: Extra MCP servers for the embedded agent's conversational sessions
+    properties:
+      servers:
+        type: object
+        description: MCP servers, keyed by server name
+        additionalProperties:
+          type: object
+          description: One MCP server. command for stdio, url for streamable HTTP
+          properties:
+            command:
+              type: string
+            args:
+              type: array
+              items:
+                type: string
+            env:
+              type: object
+              additionalProperties:
+                type: string
+            url:
+              type: string
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            enabled:
+              type: boolean
+              default: true
+          additionalProperties: false
+    additionalProperties: false
   version:
     const: 1
   sets:

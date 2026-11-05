@@ -50,7 +50,7 @@ fn stop_releases_a_native_gdk_request_before_the_provider_replies() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"late"}}]}"#;
         let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
     });
-    let llm = Llm { base_url:format!("http://{address}"), model:"fixture".into(), api_key:String::new(), temperature:None, trace:None };
+    let llm = Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url:format!("http://{address}"), model:"fixture".into(), api_key:String::new(), temperature:None, trace:None };
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let started = std::time::Instant::now();
     let stop = crate::harness::run_loop(crate::harness::LoopArgs {

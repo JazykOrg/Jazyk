@@ -250,10 +250,12 @@ impl AcpRunner {
         let mut v = vec![
             ("JAZYK_LLM_BASE_URL".to_string(), self.llm.base_url.clone()),
             ("JAZYK_MODEL".to_string(), self.llm.model.clone()),
+            ("JAZYK_LLM_API".to_string(), self.llm.api.clone()),
         ];
         if !self.llm.api_key.is_empty() {
             v.push(("JAZYK_API_KEY".to_string(), self.llm.api_key.clone()));
         }
+        if let Some(summary) = &self.llm.reasoning_summary { v.push(("JAZYK_REASONING_SUMMARY".into(), summary.clone())); }
         if let Some(t) = self.llm.temperature {
             v.push(("JAZYK_TEMPERATURE".to_string(), t.to_string()));
         }
@@ -739,7 +741,7 @@ impl AcpRunner {
             ));
         }
         if let Some(t) = trace {
-            t.event(crate::session::TraceEvent::ModelText {
+            t.event(crate::session::TraceEvent::ModelText { summary: false,
                 label: label.to_string(),
                 text: crate::llm::truncate(&text, 2_000),
                 reply: true,

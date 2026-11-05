@@ -19,6 +19,8 @@ pub struct Options {
     pub roots: Vec<String>,
     pub name: Option<String>,
     pub base_url: Option<String>,
+    pub llm_api: Option<String>,
+    pub reasoning_summary: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
     pub out: Option<String>,
@@ -321,6 +323,8 @@ pub(crate) fn resolve_llm(
         .filter(|t| *t >= 0.0);
     // The trace is attached per run by whoever starts the work (`with_trace`).
     Llm {
+        api: opts.llm_api.clone().or_else(|| env("JAZYK_LLM_API")).or_else(|| proj.api.clone()).or_else(|| global.api.clone()).unwrap_or_else(|| "chat_completions".into()),
+        reasoning_summary: opts.reasoning_summary.clone().or_else(|| env("JAZYK_REASONING_SUMMARY")).or_else(|| proj.reasoning_summary.clone()).or_else(|| global.reasoning_summary.clone()),
         base_url,
         model,
         api_key,

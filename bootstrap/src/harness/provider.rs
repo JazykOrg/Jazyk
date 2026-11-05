@@ -55,7 +55,7 @@ impl Provider for ChannelProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let body = openai::create_request_with_options(
+        let mut body = openai::create_request_with_options(
             config,
             system,
             messages,
@@ -69,6 +69,8 @@ impl Provider for ChannelProvider {
             },
         )
         .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
+        body["_jazykResponsesRequest"] = crate::model_api::companion(config, system, messages, tools)
+            .map_err(ProviderError::RequestFailed)?;
         let (reply, response) = oneshot::channel();
         self.tx
             .send(HostAction::Model {
@@ -78,10 +80,14 @@ impl Provider for ChannelProvider {
                 reply,
             })
             .map_err(|_| ProviderError::RequestFailed("model host closed".into()))?;
-        let (attempt_id, value) = response
+        let (attempt_id, mut value) = response
             .await
             .map_err(|_| ProviderError::RequestFailed("model host closed".into()))?
             .map_err(classify_error)?;
+        if value["object"] == "response" {
+            let binding = value["_jazykResponseRoute"].as_str().unwrap_or_default().to_owned();
+            value = crate::model_api::completion(&value, &binding).map_err(ProviderError::RequestFailed)?;
+        }
         let (mut message, usage) = if let Some(native) = value.get("_jazykGdkResponse") {
             let message: Message =
                 serde_json::from_value(native["message"].clone()).map_err(|e| {
@@ -105,6 +111,7 @@ impl Provider for ChannelProvider {
         // inference identity before they enter that conversation.
         let scope = crate::model::hash_hex(&attempt_id);
         let mut ids = std::collections::HashSet::new();
+        let mut original_ids = serde_json::Map::new();
         for content in &mut message.content {
             if let goose_provider_types::conversation::message::MessageContent::ToolRequest(
                 request,
@@ -113,9 +120,12 @@ impl Provider for ChannelProvider {
                 if !ids.insert(request.id.clone()) {
                     return Err(ProviderError::RequestFailed("Model returned a duplicate tool-call id in one response; no tools executed".into()));
                 }
+                let original = request.id.clone();
                 request.id = format!("{}:{}", &scope[..16], request.id);
+                original_ids.insert(request.id.clone(), serde_json::json!(original));
             }
         }
+        crate::model_api::retain_output(&mut message, &value, Value::Object(original_ids));
         Ok(stream_from_single_message(message, usage))
     }
 }

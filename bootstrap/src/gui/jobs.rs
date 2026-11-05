@@ -1096,7 +1096,7 @@ mod tests {
             out: dir.path().join(".jazyk"),
             gs: std::sync::RwLock::new(crate::gen::GenSettings::resolve(&project)),
             proj: std::sync::RwLock::new(project),
-            llm: std::sync::RwLock::new(crate::llm::Llm {
+            llm: std::sync::RwLock::new(crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
                 base_url: String::new(),
                 model: String::new(),
                 api_key: String::new(),

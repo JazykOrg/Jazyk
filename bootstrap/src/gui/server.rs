@@ -574,7 +574,7 @@ pub(super) mod tests {
         Arc::new(AppState {
             root,
             proj: std::sync::RwLock::new(proj),
-            llm: std::sync::RwLock::new(crate::llm::Llm {
+            llm: std::sync::RwLock::new(crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
                 base_url: String::new(),
                 model: String::new(),
                 api_key: String::new(),

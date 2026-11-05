@@ -69,7 +69,7 @@ impl UpdateTranslator {
         let buf = if thought { &mut self.thought } else { &mut self.message };
         let text = std::mem::take(buf);
         if !text.is_empty() {
-            trace.event(TraceEvent::ModelText {
+            trace.event(TraceEvent::ModelText { summary: false,
                 label: self.label.clone(),
                 text,
                 reply: !thought,
@@ -91,6 +91,11 @@ impl UpdateTranslator {
     pub fn on_update(&mut self, update: &SessionUpdate, trace: &Trace) {
         match update {
             SessionUpdate::AgentThoughtChunk(c) => {
+                if c.meta.as_ref().is_some_and(|meta| meta.get("jazyk").is_some_and(|v| v["reasoningSummary"] == true)) {
+                    self.flush_into(trace);
+                    if let Some(text) = content_text(&c.content) { trace.event(TraceEvent::ModelText { label: self.label.clone(), text: text.into(), reply: false, summary: true }); }
+                    return;
+                }
                 if let Some(t) = content_text(&c.content) {
                     self.push_text(trace, true, t);
                 }

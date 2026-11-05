@@ -30,6 +30,7 @@ pub enum AgentEvent {
     Input(Value),
     Timing(Value),
     Thought(String),
+    ReasoningSummary(String),
     Message(String),
     ToolCallStart {
         id: String,
@@ -100,6 +101,8 @@ impl std::fmt::Debug for ModelRequest {
 pub struct ModelDeltaProgress {
     pub content: String,
     pub thought: String,
+    #[serde(default)]
+    pub summary: String,
 }
 
 #[derive(Clone, Debug)]

@@ -698,3 +698,12 @@ A conversational turn supplies its current serving contract through system-messa
 Old conversations can contain generated contracts joined to human messages. The engine removes only a recognized exact generated prefix whose remaining text matches recorded human-message text, including consecutive merged human messages. An unrecognized prefix, missing transcript evidence, or a user quotation stays intact. Migration is idempotent and does not remove tool or assistant history.
 
 The current conversational contract distinguishes ongoing steering from completed work. Compiler packages and batch IDs from completed or cancelled earlier turns are historical evidence. They do not claim a batch or request more compiler work. An authorized prose edit reads the current file when needed, saves the scoped change, and reports the result. Status and rationale describe that action. The agent does not repeat harness instructions as an explanation of its task. A request for detailed reasoning retains its requested scope.
+
+## Provider reasoning summaries
+
+A provider reasoning summary is distinct from ordinary reasoning and the answer.
+The model delta field is `reasoning_summary`. A `modelText` trace event can carry
+`summary: true`. An absent flag retains ordinary reasoning behavior. Completed
+provider items are checkpointed with the inference receipt. A partial stream never
+serves as a completed tool-call response. Recovered receipts do not repeat paid
+inference or duplicate displayed summary deltas.

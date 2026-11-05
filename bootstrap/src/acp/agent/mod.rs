@@ -277,6 +277,9 @@ pub fn run() -> i32 {
                             AgentEvent::Timing(timing) => {
                                 notify(SessionUpdate::UsageUpdate(UsageUpdate::new(0,0).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"timing":timing}})).ok())));
                             }
+                            AgentEvent::ReasoningSummary(s) => notify(SessionUpdate::AgentThoughtChunk(
+                                ContentChunk::new(ContentBlock::from(s)).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"reasoningSummary":true}})).ok()),
+                            )),
                             AgentEvent::Thought(s) => notify(SessionUpdate::AgentThoughtChunk(
                                 ContentChunk::new(ContentBlock::from(s)),
                             )),
@@ -517,7 +520,7 @@ mod tests {
     #[test]
     fn the_model_option_offers_the_endpoint_and_keeps_its_id() {
         // An endpoint that cannot answer leaves exactly one honest choice.
-        let llm = crate::llm::Llm {
+        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
             base_url: "http://127.0.0.1:1/v1".into(),
             model: "some-model".into(),
             api_key: String::new(),

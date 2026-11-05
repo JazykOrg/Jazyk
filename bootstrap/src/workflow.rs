@@ -913,7 +913,7 @@ mod tests {
             finished: None,
         };
         progress.save(&key).unwrap();
-        let llm = crate::llm::Llm { base_url: String::new(), model: String::new(), api_key: String::new(), temperature: None, trace: None };
+        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url: String::new(), model: String::new(), api_key: String::new(), temperature: None, trace: None };
         let trace = Trace::to_sink(crate::session::TraceLevel::Normal, std::sync::Arc::new(|_| {}), Default::default());
         let result = run(&project, &llm, &steps, &trace).unwrap();
         assert_eq!(result["state"], "done");

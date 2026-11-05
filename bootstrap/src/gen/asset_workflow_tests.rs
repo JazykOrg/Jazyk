@@ -726,7 +726,7 @@ fn generation_request(
     let project = project();
     let store = Store::load(&project.out);
     let guard = crate::control::begin_internal_build(&project, &project.out, "generate").unwrap();
-    let llm = crate::llm::Llm {
+    let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
         base_url: "http://127.0.0.1:1/v1".into(),
         model: "asset-release-recovery".into(),
         api_key: String::new(),

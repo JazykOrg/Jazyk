@@ -84,7 +84,7 @@ pub(crate) fn top_usage() -> String {
             s.push_str(&format!("  jazyk {:<width$} {}\n", usage, what, width = width));
         }
     }
-    s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --out DIR\n");
+    s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --llm-api API  --reasoning-summary MODE  --out DIR\n");
     s.push_str(
         "         --verbose, -v   the full session trace: prompts, payloads, the goal cascade\n",
     );
@@ -122,6 +122,8 @@ const COMMON_OPTIONS: &[&str] = &[
     "--llm-base-url",
     "--model",
     "--api-key",
+    "--llm-api",
+    "--reasoning-summary",
     "--agent",
     "--verbose",
     "-v",
@@ -135,6 +137,8 @@ const VALUE_OPTIONS: &[&str] = &[
     "--llm-base-url",
     "--model",
     "--api-key",
+    "--llm-api",
+    "--reasoning-summary",
     "--out",
     "--depth",
     "--expand",
@@ -207,7 +211,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
     })
 }
 
-const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --out DIR";
+const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --llm-api API  --reasoning-summary MODE  --out DIR";
 const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/.jazyk/)";
 
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
@@ -608,6 +612,8 @@ pub fn run() {
                 "--llm-base-url" => opts.base_url = Some(v),
                 "--model" => opts.model = Some(v),
                 "--api-key" => opts.api_key = Some(v),
+                "--llm-api" => opts.llm_api = Some(v),
+                "--reasoning-summary" => opts.reasoning_summary = Some(v),
                 "--out" => opts.out = Some(v),
                 "--set" => opts.set = Some(v),
                 "--docs" => opts.docs.push(v),

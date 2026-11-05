@@ -89,6 +89,8 @@ fn call_timeout() -> Duration {
 
 #[derive(Clone)]
 pub struct Llm {
+    pub api: String,
+    pub reasoning_summary: Option<String>,
     pub base_url: String,
     pub model: String,
     pub api_key: String,
@@ -209,18 +211,21 @@ impl Llm {
             let base_url = self.base_url.clone();
             let api_key = self.api_key.clone();
             let timeout = call_timeout();
+            let api = request.body["_jazykApi"].as_str().unwrap_or(&self.api).to_owned();
+            let summary = request.body.get("_jazykReasoningSummary").map(|v| v.as_str().map(String::from)).unwrap_or_else(|| self.reasoning_summary.clone());
             tokio_util::task::AbortOnDropHandle::new(network
                 .spawn(async move {
                     use eventsource_stream::Eventsource;
                     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
                     let client = CLIENT.get_or_init(reqwest::Client::new);
-                    let mut body = request.body;
+                    let binding = format!("{}:{}", base_url.trim_end_matches('/'), request.body["model"].as_str().unwrap_or_default());
+                    let mut body = crate::model_api::request(&request.body, &api, summary.as_deref(), &binding)?;
                     body["stream"] = json!(true);
-                    body["stream_options"] = json!({"include_usage":true});
+                    if api == "chat_completions" { body["stream_options"] = json!({"include_usage":true}); }
                     let mut call = client
                         .post(format!(
-                            "{}/chat/completions",
-                            base_url.trim_end_matches('/')
+                            "{}/{}",
+                            base_url.trim_end_matches('/'), if api == "responses" { "responses" } else { "chat/completions" }
                         ))
                         .timeout(timeout)
                         .json(&body);
@@ -244,6 +249,18 @@ impl Llm {
                         });
                         let events = bytes.eventsource().map(|event| event
                             .map(|event| format!("data: {}", event.data)).map_err(anyhow::Error::from));
+                        if api == "responses" {
+                            let mut events = Box::pin(events);
+                            let mut collector = crate::model_api::ResponseStream::default();
+                            while let Some(event) = events.next().await {
+                                let frame = event.map_err(|e| e.to_string())?;
+                                let data = frame.strip_prefix("data: ").unwrap_or(&frame);
+                                if data == "[DONE]" { continue; }
+                                let value = serde_json::from_str(data).map_err(|e| format!("Invalid Responses event: {e}"))?;
+                                if let Some((field, text)) = collector.event(&value)? { if let Some(sink) = &request.deltas { sink(field, &text); } }
+                            }
+                            return Ok(collector.finish(&binding)?.to_string());
+                        }
                         return collect_native_stream(Box::pin(events), request.deltas).await;
                     }
                     let mut stream = response.bytes_stream();
@@ -258,6 +275,10 @@ impl Llm {
                     let body = String::from_utf8(bytes).map_err(|e| e.to_string())?;
                     if !status.is_success() {
                         return Err(format!("HTTP {status}: {}", truncate(&body, 1000)));
+                    }
+                    if api == "responses" {
+                        let value = serde_json::from_str(&body).map_err(|e| format!("Invalid Responses reply: {e}"))?;
+                        return Ok(crate::model_api::completion(&value, &binding)?.to_string());
                     }
                     Ok::<_, String>(body)
                 }))

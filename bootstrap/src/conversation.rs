@@ -650,6 +650,10 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     // The loop's events as the ACP session updates a native chat streams.
     let chat_id = id.to_string();
     let mut emit = |ev: AgentEvent| match ev {
+        AgentEvent::ReasoningSummary(s) => append(
+            &chat_id,
+            json!({"sessionUpdate":"agent_thought_chunk", "summary":true, "content":{"type":"text","text":s}}),
+        ),
         AgentEvent::Thought(s) => append(
             &chat_id,
             json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": s}}),

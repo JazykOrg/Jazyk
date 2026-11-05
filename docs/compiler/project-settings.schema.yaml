@@ -12,6 +12,13 @@ properties:
       endpoint. Resolved per field: CLI flag, then environment variable, then this
       table, then global config, then built-in default'
     properties:
+      api:
+        type: string
+        enum: [chat_completions, responses]
+        default: chat_completions
+      reasoning_summary:
+        type: string
+        enum: [auto, concise, detailed]
       base_url:
         type: string
         description: Base URL of the OpenAI-compatible endpoint

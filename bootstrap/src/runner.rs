@@ -197,7 +197,7 @@ impl<'a> LoopTrace<'a> {
 
     pub fn finish(&mut self) {
         if !self.text.is_empty() {
-            self.trace.event(crate::session::TraceEvent::ModelText {
+            self.trace.event(crate::session::TraceEvent::ModelText { summary: false,
                 label: self.label.clone(),
                 text: std::mem::take(&mut self.text),
                 reply: !self.text_thought,
@@ -244,6 +244,10 @@ impl<'a> LoopTrace<'a> {
             }
             AgentEvent::Message(text) => {
                 self.buffer_text(&text, false, crate::sys::Instant::now());
+            }
+            AgentEvent::ReasoningSummary(text) => {
+                self.finish();
+                self.trace.event(TraceEvent::ModelText { label: self.label.clone(), text, reply: false, summary: true });
             }
             AgentEvent::Thought(text) => {
                 self.buffer_text(&text, true, crate::sys::Instant::now());

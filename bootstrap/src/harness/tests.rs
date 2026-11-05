@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use super::*;
 
 fn llm() -> crate::llm::Llm {
-    crate::llm::Llm {
+    crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
         base_url: "http://127.0.0.1:3625/v1".into(),
         model: "fixture".into(),
         api_key: String::new(),
@@ -1464,6 +1464,7 @@ fn host_response_replay_retains_a_durable_prefix_before_the_engine_receipt() {
     saved.model_deltas.insert(
         request,
         ModelDeltaProgress {
+            summary: String::new(),
             content: "Hello ".into(),
             thought: String::new(),
         },
@@ -1644,4 +1645,29 @@ fn last_allowed_model_intention_replays_once_and_stop_still_wins() {
     }, "", &mut host, &mut Store::default()), Stop::MaxRounds);
     assert_eq!(tools, 1);
     assert_eq!(host.requests.borrow().len(), 1);
+}
+
+
+#[test]
+fn responses_receipt_recovery_keeps_opaque_continuation_and_does_not_repeat_inference() {
+    let raw = json!({"id":"resp","object":"response","model":"fixture","status":"completed","output":[
+        {"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"Checking the fixture."}],"encrypted_content":"opaque-state"},
+        {"type":"function_call","call_id":"original-call","name":"fixture","arguments":"{}","status":"completed"}],
+        "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}});
+    let reply = crate::model_api::completion(&raw,"route-a").unwrap();
+    let mut host = Host::new(vec![reply, response("finished")]);
+    let mut store = Store { fail: Some(CheckpointPhase::SavedModel), ..Default::default() };
+    let mut history = vec![json!({"role":"user","content":"Run"})];
+    let mut calls = 0;
+    let mut summaries = String::new();
+    let mut dispatch = |_: &str, _: &Value| { calls += 1; Ok("found".into()) };
+    assert!(matches!(run(&mut host,&mut store,&mut history,&mut dispatch,&mut |_|{}),Stop::Error(_)));
+    assert_eq!(run(&mut host,&mut store,&mut history,&mut dispatch,&mut |event| { if let AgentEvent::ReasoningSummary(text)=event { summaries.push_str(&text); } }),Stop::EndTurn);
+    assert_eq!(calls,1);
+    assert_eq!(summaries,"Checking the fixture.");
+    let requests=host.requests.borrow();
+    assert_eq!(requests.len(),2);
+    let wire=crate::model_api::request(&requests[1].body,"responses",Some("concise"),"route-a").unwrap();
+    assert!(wire["input"].as_array().unwrap().iter().any(|item|item["encrypted_content"]=="opaque-state"));
+    assert!(wire["input"].as_array().unwrap().iter().any(|item|item["type"]=="function_call_output" && item["call_id"]=="original-call"));
 }

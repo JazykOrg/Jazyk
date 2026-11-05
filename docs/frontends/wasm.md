@@ -466,3 +466,13 @@ part of the history.
 ### Current chat instructions
 
 The embedded loop assembles the current chat contract into its system message for each turn. Persistent history stores human text and actual model/tool exchanges, not repeated serving contracts. Hosted reopening and browser refresh use the same contract. Recognized legacy generated prefixes are removed only when recorded human text proves the remainder. Compiler packages from completed or cancelled earlier turns stay as evidence and do not authorize a new batch. See [conversational harness context](../compiler/sessions.md#conversational-harness-context).
+
+## Additional model wire formats
+
+The engine includes a Responses request alongside its Chat Completions request
+under `_jazykResponsesRequest`. Hosts select the configured transport and remove
+internal fields before submission. A Responses host returns the complete Responses
+object. The engine parses and validates it through the shared GDK. Streaming hosts
+forward answer deltas as `content` and provider summary deltas as
+`reasoning_summary`. The final object remains authoritative for tool execution.
+An older endpoint host can keep using Chat Completions.

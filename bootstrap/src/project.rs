@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Default)]
 pub struct LlmSettings {
     pub base_url: Option<String>,
+    pub api: Option<String>,
+    pub reasoning_summary: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
@@ -270,6 +272,8 @@ impl Default for Project {
 #[derive(Clone, Default)]
 pub struct GlobalLlm {
     pub base_url: Option<String>,
+    pub api: Option<String>,
+    pub reasoning_summary: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
@@ -291,6 +295,8 @@ pub fn load_global_llm() -> GlobalLlm {
             let t = Toml::parse(&text);
             return GlobalLlm {
                 base_url: t.string("llm.base_url"),
+                api: t.string("llm.api"),
+                reasoning_summary: t.string("llm.reasoning_summary"),
                 model: t.string("llm.model"),
                 api_key: t.string("llm.api_key"),
                 api_key_env: t.string("llm.api_key_env"),
@@ -459,6 +465,8 @@ impl Project {
             p.workflow.worker = v;
         }
         p.llm.base_url = t.string("llm.base_url");
+        p.llm.api = t.string("llm.api");
+        p.llm.reasoning_summary = t.string("llm.reasoning_summary");
         p.llm.model = t.string("llm.model");
         p.llm.api_key = t.string("llm.api_key");
         p.llm.api_key_env = t.string("llm.api_key_env");
@@ -738,7 +746,7 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
         "error": workspace.as_ref().err().map(|e| &e.1),
         "sets": workspace.as_ref().map(|w| &w.sets).ok(),
         "settings": {
-            "llm": { "baseUrl": t.string("llm.base_url"), "model": t.string("llm.model"),
+            "llm": { "api": t.string("llm.api"), "reasoningSummary": t.string("llm.reasoning_summary"), "baseUrl": t.string("llm.base_url"), "model": t.string("llm.model"),
                 "apiKeyEnv": t.string("llm.api_key_env"), "apiKeySet": t.string("llm.api_key").is_some(),
                 "temperature": t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok()) },
             "linting": { "warnings": t.array("linting.rules.warnings").unwrap_or_default(),
@@ -823,6 +831,8 @@ pub fn settings_render(root: &Path, settings: &serde_json::Value) -> Result<Stri
     let mut document: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{}", e))?;
     for (key, field) in [
         ("base_url", "baseUrl"),
+        ("api", "api"),
+        ("reasoning_summary", "reasoningSummary"),
         ("model", "model"),
         ("api_key_env", "apiKeyEnv"),
         ("temperature", "temperature"),

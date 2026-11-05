@@ -770,6 +770,13 @@ pub fn run() {
         if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
         if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
     }
+    // Commands that open a project to work on it keep its AGENTS.md section current.
+    // Mirrors docs/frontends/agent-context.md#when-it-is-written.
+    if ["compile", "watch", "gen", "test", "gui", "acp", "agent", "mcp", "setup"].contains(&cmd.as_str()) {
+        if let Ok(cwd) = std::env::current_dir() {
+            crate::agents_md::refresh(&cwd);
+        }
+    }
     let code = match cmd.as_str() {
         "sets" => cli::run_sets(&positional, &opts),
         "init" => cli::run_init(&opts),

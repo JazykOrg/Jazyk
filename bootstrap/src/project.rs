@@ -549,7 +549,7 @@ impl Project {
                     Some(rest) => (true, rest),
                     None => (false, pat.as_str()),
                 };
-                if glob_match(p, &rel) {
+                if crate::document_sets::pattern_reaches(p, &rel) && glob_match(p, &rel) {
                     included = !neg;
                 }
             }

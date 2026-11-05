@@ -109,7 +109,7 @@ pub struct Workspace {
     pub sets: Vec<DocumentSet>,
     pub hash: String,
     pub exists: bool,
-    settings: toml::Table,
+    pub(crate) settings: toml::Table,
 }
 
 impl Workspace {
@@ -381,11 +381,29 @@ pub fn eligible(path: &str) -> bool {
         && !path.split('/').any(|c| c == "target" || c == "node_modules" || c.starts_with("jazyk-out"))
 }
 
+// Files agents read as instructions. Only a pattern naming one without a wildcard
+// matches it. Mirrors docs/compiler/document-sets.md#project-configuration.
+pub const AGENT_INSTRUCTION_FILES: &[&str] =
+    &["AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "CLAUDE.local.md", "GEMINI.md"];
+
+pub fn agent_instructions(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    AGENT_INSTRUCTION_FILES.contains(&name)
+}
+
+// Whether a pattern can match an agent instruction file: only a literal one can.
+pub fn pattern_reaches(pattern: &str, path: &str) -> bool {
+    !agent_instructions(path) || !pattern.contains(['*', '?', '[', '{'])
+}
+
 pub fn matched<'a>(patterns: &'a [String], path: &str) -> Option<&'a str> {
     patterns
         .iter()
         .rev()
-        .find(|p| crate::project::glob_match(p.strip_prefix('!').unwrap_or(p), path))
+        .find(|p| {
+            let raw = p.strip_prefix('!').unwrap_or(p);
+            pattern_reaches(raw, path) && crate::project::glob_match(raw, path)
+        })
         .filter(|p| !p.starts_with('!'))
         .map(String::as_str)
 }
@@ -856,6 +874,10 @@ pub fn atomic_config(root: &Path, text: &str, base_hash: &str) -> Result<()> {
         return Err((500, e.to_string()));
     }
     ensure_ignore(root).map_err(|e| (500, e.to_string()))?;
+    drop(_lock);
+    // Every jazyk write to jazyk.toml refreshes the AGENTS.md section it describes
+    // (docs/frontends/agent-context.md#when-it-is-written).
+    crate::agents_md::sync(root, crate::agents_md::Mode::Update).report();
     Ok(())
 }
 

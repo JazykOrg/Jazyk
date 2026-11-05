@@ -665,7 +665,10 @@ impl McpServer {
 
     fn scope_catalog(&self, tools: &mut Vec<Value>) {
         if let Some(names) = self.active_tools() {
-            tools.retain(|tool| names.contains(tool["name"].as_str().unwrap_or_default()));
+            tools.retain(|tool| {
+                tool["name"] == "project_context"
+                    || names.contains(tool["name"].as_str().unwrap_or_default())
+            });
         }
         if tools.iter().any(|tool| matches!(tool["name"].as_str(), Some("read_text_file" | "write_text_file" | "list_files"))) {
             let root = self.current_gen_settings().deliverable;
@@ -677,7 +680,7 @@ impl McpServer {
             for tool in tools {
                 let action = match tool["name"].as_str() {
                     Some("read_text_file") => "Read an eligible file, capped at 64 KiB. line is one-based and limit counts lines. Private state and credentials are excluded.",
-                    Some("write_text_file") => "Write a Source file, creating parents. append adds content. Source selection and entity ownership are enforced.",
+                    Some("write_text_file") => "Write a Source file, creating parents. Read first: if the read returns owner and begin_generation, claim that entity before writing. Successful record_generation ends the claim. append adds content. Source selection and entity ownership are enforced.",
                     Some("list_files") => "List eligible files. path narrows to a subdirectory; returned paths use the same root.",
                     _ => continue,
                 };
@@ -2041,8 +2044,14 @@ impl McpServer {
         if method == "tools/call" {
             if let Some(error) = self.current_project().config_error { return Err((-32602, error)); }
         }
-        if self.cancelled() && method == "tools/call" && !matches!(params["name"].as_str(), Some("abandon_goals" | "cancel_run" | "inspect_run" | "wait_run" | "read_run_log" | "search_run_log" | "read_run_changes" | "task_context")) {
+        if self.cancelled() && method == "tools/call" && !matches!(params["name"].as_str(), Some("project_context" | "abandon_goals" | "cancel_run" | "inspect_run" | "wait_run" | "read_run_log" | "search_run_log" | "read_run_changes" | "task_context")) {
             return Err((-32602, "the build was stopped; this session cannot commit".into()));
+        }
+        if method == "tools/call" && params["name"] == "project_context" {
+            return Ok(text_result(
+                crate::project_context::read(&self.project.root),
+                false,
+            ));
         }
         if self.project.set_id.is_some()
             || self.bridge.only.is_some()
@@ -2083,7 +2092,7 @@ impl McpServer {
             return Ok(
                 json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
-                "instructions":format!("This project has independent document sets. Use list_document_sets when a set-local operation needs a set ID. General answers and named document reads need no set discovery. Pass setId on set-local tools. Never reuse a graph ID in another set. {}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)})}),
+                "instructions":format!("This project has independent document sets. Use list_document_sets when a set-local operation needs a set ID. General answers and named document reads need no set discovery. Pass setId on set-local tools. Never reuse a graph ID in another set. {}{}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)}, crate::project_context::instructions(&self.project.root))}),
             );
         }
         let writable = self.serves_project_writes();
@@ -2354,7 +2363,7 @@ impl McpServer {
                     "protocolVersion": requested,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": if self.bridge.reader { reader_instructions() } else { instructions_for(&self.modes, self.write, self.initialized()) }
+                    "instructions": format!("{}{}", if self.bridge.reader { reader_instructions() } else { instructions_for(&self.modes, self.write, self.initialized()) }, crate::project_context::instructions(&self.project.root))
                 }))
             }
             "ping" => Ok(json!({})),
@@ -2365,6 +2374,7 @@ impl McpServer {
                     .filter(|t| enabled.contains(&t.name))
                     .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}))
                     .collect();
+                tools.push(json!({"name":"project_context","description":"Read this project's repository URL, selected/default branches, sync metadata, and available integration actions. No setId required. Does not push, deploy, or grant permission.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}));
                 if self.modes.len() == 1 && self.modes[0] == "runtime" {
                     return Ok(json!({"tools": tools}));
                 }
@@ -2762,6 +2772,14 @@ impl McpServer {
                     }
                     "retract_requirement" if self.modes.iter().any(|m| m == "chat") => {
                         let r = self.retract_requirement(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "update_criterion"
+                        if !self.bridge.reader && self.modes.iter().any(|m| m == "chat")
+                            && self.open.lock().unwrap().is_none() =>
+                    {
+                        let r = self.update_criterion_chat(&params["arguments"]);
                         let is_err = !r["error"].is_null();
                         return Ok(text_result(r, is_err));
                     }
@@ -3337,6 +3355,26 @@ impl McpServer {
             .get(doc)
             .and_then(|d| d.sections.get(section))
             .map(|s| s.raw.clone())
+    }
+
+    // Conversational criterion repair uses the compiler validator and commits once.
+    fn update_criterion_chat(&self, args: &Value) -> Value {
+        let target = args["id"].as_str().unwrap_or_default();
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut session = self.chat_session(&parsed, None, target);
+        if let Err(error) = session.dispatch("update_criterion", args) {
+            return error.to_value();
+        }
+        let mut store = Store::load(&self.out);
+        store.sync_docs(&parsed);
+        let report = store.apply(
+            std::mem::take(&mut session.staged),
+            &crate::store::Commit::store("chat-criterion"),
+        );
+        if !report.skipped.is_empty() {
+            return json!({"error":{"rule":"commit-skipped","message":report.skipped.join("; ")}});
+        }
+        json!({"id":target,"committed":true,"generation":report.generation})
     }
 
     // One authored field on one node: a dual write when the fact is quoted and a
@@ -3936,6 +3974,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn project_context_is_workspace_wide_and_in_initialize() {
+        let dir = bare_dir("integration-context");
+        let project = crate::project::Project::load(&dir);
+        let serving = McpServer::with_bridge(project.clone(), project.out, vec!["chat".into()], false, BridgeFlags { ephemeral:true, ..Default::default() });
+        let init = serving.handle("initialize", &json!({})).unwrap();
+        assert!(init["instructions"].as_str().unwrap().contains("Project integration context"));
+        let catalog = serving.handle("tools/list", &json!({})).unwrap();
+        assert_eq!(catalog["tools"].as_array().unwrap().iter().filter(|t|t["name"]=="project_context").count(),1);
+        let reply = serving.handle("tools/call", &json!({"name":"project_context","arguments":{}})).unwrap();
+        let context: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(context["location"],"local");
+        assert_eq!(context["github"],Value::Null);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn chat_criterion_edit_commits_without_goal_batch_and_validates_fields() {
+        let dir = bare_dir("chat-criterion");
+        let project = crate::project::Project::load(&dir);
+        let mut store = Store::load(&project.out);
+        store.graph.requirements.insert("req:hosting-3".into(), crate::model::Requirement {statement:"The deployment runs on main.".into(), ..Default::default()});
+        store.graph.criteria.insert("crit:hosting-11".into(), crate::model::Criterion {requirement:"req:hosting-3".into(),statement:"A push to master triggers deployment.".into(),kind:"positive".into(), ..Default::default()});
+        store.save();
+        let serving = McpServer::with_bridge(project.clone(), project.out.clone(), vec!["chat".into()], false, BridgeFlags {ephemeral:true,..Default::default()});
+        let reply = serving.handle("tools/call", &json!({"name":"update_criterion","arguments":{"id":"crit:hosting-11","statement":"A push to main triggers deployment."}})).unwrap();
+        assert_ne!(reply["isError"],true,"{reply}");
+        assert_eq!(Store::load(&project.out).graph.criteria["crit:hosting-11"].statement,"A push to main triggers deployment.");
+        let bad = serving.handle("tools/call", &json!({"name":"update_criterion","arguments":{"id":"crit:hosting-11","kind":"invalid"}})).unwrap();
+        assert_eq!(bad["isError"],true);
+        assert_eq!(Store::load(&project.out).graph.criteria["crit:hosting-11"].kind,"positive");
+        let empty = serving.handle("tools/call", &json!({"name":"update_criterion","arguments":{"id":"crit:hosting-11"}})).unwrap();
+        assert_eq!(empty["isError"],true);
+        let reader = McpServer::with_bridge(project.clone(), project.out.clone(), vec!["chat".into()], false, BridgeFlags {ephemeral:true,reader:true,..Default::default()});
+        let refused = reader.handle("tools/call", &json!({"name":"update_criterion","arguments":{"id":"crit:hosting-11","statement":"must not land"}}));
+        assert!(refused.is_err() || refused.unwrap()["isError"]==true);
+        assert_eq!(Store::load(&project.out).graph.criteria["crit:hosting-11"].statement,"A push to main triggers deployment.");
+
+        assert!(serving.open.lock().unwrap().is_none());
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn ledger_initializers_do_not_name_unavailable_graph_writes_or_long_polls() {
         for mode in ["generate","verify","graph","decompile"] {
             let instructions = instructions_for(&[mode.into()],false,true);
@@ -4517,7 +4597,8 @@ mod tests {
             let names = tool_names(&server);
             let mut expected = toolset_for_kinds(&[kind]);
             expected.extend(LIFECYCLE);
-            assert_eq!(names.len(), count, "{kind}");
+            expected.push("project_context");
+            assert_eq!(names.len(), count + 1, "{kind}");
             assert_eq!(names.into_iter().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect(), "{kind}");
         }
         // Mixed batches expose the union, rather than the first goal's slice.
@@ -4533,6 +4614,7 @@ mod tests {
         let names = tool_names(&server);
         let mut expected = toolset_for_kinds(&["declare-edges"]);
         expected.extend(LIFECYCLE);
+        expected.push("project_context");
         assert_eq!(names.iter().cloned().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect());
         assert!(!names.iter().any(|name| name == "upsert_entity"));
         let reply = server.handle("tools/call", &json!({"name":"upsert_entity","arguments":{"name":"Hidden"}})).unwrap();
@@ -4622,17 +4704,19 @@ mod tests {
     }
 
     #[test]
-    fn runtime_serving_needs_no_graph_and_exposes_only_execution_tools() {
+    fn runtime_serving_needs_no_graph_and_exposes_execution_and_context() {
         let dir = bare_dir("runtime-only");
         let project = crate::project::Project::load(&dir);
         let server = McpServer::with_bridge(project, dir.join("state"), vec!["runtime".into()], false, BridgeFlags::default());
         let names = tool_names(&server);
-        assert_eq!(names.len(), crate::task_runtime::TOOLS.len());
+        assert_eq!(names.len(), crate::task_runtime::TOOLS.len() + 1);
+        assert!(names.iter().any(|n| n == "project_context"));
         for name in crate::task_runtime::TOOLS {
             assert!(names.iter().any(|n| n == name));
         }
         let init = server.handle("initialize", &json!({})).unwrap();
-        assert_eq!(init["instructions"], crate::task_runtime::PROMPT);
+        assert!(init["instructions"].as_str().unwrap().starts_with(crate::task_runtime::PROMPT));
+        assert!(init["instructions"].as_str().unwrap().contains("Project integration context"));
         let tools = server.handle("tools/list", &json!({})).unwrap();
         assert!(tools["tools"].as_array().unwrap().iter().all(|t| t["inputSchema"]["properties"]["setId"].is_null()));
         crate::vfs::remove_dir_all(dir).ok();
@@ -4675,7 +4759,8 @@ mod tests {
             tool_names(&s),
             crate::tools::READ_TOOLS
                 .iter()
-                .map(|t| t.to_string())
+                .copied().chain(std::iter::once("project_context"))
+                .map(str::to_string)
                 .collect::<Vec<_>>()
         );
         let r = s.handle(
@@ -4706,7 +4791,7 @@ mod tests {
         let names = tool_names(&s);
         assert!(names.iter().any(|name| name == "list_document_sets"));
         assert!(names.iter().any(|name| name == "read_document"));
-        assert!(names.iter().all(|name| name == "list_document_sets" || name == "read_document" || crate::tools::READ_TOOLS.contains(&name.as_str())));
+        assert!(names.iter().all(|name| name == "list_document_sets" || name == "read_document" || name == "project_context" || crate::tools::READ_TOOLS.contains(&name.as_str())));
         #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
         {
             crate::vfs::write(dir.join("docs/contract.docx"), include_bytes!("../tests/fixtures/document-proof/contract.docx")).unwrap();

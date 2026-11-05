@@ -1493,6 +1493,27 @@ mod tests {
     }
 
     #[test]
+    fn hosted_chat_receives_github_context_through_mcp_instructions() {
+        let mut w = workspace("GitHub context");
+        let e = Execution {
+            model:"fixture".into(),
+            runtime:Some(Arc::new(|request| {
+                assert_eq!(request["operation"],"project_context");
+                Ok(json!({"available":true,"location":"cloud","project":{"name":"Jazyk.org"},"github":{"url":"https://github.com/JazykOrg/jazyk-site","branch":"main","default_branch":"master"}}))
+            })),
+            transport:Some(Arc::new(|body| {
+                let body:Value = serde_json::from_str(body).unwrap();
+                let messages = body["messages"].to_string();
+                for fact in ["https://github.com/JazykOrg/jazyk-site", "default_branch", "master", "main", "Jazyk.org"] { assert!(messages.contains(fact),"missing {fact}: {messages}"); }
+                assert!(body["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]=="project_context"));
+                Ok(model_reply("The current branch is main."))
+            })), ..Default::default()
+        };
+        let chat = value(&mut w,"POST","/api/chat/sessions",json!({}),&e);
+        value(&mut w,"POST",&format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap()),json!({"messageId":"branch-question","text":"Which branch should the deploy workflow target?"}),&e);
+    }
+
+    #[test]
     fn hosted_input_callback_delivers_before_stale_write_and_persists_identity() {
         let mut w=workspace("Steering");
         w.files.insert("docs/hosting.md".into(),b"# Hosting\n\nOriginal.\n".to_vec());

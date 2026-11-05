@@ -776,6 +776,14 @@ pub(crate) fn worker_response(operation: &str, mut value: Value) -> Value {
     value
 }
 
+pub fn integration_context(root: &Path) -> Result<Value, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::vfs::is_scoped() || std::env::var_os("JAZYK_RUNTIME_URL").is_some() {
+        return dispatch(root, &json!({"operation":"project_context"}));
+    }
+    crate::project_context::local(root)
+}
+
 fn dispatch(root: &Path, request: &Value) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {

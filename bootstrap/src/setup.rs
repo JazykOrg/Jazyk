@@ -3,7 +3,7 @@ use crate::vfs::VPathExt;
 // how each one gets the `jazyk` MCP entry, and where the person reaches each one
 // afterwards. The launcher's IDE choices and `jazyk init` share it.
 // Mirrors docs/frontends/mcp.md#agent-setup and docs/frontends/cli.md#ide-agents.
-use crate::acp::install::{merge_into, spawn_command, Merge};
+use crate::acp::install::{merge_into, spawn_command};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -76,8 +76,8 @@ pub const AGENTS: &[Agent] = &[
         "Roo's MCP servers: jazyk"),
     agent("copilot-cli", "GitHub Copilot CLI", Method::Global, "~/.copilot/mcp-config.json", &["copilot"], &[], &[], None,
         "`/mcp` in the agent lists jazyk"),
-    agent("ai-assistant", "JetBrains AI Assistant", Method::Guided("Settings, Tools, AI Assistant, Model Context Protocol (MCP), add"),
-        "", &[], &[], &["ml-llm"], None, "AI Assistant's MCP servers: jazyk"),
+    agent("ai-assistant", "JetBrains AI Assistant", Method::Project, ".ai/mcp/mcp.json", &[], &[], &["ml-llm"], None,
+        "Settings, Tools, AI Assistant, Model Context Protocol (MCP): jazyk"),
     agent("cline", "Cline", Method::Guided("the MCP Servers icon, Configure, Configure MCP Servers"),
         "", &[], &["saoudrizwan.claude-dev"], &[], None, "Cline's MCP servers: jazyk"),
 ];
@@ -262,14 +262,14 @@ impl Item {
             Item::Jazyk(h) => (
                 format!("jazyk-{}", h),
                 if one_host { "Jazyk agent (ACP)".to_string() } else { format!("Jazyk agent in {}", host_label(h)) },
-                "the IDE's agent picker".to_string(),
+                "global registration".to_string(),
             ),
             Item::Agent(n) => {
                 let a = agent_by_name(n).unwrap();
                 let note = match a.method {
                     Method::Project => a.file.to_string(),
                     Method::Global => format!("{} (asks first)", a.file),
-                    Method::Guided(_) => "guided: paste one entry".to_string(),
+                    Method::Guided(_) => "paste one entry".to_string(),
                 };
                 (n.to_string(), a.label.to_string(), note)
             }
@@ -302,32 +302,38 @@ pub fn items(m: &Machine, host: Option<&'static str>) -> Vec<Item> {
     out
 }
 
-// What one row's setup came to, for the summary.
-pub struct Outcome {
-    pub label: String,
-    pub line: String,
-    pub ok: bool,
-    // The text to paste for a guided step.
-    pub paste: Option<String>,
+// The state of one row's setup. Mirrors docs/frontends/cli.md#ide-agents.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum State {
+    Installed,
+    Stale,
+    Missing,
+    // A guided step: jazyk cannot read it back.
+    Unknown,
+}
+
+impl State {
+    pub fn present(self) -> bool {
+        matches!(self, State::Installed | State::Stale)
+    }
+    pub fn word(self) -> &'static str {
+        match self {
+            State::Installed => "installed",
+            State::Stale => "stale",
+            State::Missing => "missing",
+            State::Unknown => "unknown",
+        }
+    }
+}
+
+// Where one entry lives.
+enum Spec {
+    Json { path: PathBuf, key: &'static str, name: &'static str, entry: serde_json::Value },
+    Codex { path: PathBuf, cmd: String },
 }
 
 fn stdio_entry(cmd: &str) -> serde_json::Value {
     json!({"command": cmd, "args": ["mcp", "all"]})
-}
-
-// The entry a guided step pastes: the `mcpServers` shape both AI Assistant and Cline
-// accept.
-pub fn paste_text(cmd: &str) -> String {
-    serde_json::to_string_pretty(&json!({"mcpServers": {"jazyk": stdio_entry(cmd)}})).unwrap_or_default()
-}
-
-fn ask_yes(question: &str) -> bool {
-    use std::io::Write;
-    print!("{} [y/N] ", question);
-    std::io::stdout().flush().ok();
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line).ok();
-    matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 fn global_file(name: &str) -> Option<PathBuf> {
@@ -342,61 +348,205 @@ fn global_file(name: &str) -> Option<PathBuf> {
     }
 }
 
-// Set one row up. `consented` is true when the person named it (a flag) or this is
-// a terminal that may ask. Mirrors docs/frontends/mcp.md#agent-setup.
-pub fn apply(item: &Item, root: &Path, tty: bool, consented: bool) -> Outcome {
-    let cmd = spawn_command();
+// The entries a row's setup consists of. Mirrors docs/frontends/mcp.md#agent-setup.
+fn specs(item: &Item, root: &Path, cmd: &str) -> Vec<Spec> {
+    let json_at = |rel: &str, key: &'static str, entry: serde_json::Value| Spec::Json {
+        path: root.join(rel),
+        key,
+        name: "jazyk",
+        entry,
+    };
+    let stdio = stdio_entry(cmd);
+    let typed = json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]});
     match item {
-        Item::Jazyk(h) => {
-            let label = if *h == "jetbrains" { "Jazyk agent".to_string() } else { format!("Jazyk agent ({})", host_label(h)) };
-            match crate::start::setup_jazyk_agent(h) {
-                Ok(()) => Outcome { label, line: jazyk_reach(h).to_string(), ok: true, paste: None },
-                Err(e) => Outcome { label, line: format!("not set up: {}", e), ok: false, paste: None },
+        Item::Jazyk(h) => match crate::acp::install::ide(h, cmd).map(|i| i.registry) {
+            Some(crate::acp::install::Registry::Map { path, key, entry }) => {
+                vec![Spec::Json { path, key, name: "Jazyk", entry }]
             }
+            _ => Vec::new(),
+        },
+        Item::Unsupported(_) => Vec::new(),
+        Item::Agent(n) => match *n {
+            "claude" => vec![json_at(".mcp.json", "mcpServers", stdio)],
+            "cursor" => vec![json_at(".cursor/mcp.json", "mcpServers", stdio)],
+            "gemini" => vec![json_at(".gemini/settings.json", "mcpServers", stdio)],
+            "pi" => vec![json_at(".pi/mcp.json", "mcpServers", stdio)],
+            "junie" => vec![json_at(".junie/mcp/mcp.json", "mcpServers", stdio)],
+            "roo" => vec![json_at(".roo/mcp.json", "mcpServers", stdio)],
+            "ai-assistant" => vec![json_at(".ai/mcp/mcp.json", "mcpServers", stdio)],
+            "zed" => vec![json_at(".zed/settings.json", "context_servers", stdio)],
+            "copilot" => vec![json_at(".vscode/mcp.json", "servers", typed)],
+            "droid" => vec![json_at(".factory/mcp.json", "mcpServers", typed)],
+            "opencode" => {
+                let rel = if root.join("opencode.jsonc").vexists() && !root.join("opencode.json").vexists() {
+                    "opencode.jsonc"
+                } else {
+                    "opencode.json"
+                };
+                vec![json_at(rel, "mcp", json!({"type": "local", "command": [cmd, "mcp", "all"], "enabled": true}))]
+            }
+            "codex" => vec![Spec::Codex { path: root.join(".codex/config.toml"), cmd: cmd.to_string() }],
+            n => match global_file(n) {
+                Some(path) => vec![Spec::Json { path, key: "mcpServers", name: "jazyk", entry: stdio }],
+                None => Vec::new(),
+            },
+        },
+    }
+}
+
+fn read_json(path: &Path) -> Option<serde_json::Value> {
+    let text = crate::vfs::read_to_string(path).ok()?;
+    jsonc_parser::parse_to_serde_value(&text, &Default::default()).ok().flatten()
+}
+
+fn codex_entry(path: &Path) -> Option<(Option<String>, Vec<String>)> {
+    let text = crate::vfs::read_to_string(path).ok()?;
+    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let t = doc.get("mcp_servers")?.get("jazyk")?;
+    let cmd = t.get("command").and_then(|v| v.as_str()).map(String::from);
+    let args = t
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    Some((cmd, args))
+}
+
+fn spec_state(spec: &Spec) -> State {
+    match spec {
+        Spec::Json { path, key, name, entry } => match read_json(path).as_ref().and_then(|v| v.get(*key)?.get(*name).cloned()) {
+            None => State::Missing,
+            Some(v) if &v == entry => State::Installed,
+            Some(_) => State::Stale,
+        },
+        Spec::Codex { path, cmd } => match codex_entry(path) {
+            None => State::Missing,
+            Some((Some(c), args)) if &c == cmd && args == ["mcp", "all"] => State::Installed,
+            Some(_) => State::Stale,
+        },
+    }
+}
+
+fn claude_approved(root: &Path) -> bool {
+    read_json(&root.join(".claude/settings.local.json"))
+        .and_then(|v| v.get("enabledMcpjsonServers").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .is_some_and(|a| a.iter().any(|x| x == "jazyk"))
+}
+
+// The state of one row. Mirrors docs/frontends/cli.md#ide-agents.
+pub fn state(item: &Item, root: &Path) -> State {
+    if let Item::Agent(n) = item {
+        if matches!(agent_by_name(n).map(|a| a.method), Some(Method::Guided(_))) {
+            return State::Unknown;
         }
-        Item::Unsupported(b) => Outcome { label: b.to_string(), line: "unsupported".into(), ok: false, paste: None },
-        Item::Agent(n) => {
-            let a = agent_by_name(n).unwrap();
-            let label = a.label.to_string();
-            match a.method {
-                Method::Project => match crate::start::setup_mcp(root, n) {
-                    Ok(()) => Outcome { label, line: format!("ready ({}); {}", a.file, a.reach), ok: true, paste: None },
-                    Err(e) => Outcome { label, line: format!("not set up: {}", e), ok: false, paste: None },
-                },
-                Method::Global => {
-                    let Some(path) = global_file(n) else {
-                        return Outcome { label, line: "no global file known".into(), ok: false, paste: None };
-                    };
-                    let allowed = consented
-                        || (tty && ask_yes(&format!("{}: write the jazyk entry into {}?", a.label, path.display())));
-                    if !allowed {
-                        return Outcome {
-                            label,
-                            line: format!("skipped: writing {} needs a yes", path.display()),
-                            ok: false,
-                            paste: None,
-                        };
-                    }
-                    match merge_into(&path, "mcpServers", "jazyk", &stdio_entry(&cmd)) {
-                        Ok(m) => {
-                            if matches!(m, Merge::Written) {
-                                println!("jazyk: wrote the `jazyk` MCP server into {}", path.display());
-                            }
-                            Outcome { label, line: format!("ready ({}); {}", path.display(), a.reach), ok: true, paste: None }
-                        }
-                        Err(e) => Outcome { label, line: format!("cannot write {}: {}", path.display(), e), ok: false, paste: None },
-                    }
-                }
-                Method::Guided(where_) => Outcome {
-                    label,
-                    line: format!("paste the entry below in {}", where_),
-                    // Nothing is written: the person does the step.
-                    ok: false,
-                    paste: Some(paste_text(&cmd)),
-                },
+    }
+    let cmd = spawn_command();
+    let states: Vec<State> = specs(item, root, &cmd).iter().map(spec_state).collect();
+    if states.is_empty() {
+        return State::Missing;
+    }
+    let mut s = if states.iter().all(|s| *s == State::Installed) {
+        State::Installed
+    } else if states.iter().all(|s| *s == State::Missing) {
+        State::Missing
+    } else {
+        State::Stale
+    };
+    // Parts beyond the entry: the Claude approval, the ACP Client extension.
+    if s == State::Installed {
+        let incomplete = match item {
+            Item::Agent("claude") => !claude_approved(root),
+            Item::Jazyk(h @ ("vscode" | "cursor")) => !has_extension(&extensions(h), "formulahendry.acp-client"),
+            _ => false,
+        };
+        if incomplete {
+            s = State::Stale;
+        }
+    }
+    s
+}
+
+fn ask_yes(question: &str) -> bool {
+    use std::io::Write;
+    print!("{} [y/N] ", question);
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok();
+    matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+// Set one row up, quietly. `consented` covers a global write (the person named the
+// row, or it was set up before); otherwise a terminal asks.
+// Mirrors docs/frontends/mcp.md#agent-setup.
+pub fn install(item: &Item, root: &Path, tty: bool, consented: bool) -> Result<(), String> {
+    let cmd = spawn_command();
+    if let Item::Agent(n) = item {
+        let a = agent_by_name(n).ok_or_else(|| format!("unknown agent `{}`", n))?;
+        if a.method == Method::Global && !consented {
+            let path = global_file(n).map(|p| p.display().to_string()).unwrap_or_default();
+            if !(tty && ask_yes(&format!("{}: write the jazyk entry into {}?", a.label, path))) {
+                return Err(format!("skipped: writing {} needs a yes", path));
             }
         }
     }
+    for spec in specs(item, root, &cmd) {
+        match spec {
+            Spec::Json { path, key, name, entry } => {
+                merge_into(&path, key, name, &entry).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+            }
+            Spec::Codex { path, cmd } => crate::start::setup_codex(&path, &cmd)?,
+        }
+    }
+    match item {
+        Item::Agent("claude") => crate::start::approve_claude(root)?,
+        Item::Jazyk(h) => crate::start::jazyk_agent_extension(h)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+// Remove one row's setup. Ok(false) when nothing was there.
+// Mirrors docs/frontends/cli.md#jazyk-setup.
+pub fn remove(item: &Item, root: &Path) -> Result<bool, String> {
+    let cmd = spawn_command();
+    let mut removed = false;
+    for spec in specs(item, root, &cmd) {
+        let path = match &spec {
+            Spec::Json { path, .. } | Spec::Codex { path, .. } => path.clone(),
+        };
+        removed |= match spec {
+            Spec::Json { path, key, name, .. } => crate::acp::install::remove_from(&path, key, name)
+                .map_err(|e| format!("cannot edit {}: {}", path.display(), e))?,
+            Spec::Codex { path, .. } => crate::start::remove_codex(&path)?,
+        };
+        prune_empty_dirs(&path, root);
+    }
+    if let Item::Agent("claude") = item {
+        crate::start::unapprove_claude(root)?;
+    }
+    Ok(removed)
+}
+
+// Folders inside the project that a removal left empty (`.ai/mcp/`, `.codex/`) go
+// too; nothing outside the project root is touched.
+fn prune_empty_dirs(file: &Path, root: &Path) {
+    let mut dir = file.parent();
+    while let Some(d) = dir {
+        if d == root || !d.starts_with(root) {
+            break;
+        }
+        let empty = std::fs::read_dir(d).map(|mut e| e.next().is_none()).unwrap_or(false);
+        if !empty || std::fs::remove_dir(d).is_err() {
+            break;
+        }
+        dir = d.parent();
+    }
+}
+
+// The entry a guided step pastes: the `mcpServers` shape Cline accepts.
+pub fn paste_text(cmd: &str) -> String {
+    serde_json::to_string(&json!({"mcpServers": {"jazyk": stdio_entry(cmd)}})).unwrap_or_default()
 }
 
 // The registration rule's fallback: an absolute path breaks when the binary moves.
@@ -410,15 +560,43 @@ pub fn warn_if_absolute() {
     }
 }
 
-// Print the summary: one line per row, then each guided step's paste.
-pub fn print_summary(outcomes: &[Outcome]) {
-    let width = outcomes.iter().map(|o| o.label.chars().count()).max().unwrap_or(0);
-    for o in outcomes {
-        println!("  {:w$}  {}", o.label, o.line, w = width);
+pub fn label(item: &Item) -> String {
+    match item {
+        Item::Jazyk(_) => "Jazyk agent".to_string(),
+        Item::Agent(n) => agent_by_name(n).map(|a| a.label).unwrap_or(n).to_string(),
+        Item::Unsupported(b) => b.to_string(),
     }
-    for o in outcomes.iter().filter(|o| o.paste.is_some()) {
-        println!("\n{}: paste this\n{}", o.label, o.paste.as_deref().unwrap_or(""));
+}
+
+// The short summary after a start or a setup: the Jazyk agent's place, the agents
+// with jazyk tools, guided pastes, failures, and the command that changes it.
+// Mirrors docs/frontends/cli.md#ide-agents.
+pub fn print_summary(set_up: &[Item], failed: &[(Item, String)], change: &str) {
+    for item in set_up {
+        if let Item::Jazyk(h) = item {
+            println!("  Jazyk agent: {}", jazyk_reach(h));
+        }
     }
+    let tools: Vec<String> = set_up
+        .iter()
+        .filter(|i| matches!(i, Item::Agent(n) if !matches!(agent_by_name(n).map(|a| a.method), Some(Method::Guided(_)))))
+        .map(label)
+        .collect();
+    if !tools.is_empty() {
+        println!("  jazyk tools: {}", tools.join(", "));
+    }
+    let cmd = spawn_command();
+    for item in set_up {
+        if let Item::Agent(n) = item {
+            if let Some(Method::Guided(where_)) = agent_by_name(n).map(|a| a.method) {
+                println!("  {}: paste {} in {}", label(item), paste_text(&cmd), where_);
+            }
+        }
+    }
+    for (item, why) in failed {
+        println!("  {}: not set up ({})", label(item), why);
+    }
+    println!("  change with `{}`", change);
 }
 
 // The checklist on a terminal: Some(the chosen rows), None when the person quits.
@@ -427,20 +605,184 @@ pub fn print_summary(outcomes: &[Outcome]) {
 pub fn choose(items: &[Item], heading: &str, tty: bool, one_host: bool) -> Option<Vec<Item>> {
     let enabled: Vec<bool> = items.iter().map(|i| i.enabled()).collect();
     let usable: Vec<&Item> = items.iter().filter(|i| i.enabled()).collect();
-    if usable.is_empty() {
-        return Some(Vec::new());
-    }
-    if usable.len() == 1 {
-        let only = usable[0].clone();
-        println!("jazyk: setting up {}, the only option", only.row(one_host).name);
-        return Some(vec![only]);
+    if usable.len() <= 1 {
+        return Some(usable.into_iter().cloned().collect());
     }
     if !tty {
         return Some(usable.into_iter().filter(|i| !i.needs_consent()).cloned().collect());
     }
     let rows: Vec<crate::menu::Row> = items.iter().map(|i| i.row(one_host)).collect();
-    let ticked = crate::menu::check(heading, &rows, &enabled)?;
+    let ticked = crate::menu::check(heading, &rows, &enabled, &enabled)?;
     Some(items.iter().zip(ticked).filter(|(i, t)| *t && i.enabled()).map(|(i, _)| i.clone()).collect())
+}
+
+// A name on the `jazyk setup --remove` list. Mirrors docs/frontends/cli.md#jazyk-setup.
+fn named(name: &str, host: Option<&'static str>) -> Option<Item> {
+    if name == "jazyk" {
+        return host.map(Item::Jazyk);
+    }
+    if let Some(h) = name.strip_prefix("jazyk-") {
+        return ACP_HOSTS.iter().find(|x| **x == h).map(|h| Item::Jazyk(h));
+    }
+    agent_by_name(name).map(|a| Item::Agent(a.name))
+}
+
+// `jazyk setup [ide] [--list] [--remove NAMES]`. Mirrors docs/frontends/cli.md#jazyk-setup.
+pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
+    use std::io::IsTerminal;
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let (host, ide_name) = match positional.first() {
+        None => (None, None),
+        Some(id) => match host_of(id) {
+            Some(h) => (Some(h), crate::start::choice(id).map(|c| c.name)),
+            None => {
+                eprintln!("jazyk: `{}` is not an IDE; one of vscode, cursor, zed, idea, pycharm, ...", id);
+                return 2;
+            }
+        },
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(root) = crate::project::find_root(&cwd) else {
+        eprintln!("jazyk: no jazyk project here; `jazyk init` makes one");
+        return 1;
+    };
+    let change = match positional.first() {
+        Some(id) => format!("jazyk setup {}", id),
+        None => "jazyk setup".to_string(),
+    };
+    let machine = Machine::scan();
+    let items = items(&machine, host);
+    let one_host = host.is_some();
+
+    if let Some(list) = opts.remove.as_deref() {
+        let targets: Vec<Item> = if list == "all" {
+            items.iter().filter(|i| state(i, &root).present()).cloned().collect()
+        } else {
+            let mut out = Vec::new();
+            for n in list.split(',').map(str::trim) {
+                match named(n, host) {
+                    Some(i) => out.push(i),
+                    None => {
+                        eprintln!("jazyk: unknown setup name `{}`", n);
+                        return 2;
+                    }
+                }
+            }
+            out
+        };
+        return remove_all(&targets, &root);
+    }
+
+    let states: Vec<State> = items.iter().map(|i| state(i, &root)).collect();
+    if opts.list || !tty {
+        let width = items.iter().map(|i| i.row(one_host).name.chars().count()).max().unwrap_or(0);
+        for (i, s) in items.iter().zip(&states) {
+            let row = i.row(one_host);
+            let word = if i.enabled() { s.word() } else { "unsupported" };
+            println!("  {:w$}  {:11} {}", row.name, word, if i.enabled() { row.note } else { String::new() }, w = width);
+        }
+        if !tty && !opts.list {
+            println!("\n`{} --remove NAMES` removes; on a terminal, `{}` adds and removes.", change, change);
+        }
+        return 0;
+    }
+
+    let enabled: Vec<bool> = items.iter().map(|i| i.enabled()).collect();
+    let any = states.iter().any(|s| s.present());
+    let initial: Vec<bool> = items
+        .iter()
+        .zip(&states)
+        .map(|(i, s)| i.enabled() && (!any || s.present()))
+        .collect();
+    let rows: Vec<crate::menu::Row> = items
+        .iter()
+        .zip(&states)
+        .map(|(i, s)| {
+            let mut row = i.row(one_host);
+            if i.enabled() {
+                row.note = format!("{:9} {}", s.word(), row.note);
+            }
+            row
+        })
+        .collect();
+    let heading = match ide_name {
+        Some(n) => format!("jazyk setup for {} (ticked: set up)", n),
+        None => "jazyk setup (ticked: set up)".to_string(),
+    };
+    let Some(ticked) = crate::menu::check(&heading, &rows, &enabled, &initial) else {
+        return 0;
+    };
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut failed: Vec<(Item, String)> = Vec::new();
+    let mut warned = false;
+    for ((item, s), t) in items.iter().zip(&states).zip(&ticked) {
+        if !item.enabled() {
+            continue;
+        }
+        if *t && *s != State::Installed {
+            if !warned {
+                warn_if_absolute();
+                warned = true;
+            }
+            match install(item, &root, tty, s.present()) {
+                Ok(()) => added.push(label(item)),
+                Err(e) => failed.push((item.clone(), e)),
+            }
+        } else if !*t && s.present() {
+            match remove(item, &root) {
+                Ok(_) => removed.push(label(item)),
+                Err(e) => failed.push((item.clone(), e)),
+            }
+        }
+    }
+    if added.is_empty() && removed.is_empty() && failed.is_empty() {
+        println!("jazyk: no changes");
+    }
+    if !added.is_empty() {
+        println!("jazyk: added {}", added.join(", "));
+    }
+    if !removed.is_empty() {
+        println!("jazyk: removed {}", removed.join(", "));
+    }
+    for (item, why) in &failed {
+        println!("  {}: {}", label(item), why);
+    }
+    for item in items.iter().zip(&ticked).filter(|(_, t)| **t).map(|(i, _)| i) {
+        if let Item::Agent(n) = item {
+            if let Some(Method::Guided(where_)) = agent_by_name(n).map(|a| a.method) {
+                println!("  {}: paste {} in {}", label(item), paste_text(&spawn_command()), where_);
+            }
+        }
+    }
+    if failed.is_empty() { 0 } else { 1 }
+}
+
+fn remove_all(targets: &[Item], root: &Path) -> i32 {
+    let mut code = 0;
+    let mut removed = Vec::new();
+    for item in targets {
+        if let Item::Agent(n) = item {
+            if let Some(Method::Guided(where_)) = agent_by_name(n).map(|a| a.method) {
+                println!("  {}: remove jazyk by hand in {}", label(item), where_);
+                continue;
+            }
+        }
+        match remove(item, root) {
+            Ok(true) => removed.push(label(item)),
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("jazyk: {}: {}", label(item), e);
+                code = 1;
+            }
+        }
+    }
+    if removed.is_empty() {
+        println!("jazyk: nothing to remove");
+    } else {
+        println!("jazyk: removed {}", removed.join(", "));
+    }
+    code
 }
 
 #[cfg(test)]
@@ -487,5 +829,45 @@ mod tests {
     fn the_paste_is_one_mcp_servers_entry() {
         let v: serde_json::Value = serde_json::from_str(&paste_text("jazyk")).unwrap();
         assert_eq!(v["mcpServers"]["jazyk"]["args"], json!(["mcp", "all"]));
+    }
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("jazyk-setup-{}-{}", name, crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // Install reads back as installed, an edited command as stale, and remove takes
+    // only jazyk's entry, deleting a file it leaves empty.
+    // Mirrors docs/frontends/cli.md#jazyk-setup.
+    #[test]
+    fn install_state_remove_round_trip() {
+        let dir = temp("round");
+        let claude = Item::Agent("claude");
+        let codex = Item::Agent("codex");
+        let copilot = Item::Agent("copilot");
+        assert_eq!(state(&claude, &dir), State::Missing);
+        std::fs::write(dir.join(".mcp.json"), "{\n  // mine\n  \"mcpServers\": {\n    \"other\": {\"command\": \"x\"}\n  }\n}\n").unwrap();
+        for item in [&claude, &codex, &copilot] {
+            install(item, &dir, false, false).unwrap();
+            assert_eq!(state(item, &dir), State::Installed, "{:?}", item);
+        }
+        let mcp = std::fs::read_to_string(dir.join(".mcp.json")).unwrap();
+        std::fs::write(dir.join(".mcp.json"), mcp.replace("\"all\"", "\"graph\"")).unwrap();
+        assert_eq!(state(&claude, &dir), State::Stale);
+
+        for item in [&claude, &codex, &copilot] {
+            assert!(remove(item, &dir).unwrap(), "{:?}", item);
+            assert_eq!(state(item, &dir), State::Missing, "{:?}", item);
+            assert!(!remove(item, &dir).unwrap(), "a second remove finds nothing");
+        }
+        let left = std::fs::read_to_string(dir.join(".mcp.json")).unwrap();
+        assert!(left.contains("// mine") && left.contains("\"other\"") && !left.contains("jazyk"), "{}", left);
+        assert!(!dir.join(".vscode/mcp.json").exists(), "an emptied file is deleted");
+        assert!(!dir.join(".codex/config.toml").exists(), "an emptied codex file is deleted");
+        assert!(!dir.join(".claude/settings.local.json").exists(), "the approval goes with the entry");
+        assert!(!dir.join(".vscode").exists() && !dir.join(".codex").exists(), "emptied folders go too");
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }

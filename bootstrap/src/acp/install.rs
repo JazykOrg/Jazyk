@@ -258,6 +258,57 @@ pub enum Merge {
     Unchanged,
 }
 
+// Remove one entry from a settings file, in place: the same splice as the merge, so
+// comments, formatting, and every other entry survive. A file left holding only the
+// empty map is deleted. Ok(false) when the entry was not there.
+// Mirrors docs/frontends/cli.md#jazyk-setup.
+pub fn remove_from(path: &std::path::Path, key: &str, name: &str) -> Result<bool, String> {
+    use jsonc_parser::ast::Value as JValue;
+    use jsonc_parser::{parse_to_ast, CollectOptions, CommentCollectionStrategy, ParseOptions};
+    let Ok(text) = crate::vfs::read_to_string(path) else {
+        return Ok(false);
+    };
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let parse_options = ParseOptions {
+        allow_comments: true,
+        allow_trailing_commas: true,
+        allow_loose_object_property_names: true,
+        ..Default::default()
+    };
+    let ast = parse_to_ast(
+        &text,
+        &CollectOptions { comments: CommentCollectionStrategy::Off, tokens: false },
+        &parse_options,
+    )
+    .map_err(|e| e.to_string())?;
+    let Some(JValue::Object(root)) = ast.value.as_ref() else {
+        return Err("the file does not hold a JSON object".into());
+    };
+    let Some(prop) = root.get(key) else { return Ok(false) };
+    let JValue::Object(map) = &prop.value else { return Ok(false) };
+    let Some(existing) = map.get(name) else { return Ok(false) };
+    let props = &map.properties;
+    let idx = props.iter().position(|p| std::ptr::eq(p, existing)).unwrap_or(0);
+    let (start, end) = if props.len() == 1 {
+        (map.range.start + 1, map.range.end - 1)
+    } else if idx + 1 < props.len() {
+        (props[idx].range.start, props[idx + 1].range.start)
+    } else {
+        (props[idx - 1].range.end, props[idx].range.end)
+    };
+    let out = format!("{}{}", &text[..start], &text[end..]);
+    let left = jsonc_parser::parse_to_serde_value(&out, &parse_options).ok().flatten();
+    let empty = json!({ key: {} });
+    if left.as_ref() == Some(&empty) {
+        crate::vfs::remove_file(path).map_err(|e| e.to_string())?;
+    } else {
+        crate::vfs::write(path, out).map_err(|e| e.to_string())?;
+    }
+    Ok(true)
+}
+
 // Merge one agent entry into a settings file, in place. Editors keep these files by
 // hand: they carry comments, trailing commas, and an author's formatting, so the
 // merge is a text splice at the parsed node's range and never a re-serialization of

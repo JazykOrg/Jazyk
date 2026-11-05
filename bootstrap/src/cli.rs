@@ -54,6 +54,8 @@ pub struct Options {
     // (docs/frontends/mcp.md#mcp-into-acp-sessions).
     pub agent: Option<String>,
     pub acp_ide: Option<String>,
+    // `jazyk setup --remove`: setup names, or `all`.
+    pub remove: Option<String>,
     pub ephemeral: bool,
     pub only: Option<String>,
     pub build_token: Option<String>,
@@ -248,13 +250,17 @@ fn init_setup(cwd: &std::path::Path, mcp: Option<&str>, acp: Option<&str>) -> bo
         return wrote;
     }
     crate::setup::warn_if_absolute();
-    let outcomes: Vec<crate::setup::Outcome> = chosen
-        .iter()
-        .map(|(item, named)| crate::setup::apply(item, cwd, tty, *named))
-        .collect();
-    wrote |= outcomes.iter().any(|o| o.ok);
-    println!("\njazyk: agent setup");
-    crate::setup::print_summary(&outcomes);
+    let mut done = Vec::new();
+    let mut failed = Vec::new();
+    for (item, named) in chosen {
+        match crate::setup::install(&item, cwd, tty, named) {
+            Ok(()) => done.push(item),
+            Err(e) => failed.push((item, e)),
+        }
+    }
+    wrote |= !done.is_empty();
+    println!("jazyk: agent setup");
+    crate::setup::print_summary(&done, &failed, "jazyk setup");
     wrote
 }
 

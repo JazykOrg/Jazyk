@@ -164,7 +164,7 @@ installed IDE and every detected agent, as in [`jazyk init`](#jazyk-init).
 
 Removing an entry deletes the `jazyk` server (or the `Jazyk` agent) from its file and
 leaves everything else in the file as it was. A file left holding nothing else is
-deleted. The Claude Code approval in `.claude/settings.local.json` goes with its
+deleted, and so is a folder inside the project that this leaves empty. The Claude Code approval in `.claude/settings.local.json` goes with its
 entry. The Jazyk agent's registration is global, so removing it removes it from that
 IDE for every project; the ACP Client extension stays installed. A guided step is
 removed by hand: the line names where. Exit `0` when the command did what it asked,

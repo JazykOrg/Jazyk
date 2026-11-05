@@ -4706,6 +4706,33 @@ mod tests {
             .collect()
     }
 
+    // Every tool the AGENTS.md section names is one `jazyk mcp all` serves, so a
+    // rename breaks this test, not the agents that read the section.
+    // Mirrors docs/frontends/agent-context.md#the-jazyk-section-of-agentsmd.
+    #[test]
+    fn the_agents_md_section_names_only_served_tools() {
+        let dir = bare_dir("agents-md-tools");
+        // The project-level serving `jazyk mcp all` runs without --set.
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let modes = ["compile", "generate", "verify", "decompile", "chat"].map(String::from).to_vec();
+        let server = McpServer::with_bridge(project, dir.join(".jazyk"), modes, false, BridgeFlags::default());
+        let names = tool_names(&server);
+        let payload = include_str!("../../docs/compiler/goals/prompts/project-agents.md");
+        let named: Vec<&str> = payload
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|t| t.contains('_') && t.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            .collect();
+        assert!(named.len() >= 8, "{named:?}");
+        for name in named {
+            assert!(names.iter().any(|n| n == name), "`{name}` is not served: {names:?}");
+        }
+        let init = server.handle("initialize", &json!({})).unwrap();
+        assert!(init["instructions"].as_str().unwrap().contains("take precedence over it"));
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn runtime_serving_needs_no_graph_and_exposes_execution_and_context() {
         let dir = bare_dir("runtime-only");

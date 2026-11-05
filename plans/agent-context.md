@@ -69,7 +69,7 @@ layers win.
 |---|---|---|
 | Instructions | `AGENTS.md` nested root to cwd (also `.agents/AGENTS.md`); `CLAUDE.md` or `.claude/CLAUDE.md` when a directory has no `AGENTS.md` | Yes. `@path` imports (relative, 4 hops, not in code spans, nothing outside the project in the cloud). 32 KiB cap. The jazyk block is skipped. |
 | MCP servers | `.mcp.json` (`mcpServers`), `jazyk.toml` `[mcp.servers.<name>]`; fallbacks `.vscode/mcp.json` (`servers`), `.cursor/mcp.json`, `.agents/mcp_config.json` | Yes. Stdio and streamable HTTP locally, HTTPS only in the cloud. `${VAR}` expansion. `jazyk` is reserved. |
-| Skills | `.agents/skills/*/SKILL.md`, `.claude/skills/*/SKILL.md` | Yes. Names and descriptions in the prompt, `load_skill` returns the body. Scripts never run automatically. |
+| Skills | `.agents/skills/*/SKILL.md`, `.claude/skills/*/SKILL.md` | Yes. Names and descriptions in the prompt, `read_skill` returns the body. Scripts never run automatically. |
 | Slash commands | `.claude/commands`, `.github/prompts`, `.gemini/commands` | Later. |
 | Scoped rules | `.claude/rules`, `.cursor/rules`, `.github/instructions` | Later. |
 | Subagents | `.claude/agents`, `.github/agents` | No. |

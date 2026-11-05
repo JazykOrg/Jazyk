@@ -246,6 +246,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 // Atomic, and through a symbolic link: an AGENTS.md linked to CLAUDE.md stays a link.
 fn write(path: &Path, text: &str) -> Result<(), String> {
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut target = path.to_path_buf();
     #[cfg(not(target_arch = "wasm32"))]
     if !crate::vfs::is_scoped() && std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {

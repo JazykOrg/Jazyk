@@ -122,7 +122,7 @@ Skills follow the [Agent Skills](https://agentskills.io) format: a folder holdin
 - Project: `.claude/skills/*/SKILL.md`, then `.agents/skills/*/SKILL.md`. A
   project skill overrides a global skill of the same name, and `.agents` wins
   over `.claude`.
-- The session lists each skill's name and description. The `load_skill` tool
+- The session lists each skill's name and description. The `read_skill` tool
   returns one skill's `SKILL.md` body and the relative paths of the other files
   in its folder.
 - A skill's scripts are never run by jazyk. The agent can only run them with its

@@ -1587,7 +1587,7 @@ mod tests {
                     }
                     assert!(!messages.contains("JAZYK:BEGIN"), "the jazyk section stays out");
                     let names: Vec<&str> = body["tools"].as_array().unwrap().iter().filter_map(|t| t["function"]["name"].as_str()).collect();
-                    assert!(names.contains(&"load_skill") && names.contains(&"list_issues"), "{names:?}");
+                    assert!(names.contains(&"read_skill") && names.contains(&"list_issues"), "{names:?}");
                     return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"r1","type":"function","function":{"name":"list_issues","arguments":"{}"}}]}}]}).to_string());
                 }
                 assert!(messages.contains("issues:list_issues:42 open"), "{messages}");

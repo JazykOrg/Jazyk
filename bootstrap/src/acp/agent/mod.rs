@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 
 struct SessionState {
     conns: Vec<McpServerConn>,
-    // Skills `load_skill` reads (docs/frontends/agent-context.md#skills).
+    // Skills `read_skill` reads (docs/frontends/agent-context.md#skills).
     skills: Vec<crate::agent_context::Skill>,
     tools: Vec<GenericTool>,
     // The running conversation, kept across prompts so a chat session has memory.
@@ -103,8 +103,8 @@ impl harness::ToolHost for ConnectedTools<'_> {
         Box::pin(async move {
             for connection in self.0.iter_mut() { connection.refresh_tools()?; }
             let mut tools = session_tools(self.0.iter().map(|c| (c.name.as_str(), c.tools.as_slice())))?;
-            if !self.1.is_empty() && !tools.iter().any(|t| t.name == crate::agent_context::LOAD_SKILL) {
-                tools.push(crate::agent_context::load_skill_tool());
+            if !self.1.is_empty() && !tools.iter().any(|t| t.name == crate::agent_context::READ_SKILL) {
+                tools.push(crate::agent_context::read_skill_tool());
             }
             Ok(Some(tools))
         })
@@ -114,8 +114,8 @@ impl harness::ToolHost for ConnectedTools<'_> {
         Box::pin(async move {
             match self.0.iter_mut().find(|c| c.tools.iter().any(|t| t.name == name)) {
                 Some(connection) => connection.call(name, args),
-                None if name == crate::agent_context::LOAD_SKILL && !self.1.is_empty() => {
-                    crate::agent_context::load_skill(self.1, args["name"].as_str().unwrap_or_default())
+                None if name == crate::agent_context::READ_SKILL && !self.1.is_empty() => {
+                    crate::agent_context::read_skill(self.1, args["name"].as_str().unwrap_or_default())
                 }
                 None => Err(format!("unknown tool `{name}`")),
             }
@@ -179,7 +179,7 @@ fn open_session(servers: &[McpServer], cwd: &std::path::Path, context: Option<cr
             }
         };
         let clash: Vec<String> = conn.tools.iter().map(|t| t.name.clone())
-            .filter(|n| tools.iter().any(|t| &t.name == n) || n == crate::agent_context::LOAD_SKILL).collect();
+            .filter(|n| tools.iter().any(|t| &t.name == n) || n == crate::agent_context::READ_SKILL).collect();
         if !clash.is_empty() {
             warnings.push(format!("MCP server `{}` ({}) skipped: its tool names collide with tools already offered ({})", server.name, server.source, clash.join(", ")));
             continue;
@@ -191,12 +191,12 @@ fn open_session(servers: &[McpServer], cwd: &std::path::Path, context: Option<cr
         conns.push(conn);
     }
     let mut skills = context.skills;
-    if !skills.is_empty() && tools.iter().any(|t| t.name == crate::agent_context::LOAD_SKILL) {
-        warnings.push("skills skipped: a client MCP server already offers a `load_skill` tool".into());
+    if !skills.is_empty() && tools.iter().any(|t| t.name == crate::agent_context::READ_SKILL) {
+        warnings.push("skills skipped: a client MCP server already offers a `read_skill` tool".into());
         skills.clear();
     }
     if !skills.is_empty() {
-        tools.push(crate::agent_context::load_skill_tool());
+        tools.push(crate::agent_context::read_skill_tool());
     }
     for text in [context.instructions, crate::agent_context::skills_text(&skills), crate::agent_context::warnings_text(&warnings)].into_iter().flatten() {
         harness::push_user_text(&mut history, &text);
@@ -601,7 +601,7 @@ for line in sys.stdin:
         };
         let opened = open_session(&client, dir.path(), Some(context)).unwrap();
         let names: Vec<&str> = opened.tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, vec!["graph_status", "extra_tool", "load_skill"]);
+        assert_eq!(names, vec!["graph_status", "extra_tool", "read_skill"]);
         let text = opened.history[0]["content"].as_str().unwrap();
         for part in ["Client jazyk.", "Extra server.", "PROJECT INSTRUCTIONS: be brief", "- s: d", "`broken` (.mcp.json) skipped", "`clash` (.mcp.json) skipped", "graph_status"] {
             assert!(text.contains(part), "{part}: {text}");
@@ -609,7 +609,7 @@ for line in sys.stdin:
         assert!(!text.contains("Shadow."), "a discovered jazyk never replaces the client's");
         let mut opened = opened;
         let mut host = ConnectedTools(&mut opened.conns, &opened.skills);
-        let reply = futures::executor::block_on(harness::ToolHost::call(&mut host, "load_skill", &json!({"name": "s"}))).unwrap();
+        let reply = futures::executor::block_on(harness::ToolHost::call(&mut host, "read_skill", &json!({"name": "s"}))).unwrap();
         assert!(reply.contains("Do it."));
         // A worker session reads nothing beyond its client servers.
         let worker = open_session(&client, dir.path(), None).unwrap();

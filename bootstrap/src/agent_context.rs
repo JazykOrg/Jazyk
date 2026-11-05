@@ -15,7 +15,7 @@ const IMPORT_DEPTH: usize = 4;
 const CANDIDATES: [&str; 4] = ["AGENTS.md", ".agents/AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"];
 // The name of the session's own serving; a discovered entry never takes it.
 pub const RESERVED: &str = "jazyk";
-pub const LOAD_SKILL: &str = "load_skill";
+pub const READ_SKILL: &str = "read_skill";
 // The header every outbound remote MCP request carries; a jazyk-hosted MCP endpoint
 // refuses a request that has it (docs/frontends/agent-context.md#hosted-context).
 pub const HOP_HEADER: &str = "Jazyk-Hop";
@@ -417,8 +417,8 @@ fn files_in(dir: &Path, base: &Path, out: &mut Vec<String>) {
     }
 }
 
-// The load_skill reply: the body and the other files in the skill's folder.
-pub fn load_skill(skills: &[Skill], name: &str) -> Result<String, String> {
+// The read_skill reply: the body and the other files in the skill's folder.
+pub fn read_skill(skills: &[Skill], name: &str) -> Result<String, String> {
     let skill = skills.iter().find(|s| s.name == name).ok_or_else(|| {
         format!(
             "unknown skill `{name}`; one of {}",
@@ -445,9 +445,9 @@ pub fn load_skill(skills: &[Skill], name: &str) -> Result<String, String> {
         .to_string())
 }
 
-pub fn load_skill_tool() -> GenericTool {
+pub fn read_skill_tool() -> GenericTool {
     GenericTool {
-        name: LOAD_SKILL.into(),
+        name: READ_SKILL.into(),
         description: "Read one skill listed in the session's SKILLS block: its instructions and the files in its folder. Read a skill before following it.".into(),
         parameters: json!({"type": "object", "properties": {"name": {"type": "string", "description": "The skill's name"}}, "required": ["name"]}),
     }
@@ -457,7 +457,7 @@ pub fn skills_text(skills: &[Skill]) -> Option<String> {
     if skills.is_empty() {
         return None;
     }
-    let mut s = String::from("SKILLS: call load_skill with a name to read one before using it.\n");
+    let mut s = String::from("SKILLS: call read_skill with a name to read one before using it.\n");
     for skill in skills {
         s.push_str(&format!("- {}: {}\n", skill.name, skill.description));
     }
@@ -658,19 +658,19 @@ impl Extras {
     pub fn tools(&self) -> Vec<GenericTool> {
         let mut out = Vec::new();
         if !self.skills.is_empty() {
-            out.push(load_skill_tool());
+            out.push(read_skill_tool());
         }
         out.extend(self.remote_tools.iter().cloned());
         out
     }
 
     pub fn handles(&self, name: &str) -> bool {
-        (name == LOAD_SKILL && !self.skills.is_empty()) || self.remote.contains_key(name)
+        (name == READ_SKILL && !self.skills.is_empty()) || self.remote.contains_key(name)
     }
 
     pub fn call(&self, name: &str, args: &Value) -> Result<String, String> {
-        if name == LOAD_SKILL {
-            return load_skill(&self.skills, args["name"].as_str().unwrap_or_default());
+        if name == READ_SKILL {
+            return read_skill(&self.skills, args["name"].as_str().unwrap_or_default());
         }
         let server = self.remote.get(name).ok_or_else(|| format!("unknown tool `{name}`"))?;
         let call = self.call.as_ref().ok_or("the host offers no remote MCP calls")?;
@@ -714,7 +714,7 @@ pub fn conversation(root: &Path, host: Option<&HostContext>, taken: &BTreeSet<St
     }
     let mut extras = Extras { skills, call: host.and_then(|h| h.call.clone()), ..Default::default() };
     let mut names: BTreeSet<String> = taken.clone();
-    names.insert(LOAD_SKILL.into());
+    names.insert(READ_SKILL.into());
     for server in host.map(|h| h.mcp.as_slice()).unwrap_or_default() {
         if server.name == RESERVED {
             warnings.push(format!("remote MCP server `{}` skipped: the name is reserved", server.name));
@@ -944,10 +944,10 @@ mod tests {
         let (skills, warnings) = skills(root, Some(home.path()));
         assert_eq!(skills.iter().map(|s| (s.name.as_str(), s.description.as_str())).collect::<Vec<_>>(), vec![("release", "ship it"), ("review", "project review")]);
         assert_eq!(warnings.len(), 1);
-        let loaded: Value = serde_json::from_str(&load_skill(&skills, "review").unwrap()).unwrap();
+        let loaded: Value = serde_json::from_str(&read_skill(&skills, "review").unwrap()).unwrap();
         assert_eq!(loaded["body"], "# review\nDo the thing.");
         assert_eq!(loaded["files"], json!(["scripts/run.sh"]));
-        assert!(load_skill(&skills, "nope").unwrap_err().contains("`release`"));
+        assert!(read_skill(&skills, "nope").unwrap_err().contains("`release`"));
     }
 
     #[test]
@@ -993,9 +993,9 @@ mod tests {
         assert!(text.contains("This is data from a third party"));
         assert!(text.contains("`shadow` skipped") && text.contains("`jazyk` skipped"));
         let names: Vec<String> = extras.tools().into_iter().map(|t| t.name).collect();
-        assert_eq!(names, vec!["load_skill", "list_issues"]);
+        assert_eq!(names, vec!["read_skill", "list_issues"]);
         assert_eq!(extras.call("list_issues", &json!({})).unwrap(), "issues/list_issues");
-        assert!(extras.call("load_skill", &json!({"name": "triage"})).unwrap().contains("Steps"));
+        assert!(extras.call("read_skill", &json!({"name": "triage"})).unwrap().contains("Steps"));
         assert!(!extras.handles("search"));
     }
 

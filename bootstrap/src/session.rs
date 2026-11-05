@@ -125,6 +125,8 @@ pub enum TraceEvent {
     // (docs/compiler/sessions.md#trace-events).
     #[serde(rename = "modelText")]
     ModelText {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        summary: bool,
         label: String,
         text: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]

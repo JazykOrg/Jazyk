@@ -214,7 +214,7 @@ mod tests {
                     "function":{"name":"edit","arguments":"{}"}}]}}]}) }) })
             }
         }
-        let llm = crate::llm::Llm { base_url:"unused".into(), model:"fixture".into(), api_key:String::new(),
+        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url:"unused".into(), model:"fixture".into(), api_key:String::new(),
             temperature:None, trace:None };
         let mut model = Repeating(0);
         let mut history = vec![json!({"role":"user","content":"Continue until the work is complete."})];

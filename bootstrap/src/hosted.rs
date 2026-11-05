@@ -489,7 +489,7 @@ pub fn trace() -> Trace {
     )
 }
 pub fn llm() -> crate::llm::Llm {
-    crate::llm::Llm {
+    crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
         base_url: "host-injected".into(),
         model: model_name(),
         api_key: String::new(),

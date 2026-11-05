@@ -84,3 +84,5 @@ pub mod viewer;
 pub mod wasm;
 
 pub mod workflow;
+
+pub mod model_api;

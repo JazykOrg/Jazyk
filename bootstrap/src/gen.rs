@@ -3509,7 +3509,7 @@ mod tests {
         let tools:Vec<_>=crate::tools::catalog().into_iter().filter(|tool|names.contains(tool.name)).map(|tool|GenericTool {
             name:tool.name.into(),description:tool.description.into(),parameters:tool.parameters,
         }).collect();
-        let llm=crate::llm::Llm {base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
+        let llm=crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None, base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
             api_key:String::new(),temperature:None,trace:None};
         let mut history=vec![json!({"role":"user","content":"Develop the cart source and its criterion tests together."})];
         let mut observed=Vec::new();

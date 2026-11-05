@@ -1851,7 +1851,7 @@ mod tests {
         assert_eq!(result["failed"],0);
         assert_eq!(serde_json::to_value(Ledger::load(out)).unwrap(),serde_json::to_value(before).unwrap());
         let project = crate::project::Project::load(std::path::Path::new("/project"));
-        let llm = crate::llm::Llm {base_url:"must-not-connect".into(),model:"unused".into(),api_key:String::new(),temperature:None,trace:None};
+        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None, base_url:"must-not-connect".into(),model:"unused".into(),api_key:String::new(),temperature:None,trace:None};
         let runner = crate::inprocess::InProcessRunner::start(&project,&llm,out).unwrap();
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
         let report = run_all(&store,&runner,&gs,&[],None,false,&trace).unwrap();

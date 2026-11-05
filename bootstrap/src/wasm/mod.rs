@@ -114,7 +114,7 @@ pub fn model_name() -> String {
 
 // The client every session uses. Its transport is the bridge to the page.
 pub fn llm() -> crate::llm::Llm {
-    crate::llm::Llm {
+    crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
         base_url: "in-page".to_string(),
         model: model_name(),
         api_key: String::new(),

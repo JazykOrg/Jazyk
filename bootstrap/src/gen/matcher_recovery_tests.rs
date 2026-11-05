@@ -95,7 +95,7 @@ fn forced_generation_resumes_after_matcher_repair_without_replaying_a_completed_
         let project = crate::project::Project::load(Path::new("/project"));
         let store = Store::load(&project.out);
         let guard = crate::control::begin_internal_build(&project,&project.out,"generate").unwrap();
-        let llm = crate::llm::Llm { base_url:"http://127.0.0.1:1/v1".into(), model:"two-group-recovery".into(), api_key:String::new(), temperature:None, trace:None };
+        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url:"http://127.0.0.1:1/v1".into(), model:"two-group-recovery".into(), api_key:String::new(), temperature:None, trace:None };
         let runner = crate::inprocess::InProcessRunner::start(&project,&llm,&project.out).unwrap();
         runner.set_build_token(Some(guard.token().to_owned()));
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,Arc::new(|_|{}),Default::default());

@@ -4142,7 +4142,7 @@ mod tests {
             ("begin_generation",json!({"entity":"ent:greeter"})),("write_text_file",write),
             ("write_text_file",json!({"path":"main.md","content":"not a document edit"})),
         ]};
-        let llm = crate::llm::Llm{base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),api_key:String::new(),temperature:None,trace:None};
+        let llm = crate::llm::Llm{ api: "chat_completions".into(), reasoning_summary: None, base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),api_key:String::new(),temperature:None,trace:None};
         let mut tools = crate::session_recovery::McpTools(&server);
         let mut history = vec![json!({"role":"user","content":"Repair the Source matcher, then implement the greeting."})];
         let mut receipts = Vec::new();
@@ -4327,7 +4327,7 @@ mod tests {
                 "requirement":"req:greet","criterion":"crit:greet","kind":"llm",
                 "artifact":"tests/greeting.md","name":"greeting","run":"llm","files":["src/greeting.txt"]
             }]}) };
-        let llm = crate::llm::Llm { base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
+        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
             api_key:String::new(),temperature:None,trace:None };
         let mut history = vec![json!({"role":"user","content":opening})];
         let mut saved = Saved { suspend_after_compaction:true, ..Default::default() };

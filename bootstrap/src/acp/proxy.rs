@@ -810,8 +810,10 @@ fn spawn_config(agent: &crate::acp::config::ResolvedAgent, llm: &crate::llm::Llm
     }
     if agent.name == crate::acp::config::EMBEDDED {
         config = config
+            .env("JAZYK_LLM_API", &llm.api)
             .env("JAZYK_LLM_BASE_URL", &llm.base_url)
             .env("JAZYK_MODEL", &llm.model);
+        if let Some(summary) = &llm.reasoning_summary { config = config.env("JAZYK_REASONING_SUMMARY", summary); }
         if !llm.api_key.is_empty() {
             config = config.env("JAZYK_API_KEY", &llm.api_key);
         }

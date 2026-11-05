@@ -401,6 +401,9 @@ impl LiveDeltas {
         if field == "content" {
             self.content.push_str(&text);
             (args.emit)(AgentEvent::Message(text));
+        } else if field == "reasoning_summary" {
+            self.summary.push_str(&text);
+            (args.emit)(AgentEvent::ReasoningSummary(text));
         } else {
             self.thought.push_str(&text);
             (args.emit)(AgentEvent::Thought(text));
@@ -732,12 +735,14 @@ async fn handle_action(
     }
     match action {
         HostAction::Model {
-            body,
+            mut body,
             purpose,
             ordinal,
             reply,
         } => {
             let started = crate::sys::Instant::now();
+            body["_jazykApi"] = json!(args.llm.api);
+            body["_jazykReasoningSummary"] = json!(args.llm.reasoning_summary);
             let id = format!(
                 "{}:{}:{purpose:?}:{ordinal}",
                 state.run_id, state.transition
@@ -772,7 +777,7 @@ async fn handle_action(
                 let buffer = pending.clone();
                 let sink: ModelDeltaSink = Arc::new(move |field, text| {
                     if text.is_empty()
-                        || !matches!(field, "content" | "reasoning" | "reasoning_content")
+                        || !matches!(field, "content" | "reasoning" | "reasoning_content" | "reasoning_summary")
                     {
                         return;
                     }
@@ -1049,6 +1054,7 @@ fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
         if !message.is_user_visible() {
             return;
         }
+        let summary = message.metadata.operation_note("jazyk.responses", "output").is_some();
         for content in message.content {
             match content {
                 MessageContent::Text(text) if message.role == Role::Assistant => {
@@ -1058,9 +1064,9 @@ fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
                     }
                 }
                 MessageContent::Thinking(thought) => {
-                    let text = LiveDeltas::remainder(&mut live.thought, thought.thinking);
+                    let text = LiveDeltas::remainder(if summary { &mut live.summary } else { &mut live.thought }, thought.thinking);
                     if !text.is_empty() {
-                        (args.emit)(AgentEvent::Thought(text));
+                        (args.emit)(if summary { AgentEvent::ReasoningSummary(text) } else { AgentEvent::Thought(text) });
                     }
                 }
                 _ => {}

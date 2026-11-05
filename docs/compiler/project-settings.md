@@ -121,7 +121,7 @@ errors = ["Unimplemented or TODO sections"]
 ## LLM
 
 The [embedded agent](../frontends/acp.md#the-embedded-agent) calls an OpenAI-compatible
-chat completions endpoint.
+Chat Completions or Responses endpoint.
 
 ```toml
 [llm]
@@ -131,26 +131,14 @@ api_key_env = "JAZYK_API_KEY"
 temperature = 0
 ```
 
-- `base_url`: any OpenAI-compatible server. Endpoints that only answer streaming
-  responses are handled transparently: on a "stream must be set to true" rejection the
-  client switches to streaming for the rest of the run. A transient HTTP failure on a
-  non-streaming request also retries the same request over streaming (some proxies fail
-  to relay non-streaming tool call responses); if the streaming retry succeeds,
-  streaming stays on for the rest of the run. A streamed response is assembled from its
-  deltas, including any `reasoning_content` or `reasoning` deltas, so it carries the
-  same fields as a non-streaming reply. A tool call delta that carries a new call `id`
-  starts a new call even when its `index` repeats: an Ollama endpoint behind a router
-  streams each parallel call whole under index 0, and joining their arguments made
-  every call of the reply unparseable. Some providers reject reasoning fields echoed
-  back in the message history; on such a rejection the client strips them from outgoing
-  messages for the rest of the run. The session transcript and trace keep the text (see
-  [the embedded agent](../frontends/acp.md#the-embedded-agent)).
+- `base_url`: the base URL of the selected API. Native requests use streaming.
+  Answer, reasoning, and summary deltas remain separate. Only a complete response
+  supplies executable tool calls. The client never changes APIs after submission.
 - `model`: the model id.
 - `api_key_env`: the environment variable holding the API key. A literal `api_key` may be
   given instead. Prefer `api_key_env` in tracked files.
-- `temperature`: sampling temperature. Default 0. Some models only allow their own
-  default and reject the parameter; on such a rejection the client retries once without
-  it and stops sending it for the rest of the run.
+- `temperature`: sampling temperature. Default 0. A negative value omits the field.
+  Some models require their default temperature.
 
 The endpoint, model, and credentials describe the machine, not the project, so their
 recommended home is a global config at `~/.jazyk/config.toml` (or `~/.jazyk.toml`) with
@@ -158,8 +146,9 @@ the same `[llm]` table. The global config is the machine default; a project `[ll
 overrides it, so a project that names its own model wins. Effective values resolve per
 field, highest priority first:
 
-1. CLI flag: `--llm-base-url`, `--model`, `--api-key`.
-2. Environment variable: `JAZYK_LLM_BASE_URL`, `JAZYK_MODEL`, `JAZYK_API_KEY`.
+1. CLI flag: `--llm-base-url`, `--model`, `--api-key`, `--llm-api`, `--reasoning-summary`.
+2. Environment variable: `JAZYK_LLM_BASE_URL`, `JAZYK_MODEL`, `JAZYK_API_KEY`,
+   `JAZYK_LLM_API`, `JAZYK_REASONING_SUMMARY`.
 3. Set `[sets.llm]`, then project `[llm]` in `.jazyk/jazyk.toml`.
 4. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
 5. Built-in default.
@@ -368,3 +357,24 @@ The embedded runtime requires native tool calling. `JAZYK_CODEC` is no longer
 read. No run switches to a text tool protocol. An unsupported model receives an
 explicit capability error. Older
 benchmark and transcript codec labels remain historical data.
+
+## Model API selection
+
+`[llm].api` selects `chat_completions` (default) or `responses`. `--llm-api`
+and `JAZYK_LLM_API` use the existing per-field configuration precedence.
+`[llm].reasoning_summary`, `--reasoning-summary`, and `JAZYK_REASONING_SUMMARY`
+select `auto`, `concise`, or `detailed`. An absent summary setting requests no
+summary. Summary support belongs to the exact provider and model. Responses
+support does not establish summary support. Invalid settings fail before dispatch.
+
+The transport is selected before submission. A protocol failure does not submit
+a second request through another API. Chat Completions remains supported.
+Responses uses locally owned history and `store: false`. Complete provider output
+items, including encrypted reasoning, survive tool rounds and recovery. They stay
+bound to the endpoint and model that produced them. The harness scopes tool ids
+locally and restores the original call ids on provider replay.
+
+The shared GDK formats requests and parses complete responses. The harness retains
+provider output separately from visible text because the GDK projection can omit
+opaque fields. Text, reasoning, and provider summaries have separate event channels.
+Summaries are display data, never a substitute for continuation items.

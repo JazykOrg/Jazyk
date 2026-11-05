@@ -110,7 +110,7 @@ mod native {
         metrics: Rc<RefCell<Metrics>>,
     ) -> Outcome {
         let owner = std::thread::current().id();
-        let llm = jazyk::llm::Llm {
+        let llm = jazyk::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
             base_url: "http://127.0.0.1/unused".into(),
             model: "profile".into(),
             api_key: String::new(),

@@ -170,7 +170,9 @@ it. An agent that speaks MCP only over HTTP gets the same serving over
 Every coding agent that reads MCP configuration can run jazyk's tools without the
 [IDE proxy](./acp.md#the-ide-proxy): its config gets one server entry named `jazyk`
 serving `jazyk mcp all`. The [launcher](./cli.md#ide-agents) and
-[`jazyk init`](./cli.md#jazyk-init) write these entries; each agent has a setup name.
+[`jazyk init`](./cli.md#jazyk-init) write these entries, and
+[`jazyk setup`](./cli.md#jazyk-setup) lists and removes them; each agent has a setup
+name.
 The command in every entry follows the [registration rule](./acp.md#registration):
 `jazyk` when that name on `PATH` is this binary, the absolute path otherwise, with a
 warning that the entry breaks when the binary moves.
@@ -200,8 +202,8 @@ Each agent is set up by the first method that works for it:
 | `zed` | Zed's agent | Zed installed | project file | `.zed/settings.json` (`context_servers`) |
 | `junie` | Junie | a JetBrains plugin named `junie` | project file | `.junie/mcp/mcp.json` (`mcpServers`) |
 | `roo` | Roo Code | the `rooveterinaryinc.roo-cline` extension | project file | `.roo/mcp.json` (`mcpServers`) |
+| `ai-assistant` | JetBrains AI Assistant | a JetBrains plugin named `ml-llm` | project file | `.ai/mcp/mcp.json` (`mcpServers`), the project file the plugin watches |
 | `copilot-cli` | GitHub Copilot CLI | `copilot` on `PATH` | global file | `~/.copilot/mcp-config.json` (`mcpServers`) |
-| `ai-assistant` | JetBrains AI Assistant | a JetBrains plugin named `ml-llm` | guided step | Settings, Tools, AI Assistant, Model Context Protocol (MCP), add, paste the JSON |
 | `cline` | Cline | the `saoudrizwan.claude-dev` extension | guided step | the MCP Servers icon, Configure, Configure MCP Servers, paste the JSON |
 
 Extensions are looked up in the IDE's extension folder (`~/.vscode/extensions`,
@@ -230,6 +232,7 @@ The launcher's summary names where each agent is reached in the IDE it started:
 | `zed` | the Agent panel settings, MCP servers: jazyk |
 | `junie` | Junie's MCP servers: jazyk |
 | `roo` | Roo's MCP servers: jazyk |
+| `ai-assistant` | Settings, Tools, AI Assistant, Model Context Protocol (MCP): jazyk |
 
 ## MCP over HTTP
 

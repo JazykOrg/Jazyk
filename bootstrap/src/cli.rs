@@ -120,22 +120,12 @@ pub fn run_init(opts: &Options) -> i32 {
             }
         }
     }
-    match init_mcp(&cwd, opts.mcp.as_deref()) {
-        Ok(true) => wrote_something = true,
-        Ok(false) => {}
-        Err(e) => {
-            eprintln!("jazyk: {}", e);
-            return 1;
-        }
+    if init_setup(&cwd, opts.mcp.as_deref(), opts.acp_ide.as_deref()) {
+        wrote_something = true;
     }
     // Which agent does the AI work, and for the embedded one, which model.
     // Mirrors docs/frontends/cli.md#jazyk-init.
     if init_agent(&cwd, opts.agent.as_deref()) {
-        wrote_something = true;
-    }
-    // ACP registration is global per editor; the proxy resolves the project from the
-    // session's cwd. Mirrors docs/frontends/cli.md#jazyk-init.
-    if init_acp(opts.acp_ide.as_deref()) {
         wrote_something = true;
     }
     if wrote_something {
@@ -149,13 +139,7 @@ pub fn run_init(opts: &Options) -> i32 {
 // Mirrors docs/frontends/cli.md#jazyk-init.
 fn init_flags_known(opts: &Options) -> Result<(), String> {
     if let Some(m) = opts.mcp.as_deref() {
-        if m != "none" && !crate::start::MCP_CHOICES.contains(&m) {
-            return Err(format!(
-                "unknown MCP agent `{}`; one of {}, none",
-                m,
-                crate::start::MCP_CHOICES.join(", ")
-            ));
-        }
+        list_known(m, &crate::setup::AGENTS.iter().map(|a| a.name).collect::<Vec<_>>(), "agent")?;
     }
     if let Some(a) = opts.agent.as_deref() {
         if a != "none" && !ACP_AGENTS.iter().any(|x| x.0 == a) {
@@ -167,12 +151,19 @@ fn init_flags_known(opts: &Options) -> Result<(), String> {
         }
     }
     if let Some(ide) = opts.acp_ide.as_deref() {
-        if ide != "none" && !crate::acp::install::IDES.contains(&ide) {
-            return Err(format!(
-                "unknown editor `{}`; one of {}, none",
-                ide,
-                crate::acp::install::IDES.join(", ")
-            ));
+        list_known(ide, &crate::acp::install::IDES, "editor")?;
+    }
+    Ok(())
+}
+
+// A `--mcp`/`--acp` value: `none`, `all`, or a comma-separated list of known names.
+fn list_known(value: &str, known: &[&str], what: &str) -> Result<(), String> {
+    if value == "none" || value == "all" {
+        return Ok(());
+    }
+    for name in value.split(',').map(str::trim) {
+        if !known.contains(&name) {
+            return Err(format!("unknown {} `{}`; one of {}, all, none", what, name, known.join(", ")));
         }
     }
     Ok(())
@@ -192,39 +183,79 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String
     Ok(vec![])
 }
 
-// Offer MCP integration: one of the launcher's MCP choices, set up exactly as the
-// launcher does. `--mcp` skips the prompt, a non-interactive stdin skips the whole
-// step so scripts never hang. Mirrors docs/frontends/cli.md#jazyk-init.
-fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
+// Agent setup for everything installed: one checklist of the Jazyk agent per
+// installed IDE and every detected coding agent. `--mcp` and `--acp` each answer
+// their half without the checklist; a non-interactive stdin skips what is left.
+// Mirrors docs/frontends/cli.md#jazyk-init.
+fn init_setup(cwd: &std::path::Path, mcp: Option<&str>, acp: Option<&str>) -> bool {
+    use crate::setup::Item;
     use std::io::IsTerminal;
-    let choices = crate::start::MCP_CHOICES;
-    let choice = match flag {
-        Some("none") => return Ok(false),
-        Some(a) => a.to_string(),
-        None => {
-            if !std::io::stdin().is_terminal() {
-                println!("jazyk: skipping MCP setup (no interactive stdin); rerun with --mcp {}", choices.join("|"));
-                return Ok(false);
-            }
-            println!(
-                "\nSet up MCP integration? The agent gets every lifecycle toolset over `jazyk mcp all`."
-            );
-            println!("  1) none");
-            for (i, id) in choices.iter().enumerate() {
-                let name = crate::start::choice(id).map(|c| c.name).unwrap_or(id);
-                println!("  {}) {}", i + 2, name);
-            }
-            match ask(&format!("choose [1-{}] (default 1): ", choices.len() + 1))
-                .trim()
-                .parse::<usize>()
-            {
-                Ok(n) if (2..=choices.len() + 1).contains(&n) => choices[n - 2].to_string(),
-                _ => return Ok(false),
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let machine = crate::setup::Machine::scan();
+    let all = crate::setup::items(&machine, None);
+    // (row, named by a flag: naming it is the consent)
+    let mut chosen: Vec<(Item, bool)> = Vec::new();
+    let mut snippets: Vec<String> = Vec::new();
+    let names = |v: &str| v.split(',').map(|n| n.trim().to_string()).collect::<Vec<_>>();
+    match mcp {
+        None => {}
+        Some("none") => {}
+        Some("all") => chosen.extend(all.iter().filter(|i| matches!(i, Item::Agent(_))).map(|i| (i.clone(), false))),
+        Some(v) => {
+            for n in names(v) {
+                if let Some(a) = crate::setup::agent_by_name(&n) {
+                    chosen.push((Item::Agent(a.name), true));
+                }
             }
         }
-    };
-    crate::start::setup_mcp(cwd, &choice)?;
-    Ok(true)
+    }
+    match acp {
+        None => {}
+        Some("none") => {}
+        Some("all") => chosen.extend(all.iter().filter(|i| matches!(i, Item::Jazyk(_))).map(|i| (i.clone(), true))),
+        Some(v) => {
+            for n in names(v) {
+                match crate::setup::ACP_HOSTS.iter().find(|h| **h == n) {
+                    Some(h) => chosen.push((Item::Jazyk(h), true)),
+                    None => snippets.push(n),
+                }
+            }
+        }
+    }
+    let rest: Vec<Item> = all
+        .into_iter()
+        .filter(|i| match i {
+            Item::Jazyk(_) => acp.is_none(),
+            Item::Agent(_) | Item::Unsupported(_) => mcp.is_none(),
+        })
+        .collect();
+    if rest.iter().any(|i| i.enabled()) {
+        if tty {
+            println!();
+            match crate::setup::choose(&rest, "Set up jazyk for which agents?", tty, false) {
+                Some(picked) => chosen.extend(picked.into_iter().map(|i| (i, false))),
+                None => println!("jazyk: skipping agent setup"),
+            }
+        } else {
+            println!("jazyk: skipping agent setup (no interactive stdin); rerun with --mcp all --acp all");
+        }
+    }
+    let mut wrote = false;
+    for ide in snippets {
+        wrote |= run_acp_install(Some(&ide)) == 0;
+    }
+    if chosen.is_empty() {
+        return wrote;
+    }
+    crate::setup::warn_if_absolute();
+    let outcomes: Vec<crate::setup::Outcome> = chosen
+        .iter()
+        .map(|(item, named)| crate::setup::apply(item, cwd, tty, *named))
+        .collect();
+    wrote |= outcomes.iter().any(|o| o.ok);
+    println!("\njazyk: agent setup");
+    crate::setup::print_summary(&outcomes);
+    wrote
 }
 
 pub fn run_gui(paths: &[String], opts: &Options) -> i32 {
@@ -454,50 +485,6 @@ fn ask(prompt: &str) -> String {
     let mut line = String::new();
     std::io::stdin().read_line(&mut line).ok();
     line
-}
-
-// Offer ACP registration during init: `--acp` skips the prompt, a non-interactive
-// stdin skips the step. Mirrors docs/frontends/cli.md#jazyk-init.
-fn init_acp(flag: Option<&str>) -> bool {
-    use std::io::IsTerminal;
-    let ides = crate::acp::install::IDES;
-    let choice = match flag {
-        Some("none") => return false,
-        Some(ide) => ide.to_string(),
-        None => {
-            if !std::io::stdin().is_terminal() {
-                println!(
-                    "jazyk: skipping ACP setup (no interactive stdin); rerun with --acp {}",
-                    ides.join("|")
-                );
-                return false;
-            }
-            println!("\nRegister Jazyk as an ACP agent in an editor? The proxy activates only inside jazyk projects.");
-            println!("  1) none");
-            let cmd = crate::acp::install::spawn_command();
-            for (i, id) in ides.iter().enumerate() {
-                let label = crate::acp::install::ide(id, &cmd)
-                    .map(|i| i.label)
-                    .unwrap_or(id);
-                println!("  {}) {}", i + 2, label);
-            }
-            print!("choose [1-{}] (default 1): ", ides.len() + 1);
-            use std::io::Write;
-            std::io::stdout().flush().ok();
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line).ok();
-            match line
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .filter(|n| *n >= 2 && *n <= ides.len() + 1)
-            {
-                Some(n) => ides[n - 2].to_string(),
-                None => return false,
-            }
-        }
-    };
-    run_acp_install(Some(&choice)) == 0
 }
 
 // Register the Jazyk entry in an editor's agent registry. No client supports

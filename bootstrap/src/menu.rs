@@ -168,3 +168,109 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
         Line::Heading(_) => unreachable!(),
     })
 }
+
+// A checklist: an `All` row, then one row per item, every enabled row ticked to
+// start. Space toggles the row under the cursor, `a` toggles all, enter confirms.
+// A disabled row (e.g. `unsupported`) is shown dim and never ticks. Returns the
+// ticked flags, or None when the person quits (q, esc, ctrl-c).
+// Mirrors docs/frontends/cli.md#ide-agents.
+pub fn check(heading: &str, rows: &[Row], enabled: &[bool]) -> Option<Vec<bool>> {
+    let mut ticked: Vec<bool> = enabled.to_vec();
+    // Cursor 0 is the `All` row; 1.. are the items.
+    let mut at = 0usize;
+    let n = rows.len() + 1;
+    let name_width = rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(0).max(3);
+    let mut out = std::io::stdout();
+    if terminal::enable_raw_mode().is_err() {
+        return None;
+    }
+    let _ = execute!(out, cursor::Hide);
+    let mut drawn = 0u16;
+    let all_on = |t: &[bool]| t.iter().zip(enabled).filter(|(_, e)| **e).all(|(t, _)| *t);
+    let done = loop {
+        let height_limit = match terminal::size().map(|(_, h)| h as usize) {
+            Ok(h) if h >= 5 => h - 3,
+            _ => 21,
+        };
+        let height = n.min(height_limit);
+        let top = at.saturating_sub(height.saturating_sub(1)).min(n - height);
+        if drawn > 0 {
+            let _ = queue!(out, cursor::MoveUp(drawn));
+        }
+        let _ = queue!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::FromCursorDown));
+        let _ = queue!(out, SetAttribute(Attribute::Bold), Print(heading), SetAttribute(Attribute::Reset), Print("\r\n"));
+        for i in top..top + height {
+            let here = i == at;
+            let (mark, name, note, on) = if i == 0 {
+                (if all_on(&ticked) { "[x]" } else { "[ ]" }, "All", "", true)
+            } else {
+                let r = &rows[i - 1];
+                let mark = if !enabled[i - 1] {
+                    "[-]"
+                } else if ticked[i - 1] {
+                    "[x]"
+                } else {
+                    "[ ]"
+                };
+                (mark, r.name.as_str(), r.note.as_str(), enabled[i - 1])
+            };
+            let text = format!("{} {} {:nw$}", if here { ">" } else { " " }, mark, name, nw = name_width);
+            if here {
+                let _ = queue!(out, SetAttribute(Attribute::Reverse), Print(&text), SetAttribute(Attribute::Reset));
+            } else if !on {
+                let _ = queue!(out, SetAttribute(Attribute::Dim), Print(&text), SetAttribute(Attribute::Reset));
+            } else {
+                let _ = queue!(out, Print(&text));
+            }
+            if !note.is_empty() {
+                let _ = queue!(out, Print("  "), SetAttribute(Attribute::Dim), Print(note), SetAttribute(Attribute::Reset));
+            }
+            let _ = queue!(out, Print("\r\n"));
+        }
+        let _ = queue!(
+            out,
+            SetAttribute(Attribute::Dim),
+            Print("up/down move, space toggle, a all, enter confirm, q quit"),
+            SetAttribute(Attribute::Reset)
+        );
+        let _ = out.flush();
+        drawn = height as u16 + 1;
+        let Ok(Event::Key(KeyEvent { code, modifiers, kind, .. })) = event::read() else {
+            continue;
+        };
+        if kind == KeyEventKind::Release {
+            continue;
+        }
+        let toggle_all = |t: &mut Vec<bool>| {
+            let on = !all_on(t);
+            for (i, e) in enabled.iter().enumerate() {
+                if *e {
+                    t[i] = on;
+                }
+            }
+        };
+        match code {
+            KeyCode::Up | KeyCode::BackTab => at = (at + n - 1) % n,
+            KeyCode::Down | KeyCode::Tab => at = (at + 1) % n,
+            KeyCode::Char('k') if modifiers.is_empty() => at = (at + n - 1) % n,
+            KeyCode::Char('j') if modifiers.is_empty() => at = (at + 1) % n,
+            KeyCode::Home => at = 0,
+            KeyCode::End => at = n - 1,
+            KeyCode::Char(' ') => {
+                if at == 0 {
+                    toggle_all(&mut ticked);
+                } else if enabled[at - 1] {
+                    ticked[at - 1] = !ticked[at - 1];
+                }
+            }
+            KeyCode::Char('a') if modifiers.is_empty() => toggle_all(&mut ticked),
+            KeyCode::Enter => break Some(ticked.clone()),
+            KeyCode::Esc | KeyCode::Char('q') => break None,
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => break None,
+            _ => {}
+        }
+    };
+    let _ = execute!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine), Print("\r\n"), cursor::Show);
+    let _ = terminal::disable_raw_mode();
+    done
+}

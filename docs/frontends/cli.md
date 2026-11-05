@@ -28,8 +28,8 @@ choice with its short name and full name. Only what is installed is listed: an I
 or a coding agent whose program jazyk cannot find has no row (its short name still
 works as a command, below). The up and down arrows (or `j` and `k`) move, a
 letter jumps to the next row whose name starts with it, enter starts the choice, and
-`q`, escape, or control-C quit with exit `0`. A list taller than the terminal scrolls
-with the cursor.
+`q`, escape, or control-C quit with exit `0`. The cursor starts on the first installed
+IDE. A list taller than the terminal scrolls with the cursor.
 
 Every short name is also a command: `jazyk claude` starts Claude Code without the
 menu. Picking a row and typing its name do the same thing: set the choice up, then
@@ -133,9 +133,9 @@ E.g.:
 
 ```
 jazyk: started IntelliJ IDEA on ~/dev/site
-  Jazyk agent   AI Chat window, agent selector at the bottom: Jazyk
-  Claude Code   ready (.mcp.json); jazyk tools load once Claude Code trusts the folder
-  Junie         ready (.junie/mcp/mcp.json); listed under Junie's MCP servers
+  Jazyk agent  the AI Chat window, the agent selector at the bottom: Jazyk
+  Claude Code  ready (.mcp.json); jazyk tools load once Claude Code trusts the folder
+  Junie        ready (.junie/mcp/mcp.json); Junie's MCP servers: jazyk
 ```
 
 ### jazyk init

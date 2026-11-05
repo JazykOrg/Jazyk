@@ -31,10 +31,11 @@ pub struct Ide {
 
 // Every client jazyk knows how to register with, in the order `jazyk init` offers
 // them. Mirrors docs/frontends/acp.md#registration.
-pub const IDES: [&str; 8] = [
+pub const IDES: [&str; 9] = [
     "zed",
     "jetbrains",
     "vscode",
+    "cursor",
     "neovim",
     "emacs",
     "obsidian",
@@ -80,6 +81,17 @@ pub fn ide(id: &str, cmd: &str) -> Option<Ide> {
             label: "VS Code (ACP Client extension)",
             registry: Registry::Map {
                 path: vscode_settings(&home),
+                key: "acp.agents",
+                entry: stdio(json!({})),
+            },
+        },
+        // Cursor hosts no ACP agent either; the same extension, from Open VSX, reads
+        // Cursor's own user settings.
+        "cursor" => Ide {
+            id: "cursor",
+            label: "Cursor (ACP Client extension)",
+            registry: Registry::Map {
+                path: editor_settings(&home, "Cursor"),
                 key: "acp.agents",
                 entry: stdio(json!({})),
             },
@@ -155,12 +167,17 @@ pub fn ide(id: &str, cmd: &str) -> Option<Ide> {
 
 // VS Code's user settings live in a per-platform application directory.
 fn vscode_settings(home: &std::path::Path) -> PathBuf {
+    editor_settings(home, "Code")
+}
+
+// A VS Code-family editor's user settings, by its application folder name.
+fn editor_settings(home: &std::path::Path, app: &str) -> PathBuf {
     if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/Code/User/settings.json")
+        home.join("Library/Application Support").join(app).join("User/settings.json")
     } else if cfg!(target_os = "windows") {
-        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("Code/User/settings.json")
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join(app).join("User/settings.json")
     } else {
-        home.join(".config/Code/User/settings.json")
+        home.join(".config").join(app).join("User/settings.json")
     }
 }
 

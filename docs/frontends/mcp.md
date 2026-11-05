@@ -184,8 +184,8 @@ Each agent is set up by the first method that works for it:
   before writing and names the file. `jazyk mcp` started outside a project serves the
   same tools, so one global entry works for every project.
 - Guided step: for an agent whose MCP servers live in application state jazyk must
-  not write. The summary prints the menu path and the JSON to paste, and the step
-  counts as done only when the person does it.
+  not write. The summary prints the menu path and the JSON to paste; nothing is
+  written, so the step alone does not count as a setup.
 
 | name | agent | detected by | setup | file or step |
 |---|---|---|---|---|
@@ -196,7 +196,7 @@ Each agent is set up by the first method that works for it:
 | `pi` | Pi | `pi` on `PATH` | project file | `.pi/mcp.json` |
 | `droid` | Factory Droid | `droid` on `PATH` | project file | `.factory/mcp.json` |
 | `cursor` | Cursor's agent | Cursor installed | project file | `.cursor/mcp.json` |
-| `copilot` | GitHub Copilot in VS Code | the `github.copilot-chat` extension | project file | `.vscode/mcp.json` (`servers`, `"type": "stdio"`) |
+| `copilot` | GitHub Copilot in VS Code | VS Code installed (it ships Copilot Chat built in), or the `github.copilot-chat` extension | project file | `.vscode/mcp.json` (`servers`, `"type": "stdio"`) |
 | `zed` | Zed's agent | Zed installed | project file | `.zed/settings.json` (`context_servers`) |
 | `junie` | Junie | a JetBrains plugin named `junie` | project file | `.junie/mcp/mcp.json` (`mcpServers`) |
 | `roo` | Roo Code | the `rooveterinaryinc.roo-cline` extension | project file | `.roo/mcp.json` (`mcpServers`) |

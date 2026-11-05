@@ -1211,6 +1211,21 @@ mod tests {
 
     // The generated ignore file is the block the docs state, byte for byte.
     // Mirrors docs/compiler/document-sets.md#persistence-and-identity.
+    // Agent instruction files are reached only by a literal pattern.
+    // Mirrors docs/compiler/document-sets.md#project-configuration.
+    #[test]
+    fn wildcards_skip_agent_instruction_files() {
+        let all = vec!["**/*.md".to_string()];
+        for path in ["AGENTS.md", "docs/CLAUDE.md", "GEMINI.md", "a/AGENTS.override.md", "CLAUDE.local.md"] {
+            assert!(!included(&all, path), "{path}");
+        }
+        assert!(included(&all, "docs/agents.md"));
+        assert!(included(&all, "docs/main.md"));
+        assert!(included(&["docs/AGENTS.md".to_string()], "docs/AGENTS.md"), "a literal pattern names it");
+        assert!(!included(&["docs/**".to_string(), "!AGENTS.md".to_string()], "docs/AGENTS.md"));
+        assert!(!included(&["src/**".to_string()], "src/AGENTS.md"), "source wildcards skip it too");
+    }
+
     #[test]
     fn the_generated_ignore_file_is_the_documented_one() {
         let doc = include_str!("../../docs/compiler/document-sets.md");

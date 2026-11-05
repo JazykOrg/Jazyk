@@ -175,7 +175,7 @@ impl SessionRunner for InProcessRunner {
 
         let mut dispatch = |_: &str, _: &Value| Err("MCP requires its asynchronous host".into());
         let mut model = harness::provider::DefaultModelHost::new(&self.llm);
-        let mut mcp_tools = crate::session_recovery::McpTools(&server);
+        let mut mcp_tools = crate::session_recovery::McpTools::plain(&server);
         let owner = crate::conversation::build_conversation();
         let mut emit = |ev: AgentEvent| {
             if let (Some(id), AgentEvent::Input(input)) = (&owner, &ev) {
@@ -563,7 +563,7 @@ async fn run_answer(
     let key = format!("answer:{}:{id}", out.display());
     let mut recovery = crate::session_recovery::McpRecovery::new(&server, key.clone())?;
     let mut model = harness::provider::DefaultModelHost::new(llm);
-    let mut mcp_tools = crate::session_recovery::McpTools(&server);
+    let mut mcp_tools = crate::session_recovery::McpTools::plain(&server);
     let tools = InProcessRunner::tools_of(&server).map_err(|e| format!("serving: {}", e))?;
     let mut history: Vec<Value> = vec![json!({"role": "user", "content": prompt})];
     let batch = BatchRun {

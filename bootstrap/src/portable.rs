@@ -16,3 +16,11 @@ pub fn cancel_requested() -> bool {
 pub use crate::hosted::{take_inputs, close_inputs};
 #[cfg(target_arch = "wasm32")]
 pub use crate::wasm::llm_bridge::{take_inputs, close_inputs};
+
+// The host's global agent context; a browser tab has none.
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::hosted::host_context;
+#[cfg(target_arch = "wasm32")]
+pub fn host_context() -> Option<std::sync::Arc<crate::agent_context::HostContext>> {
+    None
+}

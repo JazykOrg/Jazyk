@@ -143,7 +143,9 @@ fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) 
     }
     let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and requirements \
-         reconciled from prose documentation, consumed by generation and verification. ",
+         reconciled from prose documentation, consumed by generation and verification. \
+         The jazyk section of the project's AGENTS.md is orientation; these instructions \
+         and tool replies take precedence over it. ",
     );
     if modes.iter().any(|m| m == "compile") {
         s.push_str(
@@ -4224,7 +4226,7 @@ mod tests {
             ("write_text_file",json!({"path":"main.md","content":"not a document edit"})),
         ]};
         let llm = crate::llm::Llm{ api: "chat_completions".into(), reasoning_summary: None, base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),api_key:String::new(),temperature:None,trace:None};
-        let mut tools = crate::session_recovery::McpTools(&server);
+        let mut tools = crate::session_recovery::McpTools::plain(&server);
         let mut history = vec![json!({"role":"user","content":"Repair the Source matcher, then implement the greeting."})];
         let mut receipts = Vec::new();
         let stop = harness::run_with_hosts(LoopArgs{
@@ -4401,7 +4403,7 @@ mod tests {
         let direct = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true,
             BridgeFlags { ephemeral:true, only:Some("g:generate:ent:greeter".into()), ..Default::default() });
         assert!(direct.has_generation_contract());
-        let mut tools = crate::session_recovery::McpTools(&server);
+        let mut tools = crate::session_recovery::McpTools::plain(&server);
         let mut model = Script { requests:Vec::new(), inference:0, compactions:0,
             fact_hash:crate::gen::fact_hash(&store,"ent:greeter"),
             manifest:json!({"files":["src/greeting.txt","tests/greeting.md"],"tests":[{
@@ -4423,7 +4425,7 @@ mod tests {
         let checkpoint = server.checkpoint().unwrap();
         let restored = McpServer::with_bridge(project.clone(), out.clone(), vec!["generate".into()], true, server.bridge.clone());
         restored.restore(checkpoint).unwrap();
-        let mut restored_tools = crate::session_recovery::McpTools(&restored);
+        let mut restored_tools = crate::session_recovery::McpTools::plain(&restored);
         saved.suspended = false;
         saved.suspend_after_compaction = false;
         // Recovery owns the admitted opening, even if a caller assembles a new one.

@@ -70,6 +70,9 @@ pub struct Execution {
     pub events: Option<EventSink>,
     pub cancel: Arc<AtomicBool>,
     pub pause_reason: Arc<std::sync::Mutex<Option<String>>>,
+    /// The host's global agent context and remote MCP servers for conversations
+    /// (docs/frontends/agent-context.md#hosted-context).
+    pub agent_context: Option<Arc<crate::agent_context::HostContext>>,
 }
 
 #[derive(Debug)]
@@ -124,6 +127,37 @@ impl Workspace {
 
     pub fn snapshot(&self) -> Snapshot {
         self.files.clone()
+    }
+
+    /// Create (`true`, a new project) or refresh the jazyk section of AGENTS.md and
+    /// the CLAUDE.md and GEMINI.md imports. Answers one line per change; warnings
+    /// start with `warning: `. Mirrors docs/compiler/hosted-runtime.md.
+    pub fn sync_agents_md(&mut self, create: bool) -> Vec<String> {
+        let fs = crate::vfs::Scope::enter(&self.files);
+        let mode = if create { crate::agents_md::Mode::Create } else { crate::agents_md::Mode::Update };
+        let outcome = crate::agents_md::sync(&crate::portable::root(), mode);
+        self.files = fs.snapshot();
+        outcome.changed.into_iter().chain(outcome.warnings.into_iter().map(|w| format!("warning: {w}"))).collect()
+    }
+
+    /// The MCP servers the project's files propose, for the host to list and an
+    /// administrator to enable. Variables stay as written. `hosted` says whether the
+    /// hosted profile can use the entry at all (HTTPS only); `hash` changes whenever
+    /// the entry does. Mirrors docs/frontends/agent-context.md#hosted-context.
+    pub fn agent_mcp_proposals(&self) -> Vec<Value> {
+        let _fs = crate::vfs::Scope::enter(&self.files);
+        let keep = |name: &str| Some(format!("${{{name}}}"));
+        let (servers, warnings) = crate::agent_context::servers(&crate::portable::root(), None, &keep);
+        let mut out: Vec<Value> = servers.into_iter().map(|s| {
+            let (kind, url) = match &s.transport {
+                crate::agent_context::Transport::Stdio { .. } => ("stdio", None),
+                crate::agent_context::Transport::Http { url, .. } => ("http", Some(url.clone())),
+            };
+            json!({"name": s.name, "source": s.source, "transport": kind, "url": url,
+                   "hosted": url.as_deref().is_some_and(|u| u.starts_with("https://")), "hash": s.hash})
+        }).collect();
+        out.extend(warnings.into_iter().map(|w| json!({"warning": w})));
+        out
     }
 
     /// Finalize Stop against a protected checkpoint without running a harness.
@@ -466,6 +500,9 @@ pub fn runtime(request: &Value) -> Result<Value, String> {
 
 pub fn root() -> PathBuf {
     PathBuf::from("/project")
+}
+pub fn host_context() -> Option<Arc<crate::agent_context::HostContext>> {
+    EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.agent_context.clone()))
 }
 pub fn model_name() -> String {
     execution().model
@@ -1511,6 +1548,56 @@ mod tests {
         };
         let chat = value(&mut w,"POST","/api/chat/sessions",json!({}),&e);
         value(&mut w,"POST",&format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap()),json!({"messageId":"branch-question","text":"Which branch should the deploy workflow target?"}),&e);
+    }
+
+    // Hosted chat reads the snapshot's instruction files and skills and the host's
+    // layer, never the host filesystem, and calls remote tools through the host.
+    // Mirrors docs/frontends/agent-context.md#hosted-context.
+    #[test]
+    fn hosted_chat_receives_project_and_host_agent_context() {
+        let mut w = workspace("Agent context");
+        w.files.insert("AGENTS.md".into(), b"Prefer short sentences.\n".to_vec());
+        w.files.insert(".agents/skills/triage/SKILL.md".into(), b"---\nname: triage\ndescription: sort issues\n---\nSteps.".to_vec());
+        w.files.insert(".mcp.json".into(), br#"{"mcpServers": {"web": {"url": "https://mcp.example.com/mcp"}, "local": {"command": "x"}}}"#.to_vec());
+        let changed = w.sync_agents_md(true);
+        assert!(changed.iter().any(|c| c == "added the jazyk section to AGENTS.md"), "{changed:?}");
+        let agents = String::from_utf8(w.snapshot()["AGENTS.md"].clone()).unwrap();
+        assert!(agents.starts_with("Prefer short sentences.\n\n<!-- JAZYK:BEGIN -->"));
+        assert!(w.sync_agents_md(false).is_empty());
+        let proposals = w.agent_mcp_proposals();
+        assert_eq!(proposals.iter().map(|p| (p["name"].as_str().unwrap(), p["hosted"].as_bool().unwrap())).collect::<Vec<_>>(), vec![("local", false), ("web", true)]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let host = crate::agent_context::HostContext {
+            instructions: vec![("organization".into(), "Use British spelling.".into())],
+            mcp: vec![crate::agent_context::RemoteServer { name: "issues".into(), instructions: None, tools: vec![crate::harness::GenericTool { name: "list_issues".into(), description: "List issues".into(), parameters: json!({"type": "object"}) }] }],
+            call: Some(Arc::new(|server, tool, _| Ok(format!("{server}:{tool}:42 open")))),
+            ..Default::default()
+        };
+        let e = Execution {
+            model: "fixture".into(),
+            agent_context: Some(Arc::new(host)),
+            transport: Some(Arc::new(move |body| {
+                let body: Value = serde_json::from_str(body).unwrap();
+                let messages = body["messages"].to_string();
+                let n = seen.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    for fact in ["Prefer short sentences.", "Use British spelling.", "- triage: sort issues", "precedence"] {
+                        assert!(messages.contains(fact), "missing {fact}: {messages}");
+                    }
+                    assert!(!messages.contains("JAZYK:BEGIN"), "the jazyk section stays out");
+                    let names: Vec<&str> = body["tools"].as_array().unwrap().iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+                    assert!(names.contains(&"load_skill") && names.contains(&"list_issues"), "{names:?}");
+                    return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"r1","type":"function","function":{"name":"list_issues","arguments":"{}"}}]}}]}).to_string());
+                }
+                assert!(messages.contains("issues:list_issues:42 open"), "{messages}");
+                Ok(model_reply("42 issues are open."))
+            })),
+            ..Default::default()
+        };
+        let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &e);
+        value(&mut w, "POST", &format!("/api/chat/sessions/{}/prompt", chat["id"].as_str().unwrap()), json!({"messageId":"q","text":"How many issues are open?"}), &e);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

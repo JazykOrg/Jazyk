@@ -166,8 +166,9 @@ and, outside worker sessions, the project's and the user's
 [agent context](./agent-context.md). It does not import the Goose application
 facade.
 
-- `initialize` advertises the supported ACP and MCP capabilities, including MCP
-  over HTTP.
+- `initialize` advertises the supported ACP and MCP capabilities. It does not
+  advertise MCP over HTTP, so jazyk's own sessions keep the stdio serving, but
+  `session/new` accepts HTTP entries.
 - `session/new` connects to the supplied MCP servers, stdio or streamable HTTP,
   through the maintained Rust SDK. A session whose `_meta.jazyk.purpose` is not
   `worker` also reads the session `cwd`'s

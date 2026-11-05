@@ -377,6 +377,22 @@ mod tests {
 
     // The token gate refuses a call without the token and one with another token,
     // before the handler sees it.
+    // The embedded agent's HTTP client reaches the same serving through the SDK.
+    // Mirrors docs/frontends/agent-context.md#mcp-servers.
+    #[test]
+    fn the_embedded_agents_http_client_lists_and_calls_tools() {
+        let (serving, root) = started();
+        let mut conn = crate::acp::agent::mcp_client::McpServerConn::connect_http("graph", &serving.url, &[serving.header()]).expect("connects");
+        assert!(conn.tools.iter().any(|t| t.name == "graph_status"), "{:?}", conn.tools.iter().map(|t| &t.name).collect::<Vec<_>>());
+        assert!(conn.instructions.as_deref().is_some_and(|i| i.contains("jazyk")));
+        let reply = conn.call("graph_status", &json!({})).expect("a read tool answers");
+        assert!(reply.contains("content"));
+        drop(conn);
+        assert!(crate::acp::agent::mcp_client::McpServerConn::connect_http("graph", &serving.url, &[]).is_err(), "no token, no session");
+        serving.stop();
+        crate::vfs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn http_serving_refuses_a_call_without_the_session_token() {
         let (serving, root) = started();

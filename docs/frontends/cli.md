@@ -24,8 +24,9 @@ on the project in three groups and starts the one picked:
 
 Inside a project it prints the [status](#jazyk-status) overview first: one line per
 document set. The list follows: a heading per group, then one row per
-choice with its short name and full name, and a dim `not installed` beside a choice
-whose program jazyk cannot find. The up and down arrows (or `j` and `k`) move, a
+choice with its short name and full name. Only what is installed is listed: an IDE
+or a coding agent whose program jazyk cannot find has no row (its short name still
+works as a command, below). The up and down arrows (or `j` and `k`) move, a
 letter jumps to the next row whose name starts with it, enter starts the choice, and
 `q`, escape, or control-C quit with exit `0`. A list taller than the terminal scrolls
 with the cursor.
@@ -44,10 +45,10 @@ runs when it resolves to this binary on `PATH`, the absolute path otherwise (the
 | choice | name | sets up | then runs |
 |---|---|---|---|
 | `gui` | jazyk.dev web UI | nothing | [`jazyk gui`](#jazyk-gui) |
-| `vscode` | Visual Studio Code | the Jazyk extension (LSP), the ACP Client extension (`formulahendry.acp-client`), and the ACP registration ([`jazyk acp install vscode`](#jazyk-acp)) | `code <root>` |
-| `cursor` | Cursor | the Jazyk extension (LSP), and `.cursor/mcp.json` for Cursor's own agent | `cursor <root>` |
-| `zed` | Zed | the ACP registration (`jazyk acp install zed`) | `zed <root>` |
-| `idea` | IntelliJ IDEA | the ACP registration (`jazyk acp install jetbrains`) | the IDE on `<root>` |
+| `vscode` | Visual Studio Code | the Jazyk extension (LSP), then the [agents step](#ide-agents) (the Jazyk agent through the ACP Client extension `formulahendry.acp-client` and [`jazyk acp install vscode`](#jazyk-acp)) | `code <root>` |
+| `cursor` | Cursor | the Jazyk extension (LSP), then the agents step (the Jazyk agent through the ACP Client extension from Open VSX and `jazyk acp install cursor`) | `cursor <root>` |
+| `zed` | Zed | the agents step (the Jazyk agent through `jazyk acp install zed`) | `zed <root>` |
+| `idea` | IntelliJ IDEA | the agents step (the Jazyk agent through `jazyk acp install jetbrains`) | the IDE on `<root>` |
 | `phpstorm` | PhpStorm | the same | the same |
 | `webstorm` | WebStorm | the same | the same |
 | `pycharm` | PyCharm | the same | the same |
@@ -80,16 +81,6 @@ What each choice needs to know about its program:
   more. Every entry is project-scoped: no choice writes a coding agent's global MCP
   configuration.
 
-An IDE runs the Jazyk agent, and the Jazyk agent drives a coding agent of its own
-([agents](./acp.md#agents)). When the project's `jazyk.toml` names none (`[acp]
-agent`), an IDE choice asks which one first, in the same kind of list: the built-in
-agents and the profiles the project or the global config defines, the default
-(`embedded`) under the cursor. The answer lands in `[acp] agent`, so the question is
-asked once per project. `--agent NAME` answers it without the list, and records the
-name even when one is set. Quitting the question starts nothing. Later,
-`/agent <name>` in the IDE's Jazyk chat switches it
-([switching agents](./acp.md#switching-agents)).
-
 Outside a project (no `jazyk.toml` above the working directory) the list is the same,
 headed by a line saying that a choice initializes the working directory: the
 `jazyk.toml` and `.jazyk/` that [`jazyk init`](#jazyk-init) writes, without its
@@ -106,11 +97,50 @@ names the file or the command and exits `1` without starting the program.
 When stdin or stdout is not a terminal, bare `jazyk` prints the status (inside a
 project) and the list with the command each choice runs, and exits `0`, so a script
 never lands in a prompt. A choice command off a terminal never asks either: an IDE
-choice without a recorded agent keeps the default.
+choice takes every row that needs no consent and keeps the default driver.
+
+### IDE agents
+
+An IDE choice sets up every agent that works inside that IDE, then starts it:
+
+1. Agents. A checklist of what to set up: the Jazyk agent ([ACP](./acp.md)), and one
+   row per coding agent jazyk detects for that IDE, each with the file or step its
+   setup takes ([agent setup](./mcp.md#agent-setup)). A coding agent counts as
+   detected when its program is on `PATH` or its extension or plugin is installed in
+   that IDE. A detected agent jazyk has no setup for is listed dim as `unsupported`
+   and cannot be ticked. Every row starts ticked: space toggles a row, `a` toggles
+   all, enter confirms, and `q`, escape, or control-C start nothing. When only one row
+   can be ticked there is nothing to choose: it is taken without asking, and a line
+   says so.
+2. Driver. The Jazyk agent drives a coding agent of its own ([agents](./acp.md#agents)).
+   When the Jazyk agent is ticked and the project's `jazyk.toml` names none
+   (`[acp] agent`), a list asks which: `embedded`, the built-in agents whose program
+   is found, and the profiles the project or the global config defines, the default
+   (`embedded`) under the cursor. With one option it is taken without asking. The
+   answer lands in `[acp] agent`, so the question is asked once per project.
+   `--agent NAME` answers it without the list, and records the name even when one is
+   set. Later, `/agent <name>` in the IDE's Jazyk chat switches it
+   ([switching agents](./acp.md#switching-agents)). A built-in profile shadowed by an
+   `[acp.agents.<name>]` table is named with the file that defines it.
+3. Start. The setup is written, the IDE starts on the root, and a summary follows:
+   that the IDE started, then one line per ticked row saying how to reach that agent
+   in this IDE (e.g. in IntelliJ IDEA, the Jazyk agent is picked in the agent selector
+   at the bottom of the AI Chat window), and the text to paste for any
+   [guided step](./mcp.md#agent-setup). A row whose setup failed says so with the
+   reason.
+
+E.g.:
+
+```
+jazyk: started IntelliJ IDEA on ~/dev/site
+  Jazyk agent   AI Chat window, agent selector at the bottom: Jazyk
+  Claude Code   ready (.mcp.json); jazyk tools load once Claude Code trusts the folder
+  Junie         ready (.junie/mcp/mcp.json); listed under Junie's MCP servers
+```
 
 ### jazyk init
 
-`jazyk init [--mcp AGENT]` initializes the current directory as a project root:
+`jazyk init [--mcp LIST] [--acp LIST] [--agent NAME]` initializes the current directory as a project root:
 
 - Writes a minimal `jazyk.toml` naming a starter layout: the docs glob
   (`docs/**/*.md`), the root document (`docs/README.md`), and the
@@ -124,11 +154,15 @@ choice without a recorded agent keeps the default.
   Existing directories and files stay untouched. When `jazyk.toml` already
   existed, the scaffold step is skipped: the layout is that project's own
   business.
-- Offers [MCP](./mcp.md) integration for a coding agent: a numbered choice of
-  `none` or one of the [launcher's](#jazyk) MCP choices (`claude`, `codex`,
-  `gemini`, `opencode`, `pi`, `droid`, `cursor`), set up exactly as the launcher sets
-  it up, without starting the program. `--mcp AGENT` (one of those, or `none`) skips
-  the prompt, and a non-interactive stdin skips it too, so scripts never hang.
+- Offers [agent setup](./mcp.md#agent-setup) for everything installed: the same
+  checklist as [IDE agents](#ide-agents), across every installed IDE. One row per
+  detected coding agent (jazyk's tools over MCP), then one row per installed IDE that
+  can host the Jazyk agent (its [ACP registration](./acp.md#registration)). Every row
+  starts ticked; a row whose setup writes a file outside the project asks before
+  writing. `--mcp` takes a comma-separated list of agent setup names, `all` (every
+  detected agent), or `none`; `--acp` takes IDE client names, `all` (every installed
+  IDE that hosts the Jazyk agent), or `none`. Either flag skips the checklist for its
+  half. A non-interactive stdin skips the checklist, so scripts never hang.
 - Asks which [agent](./acp.md#agents) does the AI work: the `embedded` one, or a
   built-in external agent (`claude`, `codex`, `opencode`). The name lands
   in the project's `[acp] agent`; a built-in agent needs no profile. `--agent NAME`
@@ -139,16 +173,14 @@ choice without a recorded agent keeps the default.
   as given. The answer lands in `[llm] model`. An unanswering endpoint is reported,
   not fatal. Inside an IDE the same choice is available per session through
   [session config options](./acp.md#choosing-a-model).
-- Offers [ACP registration](./acp.md#registration) the same way: a numbered choice of
-  `none` or one of the supported clients, running
-  [`jazyk acp install`](#jazyk-acp) for the chosen one. `--acp IDE` (any client name,
-  or `none`) skips the prompt, and a non-interactive stdin skips it too.
 
 The server entry's writes all go through claimed batches (`begin_goals`, the binding,
 generation, and verification rows); raw writes outside a batch are a second entry
 running `jazyk mcp graph --write` ([write tools](../compiler/tools.md#write-tools)),
 added by hand when graph surgery is wanted. A `--mcp`, `--agent`, or `--acp` value
-that names nothing jazyk knows is a usage error before any file is written. Exit `0`
+that names nothing jazyk knows is a usage error before any file is written. A name in
+`--mcp` or `--acp` that is known but not detected is set up anyway: naming it is the
+consent. Exit `0`
 when something was set up, `1` when nothing was written, `2` on a usage error.
 
 ### jazyk compile
@@ -826,7 +858,7 @@ status. Outside a jazyk project it is a transparent passthrough. Not meant to be
 by hand.
 
 `jazyk acp install --ide <client>` registers Jazyk with an ACP client:
-`zed`, `jetbrains`, `vscode`, `neovim`, `emacs`, `obsidian`, `acpx`, `marimo` (see
+`zed`, `jetbrains`, `vscode`, `cursor`, `neovim`, `emacs`, `obsidian`, `acpx`, `marimo` (see
 [registration](./acp.md#registration)). The editor may also be given positionally
 (`jazyk acp install zed`). For a client whose config jazyk writes, the entry is
 merged in place, leaving comments and other agents alone; for the rest, the snippet

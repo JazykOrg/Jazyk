@@ -165,6 +165,72 @@ it. An agent that speaks MCP only over HTTP gets the same serving over
 [MCP over HTTP](#mcp-over-http) instead; the choice is made per agent from its
 `initialize` reply ([worker sessions](./acp.md#worker-sessions)).
 
+## Agent setup
+
+Every coding agent that reads MCP configuration can run jazyk's tools without the
+[IDE proxy](./acp.md#the-ide-proxy): its config gets one server entry named `jazyk`
+serving `jazyk mcp all`. The [launcher](./cli.md#ide-agents) and
+[`jazyk init`](./cli.md#jazyk-init) write these entries; each agent has a setup name.
+The command in every entry follows the [registration rule](./acp.md#registration):
+`jazyk` when that name on `PATH` is this binary, the absolute path otherwise, with a
+warning that the entry breaks when the binary moves.
+
+Each agent is set up by the first method that works for it:
+
+- Project file: the agent's project config in the repository. Merged in place,
+  keeping comments, formatting, and other entries; a stale `jazyk` entry is corrected
+  where it is.
+- Global file: the agent's user config, for an agent with no project config. It asks
+  before writing and names the file. `jazyk mcp` started outside a project serves the
+  same tools, so one global entry works for every project.
+- Guided step: for an agent whose MCP servers live in application state jazyk must
+  not write. The summary prints the menu path and the JSON to paste, and the step
+  counts as done only when the person does it.
+
+| name | agent | detected by | setup | file or step |
+|---|---|---|---|---|
+| `claude` | Claude Code (CLI, VS Code extension, JetBrains plugin) | `claude` on `PATH`, the `anthropic.claude-code` extension, a JetBrains plugin named `claude` | project file | `.mcp.json`, and `jazyk` in `enabledMcpjsonServers` of `.claude/settings.local.json` |
+| `codex` | Codex (CLI, VS Code extension) | `codex` on `PATH`, the `openai.chatgpt` extension | project file | `.codex/config.toml` (`[mcp_servers.jazyk]`) |
+| `gemini` | Gemini CLI, Gemini Code Assist | `gemini` on `PATH`, the `google.geminicodeassist` extension | project file | `.gemini/settings.json` (`mcpServers`) |
+| `opencode` | OpenCode | `opencode` on `PATH` | project file | `opencode.json` (`opencode.jsonc` when that is the file the project has) |
+| `pi` | Pi | `pi` on `PATH` | project file | `.pi/mcp.json` |
+| `droid` | Factory Droid | `droid` on `PATH` | project file | `.factory/mcp.json` |
+| `cursor` | Cursor's agent | Cursor installed | project file | `.cursor/mcp.json` |
+| `copilot` | GitHub Copilot in VS Code | the `github.copilot-chat` extension | project file | `.vscode/mcp.json` (`servers`, `"type": "stdio"`) |
+| `zed` | Zed's agent | Zed installed | project file | `.zed/settings.json` (`context_servers`) |
+| `junie` | Junie | a JetBrains plugin named `junie` | project file | `.junie/mcp/mcp.json` (`mcpServers`) |
+| `roo` | Roo Code | the `rooveterinaryinc.roo-cline` extension | project file | `.roo/mcp.json` (`mcpServers`) |
+| `copilot-cli` | GitHub Copilot CLI | `copilot` on `PATH` | global file | `~/.copilot/mcp-config.json` (`mcpServers`) |
+| `ai-assistant` | JetBrains AI Assistant | a JetBrains plugin named `ml-llm` | guided step | Settings, Tools, AI Assistant, Model Context Protocol (MCP), add, paste the JSON |
+| `cline` | Cline | the `saoudrizwan.claude-dev` extension | guided step | the MCP Servers icon, Configure, Configure MCP Servers, paste the JSON |
+
+Extensions are looked up in the IDE's extension folder (`~/.vscode/extensions`,
+`~/.cursor/extensions`); JetBrains plugins in the IDE's user plugin folder and in its
+bundled plugins. An agent detected through its program counts in every IDE; one
+detected through an extension or plugin counts in the IDE that has it.
+
+A known coding agent with no setup row (`aider`, `amp`, `goose`, `kiro-cli`, `qwen`,
+`auggie`, `crush`) is listed dim as `unsupported` when its program is on `PATH`.
+
+### Reaching each agent
+
+The launcher's summary names where each agent is reached in the IDE it started:
+
+| agent | where |
+|---|---|
+| the Jazyk agent, VS Code or Cursor | the ACP Client icon in the Activity Bar, Agents view: Jazyk |
+| the Jazyk agent, Zed | the Agent panel, the new thread menu: Jazyk |
+| the Jazyk agent, JetBrains | the AI Chat window, the agent selector at the bottom: Jazyk |
+| `claude` | jazyk tools load once Claude Code trusts the folder |
+| `codex` | jazyk tools load once Codex trusts the folder |
+| `gemini`, `copilot-cli` | `/mcp` in the agent lists jazyk |
+| `opencode`, `pi`, `droid` | jazyk tools load on the agent's next start |
+| `cursor` | Cursor Settings, MCP: jazyk, enabled |
+| `copilot` | Chat in Agent mode: jazyk in the tools picker |
+| `zed` | the Agent panel settings, MCP servers: jazyk |
+| `junie` | Junie's MCP servers: jazyk |
+| `roo` | Roo's MCP servers: jazyk |
+
 ## MCP over HTTP
 
 Some agents advertise their MCP clients as URL clients. Claude Code through

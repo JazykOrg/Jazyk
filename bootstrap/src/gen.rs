@@ -1,7 +1,7 @@
 use crate::vfs::VPathExt;
 pub(crate) mod progress;
 mod pipeline;
-mod assets;
+pub(crate) mod assets;
 #[cfg(test)]
 mod matcher_recovery_tests;
 #[cfg(test)]

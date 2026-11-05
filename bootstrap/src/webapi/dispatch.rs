@@ -379,13 +379,13 @@ pub(crate) async fn request_scoped(
                         .or_default() += 1;
                 }
             }
+            let input_hashes = crate::control::current_doc_hashes(&p);
             let docs: Vec<Value> = p
                 .doc_files()
                 .iter()
                 .map(|f| {
                     let rel = super::status::rel_doc(&p.root, f);
-                    let text = crate::md::read_doc(f).unwrap_or_default();
-                    let hash = crate::model::hash_hex(&text);
+                    let hash = input_hashes.get(&rel).cloned().unwrap_or_else(|| "unreadable".into());
                     let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
                     json!({
                         "path": rel,

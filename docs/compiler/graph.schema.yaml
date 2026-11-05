@@ -787,6 +787,7 @@ definitions:
           - heading
           - code-block
           - diagram
+          - blob
       order:
         type: integer
         minimum: 0

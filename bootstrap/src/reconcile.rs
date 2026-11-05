@@ -83,61 +83,34 @@ fn doc_path(proj: &Project, f: &std::path::Path) -> String {
     }
 }
 
-// Parse every matched document. Returns (doc -> (content hash, sections), doc -> links).
-// A matched file no handler claims, or one its handler cannot read, contributes no
-// sections: the checks file `unsupported-format` or `parse-error` on it
-// (`format_checks`). Mirrors docs/compiler/parsing.md#format-handlers.
+// Inventory selected files and project supported prose. Unreadable inputs retain
+// their last tree; readiness still sees the read failure in the current inventory.
 pub fn parse_all(proj: &Project) -> (ParsedDocs, BTreeMap<String, Vec<String>>) {
     let mut parsed = BTreeMap::new();
     let mut links = BTreeMap::new();
-    for f in proj.doc_files() {
-        if !md::supported_format(&f) {
-            continue;
-        }
-        let Ok(text) = md::read_doc(&f) else {
-            // A file that exists but cannot be read this time (an editor mid-save, a
-            // lock, a transient error) keeps its stored section tree, so the build
-            // sees it unchanged and never as removed; the checks file `parse-error`.
-            // Mirrors docs/compiler/parsing.md#format-handlers.
-            let rel = doc_path(proj, &f);
-            if let Some(rec) = crate::store::stored_doc(&proj.out, &rel) {
-                parsed.insert(rel, (rec.content_hash, rec.sections));
+    for (rel, input) in crate::input::scan(proj) {
+        match input {
+            Ok((hash, sections)) => {
+                let text = crate::input::projection_text(&sections);
+                links.insert(rel.clone(), md::doc_links(&text, &rel));
+                parsed.insert(rel, (hash, sections));
             }
-            continue;
-        };
-        let rel = doc_path(proj, &f);
-        links.insert(rel.clone(), md::doc_links(&text, &rel));
-        parsed.insert(rel, (hash_hex(&text), md::parse_sections(&text)));
+            Err(_) => {
+                if let Some(rec) = crate::store::stored_doc(&proj.out, &rel) {
+                    parsed.insert(rel, (rec.content_hash, rec.sections));
+                }
+            }
+        }
     }
     (parsed, links)
 }
 
-// Format findings over the matched files: `unsupported-format` for a file no handler
-// claims by its extension, `parse-error` for a file its handler cannot read. Both name
-// the document path; the file contributed no sections and schedules no session. Filed
-// and resolved like every check finding, so a no-op rebuild re-files nothing.
-// Mirrors docs/compiler/parsing.md#format-handlers.
+// Read and projection failures remain actionable; unknown formats compile as blobs.
 fn format_checks(proj: &Project) -> Vec<Finding> {
     let mut f = Vec::new();
-    for path in proj.doc_files() {
-        let rel = doc_path(proj, &path);
-        if !md::supported_format(&path) {
-            f.push(finding(
-                "unsupported-format",
-                &rel,
-                "warning",
-                format!(
-                    "{} is matched by the docs glob but no format handler claims its extension",
-                    rel
-                ),
-            ));
-        } else if let Err(e) = md::read_doc(&path) {
-            f.push(finding(
-                "parse-error",
-                &rel,
-                "error",
-                format!("{} cannot be parsed: {}", rel, e),
-            ));
+    for (rel, input) in crate::input::scan(proj) {
+        if let Err(e) = input {
+            f.push(finding("parse-error", &rel, "error", format!("{} cannot be parsed: {}", rel, e)));
         }
     }
     f
@@ -539,7 +512,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     "warning",
                     format!("section {}#{} is unprocessed after the build", doc, r),
                 )),
-                Some(c) if c.state == "non-normative" && looks_normative(&sec.raw) => {
+                Some(c) if c.state == "non-normative" && sec.kind != "blob" && looks_normative(&sec.raw) => {
                     f.push(finding(
                         "suspicious-non-normative",
                         &format!("{}#{}", doc, r),
@@ -770,7 +743,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             ));
         }
         for (r, sec) in &rec.sections {
-            if sec.raw.len() > crate::limits::MAX_SECTION_CHARS {
+            if sec.kind != "blob" && sec.raw.len() > crate::limits::MAX_SECTION_CHARS {
                 f.push(finding(
                     "section-too-large",
                     &format!("{}#{}", doc, r),
@@ -4060,13 +4033,9 @@ mod tests {
         assert!(Store::load(&proj.out).sync_docs(&parsed).is_empty());
     }
 
-    // A matched file no handler claims is `unsupported-format`; one its handler cannot
-    // read is `parse-error`; neither reaches the parse. Filed on the document path and
-    // re-derived identically on every run, so the check reconciliation keeps one
-    // diagnostic each and resolves it once the condition clears.
-    // Mirrors docs/compiler/parsing.md#format-handlers.
+    // Opaque inputs compile, while known-format read failures remain actionable.
     #[test]
-    fn unsupported_format_and_parse_error_are_filed_and_resolve() {
+    fn opaque_inputs_compile_and_parse_errors_resolve() {
         let dir = std::env::temp_dir().join(format!("jazyk-format-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
@@ -4080,12 +4049,11 @@ mod tests {
             ..Default::default()
         };
         let (parsed, _) = parse_all(&proj);
-        assert_eq!(parsed.keys().collect::<Vec<_>>(), vec!["docs/good.md"]);
+        assert_eq!(parsed.keys().collect::<Vec<_>>(), vec!["docs/good.md", "docs/notes.rst"]);
         let f = checks(&Store::default(), &proj);
         let unsupported = rules_for(&f, "unsupported-format");
-        assert_eq!(unsupported.len(), 1, "{:?}", unsupported);
-        assert_eq!(unsupported[0].1, ["docs/notes.rst"]);
-        assert_eq!(unsupported[0].2, "warning");
+        assert!(unsupported.is_empty(), "{:?}", unsupported);
+        assert_eq!(parsed["docs/notes.rst"].1["/"].kind, "blob");
         let errors = rules_for(&f, "parse-error");
         assert_eq!(errors.len(), 1, "{:?}", errors);
         assert_eq!(errors[0].1, ["docs/bad.md"]);
@@ -4107,9 +4075,9 @@ mod tests {
                 .filter(|d| d.rule == rule && d.lifecycle == "open")
                 .count()
         };
-        assert_eq!(open(&s, "unsupported-format"), 1);
+        assert_eq!(open(&s, "unsupported-format"), 0);
         assert_eq!(open(&s, "parse-error"), 1);
-        assert_eq!(s.graph.diagnostics.len(), 2);
+        assert_eq!(s.graph.diagnostics.len(), 1);
         crate::vfs::write(dir.join("docs/bad.md"), "# Bad\nnow readable\n").unwrap();
         crate::vfs::remove_file(dir.join("docs/notes.rst")).unwrap();
         s.reconcile_check_diags(checks(&s, &proj));

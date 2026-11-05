@@ -2261,7 +2261,7 @@ impl Store {
         self.docs
             .get(doc)
             .and_then(|d| d.sections.get(section))
-            .map(|s| text_contains(&s.raw, quote))
+            .map(|s| s.kind != "blob" && text_contains(&s.raw, quote))
             .unwrap_or(false)
     }
 

@@ -220,11 +220,9 @@ Every check run journals a `checks` entry under its own generation.
   `duplicate-requirement` diagnostic names both statements, the check files nothing,
   since a one-subject twin beside the session's two-subject finding is the same
   finding twice.
-- Format, over the files the docs glob matches: `unsupported-format` (a file no
-  [format handler](./parsing.md#format-handlers) claims by its extension),
-  `parse-error` (a file its handler cannot read, not valid UTF-8 or unreadable, the
-  error in the message). Both name the document path; the file contributes no sections
-  and schedules no session.
+- Input readability, over the files the docs glob matches: `parse-error` for an
+  unreadable input or failed format projection. Unknown formats compile as blobs.
+  Earlier `unsupported-format` findings resolve on the next check.
 - Document quality, prose problems a human can fix, surfaced where the human writes
   ([LSP](../frontends/lsp.md) shows them inline): `section-too-large` (a body over 6000
   chars), `doc-too-large` (over 40 sections), `empty-file` (a matched file with no

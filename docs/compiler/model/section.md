@@ -1,10 +1,12 @@
 # Section
 
 A section is a unit of document structure: a heading and its body, or a fenced block
-inside that body (a code block or a diagram). Sections form a tree per document. They
+inside that body (a code block or a diagram). An opaque input has one whole-file
+`blob` section. Prose sections form a tree per document. They
 carry no semantic meaning. All meaning lives in [entities](./entity.md),
 [requirements](./requirement.md), and [views](./view.md) extracted from section text, and
-in what derives from them.
+in what derives from them. A blob is interpreted through its referring documents
+and linked requirements. Its generated envelope is not prose evidence.
 
 Sections exist for three purposes:
 
@@ -20,7 +22,7 @@ Sections exist for three purposes:
 As produced by [parsing](../parsing.md#section-tree):
 
 - `title`: the heading text, or a block's info string.
-- `kind`: `preamble`, `root`, `heading`, `code-block`, or `diagram`. A `diagram`
+- `kind`: `preamble`, `root`, `heading`, `code-block`, `diagram`, or `blob`. A `diagram`
   section holds a PlantUML block found in a source document. It is input, parsed as
   prose. See [diagrams as input](../diagrams.md#diagrams-as-input). A `code-block`
   section holds any other fenced block. Both are children of the section whose body
@@ -31,9 +33,13 @@ As produced by [parsing](../parsing.md#section-tree):
   document's first heading, whatever its level), and a later top-level heading have
   none ([section tree](../parsing.md#section-tree)).
 - `raw`: the verbatim source text. A block's `raw` repeats inside its parent's.
+  A `blob` instead carries the generated input envelope, never quotable prose.
+  Its reference is `/` and its line range is `[0, 0]`.
 - `hash`: a content hash of `raw`, the input to
   [section diffing](../parsing.md#section-diffing) and [alignment](../alignment.md). The hash is SipHash-1-3 with zero keys, 16 hex
-  digits, the same function for `content_hash` and every stored hash. It is pinned
+  digits, section hashes use this function. UTF-8 prose `content_hash` uses this
+  whole-file hash. DOCX and PDF use SHA-256 of original bytes. A blob
+  `content_hash` hashes its byte and context envelope. It is pinned
   to that algorithm, never the standard library's default hasher, so a toolchain
   change can never make every document read as changed.
 - `lines`: the line range in the source file, for editor integration.

@@ -139,6 +139,12 @@ fn containment(part: &BTreeSet<String>, whole: &BTreeSet<String>) -> f64 {
 }
 
 fn print(full: Full, sec: &Section) -> Print {
+    if sec.kind == "blob" {
+        let identity = format!("blob:{}:{}", full.doc, sec.hash);
+        return Print { full, identity: identity.clone(), body: identity.clone(),
+            parent: None, order: sec.order, slug: String::new(), words: vec![],
+            tokens: vec![], shingles: BTreeSet::from([identity]), normalized: String::new(), raw: String::new() };
+    }
     let body: String = match sec.kind.as_str() {
         "heading" | "root" => sec.raw.lines().skip(1).collect::<Vec<_>>().join("\n"),
         _ => sec.raw.clone(),

@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn a_docx_only_set_is_dirty_and_hashes_the_compiler_projection() {
+    fn a_docx_only_set_is_dirty_and_hashes_original_bytes() {
         let root =
             std::env::temp_dir().join(format!("jazyk-docx-set-{}", crate::sys::process_id()));
         std::fs::create_dir_all(root.join(".jazyk")).unwrap();
@@ -424,10 +424,9 @@ mod tests {
         assert_eq!(workspace.summary()["sets"][0]["dirty"], true);
         let project = workspace.resolve(Some("ds_proof")).unwrap();
         let hashes = crate::control::current_doc_hashes(&project);
-        let projection = from_bytes(Path::new("contract.docx"), DOCX).unwrap();
         assert_eq!(
             hashes["contract.docx"],
-            crate::model::hash_hex(&projection.text)
+            crate::task_runtime::digest(DOCX)
         );
         std::fs::remove_dir_all(root).unwrap();
     }

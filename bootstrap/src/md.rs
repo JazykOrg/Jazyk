@@ -74,7 +74,7 @@ pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
 
 // Whether a handler claims a file: by its extension (`.md`, `.markdown`, `.txt`, and
 // natively DOCX and PDF).
-// A matched file no handler claims is `unsupported-format` territory.
+// Files without a prose handler compile as opaque whole-file inputs.
 // Mirrors docs/compiler/parsing.md#format-handlers.
 // Whether a goal or ripple target names a whole document: a path a handler claims.
 pub fn is_document_target(target: &str) -> bool {
@@ -95,12 +95,21 @@ pub fn supported_format(path: &std::path::Path) -> bool {
 // Read a document for its handler: the text, or why it cannot be read (unreadable, or
 // not valid UTF-8), the message a `parse-error` diagnostic carries.
 pub fn read_doc(path: &std::path::Path) -> Result<String, String> {
+    let bytes = crate::vfs::read(path).map_err(|e| format!("cannot read the file: {}", e))?;
+    project_bytes(path, &bytes)
+}
+
+// A projection must describe the same byte snapshot whose revision was inventoried.
+pub fn project_bytes(path: &std::path::Path, bytes: &[u8]) -> Result<String, String> {
     #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
     if crate::documents::supported(path) {
-        return crate::documents::read(path).map(|d| d.text);
+        return crate::documents::from_bytes(path, bytes).map(|d| d.text);
     }
-    let bytes = crate::vfs::read(path).map_err(|e| format!("cannot read the file: {}", e))?;
-    String::from_utf8(bytes).map_err(|e| format!("not valid UTF-8: {}", e.utf8_error()))
+    if !supported_format(path) {
+        return Err("opaque whole-file input; load its blob section instead of reading it as prose".into());
+    }
+    std::str::from_utf8(bytes).map(str::to_owned)
+        .map_err(|e| format!("not valid UTF-8: {}", e))
 }
 
 pub fn slug(s: &str) -> String {

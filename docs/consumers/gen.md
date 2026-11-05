@@ -593,6 +593,13 @@ The trail is test or site → requirement id → `quote` → section.
 
 ## Referenced assets
 
+Selected opaque inputs also compile as whole-file blob sections. Their original
+bytes remain inputs even when a generated copy exists at a different path. Blob
+coverage links the input to requirements quoted from referring documents. Reuse
+this asset fingerprint and ledger for delivery; do not create a second copy system.
+A matching existing deliverable copy satisfies the copy obligation after verification.
+
+
 Quoted requirements, their criteria, entity mentions and quoted attributes can name
 local input files. Markdown links and images, including reference-style links, name
 these inputs. The quote limits which references belong to the fact. Reference

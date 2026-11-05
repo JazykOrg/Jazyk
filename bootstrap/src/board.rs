@@ -528,7 +528,12 @@ pub fn doc_levels(store: &Store, proj: &Project) -> BTreeMap<String, usize> {
         .filter(|d| proj.is_root_file(d))
         .cloned()
         .collect();
-    crate::derive::doc_levels_from(store, &roots)
+    let mut levels = crate::derive::doc_levels_from(store, &roots);
+    let last = levels.values().copied().max().unwrap_or(0) + 1;
+    for (doc, rec) in &store.docs {
+        if rec.sections.values().any(|s| s.kind == "blob") { levels.insert(doc.clone(), last); }
+    }
+    levels
 }
 
 // The characters a goal's initially loaded set costs, so a batch fills under the
@@ -686,6 +691,7 @@ pub struct Board {
     pub alignment_pending: BTreeSet<String>,
     tier_open: [usize; 4],
     doc_levels: BTreeMap<String, usize>,
+    pub(crate) blob_inputs: BTreeMap<String, BTreeSet<String>>,
     tier1_open_docs: BTreeSet<String>,
     bind_open_by_entity: BTreeMap<String, usize>,
     cone_blockers: BTreeMap<String, Vec<String>>,
@@ -956,6 +962,10 @@ impl Board {
             alignment_pending,
             tier_open,
             doc_levels: doc_levels(store, proj),
+            blob_inputs: store.docs.iter().filter_map(|(doc, rec)| {
+                rec.sections.values().find(|s| s.kind == "blob")
+                    .map(|s| (doc.clone(), crate::input::referring_documents(s)))
+            }).collect(),
             tier1_open_docs,
             bind_open_by_entity,
             cone_blockers,

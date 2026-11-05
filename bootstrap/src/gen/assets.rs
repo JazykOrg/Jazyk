@@ -189,13 +189,13 @@ fn contained_path(root: &Path, path: &str) -> bool {
             .is_none_or(readable_path)
 }
 
-enum Target {
+pub(crate) enum Target {
     Ignore,
     Local(String),
     Blocked(String),
 }
 
-fn target(doc: &str, href: &str) -> Target {
+pub(crate) fn target(doc: &str, href: &str) -> Target {
     let raw = href.split(['?', '#']).next().unwrap_or("");
     if raw.is_empty() || raw.starts_with("//") {
         return Target::Ignore;

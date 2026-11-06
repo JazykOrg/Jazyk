@@ -837,6 +837,10 @@ and a model then fills the ones it means to omit.
   repeated-call guard reads them: empty values go at any depth, so two calls that
   differ only in filler are the same call. A top-level `null` stays, since some tools
   read it as "remove".
+- `write_text_file` preserves supplied `content`, `old_text` and `expectedHash`
+  before validation. File bytes and edit guards are literal data. Empty `content`
+  can delete a matched region. Empty `old_text` or `expectedHash` is refused, never
+  treated as permission for an unconditional overwrite.
 - A `transition` that names no state (`from` and `to` both empty) is a filled-in blank
   and counts as absent.
 - A fact that arrives with its quote and a derivation both (an entity's `mention`, a

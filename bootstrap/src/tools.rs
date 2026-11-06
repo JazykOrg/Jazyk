@@ -592,7 +592,7 @@ pub fn catalog() -> Vec<ToolDef> {
         // Mirrors docs/compiler/turns.md#generation-turns.
         ToolDef {
             name: "read_text_file",
-            description: "One eligible deliverable file's content, capped at 64 KiB including a long first line. Credentials and private compiler/Git state are excluded. path is relative to the deliverable directory; line (1-based) and limit select lines. truncatedLine identifies a line whose remainder was omitted.",
+            description: "One eligible deliverable file's content, capped at 64 KiB including a long first line. Credentials and private compiler/Git state are excluded. path is relative to the deliverable directory; line (1-based) and limit select lines. hash is the whole file SHA-256, including unread content. truncatedLine identifies a line whose remainder was omitted.",
             parameters: obj(
                 json!({"path": {"type": "string"}, "line": {"type": "integer"}, "limit": {"type": "integer"}}),
                 &["path"],
@@ -600,8 +600,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "write_text_file",
-            description: "Write one deliverable file, creating parent directories; with append true the content goes at the end of the existing file, so a long file is written in parts that fit your reply cap. path is relative to the deliverable directory. A path recorded for another entity is rejected with the owner named; reference other entities' files instead of rewriting them.",
-            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}}), &["path", "content"]),
+            description: "Write one deliverable file atomically. For a small edit, pass old_text matching exactly once and expectedHash from the last read or write; content replaces that literal text. old_text requires expectedHash and cannot combine with append true. An optional expectedHash guards any write mode; a conflict changes nothing. With append true, content goes at the end. Replies include the whole-file hash. path is relative to the deliverable. Source and ownership gates apply to every mode; preserve unrelated content.",
+            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, "old_text": {"type": "string"}, "expectedHash": {"type": "string"}}), &["path", "content"]),
         },
         ToolDef {
             name: "list_files",
@@ -650,8 +650,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_run_changes",
-            description: "List retained file changes or read one retained path. Missing contents and partial collection are explicit.",
-            parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}}), &["run_id"]),
+            description: "List retained file changes or read one changed path (version: changes, the default). version: input requires path and reads the frozen run input, including an unchanged file, explicitly labeled historical input. It does not read the current workspace. Missing contents and partial collection are explicit.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}, "version": {"type": "string", "enum": ["changes", "input"]}}), &["run_id"]),
         },
         ToolDef {
             name: "run_command",
@@ -4378,7 +4378,7 @@ impl ToolSession {
                 }
                 let more_lines = start + taken < total;
                 truncated |= more_lines;
-                let mut reply = json!({"content": content, "totalLines": total});
+                let mut reply = json!({"content": content, "totalLines": total, "hash": crate::task_runtime::digest(text.as_bytes())});
                 let ledger = crate::gen::Ledger::load(&self.snapshot.out);
                 if let Some(owner) = crate::gen::file_owner(&self.snapshot, &ledger, "", &rel) {
                     let entity = format!("ent:{owner}");
@@ -4409,7 +4409,7 @@ impl ToolSession {
             "write_text_file" => {
                 let raw = Self::str_arg(args, "path")?;
                 let (rel, note) = self.unroot_rel(raw.trim().trim_start_matches("./"));
-                let content = Self::str_arg(args, "content")?;
+                let content = args["content"].as_str().ok_or_else(|| ToolError::new("bad-args", "content must be a string".into()))?.to_owned();
                 if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));}
                 let path = self.deliverable_path(&rel)?;
                 // File ownership: a path recorded for an entity outside this session's
@@ -4432,23 +4432,45 @@ impl ToolSession {
                         ),
                     ));
                 }
-                if let Some(parent) = path.parent() {
-                    crate::vfs::create_dir_all(parent).ok();
+                // Literal edits reuse the same Source and ownership gates as full
+                // writes. Check the complete file before committing any bytes.
+                let old_text = args.get("old_text").map(|value| value.as_str().map(str::to_owned)
+                    .ok_or_else(|| ToolError::new("bad-args", "old_text must be a string".into()))).transpose()?;
+                let expected = args.get("expectedHash").map(|_| Self::str_arg(args, "expectedHash")).transpose()?;
+                let append = args["append"].as_bool() == Some(true);
+                if old_text.is_some() && (append || expected.is_none()) {
+                    return Err(ToolError::new("invalid-edit", "old_text requires expectedHash from the last read or write and cannot combine with append: true; no bytes changed".into()));
                 }
-                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools: a
-                // long file arrives in parts when the model's reply cap is small.
-                let append = args["append"].as_bool() == Some(true) && path.vis_file();
-                if append {
-                    crate::vfs::append(&path, content.as_bytes()).map_err(|e| {
-                        ToolError::new("io-error", format!("cannot append to `{}`: {}", rel, e))
-                    })?;
-                } else {
-                    crate::vfs::write(&path, &content).map_err(|e| {
-                        ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e))
-                    })?;
+                let current = if old_text.is_some() || expected.is_some() || (append && path.vis_file()) {
+                    Some(crate::vfs::read_to_string(&path).map_err(|e| ToolError::new(
+                        "not-found", format!("cannot read `{rel}` before editing: {e}; no bytes changed; list_files shows what exists")
+                    ))?)
+                } else { None };
+                if let Some(expected) = expected {
+                    let actual = crate::task_runtime::digest(current.as_deref().unwrap_or_default().as_bytes());
+                    if expected != actual {
+                        return Err(ToolError::new("file-conflict", format!(
+                            "`{rel}` changed since the supplied expectedHash; current hash: {actual}. No bytes changed. Read the affected region and reconsider the edit before retrying"
+                        )));
+                    }
                 }
-                let total = crate::vfs::read(&path).map(|b| b.len() as u64).unwrap_or(0);
-                let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append, "fileBytes": total});
+                let next = if let Some(ref old) = old_text {
+                    let text = current.as_deref().unwrap_or_default();
+                    let first = text.find(old.as_str());
+                    if old.is_empty() || first.is_none() || first != text.rfind(old.as_str()) {
+                        return Err(ToolError::new("edit-match", format!(
+                            "old_text must be nonempty and match exactly once in `{rel}`; no bytes changed. Read the affected region and include enough unchanged surrounding text to identify the intended site"
+                        )));
+                    }
+                    current.as_deref().unwrap_or_default().replacen(old.as_str(), &content, 1)
+                } else if append {
+                    format!("{}{}", current.as_deref().unwrap_or_default(), content)
+                } else { content.clone() };
+                crate::store::write_atomic(&path, next.as_bytes()).map_err(|e| {
+                    ToolError::new("io-error", format!("cannot write `{rel}`: {e}"))
+                })?;
+                let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append && current.is_some(), "fileBytes": next.len(), "hash": crate::task_runtime::digest(next.as_bytes())});
+                if old_text.is_some() { reply["replaced"] = json!(1); }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
                 }
@@ -5479,7 +5501,15 @@ impl ToolSession {
     // that omits them, and a fact the documents state keeps its quote as its one
     // provenance. Mirrors docs/compiler/tools.md#validation-and-errors.
     pub fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        let supplied = args;
         let mut args = normalize_args(args);
+        // Literal file data and supplied guards must not disappear as filler.
+        // In particular, blank old_text must never become a full overwrite.
+        if name == "write_text_file" {
+            for key in ["content", "old_text", "expectedHash"] {
+                if let Some(value) = supplied.get(key) { args[key] = value.clone(); }
+            }
+        }
         let note = prefer_quote(name, &mut args);
         let result = self.dispatch_normalized(name, &args);
         match (result, note) {
@@ -12658,6 +12688,8 @@ mod tests {
         assert_eq!(error.rule, "source-selection");
         let error = tools.dispatch("read_text_file", &json!({"path":"deliverable/public.svg"})).unwrap_err();
         assert_eq!(error.rule, "protected-path");
+        let error = tools.dispatch("write_text_file", &json!({"path":"deliverable/public.svg", "old_text":"PRIVATE_ENVIRONMENT", "content":"changed", "expectedHash":crate::task_runtime::digest(b"PRIVATE_ENVIRONMENT")})).unwrap_err();
+        assert_eq!(error.rule, "source-selection");
         assert_eq!(std::fs::read_to_string(&private).unwrap(), "PRIVATE_ENVIRONMENT");
     }
 
@@ -12693,6 +12725,82 @@ mod tests {
         assert_eq!(page["nextLine"], 65);
         assert!(page["truncatedLine"].is_null());
         crate::vfs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn literal_file_edit_preserves_unread_content_and_returns_whole_file_hashes() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let root = std::path::PathBuf::from("/project/deliverable");
+        crate::vfs::create_dir_all(&root).unwrap();
+        let original = "<title>Jazyk ž</title>\r\nregex = r'\\w+\\.py'\r\n<footer>keep me</footer>\r\n";
+        crate::vfs::write(root.join("index.html"), original).unwrap();
+        let mut tools = session();
+        tools.gen.deliverable = root.clone();
+        let page = tools.dispatch("read_text_file", &json!({"path":"index.html","limit":1})).unwrap();
+        assert_eq!(page["content"], "<title>Jazyk ž</title>\r\n");
+        assert_eq!(page["hash"], crate::task_runtime::digest(original.as_bytes()));
+        assert_eq!(page["truncated"], true);
+        let replacement = "<title>Jazyk ✓</title>";
+        let reply = tools.dispatch("write_text_file", &json!({"path":"index.html","old_text":"<title>Jazyk ž</title>","content":replacement,"expectedHash":page["hash"]})).unwrap();
+        let expected = original.replace("<title>Jazyk ž</title>", replacement);
+        assert_eq!(crate::vfs::read_to_string(root.join("index.html")).unwrap(), expected);
+        assert_eq!(reply["replaced"], 1);
+        assert_eq!(reply["fileBytes"], expected.len());
+        assert_eq!(reply["hash"], crate::task_runtime::digest(expected.as_bytes()));
+        let appended = tools.dispatch("write_text_file", &json!({"path":"index.html","content":"<!-- fin -->","append":true,"expectedHash":reply["hash"]})).unwrap();
+        assert_eq!(appended["hash"], crate::task_runtime::digest(format!("{expected}<!-- fin -->").as_bytes()));
+        tools.dispatch("write_text_file", &json!({"path":"index.html","content":"","old_text":"<!-- fin -->","expectedHash":appended["hash"]})).unwrap();
+        assert_eq!(crate::vfs::read_to_string(root.join("index.html")).unwrap(), expected);
+    }
+
+    #[test]
+    fn literal_file_edits_refuse_stale_missing_or_ambiguous_context_without_writing() {
+        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let root = std::path::PathBuf::from("/project/deliverable");
+        crate::vfs::create_dir_all(&root).unwrap();
+        let path = root.join("page.txt");
+        let mut tools = session();
+        tools.gen.deliverable = root;
+        crate::vfs::write(&path, "original").unwrap();
+        let stale = tools.dispatch("read_text_file", &json!({"path":"page.txt"})).unwrap()["hash"].clone();
+        crate::vfs::write(&path, "aaa other aaa").unwrap();
+        let hash = crate::task_runtime::digest(b"aaa other aaa");
+        for (args, rule) in [
+            (json!({"old_text":"original","expectedHash":stale}), "file-conflict"),
+            (json!({"old_text":"aaa"}), "invalid-edit"),
+            (json!({"old_text":"aaa","expectedHash":""}), "bad-args"),
+            (json!({"old_text":"aaa","expectedHash":hash,"append":true}), "invalid-edit"),
+            (json!({"old_text":"","expectedHash":hash}), "edit-match"),
+            (json!({"old_text":"absent","expectedHash":hash}), "edit-match"),
+            (json!({"old_text":"aaa","expectedHash":hash}), "edit-match"),
+            (json!({"old_text":"aa","expectedHash":hash}), "edit-match"),
+            (json!({"expectedHash":stale}), "file-conflict"),
+            (json!({"expectedHash":stale,"append":true}), "file-conflict"),
+        ] {
+            let mut args = args;
+            args["path"] = json!("page.txt");
+            args["content"] = json!("replacement");
+            assert_eq!(tools.dispatch("write_text_file", &args).unwrap_err().rule, rule);
+            assert_eq!(crate::vfs::read_to_string(&path).unwrap(), "aaa other aaa");
+        }
+        assert_eq!(crate::vfs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_file_tool_edits_preserve_native_executable_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("check.sh");
+        std::fs::write(&path, "#!/bin/sh\necho before\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
+        let mut tools = session();
+        tools.gen.deliverable = root.path().to_path_buf();
+        let read = tools.dispatch("read_text_file", &json!({"path":"check.sh"})).unwrap();
+        tools.dispatch("write_text_file", &json!({"path":"check.sh","old_text":"echo before","content":"echo after","expectedHash":read["hash"]})).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "#!/bin/sh\necho after\n");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o750);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
     #[test]
@@ -12834,6 +12942,9 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "file-owned");
         assert!(err.message.contains("operations"), "{}", err.message);
+        let err = t.dispatch("write_text_file", &json!({"path":"departments.md", "old_text":"# Departments", "content":"# Changed", "expectedHash":read["hash"]})).unwrap_err();
+        assert_eq!(err.rule, "file-owned");
+        assert_eq!(crate::vfs::read_to_string(deliverable.join("departments.md")).unwrap(), "# Departments\n");
         // The restated root: written, read, and listed under the root, with a note.
         let v = t
             .dispatch("write_text_file", &json!({"path": "handbook/sales.md", "content": "# Sales\n"}))

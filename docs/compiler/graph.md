@@ -223,7 +223,8 @@ commits, and `jazyk ripple` follows the local journal only.
 
 Every file the store writes (a node file, a doc record, a journal entry, `status.yaml`,
 `build.yaml`) lands through a sibling temporary file renamed into place, so a reader or
-a crash never sees a half-written file. `save` writes `build.yaml` last: its generation
+a crash never sees a half-written file. Native replacement preserves the existing
+file permissions. `save` writes `build.yaml` last: its generation
 is the commit point a reader checks. A write that fails is reported with its path and the error,
 never dropped.
 

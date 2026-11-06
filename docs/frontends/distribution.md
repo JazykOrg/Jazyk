@@ -70,9 +70,16 @@ A new build of an existing release must match its hashes. An npm failure leaves
 usable direct downloads and a failed workflow. Corrections require a new version.
 
 Initial publication requires npm permission for every package name. `NPM_TOKEN`
-can hold a short-lived bootstrap credential. After the first full publication,
-configure npm trusted publishing for every package with repository
-`JazykOrg/Jazyk` and calling workflow `release.yml`, then remove the token.
+can hold a short-lived publishing credential. Enable `Bypass two-factor
+authentication` when creating it. Grant `Read and write (publish and stage)`
+access to all six package names, including permission to create them on initial
+publication. Successful account authentication does not confirm publishing
+permission. `EOTP` requires correcting the credential or interactive authentication.
+
+The configured token remains in use until it expires or is replaced. For token-free
+publication after the first full release, configure npm trusted publishing for
+every package with repository `JazykOrg/Jazyk` and calling workflow `release.yml`,
+then remove the token.
 The publishing job requests OIDC. Provenance is enabled only when the source
 repository is public. npm does not support provenance for private repositories.
 Login and 2FA are interactive.

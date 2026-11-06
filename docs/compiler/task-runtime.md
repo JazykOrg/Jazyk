@@ -40,7 +40,7 @@ rewrite a task between criteria when its normal suite already covers them.
 
 Optional fields are `image`, `cwd`, `size`, `timeout_seconds`, `env`, `products`,
 `cache`, and `reports`. Defaults are `python:3.12-slim`, project root, `small`, and
-300 seconds. Sizes are small (1 vCPU, 2 GiB), medium (2 vCPU, 4 GiB), and large
+1800 seconds. Saved explicit timeouts retain their values. Sizes are small (1 vCPU, 2 GiB), medium (2 vCPU, 4 GiB), and large
 (4 vCPU, 8 GiB). Hosts may impose lower limits. The execution timeout is at most
 7200 seconds. Environment values are non-secret. Cloud provider credentials never
 enter task environments. Arbitrary publication credentials are not granted by TOML.

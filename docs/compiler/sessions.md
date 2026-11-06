@@ -356,6 +356,24 @@ remaining target. A normal turn end, the round limit, cancellation, and recovery
 suspension retain their distinct outcomes. A model transport error during review
 stops further judgments without recording invented verdicts.
 
+Runtime compaction preserves the worker's opening contract and the latest completed
+tool exchange verbatim. A current generation package retains its exact paths, hashes
+and bindings. The summarizer receives the older history, excluding that preserved
+opening and exchange. Reasoning attached to the latest tool request is summarized.
+The post-compaction size is checkpointed. When the preserved context still exceeds
+the compaction threshold, another compaction requires growth of one fifth of the
+context budget. Reopening the same package cannot consume the request budget in
+repeated compactions.
+
+The embedded ledger worker receives one continuation reminder when it ends a model
+turn without a successful `done`. The reminder asks it to finish all assigned rows
+or report the observed blocker in `done.summary`. The reminder is checkpointed
+with the conversation and is not repeated after recovery. It preserves completed
+writes and evidence. A second normal turn end still finishes the session. The
+request budget, cancellation and transport failures retain their existing limits.
+A provider response cut off by its output token limit is reported as such when
+the session cannot continue, rather than as a completed normal turn.
+
 An unfinished ledger gate after a normal turn end or the round limit is a target
 failure, not a transport failure. The worker may continue to the next target. Its
 action result retains the first failed target, the session's stop reason, and the

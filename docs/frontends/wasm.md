@@ -225,7 +225,9 @@ retain their existing API values and routes.
 
 ## The model
 
-The page owns inference, authentication and model loading. The engine supplies a
+The page owns inference, authentication and model loading. Browser boot uses the
+same 65536-token output allowance as native workers, including reasoning. The
+selected provider or local model can impose a lower supported ceiling. The engine supplies a
 native-tool request and awaits the host's response. JavaScript promises can resume
 on the worker. The model bridge does not block that worker with `Atomics.wait`.
 

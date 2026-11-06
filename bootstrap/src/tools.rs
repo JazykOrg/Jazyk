@@ -12378,6 +12378,7 @@ mod tests {
     #[test]
     fn skills_auto_load_once_cap_and_go_inactive() {
         let mut t = session();
+        t.skills.cap = 4; // Keep this cap-behavior fixture independent of the production allowance.
         assert!(
             t.skills.is_active("extraction"),
             "the goal kind's skill is active from the first round"
@@ -13265,8 +13266,8 @@ mod tests {
     #[test]
     fn caps_split_grows_the_mutation_budget_by_the_crossed_count() {
         let t = caps_session();
-        assert_eq!(t.mutation_limit, 64 + 96);
-        assert_eq!(level_session().mutation_limit, 64);
+        assert_eq!(t.mutation_limit, crate::limits::SESSION_MUTATIONS + 96);
+        assert_eq!(level_session().mutation_limit, crate::limits::SESSION_MUTATIONS);
     }
 
     // Mirrors docs/compiler/goals/abstract-entity.md#gate: a re-point swaps the target

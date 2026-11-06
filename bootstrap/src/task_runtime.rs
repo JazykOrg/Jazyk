@@ -76,7 +76,7 @@ fn size() -> String {
     "small".into()
 }
 fn timeout() -> u64 {
-    300
+    1800
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -576,7 +576,7 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
         return host.and_then(|status| wait_terminal(root, status, wait_seconds, import_terminal));
     }
     if let Some((tasks, index)) = selection {
-        let mut context = json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":300}});
+        let mut context = json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":timeout()}});
         if let Some(index) = index { context["index"] = index; }
         return Ok(context);
     }
@@ -1926,5 +1926,19 @@ pub fn cli(args: &[String]) -> Result<Value, String> {
             &json!({"run_id":args.get(1).ok_or("A run ID is required")?}),
         ),
         _ => Err("Unknown task command".into()),
+    }
+}
+
+#[cfg(test)]
+mod default_timeout_tests {
+    use super::*;
+    #[test]
+    fn new_tasks_allow_cold_builds_and_keep_explicit_shorter_deadlines() {
+        let mut value = serde_json::json!({"id":"build","name":"Build","description":"Build source","command":"cargo build --locked"});
+        let task: Task = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(task.timeout_seconds, 1800);
+        value["timeout_seconds"] = serde_json::json!(90);
+        let task: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(task.timeout_seconds, 90);
     }
 }

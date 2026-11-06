@@ -1014,7 +1014,7 @@ of the tool:
 
 - Exit `127` or `126`: the command was not found, or was not executable. That is the
   runner, never the requirement.
-- Exit `124`: the command ran past the command timeout (600 seconds,
+- Exit `124`: the command ran past the command timeout (1800 seconds,
   `JAZYK_COMMAND_TIMEOUT` overrides) and the harness killed it, the convention of
   `timeout(1)`. A test that never finished judged nothing, and a build must not hang
   with it. The output captured until the kill stays as evidence, with a last line

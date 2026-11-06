@@ -62,8 +62,8 @@ pub fn boot(root_path: &str) -> String {
     ROOT.with(|r| *r.borrow_mut() = root.clone());
     // A tree with no jazyk.toml boots too, with the defaults: the setup wizard
     // writes the file (docs/frontends/gui.md#the-setup-wizard).
-    // The browser host starts with a conservative response budget.
-    crate::llm::set_max_completion_tokens(1024);
+    // Share the native worker allowance; the selected model owns its ceiling.
+    crate::llm::set_max_completion_tokens(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS);
     // Conversations belong to the project they were about.
     chat::reset();
     let p = crate::project::Project::load(&root);

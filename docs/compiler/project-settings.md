@@ -360,12 +360,12 @@ They bound the endpoint and the process; session and build budgets are
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
 - `JAZYK_MAX_COMPLETION_TOKENS`: cap on one response's completion, sent as
-  `max_tokens` on every request (default 4096). The runtime does not switch codecs,
+  `max_tokens` on every request (default 65536). The runtime does not switch codecs,
   remove the cap, or boost a later response. Native responses are bounded to 16 MiB.
-- `JAZYK_CALL_TIMEOUT`: seconds for one whole native LLM call (default 600).
+- `JAZYK_CALL_TIMEOUT`: seconds for one whole native LLM call (default 1800).
   Hosted and browser transports enforce their host's deadline. Session round
   budgets, the ACP idle watchdog and lease TTLs provide additional bounds.
-- `JAZYK_COMMAND_TIMEOUT`: seconds one shell command may run (default 600): a recorded
+- `JAZYK_COMMAND_TIMEOUT`: seconds one shell command may run (default 1800): a recorded
   build or test under `jazyk test`, a session's `run_command`. Past it the harness kills
   the command and records exit `124`
   ([a test that could not run says nothing](../consumers/gen.md#a-test-that-could-not-run-says-nothing)).
@@ -373,7 +373,7 @@ They bound the endpoint and the process; session and build budgets are
   [trace events](./sessions.md#trace-events) including full loaded sets and raw
   payloads.
 - `JAZYK_ACP_IDLE_TIMEOUT`: seconds a [worker session](../frontends/acp.md#worker-sessions)
-  may go without an update before jazyk cancels it (default 600).
+  may go without an update before jazyk cancels it (default 1800).
 - `JAZYK_ACP_MCP`: the transport of the serving injected into
   [worker sessions](../frontends/acp.md#worker-sessions), `stdio` or `http`. Unset
   (or `auto`), the choice follows the agent's `initialize` reply: HTTP when it

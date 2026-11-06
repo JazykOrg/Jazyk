@@ -67,7 +67,7 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   under budget). Write tools stage mutations behind gates and preview the goals a
   mutation will open; `mark_goal_done` is validated against the kind's gate and takes
   a one-line justification; `mark_goal_failed` is always available; `done` runs batch
-  gates; the changeset commits atomically, or the session retries once and parks.
+  gates; the changeset commits atomically, or the session gets up to four attempts and then parks.
 - The store: one YAML file per node under `.jazyk/<set>/graph/<kind>/`, named by a
   reversible file id (`ent:order` → `ent~order.yaml`; past 180 bytes a prefix and a
   hash, with the full id inside), natural-key upserts, changesets committed atomically

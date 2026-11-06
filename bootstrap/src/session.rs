@@ -1634,7 +1634,7 @@ mod tests {
     #[test]
     fn initial_loaded_defers_what_the_budget_cannot_hold() {
         let mut s = fixture();
-        let long = "Ines Marlow keeps the lantern lit for the harbor crew until dawn on the night of the storm, and the whole quay sees it from the water. ".repeat(3);
+        let long = "Ines Marlow keeps the lantern lit for the harbor crew until dawn on the night of the storm, and the whole quay sees it from the water. ".repeat(12);
         let mut ids = Vec::new();
         for i in 0..160 {
             let id = format!("req:big-{}", i);
@@ -1779,6 +1779,7 @@ mod tests {
     #[test]
     fn skill_state_renders_once_caps_and_goes_inactive() {
         let mut sk = SkillState::new();
+        sk.cap = 4; // Exercise a deliberately small fixture cap, independent of the production default.
         assert!(matches!(
             sk.activate("extraction"),
             Ok(SkillLoad::Rendered(_))

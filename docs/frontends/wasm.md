@@ -70,6 +70,11 @@ wasm build in `src/lib.rs`: `acp`, `cli`, `gui`, `lsp`, `viewer`, `benchmark`,
 
 ### Filesystem
 
+Virtual workspace paths use `/` on every host. The isolated native tree uses
+`/project` as a logical root, including on Windows. It has no drive letter.
+Native joins are normalized before lookup and snapshot names use `/`. Confinement
+checks require this root and reject traversal outside it and drive-qualified paths.
+
 The tree holds paths and bytes. A directory is implied by any file under it, so a
 project seeded as a flat list of files needs no directory records. The host fills it
 before the backend boots:

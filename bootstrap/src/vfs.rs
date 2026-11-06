@@ -303,6 +303,8 @@ mod memory {
                 c => out.push(c.as_os_str()),
             }
         }
+        #[cfg(windows)]
+        let out = PathBuf::from(out.to_string_lossy().replace('\\', "/"));
         out
     }
 
@@ -603,7 +605,7 @@ pub(crate) fn scoped_snapshot() -> Result<std::collections::BTreeMap<String, Vec
                 .map_err(|_| "Path outside hosted workspace".to_string())?
                 .to_str()
                 .ok_or("Invalid workspace path")?
-                .to_owned();
+                .replace('\\', "/");
             let bytes = memory::read(&path).map_err(|e| e.to_string())?;
             Ok((name, bytes))
         })
@@ -613,7 +615,7 @@ pub(crate) fn scoped_snapshot() -> Result<std::collections::BTreeMap<String, Vec
 #[cfg(not(target_arch = "wasm32"))]
 fn checked(path: &Path) -> io::Result<PathBuf> {
     let normalized = memory::norm(path);
-    if !normalized.is_absolute() || !normalized.starts_with("/project") {
+    if !normalized.has_root() || !normalized.starts_with("/project") {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "path is outside the hosted workspace",
@@ -649,7 +651,7 @@ impl Scope {
         memory::list_all()
             .into_iter()
             .filter_map(|path| {
-                let name = path.strip_prefix("/project").ok()?.to_str()?.to_owned();
+                let name = path.strip_prefix("/project").ok()?.to_str()?.replace('\\', "/");
                 Some((name, memory::read(&path).ok()?))
             })
             .collect()
@@ -665,6 +667,19 @@ impl Drop for Scope {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn scoped_native_joins_round_trip_portable_snapshot_names_and_stay_confined() {
+        let _scope = super::Scope::enter(&Default::default());
+        let file = std::path::Path::new("/project").join("docs").join("main.md");
+        super::create_dir_all(file.parent().unwrap()).unwrap();
+        super::write(&file, b"source").unwrap();
+        assert_eq!(super::scoped_snapshot().unwrap()["docs/main.md"], b"source");
+        for outside in ["/project2/escape", "/project/../escape", "C:/project/escape"] {
+            assert!(super::write(outside, b"escape").is_err(), "{outside}");
+        }
+    }
+
     // Every change to the in-memory tree raises its change count, so a load or a
     // board reused while it holds still never misses a write
     // (docs/frontends/wasm.md#filesystem).

@@ -20,6 +20,11 @@ path is explicit and human-initiated: answering a
 [code action](#capabilities), which applies a suggested edit deterministically or
 hands the reply to an [answer session](./acp.md#answer-sessions).
 
+Native document links use standard file URLs. Drive letters, Unicode, spaces and
+URI delimiters round-trip through the URL library. A non-file URI does not name
+a local document. Windows verbatim path prefixes and drive-letter URLs identify
+the same project files.
+
 ## Capabilities
 
 - Diagnostics: open [diagnostics](../compiler/model.md#node-kinds) are published inline,

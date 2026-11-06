@@ -247,7 +247,8 @@ impl Lsp {
 
     fn uri_to_doc(&self, uri: &str) -> Option<String> {
         let path = uri_to_path(uri)?;
-        let rel = path.strip_prefix(&self.root).ok()?;
+        let root = uri_to_path(&path_to_uri(&self.root))?;
+        let rel = path.strip_prefix(&root).ok()?;
         Some(rel.to_string_lossy().replace('\\', "/"))
     }
 
@@ -1278,8 +1279,7 @@ fn reply<W: Write>(out: &mut W, id: Option<Value>, result: Value) {
 
 // file:// URI -> path (handles the common file:///abs/path form).
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    Some(PathBuf::from(percent_decode(rest)))
+    url::Url::parse(uri).ok()?.to_file_path().ok()
 }
 
 // One glyph per derived verification status, so the card reads at a glance in clients
@@ -1295,12 +1295,9 @@ fn status_glyph(status: &str) -> &'static str {
 }
 
 fn path_to_uri(path: &Path) -> String {
-    let s = path.to_string_lossy().replace('\\', "/");
-    if s.starts_with('/') {
-        format!("file://{}", s)
-    } else {
-        format!("file:///{}", s)
-    }
+    url::Url::from_file_path(path)
+        .map(|uri| uri.to_string())
+        .unwrap_or_default()
 }
 
 // Whole-word, case-insensitive occurrences of `needle` in `text`, as
@@ -1343,27 +1340,6 @@ fn occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
         }
     }
     out
-}
-
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            // Two ASCII hex digits; a multibyte character after the `%` is no escape,
-            // and slicing the str there would split a character.
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
-            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
 }
 
 // Events feeding the main loop: a client message, a store change, or stdin closing.
@@ -1513,13 +1489,24 @@ mod tests {
         assert!(super::occurrences("İİİ", "x").is_empty());
     }
 
+    #[cfg(windows)]
     #[test]
-    fn percent_decode_leaves_a_multibyte_character_after_a_percent_alone() {
-        assert_eq!(super::percent_decode("a%20b"), "a b");
-        assert_eq!(super::percent_decode("%aé.md"), "%aé.md");
-        assert_eq!(super::percent_decode("caf%C3%A9"), "café");
-        assert_eq!(super::percent_decode("%"), "%");
-        assert_eq!(super::percent_decode("%2"), "%2");
+    fn file_urls_find_documents_under_a_verbatim_windows_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let lsp = lsp_at(root.clone(), root.join(".jazyk"), Store::default());
+        let uri = super::path_to_uri(&root.join("docs/main.md"));
+        assert_eq!(lsp.uri_to_doc(&uri), Some("docs/main.md".into()));
+    }
+
+    #[test]
+    fn file_urls_round_trip_native_paths_with_unicode_and_delimiters() {
+        for name in ["a b.md", "%aé.md", "café.md", "%.md", "%2.md", "a#b.md"] {
+            let path = std::env::temp_dir().join(name);
+            let uri = super::path_to_uri(&path);
+            assert_eq!(super::uri_to_path(&uri), Some(path), "{uri}");
+        }
+        assert!(super::uri_to_path("https://example.org/a.md").is_none());
     }
 
     use super::*;

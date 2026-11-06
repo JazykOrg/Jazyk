@@ -89,7 +89,7 @@ and other projects. A nested `.jazyk/jazyk.toml` stops the input walk. Private
 `.jazyk` paths at any depth stay excluded, except the owning project's redacted
 configuration and generated ignore file. Symlink aliases cannot expose another
 project. The command runs through `/bin/sh -c`. Arguments and environment
-are passed as data. Concurrent source edits do not change the input snapshot.
+are passed as data. Concurrent source edits do not change the input snapshot. The input includes current eligible workspace writes, including writes made before `record_generation`. A run's `source_revision` alone does not establish that it omitted those writes. Inspect its input digest and retained evidence before diagnosing a stale snapshot.
 
 Local Docker, Podman, and hosted execution share task, manifest, result, and
 cancellation contracts. Browser-only execution returns unavailable. Local execution
@@ -170,6 +170,8 @@ that a case never executed. Never ran means no execution history. Completed case
 can survive a cancelled run, but the run remains cancelled. A requirement with
 criteria is verified only if every required bound criterion has current passing
 evidence. Command exit zero cannot verify a whole suite by itself.
+
+Before execution, check that the saved command discovers the new test and that `reports` selects its output path. A missing case can mean that its report is outside the saved patterns. Check the command, patterns, and selector before changing source or rerunning the task.
 
 Reports are fresh run outputs, never cache. Old generated reports are removed before
 execution. Statement hashes cannot be refreshed by running tests. Test/source hashes

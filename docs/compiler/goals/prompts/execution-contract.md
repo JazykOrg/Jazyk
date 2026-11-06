@@ -23,6 +23,14 @@ task_context gives projectRoot. Make the package's deliverable path relative to
 projectRoot: if they are equal, use cwd=".". Never prepend the project directory's
 own name to cwd or globs. Globs stay project-relative even when cwd is a subdirectory.
 Put JUnit patterns in reports; do not repeat a pattern in products or cache.
+Before launching a suite after adding a test, check both that the saved command
+discovers it and that reports includes its actual output path. Read the saved
+patterns; do not assume a wildcard exists. A successful command with a missing
+case can mean an excluded report, not missing source. Inspect the command, report
+patterns and selector before rerunning.
+run_task snapshots current eligible workspace files, including new file-tool
+writes before record_generation. source_revision alone is not proof of stale
+input. Use the input digest and retained evidence to diagnose snapshot issues.
 update_tasks replaces the whole list, so retain unrelated tasks and use the returned
 revision on the next call. Inspect the run's status, logs,
 retained changes, products, and per-case results. Repair owned files and start a

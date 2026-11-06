@@ -99,6 +99,7 @@ jobs:
         with:
           workspaces: bootstrap
           key: release-${{ matrix.key }}
+          cache-on-failure: true
       - run: cargo build --locked --release --bin jazyk --example distribution_smoke
         working-directory: bootstrap
       - run: cargo test --locked --release

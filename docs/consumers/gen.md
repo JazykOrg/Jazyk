@@ -26,6 +26,9 @@ when `record_generation` lands ([the generate goal](../compiler/goals/generate.m
 Anything the deliverable needs that the documents do not state is an ambiguity; generation
 chooses, records the choice, and raises it ([invented choices](#invented-choices)).
 
+Generated-file listings use document-relative paths with `/` separators on every
+native platform.
+
 ## The deliverable
 
 The deliverable is the project directory itself by default: the generated product lands

@@ -1209,8 +1209,8 @@ fn list_existing_files(dir: &Path) -> Vec<String> {
             }
             if p.vis_dir() {
                 walk(&p, root, out, depth + 1);
-            } else if let Ok(rel) = p.strip_prefix(root) {
-                out.push(rel.to_string_lossy().to_string());
+            } else {
+                out.push(relative);
             }
         }
     }

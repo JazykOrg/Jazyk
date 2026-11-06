@@ -51,7 +51,8 @@ publication.
 
 The workflow tests and builds all targets, bundles pinned and checksummed PDFium,
 tests the extracted distributions and local npm installations, and prepares all
-archives and npm tarballs from those builds. A manifest records the source commit,
+archives and npm tarballs from those builds. Failed native jobs retain their
+dependency cache for a retry. A manifest records the source commit,
 version and hashes. Publishing consumes those artifacts without rebuilding.
 
 With `publish` enabled it calls two reusable workflows:

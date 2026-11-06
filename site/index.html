@@ -39,6 +39,24 @@
       </div>
     </section>
 
+    <section id="install" class="mx-auto max-w-5xl px-6 pb-12">
+      <h2 class="text-2xl font-bold text-slate-900">Run locally</h2>
+      <p class="mt-2 text-slate-600">Use npm with Node.js 22 or newer, or download a native archive.</p>
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+        <div><p class="text-sm text-slate-500">Run once</p><pre class="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-4"><code>npx -y jazyk</code></pre></div>
+        <div><p class="text-sm text-slate-500">Install globally</p><pre class="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-4"><code>npm install -g jazyk</code></pre></div>
+      </div>
+      <ul class="mt-5 flex flex-wrap gap-x-6 gap-y-3 text-sm font-medium text-brand">
+        <li><a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases/latest/download/jazyk-aarch64-apple-darwin.tar.gz">macOS Apple Silicon</a></li>
+        <li><a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases/latest/download/jazyk-x86_64-apple-darwin.tar.gz">macOS Intel</a></li>
+        <li><a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases/latest/download/jazyk-x86_64-unknown-linux-gnu.tar.gz">Linux x64</a></li>
+        <li><a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases/latest/download/jazyk-aarch64-unknown-linux-gnu.tar.gz">Linux ARM64</a></li>
+        <li><a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases/latest/download/jazyk-x86_64-pc-windows-msvc.zip">Windows x64</a></li>
+      </ul>
+      <p class="mt-4 text-sm text-slate-500">Extract the whole archive and keep <code>lib/</code> beside the executable. Linux requires glibc 2.35 or newer. Direct downloads need no Node.js or Rust.</p>
+      <p class="mt-2 text-sm text-brand"><a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases/latest/download/SHA256SUMS">SHA-256 checksums</a> · <a class="hover:underline" href="https://github.com/JazykOrg/Jazyk/releases">All releases</a> · <a class="hover:underline" href="https://www.npmjs.com/package/jazyk">npm package</a></p>
+    </section>
+
     <section class="border-t border-slate-200 bg-slate-50">
       <div class="mx-auto max-w-5xl px-6 py-12">
         <h2 class="text-2xl font-bold text-slate-900">Example</h2>

@@ -30,7 +30,8 @@ the Unix cache root. Windows uses `LOCALAPPDATA` when available.
 
 The child inherits arguments, working directory, environment and standard streams.
 Termination signals and exit status are forwarded. Launcher diagnostics use stderr.
-MCP and ACP stdout remains protocol data. Platform packages declare `os`, `cpu`,
+MCP and ACP stdout remains protocol data. Windows extraction uses the built-in
+`System32/tar.exe`, independent of a Git Bash installation. Platform packages declare `os`, `cpu`,
 and Linux `libc`. All optional dependencies use the exact launcher version.
 
 ## Manual releases
@@ -38,7 +39,9 @@ and Linux `libc`. All optional dependencies use the exact launcher version.
 `.github/workflows/release.yml` accepts `workflow_dispatch` only, on `master`.
 Branch pushes and tag pushes do not publish. The version input must match
 `bootstrap/Cargo.toml`. The default run validates without publishing. A first publication requires the
-bootstrap npm credential before any release builds start.
+bootstrap npm credential before any release builds start. The workflow checks
+its npm account identity up front. Package publish permission is checked during
+publication.
 
 The workflow tests and builds all targets, bundles pinned and checksummed PDFium,
 tests the extracted distributions and local npm installations, and prepares all
@@ -69,7 +72,8 @@ Login and 2FA are interactive.
 Local validation covers launcher behavior, packages, workflow syntax and docs.
 Hosted validation runs native Rust tests in the release profile, the WASM check
 and Go helper tests.
-Smoke checks cover PDF loading and diagram rendering without model calls.
+Smoke checks cover PDF loading and diagram rendering without model calls, both
+in an extracted archive and in the launcher download cache.
 After publication, verify clean npm and archive installations from public URLs.
 
 The [site](../site.md) offers npm commands, named platform download links through

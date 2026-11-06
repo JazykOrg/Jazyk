@@ -20,6 +20,10 @@ native-documents = ["dep:docx-rs", "dep:pdfium-render", "dep:tempfile", "dep:zip
 document-proof = ["native-documents"]
 
 [[example]]
+name = "distribution_smoke"
+required-features = ["native-documents"]
+
+[[example]]
 name = "document_proof"
 required-features = ["document-proof"]
 
@@ -89,6 +93,9 @@ zip = { version = "8.6", default-features = false, features = ["deflate"], optio
 # .cargo/config.toml); resvg rasterizes the SVG where a surface needs pixels.
 plantuml-little = { version = "=1.2026.2-4", default-features = false, features = ["metrics-ttf-parser"] }
 resvg = "0.48"
+
+[target.'cfg(windows)'.dependencies]
+uds_windows = "=1.2.1"
 
 # The browser backend. `getrandom/js` is what lets the shared token minting build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

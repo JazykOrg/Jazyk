@@ -87,3 +87,10 @@ does not change the local project's storage authority or require a Cloud account
 The private repository owns [editor deployment](https://github.com/JazykOrg/jazyk-cloud/blob/master/docs/editor/deployment.md).
 Its local extraction is reviewed before a live-site handoff. This repository's
 `site/deploy.sh` and site workflow own jazyk.org only.
+
+## Native downloads
+
+The site shows `npx -y jazyk` and `npm install -g jazyk`. It links each supported
+platform archive through GitHub latest-release URLs, with checksums and all
+releases beside them. [Distribution](frontends/distribution.md) defines the
+platforms and the manual release workflow.

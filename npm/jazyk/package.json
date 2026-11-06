@@ -1,0 +1,13 @@
+{
+  "name": "jazyk",
+  "version": "0.2.0",
+  "description": "Natural language compiler. Requirements, diagrams, code and tests from documentation.",
+  "license": "MIT",
+  "repository": {"type": "git", "url": "git+https://github.com/JazykOrg/Jazyk.git"},
+  "homepage": "https://jazyk.org",
+  "bugs": {"url": "https://github.com/JazykOrg/Jazyk/issues"},
+  "bin": {"jazyk": "bin/jazyk.js"},
+  "files": ["bin/", "README.md", "LICENSE"],
+  "engines": {"node": ">=22"},
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"}
+}

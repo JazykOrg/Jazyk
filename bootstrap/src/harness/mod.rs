@@ -8,6 +8,7 @@ use serde_json::Value;
 
 pub mod provider;
 mod runtime;
+mod compaction;
 mod tool_arguments;
 
 pub use runtime::{

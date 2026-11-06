@@ -3236,6 +3236,73 @@ mod tests {
     }
 
     #[test]
+    fn an_incomplete_group_keeps_completed_work_and_skips_later_groups_and_build() {
+        struct Partial {
+            writer: StubRunner,
+            calls: std::cell::Cell<usize>,
+            stopped: Option<String>,
+        }
+        impl crate::runner::SessionRunner for Partial {
+            fn agent_name(&self) -> String { "partial".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, batch: &crate::runner::BatchRun, trace: &crate::session::Trace) -> crate::runner::SessionReport {
+                self.calls.set(self.calls.get() + 1);
+                match batch.goals[0].target.as_str() {
+                    "ent:cart" => self.writer.run_item(batch, trace),
+                    "ent:middle" => {
+                        crate::vfs::write(self.writer.gs.deliverable.join("index.html"), "<html>partial shared page").unwrap();
+                        let mut ledger = Ledger::load(&self.writer.store.out);
+                        ledger.support.push("index.html".into());
+                        ledger.build = Some(Build { run:"printf built > build-was-run.txt".into(),
+                            cwd:".".into(), produces:vec!["build-was-run.txt".into()], last_run:None });
+                        ledger.save(&self.writer.store.out);
+                        crate::runner::SessionReport { applied:0,rounds:24,tokens:20,cached:0,
+                            failed:None,resolved:vec![],stopped:self.stopped.clone() }
+                    }
+                    other => panic!("later group {other} consumed a partial shared page"),
+                }
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { panic!("no new model request") }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> { panic!("no new model request") }
+        }
+        for (case, (later, stopped)) in [(false,None),(true,None),
+            (false,Some("the session ran out of rounds after 24".into())),
+            (true,Some("the session ran out of rounds after 24".into()))].into_iter().enumerate() {
+            let _scope = crate::session_recovery::Scope::enter(None);
+            let out = std::env::temp_dir().join(format!("jazyk-gen-partial-stop-{}-{case}", crate::sys::process_id()));
+            crate::vfs::remove_dir_all(&out).ok();
+            let (mut store, gs) = fixture(&out);
+            for (id, name) in [("middle", "Middle"), ("z-last", "Last")] {
+                if id == "z-last" && !later { continue; }
+                store.graph.entities.insert(format!("ent:{id}"), Entity { name:name.into(), ..Default::default() });
+                store.graph.requirements.insert(format!("req:{id}"), Requirement {
+                    statement:format!("{name} has content."), entities:vec![format!("ent:{id}")], ..Default::default() });
+            }
+            let mut ledger = Ledger::load(&out);
+            ledger.medium = Some(Medium { form:"Rust source".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new() });
+            ledger.save(&out);
+            let runner = Partial { writer:StubRunner { record:true,failed:None,stopped:None,
+                store:store.clone(),gs:gs.clone() }, calls:std::cell::Cell::new(0), stopped:stopped.clone() };
+            let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet, std::sync::Arc::new(|_|{}), Default::default());
+            let result = run_selected(&store, &runner, &gs, &[], true, &trace, true).unwrap();
+            assert_eq!(runner.calls.get(), 2, "{result}");
+            assert_eq!(result["regenerated"], 1);
+            assert_eq!(result["failures"], 1);
+            assert_eq!(result["build"]["state"], "not-run");
+            let error = result["error"].as_str().unwrap();
+            assert!(error.contains("group Middle") && error.contains("Still owed: Middle"), "{error}");
+            assert!(error.contains(stopped.as_deref().unwrap_or("before recording completion")), "{error}");
+            let ledger = Ledger::load(&out);
+            assert!(ledger.entities.contains_key("cart") && !ledger.entities.contains_key("middle"));
+            assert!(crate::vfs::read_to_string(gs.deliverable.join("cart.rs")).unwrap().contains("fn cart"));
+            assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("index.html")).unwrap(), "<html>partial shared page");
+            assert!(!gs.deliverable.join("build-was-run.txt").exists());
+            assert!(ledger.build.unwrap().last_run.is_none());
+            crate::vfs::remove_dir_all(&out).ok();
+        }
+    }
+
+    #[test]
     fn prior_generation_group_progress_keeps_its_position_without_an_error_field() {
         let old = json!({"root":"ent:cart","ready":["ent:cart","ent:other"],
             "pipeline_cursor":1,"pipeline_task":null,"pipeline_results":[["ent:cart",{"Ok":1}]]});
@@ -3246,7 +3313,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_generation_exposes_its_target_and_round_limit_without_an_early_halt() {
+    fn incomplete_generation_exposes_its_group_and_round_limit_and_stops() {
         let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
         let out = std::path::Path::new("/project/.jazyk/generation-budget");
         let (store,gs) = fixture(out);
@@ -3260,7 +3327,7 @@ mod tests {
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
         let result = run_selected(&store,&runner,&gs,&[],true,&trace,false).unwrap();
         assert_eq!(result["failures"],1);
-        assert!(result["stopped"].is_null());
+        assert_eq!(result["stopped"], result["error"]);
         let error = result["error"].as_str().unwrap();
         assert!(error.contains("Cart was not completed") && error.contains("24"), "{result}");
         assert!(!error.contains("ent:cart") && !error.contains("record_generation"), "{result}");
@@ -5077,7 +5144,8 @@ pub(crate) async fn run_selected(
         }
         let outcome = if gs.worker == "pipeline" {
             while command.data.active.as_ref().unwrap().pipeline_cursor < ready.len()
-                && command.data.active.as_ref().unwrap().pipeline_failed.is_none() {
+                && command.data.active.as_ref().unwrap().pipeline_failed.is_none()
+                && !command.data.active.as_ref().unwrap().pipeline_results.iter().any(|(_, result)| result.is_err()) {
                 let cursor = command.data.active.as_ref().unwrap().pipeline_cursor;
                 let id = &ready[cursor];
                 if trace.is_cancelled() {
@@ -5159,6 +5227,14 @@ pub(crate) async fn run_selected(
             outcome.failed.as_deref(),
         );
         command.data.streak = next;
+        let incomplete: Vec<_> = ready.iter().filter_map(|id| {
+            match outcome.results.iter().find(|(target, _)| target == id).map(|(_, result)| result) {
+                Some(Ok(_)) => None,
+                Some(Err(error)) => Some((id.clone(), error.clone())),
+                None => Some((id.clone(), outcome.failed.clone().unwrap_or_else(||
+                    "The group ended before completing this target".into()))),
+            }
+        }).collect();
         for (id, result) in outcome.results {
             match result {
                 Ok(files) => {
@@ -5187,7 +5263,15 @@ pub(crate) async fn run_selected(
             &store.out,
             &format!("g:generate:{root}"),
         ));
-        if outcome.failed.is_some() {
+        if !incomplete.is_empty() {
+            let name = |id: &str| store.graph.entities.get(id).map(|entity| entity.name.as_str())
+                .filter(|name| !name.is_empty()).unwrap_or(id).to_owned();
+            let owed = incomplete.iter().map(|(id, _)| name(id)).collect::<Vec<_>>().join(", ");
+            let reason = format!("Generation group {} is incomplete. Still owed: {owed}. {}",
+                name(&root), command.data.first_error.as_deref().unwrap_or(&incomplete[0].1));
+            command.data.first_error = Some(reason.clone());
+            command.data.stopped = Some(outcome.failed.unwrap_or(reason));
+        } else if outcome.failed.is_some() {
             command.data.stopped = outcome.failed;
         }
         command.save().await?;
@@ -5197,6 +5281,8 @@ pub(crate) async fn run_selected(
     }
     let build = if !build_product || trace.is_cancelled() {
         json!({"state":"not-selected"})
+    } else if command.data.failures > 0 || command.data.stopped.is_some() {
+        json!({"state":"not-run", "reason":"generation is incomplete"})
     } else if crate::vfs::is_scoped() {
         json!({"state":"pending-ci", "pendingCi": Ledger::load(&store.out).build.is_some(), "reason":"build commands run through delivery CI"})
     } else {

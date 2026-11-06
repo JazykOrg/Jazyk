@@ -1,17 +1,37 @@
 # Runtime compaction boundary
 
-Summarize only the conversation history above. The separate request asking you to
-summarize is runtime control. It is not a user request in that history. Do not add
-it to `user_intent`, `user_messages`, `pending_tasks`, or `current_work`.
+Create a concise progress handoff for the active Jazyk session. The request to
+summarize is runtime control. It is not a user request in that history. The next agent must continue
+the actual task and accepted steering.
 
-Preserve the actual user task, accepted steering, completed actions and unresolved
-work. The next agent must continue that work. Do not tell it to summarize again or
-stop executing the task merely because this request asks for a summary.
+Conversation history to summarize:
+{{ messages }}
 
-Preserve exact package values needed by pending writes: selected set, entity and
-criterion ids, deliverable root, source selection, factHash, active claim and
-existing bound test objects (artifact, name, kind and run, including classname
-prefixes). Keep completed mutations and run ids with their observed outcomes.
-If these details cannot fit, name the package to reload before recording.
-Keep hypotheses separate from tool evidence. Do not promote a guessed path or
-selector into a fact or a next-step instruction.
+Return one JSON object with these fields when relevant:
+- `user_intent`: the actual task and accepted changes, as short strings.
+- `files`: objects with `path` and a short `summary` of completed changes.
+- `errors_and_fixes`: observed failures, exact failing selectors or error codes,
+  whether each was fixed, and the evidence for that conclusion.
+- `pending_tasks`: unfinished assigned work and observed blockers.
+- `current_work`: the active entity, current files, and last completed operation.
+- `next_step`: the next concrete action that advances the actual task.
+
+Keep the handoff under 6000 characters. Prefer a few precise bullets over a
+chronological transcript. Do not spend the available output budget restating
+history. Do not reproduce source files, long tool outputs, full prompts, the
+opening contract, or package payloads. The opening contract, latest successful
+authoritative package exchanges for unfinished targets and latest tool exchange are retained separately
+with their exact values. Source files and run logs remain available through tools.
+Name a path or run id and the relevant finding instead of copying its contents.
+
+Preserve exact identifiers needed for unfinished work: selected set, active entity,
+criterion ids, current run ids, completed records and unresolved gates. Distinguish
+observed tool results from plans and hypotheses. A failed or skipped write did
+not change the file. A passing test proves only the exact checks it executed.
+Do not turn an invented locator, guessed path, or intended implementation into a
+fact. If a necessary value is absent from the retained package, name the package
+to reload. Keep any partial file edit and the remaining work explicit.
+
+Do not add this summarization request to user intent or pending work. Do not tell
+the next agent to summarize again, stop the active task, or repeat completed writes
+and tests. Do not add new product decisions.

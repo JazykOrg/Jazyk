@@ -4021,7 +4021,7 @@ fn sink_write(
         return Err("hosted workspaces do not connect to editor sockets".into());
     }
     use std::io::{BufRead, BufReader, Write};
-    let mut stream = std::os::unix::net::UnixStream::connect(sink).map_err(|e| e.to_string())?;
+    let mut stream = crate::local_socket::UnixStream::connect(sink).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
         .map_err(|e| e.to_string())?;

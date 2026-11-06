@@ -1,0 +1,36 @@
+name: Publish npm packages
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    secrets:
+      NPM_TOKEN:
+        required: false
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release
+      - name: Verify release identity
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python3 scripts/release/artifacts.py verify dist/release "$VERSION" "$GITHUB_SHA"
+      - name: Publish platform packages, then launcher
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_PUBLIC: ${{ !github.event.repository.private }}
+        run: node scripts/release/publish-npm.mjs "$VERSION" dist/release

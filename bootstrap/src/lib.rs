@@ -27,6 +27,8 @@ pub mod agent_context;
 pub mod harness;
 pub mod limits;
 pub mod live_preview;
+#[cfg(not(target_arch = "wasm32"))]
+mod local_socket;
 pub mod llm;
 mod scoped_state;
 pub mod inprocess;

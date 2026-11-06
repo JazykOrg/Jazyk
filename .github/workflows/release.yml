@@ -1,0 +1,174 @@
+name: Release
+run-name: Release ${{ inputs.version }} (publish=${{ inputs.publish }})
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version matching bootstrap/Cargo.toml, without v'
+        required: true
+        type: string
+      publish:
+        description: 'Publish GitHub Release and npm packages after validation'
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: jazyk-release
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - id: plan
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/master
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {version} from './scripts/release/prepare.mjs';
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(process.env.VERSION) || version() !== process.env.VERSION) throw new Error('Version must match Cargo.toml');
+          const platforms=JSON.parse(fs.readFileSync('scripts/release/platforms.json'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`matrix=${JSON.stringify({include:Object.entries(platforms).map(([key,p])=>({key,...p}))})}\n`);
+          JS
+      - name: Check first-publication credentials
+        if: inputs.publish
+        env:
+          HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          if (process.env.HAS_NPM_TOKEN !== 'true') {
+            const platforms=JSON.parse(fs.readFileSync('scripts/release/platforms.json'));
+            for (const name of [...Object.keys(platforms).map(k=>`jazyk-${k}`),'jazyk']) {
+              const response=await fetch(`https://registry.npmjs.org/${name}`,{signal:AbortSignal.timeout(30000)});
+              if (!response.ok) throw new Error(`Set a short-lived NPM_TOKEN repository secret for initial publication: ${name} is not available (${response.status})`);
+            }
+          }
+          JS
+      - run: node --test scripts/release/launcher.test.cjs scripts/release/packaging.test.mjs
+  shared-checks:
+    needs: plan
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bootstrap
+      - run: cargo check --locked --target wasm32-unknown-unknown --lib
+        working-directory: bootstrap
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: runtime-worker/go.mod
+          cache-dependency-path: runtime-worker/go.sum
+      - run: go test ./...
+        working-directory: runtime-worker
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bootstrap
+          key: release-${{ matrix.key }}
+      - run: cargo build --locked --release --bin jazyk --example distribution_smoke
+        working-directory: bootstrap
+      - run: cargo test --locked --release
+        working-directory: bootstrap
+      - name: Bundle libraries and licenses
+        env:
+          KEY: ${{ matrix.key }}
+        run: |
+          binary=bootstrap/target/release/jazyk
+          if [[ "$RUNNER_OS" = Windows ]]; then binary="$binary.exe"; fi
+          python scripts/release/artifacts.py bundle "$KEY" "$binary" .local/distributions
+          python scripts/release/artifacts.py archive .local/distributions .local/archives "$KEY"
+          python scripts/release/artifacts.py extract "$KEY" .local/archives .local/extracted
+      - name: Test complete distribution
+        env:
+          KEY: ${{ matrix.key }}
+        run: |
+          ext=''
+          if [[ "$RUNNER_OS" = Windows ]]; then ext='.exe'; fi
+          cp "bootstrap/target/release/examples/distribution_smoke$ext" ".local/extracted/$KEY/smoke$ext"
+          env -u JAZYK_PDFIUM -u JAZYK_PROOF_PDFIUM ".local/extracted/$KEY/smoke$ext"
+          rm ".local/extracted/$KEY/smoke$ext"
+          ".local/extracted/$KEY/jazyk$ext" --help
+          node scripts/release/prepare.mjs .local/extracted .local/packages "$KEY"
+          node scripts/release/install-smoke.mjs .local/packages "$KEY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution-${{ matrix.key }}
+          path: .local/extracted/
+          retention-days: 14
+          if-no-files-found: error
+  collect:
+    needs: [plan, shared-checks, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: distribution-*
+          path: .local/distributions
+          merge-multiple: true
+      - run: node scripts/release/collect.mjs .local/distributions dist/release
+      - name: Verify complete artifacts
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python scripts/release/artifacts.py verify dist/release "$VERSION" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release/
+          retention-days: 14
+          if-no-files-found: error
+  github-release:
+    if: inputs.publish
+    needs: collect
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-github.yml
+    with:
+      version: ${{ inputs.version }}
+  npm-publish:
+    needs: github-release
+    if: inputs.publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release-npm.yml
+    with:
+      version: ${{ inputs.version }}
+    secrets: inherit

@@ -1,0 +1,7 @@
+{
+  "darwin-arm64": {"target":"aarch64-apple-darwin","runner":"macos-15","pdfium":"mac-arm64","library":"libpdfium.dylib","sha256":"e98679e052c07edbb5a627980902abb823d4b3f35744d877bd21668bd9fc13ab"},
+  "darwin-x64": {"target":"x86_64-apple-darwin","runner":"macos-15-intel","pdfium":"mac-x64","library":"libpdfium.dylib","sha256":"933a85a138f6027243c56bff8676375c33ceeb767401389415ffc44d689ca85d"},
+  "linux-x64": {"target":"x86_64-unknown-linux-gnu","runner":"ubuntu-22.04","pdfium":"linux-x64","library":"libpdfium.so","sha256":"588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935"},
+  "linux-arm64": {"target":"aarch64-unknown-linux-gnu","runner":"ubuntu-22.04-arm","pdfium":"linux-arm64","library":"libpdfium.so","sha256":"e7e2fe4686925618330103cb167950aca5a84bb00fd977a41b86be59dd1480a2"},
+  "win32-x64": {"target":"x86_64-pc-windows-msvc","runner":"windows-2022","pdfium":"win-x64","library":"pdfium.dll","sha256":"1fd8af952832dbb0eb16d9249f68fe09e5f5ebf7c3dd9f6066ea2720cc28487d"}
+}

@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {prepare, version} from './prepare.mjs';
+const [input, output] = process.argv.slice(2);
+const packed=path.resolve('.local/release-packages');
+prepare(path.resolve(input),packed);
+fs.mkdirSync(output,{recursive:true});
+for(const file of fs.readdirSync(packed).filter(f=>f.endsWith('.tgz'))) fs.copyFileSync(path.join(packed,file),path.join(output,file));
+execFileSync('python3',['scripts/release/artifacts.py','archive',input,output],{stdio:'inherit'});
+const sha=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+execFileSync('python3',['scripts/release/artifacts.py','seal',output,version(),sha],{stdio:'inherit'});

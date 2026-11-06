@@ -852,7 +852,7 @@ fn start_sink(state: &Arc<ProxyState>) {
         .out
         .join(format!("acp-edit-sink-{}.sock", crate::sys::process_id()));
     let _ = crate::vfs::remove_file(&path);
-    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
+    let Ok(listener) = crate::local_socket::UnixListener::bind(&path) else {
         return;
     };
     *state.sink_path.lock().unwrap() = Some(path);

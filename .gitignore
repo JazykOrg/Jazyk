@@ -32,3 +32,7 @@ project2/
 
 # Local acceptance evidence and development overrides.
 /.local/
+
+# Release artifacts.
+/dist/
+__pycache__/

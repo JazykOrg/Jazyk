@@ -612,6 +612,11 @@ issues the file write upstream and attaches the diff to a tool call update. When
 IDE lacks file system support, or nothing listens on the sink, the serving writes the
 disk directly. The graph commit is the same either way.
 
+The edit transport uses local Unix-domain sockets on macOS and Linux, and the
+`uds_windows` crate on Windows. Windows requires Windows 10 version 1803 or newer.
+The message and acknowledgement remain JSON lines on both platforms. The platform
+adapter does not change the fallback to a direct disk write.
+
 ### Mirroring into IDEs
 
 An agent cannot hand its client a new session, so background work cannot open a

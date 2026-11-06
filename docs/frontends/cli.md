@@ -9,6 +9,8 @@ The CLI is the command line frontend over the [compiler](../compiler/compiler.md
 build, inspects the [graph store](../compiler/graph.md) and the
 [goal board](../compiler/reconciler.md#goal-derivation), and hosts the other frontends.
 
+Install through npm or a native archive as described in [distribution](distribution.md).
+
 ## Commands
 
 ### jazyk

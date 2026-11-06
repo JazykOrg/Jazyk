@@ -361,8 +361,11 @@ authoritative package exchange per unfinished target (`begin_generation`,
 `begin_binding` or `begin_verification`), and latest completed tool exchange
 verbatim. A successful recording closes its package. A later successful begin
 replaces the older package for that target. A later file read or write does not
-displace the active package's exact paths, hashes and bindings. Batched requests retain their paired results together. The summarizer
-receives older history, excluding those retained exchanges and the opening.
+displace the active package's exact paths, hashes and bindings. Batched requests
+retain their paired results together. Human input after the latest tool result
+stays verbatim. Later assistant prose goes to the summary, rather than keeping a
+long answer merely because the last tool exchange preceded it. The summarizer
+receives older history and that prose, excluding retained exchanges and the opening.
 Reasoning attached to retained tool requests is summarized. The project compaction
 prompt asks for a concise progress handoff under 6000 characters. It does not ask
 for full files or a transcript. Source, logs and exact package data remain available

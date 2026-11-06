@@ -31,7 +31,23 @@ pub(crate) fn context(messages: &[Message], conversation: bool) -> Context {
                 .iter()
                 .any(|content| content.as_tool_request().is_some())
         }) {
-            keep.extend(request..messages.len());
+            let batch_ids: BTreeSet<_> = messages[request]
+                .content
+                .iter()
+                .filter_map(|content| content.as_tool_request())
+                .map(|request| request.id.as_str())
+                .collect();
+            keep.insert(request);
+            for (index, message) in messages.iter().enumerate().skip(request + 1) {
+                let paired = message
+                    .get_tool_response_ids()
+                    .iter()
+                    .any(|id| batch_ids.contains(id));
+                let human_input = index > response && message.role == Role::User;
+                if paired || human_input {
+                    keep.insert(index);
+                }
+            }
         }
     }
     // One exact package per unfinished target. A successful record closes its
@@ -283,5 +299,35 @@ mod tests {
             .retained
             .iter()
             .any(|message| message.get_tool_response_ids().contains("a-old")));
+    }
+    #[test]
+    fn later_assistant_prose_is_summarized_while_human_input_and_results_stay_exact() {
+        let prose = "LONG_ASSISTANT_HISTORY ".repeat(10_000);
+        let messages = vec![
+            Message::user().with_text("Continue the actual task"),
+            request("read", "read_text_file"),
+            reply("read", "Exact source and revision", false),
+            Message::assistant().with_text(&prose),
+            Message::user().with_text("Preserve my requested layout"),
+        ];
+        for conversation in [false, true] {
+            let parts = context(&messages, conversation);
+            assert!(parts
+                .summary
+                .iter()
+                .any(|message| message.as_concat_text() == prose));
+            assert!(!parts
+                .retained
+                .iter()
+                .any(|message| message.as_concat_text().contains("LONG_ASSISTANT_HISTORY")));
+            assert!(parts
+                .retained
+                .iter()
+                .any(|message| message.get_tool_response_ids().contains("read")));
+            assert_eq!(
+                parts.retained.last().unwrap().as_concat_text(),
+                "Preserve my requested layout"
+            );
+        }
     }
 }

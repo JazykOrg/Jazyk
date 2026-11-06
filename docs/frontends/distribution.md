@@ -63,6 +63,7 @@ With `publish` enabled it calls two reusable workflows:
   and the launcher last. Stable versions use `latest`. Prereleases use `next` and
   a GitHub prerelease.
 
+Drafts are located through the release list before their tag is published.
 Existing versions must match the prepared bytes. Published content is never
 replaced. Rerun failed jobs to reuse retained artifacts after partial publication.
 A new build of an existing release must match its hashes. An npm failure leaves

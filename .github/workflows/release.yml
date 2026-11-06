@@ -57,6 +57,7 @@ jobs:
           }
           JS
       - run: node --test scripts/release/launcher.test.cjs scripts/release/packaging.test.mjs
+      - run: python3 scripts/release/publish-github.test.py
   shared-checks:
     needs: plan
     runs-on: ubuntu-22.04

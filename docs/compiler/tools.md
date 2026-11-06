@@ -933,8 +933,9 @@ GC goals:
   merges, no `delete_view`; a dissolve leaves a redirect, it is not a delete.
 
 Servings (`jazyk mcp <toolsets>`, see [MCP](../frontends/mcp.md#toolsets)); every
-serving carries the read tools, `report_feedback`, and `await_changes`
-([the work loop](../frontends/mcp.md#the-work-loop)):
+serving carries the read tools, `report_feedback`, `await_changes`
+([the work loop](../frontends/mcp.md#the-work-loop)), and `recent_edits`
+([watching edits](../frontends/mcp.md#watching-edits)):
 
 - `jazyk mcp compile`: the [compilation tools](#compilation-tools) (`goals`,
   `begin_goals`, `done`, `abandon_goals`), the [goal tools](#goal-tools), and the

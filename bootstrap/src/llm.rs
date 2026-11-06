@@ -63,16 +63,15 @@ pub fn set_max_completion_tokens(n: u64) {
     MAX_COMPLETION_OVERRIDE.store(n, Ordering::Relaxed);
 }
 
+fn completion_token_limit(over: u64, environment: Option<&str>) -> u64 {
+    if over > 0 { return over.max(256); }
+    environment.and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS).max(256)
+}
+
 fn base_completion_tokens() -> u64 {
-    let over = MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed);
-    if over > 0 {
-        return over.max(256);
-    }
-    crate::sys::env_var("JAZYK_MAX_COMPLETION_TOKENS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS)
-        .max(256)
+    completion_token_limit(MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed),
+        crate::sys::env_var("JAZYK_MAX_COMPLETION_TOKENS").ok().as_deref())
 }
 
 pub(crate) fn max_completion_tokens() -> u64 { base_completion_tokens() }
@@ -467,3 +466,15 @@ pub fn truncate(s: &str, n: usize) -> String {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+
+#[cfg(test)]
+mod output_limit_tests {
+    #[test]
+    fn explicit_smaller_output_allowances_remain_effective() {
+        assert_eq!(super::completion_token_limit(0, None), 65_536);
+        assert_eq!(super::completion_token_limit(8192, None), 8192);
+        assert_eq!(super::completion_token_limit(0, Some("8192")), 8192);
+        assert_eq!(super::completion_token_limit(512, Some("8192")), 512);
+        assert_eq!(super::completion_token_limit(0, Some("invalid")), 65_536);
+    }
+}

@@ -1824,11 +1824,3 @@ fn complex_history_keeps_output_headroom_without_early_compaction() {
     assert_eq!(output.and_then(Value::as_u64), Some(65_536));
     assert_eq!(crate::llm::model_input_tokens(), 65_536);
 }
-
-#[test]
-fn an_explicit_lower_output_budget_is_preserved() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
-    crate::llm::set_max_completion_tokens(8192);
-    assert_eq!(crate::llm::max_completion_tokens(), 8192);
-    assert_eq!(crate::llm::model_input_tokens(), 122_880);
-}

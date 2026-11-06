@@ -4405,7 +4405,7 @@ mod tests {
                     }
                     self.inference += 1;
                     let message = match self.inference {
-                        1 => json!({"role":"assistant","content":"old tool context ".repeat(6_000),"tool_calls":[{
+                        1 => json!({"role":"assistant","content":"old tool context ".repeat(crate::limits::MODEL_CONTEXT_TOKENS / 4),"tool_calls":[{
                             "id":"begin-generation","type":"function","function":{
                                 "name":"begin_generation","arguments":"{\"entity\":\"ent:greeter\"}"
                             }

@@ -1760,15 +1760,15 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
-// A session that fails twice on one batch parks its goals after the retry:
+// A batch that exhausts its unfinished-goal attempts parks its goals:
 // `status.yaml` carries the reason, `Board::explain` shows it, the build is incomplete
 // with an `incomplete-build` diagnostic, and the next build resumes the parked goals
 // first and converges. Mirrors docs/compiler/reconciler.md#parked-and-failed.
 #[test]
-fn a_batch_failing_twice_parks_its_goals_and_the_next_build_resumes_them_first() {
+fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_them_first() {
     let (dir, project) = f1_copy("parked");
     let runner = ScriptedRunner::new(&project);
-    runner.fail_batches_of("review-entity", 2);
+    runner.fail_batches_of("review-entity", crate::limits::GOAL_ATTEMPTS);
     let started = std::time::Instant::now();
     let (report, events) = build(&project, &runner);
     eprintln!(
@@ -1785,9 +1785,11 @@ fn a_batch_failing_twice_parks_its_goals_and_the_next_build_resumes_them_first()
             _ => None,
         })
         .collect();
-    assert_eq!(failed.len(), 2, "{:?}", failed);
-    assert_eq!((failed[0].0, failed[1].0), (1, 2), "{:?}", failed);
-    assert_eq!(failed[0].1, failed[1].1, "the retry is a fresh session on the same batch");
+    assert_eq!(failed.len(), crate::limits::GOAL_ATTEMPTS as usize, "{:?}", failed);
+    assert_eq!(failed.iter().map(|(attempt, _)| *attempt).collect::<Vec<_>>(),
+        (1..=crate::limits::GOAL_ATTEMPTS).collect::<Vec<_>>(), "{:?}", failed);
+    assert!(failed.iter().all(|(_, label)| label == &failed[0].1),
+        "each retry is a fresh session on the same batch: {:?}", failed);
     let parked: BTreeMap<String, String> = events
         .iter()
         .filter_map(|e| match e {
@@ -1813,7 +1815,8 @@ fn a_batch_failing_twice_parks_its_goals_and_the_next_build_resumes_them_first()
         .expect("the failed batch");
     assert_eq!(parked.keys().cloned().collect::<BTreeSet<_>>(), batch_goals);
     assert!(parked.keys().any(|g| g.starts_with("g:review-entity:")), "{:?}", parked);
-    let expected_reason = format!("left open after its retry in session {}", failed[1].1);
+    let expected_reason = format!("left open after {} attempts in session {}",
+        crate::limits::GOAL_ATTEMPTS, failed.last().unwrap().1);
     for reason in parked.values() {
         assert_eq!(reason, &expected_reason);
     }

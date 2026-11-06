@@ -350,7 +350,7 @@ The automated path. For each goal batch the runner:
    earlier attempt never blocks it.
 
 A session that goes silent is cancelled after an idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
-default 600 seconds). Cancellation follows the protocol: pending permission requests
+default 1800 seconds). Cancellation follows the protocol: pending permission requests
 are answered `cancelled`, then `session/cancel` goes out. The lease TTLs bound what a
 dead agent can hold either way. The same timeout bounds the calls the host waits on
 synchronously: an agent that does not answer `initialize`, `session/new`, or

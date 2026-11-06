@@ -720,7 +720,7 @@ long", "context length"), since the fixed part of a session's prompt is the same
 every batch and a retry cannot help (a browser's built-in model once failed every
 batch of a sync that way before the cap). A session that failed without
 spending a token never counts as its goals' attempt: the model never saw them, so their
-one retry stays theirs. A novel build under an exhausted quota had parked goals on
+four attempts stay theirs. A novel build under an exhausted quota had parked goals on
 attempts no model made, 302 in its last minutes.
 
 ## Parked and failed
@@ -732,7 +732,7 @@ goal's `state`. Both keep the goal whole, `change` payload included, so a parked
 failed goal survives a re-derivation that would otherwise drop it.
 
 The park `reason` says which road ran out, in the words the trace uses: the retry
-(`left open after its retry in session b12-3`), the build cap or the `--sessions`
+(`left open after 4 attempts in session b12-3`), the build cap or the `--sessions`
 limit, the dead-endpoint breaker with the last error, a cancelled build, a reopen cycle
 (`reopened-after-resolve: ...`), or a flip (`cross-class flip: ...`,
 `reparent flip: ...`). An entry written without one reads with no reason. The reason
@@ -741,8 +741,8 @@ rides wherever a parked goal is shown: the `incomplete-build` diagnostic's messa
 board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status`.
 
 - Parked means "ran out of road": a session that exhausted its rounds without meeting
-  the gate is retried once with a fresh session, then its goals park; a build that hits
-  its cap (3 × the distinct goals derived so far in the build + 8 sessions, the count
+  the gate gets up to four attempts, each with a fresh session, then its goals park;
+  a build that hits its cap (8 × the distinct goals derived so far in the build + 64 sessions, the count
   cumulative over every board of the build) parks every open goal. Parked goals keep
   their records, resume first in the next build, and count as open in the verdict
   (`incomplete`, with an `incomplete-build` diagnostic). Unfinished work is never
@@ -753,7 +753,7 @@ board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status
   holds, so a goal a session just resolved derives again under the same id with the
   same `change`. The build counts these cycles per goal id and `change` across its
   sessions: a goal resolved and re-opened with the same `change` for the second time
-  in one build parks, the way a goal left open after its retry parks, and the trace
+  in one build parks without spending the remaining unfinished-goal attempts, and the trace
   names the cycle (`reopened-after-resolve`, with the count). A goal re-opened with a
   different `change` is new work under an old id, not a cycle: its count starts over.
   The count is the `REOPEN_CYCLES` constant of the registry

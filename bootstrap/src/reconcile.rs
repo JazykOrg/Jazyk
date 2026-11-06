@@ -2751,9 +2751,9 @@ pub(crate) async fn run_sessions(
             }
             let n = attempts.entry(id.clone()).or_insert(0);
             *n += 1;
-            if *n >= 2 {
+            if *n >= crate::limits::GOAL_ATTEMPTS {
                 if let Some(g) = board.goal(id) {
-                    let reason = format!("left open after its retry in session {}", batch.id);
+                    let reason = format!("left open after {} attempts in session {}", n, batch.id);
                     parked_ids.insert(id.clone());
                     parked.push(ParkedGoal::new(g.clone(), reason.clone()));
                     trace.event(TraceEvent::Goal {
@@ -2773,8 +2773,8 @@ pub(crate) async fn run_sessions(
         }
         // A resolved goal back on the board with the change it was resolved under is a
         // cycle: the commit recomputed the record behind it and a session would mark
-        // the same work done again. The second cycle parks it, as the retry rule
-        // parks the second attempt. A different change is new work under an old id
+        // the same work done again. The second cycle parks it without spending the
+        // remaining unfinished-goal attempts. A different change is new work under an old id
         // and starts the count over. Mirrors docs/compiler/reconciler.md#parked-and-failed.
         for g in board.open_goals() {
             let Some(change) = resolved_changes.remove(&g.id) else {
@@ -5995,12 +5995,52 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
     }
 
+    #[test]
+    fn an_unfinished_goal_gets_four_fresh_sessions_before_parking() {
+        use crate::board::tests::{control_auto, project_for};
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+        struct Unfinished(AtomicUsize);
+        impl SessionRunner for Unfinished {
+            fn agent_name(&self) -> String { "unfinished-stub".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, _: &BatchRun, _: &Trace) -> SessionReport {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                SessionReport { applied: 0, rounds: 1, tokens: 10, cached: 0,
+                    failed: None, resolved: Vec::new(), stopped: None }
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                Err("stub".into())
+            }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&Trace>) -> Result<String, String> {
+                Err("stub".into())
+            }
+        }
+        let out = std::env::temp_dir().join(format!("jazyk-attempt-tolerance-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let text = "# Main\n\nThe system accepts an order.\n";
+        let parsed: ParsedDocs = [("docs/main.md".into(), (hash_hex(text), crate::md::parse_sections(text)))].into();
+        let mut store = Store { out: out.clone(), ..Default::default() };
+        store.sync_docs(&parsed);
+        let project = project_for(&store);
+        let control = control_auto();
+        let trace = Trace::to_sink(crate::session::TraceLevel::Normal, Arc::new(|_: &TraceEvent| {}), Default::default());
+        let runner = Unfinished(AtomicUsize::new(0));
+        let run = run_sessions(&project, &out, &trace, None, &runner, &mut store, &parsed, &control);
+        assert_eq!(runner.0.load(Ordering::SeqCst), 4);
+        assert_eq!(run.sessions, 4);
+        assert_eq!(run.parked.len(), 1);
+        assert!(run.parked[0].reason.as_deref().unwrap().contains("after 4 attempts"));
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
     // The build cap counts the distinct goals derived so far in the build, not the
     // first board alone: the first board carries one `reconcile-section` goal (a cap
-    // sized for it would allow 3 x 1 + 8 sessions), the sync after the first session
-    // dirties twelve more documents, and each derives a goal of its own that runs
-    // once (a `reconcile-section` batch is walled per document). The build runs
-    // thirteen sessions, past the first board's cap, and parks nothing.
+    // sized for only its initial goal), the sync after the first session dirties
+    // enough linked documents to exceed that initial allowance. Each derives a
+    // goal that runs once, and the expanded cap lets every session finish.
     // Mirrors docs/compiler/compilation.md#convergence.
     #[test]
     fn the_build_cap_grows_with_the_goals_derived_during_the_build() {
@@ -6071,12 +6111,12 @@ mod tests {
             }
         }
 
-        // Thirteen one-section documents: the root links the other twelve, which sit
+        // The root links enough one-section documents to exceed its initial cap. They sit
         // one link level below it. The store is synced to the first version with the
         // twelve covered; the parsed set the build reloads after every session carries
         // a second version of each of the twelve, so the first reload dirties them:
         // goals the first board never saw.
-        const LATER: usize = 12;
+        const LATER: usize = BUILD_SESSION_FACTOR + BUILD_SESSION_FLOOR;
         let doc_text = |i: usize, version: usize| {
             let links: Vec<String> = (1..=LATER).map(|j| format!("[d{}](./d{}.md)", j, j)).collect();
             format!(
@@ -6112,7 +6152,7 @@ mod tests {
             ..Default::default()
         };
         s.sync_docs(&first);
-        // The twelve linked documents are covered and clean: only the root's section is
+        // The linked documents are covered and clean: only the root's section is
         // dirty and unprocessed, so the first board carries one goal.
         let covered: Vec<Op> = (1..=LATER)
             .map(|i| Op::SetCoverage {
@@ -6149,7 +6189,7 @@ mod tests {
         let runner = CoveringRunner { out: out.clone() };
         let run = run_sessions(&proj, &out, &trace, None, &runner, &mut s, &later, &control);
 
-        // One goal on the first board, thirteen distinct over the build, each run once:
+        // One goal on the first board, more distinct over the build, each run once:
         // more sessions than a cap sized for the first board allows, under the grown
         // cap, and nothing parked.
         let goals = 1 + LATER;

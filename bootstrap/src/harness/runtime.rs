@@ -37,6 +37,8 @@ use super::{
 };
 
 const SYSTEM: &str = include_str!("../../../docs/compiler/goals/prompts/embedded-agent.md");
+const LEDGER_CONTINUATION: &str =
+    include_str!("../../../docs/compiler/goals/prompts/ledger-continuation.md");
 const COMPACTION_REQUEST: &str =
     include_str!("../../../docs/compiler/goals/prompts/compaction-request.md");
 const COMPACTION_CONTINUATION: &str =
@@ -512,6 +514,22 @@ async fn drive(
             }
         }
         if operation::ends_turn(state.conversation.messages()) {
+            let ledger_worker = !args.conversation
+                && args.tools.iter().any(|tool| tool.name == "done")
+                && args.tools.iter().any(|tool| matches!(tool.name.as_str(),
+                    "record_generation" | "record_binding" | "record_verdict"));
+            if ledger_worker && !state.ledger_finish_reminded {
+                state.ledger_finish_reminded = true;
+                state.conversation.push(Message::user().with_text(LEDGER_CONTINUATION));
+                state.transition += 1;
+                if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
+                    return Stop::Error(error);
+                }
+                continue;
+            }
+            if state.model_output_limited {
+                return Stop::Error("The model reached its output token limit before completing the turn".into());
+            }
             if args.input_close.as_mut().is_some_and(|close| !close()) {
                 continue;
             }
@@ -574,7 +592,9 @@ async fn drive(
                     as usize
             && state
                 .compacted_at_round
-                .is_none_or(|round| state.rounds > round + 1);
+                .is_none_or(|round| state.rounds > round + 1)
+            && state.compacted_size.is_none_or(|size|
+                estimate >= size.saturating_add(crate::limits::CONTEXT_BUDGET / 5));
         let outcome = if compact {
             let provider = Arc::new(ChannelProvider {
                 tx: actions,
@@ -589,10 +609,27 @@ async fn drive(
             let opening = (!args.conversation)
                 .then(|| messages.first().filter(|message| message.role == Role::User).cloned())
                 .flatten();
+            let mut summary_messages = messages[usize::from(opening.is_some())..].to_vec();
+            let mut recent = Vec::new();
+            if let Some(response_index) = summary_messages.iter().rposition(|message|
+                !message.get_tool_response_ids().is_empty())
+            {
+                if let Some(request_index) = summary_messages[..response_index].iter().rposition(|message|
+                    message.content.iter().any(|content| content.as_tool_request().is_some()))
+                {
+                    recent = summary_messages.split_off(request_index);
+                    let mut reasoning = recent[0].clone();
+                    reasoning.content.retain(|content| content.as_tool_request().is_none());
+                    if !reasoning.content.is_empty() {
+                        summary_messages.push(reasoning);
+                    }
+                    recent[0].content.retain(|content| content.as_tool_request().is_some());
+                }
+            }
             let mut templates = Templates::default();
             templates.compaction.push_str("\n\n");
             templates.compaction.push_str(COMPACTION_REQUEST);
-            let future = goose_context_management::summarize(&model, None, &templates, &messages);
+            let future = goose_context_management::summarize(&model, None, &templates, &summary_messages);
             match drive_future(
                 future,
                 &mut requests,
@@ -612,7 +649,10 @@ async fn drive(
                     compacted.push(summary.message);
                     compacted.push(Message::user()
                         .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)));
+                    compacted.extend(recent);
                     state.conversation = Conversation::new_unvalidated(compacted);
+                    state.compacted_size = Some(serde_json::to_vec(&state.conversation)
+                        .map(|bytes| bytes.len() / 4).unwrap_or(0));
                     record_usage(args, state, summary.usage);
                     state.compacted_at_round = Some(state.rounds);
                     state.transition += 1;
@@ -852,6 +892,9 @@ async fn handle_action(
             (args.emit)(AgentEvent::Timing(
                 json!({"kind":"provider","requestId":id,"purpose":purpose,"round":state.rounds,"ms":started.elapsed().as_millis() as u64}),
             ));
+            if purpose == ModelPurpose::Inference {
+                state.model_output_limited = value["choices"][0]["finish_reason"] == "length";
+            }
             let _ = reply.send(Ok((id, value)));
         }
         HostAction::Tool {
@@ -1207,6 +1250,9 @@ fn initial_state(history: &[Value]) -> Result<HarnessState, String> {
         failed_tool_transition: None,
         usage: Vec::new(),
         compacted_at_round: None,
+        compacted_size: None,
+        ledger_finish_reminded: false,
+        model_output_limited: false,
     })
 }
 

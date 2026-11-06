@@ -547,8 +547,7 @@ impl GoalKind for PlaceAnchors {
     fn pack(&self, store: &Store, batch: &[Goal]) -> String {
         let mut lines = Vec::new();
         for g in batch {
-            lines.push(format!("- {} section changes", g.target));
-            lines.push(format!("- proposals {} full", g.target));
+            lines.push(format!("- alignment:{} full", g.target));
             if let Some(block) = store.status.alignment.iter().find(|b| b.doc == g.target) {
                 let mut seen = BTreeSet::new();
                 for p in &block.proposals {

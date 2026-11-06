@@ -291,7 +291,7 @@ fn set_projection(
             return None;
         }
         let path = crate::vfs::canonicalize(path).ok()?;
-        Some(path.strip_prefix(root()).ok()?.to_str()?.to_owned())
+        Some(path.strip_prefix(root()).ok()?.to_str()?.replace('\\', "/"))
     };
     let internal = |name: &str| {
         !matches!(name, crate::document_sets::CONFIG | ".jazyk/.gitignore")
@@ -377,7 +377,7 @@ fn set_projection(
         .strip_prefix(root())
         .ok()
         .and_then(|o| o.to_str())
-        .map(|o| format!("{o}/"));
+        .map(|o| format!("{}/", o.replace('\\', "/")));
     if let Some(text) = files
         .get(".jazyk/.gitignore")
         .and_then(|b| std::str::from_utf8(b).ok())

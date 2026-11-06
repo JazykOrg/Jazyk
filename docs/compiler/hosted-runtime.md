@@ -35,6 +35,9 @@ sheds them on its next request.
 
 ## Source and delivery projections
 
+Projection names and committed-state prefixes use `/` separators on every native
+host. Native filesystem separators do not enter snapshot or delivery keys.
+
 `Workspace::projection` takes the previous authored file paths. It returns `source`,
 `files`, `criteria`, and `graph_generation`. Paths are workspace-relative. The
 operation is read-only and uses the same project, graph, and generation ledger

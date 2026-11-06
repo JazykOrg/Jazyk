@@ -115,7 +115,7 @@ fn run(
             dispatch,
             emit,
             cancelled: &|| false,
-            max_rounds: 8,
+            max_rounds: crate::limits::AGENT_TOOL_ERROR_LIMIT + 8,
             label: "test".into(),
             conversation: true,
             inputs: None,
@@ -333,8 +333,8 @@ fn explicit_upstream_compaction_replaces_and_checkpoints_history() {
     ]);
     let mut store = Store::default();
     let mut history = vec![
-        json!({"role":"user","content":"u".repeat(45000)}),
-        json!({"role":"assistant","content":"a".repeat(45000)}),
+        json!({"role":"user","content":"u".repeat(crate::llm::model_input_tokens() * 2)}),
+        json!({"role":"assistant","content":"a".repeat(crate::llm::model_input_tokens() * 2)}),
         json!({"role":"user","content":"Continue"}),
     ];
     let stop = run(
@@ -375,8 +375,8 @@ fn poisoned_compaction_intent_resumes_tools_after_checkpoint_restore() {
         ..Default::default()
     };
     let mut history = vec![
-        json!({"role":"user","content":format!("Run the fixture tool. {}", "u".repeat(45000))}),
-        json!({"role":"assistant","content":"a".repeat(45000)}),
+        json!({"role":"user","content":format!("Run the fixture tool. {}", "u".repeat(crate::llm::model_input_tokens() * 2))}),
+        json!({"role":"assistant","content":"a".repeat(crate::llm::model_input_tokens() * 2)}),
         json!({"role":"user","content":"Continue the fixture task"}),
     ];
     let mut calls = 0;
@@ -684,7 +684,7 @@ fn unavailable_tools_are_rejected_without_host_dispatch() {
 
 #[test]
 fn repeated_tool_failures_stop_with_paired_results() {
-    let mut host = Host::new(vec![call(); 5]);
+    let mut host = Host::new(vec![call(); crate::limits::AGENT_TOOL_ERROR_LIMIT as usize]);
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let mut calls = 0;
@@ -698,14 +698,14 @@ fn repeated_tool_failures_stop_with_paired_results() {
         },
         &mut |_| {},
     );
-    assert!(matches!(stop, Stop::Error(error) if error.contains("five consecutive")));
-    assert_eq!(calls, 5);
+    assert!(matches!(stop, Stop::Error(error) if error.contains("20 consecutive")));
+    assert_eq!(calls, 20);
     assert_eq!(
         history
             .iter()
             .filter(|message| message["role"] == "tool")
             .count(),
-        5
+        20
     );
 }
 
@@ -1306,8 +1306,8 @@ fn oversized_worker_packages_survive_compaction_without_reloading_loops() {
     third["choices"][0]["message"]["tool_calls"][0]["id"] = json!("third");
     let mut host = Host::new(vec![call(), response("Older work summary"), second, third, done_response(false)]);
     let mut store = Store { suspend_on: Some(CheckpointPhase::Compacted), ..Default::default() };
-    let opening = format!("Immutable generation contract {}", "c".repeat(36_000));
-    let package = format!("Exact current bindings and factHash {}", "p".repeat(50_000));
+    let opening = format!("Immutable generation contract {}", "c".repeat(crate::llm::model_input_tokens() * 2));
+    let package = format!("Exact current bindings and factHash {}", "p".repeat(crate::llm::model_input_tokens() * 2));
     let mut history = vec![json!({"role":"user","content":opening})];
     let mut calls = 0;
     let mut dispatch = |name: &str, _: &Value| {
@@ -1316,7 +1316,7 @@ fn oversized_worker_packages_survive_compaction_without_reloading_loops() {
         Ok(if calls == 1 { package.clone() } else { "Small result".into() })
     };
     assert_eq!(ledger_completion_run(false, &mut host, &mut store, &mut history, &mut dispatch), Stop::Suspended);
-    assert!(store.saved.as_ref().unwrap().compacted_size.unwrap() > crate::limits::CONTEXT_BUDGET * 4 / 5);
+    assert!(store.saved.as_ref().unwrap().compacted_size.unwrap() > crate::llm::model_input_tokens() * 4 / 5);
     store.suspended = false;
     store.suspend_on = None;
     assert_eq!(ledger_completion_run(false, &mut host, &mut store, &mut history, &mut dispatch), Stop::EndTurn);
@@ -1332,10 +1332,10 @@ fn oversized_worker_packages_survive_compaction_without_reloading_loops() {
 
 #[test]
 fn compaction_keeps_batched_tool_packages_and_later_human_steering() {
-    let package_a = format!("Exact package A {}", "a".repeat(30_000));
-    let package_b = format!("Exact package B {}", "b".repeat(30_000));
+    let package_a = format!("Exact package A {}", "a".repeat(crate::llm::model_input_tokens()));
+    let package_b = format!("Exact package B {}", "b".repeat(crate::llm::model_input_tokens()));
     let mut history = vec![
-        json!({"role":"user","content":format!("Batch contract {}", "c".repeat(36_000))}),
+        json!({"role":"user","content":format!("Batch contract {}", "c".repeat(crate::llm::model_input_tokens() * 2))}),
         json!({"role":"assistant","content":"Inspect packages","tool_calls":[
             {"id":"package-a","type":"function","function":{"name":"fixture","arguments":"{}"}},
             {"id":"package-b","type":"function","function":{"name":"fixture","arguments":"{}"}}
@@ -1645,7 +1645,7 @@ fn interrupted_tool_host_preserves_intention_and_stops_without_another_inference
 
 #[test]
 fn mcp_error_results_count_as_tool_failures_even_with_a_successful_transport() {
-    let mut host = Host::new((0..5).map(|_| call()).collect());
+    let mut host = Host::new((0..crate::limits::AGENT_TOOL_ERROR_LIMIT).map(|_| call()).collect());
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let mut failed = 0;
@@ -1667,10 +1667,10 @@ fn mcp_error_results_count_as_tool_failures_even_with_a_successful_transport() {
         },
     );
     assert!(
-        matches!(stop,Stop::Error(ref error) if error.contains("five consecutive tool errors"))
+        matches!(stop,Stop::Error(ref error) if error.contains("20 consecutive tool errors"))
     );
-    assert_eq!(failed, 5);
-    assert_eq!(store.saved.unwrap().consecutive_tool_errors, 5);
+    assert_eq!(failed, 20);
+    assert_eq!(store.saved.unwrap().consecutive_tool_errors, 20);
 }
 
 #[test]
@@ -1803,4 +1803,32 @@ fn responses_receipt_recovery_keeps_opaque_continuation_and_does_not_repeat_infe
     let wire=crate::model_api::request(&requests[1].body,"responses",Some("concise"),"route-a").unwrap();
     assert!(wire["input"].as_array().unwrap().iter().any(|item|item["encrypted_content"]=="opaque-state"));
     assert!(wire["input"].as_array().unwrap().iter().any(|item|item["type"]=="function_call_output" && item["call_id"]=="original-call"));
+}
+
+#[test]
+fn complex_history_keeps_output_headroom_without_early_compaction() {
+    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let mut host = Host::new(vec![response("finished")]);
+    let mut history = vec![
+        json!({"role":"user","content":"u".repeat(100_000)}),
+        json!({"role":"assistant","content":"Package inspected"}),
+        json!({"role":"user","content":"Continue implementing"}),
+    ];
+    assert_eq!(run(&mut host, &mut Store::default(), &mut history,
+        &mut |_, _| panic!("unexpected tool"), &mut |_| {}), Stop::EndTurn);
+    let requests = host.requests.borrow();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].purpose, ModelPurpose::Inference);
+    let body = &requests[0].body;
+    let output = body.get("max_tokens").or_else(|| body.get("max_completion_tokens"));
+    assert_eq!(output.and_then(Value::as_u64), Some(65_536));
+    assert_eq!(crate::llm::model_input_tokens(), 65_536);
+}
+
+#[test]
+fn an_explicit_lower_output_budget_is_preserved() {
+    let _scope = crate::vfs::Scope::enter(&Default::default());
+    crate::llm::set_max_completion_tokens(8192);
+    assert_eq!(crate::llm::max_completion_tokens(), 8192);
+    assert_eq!(crate::llm::model_input_tokens(), 122_880);
 }

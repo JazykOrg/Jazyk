@@ -120,7 +120,7 @@ pub const LOOKALIKE_DISTINCTIVE_HOLDERS: usize = 3;
 pub const SESSION_ROUNDS: u32 = 24;
 // The embedded agent's flat runaway stop, in model round-trips (one may carry
 // several tool calls). `JAZYK_AGENT_MAX_ROUNDS` overrides.
-pub const AGENT_MAX_ROUNDS: u32 = 48;
+pub const AGENT_MAX_ROUNDS: u32 = 512;
 pub fn agent_max_rounds() -> u32 {
     agent_rounds_from(crate::sys::env_var("JAZYK_AGENT_MAX_ROUNDS").ok().as_deref())
 }
@@ -132,11 +132,15 @@ fn agent_rounds_from(value: Option<&str>) -> u32 {
 }
 
 // Also bounds a single reply containing many invalid calls outside a graph batch.
-pub const AGENT_TOOL_ERROR_LIMIT: u32 = 5;
-pub const SESSION_MUTATIONS: usize = 64;
-pub const CONTEXT_BUDGET: usize = 24_000;
+pub const AGENT_TOOL_ERROR_LIMIT: u32 = 20;
+pub const SESSION_MUTATIONS: usize = 1024;
+pub const CONTEXT_BUDGET: usize = 96_000;
+// Provider context is tokens, not loaded graph characters.
+pub const MODEL_CONTEXT_TOKENS: usize = 131_072;
+pub const DEFAULT_MAX_COMPLETION_TOKENS: u64 = 65_536;
+pub const GOAL_ATTEMPTS: u32 = 4;
 pub const ROUNDS_PER_SECTION: u32 = 8;
-pub const SKILLS_PER_SESSION: usize = 4;
+pub const SKILLS_PER_SESSION: usize = 8;
 // The most derive-criteria goals one batch packs: each lists several requirements
 // with their source sections and grows the changeset's mutation budget.
 // Mirrors docs/compiler/reconciler.md#batching.
@@ -145,8 +149,8 @@ pub const CRITERIA_GOALS_PER_BATCH: usize = 4;
 pub const LOADED_HIGH_WATER: f64 = 0.9;
 
 // The build cap: BUILD_SESSION_FACTOR times the derived goals, plus the floor.
-pub const BUILD_SESSION_FACTOR: usize = 3;
-pub const BUILD_SESSION_FLOOR: usize = 8;
+pub const BUILD_SESSION_FACTOR: usize = 8;
+pub const BUILD_SESSION_FLOOR: usize = 64;
 // Consecutive zero-token session failures that stop a build early: an endpoint
 // answering only errors must not grind the session cap into futile attempts.
 pub const ENDPOINT_BREAKER: usize = 5;
@@ -171,7 +175,7 @@ pub const ALIGN_CANDIDATES: usize = 3;
 // `run_command`) before the harness kills it and records exit 124.
 // `JAZYK_COMMAND_TIMEOUT` overrides, in seconds.
 // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
-pub const COMMAND_TIMEOUT_SECS: u64 = 600;
+pub const COMMAND_TIMEOUT_SECS: u64 = 1800;
 
 pub fn command_timeout() -> std::time::Duration {
     let secs = crate::sys::env_var("JAZYK_COMMAND_TIMEOUT")
@@ -188,9 +192,9 @@ mod tests {
 
     #[test]
     fn agent_request_override_preserves_the_default_and_minimum() {
-        assert_eq!(agent_rounds_from(None), 48);
-        assert_eq!(agent_rounds_from(Some("invalid")), 48);
-        assert_eq!(agent_rounds_from(Some("4294967296")), 48);
+        assert_eq!(agent_rounds_from(None), 512);
+        assert_eq!(agent_rounds_from(Some("invalid")), 512);
+        assert_eq!(agent_rounds_from(Some("4294967296")), 512);
         assert_eq!(agent_rounds_from(Some("0")), 1);
         assert_eq!(agent_rounds_from(Some("2")), 2);
         assert_eq!(agent_rounds_from(Some("72")), 72);

@@ -71,18 +71,25 @@ fn base_completion_tokens() -> u64 {
     crate::sys::env_var("JAZYK_MAX_COMPLETION_TOKENS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(4096)
+        .unwrap_or(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS)
         .max(256)
 }
 
 pub(crate) fn max_completion_tokens() -> u64 { base_completion_tokens() }
+
+// Leave room for reasoning and the final answer when compacting input history.
+pub(crate) fn model_input_tokens() -> usize {
+    crate::limits::MODEL_CONTEXT_TOKENS
+        .saturating_sub(max_completion_tokens().min(usize::MAX as u64) as usize)
+        .max(4096)
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn call_timeout() -> Duration {
     let secs = crate::sys::env_var("JAZYK_CALL_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(600)
+        .unwrap_or(1800)
         .max(30);
     Duration::from_secs(secs)
 }

@@ -130,7 +130,7 @@ shortened here; the real ones are the payload files):
   statement, open diagnostic, and composition part.
   Hints: load ent:order; skill judgment.
 
-## Loaded (9.8k of 24k chars)
+## Loaded (9.8k of 96k chars)
 - req:orders-6    full: statement, transition placed → expired (guard 30 days), source docs/orders.md#/orders/holds
 - req:payment-9   full: statement, source docs/payment.md#/payment/declines
 - ent:order       full: 7 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]
@@ -207,7 +207,7 @@ The lifecycle inside a session:
 - By name: `load_skill({name})` renders the payload in its reply and marks the skill
   active. The index line under `## Loaded` lists every skill: active ones with their
   size, the rest as loadable.
-- Cap: at most four skills render in one session (the registry constant
+- Cap: at most eight skills render in one session (the registry constant
   `skills-per-session`, [budgets](#budgets)). The cap counts the skills rendered this
   session, active or inactive, because rendered text stays in the conversation. An
   auto-load past the cap does not fire and the index line says `(cap reached)`; a
@@ -287,7 +287,7 @@ Fixed run deadlines and the embedded agent's failed-call bound still apply.
 A refusal is not an invalid mutation: the call was well-formed, the model is stuck.
 The serving does not add it to its invalid-mutation count. The
 [embedded agent](../frontends/acp.md#the-embedded-agent) has a separate failure
-counter with a limit of five. Failed calls, including refusals, increment it at
+counter with a limit of twenty. Failed calls, including refusals, increment it at
 most once per model transition. A successful call resets it. Refusals are cheap (a refused call never
 dispatches) and counted: past eight in one batch, the serving finishes the session
 implicitly, committing the staged work under the same gates the [budget path](#budgets)
@@ -344,7 +344,7 @@ served more than the graph tools and finish through the ledger:
 - The finish contract is record, then `done`: the session records its row or manifest,
   marks the goal done with a one-line justification, and ends with `done`. The gate
   reads the [ledger](../consumers/gen.md#the-ledger), never the model's word: no
-  current row, no resolution (one retry, then parked), and a row recorded without a
+  current row, no resolution (up to four attempts, then parked), and a row recorded without a
   mark still resolves the goal at the next derivation.
 
 Ledger workers judge the committed row or manifest before the session's stop. A
@@ -493,7 +493,7 @@ Budgets are registry constants built into the binary, not settings
 
 - Rounds: graph batches are sized so 24 rounds, 8 per section, fit ordinary work.
   This sizing estimate does not cap an agent session. The embedded ACP agent and
-  the in-process worker use the same 48-model-request limit, including compaction
+  the in-process worker use the same 512-model-request limit, including compaction
   requests. `JAZYK_AGENT_MAX_ROUNDS` overrides it where native environment settings
   are allowed, with a minimum of one. Hosted workspaces use the default and do not
   inherit the service environment. One request may carry several tool calls, so a
@@ -503,23 +503,28 @@ Budgets are registry constants built into the binary, not settings
   An external agent bounds
   its own loop, and the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
   [worker sessions](../frontends/acp.md#worker-sessions)) bounds them all.
-- Staged mutations per session: 64, raised for a session holding an
-  [`abstract-entity`](./goals/abstract-entity.md) goal over a requirement count to 64
-  plus that count: a split of ninety-six statements stages one move per grouped
-  statement, and a budget the split cannot fit fails every honest session (the first
-  caps split measured ran out at 64 with three sub-entities staged empty). A
+- Staged mutations per session: 1024, raised for a session holding an
+  [`abstract-entity`](./goals/abstract-entity.md) goal over a requirement count to 1024
+  plus that count: a split stages one move per grouped statement. A
   [`derive-criteria`](./goals/derive-criteria.md) goal raises it by three per listed
   requirement, the density the criteria skill asks for. Enforced by
   the tool serving.
-- Context: 24000 characters, counting the loaded set and the skills rendered this
+- Loaded graph context: 96000 characters, counting the loaded set and the skills rendered this
   session ([policy](./context.md#policy)).
+- Model context: 131072 tokens, separate from the character budget of the loaded
+  graph. Reserve the requested output allowance before deciding to compact history.
+  The default output allowance is 65536 tokens, including reasoning. Provider
+  ceilings and explicit lower settings still apply. Compaction starts at 80 percent
+  of the remaining input allowance.
+- Consecutive tool errors: 20. Successful calls reset the count. Unchanged repeated
+  reads still stop on the third identical call. These guards detect lack of progress.
 - High-water mark: 0.9 of the context budget. Past it, `load` and `expand` are refused
   with a `context-full` error naming the unload candidates until something is unloaded;
   reads still answer ([policy](./context.md#policy)).
-- Skills per session: 4, counting every skill rendered this session, active or inactive
+- Skills per session: 8, counting every skill rendered this session, active or inactive
   ([skills](#skills)). Enforced by the tool serving on `load_skill` and by the harness
   on auto-load.
-- Per build: 3 × the distinct goals derived so far in the build plus 8 sessions, so a
+- Per build: 8 × the distinct goals derived so far in the build plus 64 sessions, so a
   stuck build stops instead of looping. The count grows with the build: every goal id
   any board of this build has carried, recomputed after every commit, so goals that
   derive only after an earlier batch commits (the deeper link levels of a project)

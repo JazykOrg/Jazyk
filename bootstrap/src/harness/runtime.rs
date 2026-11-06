@@ -470,7 +470,7 @@ async fn drive(
         .with_max_tokens(Some(
             crate::llm::max_completion_tokens().min(i32::MAX as u64) as i32,
         ))
-        .with_context_limit(Some(crate::limits::CONTEXT_BUDGET))
+        .with_context_limit(Some(crate::limits::MODEL_CONTEXT_TOKENS))
         .with_vision_support(false);
     loop {
         // A successful domain gate completes a worker batch. Input accepted after
@@ -495,7 +495,7 @@ async fn drive(
             return Stop::Error(error);
         }
         if state.consecutive_tool_errors >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
-            return Stop::Error("Stopped after five consecutive tool errors; inspect the failed calls before retrying".into());
+            return Stop::Error(format!("Stopped after {} consecutive tool errors; inspect the failed calls before retrying", crate::limits::AGENT_TOOL_ERROR_LIMIT));
         }
         if let Some(last) = state.conversation.last() {
             if last.error_kind().is_some() {
@@ -587,14 +587,14 @@ async fn drive(
         let compact = unanswered(&state.conversation).is_empty()
             && state.conversation.len() > 2
             && estimate
-                > (crate::limits::CONTEXT_BUDGET as f64
+                > (crate::llm::model_input_tokens() as f64
                     * goose_context_management::DEFAULT_COMPACTION_THRESHOLD)
                     as usize
             && state
                 .compacted_at_round
                 .is_none_or(|round| state.rounds > round + 1)
             && state.compacted_size.is_none_or(|size|
-                estimate >= size.saturating_add(crate::limits::CONTEXT_BUDGET / 5));
+                estimate >= size.saturating_add(crate::llm::model_input_tokens() / 5));
         let outcome = if compact {
             let provider = Arc::new(ChannelProvider {
                 tx: actions,

@@ -28,7 +28,7 @@ beside them, uncounted, since a header reading over its own budget before the fi
 call had read as a defect. E.g.:
 
 ```text
-## Loaded (14.2k of 24k chars)
+## Loaded (14.2k of 96k chars)
 - view:class/commerce   12 entities, 18 edges shown; 9 members unloaded  [h:view:class/commerce:members]
 - ent:order             full: 7 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]
 - ent:customer          stub (definition only)                           [5 edges loadable: h:ent:customer]
@@ -140,9 +140,7 @@ The initially loaded set obeys the same ceiling as every later `load`: a goal's 
 target loads full, and a supporting item that would land the set past the high-water
 mark enters as a stub ([batching](./reconciler.md#batching)). A supporting item whose
 stub would land the set past the budget itself is not loaded: the status names it on one
-`Not loaded` line, loadable by id when the work reaches it. A novel's criteria batch
-listed forty requirements and their sections, and the stubs past the mark opened the
-set at 26.3k of its 24k.
+`Not loaded` line, loadable by id when the work reaches it. The opening prompt never exceeds this ceiling because of supporting stubs.
 
 The walk is breadth-first per axis in a fixed order (`parents`, `mentions`,
 `requirements`, `related`, `members`), each frontier in document order (document link
@@ -151,7 +149,7 @@ during the walk: when the next item would exceed the budget, the walk stops on t
 frontier and emits a handle instead. Overload is impossible by construction: the model
 sees `9 members unloaded` and chooses.
 
-The budget is 24000 characters, a registry constant
+The budget is 96000 characters, a registry constant
 ([budgets](./sessions.md#budgets)). The header counts every loaded item plus the skills
 rendered this session; an inactive skill keeps its chars, because its text is still in
 the conversation.

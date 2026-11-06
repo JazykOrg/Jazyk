@@ -122,7 +122,9 @@ punctuation, formatting, or list position means the same thing; write nothing el
 Then the change in one line, the gate in one line, and the hints. No skill is active
 unless the batch holds another kind.
 
-The initially loaded set for the document holds:
+The initially loaded set holds `alignment:<document>` in full, followed by
+candidate section stubs. The alignment item is also available through `load`.
+Its budgeted body holds:
 
 - The section changes block: every operation the deterministic pass computed for the
   document and for the old sections whose anchors it holds, so the model knows whether
@@ -148,8 +150,7 @@ E.g.:
   load docs/orders.md#/orders/expiry
 
 ## Loaded (6.1k of 24k chars)
-- docs/orders.md   section changes: 1 edited, 1 split, 1 deleted
-- proposals docs/orders.md   3 anchors, 5 candidates
+- alignment:docs/orders.md   3 proposals, 3 section changes
 - docs/orders.md#/orders/expiry   stub   [loadable: h:docs/orders.md#/orders/expiry:body]
 Skills: none active; extraction, judgment, flow-views, structural-views, abstraction, conformance (load_skill)
 ```

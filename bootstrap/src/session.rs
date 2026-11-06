@@ -1336,7 +1336,7 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
             // target: a judgment cannot run on stubs of its own subjects.
             let primary = batch
                 .iter()
-                .any(|g| g.target == target || g.target.split('~').any(|part| part == target));
+                .any(|g| target == format!("alignment:{}", g.target) || g.target == target || g.target.split('~').any(|part| part == target));
             if full && (primary || !loaded.over_high_water(0)) {
                 let text = loaded.load(store, target, 1).ok();
                 // The mark is a ceiling, not a suggestion: a supporting item that
@@ -1375,6 +1375,9 @@ fn stub_or_defer(loaded: &mut LoadedSet, store: &Store, target: &str) {
 // the top level of a scope (docs/compiler/concepts/levels.md#the-scope-root).
 fn resolves(store: &Store, target: &str) -> bool {
     let id = store.resolve_id(target);
+    if let Some(doc) = id.strip_prefix("alignment:") {
+        return store.status.alignment.iter().any(|block| block.doc == doc);
+    }
     if let Some(scope) = crate::board::scope_target(id) {
         return !crate::board::scope_root(store, scope).is_empty();
     }
@@ -1541,6 +1544,49 @@ mod tests {
             state: GoalState::Open,
             hints: vec!["load shop.md#/shop/cart".into(), "skill extraction".into()],
         }
+    }
+
+    #[test]
+    fn alignment_evidence_is_in_the_opening_prompt_and_reloadable() {
+        let mut store = fixture();
+        store.status.alignment.push(DocAlignment {
+            doc: "shop.md".into(),
+            changes: vec![SectionOp {
+                op: "moved".into(), from: vec!["shop.md#/shop/old-cart".into()],
+                to: vec!["shop.md#/shop/cart".into()], similarity: Some(0.9),
+            }],
+            proposals: vec![AnchorProposal {
+                anchor: "ent:cart".into(), from: "shop.md#/shop/old-cart".into(),
+                quote: "The Shopping Cart holds items.".into(),
+                excerpt: "Previous cart context.".into(),
+                candidates: vec![AnchorCandidate {
+                    section: "shop.md#/shop/cart".into(), similarity: 0.9,
+                    quote_locates: true, nearest: None,
+                    excerpt: "The Shopping Cart holds items.".into(),
+                }],
+            }],
+        });
+        let mut goal = goal();
+        goal.id = "g:place-anchors:shop.md".into();
+        goal.kind = "place-anchors".into();
+        goal.target = "shop.md".into();
+        let (mut loaded, _) = initial_loaded(&store, std::slice::from_ref(&goal));
+        assert!(loaded.contains("alignment:shop.md"));
+        let prompt = preview(&store, &[goal]);
+        for evidence in ["Previous cart context.", "old-cart", "quoteLocates", "0.9", "The Shopping Cart holds items."] {
+            assert!(prompt.contains(evidence), "Missing {evidence}: {prompt}");
+        }
+        loaded.unload("alignment:shop.md");
+        let reloaded = loaded.load(&store, "alignment:shop.md", 1).unwrap();
+        assert!(reloaded.contains("Previous cart context."));
+
+        let mut tight = LoadedSet::new(500);
+        let first = tight.load(&store, "alignment:shop.md", 1).unwrap();
+        let handle = tight.items[0].handles[0].handle.clone();
+        assert!(first.contains(&handle));
+        let rest = tight.expand(&store, &handle).unwrap();
+        assert!(rest.contains("Expansion of alignment:shop.md (body)"));
+        assert!(tight.load(&store, "alignment:missing.md", 1).is_err());
     }
 
     // The initially loaded set obeys the high-water ceiling on the normal path.

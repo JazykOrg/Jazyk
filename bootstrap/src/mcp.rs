@@ -522,6 +522,94 @@ impl McpServer {
     // changes, or at the timeout. timeout_seconds 0 waits indefinitely; the default
     // returns because most MCP clients bound a tool call with their own timeout.
     // Mirrors docs/frontends/mcp.md#the-work-loop.
+    // Watch from the first request. Mirrors docs/frontends/mcp.md#watching-edits.
+    fn watch_edits(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.bridge.ephemeral {
+            crate::edit_watch::for_root(&self.project.root);
+        }
+    }
+
+    fn recent_edits_tool() -> Value {
+        json!({
+            "name": "recent_edits",
+            "description": "Project files edited since the cursor `since` (since this serving started when absent), by any tool: your own edit tools, an editor, git. Edit files with your own tools; this shows their effect before any build. A document row lists the open compile goals its edit derived (dirtied sections); a source row names the entity owning the file. Pass the reply's cursor as the next since. Read only: never compiles.",
+            "inputSchema": {"type": "object", "properties": {
+                "since": {"type": "integer", "minimum": 0, "description": "cursor of a previous reply"},
+                "setId": {"type": "string", "description": "narrow the rows to one document set"}
+            }, "additionalProperties": false}
+        })
+    }
+
+    // An alignment or reconcile goal still to run, whether ready or awaiting a release.
+    fn dirtied(g: &crate::model::Goal) -> bool {
+        matches!(g.kind.as_str(), "place-anchors" | "reconcile-section")
+            && !matches!(g.state, crate::model::GoalState::Failed { .. })
+    }
+
+    // Mirrors docs/frontends/mcp.md#watching-edits.
+    fn recent_edits(&self, args: &Value) -> Value {
+        let only = args["setId"].as_str().or(self.project.set_id.as_deref());
+        #[cfg(not(target_arch = "wasm32"))]
+        let (watching, cursor, edits) = {
+            let log = crate::edit_watch::for_root(&self.project.root);
+            // A rescan answers an edit landed inside the debounce window too.
+            log.rescan();
+            (log.watching(), log.cursor(), log.since(args["since"].as_u64().unwrap_or(0)))
+        };
+        #[cfg(target_arch = "wasm32")]
+        let (watching, cursor, edits): (bool, u64, Vec<crate::edit_watch::Edit>) = (false, 0, Vec::new());
+        let Ok(w) = crate::document_sets::Workspace::load(&self.project.root) else {
+            return json!({"cursor": cursor, "watching": watching, "graphStale": false, "edits": []});
+        };
+        let mut boards: BTreeMap<String, (crate::board::Board, crate::store::Store, crate::gen::Ledger)> = BTreeMap::new();
+        let mut stale = false;
+        let mut rows = Vec::new();
+        for e in edits {
+            let sets: Vec<Value> = w.memberships(&e.path).into_iter()
+                .filter(|m| only.is_none_or(|id| m["setId"] == id))
+                .map(|m| json!({"setId": m["setId"], "role": m["role"]}))
+                .collect();
+            // Under setId, only that set's files; otherwise also the project file and
+            // removed files, which no set selects any more.
+            if sets.is_empty() && (only.is_some() || !(e.removed || e.path == crate::document_sets::CONFIG)) {
+                continue;
+            }
+            let mut row = json!({"path": e.path, "removed": e.removed, "sets": sets});
+            let mut goals: Vec<String> = Vec::new();
+            for m in row["sets"].as_array().cloned().unwrap_or_default() {
+                let id = m["setId"].as_str().unwrap_or_default().to_string();
+                if !boards.contains_key(&id) {
+                    let Ok(p) = w.resolve(Some(&id)) else { continue };
+                    let board = crate::board::Board::compute(&p, &p.out);
+                    stale |= board.goals.iter().any(|g| Self::dirtied(g));
+                    boards.insert(id.clone(), (board, Store::load(&p.out), crate::gen::Ledger::load(&p.out)));
+                }
+                let (board, store, ledger) = &boards[&id];
+                if m["role"] == "docs" {
+                    goals.extend(board.goals.iter()
+                        .filter(|g| Self::dirtied(g) && crate::board::target_doc(&g.target).as_deref() == Some(e.path.as_str()))
+                        .map(|g| g.id.clone()));
+                } else if row["owner"].is_null() {
+                    let deliverable = w.resolve(Some(&id)).map(|p| crate::gen::GenSettings::resolve(&p).deliverable).unwrap_or_default();
+                    let base = deliverable.strip_prefix(&self.project.root).unwrap_or(std::path::Path::new("")).to_path_buf();
+                    if let Ok(rel) = std::path::Path::new(&e.path).strip_prefix(&base) {
+                        if let Some(owner) = crate::gen::file_owner(store, ledger, "", &rel.to_string_lossy().replace('\\', "/")) {
+                            row["owner"] = json!(format!("ent:{owner}"));
+                        }
+                    }
+                }
+            }
+            if !goals.is_empty() {
+                goals.sort();
+                goals.dedup();
+                row["goals"] = json!(goals);
+            }
+            rows.push(row);
+        }
+        json!({"cursor": cursor, "watching": watching, "graphStale": stale, "edits": rows})
+    }
+
     fn await_changes(&self, params: &Value) -> Value {
         let timeout = params["arguments"]["timeout_seconds"]
             .as_u64()
@@ -563,7 +651,28 @@ impl McpServer {
         // waits, so the poll answers at once with what it sees now.
         #[cfg(target_arch = "wasm32")]
         let deadline = Some(crate::sys::Instant::now());
+        #[cfg(not(target_arch = "wasm32"))]
+        let edits = crate::edit_watch::for_root(&self.project.root);
+        #[cfg(not(target_arch = "wasm32"))]
+        let edit_cursor = edits.cursor();
         while deadline.is_none_or(|d| crate::sys::Instant::now() < d) {
+            // A recorded edit wakes the poll at once; the 2 s tick still catches the
+            // generation, ledger, and control surfaces.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if edits.watching() {
+                    edits.wait(edit_cursor, std::time::Duration::from_secs(2));
+                } else {
+                    crate::sys::sleep(std::time::Duration::from_secs(2));
+                }
+                for e in edits.since(edit_cursor) {
+                    if e.path != crate::document_sets::CONFIG && !changed_docs.contains(&e.path) {
+                        changed_docs.push(e.path);
+                    }
+                    changed = true;
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
             crate::sys::sleep(std::time::Duration::from_secs(2));
             let store = Store::load(&self.out);
             if store.status.generation != start_gen {
@@ -2049,6 +2158,9 @@ impl McpServer {
         if self.cancelled() && method == "tools/call" && !matches!(params["name"].as_str(), Some("project_context" | "abandon_goals" | "cancel_run" | "inspect_run" | "wait_run" | "read_run_log" | "search_run_log" | "read_run_changes" | "task_context")) {
             return Err((-32602, "the build was stopped; this session cannot commit".into()));
         }
+        if method == "tools/call" && params["name"] == "recent_edits" && !self.bridge.ephemeral {
+            return Ok(text_result(self.recent_edits(&params["arguments"]), false));
+        }
         if method == "tools/call" && params["name"] == "project_context" {
             return Ok(text_result(
                 crate::project_context::read(&self.project.root),
@@ -2087,6 +2199,7 @@ impl McpServer {
         let w =
             crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
         if method == "initialize" {
+            self.watch_edits();
             // Registration belongs to each set-local child, created lazily.
             if let Some(name) = params["clientInfo"]["name"].as_str() {
                 *self.client.lock().unwrap() = Some(name.into());
@@ -2310,6 +2423,7 @@ impl McpServer {
     fn handle_local(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         match method {
             "initialize" => {
+                self.watch_edits();
                 if let Some(name) = params["clientInfo"]["name"].as_str() {
                     *self.client.lock().unwrap() = Some(name.to_string());
                 }
@@ -2539,9 +2653,10 @@ impl McpServer {
                 // stall wearing a tool's name, so it is not offered.
                 // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
                 if !self.bridge.ephemeral {
+                    tools.push(Self::recent_edits_tool());
                     tools.push(json!({
                         "name": "await_changes",
-                        "description": "Long poll: returns when the graph moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
+                        "description": "Long poll: returns when the graph moves, a documentation or source file changes (woken by file events), or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
                         "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
                     }));
                 }
@@ -4855,6 +4970,41 @@ mod tests {
         assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}})).is_err());
         assert!(Store::load(&dir.join(".jazyk/ds_main")).graph.entities.is_empty());
         assert!(crate::control::Control::load(&project,&project.out).released.compile.is_empty());
+    }
+
+    // Mirrors docs/frontends/mcp.md#watching-edits.
+    #[test]
+    fn recent_edits_reports_an_outside_edit_with_its_derived_goals() {
+        let dir=bare_dir("recent-edits");
+        let project=crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let s=McpServer::with_bridge(project.clone(),project.out.clone(),vec!["chat".into()],false,BridgeFlags::default());
+        s.handle("initialize",&json!({"clientInfo":{"name":"test"}})).unwrap();
+        let listed=s.handle("tools/list",&json!({})).unwrap();
+        assert!(listed["tools"].as_array().unwrap().iter().any(|t|t["name"]=="recent_edits"),"{listed}");
+        let call=|args:Value|{
+            let r=s.handle("tools/call",&json!({"name":"recent_edits","arguments":args})).unwrap();
+            serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()
+        };
+        let before=call(json!({}));
+        let cursor=before["cursor"].as_u64().unwrap();
+        // Written by "another tool": straight to disk, no Jazyk write path.
+        std::fs::write(dir.join("docs/orders.md"),"# Orders\n\nAn order ships within two days.\n").unwrap();
+        std::fs::write(dir.join("notes.txt"),"unselected\n").unwrap();
+        let after=call(json!({"since":cursor}));
+        let edits=after["edits"].as_array().unwrap();
+        assert_eq!(edits.len(),1,"{after}");
+        assert_eq!(edits[0]["path"],"docs/orders.md");
+        assert_eq!(edits[0]["removed"],false);
+        assert_eq!(edits[0]["sets"],json!([{"setId":"ds_main","role":"docs"}]));
+        assert!(edits[0]["goals"].as_array().is_some_and(|g|!g.is_empty()),"{after}");
+        assert_eq!(after["graphStale"],true);
+        assert!(after["cursor"].as_u64().unwrap()>cursor);
+        let again=call(json!({"since":after["cursor"]}));
+        assert!(again["edits"].as_array().unwrap().is_empty(),"{again}");
+        assert!(call(json!({"setId":"other"}))["edits"].as_array().unwrap().is_empty());
+        let ephemeral=McpServer::with_bridge(project.clone(),project.out.clone(),vec!["chat".into()],false,BridgeFlags{ephemeral:true,..Default::default()});
+        let listed=ephemeral.handle("tools/list",&json!({})).unwrap();
+        assert!(!listed["tools"].as_array().unwrap().iter().any(|t|t["name"]=="recent_edits"));
     }
 
     #[test]

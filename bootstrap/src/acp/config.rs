@@ -205,7 +205,7 @@ pub fn idle_timeout() -> std::time::Duration {
     let secs = std::env::var("JAZYK_ACP_IDLE_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(600)
+        .unwrap_or(1800)
         .max(30);
     std::time::Duration::from_secs(secs)
 }

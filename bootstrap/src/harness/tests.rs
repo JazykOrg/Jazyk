@@ -710,6 +710,27 @@ fn repeated_tool_failures_stop_with_paired_results() {
 }
 
 #[test]
+fn malformed_argument_feedback_names_the_json_error_without_executing_the_call() {
+    let mut malformed = call();
+    malformed["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] =
+        json!(r#"{"pattern":"\w+\.py"}"#);
+    let mut repaired = call();
+    repaired["choices"][0]["message"]["tool_calls"][0]["id"] = json!("corrected");
+    let mut host = Host::new(vec![malformed, repaired, response("Finished")]);
+    let mut calls = 0;
+    let stop = run(&mut host, &mut Store::default(),
+        &mut vec![json!({"role":"user","content":"Use the fixture"})],
+        &mut |_, _| { calls += 1; Ok("Executed".into()) }, &mut |_| {});
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(calls, 1, "the malformed call must not execute");
+    let requests = host.requests.borrow();
+    let feedback = requests[1].body["messages"].to_string();
+    assert!(feedback.contains("invalid escape at line 1 column"), "{feedback}");
+    assert!(feedback.contains("finish_reason: tool_calls"), "{feedback}");
+    assert!(feedback.contains("does not imply provider output truncation"), "{feedback}");
+}
+
+#[test]
 fn rejected_native_tool_capability_returns_an_explicit_error() {
     struct Reject;
     impl ModelHost for Reject {

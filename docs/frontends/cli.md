@@ -28,7 +28,8 @@ Inside a project it prints the [status](#jazyk-status) overview first: one line 
 document set. The list follows: a heading per group, then one row per
 choice with its short name and full name. Only what is installed is listed: an IDE
 or a coding agent whose program jazyk cannot find has no row (its short name still
-works as a command, below). The up and down arrows (or `j` and `k`) move, a
+works as a command, below). The native terminal menu supports Windows console events.
+The up and down arrows (or `j` and `k`) move, a
 letter jumps to the next row whose name starts with it, enter starts the choice, and
 `q`, escape, or control-C quit with exit `0`. The cursor starts on the first installed
 IDE. A list taller than the terminal scrolls with the cursor.

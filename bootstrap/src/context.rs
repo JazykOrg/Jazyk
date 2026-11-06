@@ -119,11 +119,31 @@ pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
         format!("the documents here are {}", shown.join(", "))
     };
     format!(
-        "unknown target `{}`{}; use a node id (ent:..., req:..., view:..., diag:...), a section reference (<document>#/<section>), or scope:<scope> for a scope's top level; {}; search finds node ids by words",
+        "unknown target `{}`{}; use a node id (ent:..., req:..., view:..., diag:...), a section reference (<document>#/<section>), scope:<scope> for a scope's top level, or alignment:<document> for pending anchor proposals; {}; search finds node ids by words",
         id,
         if placeholder { " (that is the placeholder from the instructions, not a target in this project)" } else { "" },
         listing
     )
+}
+
+// Pending alignment is evidence, not a graph node. Keep it loadable and budgeted.
+fn alignment_text(store: &Store, target: &str) -> Option<String> {
+    let doc = target.strip_prefix("alignment:")?;
+    let block = store
+        .status
+        .alignment
+        .iter()
+        .find(|block| block.doc == doc)?;
+    let mut value = serde_json::to_value(block).ok()?;
+    for proposal in value["proposals"].as_array_mut()? {
+        let id = proposal["anchor"].as_str()?.to_string();
+        if let Some(requirement) = store.graph.requirements.get(&id) {
+            proposal["statement"] = serde_json::json!(requirement.statement);
+        } else if let Some(entity) = store.graph.entities.get(&id) {
+            proposal["name"] = serde_json::json!(entity.name);
+        }
+    }
+    serde_json::to_string_pretty(&value).ok()
 }
 
 fn first_line(s: &str) -> String {
@@ -286,14 +306,19 @@ impl LoadedSet {
         self.note_reference(&target);
         let remaining = self.budget.saturating_sub(self.used()).max(400);
         if axis == "body" {
-            let (doc, sec) = split_section_ref(&target)
-                .ok_or_else(|| format!("bad body handle `{}`", handle))?;
-            let raw = store
-                .docs
-                .get(&doc)
-                .and_then(|d| d.sections.get(&sec))
-                .map(|s| s.raw.clone())
-                .ok_or_else(|| format!("unknown section {}", target))?;
+            let raw = if let Some(text) = alignment_text(store, &target) {
+                text
+            } else {
+                let (doc, sec) = split_section_ref(&target)
+                    .ok_or_else(|| format!("bad body handle `{}`", handle))?;
+                let raw = store
+                    .docs
+                    .get(&doc)
+                    .and_then(|d| d.sections.get(&sec))
+                    .map(|s| s.raw.clone())
+                    .ok_or_else(|| format!("unknown section {}", target))?;
+                raw
+            };
             let chunk: String = raw
                 .chars()
                 .skip(start)
@@ -541,6 +566,19 @@ impl LoadedSet {
     // One line per policy: name, one definition line, the stereotype, its own edge
     // count. Mirrors docs/compiler/context.md#policy.
     pub fn stub_line(&self, store: &Store, id: &str) -> Option<String> {
+        if let Some(doc) = id.strip_prefix("alignment:") {
+            let block = store
+                .status
+                .alignment
+                .iter()
+                .find(|block| block.doc == doc)?;
+            return Some(format!(
+                "- {} ({} proposals, {} section changes)",
+                id,
+                block.proposals.len(),
+                block.changes.len()
+            ));
+        }
         if let Some(scope) = crate::board::scope_target(id) {
             let n = crate::board::scope_root(store, scope).len();
             if n == 0 {
@@ -620,7 +658,31 @@ impl LoadedSet {
         budget: usize,
     ) -> Result<(String, LoadedItem), String> {
         let mut b = Builder::new(budget);
-        let (what, summary) = if let Some(scope) = crate::board::scope_target(id) {
+        let (what, summary) = if let Some(raw) = alignment_text(store, id) {
+            b.push(&format!("## {}", id));
+            let room = b.budget.saturating_sub(b.text.len() + 150);
+            let consumed = if raw.len() <= room {
+                raw.chars().count()
+            } else {
+                // Emit the raw prefix, not a display truncation marker, so body
+                // expansion resumes at the exact character boundary.
+                raw.char_indices()
+                    .take_while(|(byte, _)| *byte < room)
+                    .count()
+            };
+            let prefix: String = raw.chars().take(consumed).collect();
+            b.push(&prefix);
+            if consumed < raw.chars().count() {
+                let handle = format!("h:{}:body:{}", id, consumed);
+                b.push(&format!("[remaining alignment evidence: {}]", handle));
+                b.handles.push(Handle {
+                    handle,
+                    description: "remaining alignment evidence".into(),
+                    size: raw.len().saturating_sub(prefix.len()),
+                });
+            }
+            ("full".into(), self.stub_line(store, id).unwrap_or_default().trim_start_matches("- ").to_string())
+        } else if let Some(scope) = crate::board::scope_target(id) {
             let n = self.render_scope_root(store, scope, &mut b)?;
             (
                 "full".to_string(),

@@ -124,7 +124,7 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "load",
-            description: "Load a target and its immediate neighborhood into the loaded set: any node id (ent:..., req:..., view:..., diag:...) or a section reference (doc.md#/ref). depth defaults to 1: the target in full, its edges, each neighbor as a stub; depth 2 loads the neighbors in full too. Whatever the budget cut off arrives as expansion handles (h:<target>:<axis>). Loading an already loaded target is a repeat; deepen a loaded node with expand instead.",
+            description: "Load a target and its immediate neighborhood into the loaded set: any node id (ent:..., req:..., view:..., diag:...), a section reference (doc.md#/ref), or alignment:<document> for pending anchor proposals and section changes. depth defaults to 1: the target in full, its edges, each neighbor as a stub; depth 2 loads the neighbors in full too. Whatever the budget cut off arrives as expansion handles (h:<target>:<axis>). Loading an already loaded target is a repeat; deepen a loaded node with expand instead.",
             parameters: obj(
                 json!({"target": {"type": "string"}, "depth": {"type": "integer", "minimum": 1}}),
                 &["target"],
@@ -160,7 +160,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_entity",
-            description: "One entity with its definition, mentions, requirements, and relationships.",
+            description: "One entity (ent:...) with its definition, mentions, requirements, and relationships. For requirements (req:...) and other node kinds use load with target instead.",
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {

@@ -47,6 +47,11 @@ mark is measured over the loaded items alone, since a batch with two skills acti
 (extraction and flow-views together pass 26k characters) could otherwise load
 nothing at all.
 
+`alignment:<document>` loads the pending alignment block as one budgeted item.
+It carries section operations, anchor identities and statements, previous locations
+and quotes, and ranked candidates with their excerpts. A truncated block exposes
+a `body` handle. `load` can reload the block after compaction.
+
 What joins the set:
 
 - the initially loaded set: the registry's `pack` computes it for a batch from its
@@ -76,7 +81,8 @@ auto-load the full extraction skill. Other skills remain available by name.
 The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 
 - `load({target, depth?})`: load a target and its immediate neighborhood. The target is
-  any node id (entity, requirement, view, diagnostic), a section reference, or
+  any node id (entity, requirement, view, diagnostic), a section reference,
+  `alignment:<document>` for pending section changes and anchor proposals, or
   `scope:<scope>`, the top level of a scope, which loads its parentless entities as
   stubs ([the scope root](./concepts/levels.md#the-scope-root)), each with the
   document it is mentioned in most (`[doc <path>]`) and, under them, the
@@ -180,7 +186,8 @@ h:ent:customer                       # a stub's whole neighborhood
 
 The axis names are a closed set: the five walk axes plus three frontiers that only
 handles name: `children` (the containment subtree below the direct children), `body`
-(the rest of a truncated section body, also reachable with `read_section`), and `edges`
+(the rest of a truncated section body or alignment block; sections are also
+reachable with `read_section`), and `edges`
 (the relationships among a view's members beyond those shown). A handle without an axis
 names a stub's whole neighborhood. Handles are accepted by `expand`; a handle closes
 when its item unloads, and `expand` on a closed or unknown handle errors

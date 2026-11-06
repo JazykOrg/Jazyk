@@ -254,3 +254,8 @@ by no binding are unclaimed: behavior the code carries that no requirement descr
   exactly what has no docs yet.
 - Its per-entity slice is the `files` part of the
   [unattached remainder](./gen.md#the-unattached-remainder) generation measures.
+
+## Portable file names
+
+Test candidates use document-relative paths with `/` separators on every native
+platform. Native filesystem separators do not enter their serialized file names.

@@ -7160,7 +7160,7 @@ mod tests {
                 if p.is_dir() {
                     walk(root, &p, into);
                 } else {
-                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
                     into.insert(rel, std::fs::read(&p).unwrap());
                 }
             }

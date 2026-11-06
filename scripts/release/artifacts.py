@@ -55,7 +55,7 @@ def bundle(key, binary, output):
             text.append(f'\n--- {file.relative_to(extracted)} ---\n'.encode() + file.read_bytes())
         metadata = json.loads(subprocess.check_output(
             ['cargo', 'metadata', '--locked', '--format-version', '1', '--filter-platform', meta['target']],
-            cwd=ROOT / 'bootstrap', text=True))
+            cwd=ROOT / 'bootstrap', encoding='utf-8'))
         for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
             text.append(f"\n--- Rust dependency {package['name']} {package['version']} ---\nLicense: {package.get('license')}\nSource: {package.get('repository')}\n".encode())
             base = Path(package['manifest_path']).parent

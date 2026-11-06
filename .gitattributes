@@ -1,0 +1,15 @@
+# Keep opaque input bytes intact. Normalize source and embedded text payloads.
+* -text
+*.md text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.sh text eol=lf
+*.go text eol=lf
+*.sum text eol=lf
+*.lock text eol=lf

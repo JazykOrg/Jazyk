@@ -34,6 +34,12 @@ MCP and ACP stdout remains protocol data. Windows extraction uses the built-in
 `System32/tar.exe`, independent of a Git Bash installation. Platform packages declare `os`, `cpu`,
 and Linux `libc`. All optional dependencies use the exact launcher version.
 
+## Source checkout
+
+`.gitattributes` keeps source and embedded text payloads at LF on every platform.
+Other files retain their committed bytes, including opaque document fixtures.
+Release metadata from Cargo is UTF-8.
+
 ## Manual releases
 
 `.github/workflows/release.yml` accepts `workflow_dispatch` only, on `master`.

@@ -140,7 +140,7 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
             };
             let hits: Vec<&String> = needles.iter().filter(|n| bounded(n.as_str())).collect();
             if !hits.is_empty() {
-                let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().to_string();
+                let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
                 // A hash needle is eight hex characters; a file that names the id or
                 // slug but no current hash is another statement's test.
                 let is_hash = |n: &str| n.len() == 8 && n.chars().all(|c| c.is_ascii_hexdigit());

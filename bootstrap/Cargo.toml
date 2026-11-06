@@ -81,7 +81,7 @@ futures-util = "0.3"
 tower-http = { version = "0.6", features = ["cors", "set-header"] }
 open = "5"
 # The launcher menu (docs/frontends/cli.md#jazyk): raw mode and key events.
-crossterm = { version = "0.29", default-features = false, features = ["events"] }
+crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 jsonc-parser = { version = "0.33.1", features = ["serde", "serde_json"] }
 # Native format readers. Minimal builds can disable the default feature.
 docx-rs = { version = "=0.4.22", default-features = false, optional = true }

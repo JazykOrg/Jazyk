@@ -356,10 +356,17 @@ remaining target. A normal turn end, the round limit, cancellation, and recovery
 suspension retain their distinct outcomes. A model transport error during review
 stops further judgments without recording invented verdicts.
 
-Runtime compaction preserves the worker's opening contract and the latest completed
-tool exchange verbatim. A current generation package retains its exact paths, hashes
-and bindings. The summarizer receives the older history, excluding that preserved
-opening and exchange. Reasoning attached to the latest tool request is summarized.
+Runtime compaction preserves the worker's opening contract, latest successful
+authoritative package exchange per unfinished target (`begin_generation`,
+`begin_binding` or `begin_verification`), and latest completed tool exchange
+verbatim. A successful recording closes its package. A later successful begin
+replaces the older package for that target. A later file read or write does not
+displace the active package's exact paths, hashes and bindings. Batched requests retain their paired results together. The summarizer
+receives older history, excluding those retained exchanges and the opening.
+Reasoning attached to retained tool requests is summarized. The project compaction
+prompt asks for a concise progress handoff under 6000 characters. It does not ask
+for full files or a transcript. Source, logs and exact package data remain available
+through their original tools or retained exchanges.
 The post-compaction size is checkpointed. When the preserved context still exceeds
 the compaction threshold, another compaction requires growth of one fifth of the
 context budget. Reopening the same package cannot consume the request budget in
@@ -374,10 +381,14 @@ request budget, cancellation and transport failures retain their existing limits
 A provider response cut off by its output token limit is reported as such when
 the session cannot continue, rather than as a completed normal turn.
 
-An unfinished ledger gate after a normal turn end or the round limit is a target
-failure, not a transport failure. The worker may continue to the next target. Its
-action result retains the first failed target, the session's stop reason, and the
-unmet gate in `error`. `stopped` remains the reason an action halted early.
+An unfinished generation group after a normal turn end or the round limit stops
+the generation action before another group starts. Later groups must not consume
+partially written shared files. Completed records and writes remain available for
+the next invocation. The result names the first incomplete group, the targets still
+owed, and the observed session stop or gate failure in `error`. It does not convert
+an ordinary unfinished gate into a transport failure. `stopped` retains the runtime
+failure or the incomplete group reason. The final artifact build is skipped when
+generation has failed or stopped. Binding and review retain their own target rules.
 
 Malformed JSON tool arguments retain the parser's exact error, line and column in
 the model's repair feedback. The feedback includes the complete argument length

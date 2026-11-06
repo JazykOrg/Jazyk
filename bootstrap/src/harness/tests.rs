@@ -353,6 +353,8 @@ fn explicit_upstream_compaction_replaces_and_checkpoints_history() {
         .as_str()
         .unwrap()
         .contains("It is not a user request in that history"));
+    assert!(!requests[0].body["messages"][0]["content"].as_str().unwrap()
+        .contains("spend your entire length budget"));
     assert!(requests[1].body["messages"]
         .as_array()
         .unwrap()
@@ -1376,6 +1378,35 @@ fn compaction_keeps_batched_tool_packages_and_later_human_steering() {
     assert!(resumed.iter().any(|message| message["content"] == package_b));
     assert!(resumed.iter().any(|message| message["tool_calls"].as_array().is_some_and(|calls| calls.len() == 2)));
     assert_eq!(resumed.last().unwrap()["content"], "Finish the source before testing");
+}
+
+#[test]
+fn compaction_keeps_the_active_package_after_a_later_source_write_without_replay() {
+    let package = json!({"entity":"ent:diagram","factHash":"exact-current-hash", "deliverable":"/project",
+        "boundTests":[{"artifact":"tests/diagram.py","name":"Diagram::current_selector","kind":"programmatic","run":"task:browser"}]}).to_string();
+    let mut history = vec![
+        json!({"role":"user","content":"Generate this assigned batch"}),
+        json!({"role":"assistant","content":"older investigation ".repeat(crate::llm::model_input_tokens() / 4)}),
+        json!({"role":"user","content":"Continue implementing"}),
+        json!({"role":"assistant","tool_calls":[{"id":"package","type":"function","function":{"name":"begin_generation","arguments":"{\"entity\":\"ent:diagram\"}"}}]}),
+        json!({"role":"tool","tool_call_id":"package","content":package}),
+        json!({"role":"assistant","tool_calls":[{"id":"write","type":"function","function":{"name":"fixture","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"write","content":"source edit completed"}),
+        json!({"role":"user","content":"Preserve the requested layout"}),
+    ];
+    let mut host = Host::new(vec![response("Implementation continues; source edit succeeded."), done_response(false)]);
+    let mut calls = 0;
+    assert_eq!(ledger_completion_run(false, &mut host, &mut Store::default(), &mut history,
+        &mut |name, _| { assert_eq!(name, "done", "completed tools must not replay"); calls += 1; Ok("Recorded".into()) }), Stop::EndTurn);
+    assert_eq!(calls, 1);
+    let requests = host.requests.borrow();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].purpose, ModelPurpose::Compaction);
+    let resumed = requests[1].body["messages"].as_array().unwrap();
+    assert!(resumed.iter().any(|message| message["content"] == package));
+    assert!(resumed.iter().any(|message| message["content"] == "source edit completed"));
+    assert_eq!(resumed.last().unwrap()["content"], "Preserve the requested layout");
+    assert!(!requests[0].body.to_string().contains("exact-current-hash"));
 }
 
 #[test]

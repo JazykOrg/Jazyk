@@ -602,34 +602,10 @@ async fn drive(
                 ordinal,
             });
             let model = ProviderModel::new(provider, config.clone());
-            // The summary borrows a snapshot so host checkpoints may mutate owned state.
-            let messages = state.conversation.messages().clone();
-            // Worker openings carry immutable batch contracts. Keep the saved
-            // message, not a freshly assembled prompt or the model's summary.
-            let opening = (!args.conversation)
-                .then(|| messages.first().filter(|message| message.role == Role::User).cloned())
-                .flatten();
-            let mut summary_messages = messages[usize::from(opening.is_some())..].to_vec();
-            let mut recent = Vec::new();
-            if let Some(response_index) = summary_messages.iter().rposition(|message|
-                !message.get_tool_response_ids().is_empty())
-            {
-                if let Some(request_index) = summary_messages[..response_index].iter().rposition(|message|
-                    message.content.iter().any(|content| content.as_tool_request().is_some()))
-                {
-                    recent = summary_messages.split_off(request_index);
-                    let mut reasoning = recent[0].clone();
-                    reasoning.content.retain(|content| content.as_tool_request().is_none());
-                    if !reasoning.content.is_empty() {
-                        summary_messages.push(reasoning);
-                    }
-                    recent[0].content.retain(|content| content.as_tool_request().is_some());
-                }
-            }
+            let parts = super::compaction::context(state.conversation.messages(), args.conversation);
             let mut templates = Templates::default();
-            templates.compaction.push_str("\n\n");
-            templates.compaction.push_str(COMPACTION_REQUEST);
-            let future = goose_context_management::summarize(&model, None, &templates, &summary_messages);
+            templates.compaction = COMPACTION_REQUEST.to_string();
+            let future = goose_context_management::summarize(&model, None, &templates, &parts.summary);
             match drive_future(
                 future,
                 &mut requests,
@@ -645,11 +621,11 @@ async fn drive(
             .await
             {
                 Ok(summary) => {
-                    let mut compacted: Vec<Message> = opening.into_iter().collect();
+                    let mut compacted: Vec<Message> = parts.opening.into_iter().collect();
                     compacted.push(summary.message);
                     compacted.push(Message::user()
                         .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)));
-                    compacted.extend(recent);
+                    compacted.extend(parts.retained);
                     state.conversation = Conversation::new_unvalidated(compacted);
                     state.compacted_size = Some(serde_json::to_vec(&state.conversation)
                         .map(|bytes| bytes.len() / 4).unwrap_or(0));

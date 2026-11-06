@@ -43,7 +43,7 @@ prompt and the tool replies rendered ([preview](#preview)).
 
 A session produces either a committed [changeset](./graph.md#changesets) with each goal
 of the batch resolved, failed, or left open, or a failed session that leaves no trace in
-the graph. Nothing in between. A goal left open after its retry parks
+the graph. Nothing in between. A goal left open after four attempts parks
 ([resolving, failing, parking](#resolving-failing-parking)).
 
 ## The prompt
@@ -379,6 +379,13 @@ failure, not a transport failure. The worker may continue to the next target. It
 action result retains the first failed target, the session's stop reason, and the
 unmet gate in `error`. `stopped` remains the reason an action halted early.
 
+Malformed JSON tool arguments retain the parser's exact error, line and column in
+the model's repair feedback. The feedback includes the complete argument length
+and a bounded excerpt near the error. A shortened diagnostic excerpt does not mean
+the provider cut off its output. The provider's actual finish reason is reported
+separately. The rejected call does not execute. The model repairs its proposal in
+its next ordinary inference. The adapter does not rewrite the proposed arguments.
+
 ## Staged mutations
 
 Write tools never touch the store directly. They stage mutations into the session's
@@ -543,7 +550,7 @@ called it: the serving runs the same commit gates, a clean batch commits, and th
 the session marked are resolved while the rest stay open. Weak models forget the finish
 contract more often than they stage bad work; discarding a valid changeset over a
 missing `done` would punish the wrong thing. A session with nothing staged and no goal
-marked is a failed session, retried once.
+marked is a failed session and counts toward the same four-attempt goal budget.
 
 The same reasoning bounds what one bad claim can sink. When the implicit `done` is
 rejected over a dishonest `covered` claim, the harness drops the offending coverage marks

@@ -8,6 +8,7 @@ use serde_json::Value;
 
 pub mod provider;
 mod runtime;
+mod tool_arguments;
 
 pub use runtime::{
     run_loop, run_loop_async, run_loop_with_instructions, run_with_host, run_with_host_async,

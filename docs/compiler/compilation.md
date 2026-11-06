@@ -319,7 +319,7 @@ again ([parked and failed](./reconciler.md#parked-and-failed)), so a verdict nev
 an over-fan-out level.
 
 A build with open blocked goals is `converged, 2 blocked`, never silently done.
-A hard per-build cap (3 × the distinct goals derived so far in the build + 8 sessions)
+A hard per-build cap (8 × the distinct goals derived so far in the build + 64 sessions)
 backstops the loop. The count is cumulative: every goal id any board of this build has
 carried, recomputed after every commit, so a project whose deeper link levels derive
 their goals only after the roots ingest gets a cap sized for the whole build, not for

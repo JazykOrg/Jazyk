@@ -117,6 +117,22 @@ impl Provider for ChannelProvider {
                 request,
             ) = content
             {
+                if let Err(error) = &mut request.tool_call {
+                    if error.code == rmcp::model::ErrorCode::INVALID_PARAMS {
+                        let raw = value["choices"][0]["message"]["tool_calls"].as_array()
+                            .and_then(|calls| calls.iter().find(|call| call["id"] == request.id));
+                        if let Some(raw) = raw {
+                            if let Some(arguments) = raw["function"]["arguments"].as_str() {
+                                if let Some(feedback) = super::tool_arguments::json_error_feedback(
+                                    raw["function"]["name"].as_str().unwrap_or("unknown"),
+                                    arguments, value["choices"][0]["finish_reason"].as_str(),
+                                ) {
+                                    error.message = feedback.into();
+                                }
+                            }
+                        }
+                    }
+                }
                 if !ids.insert(request.id.clone()) {
                     return Err(ProviderError::RequestFailed("Model returned a duplicate tool-call id in one response; no tools executed".into()));
                 }

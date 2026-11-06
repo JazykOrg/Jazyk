@@ -85,8 +85,8 @@ harness checks the ledger, not the model's word:
 - A session that recorded the row and ended without marking the goal still resolves
   it: the next derivation finds the row current, and the journal records the
   `record_binding` as the resolution.
-- A session that ends without a row has not resolved the goal. It retries once with a
-  fresh session, then parks
+- A session that ends without a row has not resolved the goal. A compiler build gives it up to
+  four attempts with fresh sessions, then parks it
   ([resolving, failing, parking](../sessions.md#resolving-failing-parking)).
 - `mark_goal_failed({goal, reason})` when the deliverable cannot be searched or no
   test can be written in the medium's toolchain. A failed mandatory goal blocks

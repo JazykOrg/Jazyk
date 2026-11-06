@@ -379,6 +379,13 @@ failure, not a transport failure. The worker may continue to the next target. It
 action result retains the first failed target, the session's stop reason, and the
 unmet gate in `error`. `stopped` remains the reason an action halted early.
 
+Malformed JSON tool arguments retain the parser's exact error, line and column in
+the model's repair feedback. The feedback includes the complete argument length
+and a bounded excerpt near the error. A shortened diagnostic excerpt does not mean
+the provider cut off its output. The provider's actual finish reason is reported
+separately. The rejected call does not execute. The model repairs its proposal in
+its next ordinary inference. The adapter does not rewrite the proposed arguments.
+
 ## Staged mutations
 
 Write tools never touch the store directly. They stage mutations into the session's

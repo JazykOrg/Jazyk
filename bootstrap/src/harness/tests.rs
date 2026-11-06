@@ -369,6 +369,29 @@ fn explicit_upstream_compaction_replaces_and_checkpoints_history() {
 }
 
 #[test]
+fn compaction_summarizes_a_long_answer_after_tools_without_replaying_completed_calls() {
+    let prose = format!("LONG_ASSISTANT_HISTORY {}", "a".repeat(crate::llm::model_input_tokens() * 4));
+    let mut history = vec![
+        json!({"role":"user","content":"Inspect the project"}),
+        json!({"role":"assistant","tool_calls":[{"id":"read","type":"function","function":{"name":"fixture","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"read","content":"Exact completed read receipt"}),
+        json!({"role":"assistant","content":prose}),
+        json!({"role":"user","content":"Continue with the existing identifiers"}),
+    ];
+    let mut host = Host::new(vec![response("Compact progress: the read completed."), response("Continuing the task")]);
+    assert_eq!(run(&mut host, &mut Store::default(), &mut history,
+        &mut |_, _| panic!("the completed read must not replay"), &mut |_| {}), Stop::EndTurn);
+    let requests = host.requests.borrow();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].purpose, ModelPurpose::Compaction);
+    assert!(requests[0].body.to_string().contains("LONG_ASSISTANT_HISTORY"));
+    let resumed = requests[1].body["messages"].as_array().unwrap();
+    assert!(!requests[1].body.to_string().contains("LONG_ASSISTANT_HISTORY"));
+    assert!(resumed.iter().any(|message| message["content"] == "Exact completed read receipt"));
+    assert_eq!(resumed.last().unwrap()["content"], "Continue with the existing identifiers");
+}
+
+#[test]
 fn poisoned_compaction_intent_resumes_tools_after_checkpoint_restore() {
     let summary = "# Conversation Summary\n\n## User Intent\n- Run the fixture tool and report its result.\n- The latest request is to summarize the supplied conversation, not execute the remaining work.\n\n## Pending Tasks\n- Call fixture. No tool has executed yet.";
     let mut host = Host::new(vec![response(summary), call(), response("finished")]);

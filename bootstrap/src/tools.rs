@@ -650,8 +650,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_run_changes",
-            description: "List retained file changes or read one retained path. Missing contents and partial collection are explicit.",
-            parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}}), &["run_id"]),
+            description: "List retained file changes or read one changed path (version: changes, the default). version: input requires path and reads the frozen run input, including an unchanged file, explicitly labeled historical input. It does not read the current workspace. Missing contents and partial collection are explicit.",
+            parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}, "version": {"type": "string", "enum": ["changes", "input"]}}), &["run_id"]),
         },
         ToolDef {
             name: "run_command",

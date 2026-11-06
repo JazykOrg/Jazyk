@@ -281,7 +281,8 @@ serves these:
   deliverable. `limit` defaults to 400 lines and the content is capped at 64 KiB.
   Content preserves the original UTF-8 bytes, including LF or CRLF line endings
   and a final newline. Delimiters count toward the byte cap. Concatenating complete
-  pages reproduces the file exactly.
+  pages reproduces the file exactly. The reply includes `hash`, the SHA-256 of the
+  whole file, even when only part of its content is returned.
   When more lines remain the reply carries `truncated: true` and `nextLine`, so a
   bundle or a lockfile never floods the history the session resends every round.
   A single longer line returns a UTF-8-safe prefix within the same byte cap and
@@ -292,16 +293,30 @@ serves these:
   checks the resolved symlink target and its owning project. Ordinary documents,
   build evidence and explicit `.github` files
   remain readable without requiring them to be Source.
-- `write_text_file({path, content, append?})`: write one file, or append to it when
-  `append` is true, so a long file is written in parts that fit a model's reply cap.
-  A path recorded for an entity outside the session's component group is rejected with
-  the owner named; during a `bind` goal, a path the ledger records as any entity's
-  implementing file is rejected the same way. A path that restates the deliverable
-  directory's name is normalized under the root, here and in `read_text_file` and
-  `list_files`, and the reply's `note` says so
-  ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)). The embedded agent once wrote a whole module in one call, the reply was
-  cut at the model's output cap, the endpoint rejected the unclosed JSON, and every
-  generation session after the first two died the same way.
+- `write_text_file({path, content, append?, old_text?, expectedHash?})`: write one
+  file, or append when `append` is true. Use `old_text` for a small literal edit:
+  it must match exactly once, and `content` replaces that occurrence. Empty,
+  missing or repeated matches are rejected without changing the file. Replacement
+  requires `expectedHash` from the last read or write, and cannot combine with
+  `append: true`. Quotes, backslashes and line endings are literal, not a regex.
+  `expectedHash` also guards ordinary overwrites and appends when supplied.
+  A mismatch returns `file-conflict` with the current hash. Read the affected
+  region again and reconsider the edit. Do not retry the stale edit blindly.
+  Hash comparison and commit run synchronously in the workspace's serialized
+  execution. This does not lock out writes by unrelated external programs.
+  Each accepted write commits complete bytes through a sibling temporary file
+  renamed into place. Native writes preserve existing file permissions. Replies
+  include `hash` for the complete resulting file, `fileBytes`, and `replaced`
+  for a literal edit. Prefer a localized edit over rewriting unchanged sections.
+  New files and complete rewrites still use `content`; append is available when
+  a file genuinely needs several complete calls.
+  A path recorded for an entity outside the session's component group is rejected
+  with the owner named. The same Source, protected-path and ownership gates apply
+  to every write mode. During a `bind` goal, a path the ledger records as any
+  entity's implementing file is rejected the same way. A path that restates the
+  deliverable directory's name is normalized under the root, here and in
+  `read_text_file` and `list_files`, and the reply's `note` says so
+  ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)).
 - `list_files({path?})`: the deliverable tree.
 - The [task tools](../tools.md#task-runtime-tools) execute saved commands in finite
   isolated runs. The session inspects status, logs, retained changes, and test reports,

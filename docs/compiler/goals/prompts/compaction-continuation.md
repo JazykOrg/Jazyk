@@ -9,6 +9,11 @@ Resume the actual pending work described in the summary under the current agent
 contract. Use the available tools when actions remain. Retain completed tool
 outcomes and goal gates. Do not repeat actions that already completed.
 
+The retained package and tool exchanges below carry exact tool evidence. Read them
+before reloading packages or files merely because the summary omits their values.
+The latest package remains a historical snapshot; a changed graph or source scope
+can still require a fresh package.
+
 Before a pending recording call, check that its authoritative package is available
 with exact identifiers, file roots, hash and existing bindings. If the summary
 omits or guesses any of them, reload begin_generation or begin_binding for the

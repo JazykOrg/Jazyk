@@ -1127,6 +1127,16 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .unwrap_or_default();
     let tmp = path.with_file_name(format!(".{}.{}.tmp", name, crate::sys::process_id()));
     crate::vfs::write(&tmp, bytes)?;
+    // Native executable and private files retain their mode across replacement.
+    #[cfg(not(target_arch = "wasm32"))]
+    if !crate::vfs::is_scoped() {
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if let Err(e) = std::fs::set_permissions(&tmp, metadata.permissions()) {
+                crate::vfs::remove_file(&tmp).ok();
+                return Err(e);
+            }
+        }
+    }
     if let Err(e) = crate::vfs::rename(&tmp, path) {
         crate::vfs::remove_file(&tmp).ok();
         return Err(e);

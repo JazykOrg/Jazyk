@@ -1097,31 +1097,18 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
             json!({"text":text,"next_offset":start+text.chars().count(),"complete":state["terminated"]}),
         )
     } else if operation == "read_run_changes" {
+        let version = match args.get("version") {
+            None => "changes",
+            Some(value) => value.as_str().filter(|value| matches!(*value, "changes" | "input"))
+                .ok_or("version must be changes or input")?,
+        };
+        if version == "input" && args["path"].as_str().is_none() {
+            return Err("version: input requires path; omit version and path to list retained changes".into());
+        }
         if let Some(path) = args["path"].as_str() {
             if !safe_path(path) || protected(path) {
                 return Err("Invalid output path.".into());
             }
-            let content = result["files"][path]
-                .as_str()
-                .or_else(|| result["reports"][path].as_str());
-            let before = result["input_files"][path]
-                .as_str()
-                .and_then(|s| STANDARD.decode(s).ok());
-            let deleted = result["deleted"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(|p| p == path));
-            if content.is_none() && !deleted {
-                return Err("Retained file not found".into());
-            }
-            if args["download"] == "1" {
-                return Ok(
-                    json!({"path":path,"encoding":"base64","content":content.ok_or("Deleted file has no current contents")?}),
-                );
-            }
-            let bytes = content
-                .map(|s| STANDARD.decode(s))
-                .transpose()
-                .map_err(|e| e.to_string())?;
             let preview = |bytes: Option<Vec<u8>>| -> Value {
                 match bytes {
                     None => json!({"encoding":"absent"}),
@@ -1136,6 +1123,42 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
                     },
                 }
             };
+            if version == "input" {
+                let encoded = result["input_files"][path].as_str()
+                    .ok_or("Retained input file not found; input reads use the frozen run snapshot, not the current workspace")?;
+                let bytes = STANDARD.decode(encoded).map_err(|_| "Invalid retained input encoding")?;
+                let mut value = if args["download"] == "1" {
+                    json!({"encoding":"base64","content":encoded})
+                } else { preview(Some(bytes)) };
+                value["path"] = json!(path);
+                value["version"] = json!("input");
+                return Ok(value);
+            }
+            let content = result["files"][path]
+                .as_str()
+                .or_else(|| result["reports"][path].as_str());
+            let before = result["input_files"][path]
+                .as_str()
+                .and_then(|s| STANDARD.decode(s).ok());
+            let deleted = result["deleted"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|p| p == path));
+            if content.is_none() && !deleted {
+                return Err(if result["input_files"][path].is_string() {
+                    "No retained change for this path. The frozen input exists: read_run_changes with this path and version: input reads it. Omit path to list retained changes"
+                } else {
+                    "Retained changed file not found. Omit path to list retained changes; version: input reads a path from the frozen run input when retained"
+                }.into());
+            }
+            if args["download"] == "1" {
+                return Ok(
+                    json!({"path":path,"encoding":"base64","content":content.ok_or("Deleted file has no current contents")?}),
+                );
+            }
+            let bytes = content
+                .map(|s| STANDARD.decode(s))
+                .transpose()
+                .map_err(|e| e.to_string())?;
             let mut value = preview(bytes);
             value["path"] = json!(path);
             value["before"] = preview(before);
@@ -1926,6 +1949,83 @@ pub fn cli(args: &[String]) -> Result<Value, String> {
             &json!({"run_id":args.get(1).ok_or("A run ID is required")?}),
         ),
         _ => Err("Unknown task command".into()),
+    }
+}
+
+#[cfg(test)]
+mod retained_input_tests {
+    use super::*;
+
+    fn retained() -> Value {
+        json!({"complete":true,
+            "input_files":{"page.html":STANDARD.encode("<svg>original ž\r\n</svg>"),"changed.txt":STANDARD.encode("before"),"deleted.txt":STANDARD.encode("deleted input")},
+            "files":{"changed.txt":STANDARD.encode("after"),"new.txt":STANDARD.encode("created")},
+            "deleted":["deleted.txt"]})
+    }
+
+    #[test]
+    fn retained_input_reads_unchanged_snapshot_without_claiming_a_changed_output() {
+        let result = retained();
+        let args = json!({"operation":"read_run_changes","path":"page.html"});
+        let error = present(&Value::Null, &result, &args).unwrap_err();
+        assert!(error.contains("frozen input exists") && error.contains("version: input"));
+        let input = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"page.html","version":"input"})).unwrap();
+        assert_eq!(input, json!({"path":"page.html","version":"input","encoding":"utf8","content":"<svg>original ž\r\n</svg>"}));
+        let listed = present(&Value::Null, &result, &json!({"operation":"read_run_changes"})).unwrap();
+        assert_eq!(listed["files"].as_array().unwrap().len(), 3);
+        assert!(listed["files"].as_array().unwrap().iter().all(|file| file["path"] != "page.html"));
+        assert_eq!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"changes"})).unwrap(), listed);
+    }
+
+    #[test]
+    fn retained_input_and_changed_versions_keep_their_own_bytes() {
+        let result = retained();
+        let changed = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"changed.txt"})).unwrap();
+        assert_eq!(changed["content"], "after");
+        assert_eq!(changed["before"]["content"], "before");
+        assert_eq!(changed["change"], "modified");
+        let input = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"changed.txt","version":"input"})).unwrap();
+        assert_eq!(input["content"], "before");
+        assert_eq!(input["version"], "input");
+        assert!(input.get("change").is_none() && input.get("before").is_none());
+        let deleted = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"deleted.txt"})).unwrap();
+        assert_eq!(deleted["encoding"], "absent");
+        assert_eq!(deleted["change"], "deleted");
+        let input = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"deleted.txt","version":"input"})).unwrap();
+        assert_eq!(input["content"], "deleted input");
+        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"new.txt","version":"input"})).unwrap_err().contains("Retained input file not found"));
+    }
+
+    #[test]
+    fn retained_input_preserves_binary_downloads_and_bounds_previews() {
+        for bytes in [vec![0u8, 255, 128, 13, 10], vec![b'x'; 65537]] {
+            let encoded = STANDARD.encode(&bytes);
+            let result = json!({"input_files":{"asset.bin":encoded}});
+            let mut args = json!({"operation":"read_run_changes","path":"asset.bin","version":"input"});
+            let preview = present(&Value::Null, &result, &args).unwrap();
+            assert_eq!(preview["encoding"], "binary");
+            assert_eq!(preview["size"], bytes.len());
+            assert_eq!(preview["download"], true);
+            args["download"] = json!("1");
+            let full = present(&Value::Null, &result, &args).unwrap();
+            assert_eq!(full["encoding"], "base64");
+            assert_eq!(full["version"], "input");
+            assert_eq!(STANDARD.decode(full["content"].as_str().unwrap()).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn retained_input_rejects_protected_paths_missing_inputs_and_invalid_modes() {
+        let result = json!({"input_files":{".env":STANDARD.encode("private"),"src/private.key":STANDARD.encode("private"),"broken.txt":"not base64"}});
+        for path in [".env", "../outside.txt", "src/private.key", ".git/config"] {
+            let args = json!({"operation":"read_run_changes","path":path,"version":"input"});
+            assert!(present(&Value::Null, &result, &args).unwrap_err().contains("Invalid output path"));
+        }
+        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"input"})).unwrap_err().contains("requires path"));
+        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"current"})).unwrap_err().contains("version must be"));
+        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"input","path":"absent.txt"})).unwrap_err().contains("Retained input file not found"));
+        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"input","path":"broken.txt"})).unwrap_err().contains("Invalid retained input encoding"));
+        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"absent.txt"})).unwrap_err().contains("Omit path to list retained changes"));
     }
 }
 

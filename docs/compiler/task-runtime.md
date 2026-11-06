@@ -187,6 +187,16 @@ remain binary files. Historical results remain readable after container teardown
 `cancel_run` replies omit log text, including idempotent starts and cleanup.
 Repeated context requests do not reload historical logs into the model context.
 `read_run_log` and `search_run_log` read the retained log in bounded parts.
+`read_run_changes({run_id, path?, version?})` lists retained changed files or reads
+one changed path by default (`version: "changes"`). Unchanged input files are not
+changed outputs. When a requested path exists only in the frozen input, the error
+points to `version: "input"` instead of claiming no retained file exists. Call
+without `path` to list retained changes.
+`version: "input"` requires `path` and returns that run's frozen input bytes,
+labeled `version: "input"`. This is historical input, not a claim about the current
+workspace or the run's final output. Missing inputs and protected paths are refused.
+Text previews keep their existing byte bound. Binary or large files retain their
+base64 download representation. Input reads do not apply or promote any file.
 `read_run_log.offset` is a zero-based Unicode character offset. Its `limit` counts
 characters, not bytes or lines. Continue with the returned `next_offset`.
 `search_run_log.offset` skips lines from zero and `limit` bounds the matching lines.

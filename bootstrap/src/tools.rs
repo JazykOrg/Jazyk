@@ -694,7 +694,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "load_skill",
-            description: "Bring one skill into the session by its name from the skills index. The reply renders the payload; at most four skills render in one session.",
+            description: "Bring one skill into the session by its name from the skills index. The reply renders the payload; at most eight skills render in one session.",
             parameters: obj(json!({"name": {"type": "string"}}), &["name"]),
         },
         ToolDef {

@@ -43,7 +43,7 @@ prompt and the tool replies rendered ([preview](#preview)).
 
 A session produces either a committed [changeset](./graph.md#changesets) with each goal
 of the batch resolved, failed, or left open, or a failed session that leaves no trace in
-the graph. Nothing in between. A goal left open after its retry parks
+the graph. Nothing in between. A goal left open after four attempts parks
 ([resolving, failing, parking](#resolving-failing-parking)).
 
 ## The prompt
@@ -543,7 +543,7 @@ called it: the serving runs the same commit gates, a clean batch commits, and th
 the session marked are resolved while the rest stay open. Weak models forget the finish
 contract more often than they stage bad work; discarding a valid changeset over a
 missing `done` would punish the wrong thing. A session with nothing staged and no goal
-marked is a failed session, retried once.
+marked is a failed session and counts toward the same four-attempt goal budget.
 
 The same reasoning bounds what one bad claim can sink. When the implicit `done` is
 rejected over a dishonest `covered` claim, the harness drops the offending coverage marks

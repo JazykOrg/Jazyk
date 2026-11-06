@@ -129,8 +129,8 @@ ledger, not the model's word:
   next derivation. The run compares the entity's monotonic `recordSequence`, so a
   second record within the same timestamp second still proves completion. An older
   saved session without sequence receipts keeps its `recordedAt` comparison. A
-  session that never recorded has not resolved it: retry once with
-  a fresh session, then park
+  session that never recorded has not resolved it. A compiler build gives it up to
+  four attempts with fresh sessions, then parks it
   ([resolving, failing, parking](../sessions.md#resolving-failing-parking)).
 - A bound test the session cannot make pass without changing it is left untouched.
   The session records what it wrote and says so in its justification; the row reads

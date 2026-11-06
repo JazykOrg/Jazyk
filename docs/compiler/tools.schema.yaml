@@ -1204,6 +1204,61 @@ definitions:
         default: 300
         description: 0 waits indefinitely
     additionalProperties: false
+  recentEdits:
+    description: Request payload of recent_edits
+    type: object
+    properties:
+      since:
+        type: integer
+        minimum: 0
+        description: The cursor of a previous reply; absent lists every edit since the serving started
+      setId:
+        type: string
+    additionalProperties: false
+  recentEditsResponse:
+    description: Response of recent_edits
+    type: object
+    properties:
+      cursor:
+        type: integer
+        minimum: 0
+      watching:
+        type: boolean
+        description: False when the platform offers no file events
+      graphStale:
+        type: boolean
+      edits:
+        type: array
+        items:
+          type: object
+          properties:
+            path:
+              type: string
+            removed:
+              type: boolean
+            sets:
+              type: array
+              items:
+                type: object
+                properties:
+                  setId:
+                    type: string
+                  role:
+                    type: string
+                    enum: [docs, source]
+                additionalProperties: false
+            goals:
+              type: array
+              description: Open compile goals derived on a document
+              items:
+                type: string
+            owner:
+              type: string
+              description: The entity whose generation manifest lists a source file
+          required: [path, removed, sets]
+          additionalProperties: false
+    required: [cursor, watching, edits]
+    additionalProperties: false
   awaitChangesResponse:
     description: Response of await_changes
     type: object

@@ -76,7 +76,8 @@ Every serving includes the [read tools](../compiler/tools.md#read-tools) (`load`
 `expand`, `unload`, `graph_status`, `search`, `read_section`, `get_entity`,
 `get_view`, `diagnostics`), [`report_feedback`](../compiler/tools.md#feedback-tool),
 [`report_spend`](../compiler/tools.md#spend-tool) (what an external agent's run
-billed, recorded on the open batch's journal entry), and `await_changes` (below). The reads maintain the
+billed, recorded on the open batch's journal entry), `await_changes`, and
+[`recent_edits`](#watching-edits) (below). The reads maintain the
 [loaded set](../compiler/context.md#the-loaded-set) per open batch, and every
 mutating reply carries its condensed status block. A reply's text content is the JSON
 object pretty-printed ([tools](../compiler/tools.md)), so the agent's user reads it in
@@ -123,7 +124,8 @@ this spawning path and are not for standalone servings:
   a peer worker, it is part of a run that already holds its lease), and end of input
   with an open batch runs the implicit finish: staged work commits under the same
   gates the [budget path](../compiler/sessions.md#budgets) uses, so an agent that dies
-  mid-batch still lands its valid extractions. It does not serve `await_changes`:
+  mid-batch still lands its valid extractions. It does not serve `await_changes`
+  or `recent_edits`:
   the session exists for one batch, and a long poll is a stall wearing a tool's name
   (a weak model was observed idling a build on it instead of calling `done`).
 - `--only <batch|goal>`: `begin_goals` accepts only the named batch
@@ -343,6 +345,54 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
   counts (open, blocked, parked, failed, per class), the open diagnostic counts, the
   pending generation work, the pending verification work grouped by reason, and the
   workflow modes with the gated counts.
+
+### Watching edits
+
+An agent edits project files with its own tools. Jazyk has no edit tool of its own
+for them and needs none: the [dirty set](../compiler/reconciler.md#dirty-set) is
+computed from content hashes on disk, so the next build sees every edit, whatever
+wrote it. The serving watches so the agent sees the effect of an edit at once,
+before any build.
+
+- A native serving watches the project root with native file events from its first
+  request until it exits. A file counts when it is `.jazyk/jazyk.toml` or a `docs`
+  or `source` file of any document set. Its fingerprint is its size and modification
+  time; an event that leaves every fingerprint unchanged records nothing, so editor
+  temp files, renames, and Jazyk's own state writes never count.
+- Every fingerprint change appends one edit with the next sequence number: the path
+  and whether it was removed. An agent's edit tool, an editor, a formatter, and
+  `git checkout` all count the same way.
+- `await_changes` wakes on a recorded edit instead of waiting for its next poll,
+  and lists edited `source` files in `changedDocs` beside the documents.
+- `recent_edits({since?, setId?})`: the edits recorded after the cursor `since`
+  (every edit since the serving started when absent), one row per path with its
+  latest state. Each row names the sets and roles that select the path. A document
+  row lists the compile goals the board derives on it (`place-anchors` on the
+  document, `reconcile-section` on its sections), ready or awaiting a compile
+  release, so the agent sees which sections its edit dirtied. A source row names
+  the entity whose generation manifest lists the file (`owner`). The reply carries
+  `cursor` (pass it as the next `since`), `graphStale` (such a goal stands in a set
+  the rows name), and `watching`. Each call compares fingerprints itself before it
+  answers, so an edit inside the event debounce still shows. `setId` narrows the
+  rows to one set; a set-scoped worker defaults to its own set. The tool is read
+  only: it never compiles, releases work, or writes the graph.
+- Without native file events (`watching: false`, e.g. a hosted in-memory
+  workspace), `recent_edits` still finds edits by comparing fingerprints between
+  calls, and `await_changes` falls back to its 2 second poll.
+
+E.g.:
+
+```
+recent_edits → {cursor: 3, watching: true, graphStale: true, edits: [
+  {path: docs/orders.md, removed: false, sets: [{setId: ds_main, role: docs}],
+   goals: [g:reconcile-section:docs/orders.md#/orders/refunds]},
+  {path: src/orders.rs, removed: false, sets: [{setId: ds_main, role: source}],
+   owner: ent:order}]}
+```
+
+The browser engine reports no edits and answers `watching: false`. An
+`--ephemeral` serving neither watches nor serves `recent_edits`, as with
+`await_changes`.
 
 ## The control plane over MCP
 

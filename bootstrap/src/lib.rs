@@ -39,6 +39,7 @@ pub mod md;
 pub mod input;
 #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
 pub mod documents;
+pub mod edit_watch;
 pub mod model;
 pub mod project;
 pub mod document_sets;

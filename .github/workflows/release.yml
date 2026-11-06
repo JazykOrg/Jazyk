@@ -26,6 +26,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
       - id: plan
         env:
           VERSION: ${{ inputs.version }}
@@ -42,7 +43,9 @@ jobs:
         if: inputs.publish
         env:
           HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ "$HAS_NPM_TOKEN" = true ]; then npm whoami --registry=https://registry.npmjs.org; fi
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           if (process.env.HAS_NPM_TOKEN !== 'true') {
@@ -116,11 +119,12 @@ jobs:
           ext=''
           if [[ "$RUNNER_OS" = Windows ]]; then ext='.exe'; fi
           cp "bootstrap/target/release/examples/distribution_smoke$ext" ".local/extracted/$KEY/smoke$ext"
-          env -u JAZYK_PDFIUM -u JAZYK_PROOF_PDFIUM ".local/extracted/$KEY/smoke$ext"
+          env -u JAZYK_PLANTUML -u JAZYK_PDFIUM -u JAZYK_PROOF_PDFIUM ".local/extracted/$KEY/smoke$ext"
           rm ".local/extracted/$KEY/smoke$ext"
           ".local/extracted/$KEY/jazyk$ext" --help
           node scripts/release/prepare.mjs .local/extracted .local/packages "$KEY"
           node scripts/release/install-smoke.mjs .local/packages "$KEY"
+          node scripts/release/fallback-smoke.cjs .local/packages .local/archives "$KEY"
       - uses: actions/upload-artifact@v4
         with:
           name: distribution-${{ matrix.key }}

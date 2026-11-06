@@ -134,7 +134,10 @@ async function fetchBinary(key, { base = DOWNLOAD_BASE, timeoutMs = 120_000, cac
     const actual = await download(url, archive, { timeoutMs, fetchImpl });
     if (actual !== expected) throw new Error(`SHA-256 mismatch for ${archiveName}; refusing to extract or execute it`);
     // Only these release-owned paths are extracted. PDFium lives beside the binary.
-    const tar = spawnSync('tar', ['-xf', archive, '-C', staging, '--', binName(), 'lib', 'LICENSE', 'THIRD_PARTY_NOTICES'], {
+    const tarCommand = process.platform === 'win32'
+      ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+      : 'tar';
+    const tar = spawnSync(tarCommand, ['-xf', archive, '-C', staging, '--', binName(), 'lib', 'LICENSE', 'THIRD_PARTY_NOTICES'], {
       stdio: ['ignore', 'ignore', 'inherit'], timeout: timeoutMs, killSignal: 'SIGKILL',
     });
     if (tar.status !== 0) throw new Error('failed to extract archive');

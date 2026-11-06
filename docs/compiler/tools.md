@@ -705,7 +705,9 @@ session with an explicit deliverable directory keeps paths relative to that dire
   its artifact, selector, kind, and assertions. Its `run` and `cwd` may change to a
   shared suite task, clearing evidence until the same selector runs again.
   Missing or stale required tests keep the generation gate open;
-  programmatic evidence still comes from `run_tests`. `choices` lists
+  programmatic evidence still comes from `run_tests`. Recording one entity does not
+  require an immediate test run. Finish the related source changes in the assigned
+  batch, then run the shared suite at a useful execution milestone. `choices` lists
   what the worker had to invent, each `{choice, scope, reasoning, requirements?}`,
   recorded as [`invented-choice`](../consumers/gen.md#invented-choices) diagnostics
   graded by scope. A `factHash` that no longer matches the live graph is recorded but leaves the

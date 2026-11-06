@@ -190,6 +190,12 @@ pub struct HarnessState {
     pub usage: Vec<goose_provider_types::conversation::token_usage::ProviderUsage>,
     #[serde(default)]
     pub compacted_at_round: Option<u32>,
+    #[serde(default)]
+    pub compacted_size: Option<usize>,
+    #[serde(default)]
+    pub ledger_finish_reminded: bool,
+    #[serde(default)]
+    pub model_output_limited: bool,
 }
 
 pub trait Recovery {

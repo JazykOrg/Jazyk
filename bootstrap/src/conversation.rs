@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+mod history_repair;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Chat {
     id: String,
@@ -438,7 +440,7 @@ fn refresh_context(history: &mut [Value], humans: &[String], instructions: &str)
 // failed mid-way can leave a tool result as the last message.
 fn push_user(history: &mut Vec<Value>, text: String) {
     if let Some(last) = history.last_mut() {
-        if last["role"] == "user" {
+        if last["role"] == "user" && !history_repair::is_receipt(last) {
             let prev = last["content"].as_str().unwrap_or_default().to_string();
             last["content"] = json!(format!("{}\n\n{}", prev, text));
             return;
@@ -623,6 +625,11 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         }
     );
     if !resuming {
+        BOOK.with(|book| {
+            if let Some(chat) = book.borrow().chats.get(id) {
+                history_repair::restore(&mut history, &chat.updates, &message_id);
+            }
+        });
         push_user(&mut history, text.clone());
         delivered(id, json!({"messageId":message_id,"text":text,"turnId":turn_id}));
     }

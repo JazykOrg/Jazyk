@@ -1,5 +1,15 @@
 name: Publish npm packages
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version of an existing published GitHub Release'
+        required: true
+        type: string
+      source_run_id:
+        description: 'Completed Release workflow run containing the validated artifacts'
+        required: true
+        type: string
   workflow_call:
     inputs:
       version:
@@ -9,10 +19,15 @@ on:
       NPM_TOKEN:
         required: false
 permissions:
+  actions: read
   contents: read
   id-token: write
 jobs:
   publish:
+    concurrency:
+      group: jazyk-npm-publish
+      cancel-in-progress: false
+    timeout-minutes: 75
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -24,10 +39,14 @@ jobs:
         with:
           name: release-assets
           path: dist/release
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Verify release identity
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-        run: python3 scripts/release/artifacts.py verify dist/release "$VERSION" "$GITHUB_SHA"
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: python3 scripts/release/verify-npm-source.py "$VERSION" dist/release "$SOURCE_RUN_ID"
       - name: Publish platform packages, then launcher
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

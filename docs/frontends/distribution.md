@@ -60,12 +60,20 @@ With `publish` enabled it calls two reusable workflows:
 - `release-github.yml` creates `v<version>` at the validated commit and publishes
   archives, checksums, npm tarballs and the manifest as release assets.
 - `release-npm.yml` follows the GitHub Release. It publishes platform packages first
-  and the launcher last. Stable versions use `latest`. Prereleases use `next` and
-  a GitHub prerelease.
+  and the launcher last. All platform packages are submitted before waiting for
+  registry visibility. The launcher is submitted only after every platform is
+  publicly available and its integrity matches. Stable versions use `latest`.
+  Prereleases use `next` and a GitHub prerelease.
 
 Drafts are located through the release list before their tag is published.
 Existing versions must match the prepared bytes. Published content is never
 replaced. Rerun failed jobs to reuse retained artifacts after partial publication.
+Registry checks allow up to 30 minutes per publication phase for npm scanning.
+A timeout leaves the accepted package pending at npm. Wait for it to become
+public before retrying. The npm workflow also accepts a manual `source_run_id`
+for a completed `release.yml` run on `master`. It downloads that run's artifacts,
+checks their source commit and exact manifest against the published GitHub
+Release, and resumes npm publication without rebuilding.
 A new build of an existing release must match its hashes. An npm failure leaves
 usable direct downloads and a failed workflow. Corrections require a new version.
 

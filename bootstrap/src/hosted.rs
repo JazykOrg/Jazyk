@@ -1291,6 +1291,69 @@ mod tests {
         }
     }
     #[test]
+    fn old_amnesic_chat_recovers_its_own_timeline_in_the_next_provider_request_once() {
+        for already_amnesic in [false,true] {
+        let mut w = workspace("Legacy chat");
+        value(&mut w,"POST","/api/chat/sessions",json!({}),&Execution::default());
+        value(&mut w,"POST","/api/chat/sessions",json!({}),&Execution::default());
+        let mut book: Value = serde_json::from_slice(&w.files[".jazyk/conversations.json"]).unwrap();
+        let chat = &mut book["chats"]["chat-1"];
+        chat["state"] = json!("idle");
+        chat["titled"] = json!(true);
+        chat["history"] = if already_amnesic { json!([
+            {"role":"user","content":"try again"},
+            {"role":"assistant","content":"I do not have the earlier request."}
+        ]) } else { json!([]) };
+        chat["updates"] = json!([
+            [0,{"sessionUpdate":"user_message","messageId":"original","text":"Restyle the UML diagram in deliverable/index.html"}],
+            [1,{"sessionUpdate":"agent_message_chunk","content":{"text":"Updating UML cards."}}],
+            [2,{"sessionUpdate":"tool_call","toolCallId":"write","title":"write_text_file","rawInput":{"path":"deliverable/index.html"}}],
+            [3,{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"completed","rawOutput":"Saved deliverable/index.html"}],
+            [4,{"sessionUpdate":"turn_end","stop":"cancelled"}],
+            [5,{"sessionUpdate":"user_message","messageId":"retry","text":"try again"}],
+            [6,{"sessionUpdate":"agent_message_chunk","content":{"text":"I do not have the earlier request."}}],
+            [7,{"sessionUpdate":"turn_end","stop":"end_turn"}]
+        ]);
+        if !already_amnesic { chat["updates"].as_array_mut().unwrap().truncate(5); }
+        chat["next_n"] = json!(8);
+        book["chats"]["chat-2"]["updates"] = json!([
+            [0,{"sessionUpdate":"user_message","text":"DO_NOT_CROSS_OTHER_CHAT"}]
+        ]);
+        w.files.insert(".jazyk/conversations.json".into(),serde_json::to_vec(&book).unwrap());
+        w.files.insert("deliverable/index.html".into(),b"Previously saved diagram".to_vec());
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let observed = requests.clone();
+        let execution = Execution {
+            model:"legacy-repair-fixture".into(),
+            transport:Some(Arc::new(move |body| {
+                observed.lock().unwrap().push(serde_json::from_str(body).unwrap());
+                Ok(model_reply("The earlier request was to restyle the UML diagram."))
+            })),..Default::default()
+        };
+        value(&mut w,"POST","/api/chat/sessions/chat-1/prompt",json!({"text":"try again","messageId":"new-retry"}),&execution);
+        let mut reopened = Workspace::new(w.snapshot()).unwrap();
+        value(&mut reopened,"POST","/api/chat/sessions/chat-1/prompt",json!({"text":"what was the task?","messageId":"later"}),&execution);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(),2,"History repair must not invoke extra inference");
+        for request in requests.iter() {
+            let messages = request["messages"].as_array().unwrap();
+            let receipts = messages.iter().filter(|message| message["role"] == "user"
+                && message["content"].as_str().is_some_and(|text|text.starts_with("Earlier conversation evidence was recovered"))).collect::<Vec<_>>();
+            assert_eq!(receipts.len(),1,"The receipt must survive reopening without duplication: {:?}",
+                messages.iter().filter(|message|message["role"] != "system").collect::<Vec<_>>());
+            let text = receipts[0]["content"].as_str().unwrap();
+            assert!(text.contains("Restyle the UML diagram in deliverable/index.html"));
+            assert!(text.contains("Updating UML cards."));
+            assert!(text.contains("Saved deliverable/index.html"));
+            assert!(!messages.iter().any(|message|message["role"] == "tool" || message.get("tool_calls").is_some()),
+                "Historical observations must not become synthetic tool calls or outcomes");
+            assert!(!request.to_string().contains("DO_NOT_CROSS_OTHER_CHAT"));
+        }
+        assert_eq!(reopened.snapshot()["deliverable/index.html"],b"Previously saved diagram");
+        }
+    }
+
+    #[test]
     fn shared_task_suite_dispatches_once_per_pass_and_keeps_case_and_owner_evidence_separate() {
         use base64::Engine;
         use crate::harness::Recovery;

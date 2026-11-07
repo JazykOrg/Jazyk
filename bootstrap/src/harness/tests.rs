@@ -1899,3 +1899,91 @@ fn complex_history_keeps_output_headroom_without_early_compaction() {
     assert_eq!(output.and_then(Value::as_u64), Some(65_536));
     assert_eq!(crate::llm::model_input_tokens(), 65_536);
 }
+
+#[test]
+fn protected_stop_keeps_compacted_history_without_reexpanding_old_receipts() {
+    let mut old = call();
+    old["choices"][0]["message"]["tool_calls"][0]["id"] = json!("obsolete-call");
+    let mut latest = call();
+    latest["choices"][0]["message"]["tool_calls"][0]["id"] = json!("latest-call");
+    let mut host = Host::new(vec![old, latest, response("Compact progress: continue the delivery.")]);
+    let mut store = Store { suspend_on: Some(CheckpointPhase::Compacted), ..Default::default() };
+    let mut history = vec![json!({"role":"user","content":"Continue the delivery work."})];
+    let mut calls = 0;
+    assert_eq!(ledger_completion_run(true, &mut host, &mut store, &mut history,
+        &mut |name, _| {
+            assert_eq!(name, "fixture");
+            calls += 1;
+            Ok(if calls == 1 {
+                format!("OBSOLETE_RECEIPT {}", "o".repeat(crate::llm::model_input_tokens()))
+            } else {
+                format!("LATEST_RECEIPT {}", "l".repeat(crate::llm::model_input_tokens() * 4))
+            })
+        }), Stop::Suspended);
+    assert_eq!(calls, 2);
+    assert_eq!(host.requests.borrow().iter().map(|request| request.purpose).collect::<Vec<_>>(),
+        vec![ModelPurpose::Inference, ModelPurpose::Inference, ModelPurpose::Compaction]);
+    assert!(store.phases.contains(&CheckpointPhase::Compacted));
+    let compacted = store.saved.as_ref().unwrap();
+    assert!(compacted.compacted_at_round.is_some());
+    assert_eq!(compacted.model_receipts.len(), 3, "Compaction must leave old receipts available to exercise the boundary");
+    let before = history.clone();
+    let text = serde_json::to_string(&before).unwrap();
+    assert!(!text.contains("obsolete-call") && !text.contains("OBSOLETE_RECEIPT"));
+    assert!(text.contains("latest-call") && text.contains("LATEST_RECEIPT"));
+    assert_eq!(runtime::stopped_history(compacted), before,
+        "Protected Stop must retain the exact compacted snapshot");
+
+    store.suspended = false;
+    store.suspend_on = None;
+    let mut cancelled_host = Host::new(vec![]);
+    let config = llm();
+    assert_eq!(runtime::run_with_host(LoopArgs {
+        llm: &config, history: &mut history, tools: &[tool()],
+        dispatch: &mut |_, _| panic!("Stop must not replay a completed tool"),
+        emit: &mut |_| {}, cancelled: &|| true, max_rounds: 8,
+        label: "cancel compacted chat".into(), conversation: true,
+        inputs: None, input_close: None,
+    }, "", &mut cancelled_host, &mut store), Stop::Cancelled);
+    assert!(cancelled_host.requests.borrow().is_empty(), "Stop must not infer again");
+    assert_eq!(history, before, "Normal cancellation must not undo compaction");
+    assert_eq!(runtime::stopped_history(store.saved.as_ref().unwrap()), before,
+        "Stopping a normalized Finished checkpoint must be idempotent");
+}
+
+#[test]
+fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
+    for api in ["chat_completions", "responses"] {
+        let answer = format!("Finished answer from {api}");
+        let reply = if api == "responses" {
+            json!({"id":"response-final","object":"response","model":"fixture","status":"completed",
+                "_jazykResponseRoute":"fixture-route",
+                "output":[{"id":"message-final","type":"message","role":"assistant","status":"completed",
+                    "content":[{"type":"output_text","text":answer,"annotations":[]}]}],
+                "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}})
+        } else { response(&answer) };
+        let mut host = Host::new(vec![reply]);
+        let mut store = Store::default();
+        let mut history = vec![json!({"role":"user","content":"Finish the requested work."})];
+        assert_eq!(run(&mut host, &mut store, &mut history,
+            &mut |_, _| panic!("A plain answer must not dispatch tools"), &mut |_| {}), Stop::EndTurn);
+        assert_eq!(host.requests.borrow().len(), 1, "{api}");
+        assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished), "{api}");
+        let saved = store.saved.as_mut().unwrap();
+        assert_eq!(saved.model_receipts.len(), 1, "{api}");
+        let mut stripped = 0;
+        for message in saved.conversation.messages_mut() {
+            if let Some(notes) = message.metadata.operations.as_mut() {
+                stripped += usize::from(notes.remove("jazyk.runtime").is_some());
+            }
+        }
+        assert_eq!(stripped, 1, "The fixture must model a legacy response without inferenceId: {api}");
+        let stopped = runtime::stopped_history(saved);
+        assert_eq!(stopped.iter().filter(|message|
+            message["role"] == "assistant" && message["content"] == answer).count(), 1,
+            "A naturally finished legacy answer must not be appended again: {api}");
+        assert_eq!(stopped.len(), history.len(), "Stop added a legacy message at {api}");
+        assert!(stopped.iter().all(|message| message["role"] != "tool"), "{api}");
+        assert_eq!(runtime::stopped_history(saved), stopped, "Repeated Stop changed legacy history: {api}");
+    }
+}

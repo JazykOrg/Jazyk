@@ -229,19 +229,20 @@ pub fn locations(
                     }
                 }
             };
-            for eid in &seen {
-                if let Some(e) = ledger.entities.get(eid) {
-                    for f in &e.files {
+            for (eid, entity) in &ledger.entities {
+                if seen.contains(store.resolve_id(eid)) {
+                    for f in &entity.files {
                         file(&gs.deliverable, f, None);
                     }
                 }
             }
             for (rid, row) in &ledger.requirements {
-                let owns = seen.contains(rid) || seen.contains(&row.entity);
+                let owns = seen.contains(store.resolve_id(rid))
+                    || seen.contains(store.resolve_id(&row.entity));
                 let criteria: Vec<_> = row
                     .tests
                     .iter()
-                    .filter(|(cid, _)| seen.contains(*cid))
+                    .filter(|(cid, _)| seen.contains(store.resolve_id(cid)))
                     .collect();
                 if owns || !criteria.is_empty() {
                     for f in &row.files {
@@ -366,10 +367,14 @@ mod tests {
         s.graph
             .diagnostics
             .insert("diag:one".into(), finding(&["crit:one"]));
-        let ledger: crate::gen::Ledger = serde_json::from_value(json!({"requirements":{"req:one":{
+        s.graph.redirects.insert("req:old".into(), "req:one".into());
+        s.graph
+            .redirects
+            .insert("crit:old".into(), "crit:one".into());
+        let ledger: crate::gen::Ledger = serde_json::from_value(json!({"requirements":{"req:old":{
             "entity":"ent:one", "files":["src/order.rs","../escape.rs"],"sites":[{"file":"src/order.rs","line":8,"head":"fn order() {}"}],
             "test":{"kind":"programmatic","label":"orders","artifact":"tests/order.rs","name":"orders","run":"cargo test"},
-            "tests":{"crit:one":{"test":{"kind":"programmatic","label":"criterion","artifact":"tests/criterion.rs","name":"criterion","run":"cargo test"},"criterion_hash":"h"}},"hashes":{"requirement":"h","test":"h","files":"h"}
+            "tests":{"crit:old":{"test":{"kind":"programmatic","label":"criterion","artifact":"tests/criterion.rs","name":"criterion","run":"cargo test"},"criterion_hash":"h"}},"hashes":{"requirement":"h","test":"h","files":"h"}
         }}})).unwrap();
         ledger.save(&s.out);
         let mut gs = crate::gen::GenSettings::from_out(&s.out);

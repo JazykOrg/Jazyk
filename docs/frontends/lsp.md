@@ -39,6 +39,10 @@ the same project files.
   link with UTF-16 ranges and names the missing target. Saved targets and file
   watcher notifications refresh open documents without requiring a graph change.
   A stored suppression for that source-target pair remains respected.
+- Diagnostic ranges use the shared [location resolver](../compiler/model/diagnostic.md#locations).
+  Every located quote in the document is published once per finding and range.
+  Prompt code actions use those same ranges, including related context.
+  Related document locations identify the affected context without inventing a quote.
 - Go to definition: entity → its defining mention.
 - References: entity → all mentions across documents.
 - Hover on an entity: the [card](../consumers/docsgen.md#entity-cards) in short,

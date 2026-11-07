@@ -17,6 +17,7 @@ pub mod control;
 pub mod costs;
 pub mod decompile;
 pub mod derive;
+pub mod diagnostic_locations;
 pub mod docsgen;
 pub mod feedback;
 pub mod bind;

@@ -279,8 +279,8 @@ Documents:
 - `GET /api/docs`: the matched documents with their content hashes, whether each is
   stale against the graph (on-disk hash differs from the reconciled hash), its open
   diagnostics counted by severity, and its open goals counted by kind. A diagnostic
-  counts toward a document when a subject anchors there: a requirement whose source is
-  the document, an entity with a mention in it, or a section reference into it.
+  counts toward each document returned by the shared
+  [diagnostic location resolver](../compiler/model/diagnostic.md#locations).
   Suppressed diagnostics never count.
 - `GET /api/docs/content?path=`: the raw document text, its hash, and
   `linkDiagnostics` from the current text and project files. Each finding contains
@@ -790,6 +790,18 @@ A restored conversation opens a new ACP session when its old process is gone. Th
 
 
 Native input admission flushes the original message before returning acceptance. A later transcript write failure marks the session failed, stops the active prompt, and emits a persistence error. The retained admission restores as interrupted when the terminal event could not be written. Incremental transcript writes report errors without flushing each text delta.
+
+## Diagnostic locations
+
+`GET /api/graph` includes `diagnosticLocations`, keyed by diagnostic id. Each
+location has project-relative `path`, `kind` (`document` or `file`), optional
+`section` and `quote`, and `related`. A related location follows provenance,
+ownership, or a proposed edit rather than quoting a subject directly.
+File locations may carry a one-based `line` from a recorded implementing site.
+The line is a navigation hint, not fresh verification evidence.
+The shared resolver serves native and browser transports and editor diagnostics.
+The global problem count opens all open, unsuppressed findings of visible severity,
+including questions, proposals, and drafts. Findings without locations remain visible.
 
 ## Scoped test artifacts
 

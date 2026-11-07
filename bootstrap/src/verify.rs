@@ -1,3 +1,4 @@
+pub mod artifacts;
 use crate::vfs::VPathExt;
 // Verification: run the tests the ledger records and feed verdicts back. Status is
 // derived, never stored, from byte hashes and current Source membership. Mirrors
@@ -274,6 +275,8 @@ pub fn pending(
 pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap<String, Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = std::collections::BTreeMap::new();
+    let project_root=crate::project::find_root(&store.out);
+    let project_path=|test:&crate::gen::TestRef| project_root.as_ref().and_then(|root| artifact_path(&store.out,gs,test).strip_prefix(root).ok().map(|path|path.to_string_lossy().replace('\\',"/")));
     for rid in store.graph.requirements.keys() {
         let entry = match ledger.requirements.get(rid) {
             Some(row) => {
@@ -283,6 +286,7 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
                     "reason": reason,
                     "repair": repair_for(&status, &reason, rid, &row.entity),
                     "kind": row.test.kind,
+                    "artifactPath": project_path(&row.test),
                     "label": row.test.label,
                     "name": row.test.name,
                     "run": row.test.run,
@@ -294,6 +298,7 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
                     "criteria": row.tests.iter().map(|(cid, ct)| (cid.clone(), json!({
                         "name": ct.test.name,
                         "artifact": ct.test.artifact,
+                        "path": project_path(&ct.test),
                         "kind": ct.test.kind,
                         "verdict": ct.verdict,
                         "lastRun": ct.last_run,
@@ -1397,7 +1402,7 @@ mod tests {
     use crate::gen::{mark as gen_mark, test_name, GenSettings};
     use crate::model::*;
 
-    fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
+    pub(super) fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
         let mut s = Store {
             out: out.to_path_buf(),
             ..Default::default()
@@ -1519,7 +1524,7 @@ mod tests {
         );
     }
 
-    fn multi_llm_fixture(out: &std::path::Path) -> (Store, GenSettings) {
+    pub(super) fn multi_llm_fixture(out: &std::path::Path) -> (Store, GenSettings) {
         let (mut store, gs) = fixture(out);
         let mut ledger = Ledger::load(out);
         let row = ledger.requirements.get_mut("req:shop-1").unwrap();

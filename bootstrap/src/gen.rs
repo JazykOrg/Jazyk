@@ -335,14 +335,18 @@ pub struct BuildRun {
 // Run the deliverable's build once and record what happened. Ok(()) when there is no
 // build to run or it produced everything it promised; the error is what a reader
 // needs to see. Mirrors docs/consumers/gen.md#the-build.
-pub fn run_build(
+pub fn run_build(out: &Path, gs: &GenSettings, trace: &crate::session::Trace, label: &str) -> Result<(),String> {
+    run_build_receipt(out,gs,trace,label).map(|_|())
+}
+
+pub(crate) fn run_build_receipt(
     out: &Path,
     gs: &GenSettings,
     trace: &crate::session::Trace,
     label: &str,
-) -> Result<(), String> {
+) -> Result<Option<(String,String,Value)>, String> {
     let Some(b) = Ledger::load(out).build.clone() else {
-        return Ok(());
+        return Ok(None);
     };
     if let Some(id) = b.run.strip_prefix("task:") {
         let root = crate::task_runtime::project_root(out)?;
@@ -351,14 +355,15 @@ pub fn run_build(
             .chain(ledger.support.iter().cloned()).collect();
         let inputs = hash_hex(&json!({"run":b.run,"cwd":b.cwd,"produces":b.produces,
             "sources":hash_files(gs,&files)}).to_string());
-        let (_, result) = crate::task_runtime::execute_with_key(&root, id,
+        let (run_id, result) = crate::task_runtime::execute_with_key(&root, id,
             &format!("build:{label}:{}:{inputs}", out.display()))?;
         let success = result["status"] == "succeeded" && result["complete"] == true;
         if !success {
             record_build_run(out, false, result["log"].as_str().unwrap_or("No log output"));
             return Err("Build task did not complete successfully. Inspect its run log.".into());
         }
-        return check_build_products(out, gs, &b);
+        check_build_products(out, gs, &b)?;
+        return Ok(Some((id.to_owned(),run_id,result)));
     }
     let cwd = gs.deliverable.join(&b.cwd);
     trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
@@ -384,10 +389,11 @@ pub fn run_build(
             crate::llm::truncate(evidence.trim(), 2000)
         ));
     }
-    check_build_products(out, gs, &b)
+    check_build_products(out, gs, &b)?;
+    Ok(None)
 }
 
-fn check_build_products(out: &Path, gs: &GenSettings, b: &Build) -> Result<(), String> {
+pub(crate) fn check_build_products(out: &Path, gs: &GenSettings, b: &Build) -> Result<(), String> {
     let missing: Vec<&String> = b
         .produces
         .iter()

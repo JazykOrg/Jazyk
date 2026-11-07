@@ -448,8 +448,18 @@ call has an output ceiling. The generation divides:
 
 - The first part generates the types, state, and the first group of requirements.
 - Each further part receives what was generated so far and the next group of
-  requirements, and returns only additional content to append.
-- Parts concatenate; traceability markers per requirement are unaffected.
+  requirements, and extends the artifact while preserving the earlier parts.
+- In file-reply mode, later replies contain only additions. The worker buffers
+  and concatenates the product replies before one complete file write. This reply
+  assembly does not authorize partial rewrites of an existing file. Traceability
+  markers per requirement are unaffected.
+
+Requirement groups are not file chunks. A worker never replaces an existing
+complete file with a prefix intending to append the rest later. Prefer guarded
+replacements for existing files. Each accepted write preserves unrelated content.
+A complete rewrite includes the whole file in one call. If it does not fit, use
+guarded replacements instead. Append is limited to append-oriented artifacts or
+new output that cannot fit one call.
 
 The group size is 20 requirements per part (the `{GROUP}` placeholder of the generation
 contract). The `requirements-per-entity` limit (soft 50, hard 80) opens an

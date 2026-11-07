@@ -5,7 +5,7 @@ use crate::vfs::VPathExt;
 // this server when to reload and republish.
 use crate::jsonrpc::{read_message, write_message};
 use crate::md;
-use crate::model::{Diagnostic, Entity, VIEW_KINDS};
+use crate::model::{Entity, VIEW_KINDS};
 use crate::store::Store;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -376,44 +376,6 @@ impl Lsp {
             }
         }
         items
-    }
-
-    // Where a diagnostic subject anchors inside `doc`, if it does at all.
-    fn subject_anchor(&self, subject: &str, doc: &str) -> Option<(usize, usize, usize, usize)> {
-        crate::diagnostic_locations::subject_locations(&self.store, subject)
-            .into_iter().find(|l| l.path == doc)
-            .map(|l| self.anchor(doc, l.quote.as_deref().unwrap_or(""), "", l.section.as_deref()))
-    }
-
-    // Where a prompted diagnostic's suggested edit anchors inside `doc`: the located
-    // `old_text`, else the first line of the target section. This is how a
-    // ratification-pending or decision prompt on an unquoted fact reaches the editor.
-    // Mirrors docs/frontends/lsp.md#capabilities.
-    fn prompt_edit_anchor(
-        &self,
-        d: &Diagnostic,
-        doc: &str,
-    ) -> Option<(usize, usize, usize, usize)> {
-        let p = d.prompt.as_ref()?;
-        for o in &p.options {
-            let Some(e) = o.edit.as_ref().filter(|e| e.doc == doc) else {
-                continue;
-            };
-            if !e.old_text.is_empty() {
-                if let Some(r) = md::locate(&self.doc_text(doc), &e.old_text) {
-                    return Some(r);
-                }
-            }
-            if let Some(s) = self
-                .store
-                .docs
-                .get(doc)
-                .and_then(|rec| rec.sections.get(&e.section))
-            {
-                return Some((s.lines[0], 0, s.lines[0], 0));
-            }
-        }
-        None
     }
 
     // ---- entity under cursor ----
@@ -1052,9 +1014,7 @@ impl Lsp {
         let end = params["range"]["end"]["line"].as_u64().unwrap_or(u64::MAX) as usize;
         let mut actions: Vec<Value> = Vec::new();
         for (did, d) in &self.store.graph.diagnostics {
-            if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
-                continue;
-            }
+            if !crate::diagnostic_locations::visible(d) { continue; }
             let Some(p) = &d.prompt else { continue };
             if d.answer
                 .as_ref()
@@ -1064,14 +1024,9 @@ impl Lsp {
                 continue;
             }
             let in_range = |r: (usize, usize, usize, usize)| r.0 <= end && r.2 >= start;
-            let intersects = d
-                .subjects
-                .iter()
-                .any(|s| self.subject_anchor(s, &doc).map(in_range).unwrap_or(false))
-                || self
-                    .prompt_edit_anchor(d, &doc)
-                    .map(in_range)
-                    .unwrap_or(false);
+            let intersects = crate::diagnostic_locations::document_locations(&self.store, d)
+                .into_iter().filter(|l| l.path == doc)
+                .any(|l| in_range(self.anchor(&doc, l.quote.as_deref().unwrap_or(""), "", l.section.as_deref())));
             if !intersects {
                 continue;
             }
@@ -1816,11 +1771,17 @@ mod tests {
         let mut lsp = lsp_at(std::env::temp_dir(), std::env::temp_dir().join("diagnostic-lsp"), store);
         lsp.overlay.insert("rules.md".into(), "# Rules\n\nOrders complete.\n".into());
         lsp.overlay.insert("examples.md".into(), "# Examples\n\nReturns 200.\n".into());
+        lsp.store.graph.diagnostics.get_mut("diag:one").unwrap().prompt = Some(serde_json::from_value(json!({
+            "question":"Which is correct?", "options":[{"label":"Explain", "answer":"Explain"}], "freeform":true
+        })).unwrap());
         for doc in ["rules.md", "examples.md"] {
             let diagnostics = lsp.document_diagnostics(doc);
             assert_eq!(diagnostics.len(), 1, "{doc}");
             assert_eq!(diagnostics[0]["range"]["start"]["line"], 2);
             assert_eq!(diagnostics[0]["data"]["jazykDiag"], "diag:one");
+            let actions = lsp.on_code_action(&json!({"textDocument":{"uri": lsp.doc_to_uri(doc)},
+                "range":{"start":{"line":2,"character":0},"end":{"line":2,"character":4}}}));
+            assert_eq!(actions.as_array().unwrap().len(), 1, "{doc}");
         }
         lsp.store.graph.diagnostics.get_mut("diag:one").unwrap().triage = Some("suppressed".into());
         assert!(lsp.document_diagnostics("rules.md").is_empty());

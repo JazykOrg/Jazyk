@@ -41,6 +41,7 @@ the same project files.
   A stored suppression for that source-target pair remains respected.
 - Diagnostic ranges use the shared [location resolver](../compiler/model/diagnostic.md#locations).
   Every located quote in the document is published once per finding and range.
+  Prompt code actions use those same ranges, including related context.
   Related document locations identify the affected context without inventing a quote.
 - Go to definition: entity → its defining mention.
 - References: entity → all mentions across documents.

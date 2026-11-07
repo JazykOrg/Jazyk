@@ -1,0 +1,15 @@
+<idea-plugin>
+  <id>org.jazyk.lsp</id>
+  <name>Jazyk</name>
+  <version>0.1.0</version>
+  <vendor email="matus@matus.io" url="https://jazyk.org">Matus Faro</vendor>
+  <description>Jazyk language support for prose documentation through LSP4IJ.</description>
+  <idea-version since-build="242"/>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.redhat.devtools.lsp4ij</depends>
+  <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+    <server id="jazyk" name="Jazyk" factoryClass="org.jazyk.lsp.JazykServerFactory"/>
+    <fileNamePatternMapping patterns="*.md;*.markdown" serverId="jazyk" languageId="markdown"
+                            documentMatcher="org.jazyk.lsp.JazykDocumentMatcher"/>
+  </extensions>
+</idea-plugin>

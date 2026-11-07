@@ -731,6 +731,11 @@ The embedded loop accepts ordered human inputs at safe boundaries. Steering keep
 
 Native provider streams emit answer and thought deltas separately. Complete messages remain the source of history and tool arguments. The final assembled response is not emitted again. Partial output is retained when a model attempt fails. An attempt with visible output is not retried automatically. Round and tool timing events carry monotonic durations.
 
+A stopped conversation retains accepted model responses and completed tool
+receipts in its history. Pending calls receive interrupted results without being
+dispatched. Provider call identities and native response metadata stay paired.
+The next human turn receives that history and does not replay the stopped work.
+
 
 Steering keeps separate input identities and delivery events. Adjacent human text is joined into one user message in model history when a template requires alternating roles. Native tool results retain their tool role and call identity. The embedded ACP agent applies the same shaping to initial MCP instruction blocks and the first human prompt.
 

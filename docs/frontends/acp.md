@@ -199,6 +199,15 @@ The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md) remains 
 Jazyk payload. MCP supplies the domain prompt and tools. IDE-mediated edits still
 pass through the existing proxy and workspace contract.
 
+The generic payload guides conversational and worker turns. The agent prefers
+guarded replacements when editing existing files through file tools. Each accepted
+write preserves unrelated existing content, including when cancellation follows it.
+An existing complete file is never replaced with a prefix intending to append the
+rest later. A complete rewrite includes the whole file in one call. Append is
+limited to append-oriented artifacts or new output that cannot fit one call.
+These file-tool instructions do not change generation's
+[buffered FILE replies](../consumers/gen.md#dense-entities-generate-in-parts).
+
 ### Choosing a model
 
 The protocol carries the choice: an agent may return `configOptions` from

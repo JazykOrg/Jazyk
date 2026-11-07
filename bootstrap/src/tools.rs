@@ -5682,7 +5682,7 @@ impl ToolSession {
                 // In a serving, the first node of a kind loaded brings the kind's
                 // skill, once; a batch works under its goal kinds' skills and reads
                 // other nodes as reference. Mirrors docs/compiler/sessions.md#skills.
-                if !self.skills.has_pinned() {
+                if self.scope.goals.is_empty() && !self.skills.has_pinned() {
                     if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &id) {
                         if let Ok(SkillLoad::Rendered(payload)) = self.skills.activate(skill) {
                             v["skill"] =
@@ -12401,6 +12401,41 @@ mod tests {
             t.dispatch("search", &json!({"query": "buy"})).is_ok(),
             "reads still answer past the mark"
         );
+    }
+
+    #[test]
+    fn skill_free_fixed_goal_load_does_not_autoactivate_reference_skill() {
+        let snapshot = session().snapshot;
+        let goals = vec![Goal {
+            id: "g:place-anchors:shop.md".into(),
+            kind: "place-anchors".into(),
+            target: "shop.md".into(),
+            mandatory: true,
+            ..Default::default()
+        }];
+        let mut fixed = ToolSession::new(
+            snapshot.clone(),
+            WorkScope::for_batch("fixed", &goals),
+            64,
+            96_000,
+        );
+        assert!(
+            !fixed.skills.has_pinned(),
+            "this fixed goal intentionally has no skill"
+        );
+        let loaded = fixed
+            .dispatch("load", &json!({"target":"shop.md#/shop/cart"}))
+            .unwrap();
+        assert!(loaded.get("skill").is_none());
+        assert!(!fixed.skills.is_rendered("extraction"));
+        let mut serving = ToolSession::new(snapshot, WorkScope::serving("mcp-read"), 64, 96_000);
+        let loaded = serving
+            .dispatch("load", &json!({"target":"shop.md#/shop/cart"}))
+            .unwrap();
+        assert!(loaded["skill"]
+            .as_str()
+            .unwrap()
+            .contains("[skill: extraction (active)]"));
     }
 
     // Auto-load once, the per-session cap, and the inactive marking when the last

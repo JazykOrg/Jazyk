@@ -194,8 +194,10 @@ The lifecycle inside a session:
 - From the first round: the skills of the batch's goal kinds (the union, from the
   [goal catalog](./reconciler.md#the-catalog)) render in the prompt as active. A goal
   kind's skill stays active while a goal of that kind is open in the batch.
-- Auto-load: in a session with no goal-kind skill (a serving), the first node of a
-  kind loaded brings the kind's skill, once. A section brings `extraction`; a flow view
+- Auto-load: in a session with no fixed goals (a serving), the first node of a
+  kind loaded brings the kind's skill, once. A fixed goal batch never auto-loads
+  skills from reference nodes, even when none of its goal kinds assigns a skill.
+  A section brings `extraction`; a flow view
   (`use-case`, `activity`, `sequence`, `communication`, `timing`, `overview`) brings
   `flow-views`; a structural view (`class`, `object`, `package`, `component`,
   `composite`, `deployment`, `state`) brings `structural-views`. Entities and

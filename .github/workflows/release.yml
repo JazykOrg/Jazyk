@@ -58,6 +58,8 @@ jobs:
           JS
       - run: node --test scripts/release/launcher.test.cjs scripts/release/packaging.test.mjs
       - run: python3 scripts/release/publish-github.test.py
+      - run: node --test scripts/release/publish-npm.test.mjs
+      - run: python3 scripts/release/verify-npm-source.test.py
   shared-checks:
     needs: plan
     runs-on: ubuntu-22.04
@@ -172,6 +174,7 @@ jobs:
     needs: github-release
     if: inputs.publish
     permissions:
+      actions: read
       contents: read
       id-token: write
     uses: ./.github/workflows/release-npm.yml

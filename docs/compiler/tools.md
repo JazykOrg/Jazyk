@@ -806,6 +806,13 @@ only the ledger, never the graph.
   Shared `task:<id>` references execute once per selection, after the build. Mixed
   selections also run their legacy commands locally; hosted responses list those
   commands as pending. Task criteria reuse the imported case evidence.
+  The reply separates selected ledger verdicts from `suite` counts across the
+  already executed tasks. `suite.failures` includes at most 20 exact failed case
+  identities and their run, task and report, within 32 KiB. Oversized or excess
+  entries remain counted in `omittedFailures`; included identities are never
+  truncated. No requirement or entity owner is inferred for a case. A selected
+  pass does not imply the entire suite passed. This summary starts no extra run
+  and changes no verdict, gate or goal.
   An explicitly selected unbound requirement is returned as skipped with binding
   guidance. An empty execution cannot be reported as passing that requirement.
 - `record_verdict({requirement, verdict, factHash?, evidence?, criteria?})`: record a `pass` or

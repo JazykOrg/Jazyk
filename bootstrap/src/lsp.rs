@@ -342,7 +342,7 @@ impl Lsp {
             }
         }
         for (did, d) in &self.store.graph.diagnostics {
-            if d.rule == "broken-link" || d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+            if d.rule == "broken-link" || !crate::diagnostic_locations::visible(d) {
                 continue;
             }
             let severity = match d.severity.as_str() {
@@ -363,34 +363,16 @@ impl Lsp {
                 Some(q) => format!("{}: {}\nQ: {}", d.rule, d.message, q),
                 None => format!("{}: {}", d.rule, d.message),
             };
-            let mut pushed = false;
-            for subject in &d.subjects {
-                let anchor = self.subject_anchor(subject, doc);
-                let Some(range) = anchor else { continue };
-                pushed = true;
+            let mut ranges = BTreeSet::new();
+            for location in crate::diagnostic_locations::document_locations(&self.store, d) {
+                if location.path != doc { continue; }
+                let range = self.anchor(doc, location.quote.as_deref().unwrap_or(""), "", location.section.as_deref());
+                if !ranges.insert(range) { continue; }
                 items.push(json!({
-                    "range": self.range(range),
-                    "severity": severity,
-                    "source": diagnostic_source(&self.root,did),
-                    "code": d.rule,
-                    "message": message,
-                    "data": { "jazykDiag": did, "setId": crate::webapi::sets::unqualify(did).0 }
+                    "range": self.range(range), "severity": severity,
+                    "source": diagnostic_source(&self.root,did), "code": d.rule, "message": message,
+                    "data": { "jazykDiag": did, "setId": crate::webapi::sets::unqualify(did).0, "related": location.related }
                 }));
-            }
-            // A prompted proposal whose subject sits nowhere in the documents (a
-            // ratification proposal on a derived fact) anchors at its edit target,
-            // so the question still sits inline where the sentence would land.
-            if !pushed {
-                if let Some(range) = self.prompt_edit_anchor(d, doc) {
-                    items.push(json!({
-                        "range": self.range(range),
-                        "severity": severity,
-                        "source": diagnostic_source(&self.root,did),
-                        "code": d.rule,
-                        "message": message,
-                        "data": { "jazykDiag": did, "setId": crate::webapi::sets::unqualify(did).0 }
-                    }));
-                }
             }
         }
         items
@@ -398,25 +380,9 @@ impl Lsp {
 
     // Where a diagnostic subject anchors inside `doc`, if it does at all.
     fn subject_anchor(&self, subject: &str, doc: &str) -> Option<(usize, usize, usize, usize)> {
-        let resolved = self.store.resolve_id(subject).to_string();
-        if let Some(r) = self.store.graph.requirements.get(&resolved) {
-            if let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) {
-                return Some(self.anchor(doc, &src.quote, "", Some(&src.section)));
-            }
-            return None;
-        }
-        if let Some(e) = self.store.graph.entities.get(&resolved) {
-            let m = e.mentions.iter().find(|m| m.doc == doc)?;
-            return Some(self.anchor(doc, &m.quote, &e.name, Some(&m.section)));
-        }
-        // A section reference subject: "doc.md#/ref".
-        if let Some((sdoc, sec)) = crate::model::split_section_ref(&resolved) {
-            if sdoc == doc {
-                let s = self.store.docs.get(doc)?.sections.get(&sec)?;
-                return Some((s.lines[0], 0, s.lines[0], 0));
-            }
-        }
-        None
+        crate::diagnostic_locations::subject_locations(&self.store, subject)
+            .into_iter().find(|l| l.path == doc)
+            .map(|l| self.anchor(doc, l.quote.as_deref().unwrap_or(""), "", l.section.as_deref()))
     }
 
     // Where a prompted diagnostic's suggested edit anchors inside `doc`: the located
@@ -1839,6 +1805,25 @@ mod tests {
         assert!(applied.contains("publishDiagnostics"), "{}", applied);
         assert!(!applied.contains("Which bound holds?"), "{}", applied);
         crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn criterion_locations_publish_own_and_related_requirement_ranges_once() {
+        let mut store = Store::default();
+        store.graph.requirements.insert("req:one".into(), serde_json::from_value(json!({"statement":"Rule", "entities":[], "source":{"doc":"rules.md","section":"/rules","quote":"Orders complete."}})).unwrap());
+        store.graph.criteria.insert("crit:one".into(), serde_json::from_value(json!({"requirement":"req:one", "statement":"Example", "source":{"doc":"examples.md","section":"/examples","quote":"Returns 200."}})).unwrap());
+        store.graph.diagnostics.insert("diag:one".into(), serde_json::from_value(json!({"rule":"contradiction","severity":"error","subjects":["crit:one","req:one"],"message":"Conflict"})).unwrap());
+        let mut lsp = lsp_at(std::env::temp_dir(), std::env::temp_dir().join("diagnostic-lsp"), store);
+        lsp.overlay.insert("rules.md".into(), "# Rules\n\nOrders complete.\n".into());
+        lsp.overlay.insert("examples.md".into(), "# Examples\n\nReturns 200.\n".into());
+        for doc in ["rules.md", "examples.md"] {
+            let diagnostics = lsp.document_diagnostics(doc);
+            assert_eq!(diagnostics.len(), 1, "{doc}");
+            assert_eq!(diagnostics[0]["range"]["start"]["line"], 2);
+            assert_eq!(diagnostics[0]["data"]["jazykDiag"], "diag:one");
+        }
+        lsp.store.graph.diagnostics.get_mut("diag:one").unwrap().triage = Some("suppressed".into());
+        assert!(lsp.document_diagnostics("rules.md").is_empty());
     }
 
     fn lsp_at(root: std::path::PathBuf, out: std::path::PathBuf, store: Store) -> Lsp {

@@ -246,6 +246,7 @@ pub async fn release(State(st): State<SharedState>, Json(body): Json<Value>) -> 
 
 pub async fn graph(State(st): State<SharedState>) -> Response {
     let store = load_store(&st).await;
+    let locations = crate::diagnostic_locations::locations(&store, &st.proj().root, &st.gs());
     Json(json!({
         "generation": store.status.generation,
         "entities": store.graph.entities,
@@ -255,6 +256,7 @@ pub async fn graph(State(st): State<SharedState>) -> Response {
         "relationships": store.graph.relationships,
         "stateMachines": store.graph.state_machines,
         "diagnostics": store.graph.diagnostics,
+        "diagnosticLocations": locations,
         "redirects": store.graph.redirects,
     }))
     .into_response()

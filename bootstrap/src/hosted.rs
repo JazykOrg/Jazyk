@@ -1112,6 +1112,56 @@ mod tests {
     }
 
     #[test]
+    fn stopped_before_inference_chat_sends_the_next_human_instructions_in_full() {
+        let mut w = workspace("Stopped before inference");
+        let chat = value(&mut w,"POST","/api/chat/sessions",json!({}),&Execution::default());
+        let path = format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap());
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value,Snapshot)>));
+        let checkpoint = saved.clone();
+        let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+            let checkpoint = checkpoint.clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap()+1;
+                capsule["sequence"] = json!(next);
+                let before_model = capsule["frames"].as_array().and_then(|frames|frames.last())
+                    .is_some_and(|frame|frame["boundary"]["phase"] == "before_model");
+                *checkpoint.lock().unwrap() = Some((capsule,files));
+                if before_model { Err("checkpoint-failed: injected loss before inference".into()) }
+                else { Ok(next) }
+            })
+        });
+        let execution = Execution {
+            checkpoint:Some(sink),model:"must-not-run".into(),
+            transport:Some(Arc::new(|_| panic!("A protected pre-inference Stop must not invoke a model"))),
+            ..Default::default()
+        };
+        let stopped = value(&mut w,"POST",&path,json!({"text":"Create the recovery document.","messageId":"original"}),&execution);
+        assert_eq!(stopped["stop"],"suspended");
+        let (capsule,files) = saved.lock().unwrap().clone().unwrap();
+        let mut stopped = Workspace::new(files).unwrap();
+        stopped.stop_recovery(&capsule,&[]).unwrap();
+        let mut stopped = Workspace::new(stopped.snapshot()).unwrap();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let observed = requests.clone();
+        let execution = Execution {
+            model:"followup-fixture".into(),transport:Some(Arc::new(move |body| {
+                observed.lock().unwrap().push(serde_json::from_str(body).unwrap());
+                Ok(model_reply("The earlier request was to create the recovery document."))
+            })),..Default::default()
+        };
+        let instruction = "Do not write any files. Just explain the earlier task.";
+        value(&mut stopped,"POST",&path,json!({"text":instruction,"messageId":"followup"}),&execution);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(),1,"No stopped inference or tool may be replayed");
+        let humans = requests[0]["messages"].as_array().unwrap().iter()
+            .filter(|message|message["role"] == "user")
+            .filter_map(|message|message["content"].as_str()).collect::<Vec<_>>().join("\n");
+        assert!(humans.contains("Create the recovery document."),"{humans}");
+        assert!(humans.contains(instruction),"New instructions vanished from actual provider input: {humans}");
+        assert!(!stopped.snapshot().contains_key("docs/recovery.md"));
+    }
+
+    #[test]
     fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
         for phase in ["saved_model", "before_tool", "after_tool", "finished"] {
             for response_kind in ["completion", "responses"] {

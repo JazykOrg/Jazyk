@@ -437,14 +437,7 @@ fn refresh_context(history: &mut [Value], humans: &[String], instructions: &str)
 // templates refuse a conversation whose roles do not alternate, and a turn that
 // failed mid-way can leave a tool result as the last message.
 fn push_user(history: &mut Vec<Value>, text: String) {
-    if let Some(last) = history.last_mut() {
-        if last["role"] == "user" {
-            let prev = last["content"].as_str().unwrap_or_default().to_string();
-            last["content"] = json!(format!("{}\n\n{}", prev, text));
-            return;
-        }
-    }
-    history.push(json!({"role": "user", "content": text}));
+    harness::push_user_text(history, &text);
 }
 
 // A model error, with the remedy when it reads as a context window too small for

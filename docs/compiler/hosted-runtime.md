@@ -110,6 +110,8 @@ Chat events use the editor's `chat.sessions` and `chat.update` shapes.
 Stopping a protected chat restores its accepted model history from the execution
 checkpoint before saving the conversation. Earlier human requests, assistant
 messages, and completed tool receipts remain available to the next turn.
+A follow-up human message is included in full even when the stopped history ends
+with an earlier human message.
 Unanswered tool calls receive interrupted outcomes. Stop does not invoke a model,
 dispatch a pending tool, or restore staged MCP mutations. The checkpoint frame
 must match the running conversation and its turn identity.

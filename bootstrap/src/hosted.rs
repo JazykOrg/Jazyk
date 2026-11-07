@@ -615,6 +615,18 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
             return Ok(Reply::json(if result["state"] == "failed" {422} else {200},
                 json!({"kind":"workflow","report":result})));
         }
+        if kind == "verify" && request.get("testPaths").is_some() {
+            let paths=match crate::verify::artifacts::parse_paths(&request) {
+                Ok(Some(paths))=>paths,Ok(None)=>unreachable!(),Err(error)=>return Ok(Reply::json(400,json!({"error":error}))),
+            };
+            let result=crate::verify::artifacts::run_workspace(&root(),routed.selector.as_deref(),&paths,&trace(),|project| {
+                Ok(Box::new(crate::inprocess::InProcessRunner::start(project,&llm(),&project.out)?))
+            });
+            return Ok(match result {
+                Ok(report)=>Reply::json(200,json!({"kind":"verify","report":report})),
+                Err(error)=>Reply::json(422,json!({"error":error})),
+            });
+        }
         if matches!(kind, "verify" | "audit" | "gen") {
             let p = match selected() {
                 Ok(p) => p,
@@ -677,7 +689,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     if method == "GET" && route == "/capabilities" {
         return Ok(Reply::json(
             200,
-            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"conversationJobs":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
+            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"conversationJobs":true,"testPaths":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
         ));
     }
     let envelope: Value =

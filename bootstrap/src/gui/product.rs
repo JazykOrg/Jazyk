@@ -41,6 +41,7 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
         "jobs": ["workflow", "build", "compile", "gen", "verify", "audit", "decompile", "benchmark"],
         "agent": agent,
         "chatInputs": agent != "none",
+        "testPaths": true,
         "model": model,
         "rendering": "server",
         "persistence": "disk",

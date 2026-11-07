@@ -27,7 +27,7 @@ export function prepare(input, output, keys = Object.keys(platforms)) {
     if (!key.startsWith('win32')) fs.chmodSync(path.join(pkg,'bin',binary),0o755);
     fs.copyFileSync(path.join(root,'LICENSE'), path.join(pkg,'LICENSE'));
     const [os,cpu] = key.split('-');
-    fs.writeFileSync(path.join(pkg,'package.json'), JSON.stringify({name:`jazyk-${key}`, version:v, description:`Jazyk native distribution for ${key}`,license:'MIT',repository:{type:'git',url:'git+https://github.com/JazykOrg/Jazyk.git'}, os:[os],cpu:[cpu],...(os==='linux'?{libc:['glibc']}:{}),files:['bin/','LICENSE']},null,2));
+    fs.writeFileSync(path.join(pkg,'package.json'), JSON.stringify({name:`jazyk-${key}`, version:v, description:`Jazyk native distribution for ${key}`,license:'MIT',homepage:'https://jazyk.org',repository:{type:'git',url:'git+https://github.com/JazykOrg/Jazyk.git'}, os:[os],cpu:[cpu],...(os==='linux'?{libc:['glibc']}:{}),files:['bin/','LICENSE']},null,2));
     deps[`jazyk-${key}`]=v;
   }
   const main = path.join(output,'jazyk');

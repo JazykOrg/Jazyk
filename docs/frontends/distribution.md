@@ -2,6 +2,7 @@
 
 Jazyk ships as native archives on GitHub Releases and as the `jazyk` npm package.
 Both channels contain the same native build. The npm package is a Node launcher.
+Every npm package declares `https://jazyk.org` as its homepage.
 The editor remains at `jazyk.dev`.
 
 ## Installation

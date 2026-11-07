@@ -17,9 +17,11 @@ test('all distributions pack with exact dependencies, platform gates and verifie
   const manifest=prepare(input,output);
   assert.equal(Object.keys(manifest.sha256).length,6);
   const pkg=JSON.parse(fs.readFileSync(path.join(output,'jazyk/package.json')));
+  assert.equal(pkg.homepage,'https://jazyk.org');
   assert.deepEqual(pkg.optionalDependencies,Object.fromEntries(Object.keys(platforms).map(k=>[`jazyk-${k}`,version()])));
   for(const key of Object.keys(platforms)) {
    const meta=JSON.parse(fs.readFileSync(path.join(output,`jazyk-${key}/package.json`)));
+   assert.equal(meta.homepage,'https://jazyk.org');
    assert.deepEqual(meta.os,[key.split('-')[0]]); assert.deepEqual(meta.cpu,[key.split('-')[1]]);
    if(key.startsWith('linux')) assert.deepEqual(meta.libc,['glibc']);
    const names=execFileSync('tar',['-tf',path.join(output,`jazyk-${key}-${version()}.tgz`)],{encoding:'utf8'});

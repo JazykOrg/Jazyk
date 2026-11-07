@@ -1,3 +1,8 @@
+---
+name: edit-documentation
+description: "Edit prose, requirements, criteria, or intended behavior without implicit compilation."
+requiredCapabilities: "document writes"
+---
 # Edit documentation
 
 Use for prose, requirements, criteria, and intended behavior changes.

@@ -8,30 +8,28 @@ pub const TOOLS: [&str; 2] = ["list_jazyk_skills", "read_jazyk_skill"];
 
 pub struct Skill {
     pub name: &'static str,
-    pub description: &'static str,
-    pub capabilities: &'static str,
     pub source: &'static str,
     pub body: &'static str,
 }
 
 pub const SKILLS: &[Skill] = &[
-    Skill { name: "inspect-project", description: "Inspect project questions, code, docs, reviews, and status without changing them.", capabilities: "read", source: "docs/compiler/skills/agent/inspect-project.md", body: include_str!("../../docs/compiler/skills/agent/inspect-project.md") },
-    Skill { name: "edit-documentation", description: "Edit prose, requirements, criteria, or intended behavior without implicit compilation.", capabilities: "document writes", source: "docs/compiler/skills/agent/edit-documentation.md", body: include_str!("../../docs/compiler/skills/agent/edit-documentation.md") },
-    Skill { name: "change-code", description: "Repair or change code within requirements; update docs first for authorized behavior changes.", capabilities: "source reads and writes, generation recording", source: "docs/compiler/skills/agent/change-code.md", body: include_str!("../../docs/compiler/skills/agent/change-code.md") },
-    Skill { name: "compile", description: "Compile documentation into the semantic graph and resolve reconciliation goals.", capabilities: "compile orchestration or goal loop", source: "docs/compiler/skills/agent/compile.md", body: include_str!("../../docs/compiler/skills/agent/compile.md") },
-    Skill { name: "generate", description: "Implement documented requirements and record deliverables and tests.", capabilities: "generation and source writes", source: "docs/compiler/skills/agent/generate.md", body: include_str!("../../docs/compiler/skills/agent/generate.md") },
-    Skill { name: "bind", description: "Connect existing implementation and test evidence to requirements.", capabilities: "binding", source: "docs/compiler/skills/agent/bind.md", body: include_str!("../../docs/compiler/skills/agent/bind.md") },
-    Skill { name: "verify", description: "Run tests or judge observable criteria and record current evidence.", capabilities: "verification or authorized test execution", source: "docs/compiler/skills/agent/verify.md", body: include_str!("../../docs/compiler/skills/agent/verify.md") },
-    Skill { name: "reverse-compile", description: "Draft documentation from observed implementation and surface intent conflicts.", capabilities: "decompilation or authorized code inspection and drafting", source: "docs/compiler/skills/agent/reverse-compile.md", body: include_str!("../../docs/compiler/skills/agent/reverse-compile.md") },
-    Skill { name: "execute-task", description: "Inspect and execute the requested task under its approval and cost rules.", capabilities: "task execution", source: "docs/compiler/skills/agent/execute-task.md", body: include_str!("../../docs/compiler/skills/agent/execute-task.md") },
-    Skill { name: "recover-workflow", description: "Diagnose failed tools, conflicts, interrupted work, or missing prerequisites.", capabilities: "relevant inspection and repair tools", source: "docs/compiler/skills/agent/recover-workflow.md", body: include_str!("../../docs/compiler/skills/agent/recover-workflow.md") },
-    Skill { name: "publish", description: "Push, publish, or deploy only with explicit authority and verified integration state.", capabilities: "publication integration and authority", source: "docs/compiler/skills/agent/publish.md", body: include_str!("../../docs/compiler/skills/agent/publish.md") },
+    Skill { name: "inspect-project", source: "docs/compiler/skills/agent/inspect-project.md", body: include_str!("../../docs/compiler/skills/agent/inspect-project.md") },
+    Skill { name: "edit-documentation", source: "docs/compiler/skills/agent/edit-documentation.md", body: include_str!("../../docs/compiler/skills/agent/edit-documentation.md") },
+    Skill { name: "change-code", source: "docs/compiler/skills/agent/change-code.md", body: include_str!("../../docs/compiler/skills/agent/change-code.md") },
+    Skill { name: "compile", source: "docs/compiler/skills/agent/compile.md", body: include_str!("../../docs/compiler/skills/agent/compile.md") },
+    Skill { name: "generate", source: "docs/compiler/skills/agent/generate.md", body: include_str!("../../docs/compiler/skills/agent/generate.md") },
+    Skill { name: "bind", source: "docs/compiler/skills/agent/bind.md", body: include_str!("../../docs/compiler/skills/agent/bind.md") },
+    Skill { name: "verify", source: "docs/compiler/skills/agent/verify.md", body: include_str!("../../docs/compiler/skills/agent/verify.md") },
+    Skill { name: "reverse-compile", source: "docs/compiler/skills/agent/reverse-compile.md", body: include_str!("../../docs/compiler/skills/agent/reverse-compile.md") },
+    Skill { name: "execute-task", source: "docs/compiler/skills/agent/execute-task.md", body: include_str!("../../docs/compiler/skills/agent/execute-task.md") },
+    Skill { name: "recover-workflow", source: "docs/compiler/skills/agent/recover-workflow.md", body: include_str!("../../docs/compiler/skills/agent/recover-workflow.md") },
+    Skill { name: "publish", source: "docs/compiler/skills/agent/publish.md", body: include_str!("../../docs/compiler/skills/agent/publish.md") },
 ];
 
 // One line per set, from the project's configuration.
 fn sets_text(workspace: &crate::document_sets::Workspace) -> String {
     if workspace.sets.is_empty() {
-        return "No document sets yet. Add one in the GUI or with `update_project_settings`.".into();
+        return String::new();
     }
     let list = |patterns: &[String]| {
         let shown: Vec<String> = patterns
@@ -76,32 +74,46 @@ fn sets_text(workspace: &crate::document_sets::Workspace) -> String {
 // Both AGENTS.md and MCP initialize call this renderer with the same root.
 pub fn render(root: &Path) -> Result<String, String> {
     let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
-    let skills = SKILLS.iter().map(|s| format!("- `{}`: {}", s.name, s.description))
-        .collect::<Vec<_>>().join("\n");
     let template = mustache::compile_str(TEMPLATE).map_err(|e| format!("invalid agent main template: {e}"))?;
-    template.render_to_string(&json!({"sets":sets_text(&workspace), "skills":skills}))
+    template.render_to_string(&json!({"sets":sets_text(&workspace)}))
         .map_err(|e| format!("cannot render agent main template: {e}"))
 }
 
-pub fn catalog() -> Value {
-    json!({"skills": SKILLS.iter().map(|s| json!({"name":s.name,
-        "description":s.description, "requiredCapabilities":s.capabilities,
-        "source":s.source})).collect::<Vec<_>>(),
-        "note":"Read a skill before its workflow. Availability and authorization come from the serving and its gates, not from reading a skill."})
+fn tool_payload() -> Value {
+    serde_json::from_str(include_str!("../../docs/compiler/goals/prompts/agent-skill-tools.json"))
+        .expect("valid embedded workflow skill tool definitions")
+}
+
+impl Skill {
+    fn metadata(&self) -> Result<Value, String> {
+        let (mut metadata, _) = crate::agent_context::front_matter(self.body)
+            .ok_or_else(|| format!("invalid built-in skill front matter: {}", self.source))?;
+        if metadata["name"] != self.name || !["description", "requiredCapabilities"].iter()
+            .all(|key| metadata[*key].as_str().is_some_and(|s| !s.is_empty())) {
+            return Err(format!("invalid built-in skill metadata: {}", self.source));
+        }
+        metadata["source"] = json!(self.source);
+        Ok(metadata)
+    }
+}
+
+pub fn catalog() -> Result<Value, String> {
+    let skills = SKILLS.iter().map(Skill::metadata).collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({"skills":skills,"note":tool_payload()["note"]}))
 }
 
 pub fn read(name: &str) -> Result<Value, String> {
     let skill = SKILLS.iter().find(|s| s.name == name).ok_or_else(|| format!(
         "unknown Jazyk skill `{name}`; one of {}", SKILLS.iter().map(|s| s.name).collect::<Vec<_>>().join(", ")))?;
-    Ok(json!({"name":skill.name,"description":skill.description,
-        "requiredCapabilities":skill.capabilities,"source":skill.source,"body":skill.body}))
+    let mut reply = skill.metadata()?;
+    reply["body"] = json!(skill.body);
+    Ok(reply)
 }
 
 pub fn tools() -> Vec<Value> {
-    vec![
-        json!({"name":"list_jazyk_skills","description":"List built-in deferred Jazyk workflow skills, their triggers, required capabilities, and source paths. Read-only. No graph or setId needed.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
-        json!({"name":"read_jazyk_skill","description":"Read the exact instructions of one built-in Jazyk workflow skill before using it. A skill grants no new tool, permission, or cost approval. No graph or setId needed.","inputSchema":{"type":"object","properties":{"name":{"type":"string","enum":SKILLS.iter().map(|s|s.name).collect::<Vec<_>>()}},"required":["name"],"additionalProperties":false}}),
-    ]
+    let mut tools = tool_payload()["tools"].as_array().expect("embedded tool list").clone();
+    tools[1]["inputSchema"]["properties"]["name"]["enum"] = json!(SKILLS.iter().map(|s|s.name).collect::<Vec<_>>());
+    tools
 }
 
 #[cfg(test)]
@@ -115,7 +127,8 @@ mod tests {
         for skill in SKILLS {
             let reply = read(skill.name).unwrap();
             assert_eq!(reply["body"], skill.body);
-            assert!(skill.body.starts_with("# "));
+            assert!(crate::agent_context::front_matter(skill.body).unwrap().1.starts_with("# "));
+            assert!(TEMPLATE.contains(&format!("`{}`", skill.name)));
             for token in skill.body.split('`').skip(1).step_by(2) {
                 if token.contains('-') && !token.contains(' ') && !token.contains('/') && !token.contains('*') {
                     assert!(names.contains(token), "unresolved skill reference `{token}` in {}", skill.name);
@@ -124,7 +137,7 @@ mod tests {
         }
         assert!(read("../../secret").unwrap_err().contains("unknown Jazyk skill"));
         assert!(TEMPLATE.contains("{{{sets}}}"));
-        assert!(TEMPLATE.contains("{{{skills}}}"));
+        assert_eq!(catalog().unwrap()["skills"].as_array().unwrap().len(), SKILLS.len());
         assert!(TEMPLATE.contains("Never invent requirements"));
         assert!(TEMPLATE.contains("A docs edit does not authorize"));
     }

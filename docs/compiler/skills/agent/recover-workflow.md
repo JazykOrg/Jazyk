@@ -1,3 +1,8 @@
+---
+name: recover-workflow
+description: "Diagnose failed tools, conflicts, interrupted work, or missing prerequisites."
+requiredCapabilities: "relevant inspection and repair tools"
+---
 # Recover a workflow
 
 Use for failed tools, conflicts, interrupted work, and blocked synchronization.

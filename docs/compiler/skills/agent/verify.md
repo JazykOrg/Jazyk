@@ -1,3 +1,8 @@
+---
+name: verify
+description: "Run tests or judge observable criteria and record current evidence."
+requiredCapabilities: "verification or authorized test execution"
+---
 # Verify behavior
 
 Use for running tests, checking requirements, or judging observable criteria.

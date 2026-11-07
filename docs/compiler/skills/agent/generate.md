@@ -1,3 +1,8 @@
+---
+name: generate
+description: "Implement documented requirements and record deliverables and tests."
+requiredCapabilities: "generation and source writes"
+---
 # Generate a deliverable
 
 Use for implementing documented behavior or recording an owned source repair.

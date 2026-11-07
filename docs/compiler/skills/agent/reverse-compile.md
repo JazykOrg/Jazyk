@@ -1,3 +1,8 @@
+---
+name: reverse-compile
+description: "Draft documentation from observed implementation and surface intent conflicts."
+requiredCapabilities: "decompilation or authorized code inspection and drafting"
+---
 # Reverse compile implementation
 
 Use to document observed implementation or reconcile an authorized code-first

@@ -44,7 +44,17 @@ Before a workflow, call `read_jazyk_skill` with its name below. Use
 `list_jazyk_skills` for the current catalog and required capabilities. These
 built-in skills carry the detailed procedures. Read only the relevant skills.
 
-{{{skills}}}
+- `inspect-project`: Inspect project questions, code, docs, reviews, and status without changing them.
+- `edit-documentation`: Edit prose, requirements, criteria, or intended behavior without implicit compilation.
+- `change-code`: Repair or change code within requirements; update docs first for authorized behavior changes.
+- `compile`: Compile documentation into the semantic graph and resolve reconciliation goals.
+- `generate`: Implement documented requirements and record deliverables and tests.
+- `bind`: Connect existing implementation and test evidence to requirements.
+- `verify`: Run tests or judge observable criteria and record current evidence.
+- `reverse-compile`: Draft documentation from observed implementation and surface intent conflicts.
+- `execute-task`: Inspect and execute the requested task under its approval and cost rules.
+- `recover-workflow`: Diagnose failed tools, conflicts, interrupted work, or missing prerequisites.
+- `publish`: Push, publish, or deploy only with explicit authority and verified integration state.
 
 For a mixed request, read the relevant skills and order authorized work as
 needed: docs → graph → implementation → evidence. Do not require unrelated
@@ -55,7 +65,12 @@ state the concrete missing capability once. With no Jazyk MCP connection, use
 
 ### Project configuration
 
+{{#sets}}
 {{{sets}}}
+{{/sets}}
+{{^sets}}
+No document sets yet. Add one in the GUI or with `update_project_settings`.
+{{/sets}}
 
 `.jazyk/jazyk.toml` is authoritative. Use `list_document_sets` when a set-local
 operation needs an ID. Do not guess an ambiguous set or reuse IDs across sets.

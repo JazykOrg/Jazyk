@@ -1,3 +1,8 @@
+---
+name: compile
+description: "Compile documentation into the semantic graph and resolve reconciliation goals."
+requiredCapabilities: "compile orchestration or goal loop"
+---
 # Compile documentation
 
 Use when the user asks to compile, reconcile, or build the semantic graph.

@@ -2051,7 +2051,7 @@ impl McpServer {
                 return Err((-32601, "workflow skills are not served by the dedicated task runtime".into()));
             }
             let value = if params["name"] == "list_jazyk_skills" {
-                crate::agent_workflows::catalog()
+                crate::agent_workflows::catalog().map_err(|e| (-32603, e))?
             } else {
                 let name = params["arguments"]["name"].as_str().ok_or((-32602, "name is required".into()))?;
                 crate::agent_workflows::read(name).map_err(|e| (-32602, e))?
@@ -4625,7 +4625,7 @@ mod tests {
             expected.extend(LIFECYCLE);
             expected.push("project_context");
             expected.extend(crate::agent_workflows::TOOLS);
-            assert_eq!(names.len(), count + 1, "{kind}");
+            assert_eq!(names.len(), count + 1 + crate::agent_workflows::TOOLS.len(), "{kind}");
             assert_eq!(names.into_iter().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect(), "{kind}");
         }
         // Mixed batches expose the union, rather than the first goal's slice.
@@ -4642,7 +4642,7 @@ mod tests {
         let mut expected = toolset_for_kinds(&["declare-edges"]);
         expected.extend(LIFECYCLE);
         expected.push("project_context");
-            expected.extend(crate::agent_workflows::TOOLS);
+        expected.extend(crate::agent_workflows::TOOLS);
         assert_eq!(names.iter().cloned().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect());
         assert!(!names.iter().any(|name| name == "upsert_entity"));
         let reply = server.handle("tools/call", &json!({"name":"upsert_entity","arguments":{"name":"Hidden"}})).unwrap();
@@ -4973,7 +4973,7 @@ mod tests {
             }
             let listed = server.handle("tools/call", &json!({"name":"list_jazyk_skills","arguments":{}})).unwrap();
             let listed: Value = serde_json::from_str(listed["content"][0]["text"].as_str().unwrap()).unwrap();
-            assert_eq!(listed, crate::agent_workflows::catalog());
+            assert_eq!(listed, crate::agent_workflows::catalog().unwrap());
             for skill in crate::agent_workflows::SKILLS {
                 let reply = server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":skill.name}})).unwrap();
                 let reply: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();

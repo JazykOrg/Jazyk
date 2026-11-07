@@ -1,3 +1,8 @@
+---
+name: publish
+description: "Push, publish, or deploy only with explicit authority and verified integration state."
+requiredCapabilities: "publication integration and authority"
+---
 # Publish changes
 
 Use for an explicitly requested push, publication, release, or deployment.

@@ -34,7 +34,10 @@ replace the conversational policy with a separate copy.
 ## Deferred skills
 
 Built-in workflow skills live in [`skills/agent/`](../compiler/skills/agent/).
-They are embedded into the compiler. `list_jazyk_skills` lists their stable names,
+They are embedded into the compiler. Each skill's YAML front matter holds its
+name, description, and required capabilities. The main template contains the
+reviewable routing table. Tool descriptions live in
+[`agent-skill-tools.json`](../compiler/goals/prompts/agent-skill-tools.json). `list_jazyk_skills` lists their stable names,
 descriptions, required capabilities, and source paths. `read_jazyk_skill` returns
 one exact Markdown body. Both tools are read-only, require no document set or
 graph, and remain available during a batch and in restricted servings.

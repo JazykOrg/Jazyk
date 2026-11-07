@@ -1,3 +1,8 @@
+---
+name: bind
+description: "Connect existing implementation and test evidence to requirements."
+requiredCapabilities: "binding"
+---
 # Bind existing implementation
 
 Use when asked to connect existing code to documented requirements and criteria.

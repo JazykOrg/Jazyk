@@ -1,3 +1,8 @@
+---
+name: execute-task
+description: "Inspect and execute the requested task under its approval and cost rules."
+requiredCapabilities: "task execution"
+---
 # Execute a task
 
 When the user requests task inspection or execution, read task_context and choose

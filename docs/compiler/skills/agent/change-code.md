@@ -1,3 +1,8 @@
+---
+name: change-code
+description: "Repair or change code within requirements; update docs first for authorized behavior changes."
+requiredCapabilities: "source reads and writes, generation recording"
+---
 # Change code
 
 Use for bug fixes, refactors, and features in an existing deliverable.

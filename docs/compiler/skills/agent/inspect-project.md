@@ -1,3 +1,8 @@
+---
+name: inspect-project
+description: "Inspect project questions, code, docs, reviews, and status without changing them."
+requiredCapabilities: "read"
+---
 # Inspect a project
 
 Use for project questions, explanations, reviews, status, and change impact.

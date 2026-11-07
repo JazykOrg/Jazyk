@@ -106,6 +106,7 @@ pub(crate) fn released(out: &std::path::Path, task: &str) {
 }
 
 /// Preserve accepted chat context and release claims without running MCP state.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stop_owned(value: &Value) -> Result<(), String> {
     if !crate::vfs::is_scoped() { return Err("Stop recovery requires a scoped workspace".into()); }
     let state = decode(value)?;

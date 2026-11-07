@@ -827,6 +827,33 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     })
 }
 
+fn verification_next(
+    failed: u64,
+    runner_failed: u64,
+    rows: &[Value],
+    skipped: &[Value],
+    document_findings: bool,
+    generated_candidate_failure: bool,
+) -> &'static str {
+    if failed > 0 && document_findings {
+        "a failing row has an open document diagnostic: surface it to the document author before changing the deliverable or test; do not silently rewrite prose"
+    } else if failed > 0 && generated_candidate_failure {
+        "a generated candidate failed current checks: compare the documented obligation, implementation and test. If the implementation or test is wrong, repair through the owning entity's permitted generation tools, record_generation and run_tests again; otherwise report the finding when repair tools are unavailable. A document contradiction needs a diagnostic and an author decision, never silent prose changes. This guidance does not schedule automatic regeneration"
+    } else if failed > 0 {
+        "a failing row names its requirement: compare its documented obligation, current implementation and test, then follow its status and permitted repair tools. Test failure alone does not prove the documents are wrong; a document contradiction needs a diagnostic and an author decision"
+    } else if runner_failed > 0 {
+        "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
+    } else if rows.iter().any(|row| row["verdict"] == "none") {
+        "some cases remain unverified; inspect their report evidence before retrying"
+    } else if !skipped.is_empty() {
+        "skipped rows say why; llm rows need begin_verification and record_verdict"
+    } else if rows.is_empty() {
+        "no selected tests ran; inspect the target and its bindings"
+    } else {
+        "all selected rows pass"
+    }
+}
+
 // The `run_tests` tool: the build once, then every selected programmatic row, verdicts
 // recorded as a side effect. No model anywhere, so any toolset can serve it; `llm` rows
 // are listed as skipped and go through record_verdict.
@@ -1036,6 +1063,13 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
                 .collect::<Vec<Value>>()
         })
         .collect();
+    // Use the current landed ledger after all verdict imports/legacy marks.
+    // This changes guidance, not derived statuses or goal scheduling.
+    let current = Ledger::load(&store.out);
+    let generated_candidate_failure = rows.iter().filter(|row| row["verdict"] == "fail")
+        .filter_map(|row| row["requirement"].as_str())
+        .filter_map(|rid| current.requirements.get(rid).map(|row| (rid, row)))
+        .any(|(rid, row)| status_of(store, rid, row, gs).1 == "criteria-failing-after-generation");
     let mut reply = json!({
         "runs": runs,
         "passed": passed,
@@ -1043,21 +1077,7 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
         "runnerFailed": runner_failed,
         "rows": rows,
         "skipped": skipped,
-        "next": if failed > 0 && !doc_diags.is_empty() {
-            "a failing row names its requirement; an open diagnostic names its statement, so the documents themselves may be wrong: surface it to the document author before rewriting the deliverable or the test"
-        } else if failed > 0 {
-            "a failing row names its requirement; when its status reads failing (implementing files exist), it is a finding for the author that the failing-binding check files, not a row to regenerate; otherwise fix the deliverable or the test, then run_tests again"
-        } else if runner_failed > 0 {
-            "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
-        } else if rows.iter().any(|row| row["verdict"] == "none") {
-            "some cases remain unverified; inspect their report evidence before retrying"
-        } else if !skipped.is_empty() {
-            "skipped rows say why; llm rows need begin_verification and record_verdict"
-        } else if rows.is_empty() {
-            "no selected tests ran; inspect the target and its bindings"
-        } else {
-            "all selected rows pass"
-        }
+        "next": verification_next(failed, runner_failed, &rows, &skipped, !doc_diags.is_empty(), generated_candidate_failure)
     });
     if skipped.iter().any(|r| r["pendingCi"] == true) {
         reply["pendingCi"] = json!(true);
@@ -1309,6 +1329,27 @@ pub fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generated_candidate_failure_guidance_permits_guarded_repair_without_rescheduling() {
+        let next = verification_next(1, 0, &[], &[], false, true);
+        assert!(next.contains("generated candidate"));
+        assert!(next.contains("owning entity's permitted generation tools"));
+        assert!(next.contains("record_generation and run_tests"));
+        assert!(next.contains("does not schedule automatic regeneration"));
+        assert!(!next.contains("not a row to regenerate"));
+    }
+
+    #[test]
+    fn document_diagnostic_guidance_takes_priority_over_candidate_repair() {
+        let next = verification_next(1, 0, &[], &[], true, true);
+        assert!(next.contains("document author") && next.contains("do not silently rewrite prose"));
+        assert!(!next.contains("record_generation"));
+        let runner = verification_next(0, 1, &[], &[], false, false);
+        assert!(runner.contains("never judged") && runner.contains("fix the runner"));
+        let pass = verification_next(0, 0, &[json!({"verdict":"pass"})], &[], false, false);
+        assert_eq!(pass, "all selected rows pass");
+    }
+
     #[test]
     fn explicitly_selected_unbound_requirement_cannot_report_all_passed() {
         let _scope = crate::vfs::Scope::enter(&Default::default());

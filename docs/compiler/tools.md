@@ -984,8 +984,12 @@ same document writer as the editor. ACP document edits use the editor sink when
 one is attached. Normal document saves dirty the affected sections for the next
 build. Editing an identified compiled fact uses the existing dual-write tools.
 
-General questions need no project discovery. The conversational contract is
-embedded from `goals/prompts/chat-conversation.md`. Detailed lifecycle packages
+General questions need no project discovery. The conversational policy is
+rendered from `goals/prompts/agent-main.mustache`, also used in `AGENTS.md`.
+`list_jazyk_skills` and `read_jazyk_skill` expose the built-in
+[workflow skills](../frontends/agent-workflows.md). They are read-only and require
+no graph or set ID. A readable skill does not grant its required capabilities.
+Detailed lifecycle packages
 apply to requested lifecycle work. A document edit does not authorize compilation,
 generation, task execution, or a workflow release. A tool repair hint grants no
 new authority.

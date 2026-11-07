@@ -1,3 +1,5 @@
+# Execute a task
+
 When the user requests task inspection or execution, read task_context and choose
 tasks by name and description. Reuse existing tasks. General questions and prose
 document edits do not require task_context and do not authorize execution.

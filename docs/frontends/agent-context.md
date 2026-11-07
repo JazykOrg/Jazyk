@@ -7,6 +7,9 @@ so a project's own conventions reach every agent that works on it. Jazyk also
 keeps one section of the project's `AGENTS.md` current, so every other agent
 learns that the project is a jazyk project and how to work with it.
 
+See [agent workflows](./agent-workflows.md) for the shared policy, skill catalog,
+and request routing.
+
 ## Layers
 
 A session's context comes from layers. A later layer overrides an earlier one by
@@ -186,12 +189,12 @@ Jazyk keeps one marked section in the project's `AGENTS.md`:
 <!-- JAZYK:END -->
 ```
 
-The text between the markers is the
-[project agents payload](../compiler/goals/prompts/project-agents.md) with the
-project's document sets filled in. It tells any agent that this is a jazyk
-project, which tools to use, and what jazyk manages. It holds no workflow: the
-jazyk serving's instructions, each `begin_*` reply, and each tool description
-carry that, and the section says they take precedence.
+Immediately after the opening marker, a Markdown comment identifies Jazyk as
+the writer and names the config opt-out. The remaining text is the shared
+[main policy template](../compiler/goals/prompts/agent-main.mustache), rendered
+with the project's document sets. MCP, ACP, and Cloud use the same policy.
+[Workflow skills](./agent-workflows.md) carry procedures loaded on demand.
+Active `begin_*` packages and tool gates supply the current scope and evidence.
 
 ### When it is written
 

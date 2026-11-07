@@ -7,6 +7,52 @@ description: >-
   node shapes are referenced from graph.json. Every call is validated by the graph
   store's gates when staged; a rejection is a toolError
 definitions:
+  listJazykSkillsRequest:
+    description: List built-in workflow skills without selecting a document set
+    type: object
+    properties: {}
+    additionalProperties: false
+  jazykWorkflowSkill:
+    type: object
+    required: [name, description, requiredCapabilities, source]
+    properties:
+      name:
+        type: string
+      description:
+        type: string
+      requiredCapabilities:
+        type: string
+        description: Capabilities needed to perform the workflow, not granted by reading it
+      source:
+        type: string
+        description: Reviewable embedded Markdown source path
+      body:
+        type: string
+        description: Exact embedded Markdown, present in a read reply
+    additionalProperties: false
+  listJazykSkillsResponse:
+    type: object
+    required: [skills, note]
+    properties:
+      skills:
+        type: array
+        items:
+          $ref: '#/definitions/jazykWorkflowSkill'
+      note:
+        type: string
+    additionalProperties: false
+  readJazykSkillRequest:
+    description: Read one named built-in workflow skill without graph or set state
+    type: object
+    required: [name]
+    properties:
+      name:
+        type: string
+    additionalProperties: false
+  readJazykSkillResponse:
+    allOf:
+      - $ref: '#/definitions/jazykWorkflowSkill'
+      - required: [body]
   toolError:
     description: A rejected call. Names the violated rule and how to repair the call
     type: object

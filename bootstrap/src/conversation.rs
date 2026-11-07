@@ -308,8 +308,8 @@ pub fn remove(id: &str) -> bool {
 
 // The chat serving for one conversation, as a native chat session gets it: `chat`
 // mode, ephemeral, no build token. A reader conversation gets the `graph` serving
-// with the read tools alone and a short instruction block instead, so the prompt
-// fits a small model's window. Answers the serving, its tools in the shape the loop
+// with read tools, deferred workflow skills, and explicit read-only capabilities.
+// Both profiles use the same main policy. Answers the serving, its tools in the shape the loop
 // hands the model, and its instructions.
 fn open_serving(reader: bool) -> Result<(McpServer, Vec<GenericTool>, String, crate::agent_context::Extras), String> {
     let project = crate::document_sets::Workspace::load(&crate::portable::root())

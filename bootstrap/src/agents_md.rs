@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub const BEGIN: &str = "<!-- JAZYK:BEGIN -->";
 pub const END: &str = "<!-- JAZYK:END -->";
-const PAYLOAD: &str = include_str!("../../docs/compiler/goals/prompts/project-agents.md");
+const NOTICE: &str = "<!-- Automatically updated by Jazyk. To opt out, set [agents] block = false in .jazyk/jazyk.toml. -->";
 pub const AGENTS: &str = "AGENTS.md";
 // The files that get the import, when they exist.
 const IMPORTERS: &[&str] = &["CLAUDE.md", ".claude/CLAUDE.md", "GEMINI.md"];
@@ -68,58 +68,13 @@ fn eol(text: &str) -> &'static str {
 }
 
 fn block(inner: &str, eol: &str) -> String {
-    let body: Vec<&str> = inner.trim_end().lines().collect();
+    let body: Vec<&str> = std::iter::once(NOTICE).chain(inner.trim_end().lines()).collect();
     format!("{BEGIN}{eol}{}{eol}{END}", body.join(eol))
 }
 
-// One line per set, from the project's configuration.
-fn sets_text(workspace: &crate::document_sets::Workspace) -> String {
-    if workspace.sets.is_empty() {
-        return "No document sets yet. Add one in the GUI or with `update_project_settings`.".into();
-    }
-    let list = |patterns: &[String]| {
-        let shown: Vec<String> = patterns
-            .iter()
-            .filter(|p| !p.starts_with('!'))
-            .map(|p| format!("`{p}`"))
-            .collect();
-        let excluded = patterns.iter().filter(|p| p.starts_with('!')).count();
-        let mut s = if shown.is_empty() {
-            "none".to_string()
-        } else {
-            shown.join(", ")
-        };
-        if excluded > 0 {
-            s.push_str(&format!(
-                " ({excluded} exclusion{})",
-                if excluded == 1 { "" } else { "s" }
-            ));
-        }
-        s
-    };
-    let mut lines = vec!["Document sets:".to_string(), String::new()];
-    for set in &workspace.sets {
-        let mut line = format!("- `{}` ({}): docs {}", set.id, set.name.trim(), list(&set.docs));
-        if !set.roots.is_empty() {
-            line.push_str(&format!(", roots {}", list(&set.roots)));
-        }
-        line.push_str(&format!(
-            ", source {}",
-            if set.source.is_empty() {
-                "none".to_string()
-            } else {
-                list(&set.source)
-            }
-        ));
-        lines.push(line);
-    }
-    lines.join("\n")
-}
-
-// The section's text for this project, without the markers.
+// The shared conversational policy, without managed-file metadata.
 pub fn render(root: &Path) -> Result<String, String> {
-    let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
-    Ok(PAYLOAD.replace("{SETS}", &sets_text(&workspace)))
+    crate::agent_workflows::render(root)
 }
 
 // `[agents] block` in jazyk.toml; true when unset or unreadable.
@@ -431,7 +386,7 @@ mod tests {
         let out = sync(root);
         assert_eq!(out.changed, vec!["created AGENTS.md with the jazyk section"]);
         let text = std::fs::read_to_string(root.join(AGENTS)).unwrap();
-        assert!(text.starts_with(BEGIN));
+        assert!(text.starts_with(&format!("{BEGIN}\n{NOTICE}\n")));
         assert!(text.trim_end().ends_with(END));
         assert!(text.contains("- `ds_main` (Main): docs `docs/**/*.md` (1 exclusion), roots `docs/main.md`, source `src/**`"));
         assert!(!text.contains("{SETS}"));
@@ -514,7 +469,7 @@ mod tests {
         assert!(out.changed.contains(&"added an AGENTS.md import to .claude/CLAUDE.md".to_string()));
         assert_eq!(
             std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
-            format!("# Claude\n\n{BEGIN}\n@AGENTS.md\n{END}\n")
+            format!("# Claude\n\n{BEGIN}\n{NOTICE}\n@AGENTS.md\n{END}\n")
         );
         assert!(std::fs::read_to_string(root.join(".claude/CLAUDE.md")).unwrap().contains("\n@../AGENTS.md\n"));
         assert_eq!(std::fs::read_to_string(root.join("GEMINI.md")).unwrap(), "See @./AGENTS.md for more.\n");

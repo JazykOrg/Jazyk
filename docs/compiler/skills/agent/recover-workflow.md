@@ -1,0 +1,18 @@
+# Recover a workflow
+
+Use for failed tools, conflicts, interrupted work, and blocked synchronization.
+
+- Inspect the actual error, active batch or run, current files, and returned
+  repair. A failed write is not saved work. A stale hash needs a fresh read.
+- Repair the named failure within the authorized scope. A suggested lifecycle
+  does not authorize compilation, generation, task execution, or publication.
+- Preserve successful commits, completed evidence, and active ownership. Resume
+  an existing recoverable run instead of repeating uncertain external actions.
+- If requirements are ambiguous, surface a diagnostic or ask for the concrete
+  missing decision. Do not settle a product choice silently in code.
+- A missing capability, credential, release, or approval is a blocker. Name it
+  once and stop dependent actions. Do not try unrelated lifecycles to evade it.
+- Use `report_feedback` for wrong or confusing Jazyk instructions, tools, or
+  errors. It writes local feedback, transmits nothing, and does not resolve the
+  work or replace a diagnostic.
+- Report the failure, what actually landed, and the exact remaining prerequisite.

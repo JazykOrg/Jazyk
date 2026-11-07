@@ -169,6 +169,14 @@ it. An agent that speaks MCP only over HTTP gets the same serving over
 [MCP over HTTP](#mcp-over-http) instead; the choice is made per agent from its
 `initialize` reply ([worker sessions](./acp.md#worker-sessions)).
 
+## Workflow skills
+
+Every serving except the dedicated task runtime exposes `list_jazyk_skills` and
+`read_jazyk_skill`. They return the shared built-in workflow instructions without
+opening a batch or changing state. The [main policy](./agent-workflows.md) is the
+same template used for `AGENTS.md`, ACP, and Cloud chat. Capabilities and active
+packages constrain what the agent can do.
+
 ## Agent setup
 
 Every coding agent that reads MCP configuration can run jazyk's tools without the

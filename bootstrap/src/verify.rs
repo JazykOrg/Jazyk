@@ -1,3 +1,4 @@
+pub mod artifacts;
 use crate::vfs::VPathExt;
 // Verification: run the tests the ledger records and feed verdicts back. Status is
 // derived, never stored, from byte hashes and current Source membership. Mirrors
@@ -274,6 +275,8 @@ pub fn pending(
 pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap<String, Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = std::collections::BTreeMap::new();
+    let project_root=crate::project::find_root(&store.out);
+    let project_path=|test:&crate::gen::TestRef| project_root.as_ref().and_then(|root| artifact_path(&store.out,gs,test).strip_prefix(root).ok().map(|path|path.to_string_lossy().replace('\\',"/")));
     for rid in store.graph.requirements.keys() {
         let entry = match ledger.requirements.get(rid) {
             Some(row) => {
@@ -283,6 +286,7 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
                     "reason": reason,
                     "repair": repair_for(&status, &reason, rid, &row.entity),
                     "kind": row.test.kind,
+                    "artifactPath": project_path(&row.test),
                     "label": row.test.label,
                     "name": row.test.name,
                     "run": row.test.run,
@@ -294,6 +298,7 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
                     "criteria": row.tests.iter().map(|(cid, ct)| (cid.clone(), json!({
                         "name": ct.test.name,
                         "artifact": ct.test.artifact,
+                        "path": project_path(&ct.test),
                         "kind": ct.test.kind,
                         "verdict": ct.verdict,
                         "lastRun": ct.last_run,
@@ -827,6 +832,66 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     })
 }
 
+// Report existing task evidence separately from selected ledger verdicts.
+// Atomic case identities stay exact; oversized/excess entries are counted only.
+fn suite_summary(runs: &[Value]) -> Value {
+    let (mut passed, mut failed, mut skipped, mut other, mut unsuccessful) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
+    let (mut bytes, mut omitted) = (2usize, 0u64);
+    let mut failures = Vec::new();
+    for run in runs {
+        if run["state"] != "succeeded" {
+            unsuccessful += 1;
+        }
+        for case in run["tests"].as_array().into_iter().flatten() {
+            match case["status"].as_str() {
+                Some("passed") => passed += 1,
+                Some("skipped") => skipped += 1,
+                Some("failed") => {
+                    failed += 1;
+                    let failure = json!({"runId":run["id"],"task":run["task"],"identity":case["identity"],"status":case["status"],"report":case["report"]});
+                    let size = failure.to_string().len() + usize::from(!failures.is_empty());
+                    if failures.len() < 20 && bytes.saturating_add(size) <= 32 * 1024 {
+                        bytes += size;
+                        failures.push(failure);
+                    } else {
+                        omitted += 1;
+                    }
+                }
+                _ => other += 1,
+            }
+        }
+    }
+    json!({"passedCases":passed,"failedCases":failed,"skippedCases":skipped,"otherCases":other,"unsuccessfulRuns":unsuccessful,"failures":failures,"omittedFailures":omitted})
+}
+
+fn verification_next(
+    failed: u64,
+    runner_failed: u64,
+    rows: &[Value],
+    skipped: &[Value],
+    document_findings: bool,
+    generated_candidate_failure: bool,
+) -> &'static str {
+    if failed > 0 && document_findings {
+        "a failing row has an open document diagnostic: surface it to the document author before changing the deliverable or test; do not silently rewrite prose"
+    } else if failed > 0 && generated_candidate_failure {
+        "a generated candidate failed current checks: compare the documented obligation, implementation and test. If the implementation or test is wrong, repair through the owning entity's permitted generation tools, record_generation and run_tests again; otherwise report the finding when repair tools are unavailable. A document contradiction needs a diagnostic and an author decision, never silent prose changes. This guidance does not schedule automatic regeneration"
+    } else if failed > 0 {
+        "a failing row names its requirement: compare its documented obligation, current implementation and test, then follow its status and permitted repair tools. Test failure alone does not prove the documents are wrong; a document contradiction needs a diagnostic and an author decision"
+    } else if runner_failed > 0 {
+        "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
+    } else if rows.iter().any(|row| row["verdict"] == "none") {
+        "some cases remain unverified; inspect their report evidence before retrying"
+    } else if !skipped.is_empty() {
+        "skipped rows say why; llm rows need begin_verification and record_verdict"
+    } else if rows.is_empty() {
+        "no selected tests ran; inspect the target and its bindings"
+    } else {
+        "all selected rows pass"
+    }
+}
+
 // The `run_tests` tool: the build once, then every selected programmatic row, verdicts
 // recorded as a side effect. No model anywhere, so any toolset can serve it; `llm` rows
 // are listed as skipped and go through record_verdict.
@@ -1036,29 +1101,28 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
                 .collect::<Vec<Value>>()
         })
         .collect();
+    // Use the current landed ledger after all verdict imports/legacy marks.
+    // This changes guidance, not derived statuses or goal scheduling.
+    let current = Ledger::load(&store.out);
+    let generated_candidate_failure = rows.iter().filter(|row| row["verdict"] == "fail")
+        .filter_map(|row| row["requirement"].as_str())
+        .filter_map(|rid| current.requirements.get(rid).map(|row| (rid, row)))
+        .any(|(rid, row)| status_of(store, rid, row, gs).1 == "criteria-failing-after-generation");
     let mut reply = json!({
         "runs": runs,
+        "suite": suite_summary(&runs),
         "passed": passed,
         "failed": failed,
         "runnerFailed": runner_failed,
         "rows": rows,
         "skipped": skipped,
-        "next": if failed > 0 && !doc_diags.is_empty() {
-            "a failing row names its requirement; an open diagnostic names its statement, so the documents themselves may be wrong: surface it to the document author before rewriting the deliverable or the test"
-        } else if failed > 0 {
-            "a failing row names its requirement; when its status reads failing (implementing files exist), it is a finding for the author that the failing-binding check files, not a row to regenerate; otherwise fix the deliverable or the test, then run_tests again"
-        } else if runner_failed > 0 {
-            "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
-        } else if rows.iter().any(|row| row["verdict"] == "none") {
-            "some cases remain unverified; inspect their report evidence before retrying"
-        } else if !skipped.is_empty() {
-            "skipped rows say why; llm rows need begin_verification and record_verdict"
-        } else if rows.is_empty() {
-            "no selected tests ran; inspect the target and its bindings"
-        } else {
-            "all selected rows pass"
-        }
+        "next": verification_next(failed, runner_failed, &rows, &skipped, !doc_diags.is_empty(), generated_candidate_failure)
     });
+    if !rows.is_empty() && skipped.is_empty() && rows.iter().all(|row| row["verdict"] == "pass")
+        && (reply["suite"]["failedCases"].as_u64().unwrap_or(0) > 0 || reply["suite"]["unsuccessfulRuns"].as_u64().unwrap_or(0) > 0)
+    {
+        reply["next"] = json!("all selected rows pass, but the executed suite has failed cases or an unsuccessful run; inspect suite.failures and run evidence before claiming whole-suite success. No owner is inferred for an unbound case");
+    }
     if skipped.iter().any(|r| r["pendingCi"] == true) {
         reply["pendingCi"] = json!(true);
         reply["pending"] = json!(skipped.iter().filter(|r| r["pendingCi"] == true).collect::<Vec<_>>());
@@ -1310,6 +1374,57 @@ pub fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn suite_failure_summary_counts_unselected_cases_without_inventing_owners() {
+        let mut tests = (0..25).map(|n| json!({"identity":format!("OtherSuite::case_{n}"),"status":"failed","report":"reports/other.xml"})).collect::<Vec<_>>();
+        tests.push(json!({"identity":"selected","status":"passed"}));
+        tests.push(json!({"identity":"skipped","status":"skipped"}));
+        let summary = suite_summary(&[json!({"id":"run-1","task":"shared-suite","state":"failed","tests":tests})]);
+        assert_eq!(summary["passedCases"], 1);
+        assert_eq!(summary["failedCases"], 25);
+        assert_eq!(summary["skippedCases"], 1);
+        assert_eq!(summary["unsuccessfulRuns"], 1);
+        assert_eq!(summary["failures"].as_array().unwrap().len(), 20);
+        assert_eq!(summary["omittedFailures"], 5);
+        assert_eq!(summary["failures"][0]["identity"], "OtherSuite::case_0");
+        assert!(summary["failures"][0].get("owner").is_none());
+        assert!(summary["failures"][0].get("requirement").is_none());
+    }
+
+    #[test]
+    fn suite_failure_summary_keeps_atomic_identities_and_counts_oversized_entries() {
+        let summary = suite_summary(&[json!({"id":"run-1","task":"shared-suite","state":"failed","tests":[
+            {"identity":"x".repeat(40_000),"status":"failed","report":"reports/a.xml"},
+            {"identity":"Exact::case","status":"failed","report":"reports/b.xml"}
+        ]})]);
+        assert_eq!(summary["failedCases"], 2);
+        assert_eq!(summary["omittedFailures"], 1);
+        assert_eq!(summary["failures"].as_array().unwrap().len(), 1);
+        assert_eq!(summary["failures"][0]["identity"], "Exact::case");
+        assert!(summary["failures"].to_string().len() < 32 * 1024);
+    }
+
+    #[test]
+    fn generated_candidate_failure_guidance_permits_guarded_repair_without_rescheduling() {
+        let next = verification_next(1, 0, &[], &[], false, true);
+        assert!(next.contains("generated candidate"));
+        assert!(next.contains("owning entity's permitted generation tools"));
+        assert!(next.contains("record_generation and run_tests"));
+        assert!(next.contains("does not schedule automatic regeneration"));
+        assert!(!next.contains("not a row to regenerate"));
+    }
+
+    #[test]
+    fn document_diagnostic_guidance_takes_priority_over_candidate_repair() {
+        let next = verification_next(1, 0, &[], &[], true, true);
+        assert!(next.contains("document author") && next.contains("do not silently rewrite prose"));
+        assert!(!next.contains("record_generation"));
+        let runner = verification_next(0, 1, &[], &[], false, false);
+        assert!(runner.contains("never judged") && runner.contains("fix the runner"));
+        let pass = verification_next(0, 0, &[json!({"verdict":"pass"})], &[], false, false);
+        assert_eq!(pass, "all selected rows pass");
+    }
+
+    #[test]
     fn explicitly_selected_unbound_requirement_cannot_report_all_passed() {
         let _scope = crate::vfs::Scope::enter(&Default::default());
         let out = std::path::Path::new("/project/.jazyk");
@@ -1397,7 +1512,7 @@ mod tests {
     use crate::gen::{mark as gen_mark, test_name, GenSettings};
     use crate::model::*;
 
-    fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
+    pub(super) fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
         let mut s = Store {
             out: out.to_path_buf(),
             ..Default::default()
@@ -1519,7 +1634,7 @@ mod tests {
         );
     }
 
-    fn multi_llm_fixture(out: &std::path::Path) -> (Store, GenSettings) {
+    pub(super) fn multi_llm_fixture(out: &std::path::Path) -> (Store, GenSettings) {
         let (mut store, gs) = fixture(out);
         let mut ledger = Ledger::load(out);
         let row = ledger.requirements.get_mut("req:shop-1").unwrap();

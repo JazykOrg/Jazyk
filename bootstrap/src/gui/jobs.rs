@@ -81,6 +81,7 @@ pub enum JobKind {
     Verify {
         targets: Vec<String>,
         test_kind: Option<String>,
+        test_paths: Option<Vec<String>>,
         force: bool,
     },
     Audit,
@@ -127,9 +128,14 @@ impl JobKind {
             JobKind::Verify {
                 targets,
                 test_kind,
+                test_paths,
                 force,
             } => {
-                json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force })
+                {
+                    let mut value=json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force });
+                    if let Some(paths)=test_paths {value["testPaths"]=json!(paths);}
+                    value
+                }
             }
             JobKind::Audit => json!({ "kind": "audit" }),
             JobKind::Decompile { scopes } => json!({ "kind": "decompile", "scopes": scopes }),
@@ -586,7 +592,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             }
             if !trace.is_cancelled() && !crate::gen::Ledger::load(&st.out).requirements.is_empty() {
                 trace.line("build", "review");
-                let verify = JobKind::Verify { targets: vec![], test_kind: None, force: false };
+                let verify = JobKind::Verify { targets: vec![], test_kind: None, test_paths: None, force: false };
                 steps.push(json!({"step": "review", "result": execute(st, &verify, trace)?}));
             }
             Ok(json!({ "steps": steps }))
@@ -606,8 +612,14 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         JobKind::Verify {
             targets,
             test_kind,
+            test_paths,
             force,
         } => {
+            if let Some(paths)=test_paths {
+                return crate::verify::artifacts::run_workspace(&st.root,st.proj().set_id.as_deref(),paths,trace,|project| {
+                    Ok(Box::new(crate::acp::runner::AcpRunner::start(project,&st.llm(),&project.out)?))
+                });
+            }
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
             let store = crate::store::Store::load(&st.out);
             crate::verify::run_all(
@@ -699,7 +711,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
     }
     let tasks_only = body["kind"] == "workflow" && crate::workflow::parse(&body["steps"])
         .is_ok_and(|steps| steps.iter().all(|s| matches!(s, crate::workflow::Step::Task { .. })));
-    if st.proj().set_id.is_none() && body["kind"] != "benchmark" && !tasks_only {
+    if st.proj().set_id.is_none() && body["kind"] != "benchmark" && !tasks_only && !(body["kind"] == "verify" && body.get("testPaths").is_some()) {
         return super::api::err(
             StatusCode::BAD_REQUEST,
             "select a document set for this job",
@@ -776,6 +788,9 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
         Some("verify") => JobKind::Verify {
             targets: str_list(&body["targets"]),
             test_kind: body["testKind"].as_str().map(|s| s.to_string()),
+            test_paths: match crate::verify::artifacts::parse_paths(&body) {
+                Ok(paths)=>paths, Err(error)=>return super::api::err(StatusCode::BAD_REQUEST,error),
+            },
             force: body["force"].as_bool().unwrap_or(false),
         },
         Some("audit") => JobKind::Audit,

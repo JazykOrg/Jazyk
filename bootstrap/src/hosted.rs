@@ -615,6 +615,18 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
             return Ok(Reply::json(if result["state"] == "failed" {422} else {200},
                 json!({"kind":"workflow","report":result})));
         }
+        if kind == "verify" && request.get("testPaths").is_some() {
+            let paths=match crate::verify::artifacts::parse_paths(&request) {
+                Ok(Some(paths))=>paths,Ok(None)=>unreachable!(),Err(error)=>return Ok(Reply::json(400,json!({"error":error}))),
+            };
+            let result=crate::verify::artifacts::run_workspace(&root(),routed.selector.as_deref(),&paths,&trace(),|project| {
+                Ok(Box::new(crate::inprocess::InProcessRunner::start(project,&llm(),&project.out)?))
+            });
+            return Ok(match result {
+                Ok(report)=>Reply::json(200,json!({"kind":"verify","report":report})),
+                Err(error)=>Reply::json(422,json!({"error":error})),
+            });
+        }
         if matches!(kind, "verify" | "audit" | "gen") {
             let p = match selected() {
                 Ok(p) => p,
@@ -677,7 +689,7 @@ fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, String> {
     if method == "GET" && route == "/capabilities" {
         return Ok(Reply::json(
             200,
-            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"conversationJobs":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
+            json!({"protocol":crate::protocol::EDITOR_PROTOCOL_VERSION,"backend":"hosted","projects":"list","docs":"write","events":"pushed","lsp":false,"jobs":["workflow","compile","gen","verify","audit"],"agent":"embedded","chatInputs":true,"conversationJobs":true,"testPaths":true,"model":if execution().transport.is_some(){"configured"}else{"none"},"modelName":model_name(),"rendering":"server","persistence":"memory","shell":false,"dev":false}),
         ));
     }
     let envelope: Value =
@@ -1112,6 +1124,56 @@ mod tests {
     }
 
     #[test]
+    fn stopped_before_inference_chat_sends_the_next_human_instructions_in_full() {
+        let mut w = workspace("Stopped before inference");
+        let chat = value(&mut w,"POST","/api/chat/sessions",json!({}),&Execution::default());
+        let path = format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap());
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value,Snapshot)>));
+        let checkpoint = saved.clone();
+        let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+            let checkpoint = checkpoint.clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap()+1;
+                capsule["sequence"] = json!(next);
+                let before_model = capsule["frames"].as_array().and_then(|frames|frames.last())
+                    .is_some_and(|frame|frame["boundary"]["phase"] == "before_model");
+                *checkpoint.lock().unwrap() = Some((capsule,files));
+                if before_model { Err("checkpoint-failed: injected loss before inference".into()) }
+                else { Ok(next) }
+            })
+        });
+        let execution = Execution {
+            checkpoint:Some(sink),model:"must-not-run".into(),
+            transport:Some(Arc::new(|_| panic!("A protected pre-inference Stop must not invoke a model"))),
+            ..Default::default()
+        };
+        let stopped = value(&mut w,"POST",&path,json!({"text":"Create the recovery document.","messageId":"original"}),&execution);
+        assert_eq!(stopped["stop"],"suspended");
+        let (capsule,files) = saved.lock().unwrap().clone().unwrap();
+        let mut stopped = Workspace::new(files).unwrap();
+        stopped.stop_recovery(&capsule,&[]).unwrap();
+        let mut stopped = Workspace::new(stopped.snapshot()).unwrap();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let observed = requests.clone();
+        let execution = Execution {
+            model:"followup-fixture".into(),transport:Some(Arc::new(move |body| {
+                observed.lock().unwrap().push(serde_json::from_str(body).unwrap());
+                Ok(model_reply("The earlier request was to create the recovery document."))
+            })),..Default::default()
+        };
+        let instruction = "Do not write any files. Just explain the earlier task.";
+        value(&mut stopped,"POST",&path,json!({"text":instruction,"messageId":"followup"}),&execution);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(),1,"No stopped inference or tool may be replayed");
+        let humans = requests[0]["messages"].as_array().unwrap().iter()
+            .filter(|message|message["role"] == "user")
+            .filter_map(|message|message["content"].as_str()).collect::<Vec<_>>().join("\n");
+        assert!(humans.contains("Create the recovery document."),"{humans}");
+        assert!(humans.contains(instruction),"New instructions vanished from actual provider input: {humans}");
+        assert!(!stopped.snapshot().contains_key("docs/recovery.md"));
+    }
+
+    #[test]
     fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
         for phase in ["saved_model", "before_tool", "after_tool", "finished"] {
             for response_kind in ["completion", "responses"] {
@@ -1240,6 +1302,69 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn old_amnesic_chat_recovers_its_own_timeline_in_the_next_provider_request_once() {
+        for already_amnesic in [false,true] {
+        let mut w = workspace("Legacy chat");
+        value(&mut w,"POST","/api/chat/sessions",json!({}),&Execution::default());
+        value(&mut w,"POST","/api/chat/sessions",json!({}),&Execution::default());
+        let mut book: Value = serde_json::from_slice(&w.files[".jazyk/conversations.json"]).unwrap();
+        let chat = &mut book["chats"]["chat-1"];
+        chat["state"] = json!("idle");
+        chat["titled"] = json!(true);
+        chat["history"] = if already_amnesic { json!([
+            {"role":"user","content":"try again"},
+            {"role":"assistant","content":"I do not have the earlier request."}
+        ]) } else { json!([]) };
+        chat["updates"] = json!([
+            [0,{"sessionUpdate":"user_message","messageId":"original","text":"Restyle the UML diagram in deliverable/index.html"}],
+            [1,{"sessionUpdate":"agent_message_chunk","content":{"text":"Updating UML cards."}}],
+            [2,{"sessionUpdate":"tool_call","toolCallId":"write","title":"write_text_file","rawInput":{"path":"deliverable/index.html"}}],
+            [3,{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"completed","rawOutput":"Saved deliverable/index.html"}],
+            [4,{"sessionUpdate":"turn_end","stop":"cancelled"}],
+            [5,{"sessionUpdate":"user_message","messageId":"retry","text":"try again"}],
+            [6,{"sessionUpdate":"agent_message_chunk","content":{"text":"I do not have the earlier request."}}],
+            [7,{"sessionUpdate":"turn_end","stop":"end_turn"}]
+        ]);
+        if !already_amnesic { chat["updates"].as_array_mut().unwrap().truncate(5); }
+        chat["next_n"] = json!(8);
+        book["chats"]["chat-2"]["updates"] = json!([
+            [0,{"sessionUpdate":"user_message","text":"DO_NOT_CROSS_OTHER_CHAT"}]
+        ]);
+        w.files.insert(".jazyk/conversations.json".into(),serde_json::to_vec(&book).unwrap());
+        w.files.insert("deliverable/index.html".into(),b"Previously saved diagram".to_vec());
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let observed = requests.clone();
+        let execution = Execution {
+            model:"legacy-repair-fixture".into(),
+            transport:Some(Arc::new(move |body| {
+                observed.lock().unwrap().push(serde_json::from_str(body).unwrap());
+                Ok(model_reply("The earlier request was to restyle the UML diagram."))
+            })),..Default::default()
+        };
+        value(&mut w,"POST","/api/chat/sessions/chat-1/prompt",json!({"text":"try again","messageId":"new-retry"}),&execution);
+        let mut reopened = Workspace::new(w.snapshot()).unwrap();
+        value(&mut reopened,"POST","/api/chat/sessions/chat-1/prompt",json!({"text":"what was the task?","messageId":"later"}),&execution);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(),2,"History repair must not invoke extra inference");
+        for request in requests.iter() {
+            let messages = request["messages"].as_array().unwrap();
+            let receipts = messages.iter().filter(|message| message["role"] == "user"
+                && message["content"].as_str().is_some_and(|text|text.starts_with("Earlier conversation evidence was recovered"))).collect::<Vec<_>>();
+            assert_eq!(receipts.len(),1,"The receipt must survive reopening without duplication: {:?}",
+                messages.iter().filter(|message|message["role"] != "system").collect::<Vec<_>>());
+            let text = receipts[0]["content"].as_str().unwrap();
+            assert!(text.contains("Restyle the UML diagram in deliverable/index.html"));
+            assert!(text.contains("Updating UML cards."));
+            assert!(text.contains("Saved deliverable/index.html"));
+            assert!(!messages.iter().any(|message|message["role"] == "tool" || message.get("tool_calls").is_some()),
+                "Historical observations must not become synthetic tool calls or outcomes");
+            assert!(!request.to_string().contains("DO_NOT_CROSS_OTHER_CHAT"));
+        }
+        assert_eq!(reopened.snapshot()["deliverable/index.html"],b"Previously saved diagram");
+        }
+    }
+
     #[test]
     fn shared_task_suite_dispatches_once_per_pass_and_keeps_case_and_owner_evidence_separate() {
         use base64::Engine;

@@ -1113,7 +1113,8 @@ mod tests {
 
     #[test]
     fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
-        for phase in ["saved_model", "after_tool", "finished"] {
+        for phase in ["saved_model", "before_tool", "after_tool", "finished"] {
+            for response_kind in ["completion", "responses"] {
             let mut w = workspace("Recovery");
             let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &Execution::default());
             let path = format!("/api/chat/sessions/{}/prompt", chat["id"].as_str().unwrap());
@@ -1126,7 +1127,14 @@ mod tests {
                     let request: Value = serde_json::from_str(&request).unwrap();
                     assert!(request["_jazyk"]["requestId"].is_string());
                     let n = model_calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(if n == 0 {
+                    Ok(if n == 0 && response_kind == "responses" {
+                        json!({"object":"response","id":"response-fixture","model":"fixture","status":"completed",
+                            "_jazykResponseRoute":"fixture-route","output":[
+                                {"id":"reasoning-fixture","type":"reasoning","summary":[],"encrypted_content":"opaque-reasoning-fixture"},
+                                {"id":"call-fixture","type":"function_call","call_id":"write-1","name":"write_document","status":"completed",
+                                    "arguments":json!({"path":"docs/recovery.md","text":"# Recovered\n\nSaved once.\n"}).to_string()}],
+                            "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}}).to_string()
+                    } else if n == 0 {
                         json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"write-1","type":"function","function":{"name":"write_document","arguments":json!({"path":"docs/recovery.md","text":"# Recovered\n\nSaved once.\n"}).to_string()}}]}}],"usage":{"total_tokens":13,"prompt_tokens":10,"completion_tokens":3}}).to_string()
                     } else {
                         assert_eq!(n, 1, "A completed provider call was replayed at {phase}");
@@ -1156,8 +1164,21 @@ mod tests {
             assert_eq!(stopped["stop"],"suspended", "{phase}: {stopped}");
             let (capsule, files) = saved.lock().unwrap().clone().unwrap();
             crate::session_recovery::validate(&capsule).unwrap();
+            let mut normalized: crate::harness::HarnessState =
+                serde_json::from_value(capsule["frames"][0]["harness"].clone()).unwrap();
+            let stopped_history = crate::harness::stopped_history(&normalized);
+            normalized.conversation = goose_provider_types::conversation::Conversation::new_unvalidated(
+                stopped_history.iter().filter_map(|message| message.get("_jazykGdk"))
+                    .map(|message| serde_json::from_value(message.clone()).unwrap()).collect::<Vec<_>>());
+            assert_eq!(crate::harness::stopped_history(&normalized), stopped_history,
+                "Normalizing an already stopped transcript duplicated evidence at {phase}");
+            if response_kind == "responses" {
+                assert!(stopped_history.iter().any(|message| message.to_string().contains("opaque-reasoning-fixture")),
+                    "Stopped transcript lost native Responses context at {phase}");
+            }
             assert!(capsule["deliveredInputs"].as_array().unwrap().contains(&json!("accepted-1")));
-            assert_eq!(files.contains_key("docs/recovery.md"), phase != "saved_model");
+            let committed = matches!(phase, "after_tool" | "finished");
+            assert_eq!(files.contains_key("docs/recovery.md"), committed);
             let mut cancelled = Workspace::new(files.clone()).unwrap();
             let prior = value(&mut cancelled,"GET",&path.replace("/prompt",""),Value::Null,&Execution::default());
             let next = prior["updates"].as_array().unwrap().last().map_or(0,|u|u["n"].as_u64().unwrap()+1);
@@ -1171,6 +1192,41 @@ mod tests {
             assert_eq!(cancelled_updates.last().unwrap()["n"],json!(next+1),"{phase}");
             assert_eq!(cancelled_updates.iter()
                 .filter(|u| u["update"]["sessionUpdate"] == "turn_end" && u["update"]["stop"] == "cancelled").count(),1,"{phase}");
+            let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+            let observed = requests.clone();
+            let followup = Execution {
+                model: "followup-fixture".into(),
+                transport: Some(Arc::new(move |body| {
+                    observed.lock().unwrap().push(serde_json::from_str(body).unwrap());
+                    Ok(model_reply("The prior request was to create the recovery document."))
+                })),
+                ..Default::default()
+            };
+            value(&mut cancelled, "POST", &path,
+                json!({"text":"try again","messageId":"followup-1","turnId":"turn-2"}), &followup);
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1, "Stop or followup replayed inference at {phase}");
+            let messages = requests[0]["messages"].as_array().unwrap();
+            assert!(messages.iter().any(|message| message["role"] == "user"
+                && message["content"].as_str().is_some_and(|text| text.contains("Create the recovery document."))),
+                "Stopped chat lost the accepted human request at {phase}: {}", requests[0]);
+            {
+                let inference = capsule["frames"][0]["harness"]["model_receipts"].as_object().unwrap()
+                    .keys().find(|key| key.contains(":Inference:")).unwrap();
+                let call_id = format!("{}:write-1", &crate::model::hash_hex(inference)[..16]);
+                assert!(messages.iter().any(|message| message["role"] == "assistant"
+                    && message["tool_calls"].as_array().is_some_and(|calls| calls.iter().any(|call| call["id"] == call_id))),
+                    "Stopped chat lost its assistant tool request at {phase}: {messages:?}");
+                assert!(messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == call_id),
+                    "Stopped chat lost the completed tool receipt at {phase}");
+                if !committed {
+                    assert!(messages.iter().any(|message| message["role"] == "tool"
+                        && message["content"].as_str().is_some_and(|content| content.contains("interrupted"))),
+                        "An undispatched proposal needs an interrupted result");
+                }
+            }
+            assert_eq!(cancelled.snapshot().contains_key("docs/recovery.md"), committed,
+                "Following up dispatched a saved proposal at {phase}");
             let mut restored = Workspace::new(files).unwrap();
             let resumed = Execution { model:"fixture".into(),transport_async:Some(model),resume:Some(capsule),..Default::default() };
             let complete = value(&mut restored,"POST",&path,body,&resumed);
@@ -1181,6 +1237,7 @@ mod tests {
             let updates = timeline["updates"].as_array().unwrap();
             assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "user_message").count(),1,"{phase}");
             assert_eq!(updates.iter().filter(|u| u["update"]["sessionUpdate"] == "turn_end").count(),1,"{phase}");
+            }
         }
     }
     #[test]

@@ -790,7 +790,12 @@ only the ledger, never the graph.
   `criterionTests` lists every bound test with its criterion id, statement hash,
   kind, artifact, and current verdict. LLM entries include the criteria text.
   A mixed row includes both execution guidance and LLM judgment guidance.
-- `run_tests({requirements?, all?})`: execute the recorded programmatic tests: the
+- `run_tests({requirements?, all?})`: execute the recorded programmatic tests. Its
+  next-step guidance distinguishes a failed generated candidate from an open
+  document diagnostic. It permits authorized candidate repair through existing
+  generation tools and re-verification, never automatic regeneration or silent
+  prose changes. See [derived statuses](../consumers/gen.md#status-is-derived-never-stored).
+  Execution runs the
   [build](../consumers/gen.md#the-build) first, once, then each selected row's command.
   `requirements` selects rows (requirement or entity ids); empty runs every
   non-verified row; `all: true` reruns every programmatic row, verified ones included,

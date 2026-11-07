@@ -801,6 +801,14 @@ First match wins:
    `criteria-failing-after-generation`), a finding for the author, not more generation
    work. Without the rule a criterion that contradicts its neighbors (sort's example
    that lists unsorted output) regenerated its entity on every build.
+   This prevents automatic rescheduling, not an authorized worker's repair.
+   `run_tests` identifies a failed generated candidate from the current ledger.
+   Its guidance asks the operator to compare the requirement, implementation and
+   test. An implementation or test defect can be repaired through the owning
+   entity's generation tools, then recorded and verified again. Existing ownership
+   and completion gates apply. A document contradiction needs a diagnostic and an
+   author decision. The tool never silently rewrites prose or schedules another
+   generation loop.
 6. A passing headline with any bound criterion lacking a passing verdict reads
    `unverified` (reason `criteria-incomplete`). A headline cannot hide an unrun,
    skipped, or interrupted case. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list

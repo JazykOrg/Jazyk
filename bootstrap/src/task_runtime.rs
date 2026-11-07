@@ -52,7 +52,7 @@ pub fn cancel_owned(root: &Path, fence: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub const PROMPT: &str = include_str!("../../docs/compiler/goals/prompts/execution-contract.md");
+pub const PROMPT: &str = include_str!("../../docs/compiler/skills/agent/execute-task.md");
 pub const TOOLS: [&str; 9] = [
     "task_context",
     "update_tasks",

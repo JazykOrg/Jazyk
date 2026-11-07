@@ -1,0 +1,30 @@
+{
+  "note": "Read a skill before its workflow. Availability and authorization come from the serving and its gates, not from reading a skill.",
+  "tools": [
+    {
+      "name": "list_jazyk_skills",
+      "description": "List built-in deferred Jazyk workflow skills, their triggers, required capabilities, and source paths. Read-only. No graph or setId needed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_jazyk_skill",
+      "description": "Read the exact instructions of one built-in Jazyk workflow skill before using it. A skill grants no new tool, permission, or cost approval. No graph or setId needed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

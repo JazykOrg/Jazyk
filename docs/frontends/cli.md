@@ -173,6 +173,7 @@ installed IDE and every detected agent, as in [`jazyk init`](#jazyk-init).
 - `jazyk setup agents-md`: create or refresh the
   [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd)
   and the `CLAUDE.md` and `GEMINI.md` imports. `--remove agents-md` deletes them.
+  Set `[agents] block = false` first to keep them removed.
 - `jazyk setup trust`: list the project's MCP servers and skills and record them as
   [trusted](./agent-context.md#trust). `--remove trust` revokes the trust.
 - `--list` also prints an `agents-md` line (`installed`, `missing`, `stale`, or

@@ -352,7 +352,7 @@ pub struct Skill {
 }
 
 // Front matter and body of a SKILL.md.
-fn front_matter(text: &str) -> Option<(Value, &str)> {
+pub(crate) fn front_matter(text: &str) -> Option<(Value, &str)> {
     let rest = text.strip_prefix("---")?;
     let rest = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n'))?;
     let mut at = 0;

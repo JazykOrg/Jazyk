@@ -325,7 +325,8 @@ block = false
 - `block` (default `true`): keep the
   [jazyk section of `AGENTS.md`](../frontends/agent-context.md#the-jazyk-section-of-agentsmd)
   and the `CLAUDE.md` and `GEMINI.md` imports. `false` stops every create and
-  update. Nothing already written is removed.
+  update. This is the only opt-out. Deleting a file or section does not opt out.
+  Nothing already written is removed.
 
 ## MCP servers
 

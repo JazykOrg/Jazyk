@@ -272,9 +272,9 @@ module.
   the conversation, so the loaded set carries from one prompt to the next. A
   `reader`-tier model ([model sources](#model-sources)) gets the `graph` serving
   instead: the read tools alone (`search`, `load`, `expand`, `read_section`,
-  `get_entity`, `get_view`, `diagnostics`) and a short instruction block, so the
-  prompt fits a small window and the model answers questions about the project
-  without being offered edits it cannot make well. The page passes the tier when it
+  `get_entity`, `get_view`, `diagnostics`), workflow skill readers, and the shared
+  main policy with explicit read-only capabilities. Workflow procedures are
+  deferred to skills. The model is not offered mutation tools. The page passes the tier when it
   opens the conversation (`{"tier": "reader"}` in the body).
 - `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::harness::run_loop_with_instructions`
   with the serving's tools and a dispatch closure that calls `tools/call` on it,

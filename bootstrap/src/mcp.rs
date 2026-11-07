@@ -136,152 +136,45 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
 const TAB_BUILD_NOTE: &str = "You cannot start a build: the Build button at the top of the page builds the documents into the graph. When asked to build, say so. ";
 const WRITER_BUILD_NOTE: &str = "Use compile_document_sets to compile named set IDs, or omit setIds to compile all dirty sets. ";
 
-// The instructions for a serving, `tab` saying it runs in a browser tab.
+// Capability context only. Shared policy comes from agent_workflows::render.
 fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) -> String {
     if modes.len() == 1 && modes[0] == "runtime" {
         return crate::task_runtime::PROMPT.to_owned();
     }
-    let mut s = String::from(
-        "This server is one jazyk project's semantic graph: entities and requirements \
-         reconciled from prose documentation, consumed by generation and verification. \
-         The jazyk section of the project's AGENTS.md is orientation; these instructions \
-         and tool replies take precedence over it. ",
-    );
-    if modes.iter().any(|m| m == "compile") {
-        s.push_str(
-            "GOAL LOOP: call goals for the board; begin_goals claims the next ready batch (or a \
-             named one) and answers with the batch's assembled instructions and its loaded set. \
-             Load context with load, expand, unload, and graph_status, stage findings with the \
-             write tools and view tools, mark each goal with mark_goal_done and a one-line \
-             justification (or mark_goal_failed with a reason), then call done. Its reply names \
-             the next ready batch; repeat until the board is empty and the verdict is converged. ",
-        );
+    let mut s = format!("Served toolsets: {}. The actual tools/list catalog is authoritative. ", modes.join(", "));
+    if initialized {
+        s.push_str("The project is already initialized. There is nothing to scaffold. ");
+    } else {
+        s.push_str("NO PROJECT HERE: there is no jazyk.toml or graph yet. For an authorized setup, use init_project if served, then reopen the conversation. Inspection and workflow skill tools need no graph. ");
     }
-    if modes.iter().any(|m| m == "generate") {
-        s.push_str(
-            "GENERATION LOOP: call generation_tasks; for each entity, begin_generation, inspect \
-             existing files and develop the actual source and tests in the order the work needs. \
-             Preserve current test assertions. Reuse a suite task for related checks with separate \
-             JUnit selectors, record_generation with the complete manifest, then run_tests for \
-             programmatic evidence. LLM criteria remain unjudged until Review. A separate Bind pass \
-             or failing baseline is not required. OPTIONAL BINDING: binding_tasks and begin_binding \
-             inspect an existing deliverable, then record_binding records its observed evidence. ",
-        );
-    }
-    if modes.iter().any(|m| m == "decompile") {
-        s.push_str(
-            "DECOMPILE LOOP: call decompile_tasks; for each released scope, begin_decompile, read \
-             the code with YOUR OWN tools (the package carries the inventory and the tests first), \
-             draft one markdown document stating what the code observably does, then submit_draft. \
-             The draft is compiler input; binding self-checks it against the code after the next \
-             compile. ",
-        );
-    }
-    if modes.iter().any(|m| m == "verify") {
-        s.push_str(
-            "VERIFICATION LOOP: call verification_tasks; run_tests covers programmatic rows; for \
-             llm rows, begin_verification, judge the criteria against the deliverable with your own \
-             tools, and record_verdict with evidence. ",
-        );
-    }
-    if modes.iter().any(|m| m == "benchmark") {
-        s.push_str(
-            "BENCHMARK LOOP: you are the model under test. Call benchmark_cases; for each pending \
-             case, begin_case, follow the returned instructions exactly as if it were real work \
-             (stage graph writes with the write tools; a reconcile case never files diagnostics, the \
-             review cases do; for a generation case write real files into \
-             the named sandbox deliverable with your own tools, record_generation, run_tests; for a \
-             verification case judge the criteria against the files), then finish_case (verification \
-             cases pass verdict and evidence). After the last case call benchmark_report with an \
-             honest model name for the agent you are. You are graded deterministically; gaming a \
-             check grades the gaming, not the skill. ",
-        );
-    }
-    if modes.iter().any(|m| m == "chat") {
-        // An uninitialized directory has no graph to talk about, so the serving says
-        // so plainly instead of offering tools that could only refuse.
-        // Mirrors docs/frontends/acp.md#project-tools.
-        if !initialized {
-            s.push_str(
-                "CHAT SERVING, NO PROJECT HERE: this directory holds no jazyk.toml, so there is no \
-                 graph yet and the read tools have nothing to return. Call init_project to scaffold \
-                 one (jazyk.toml, docs/ with a placeholder root document, deliverable/), then tell \
-                 the user to reopen the conversation: the new session serves the project. ",
-            );
-        } else {
-            s.push_str(
-                include_str!("../../docs/compiler/goals/prompts/chat-conversation.md"),
-            );
-            // A tab serves the compilation lifecycle alone (docs/frontends/wasm.md#chat).
-            if tab {
-                s.push_str(
-                    "This serving runs in a browser tab, which has no shell: binding, \
-                     generation, and verification are not served here. ",
-                );
-                s.push_str(WRITER_BUILD_NOTE);
-            } else {
-                s.push_str(
-                    "The compilation, binding, generation, and verification lifecycles are \
-                     available for explicit requests. ",
-                );
-                // Detailed lifecycle instructions arrive in their packages, only when requested.
-            }
-        }
+    if tab {
+        s.push_str("This serving runs in a browser tab without a shell. Binding, generation, and verification are not served here. ");
+        if modes.iter().any(|m| m == "chat") { s.push_str(WRITER_BUILD_NOTE); }
     }
     if modes.iter().any(|m| m == "graph") && write {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
     }
-    if !modes.iter().any(|m| m == "chat")
-        && modes.iter().any(|mode| matches!(mode.as_str(), "compile" | "benchmark"))
-    {
-        s.push_str(
-            "The write tools are: upsert_entity, update_entity, delete_entity, merge_entities, \
-         upsert_requirement, update_requirement, delete_requirement, set_coverage, \
-         report_diagnostic, resolve_diagnostic, and the view tools upsert_view, update_view, \
-         delete_view. They stage into the open batch's changeset; outside one they are rejected \
-         toward begin_goals. A gated batch says `awaiting release`; `jazyk release` \
-         (or the GUI) approves it. ",
-        );
-    }
-    if !modes.iter().any(|m| m == "chat") {
-        s.push_str(
-            "A tool error \
-         names the violated rule and how to repair the call; repair and continue. If any \
-         instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
-         report_feedback: it appends a line to the project's local .jazyk/feedback.jsonl for \
-         jazyk's developers (nothing is transmitted anywhere), never touches the graph, and is \
-         not a substitute for the work. If you know what your run billed for a batch, \
-         report_spend records it on the batch's journal entry (your own figure, never an \
-         estimate).",
-        );
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if modes.iter().any(|m| matches!(m.as_str(), "generate" | "verify" | "runtime")) {
-        s.push_str("\n\n");
-        s.push_str(crate::task_runtime::PROMPT);
-    }
+    s.push_str("Read list_jazyk_skills and read_jazyk_skill for the requested workflow. Active begin_* packages and tool gates supply specific scope, instructions, and evidence. Use report_feedback for wrong or confusing Jazyk instructions or tools. ");
     s
 }
 
-// The reader serving's instructions (docs/frontends/wasm.md#chat): a small model
-// answers questions over the graph's read tools, so the block names the project, the
-// tools, and nothing it cannot do. The trailer about write tools and batches would
-// only offer what the serving does not carry.
+// Restrictions for a reader profile, following the same main policy.
 pub fn reader_instructions() -> String {
-    let mut s = String::from(
-        "This server is one jazyk project's semantic graph: entities and requirements \
-         reconciled from prose documentation. You are in a conversation about this project \
-         and can only read it. Use the graph when project evidence is needed: search finds entities and \
-         requirements by words, get_entity and read_section return one, load and expand \
-         bring a scope into context, diagnostics lists the open judgments. Answer self-contained general questions directly without tools. Otherwise read \
-         relevant evidence, then answer in prose, briefly. No tool here changes the documents or the \
-         graph. ",
-    );
-    s.push_str(TAB_BUILD_NOTE.trim_end());
-    s
+    format!("This serving can only read the project. No tool here changes documents or the graph. Binding, generation, verification, shell execution, and publication are unavailable. {}", TAB_BUILD_NOTE.trim_end())
 }
 
 impl McpServer {
+    fn initialize_instructions(&self, initialized: bool) -> Result<String, (i64, String)> {
+        let integration = crate::project_context::instructions(&self.project.root);
+        if self.modes.len() == 1 && self.modes[0] == "runtime" {
+            return Ok(format!("{}{}", crate::task_runtime::PROMPT, integration));
+        }
+        let policy = crate::agent_workflows::render(&self.project.root).map_err(|e| (-32603, e))?;
+        let capabilities = if self.bridge.reader { reader_instructions() }
+            else { instructions_for(&self.modes, self.write, initialized) };
+        Ok(format!("{policy}\n\n## Serving capabilities\n\n{capabilities}\n{integration}"))
+    }
+
     // Ledger workers carry the execution contract in their opening prompt. A
     // manually claimed ledger batch receives it from begin_goals instead.
     fn has_execution_contract(&self) -> bool {
@@ -778,6 +671,7 @@ impl McpServer {
         if let Some(names) = self.active_tools() {
             tools.retain(|tool| {
                 tool["name"] == "project_context"
+                    || crate::agent_workflows::TOOLS.contains(&tool["name"].as_str().unwrap_or_default())
                     || names.contains(tool["name"].as_str().unwrap_or_default())
             });
         }
@@ -2152,6 +2046,18 @@ impl McpServer {
 
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(self.bridge.cancel_file.as_deref());
+        if method == "tools/call" && crate::agent_workflows::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
+            if self.modes.len() == 1 && self.modes[0] == "runtime" {
+                return Err((-32601, "workflow skills are not served by the dedicated task runtime".into()));
+            }
+            let value = if params["name"] == "list_jazyk_skills" {
+                crate::agent_workflows::catalog().map_err(|e| (-32603, e))?
+            } else {
+                let name = params["arguments"]["name"].as_str().ok_or((-32602, "name is required".into()))?;
+                crate::agent_workflows::read(name).map_err(|e| (-32602, e))?
+            };
+            return Ok(text_result(value, false));
+        }
         if method == "tools/call" {
             if let Some(error) = self.current_project().config_error { return Err((-32602, error)); }
         }
@@ -2207,7 +2113,7 @@ impl McpServer {
             return Ok(
                 json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
-                "instructions":format!("This project has independent document sets. Use list_document_sets when a set-local operation needs a set ID. General answers and named document reads need no set discovery. Pass setId on set-local tools. Never reuse a graph ID in another set. {}{}",if self.bridge.reader {reader_instructions()} else {instructions_for(&self.modes,self.write,w.exists)}, crate::project_context::instructions(&self.project.root))}),
+                "instructions":self.initialize_instructions(w.exists)?}),
             );
         }
         let writable = self.serves_project_writes();
@@ -2215,6 +2121,7 @@ impl McpServer {
             let mut result = self.handle_local(method, params)?;
             let tools = result["tools"].as_array_mut().unwrap();
             for t in tools.iter_mut() {
+                if crate::agent_workflows::TOOLS.contains(&t["name"].as_str().unwrap_or_default()) { continue; }
                 t["inputSchema"]["properties"]["setId"] = json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});
             }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
@@ -2479,7 +2386,7 @@ impl McpServer {
                     "protocolVersion": requested,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{}{}", if self.bridge.reader { reader_instructions() } else { instructions_for(&self.modes, self.write, self.initialized()) }, crate::project_context::instructions(&self.project.root))
+                    "instructions": self.initialize_instructions(self.initialized())?
                 }))
             }
             "ping" => Ok(json!({})),
@@ -2494,6 +2401,7 @@ impl McpServer {
                 if self.modes.len() == 1 && self.modes[0] == "runtime" {
                     return Ok(json!({"tools": tools}));
                 }
+                tools.extend(crate::agent_workflows::tools());
                 #[cfg(not(target_arch = "wasm32"))]
                 if !self.bridge.reader && self.modes.iter().any(|m| m == "chat") {
                     tools.push(json!({
@@ -3983,7 +3891,7 @@ impl McpServer {
         if let Err(e) = self.write_edit(crate::document_sets::CONFIG, &old_full, &full, &full) {
             return json!({"error": {"rule": "write-failed", "message": e}});
         }
-        crate::agents_md::sync(&self.project.root, crate::agents_md::Mode::Update).report();
+        crate::agents_md::sync(&self.project.root).report();
         json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
                "note": "jazyk.toml edited in place; a running GUI reloads it live"})
     }
@@ -4141,7 +4049,7 @@ mod tests {
             assert!(!instructions.contains("call await_changes"),"{mode}");
             assert!(instructions.contains("report_feedback"));
         }
-        assert!(instructions_for(&["compile".into()],false,true).contains("upsert_entity"));
+        assert!(instructions_for(&["compile".into()],false,true).contains("read_jazyk_skill"));
         assert!(instructions_for(&["graph".into()],true,true).contains("manual graph surgery"));
     }
 
@@ -4716,7 +4624,8 @@ mod tests {
             let mut expected = toolset_for_kinds(&[kind]);
             expected.extend(LIFECYCLE);
             expected.push("project_context");
-            assert_eq!(names.len(), count + 1, "{kind}");
+            expected.extend(crate::agent_workflows::TOOLS);
+            assert_eq!(names.len(), count + 1 + crate::agent_workflows::TOOLS.len(), "{kind}");
             assert_eq!(names.into_iter().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect(), "{kind}");
         }
         // Mixed batches expose the union, rather than the first goal's slice.
@@ -4733,6 +4642,7 @@ mod tests {
         let mut expected = toolset_for_kinds(&["declare-edges"]);
         expected.extend(LIFECYCLE);
         expected.push("project_context");
+        expected.extend(crate::agent_workflows::TOOLS);
         assert_eq!(names.iter().cloned().collect::<BTreeSet<_>>(), expected.into_iter().map(str::to_string).collect());
         assert!(!names.iter().any(|name| name == "upsert_entity"));
         let reply = server.handle("tools/call", &json!({"name":"upsert_entity","arguments":{"name":"Hidden"}})).unwrap();
@@ -4832,19 +4742,19 @@ mod tests {
         let modes = ["compile", "generate", "verify", "decompile", "chat"].map(String::from).to_vec();
         let server = McpServer::with_bridge(project, dir.join(".jazyk"), modes, false, BridgeFlags::default());
         let names = tool_names(&server);
-        let payload = include_str!("../../docs/compiler/goals/prompts/project-agents.md");
+        let payload = include_str!("../../docs/compiler/goals/prompts/agent-main.mustache");
         let named: Vec<&str> = payload
             .split('`')
             .skip(1)
             .step_by(2)
             .filter(|t| t.contains('_') && t.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
             .collect();
-        assert!(named.len() >= 8, "{named:?}");
+        assert!(named.len() >= 4, "{named:?}");
         for name in named {
             assert!(names.iter().any(|n| n == name), "`{name}` is not served: {names:?}");
         }
         let init = server.handle("initialize", &json!({})).unwrap();
-        assert!(init["instructions"].as_str().unwrap().contains("take precedence over it"));
+        assert!(init["instructions"].as_str().unwrap().contains("Active tool packages and enforced"));
         crate::vfs::remove_dir_all(dir).ok();
     }
 
@@ -4891,7 +4801,7 @@ mod tests {
             .unwrap();
         let instructions = init["instructions"].as_str().unwrap();
         assert!(
-            instructions.contains("can only read it"),
+            instructions.contains("can only read the project"),
             "{}",
             instructions
         );
@@ -4904,7 +4814,7 @@ mod tests {
             tool_names(&s),
             crate::tools::READ_TOOLS
                 .iter()
-                .copied().chain(std::iter::once("project_context"))
+                .copied().chain(std::iter::once("project_context")).chain(crate::agent_workflows::TOOLS)
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         );
@@ -4930,13 +4840,13 @@ mod tests {
         );
         let init = s.handle("initialize", &json!({})).unwrap();
         let instructions = init["instructions"].as_str().unwrap();
-        assert!(instructions.contains("can only read it"));
+        assert!(instructions.contains("can only read the project"));
         assert!(instructions.contains("list_document_sets"));
         assert!(!instructions.contains("The write tools are"));
         let names = tool_names(&s);
         assert!(names.iter().any(|name| name == "list_document_sets"));
         assert!(names.iter().any(|name| name == "read_document"));
-        assert!(names.iter().all(|name| name == "list_document_sets" || name == "read_document" || name == "project_context" || crate::tools::READ_TOOLS.contains(&name.as_str())));
+        assert!(names.iter().all(|name| crate::agent_workflows::TOOLS.contains(&name.as_str()) || name == "list_document_sets" || name == "read_document" || name == "project_context" || crate::tools::READ_TOOLS.contains(&name.as_str())));
         #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
         {
             crate::vfs::write(dir.join("docs/contract.docx"), include_bytes!("../tests/fixtures/document-proof/contract.docx")).unwrap();
@@ -5020,12 +4930,63 @@ mod tests {
 
     #[test]
     fn conversational_contract_does_not_require_discovery_or_execution() {
-        let instructions=instructions_in(&["chat".into()],false,true,false);
+        let dir = bare_dir("shared-conversation-policy");
+        let instructions = chat_server(&dir).handle("initialize", &json!({})).unwrap();
+        let instructions = instructions["instructions"].as_str().unwrap();
         assert!(instructions.contains("self-contained general question directly"));
-        assert!(instructions.contains("does not authorize compiling"));
-        assert!(instructions.contains("write_document"));
+        assert!(instructions.contains("A docs edit does not authorize"));
+        assert!(instructions.contains("read_jazyk_skill"));
+        assert!(!instructions.contains("GENERATION LOOP:"));
         assert!(!instructions.contains("Read task_context and choose"));
         assert!(!instructions.contains("The write tools are:"));
+    }
+
+    #[test]
+    fn workflow_policy_and_skills_match_agents_mcp_acp_and_restricted_servings() {
+        let dir = bare_dir("workflow-parity");
+        let config = dir.join(crate::document_sets::CONFIG);
+        let mut text = crate::vfs::read_to_string(&config).unwrap();
+        text.push_str("\n[[sets]]\nid = 'ds_other'\nname = 'Other'\ndocs = ['other/**']\nsource = []\n");
+        crate::vfs::write(&config, text).unwrap();
+        crate::agents_md::sync(&dir);
+        let policy = crate::agent_workflows::render(&dir).unwrap();
+        let agents = crate::vfs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert!(agents.contains(&format!("\n{policy}<!-- JAZYK:END -->")));
+        for (modes, reader, scoped) in [
+            (vec!["chat"], false, false),
+            (vec!["compile", "generate", "verify", "decompile", "chat"], false, false),
+            (vec!["graph"], true, false),
+            (vec!["compile"], false, true),
+        ] {
+            let workspace = crate::document_sets::Workspace::load(&dir).unwrap();
+            let project = if scoped { workspace.resolve(Some("ds_main")).unwrap() } else { workspace.files_project() };
+            // Ephemeral compile/chat are also the ACP-injected serving profiles.
+            let server = McpServer::with_bridge(project.clone(), project.out.clone(),
+                modes.into_iter().map(String::from).collect(), false,
+                BridgeFlags { ephemeral: true, reader, ..Default::default() });
+            let init = server.handle("initialize", &json!({})).unwrap();
+            assert!(init["instructions"].as_str().unwrap().starts_with(&policy));
+            let catalog = server.handle("tools/list", &json!({})).unwrap();
+            for name in crate::agent_workflows::TOOLS {
+                let tool = catalog["tools"].as_array().unwrap().iter().find(|t|t["name"]==name).unwrap();
+                assert!(tool["inputSchema"]["properties"]["setId"].is_null());
+            }
+            let listed = server.handle("tools/call", &json!({"name":"list_jazyk_skills","arguments":{}})).unwrap();
+            let listed: Value = serde_json::from_str(listed["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(listed, crate::agent_workflows::catalog().unwrap());
+            for skill in crate::agent_workflows::SKILLS {
+                let reply = server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":skill.name}})).unwrap();
+                let reply: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+                assert_eq!(reply["body"], skill.body);
+            }
+            assert!(server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":"../../secret"}})).is_err());
+        }
+        crate::vfs::remove_file(config).unwrap();
+        let uninitialized = chat_server(&dir);
+        assert!(uninitialized.handle("initialize", &json!({})).unwrap()["instructions"].as_str().unwrap().contains("NO PROJECT HERE"));
+        assert!(tool_names(&uninitialized).contains(&"read_jazyk_skill".to_string()));
+        assert!(uninitialized.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":"change-code"}})).is_ok());
+        crate::vfs::remove_dir_all(dir).unwrap();
     }
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {

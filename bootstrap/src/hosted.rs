@@ -129,13 +129,12 @@ impl Workspace {
         self.files.clone()
     }
 
-    /// Create (`true`, a new project) or refresh the jazyk section of AGENTS.md and
+    /// Ensure the jazyk section of AGENTS.md exists and is current, along with
     /// the CLAUDE.md and GEMINI.md imports. Answers one line per change; warnings
     /// start with `warning: `. Mirrors docs/compiler/hosted-runtime.md.
-    pub fn sync_agents_md(&mut self, create: bool) -> Vec<String> {
+    pub fn sync_agents_md(&mut self, _create: bool) -> Vec<String> {
         let fs = crate::vfs::Scope::enter(&self.files);
-        let mode = if create { crate::agents_md::Mode::Create } else { crate::agents_md::Mode::Update };
-        let outcome = crate::agents_md::sync(&crate::portable::root(), mode);
+        let outcome = crate::agents_md::sync(&crate::portable::root());
         self.files = fs.snapshot();
         outcome.changed.into_iter().chain(outcome.warnings.into_iter().map(|w| format!("warning: {w}"))).collect()
     }
@@ -1735,6 +1734,44 @@ mod tests {
     // Hosted chat reads the snapshot's instruction files and skills and the host's
     // layer, never the host filesystem, and calls remote tools through the host.
     // Mirrors docs/frontends/agent-context.md#hosted-context.
+    #[test]
+    fn hosted_chat_uses_the_exact_managed_policy_and_deferred_skill_tools() {
+        let mut w = workspace("Shared workflows");
+        w.sync_agents_md(false);
+        let policy = {
+            let _fs = crate::vfs::Scope::enter(&w.files);
+            crate::agent_workflows::render(&crate::portable::root()).unwrap()
+        };
+        let before = w.snapshot();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let expected_skill = crate::agent_workflows::read("change-code").unwrap()["body"].as_str().unwrap().to_string();
+        let e = Execution { model: "fixture".into(), transport: Some(Arc::new(move |body| {
+            let request: Value = serde_json::from_str(body).unwrap();
+            let texts = request["messages"].as_array().unwrap().iter()
+                .filter_map(|m|m["content"].as_str()).collect::<Vec<_>>();
+            assert_eq!(texts.iter().map(|t|t.matches(&policy).count()).sum::<usize>(), 1);
+            for name in crate::agent_workflows::TOOLS {
+                assert!(request["tools"].as_array().unwrap().iter().any(|t|t["function"]["name"]==name));
+            }
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,
+                    "tool_calls":[{"id":"read-workflow","type":"function","function":{"name":"read_jazyk_skill","arguments":json!({"name":"change-code"}).to_string()}}]}}]}).to_string());
+            }
+            assert!(texts.iter().filter_map(|t|serde_json::from_str::<Value>(t).ok())
+                .any(|v|v["body"].as_str()==Some(expected_skill.as_str())));
+            Ok(model_reply("A repair stays within requirements. Changed behavior updates the docs first."))
+        })), ..Default::default() };
+        let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &e);
+        value(&mut w, "POST", &format!("/api/chat/sessions/{}/prompt",chat["id"].as_str().unwrap()),
+            json!({"text":"Explain the workflow for a code change. Do not edit anything.","messageId":"workflow-question"}), &e);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        for (path, bytes) in before {
+            assert_eq!(w.snapshot().get(&path), Some(&bytes), "read-only skill request changed {path}");
+        }
+        assert!(!w.snapshot().keys().any(|p|p.contains("graph/")));
+    }
+
     #[test]
     fn hosted_chat_receives_project_and_host_agent_context() {
         let mut w = workspace("Agent context");

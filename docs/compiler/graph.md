@@ -173,7 +173,9 @@ Everything else is local: rebuilt on demand, or a log of what ran.
   - Everything else under the out directory (decompile drafts, benchmark results,
     previews, deliverable baselines, temporary files): local by default.
 - Local, per project: `sessions/`, `runs/`, `removed-sets/`, `project.lock`, `trace/`,
-  and the `.bak` archives of other store versions.
+  `ide.json`, `ide-installer/`, and the `.bak` archives of other store versions.
+  The [editor adapters](../frontends/lsp.md#editor-setup) use `ide.json` for the
+  local executable and `ide-installer/` for isolated plugin installation.
 
 The generated `.jazyk/.gitignore` states this split
 ([persistence and identity](./document-sets.md#persistence-and-identity)). The

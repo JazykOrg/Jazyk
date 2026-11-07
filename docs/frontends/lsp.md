@@ -25,6 +25,37 @@ URI delimiters round-trip through the URL library. A non-file URI does not name
 a local document. Windows verbatim path prefixes and drive-letter URLs identify
 the same project files.
 
+## Editor setup
+
+The launcher configures the language server separately from the ACP chat agent.
+An ACP registration does not connect the language server.
+
+- VS Code and Cursor use the extension in `bootstrap/editors/vscode/`.
+- Zed uses the [Zed extension](../../bootstrap/editors/zed/README.md). It attaches to Markdown
+  without replacing Zed's grammar. `jazyk zed` enables `jazyk` in the project's
+  `.zed/settings.json` and records the executable under `lsp.jazyk.binary`.
+  Other Markdown servers and settings remain intact. The extension is opt-in.
+- The JetBrains choices use one [JetBrains plugin](../../bootstrap/editors/jetbrains/README.md), with
+  the free LSP4IJ client. This includes IntelliJ IDEA, PhpStorm, WebStorm,
+  PyCharm, GoLand, RustRover, CLion, Rider, and RubyMine. The plugin attaches to
+  Markdown only in a Jazyk project. Each launcher records the executable in
+  `.jazyk/ide.json`. ACP settings remain separate.
+
+Source checkouts build the editor adapters using their README instructions.
+The launcher installs available local artifacts. A missing adapter or dependency
+produces an explicit setup instruction, never a claim that LSP is connected.
+JetBrains plugin installation requires an IDE restart when it is already running.
+The LSP4IJ installer uses temporary IDE configuration and cache directories, so
+installing the client does not take the open IDE's profile lock.
+An installed adapter is setup evidence. A successful LSP initialize exchange and
+document diagnostics are connection evidence.
+
+Editor adapters launch the existing native server. They do not compile documents
+or call a model. Diagnostics, hover, definitions, references, completion and quick
+fixes use standard LSP. Client support determines diagram images, code lenses,
+and server-driven navigation. Freeform diagnostic answers remain available through
+the CLI and ACP chat.
+
 ## Capabilities
 
 - Diagnostics: open [diagnostics](../compiler/model.md#node-kinds) are published inline,

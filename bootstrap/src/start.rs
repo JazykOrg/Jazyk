@@ -295,8 +295,8 @@ pub fn setup(choice: &Choice, root: &Path, _opts: &Options, _tty: bool) -> Resul
         "gui" => Ok(()),
         "vscode" => jazyk_extension("code"),
         "cursor" => jazyk_extension("cursor"),
-        "zed" => Ok(()),
-        id if is_jetbrains(id) => Ok(()),
+        "zed" => crate::editor_lsp::zed(root),
+        id if is_jetbrains(id) => crate::editor_lsp::jetbrains(root, program(id, root)),
         id => setup_mcp(root, id),
     }
 }

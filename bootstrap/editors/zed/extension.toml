@@ -1,0 +1,15 @@
+id = "jazyk"
+name = "Jazyk"
+version = "0.1.0"
+schema_version = 1
+authors = ["Matus Faro <matus@matus.io>"]
+description = "Jazyk language server for prose documentation"
+repository = "https://github.com/JazykOrg/Jazyk"
+
+[language_servers.jazyk]
+name = "Jazyk"
+languages = ["Markdown"]
+opt_in_languages = ["Markdown"]
+
+[language_servers.jazyk.language_ids]
+Markdown = "markdown"

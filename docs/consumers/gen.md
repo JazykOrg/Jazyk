@@ -801,6 +801,14 @@ First match wins:
    `criteria-failing-after-generation`), a finding for the author, not more generation
    work. Without the rule a criterion that contradicts its neighbors (sort's example
    that lists unsorted output) regenerated its entity on every build.
+   This prevents automatic rescheduling, not an authorized worker's repair.
+   `run_tests` identifies a failed generated candidate from the current ledger.
+   Its guidance asks the operator to compare the requirement, implementation and
+   test. An implementation or test defect can be repaired through the owning
+   entity's generation tools, then recorded and verified again. Existing ownership
+   and completion gates apply. A document contradiction needs a diagnostic and an
+   author decision. The tool never silently rewrites prose or schedules another
+   generation loop.
 6. A passing headline with any bound criterion lacking a passing verdict reads
    `unverified` (reason `criteria-incomplete`). A headline cannot hide an unrun,
    skipped, or interrupted case. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
@@ -1138,6 +1146,40 @@ no arguments it processes every runnable row; entity ids select their requiremen
 rows; requirement ids select rows directly. `--kind` filters `programmatic` or `llm`;
 `--force` also reruns `verified` rows; `--list` prints the derived status table without
 running anything. Exit 0 when every targeted row is `verified`, 1 otherwise.
+
+### Test artifact selection
+
+A verification job may supply nonempty `testPaths`, an exact list of project-relative
+test files. It does not combine them with requirement or entity `targets`.
+Every selected file must have a current recorded test binding. An unbound file,
+missing artifact, changed requirement, or unsupported runner fails before the build
+or any test starts. No empty selection means every test.
+
+Only criterion tests whose artifacts match the selected files execute. Other tests
+on the same requirement keep their evidence. Re-running a selected artifact also
+runs its already passing tests. Saved tasks execute once per job, including across document sets. Their reports
+are evaluated separately for each selected test name. Identical legacy commands
+in the same execution directory also share one execution. A build task already
+executed by this job supplies its report to selected tests.
+A saved task or legacy command recorded for artifacts outside the selection is
+unscopable and fails before execution. The user can select a containing folder or
+configure separate scoped tasks. Test commands are never guessed from filenames.
+
+All affected sets' build prerequisites finish after validation, before verification. A shared
+receipt is usable only while its test, requirement, criterion, and implementing
+hashes remain current. After the builds, the job retains an input fingerprint for
+all selected tests. It covers their bindings, criterion and requirement facts,
+judgment context, implementing and support file bytes, test artifact bytes, and
+project configuration. The durable
+cursor keeps that fingerprint across suspension. A restored result without an
+input fingerprint fails closed. The job checks every selected input before each
+observation, after execution before recording evidence, and before returning its
+report. A later test command or task product cannot refresh an earlier observation.
+Changed inputs fail visibly and require another explicit run. Normal build
+prerequisites remain unchanged.
+A scoped result records each selected criterion independently. The row cannot pass
+until every bound criterion has current passing evidence. Existing verification
+without `testPaths` keeps its target and pending-row behavior.
 
 ## Pluggable workers
 

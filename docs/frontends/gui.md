@@ -802,3 +802,16 @@ The line is a navigation hint, not fresh verification evidence.
 The shared resolver serves native and browser transports and editor diagnostics.
 The global problem count opens all open, unsuppressed findings of visible severity,
 including questions, proposals, and drafts. Findings without locations remain visible.
+
+## Scoped test artifacts
+
+The capability descriptor advertises `testPaths: true` when verify jobs support
+exact artifact selection. `POST /api/jobs` with `kind: verify` accepts nonempty
+`testPaths`, a list of project-relative test filenames, and an explicit `setId`
+to restrict the run to one set. Without `setId`, it validates all affected sets
+before executing them sequentially in the same durable job. It rejects malformed lists and a
+combination with nonempty `targets`. It uses the normal durable job, cancellation,
+trace, model selection, and evidence paths. Older engines do not advertise the
+capability, so an editor must not submit this selector to them.
+
+See [test artifact selection](../consumers/gen.md#test-artifact-selection).

@@ -78,7 +78,7 @@ pub fn matrix_rows(store: &Store, gs: &GenSettings) -> (BTreeMap<String, Value>,
             .unwrap_or_default();
         let mut row = v.clone();
         row["entity"] = json!(entity);
-        row["test"] = json!({ "kind": v["kind"], "run": v["run"], "label": v["label"] });
+        row["test"] = json!({ "kind": v["kind"], "run": v["run"], "label": v["label"], "path":v["artifactPath"] });
         rows.insert(rid, row);
     }
     (rows, by_status)

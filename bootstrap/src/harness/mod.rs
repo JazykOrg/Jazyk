@@ -15,6 +15,8 @@ pub use runtime::{
     run_loop, run_loop_async, run_loop_with_instructions, run_with_host, run_with_host_async,
     run_with_hosts, run_with_hosts_async, MemoryRecovery,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use runtime::stopped_history;
 
 pub type ModelDeltaSink = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
 

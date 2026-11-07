@@ -862,6 +862,19 @@ pub(crate) fn restore_input_outcomes(mut inputs: Vec<Value>) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn restore_stopped_history(key: &str, history: Vec<Value>) {
+    BOOK.with(|book| {
+        for chat in book.borrow_mut().chats.values_mut() {
+            if chat.state == "running" && chat.turn_id.as_ref().is_some_and(|turn|
+                key == format!("chat:{}:{turn}", chat.id)) {
+                chat.history = history;
+                break;
+            }
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stop_recovered() {
     let running = BOOK.with(|b| b.borrow().chats.values()
         .filter(|chat| chat.state == "running").map(|chat| chat.id.clone()).collect::<Vec<_>>());
@@ -928,6 +941,34 @@ impl Drop for Scope {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+
+    #[test]
+    fn protected_stop_history_matches_running_chat_and_turn() {
+        reset();
+        BOOK.with(|book| {
+            let mut book = book.borrow_mut();
+            for (id, turn, text) in [("chat-1", "accepted-turn", "old context"),
+                ("chat-2", "other-turn", "other conversation")] {
+                book.chats.insert(id.into(), serde_json::from_value(json!({"id":id,"title":id,
+                    "titled":true,"state":"running","updates":[],"next_n":0,"reader":false,
+                    "turn_id":turn,"history":[{"role":"user","content":text}]})).unwrap());
+            }
+        });
+        let history = vec![json!({"role":"user","content":"accepted context"})];
+        restore_stopped_history("chat:chat-1:wrong-turn", history.clone());
+        restore_stopped_history("chat:chat-2:accepted-turn", history.clone());
+        BOOK.with(|book| assert_eq!(book.borrow().chats["chat-1"].history[0]["content"], "old context"));
+        restore_stopped_history("chat:chat-1:accepted-turn", history.clone());
+        BOOK.with(|book| {
+            let book = book.borrow();
+            assert_eq!(book.chats["chat-1"].history, history);
+            assert_eq!(book.chats["chat-2"].history[0]["content"], "other conversation");
+        });
+        BOOK.with(|book| book.borrow_mut().chats.get_mut("chat-1").unwrap().state = "idle".into());
+        restore_stopped_history("chat:chat-1:accepted-turn", Vec::new());
+        BOOK.with(|book| assert_eq!(book.borrow().chats["chat-1"].history, history));
+        reset();
+    }
 
     // Mirrors docs/frontends/gui.md#turn-effects.
     #[test]

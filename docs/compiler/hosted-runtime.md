@@ -107,6 +107,13 @@ The snapshot stores their history and numbered updates in
 instructs the model to reload handles. Conversation ids belong to the workspace.
 Chat events use the editor's `chat.sessions` and `chat.update` shapes.
 
+Stopping a protected chat restores its accepted model history from the execution
+checkpoint before saving the conversation. Earlier human requests, assistant
+messages, and completed tool receipts remain available to the next turn.
+Unanswered tool calls receive interrupted outcomes. Stop does not invoke a model,
+dispatch a pending tool, or restore staged MCP mutations. The checkpoint frame
+must match the running conversation and its turn identity.
+
 Hosted conversations receive the project's
 [agent context](../frontends/agent-context.md) from the snapshot: instruction files
 and skills. The host's global layer and its remote MCP servers arrive through

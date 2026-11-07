@@ -195,27 +195,25 @@ carry that, and the section says they take precedence.
 
 ### When it is written
 
-- Create: [`jazyk init`](./cli.md#jazyk-init), `init_project` over MCP, `/init`
-  in the [IDE proxy](./acp.md#the-ide-proxy), `jazyk setup agents-md`, and a new
-  [hosted](../compiler/hosted-runtime.md) project. A missing `AGENTS.md` is created holding the section. An
-  `AGENTS.md` without the markers gets the section appended.
-- Update: every command that opens a project to work on it (`compile`, `watch`,
-  `gen`, `test`, `gui`, `acp`, `agent`, `mcp`, `setup`) and every jazyk write to
-  `jazyk.toml`. Only the text between the markers is replaced, and only when it
-  differs. Read-only commands (`status`, `explain`, `preview`, `query`) never
-  write it.
-- A local stamp in `.jazyk/agents-md.stamp` records the binary version and the
-  configuration hash of the last check, so an unchanged project is not reread.
+- Create or refresh: [`jazyk init`](./cli.md#jazyk-init), `init_project` over MCP,
+  `/init` in the [IDE proxy](./acp.md#the-ide-proxy), `jazyk setup agents-md`,
+  every command that opens a project to work on it (`compile`, `watch`, `gen`,
+  `test`, `gui`, `acp`, `agent`, `mcp`, `setup`), every jazyk write to
+  `jazyk.toml`, and writable [hosted](../compiler/hosted-runtime.md) jobs.
+- A missing `AGENTS.md` is created. A file without the markers gets the section
+  appended. An existing section is refreshed only when its text differs.
+- Working commands check on every start, including MCP server startup. Deleting
+  the file or section does not opt out. The next check restores it.
+- Read-only commands (`status`, `explain`, `preview`, `query`) never write it.
 - Writes are atomic. Everything outside the markers stays byte for byte,
   including line endings. Each change prints one line on standard error, e.g.
   `jazyk: updated the jazyk section in AGENTS.md`.
 
 ### Opting out
 
-- Deleting the section opts out: an update never adds it back.
 - `[agents] block = false` in `jazyk.toml` stops every create and update.
 - `jazyk setup --remove agents-md` deletes the section, and the file too when
-  nothing else is left in it.
+  nothing else is left in it. Set `[agents] block = false` first to keep it removed.
 - Markers that are duplicated, out of order, or unclosed leave the file untouched
   with one warning.
 
@@ -236,8 +234,8 @@ import `AGENTS.md`, jazyk appends the import (`@../AGENTS.md` from
   counts, outside code.
 - A file that is a symbolic link to `AGENTS.md`, or the same file, is left alone.
 - No file is created: an agent that finds no `CLAUDE.md` reads `AGENTS.md`.
-- The import follows the section's lifecycle: it is appended on create and
-  refreshed on update, and deleting it opts that file out.
+- The import follows the section's lifecycle: a missing import is appended and
+  an existing import is refreshed. Deleting it does not opt out.
 - An `AGENTS.md` that is a link (e.g. to `CLAUDE.md`) is written through the
   link, so it stays a link.
 - The same opt-outs apply.

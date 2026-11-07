@@ -3983,7 +3983,7 @@ impl McpServer {
         if let Err(e) = self.write_edit(crate::document_sets::CONFIG, &old_full, &full, &full) {
             return json!({"error": {"rule": "write-failed", "message": e}});
         }
-        crate::agents_md::sync(&self.project.root, crate::agents_md::Mode::Update).report();
+        crate::agents_md::sync(&self.project.root).report();
         json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
                "note": "jazyk.toml edited in place; a running GUI reloads it live"})
     }

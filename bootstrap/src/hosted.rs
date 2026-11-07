@@ -129,13 +129,12 @@ impl Workspace {
         self.files.clone()
     }
 
-    /// Create (`true`, a new project) or refresh the jazyk section of AGENTS.md and
+    /// Ensure the jazyk section of AGENTS.md exists and is current, along with
     /// the CLAUDE.md and GEMINI.md imports. Answers one line per change; warnings
     /// start with `warning: `. Mirrors docs/compiler/hosted-runtime.md.
-    pub fn sync_agents_md(&mut self, create: bool) -> Vec<String> {
+    pub fn sync_agents_md(&mut self, _create: bool) -> Vec<String> {
         let fs = crate::vfs::Scope::enter(&self.files);
-        let mode = if create { crate::agents_md::Mode::Create } else { crate::agents_md::Mode::Update };
-        let outcome = crate::agents_md::sync(&crate::portable::root(), mode);
+        let outcome = crate::agents_md::sync(&crate::portable::root());
         self.files = fs.snapshot();
         outcome.changed.into_iter().chain(outcome.warnings.into_iter().map(|w| format!("warning: {w}"))).collect()
     }

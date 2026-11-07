@@ -25,7 +25,7 @@ sets.
 ## What Jazyk manages
 
 Rules outside this section are the project's own. Jazyk rewrites this section
-when it updates. Delete the section to opt out.
+when it updates. To opt out, set `[agents] block = false` in `jazyk.toml`.
 
 - **`.jazyk/`.** Do not edit anything in it by hand. Graph nodes, `status.yaml`,
   and the journal change only through Jazyk tools, which enforce identity,

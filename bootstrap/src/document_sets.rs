@@ -877,7 +877,7 @@ pub fn atomic_config(root: &Path, text: &str, base_hash: &str) -> Result<()> {
     drop(_lock);
     // Every jazyk write to jazyk.toml refreshes the AGENTS.md section it describes
     // (docs/frontends/agent-context.md#when-it-is-written).
-    crate::agents_md::sync(root, crate::agents_md::Mode::Update).report();
+    crate::agents_md::sync(root).report();
     Ok(())
 }
 

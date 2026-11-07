@@ -858,7 +858,7 @@ fn run_agents_md(cwd: &Path) -> i32 {
         println!("jazyk: [agents] block = false in jazyk.toml; nothing written");
         return 0;
     }
-    let outcome = crate::agents_md::sync(&root, crate::agents_md::Mode::Create);
+    let outcome = crate::agents_md::sync(&root);
     for line in &outcome.changed {
         println!("jazyk: {line}");
     }

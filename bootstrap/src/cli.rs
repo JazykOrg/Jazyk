@@ -95,7 +95,7 @@ pub fn run_init(opts: &Options) -> i32 {
             cwd.display()
         );
         // An existing project still gets its AGENTS.md section on an explicit init.
-        let outcome = crate::agents_md::sync(&cwd, crate::agents_md::Mode::Create);
+        let outcome = crate::agents_md::sync(&cwd);
         for item in &outcome.items {
             println!("jazyk: wrote {}", item);
         }
@@ -193,7 +193,7 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String
     crate::document_sets::ensure_ignore(cwd).map_err(|e| e.to_string())?;
     // The jazyk section of AGENTS.md (docs/frontends/agent-context.md#when-it-is-written).
     // Warnings go to stderr, which never carries a protocol.
-    let outcome = crate::agents_md::sync(cwd, crate::agents_md::Mode::Create);
+    let outcome = crate::agents_md::sync(cwd);
     for w in &outcome.warnings {
         eprintln!("jazyk: {w}");
     }

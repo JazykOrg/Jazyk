@@ -105,11 +105,17 @@ pub(crate) fn released(out: &std::path::Path, task: &str) {
     STATE.with(|s| s.borrow_mut().claims.retain(|claim| claim.out != out || claim.lease.task != task));
 }
 
-/// Apply protected ownership receipts without restoring or running MCP state.
+/// Preserve accepted chat context and release claims without running MCP state.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stop_owned(value: &Value) -> Result<(), String> {
     if !crate::vfs::is_scoped() { return Err("Stop recovery requires a scoped workspace".into()); }
     let state = decode(value)?;
     for claim in state.claims { crate::control::release_owned_lease(&claim)?; }
+    for frame in state.frames {
+        if frame.key.starts_with("chat:") {
+            crate::conversation::restore_stopped_history(&frame.key, crate::harness::stopped_history(&frame.harness));
+        }
+    }
     Ok(())
 }
 

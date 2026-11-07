@@ -17,6 +17,7 @@ pub mod control;
 pub mod costs;
 pub mod decompile;
 pub mod derive;
+pub mod diagnostic_locations;
 pub mod docsgen;
 pub mod feedback;
 pub mod bind;
@@ -78,6 +79,8 @@ pub mod launcher;
 pub mod menu;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod start;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod editor_lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod setup;
 #[cfg(not(target_arch = "wasm32"))]

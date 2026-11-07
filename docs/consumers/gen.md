@@ -448,8 +448,18 @@ call has an output ceiling. The generation divides:
 
 - The first part generates the types, state, and the first group of requirements.
 - Each further part receives what was generated so far and the next group of
-  requirements, and returns only additional content to append.
-- Parts concatenate; traceability markers per requirement are unaffected.
+  requirements, and extends the artifact while preserving the earlier parts.
+- In file-reply mode, later replies contain only additions. The worker buffers
+  and concatenates the product replies before one complete file write. This reply
+  assembly does not authorize partial rewrites of an existing file. Traceability
+  markers per requirement are unaffected.
+
+Requirement groups are not file chunks. A worker never replaces an existing
+complete file with a prefix intending to append the rest later. Prefer guarded
+replacements for existing files. Each accepted write preserves unrelated content.
+A complete rewrite includes the whole file in one call. If it does not fit, use
+guarded replacements instead. Append is limited to append-oriented artifacts or
+new output that cannot fit one call.
 
 The group size is 20 requirements per part (the `{GROUP}` placeholder of the generation
 contract). The `requirements-per-entity` limit (soft 50, hard 80) opens an
@@ -801,6 +811,14 @@ First match wins:
    `criteria-failing-after-generation`), a finding for the author, not more generation
    work. Without the rule a criterion that contradicts its neighbors (sort's example
    that lists unsorted output) regenerated its entity on every build.
+   This prevents automatic rescheduling, not an authorized worker's repair.
+   `run_tests` identifies a failed generated candidate from the current ledger.
+   Its guidance asks the operator to compare the requirement, implementation and
+   test. An implementation or test defect can be repaired through the owning
+   entity's generation tools, then recorded and verified again. Existing ownership
+   and completion gates apply. A document contradiction needs a diagnostic and an
+   author decision. The tool never silently rewrites prose or schedules another
+   generation loop.
 6. A passing headline with any bound criterion lacking a passing verdict reads
    `unverified` (reason `criteria-incomplete`). A headline cannot hide an unrun,
    skipped, or interrupted case. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
@@ -1138,6 +1156,40 @@ no arguments it processes every runnable row; entity ids select their requiremen
 rows; requirement ids select rows directly. `--kind` filters `programmatic` or `llm`;
 `--force` also reruns `verified` rows; `--list` prints the derived status table without
 running anything. Exit 0 when every targeted row is `verified`, 1 otherwise.
+
+### Test artifact selection
+
+A verification job may supply nonempty `testPaths`, an exact list of project-relative
+test files. It does not combine them with requirement or entity `targets`.
+Every selected file must have a current recorded test binding. An unbound file,
+missing artifact, changed requirement, or unsupported runner fails before the build
+or any test starts. No empty selection means every test.
+
+Only criterion tests whose artifacts match the selected files execute. Other tests
+on the same requirement keep their evidence. Re-running a selected artifact also
+runs its already passing tests. Saved tasks execute once per job, including across document sets. Their reports
+are evaluated separately for each selected test name. Identical legacy commands
+in the same execution directory also share one execution. A build task already
+executed by this job supplies its report to selected tests.
+A saved task or legacy command recorded for artifacts outside the selection is
+unscopable and fails before execution. The user can select a containing folder or
+configure separate scoped tasks. Test commands are never guessed from filenames.
+
+All affected sets' build prerequisites finish after validation, before verification. A shared
+receipt is usable only while its test, requirement, criterion, and implementing
+hashes remain current. After the builds, the job retains an input fingerprint for
+all selected tests. It covers their bindings, criterion and requirement facts,
+judgment context, implementing and support file bytes, test artifact bytes, and
+project configuration. The durable
+cursor keeps that fingerprint across suspension. A restored result without an
+input fingerprint fails closed. The job checks every selected input before each
+observation, after execution before recording evidence, and before returning its
+report. A later test command or task product cannot refresh an earlier observation.
+Changed inputs fail visibly and require another explicit run. Normal build
+prerequisites remain unchanged.
+A scoped result records each selected criterion independently. The row cannot pass
+until every bound criterion has current passing evidence. Existing verification
+without `testPaths` keeps its target and pending-row behavior.
 
 ## Pluggable workers
 

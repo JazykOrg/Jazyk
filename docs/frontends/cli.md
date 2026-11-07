@@ -50,8 +50,8 @@ runs when it resolves to this binary on `PATH`, the absolute path otherwise (the
 | `gui` | jazyk.dev web UI | nothing | [`jazyk gui`](#jazyk-gui) |
 | `vscode` | Visual Studio Code | the Jazyk extension (LSP), then the [agents step](#ide-agents) (the Jazyk agent through the ACP Client extension `formulahendry.acp-client` and [`jazyk acp install vscode`](#jazyk-acp)) | `code <root>` |
 | `cursor` | Cursor | the Jazyk extension (LSP), then the agents step (the Jazyk agent through the ACP Client extension from Open VSX and `jazyk acp install cursor`) | `cursor <root>` |
-| `zed` | Zed | the agents step (the Jazyk agent through `jazyk acp install zed`) | `zed <root>` |
-| `idea` | IntelliJ IDEA | the agents step (the Jazyk agent through `jazyk acp install jetbrains`) | the IDE on `<root>` |
+| `zed` | Zed | the Zed extension (LSP), then the agents step (the Jazyk agent through `jazyk acp install zed`) | `zed <root>` |
+| `idea` | IntelliJ IDEA | the shared JetBrains plugin with LSP4IJ (LSP), then the agents step (the Jazyk agent through `jazyk acp install jetbrains`) | the IDE on `<root>` |
 | `phpstorm` | PhpStorm | the same | the same |
 | `webstorm` | WebStorm | the same | the same |
 | `pycharm` | PyCharm | the same | the same |
@@ -68,6 +68,11 @@ runs when it resolves to this binary on `PATH`, the absolute path otherwise (the
 | `droid` | Factory Droid | `.factory/mcp.json` | `droid` |
 
 What each choice needs to know about its program:
+
+- Zed and the JetBrains IDEs use the [editor adapters](./lsp.md#editor-setup).
+  The launcher preserves existing project settings, installs a built adapter when
+  available, and names any remaining installation or restart step. Missing local
+  artifacts do not prevent the editor or ACP agent from opening.
 
 - The Jazyk extension is installed from the newest `jazyk-<version>.vsix` in the
   checkout the binary was built in (`bootstrap/editors/vscode/`), when the editor

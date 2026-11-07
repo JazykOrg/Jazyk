@@ -353,29 +353,60 @@ async fn run_inner_async(
     )
     .await;
     if result == Stop::Cancelled {
-        let mut response = Message::user();
-        for request in unanswered(&state.conversation) {
-            let result = match state.tool_receipts.get(&request.id) {
-                Some(receipt) => tool_result(receipt.result.clone(), receipt.ok),
-                None => CallToolResult::error(vec![ContentBlock::text(
-                    "Tool call was interrupted before completing",
-                )]),
-            };
-            response.add_tool_response_with_metadata(
-                request.id,
-                Ok(result),
-                request.metadata.as_ref(),
-            );
-        }
-        if !response.content.is_empty() {
-            state.conversation.push(response);
-        }
+        preserve_interrupted_turn(&mut state);
         if let Err(error) = checkpoint(recovery, &state, CheckpointPhase::Finished, None).await {
             return Stop::Error(error);
         }
     }
     *args.history = export_history(&state.conversation);
     result
+}
+
+fn preserve_interrupted_turn(state: &mut HarnessState) {
+    // GDK applies its conversation effect after tools return. The accepted model
+    // receipt and tool receipts can already be checkpointed before that effect.
+    let prefix = format!("{}:{}:Inference:", state.run_id, state.transition);
+    let mut receipts = state.model_receipts.iter().filter_map(|(id, value)| {
+        id.strip_prefix(&prefix)?.parse::<u64>().ok().map(|ordinal| (ordinal, id, value))
+    }).collect::<Vec<_>>();
+    receipts.sort_by_key(|(ordinal, _, _)| *ordinal);
+    for (_, id, value) in receipts {
+        if state.conversation.iter().any(|message|
+            message.metadata.operation_note("jazyk.runtime", "inferenceId").and_then(Value::as_str) == Some(id.as_str())) {
+            continue;
+        }
+        let model = state.model_requests.get(id).and_then(|body| body["model"].as_str()).unwrap_or("recovered");
+        if let Ok((message, _)) = super::provider::response_message(id, value.clone(), model) {
+            let ids = message.content.iter().filter_map(MessageContent::as_tool_request)
+                .map(|request| request.id.as_str()).collect::<Vec<_>>();
+            if !ids.is_empty() && ids.iter().all(|id| state.conversation.iter().flat_map(|message| &message.content)
+                .filter_map(MessageContent::as_tool_request).any(|request| request.id == *id)) {
+                continue;
+            }
+            state.conversation.push(message);
+        }
+    }
+
+    let mut response = Message::user();
+    for request in unanswered(&state.conversation) {
+        let result = match state.tool_receipts.get(&request.id) {
+            Some(receipt) => tool_result(receipt.result.clone(), receipt.ok),
+            None => CallToolResult::error(vec![ContentBlock::text(
+                "Tool call was interrupted before completing",
+            )]),
+        };
+        response.add_tool_response_with_metadata(request.id, Ok(result), request.metadata.as_ref());
+    }
+    if !response.content.is_empty() {
+        state.conversation.push(response);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stopped_history(state: &HarnessState) -> Vec<Value> {
+    let mut stopped = state.clone();
+    preserve_interrupted_turn(&mut stopped);
+    export_history(&stopped.conversation)
 }
 
 async fn checkpoint(

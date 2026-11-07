@@ -15,7 +15,7 @@ const DRAFT_RULE: &str = "unratified";
 // The one classification every Inbox surface reads: the section an open diagnostic
 // lists under, or none when it lists nowhere (resolved, or hidden).
 pub fn section_of(d: &Diagnostic) -> Option<&'static str> {
-    if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+    if !crate::diagnostic_locations::visible(d) {
         return None;
     }
     if d.rule == DRAFT_RULE {

@@ -917,7 +917,7 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
         "verify" => {
             let id = st.jobs.submit(
                 st,
-                super::jobs::JobKind::Verify { targets: Vec::new(), test_kind: None, force: false },
+                super::jobs::JobKind::Verify { targets: Vec::new(), test_kind: None, test_paths: None, force: false },
             );
             Some(format!("verification queued (job {})", id))
         }

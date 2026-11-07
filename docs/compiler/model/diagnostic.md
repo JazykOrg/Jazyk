@@ -32,6 +32,28 @@ lands a `derived` or `decree` fact, generation, and decompilation.
 - `answer`: the human response, once one arrives. See [answers](#answers).
 - `created` and `updated`: generation markers.
 
+## Locations
+
+A diagnostic keeps its semantic `subjects`. File locations are a read projection,
+never a second source of truth. All frontends use the same resolver.
+
+- A requirement resolves to its source. An entity resolves to every mention.
+- A criterion resolves to its own source and its owning requirement.
+- Derived provenance follows `from` references. Redirects resolve before traversal.
+  Cycles stop at visited nodes.
+- A relationship follows its contributing requirements. A state machine follows its
+  subject and transition requirements. A view follows its provenance and members.
+- Document and section subjects resolve directly. A proposed edit contributes its
+  target and `old_text`, even when another subject already has a location.
+- Ledger ownership adds implementing files, anchored sites, and test artifacts for
+  affected entities, requirements, and criteria. These are related locations, not
+  claims that the diagnostic was measured on a particular code line.
+- The same diagnostic counts once per file and once globally. Multiple subject
+  paths to a file never multiply its count. Resolved and suppressed findings do
+  not count. Severity `none` is not surfaced.
+- A finding with no supported location stays project-wide. No frontend assigns an
+  arbitrary file or searches the message for a filename.
+
 ## Prompts
 
 A diagnostic can carry a `prompt`: a question for the document owner, with optional

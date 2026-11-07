@@ -477,7 +477,9 @@ pub(crate) async fn request_scoped(
 
         // The whole graph, as the shards hold it.
         ("GET", "/graph") => {
+            let p = project();
             let store = Store::load(&out());
+            let locations = crate::diagnostic_locations::locations(&store, &p.root, &crate::gen::GenSettings::resolve(&p));
             ok(json!({
                 "generation": store.status.generation,
                 "entities": store.graph.entities,
@@ -487,6 +489,7 @@ pub(crate) async fn request_scoped(
                 "relationships": store.graph.relationships,
                 "stateMachines": store.graph.state_machines,
                 "diagnostics": store.graph.diagnostics,
+                "diagnosticLocations": locations,
                 "redirects": store.graph.redirects,
             }))
         }

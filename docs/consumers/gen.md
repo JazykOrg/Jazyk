@@ -1159,8 +1159,16 @@ configure separate scoped tasks. Test commands are never guessed from filenames.
 
 All affected sets' build prerequisites finish after validation, before verification. A shared
 receipt is usable only while its test, requirement, criterion, and implementing
-hashes remain current. Changed inputs fail visibly and require another explicit
-run. Normal build prerequisites remain unchanged.
+hashes remain current. After the builds, the job retains an input fingerprint for
+all selected tests. It covers their bindings, criterion and requirement facts,
+judgment context, implementing and support file bytes, test artifact bytes, and
+project configuration. The durable
+cursor keeps that fingerprint across suspension. A restored result without an
+input fingerprint fails closed. The job checks every selected input before each
+observation, after execution before recording evidence, and before returning its
+report. A later test command or task product cannot refresh an earlier observation.
+Changed inputs fail visibly and require another explicit run. Normal build
+prerequisites remain unchanged.
 A scoped result records each selected criterion independently. The row cannot pass
 until every bound criterion has current passing evidence. Existing verification
 without `testPaths` keeps its target and pending-row behavior.

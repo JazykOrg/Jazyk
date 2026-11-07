@@ -271,6 +271,7 @@ async fn prepare_build(
         built: false,
         results: BTreeMap::new(),
         task_receipts: BTreeMap::new(),
+        inputs: None,
     })?;
     cache.tasks.extend(progress.data.task_receipts.clone());
     if !progress.data.built {
@@ -316,8 +317,10 @@ async fn run_cached(
 ) -> Result<Value, String> {
     let selected = plan(project, store, gs, paths)?;
     let mut progress = prepare_build(store, gs, paths, trace, cache).await?;
+    retain_inputs(store, gs, &selected, &mut progress, cache).await?;
     let mut lines = Vec::new();
     for bound in selected {
+        cache.validate_inputs()?;
         if trace.is_cancelled() {
             return Err("Verification cancelled".into());
         }
@@ -362,6 +365,7 @@ async fn run_cached(
                             requirement: bound.requirement.clone(),
                             message: observed.evidence.clone(),
                         });
+                        cache.validate_inputs()?;
                         if !bound.test.run.starts_with("task:") {
                             record(store, gs, &bound, &observed)?;
                         }
@@ -426,11 +430,13 @@ async fn run_cached(
                     evidence: crate::llm::truncate(reply.trim(), 400),
                 }
             };
+            cache.validate_inputs()?;
             progress.data.task_receipts = cache.tasks.clone();
             progress.data.results.insert(id, observed.clone());
             progress.save().await?;
             observed
         };
+        cache.validate_inputs()?;
         let result = if let Some(task) = bound.test.run.strip_prefix("task:") {
             let run_id = &cache
                 .tasks
@@ -450,6 +456,7 @@ async fn run_cached(
         });
         lines.push(json!({"requirement":bound.requirement,"criterion":bound.criterion,"artifact":bound.artifact,"verdict":result.verdict,"evidence":result.evidence}));
     }
+    cache.validate_inputs()?;
     let verified = lines
         .iter()
         .filter(|test| test["verdict"] == "pass")
@@ -469,10 +476,19 @@ fn receipt(result: &Value) -> Value {
 
 #[derive(Default)]
 struct RunCache {
+    inputs: BTreeMap<std::path::PathBuf, InputScope>,
     tasks: BTreeMap<String, (String, Value)>,
     commands: BTreeMap<String, ProgRun>,
 }
 impl RunCache {
+    fn validate_inputs(&self) -> Result<(), String> {
+        for scope in self.inputs.values() {
+            if input_fingerprint(&scope.store, &scope.gs, &scope.selected)? != scope.fingerprint {
+                return Err(changed_inputs());
+            }
+        }
+        Ok(())
+    }
     fn programmatic(
         &mut self,
         gs: &GenSettings,
@@ -508,6 +524,96 @@ struct Progress {
     results: BTreeMap<String, Observed>,
     #[serde(default)]
     task_receipts: BTreeMap<String, (String, Value)>,
+    #[serde(default)]
+    inputs: Option<String>,
+}
+
+struct InputScope {
+    store: Store,
+    gs: GenSettings,
+    selected: Vec<Bound>,
+    fingerprint: String,
+}
+
+fn changed_inputs() -> String {
+    "Test inputs changed or the retained observation has no input fingerprint. Rerun the selected tests in a new job.".into()
+}
+
+fn input_fingerprint(
+    store: &Store,
+    gs: &GenSettings,
+    selected: &[Bound],
+) -> Result<String, String> {
+    let ledger = Ledger::load(&store.out);
+    let mut inputs = Vec::new();
+    for bound in selected {
+        let row = ledger
+            .requirements
+            .get(&bound.requirement)
+            .ok_or_else(changed_inputs)?;
+        ensure_current_source(store, gs, row)?;
+        let test = if let Some(cid) = &bound.criterion {
+            &row.tests.get(cid).ok_or_else(changed_inputs)?.test
+        } else {
+            &row.test
+        };
+        if reference(test) != reference(&bound.test) {
+            return Err(changed_inputs());
+        }
+        inputs.push(json!({"reference":test,
+            "requirement":store.graph.requirements.get(&bound.requirement),
+            "criterion":bound.criterion.as_ref().and_then(|id|store.graph.criteria.get(id)),
+            "context":crate::context::ledger_context(store,&bound.requirement),
+            "files":row.files,"fileBytes":crate::gen::hash_files(gs,&row.files),
+            "artifact":hash_file(&artifact_path(&store.out,gs,test))}));
+    }
+    let config = crate::project::find_root(&store.out)
+        .map(|root| hash_file(&root.join(".jazyk/jazyk.toml")));
+    Ok(hash_hex(
+        &json!({"settings":gs,"inputs":inputs,"support":ledger.support,
+            "supportBytes":crate::gen::hash_files(gs,&ledger.support),"projectConfig":config})
+        .to_string(),
+    ))
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn retain_inputs(
+    store: &Store,
+    gs: &GenSettings,
+    selected: &[Bound],
+    progress: &mut crate::gen::progress::Progress<Progress>,
+    cache: &mut RunCache,
+) -> Result<(), String> {
+    let current = input_fingerprint(store, gs, selected)?;
+    if progress
+        .data
+        .inputs
+        .as_ref()
+        .is_some_and(|saved| saved != &current)
+        || (progress.data.inputs.is_none() && !progress.data.results.is_empty())
+    {
+        return Err(changed_inputs());
+    }
+    if progress.data.inputs.is_none() {
+        progress.data.inputs = Some(current.clone());
+        progress.save().await?;
+    }
+    if let Some(previous) = cache.inputs.get(&store.out) {
+        if previous.fingerprint != current {
+            return Err(changed_inputs());
+        }
+    } else {
+        cache.inputs.insert(
+            store.out.clone(),
+            InputScope {
+                store: store.clone(),
+                gs: gs.clone(),
+                selected: selected.to_vec(),
+                fingerprint: current,
+            },
+        );
+    }
+    cache.validate_inputs()
 }
 
 fn imported_task_observation(
@@ -685,6 +791,11 @@ pub fn run_workspace(
         }
         prepare_build(store, gs, paths, trace, &mut cache)?;
     }
+    for (project, store, gs, paths) in &groups {
+        let selected = plan(project, store, gs, paths)?;
+        let mut progress = prepare_build(store, gs, paths, trace, &mut cache)?;
+        retain_inputs(store, gs, &selected, &mut progress, &mut cache)?;
+    }
     for (project, store, gs, paths) in groups {
         if trace.is_cancelled() {
             return Err("Verification cancelled".into());
@@ -708,6 +819,7 @@ pub fn run_workspace(
         )?;
         results.push(json!({"setId":project.set_id,"report":result}));
     }
+    cache.validate_inputs()?;
     let total = |field: &str| {
         results
             .iter()
@@ -1050,6 +1162,265 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(legacy.get(), 1);
+    }
+    #[test]
+    fn later_legacy_command_cannot_rebaseline_or_reuse_an_earlier_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let project = Project::load(root);
+        let (mut store, gs) = super::super::tests::multi_llm_fixture(&root.join(".jazyk"));
+        let mut ledger = Ledger::load(&store.out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        let third = row.tests["crit:second"].clone();
+        row.tests.insert("crit:third".into(), third);
+        let mut criterion = store.graph.criteria["crit:second"].clone();
+        criterion.statement = "Check third".into();
+        store.graph.criteria.insert("crit:third".into(), criterion);
+        for (cid, test) in &mut row.tests {
+            test.test.kind = "programmatic".into();
+            test.test.name = cid.clone();
+            test.test.artifact = format!("tests/{}.rs", cid.replace(':', "-"));
+            test.test.run = if cid == "crit:second" {
+                "printf changed > src/cart.rs"
+            } else {
+                "printf x >> runs.log"
+            }
+            .into();
+            test.criterion_hash = hash_hex(&store.graph.criteria[cid].statement);
+            test.verdict = "none".into();
+            test.evidence = None;
+            crate::vfs::write(
+                gs.deliverable.join(&test.test.artifact),
+                format!("// {cid}"),
+            )
+            .unwrap();
+            test.test_hash = hash_file(&artifact_path(&store.out, &gs, &test.test));
+        }
+        row.test = row.tests["crit:first"].test.clone();
+        row.hashes.test = row.tests["crit:first"].test_hash.clone();
+        row.verdict = "none".into();
+        let old = row.hashes.files.clone();
+        let paths = row
+            .tests
+            .values()
+            .map(|test| {
+                gs.deliverable
+                    .join(&test.test.artifact)
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        ledger.save(&store.out);
+        let result = run(
+            &project,
+            &store,
+            &Judge(Cell::new(0)),
+            &gs,
+            &paths,
+            &Trace::stderr(crate::session::TraceLevel::Quiet),
+        );
+        assert!(
+            result.is_err(),
+            "Changed inputs received cached PASS: {result:?}"
+        );
+        let row = Ledger::load(&store.out).requirements["req:shop-1"].clone();
+        assert_eq!(
+            row.hashes.files, old,
+            "Never stamp an old observation with new implementation bytes"
+        );
+        assert_eq!(row.tests["crit:third"].verdict, "none");
+        assert_eq!(
+            crate::vfs::read_to_string(gs.deliverable.join("runs.log")).unwrap(),
+            "x"
+        );
+        assert_ne!(status_of(&store, "req:shop-1", &row, &gs).0, "verified");
+    }
+    #[test]
+    fn suspended_non_task_observation_cannot_rebaseline_changed_implementation() {
+        struct SuspendSecond(Cell<usize>);
+        impl SessionRunner for SuspendSecond {
+            fn agent_name(&self) -> String {
+                "fixture".into()
+            }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(
+                &self,
+                _: &crate::runner::BatchRun,
+                _: &Trace,
+            ) -> crate::runner::SessionReport {
+                panic!("No batch")
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                panic!("Use traced ask")
+            }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&Trace>,
+            ) -> Result<String, String> {
+                self.0.set(self.0.get() + 1);
+                if self.0.get() == 1 {
+                    Ok("PASS: inspected original implementation".into())
+                } else {
+                    Err("suspended".into())
+                }
+            }
+        }
+        for mutation in [
+            "implementation",
+            "artifact",
+            "criterion",
+            "requirement",
+            "context",
+            "missing-epoch",
+            "unchanged",
+        ] {
+            let _scope = crate::vfs::Scope::enter(&Default::default());
+            let (project, mut store, gs) = fixture();
+            let mut ledger = Ledger::load(&store.out);
+            let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+            for test in row.tests.values_mut() {
+                test.verdict = "none".into();
+                test.evidence = None;
+            }
+            row.verdict = "none".into();
+            let paths = row
+                .tests
+                .values()
+                .map(|test| path(&gs, &test.test.artifact))
+                .collect::<Vec<_>>();
+            ledger.save(&store.out);
+            let signature = json!({"paths":paths,"settings":gs});
+            let key = crate::gen::progress::command_key("verify-artifacts", &store.out, &signature);
+            let mut progress = {
+                let _recovery = crate::session_recovery::Scope::enter(None);
+                let error = run(
+                    &project,
+                    &store,
+                    &SuspendSecond(Cell::new(0)),
+                    &gs,
+                    &paths,
+                    &Trace::stderr(crate::session::TraceLevel::Quiet),
+                )
+                .unwrap_err();
+                assert_eq!(error, "suspended");
+                crate::session_recovery::parent(&key).unwrap().unwrap()
+            };
+            assert_eq!(progress["data"]["results"].as_object().unwrap().len(), 1);
+            if mutation == "missing-epoch" {
+                progress["data"].as_object_mut().unwrap().remove("inputs");
+            }
+            let capsule = json!({"version":1,"gdkVersion":"0.1.0-alpha.13","operationSet":"jazyk-gdk-3","frames":[],"parent":{key:progress},"claims":[],"deliveredInputs":[]});
+            crate::session_recovery::validate(&capsule).unwrap();
+            // Shared engine consumers restore owned snapshots, not necessarily Cloud's revision-fenced snapshot.
+            let old = Ledger::load(&store.out).requirements["req:shop-1"]
+                .hashes
+                .files
+                .clone();
+            match mutation {
+                "implementation" => crate::vfs::write(
+                    gs.deliverable.join("src/cart.rs"),
+                    "// changed after suspension",
+                )
+                .unwrap(),
+                "artifact" => {
+                    let artifact = artifact_path(
+                        &store.out,
+                        &gs,
+                        &Ledger::load(&store.out).requirements["req:shop-1"].tests["crit:first"]
+                            .test,
+                    );
+                    let text = crate::vfs::read_to_string(&artifact).unwrap();
+                    crate::vfs::write(artifact, format!("{text}\nChanged observable condition.\n"))
+                        .unwrap();
+                }
+                "criterion" => {
+                    store
+                        .graph
+                        .criteria
+                        .get_mut("crit:first")
+                        .unwrap()
+                        .statement = "A rebound criterion".into();
+                    let mut ledger = Ledger::load(&store.out);
+                    let test = ledger
+                        .requirements
+                        .get_mut("req:shop-1")
+                        .unwrap()
+                        .tests
+                        .get_mut("crit:first")
+                        .unwrap();
+                    test.criterion_hash = hash_hex(&store.graph.criteria["crit:first"].statement);
+                    let artifact = artifact_path(&store.out, &gs, &test.test);
+                    crate::vfs::write(artifact,format!("---\nrequirement: req:shop-1\ncriterion: crit:first\nhash: {}\n---\nInspect source. PASS if satisfied. FAIL otherwise.\n",test.criterion_hash)).unwrap();
+                    ledger.save(&store.out);
+                }
+                "requirement" => {
+                    store
+                        .graph
+                        .requirements
+                        .get_mut("req:shop-1")
+                        .unwrap()
+                        .statement = "The Cart shall use the new behavior.".into();
+                    let mut ledger = Ledger::load(&store.out);
+                    ledger
+                        .requirements
+                        .get_mut("req:shop-1")
+                        .unwrap()
+                        .hashes
+                        .requirement = hash_hex(&store.graph.requirements["req:shop-1"].statement);
+                    ledger.save(&store.out);
+                }
+                "context" => {
+                    store.graph.entities.get_mut("ent:cart").unwrap().name =
+                        "Changed context".into()
+                }
+                "missing-epoch" | "unchanged" => {}
+                _ => unreachable!(),
+            }
+            let before = serde_json::to_value(Ledger::load(&store.out)).unwrap();
+            let judge = Judge(Cell::new(0));
+            let _recovery = crate::session_recovery::Scope::enter(Some(&capsule));
+            let resumed = run(
+                &project,
+                &store,
+                &judge,
+                &gs,
+                &paths,
+                &Trace::stderr(crate::session::TraceLevel::Quiet),
+            );
+            if mutation == "unchanged" {
+                assert!(
+                    resumed.is_ok(),
+                    "Unchanged input should resume: {resumed:?}"
+                );
+                assert_eq!(
+                    judge.0.get(),
+                    1,
+                    "Reuse only the already observed criterion"
+                );
+                continue;
+            }
+            assert!(
+                resumed.is_err(),
+                "{mutation}: a retained PASS was applied to changed input: {resumed:?}"
+            );
+            assert_eq!(judge.0.get(), 0, "Must refuse before new judgments");
+            assert_eq!(
+                serde_json::to_value(Ledger::load(&store.out)).unwrap(),
+                before
+            );
+            assert_eq!(
+                Ledger::load(&store.out).requirements["req:shop-1"]
+                    .hashes
+                    .files,
+                old
+            );
+        }
     }
     #[test]
     fn later_set_build_mutation_cannot_reuse_prior_shared_suite_observation() {

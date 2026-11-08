@@ -517,9 +517,10 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 
 - `init_project({dir?})`: scaffold `jazyk.toml` and the starter layout. Offered only
   where no `jazyk.toml` exists.
-- `update_project_settings({...})`: typed edits to `jazyk.toml` (workflow modes, the
-  docs glob, lint rules, the `[acp]` profile, the `[executors]` overrides), rendered as
-  minimal edits ([project settings](./project-settings.md)).
+- `update_project_settings({settings, baseHash})`: edits to the `workflow` and `gen`
+  keys of `jazyk.toml`, rendered as minimal edits under the project lock and a
+  configuration hash ([project settings](./project-settings.md)). The agent, executor,
+  and model settings are not editable.
 
 ## Feedback tool
 
@@ -760,10 +761,10 @@ stays outside the goal board: released scopes are its worklist.
 - `begin_decompile({scope})`: the package for one draft: the inventory slice, the test
   files with their assertions, the lint rules, and the
   [drafting contract](../consumers/decompile.md#draft-goals).
-- `submit_draft({path, content})`: validate the draft (lint rules, extractable
+- `submit_draft({path, content, scope?})`: validate the draft (lint rules, extractable
   statements, evidence anchors) and write it into the docs tree. Records the draft hash
-  for [ratification](../consumers/decompile.md#ratification) and consumes the scope's
-  release.
+  for [ratification](../consumers/decompile.md#ratification) and consumes the release
+  of `scope` when given.
 
 ## Verification tools
 

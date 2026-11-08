@@ -2552,8 +2552,8 @@ impl McpServer {
                     } else {
                         tools.push(json!({
                             "name": "update_project_settings",
-                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile, workflow.generate, workflow.worker, acp.agent, gen.deliverable, gen.worker, llm.model, llm.base_url.",
-                            "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["settings"], "additionalProperties": false}
+                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual|auto), workflow.worker (internal|agent|any), gen.deliverable, gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
+                            "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}, "baseHash": {"type": "string", "description": "configuration hash from list_document_sets"}}, "required": ["settings", "baseHash"], "additionalProperties": false}
                         }));
                     }
                 }
@@ -3854,17 +3854,18 @@ impl McpServer {
         json!({"error": "the browser backend does not scaffold a project"})
     }
 
+    // Edits the allowlisted keys under the project lock and a configuration hash, never
+    // while a build runs. The agent, executor, and model settings stay out of reach.
+    // Mirrors docs/frontends/acp.md#project-tools.
     fn update_project_settings(&self, args: &Value) -> Value {
-        const KEYS: [&str; 8] = [
-            "workflow.compile",
-            "workflow.generate",
-            "workflow.worker",
-            "acp.agent",
-            "gen.deliverable",
-            "gen.worker",
-            "llm.model",
-            "llm.base_url",
+        const KEYS: [(&str, &[&str]); 5] = [
+            ("workflow.compile", &["manual", "auto"]),
+            ("workflow.generate", &["manual", "auto"]),
+            ("workflow.worker", &["internal", "agent", "any"]),
+            ("gen.deliverable", &[]),
+            ("gen.worker", &["agentic", "pipeline"]),
         ];
+        let supported = || KEYS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ");
         let Some(settings) = args["settings"].as_object() else {
             return json!({"error": {"rule": "missing-argument", "message": "settings is required: a map of key to value"}});
         };
@@ -3872,25 +3873,69 @@ impl McpServer {
             return json!({"error": {"rule": "not-a-project", "message":
                 "no jazyk.toml here to edit; call init_project first"}});
         }
-        let path = self.project.root.join(crate::document_sets::CONFIG);
-        let old_full = crate::vfs::read_to_string(&path).unwrap_or_default();
-        let mut full = old_full.clone();
         for (key, value) in settings {
-            if !KEYS.contains(&key.as_str()) {
+            let Some((_, allowed)) = KEYS.iter().find(|(k, _)| k == key) else {
                 return json!({"error": {"rule": "unsupported-key", "message": format!(
-                    "`{}` is not editable here; supported: {}", key, KEYS.join(", "))}});
-            }
+                    "`{}` is not editable here; supported: {}", key, supported())}});
+            };
             let Some(value) = value.as_str() else {
                 return json!({"error": {"rule": "bad-value", "message": format!("`{}` takes a string value", key)}});
             };
-            let (section, k) = key.split_once('.').unwrap();
-            full = toml_set(&full, section, k, value);
+            if !allowed.is_empty() && !allowed.contains(&value) {
+                return json!({"error": {"rule": "bad-value", "message": format!(
+                    "`{}` takes one of {}", key, allowed.join(", "))}});
+            }
+        }
+        let Some(base) = args["baseHash"].as_str() else {
+            return json!({"error": {"rule": "missing-argument", "message":
+                "baseHash is required: the configuration hash list_document_sets returns"}});
+        };
+        let root = &self.project.root;
+        let Ok(_project) = crate::document_sets::ProjectLock::acquire(root, "project.lock") else {
+            return json!({"error": {"rule": "project-busy", "message":
+                "a build or another project operation holds the project; retry when it finishes"}});
+        };
+        let before = match crate::document_sets::Workspace::load(root) {
+            Ok(w) => w,
+            Err((_, e)) => return json!({"error": {"rule": "bad-config", "message": e}}),
+        };
+        let running = std::iter::once(self.out.clone())
+            .chain(before.sets.iter().filter_map(|s| before.resolve(Some(&s.id)).ok().map(|p| p.out)))
+            .find_map(|out| crate::control::build_lease(&out));
+        if let Some(lease) = running {
+            return json!({"error": {"rule": "build-running", "message": format!(
+                "a build is running (lease `{}`); settings change after it finishes", lease.worker)}});
+        }
+        let path = root.join(crate::document_sets::CONFIG);
+        let Ok(_config) = crate::document_sets::ProjectLock::acquire(root, "config.lock") else {
+            return json!({"error": {"rule": "project-busy", "message": "another configuration edit is in progress; retry"}});
+        };
+        let old_full = match crate::vfs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", path.display(), e)}}),
+        };
+        if crate::model::hash_hex(&old_full) != base || before.hash != base {
+            return json!({"error": {"rule": "stale-config", "message":
+                "configuration changed; call list_document_sets for the current hash and review the file before retrying"}});
+        }
+        let mut full = old_full.clone();
+        for (key, value) in settings {
+            let (section, k) = key.split_once('.').unwrap_or(("", key.as_str()));
+            full = match try_toml_set(&full, section, k, value.as_str().unwrap_or_default()) {
+                Ok(text) => text,
+                Err(e) => return json!({"error": {"rule": "bad-config", "message": e}}),
+            };
+        }
+        if let Err((_, e)) = crate::document_sets::Workspace::parse(root, &full, true) {
+            return json!({"error": {"rule": "bad-config", "message": e}});
         }
         if let Err(e) = self.write_edit(crate::document_sets::CONFIG, &old_full, &full, &full) {
             return json!({"error": {"rule": "write-failed", "message": e}});
         }
-        crate::agents_md::sync(&self.project.root).report();
+        drop(_config);
+        crate::agents_md::sync(root).report();
         json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
+               "hash": crate::model::hash_hex(&full),
                "note": "jazyk.toml edited in place; a running GUI reloads it live"})
     }
 }
@@ -6024,5 +6069,44 @@ mod tests {
         let reply = chat_server(&base).init_project();
         assert_eq!(reply["error"]["rule"], "write-failed", "{reply}");
         crate::vfs::remove_dir_all(&base).ok();
+    }
+
+    // update_project_settings edits only the allowlisted keys, under the project lock,
+    // against the configuration hash, and never while a build runs.
+    // Mirrors docs/frontends/acp.md#project-tools.
+    #[test]
+    fn project_settings_need_a_hash_the_lock_and_no_build() {
+        let dir = bare_dir("settings-guard");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let call = |args: Value| -> Value {
+            let reply = serving.handle("tools/call", &json!({"name":"update_project_settings","arguments":args})).unwrap();
+            let body: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(reply["isError"], !body["error"].is_null(), "{reply}");
+            body
+        };
+        let config = dir.join(crate::document_sets::CONFIG);
+        let original = crate::vfs::read_to_string(&config).unwrap();
+        let hash = crate::model::hash_hex(&original);
+        for key in ["llm.base_url", "llm.model", "acp.agent", "executors.compile"] {
+            assert_eq!(call(json!({"settings":{key:"x"},"baseHash":hash}))["error"]["rule"], "unsupported-key", "{key}");
+        }
+        assert_eq!(call(json!({"settings":{"workflow.compile":"sometimes"},"baseHash":hash}))["error"]["rule"], "bad-value");
+        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"}}))["error"]["rule"], "missing-argument");
+        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":"stale"}))["error"]["rule"], "stale-config");
+        {
+            let _held = crate::document_sets::ProjectLock::acquire(&dir, "project.lock").unwrap();
+            assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "project-busy");
+        }
+        let out = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap().out;
+        crate::control::claim(&out, crate::control::BUILD_LEASE, "internal-test").unwrap();
+        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "build-running");
+        crate::control::release_lease(&out, crate::control::BUILD_LEASE);
+        assert_eq!(crate::vfs::read_to_string(&config).unwrap(), original, "a refused edit wrote the file");
+        let ok = call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}));
+        let edited = crate::vfs::read_to_string(&config).unwrap();
+        assert!(edited.contains("[workflow]\ncompile = \"auto\""), "{edited}");
+        assert_eq!(ok["hash"], crate::model::hash_hex(&edited));
+        crate::document_sets::Workspace::load(&dir).unwrap();
+        crate::vfs::remove_dir_all(dir).ok();
     }
 }

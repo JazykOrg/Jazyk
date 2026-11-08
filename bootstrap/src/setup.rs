@@ -134,9 +134,10 @@ fn home() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default())
 }
 
+// A program on PATH, the one lookup every launcher, setup, and install check shares.
+// On Windows it honors PATHEXT (`code` finds `code.cmd`). Mirrors docs/frontends/cli.md#jazyk.
 pub fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.vis_file())
+    which::which(name).ok()
 }
 
 // Installed extension ids (lowercase, version stripped) of a VS Code-family IDE.
@@ -949,6 +950,17 @@ fn remove_all(targets: &[Item], root: &Path) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    // One shared program lookup, from the `which` crate: what is on PATH is found,
+    // and on Windows a program found through PATHEXT (`cmd` is `cmd.exe`).
+    #[test]
+    fn program_lookup_finds_what_is_on_path() {
+        assert!(super::which("jazyk-no-such-program-anywhere").is_none());
+        #[cfg(unix)]
+        assert!(super::which("sh").is_some_and(|p| p.is_absolute()));
+        #[cfg(windows)]
+        assert!(super::which("cmd").is_some_and(|p| p.extension().is_some()));
+    }
+
     use super::*;
 
     #[test]

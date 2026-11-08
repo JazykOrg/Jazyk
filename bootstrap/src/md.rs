@@ -64,11 +64,12 @@ fn locate_tokens(text: &str, needle: &str) -> Option<(usize, usize)> {
     None
 }
 
-// 0-based (line, char column) of a byte offset within `text`.
+// 0-based (line, column) of a byte offset within `text`, the column in UTF-16 code
+// units: the LSP's default position encoding, which every editor range uses.
 pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
     let before = &text[..byte.min(text.len())];
     let line = before.matches('\n').count();
-    let col = before.rsplit('\n').next().unwrap_or("").chars().count();
+    let col = before.rsplit('\n').next().unwrap_or("").encode_utf16().count();
     (line, col)
 }
 
@@ -509,6 +510,15 @@ mod tests {
         assert_eq!((sl, sc), (1, 0));
         assert_eq!(el, 2);
         assert_eq!(ec, "cancel it.".chars().count());
+    }
+
+    // Columns count UTF-16 code units: an emoji before the quote is two.
+    #[test]
+    fn locate_reports_utf16_columns() {
+        let (sl, sc, el, ec) = super::locate("é 😀 An order ships.", "An order ships.").unwrap();
+        assert_eq!((sl, el), (0, 0));
+        assert_eq!(sc, 5);
+        assert_eq!(ec, 5 + "An order ships.".len());
     }
 
     use super::*;

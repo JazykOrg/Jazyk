@@ -231,7 +231,10 @@ when something was set up, `1` when nothing was written, `2` on a usage error.
 
 ### jazyk compile
 
-`jazyk compile [path...]` runs one [build](../compiler/compilation.md#a-build). The
+`jazyk compile [path...]` runs one [build](../compiler/compilation.md#a-build) per
+selected [document set](../compiler/document-sets.md#cli-and-lsp): the set `--set`
+names, else every set claiming one of the paths, else every dirty set. A path no set
+claims is a usage error. The
 [reconciler](../compiler/reconciler.md) derives the goal board from the documents, the
 graph, the ledger, and the [change records](../compiler/graph.md#change-records); the
 scheduler [batches](../compiler/reconciler.md#batching) ready goals; and
@@ -920,9 +923,11 @@ meant to be run by hand.
 
 ### jazyk lsp
 
-`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. Read-only: it
-serves the last committed graph and its rendered diagrams, and a `compile` or `watch`
-rebuild refreshes it. `--stdio` is accepted and changes nothing: LSP clients append it
+`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. It serves the
+last committed graph and its rendered diagrams, and a rebuild refreshes it. It writes
+only through its explicit [commands](./lsp.md#commands): answering a diagnostic,
+editing a document set, and `jazyk.compile`, which builds one set with the LLM
+settings this command resolved. `--stdio` is accepted and changes nothing: LSP clients append it
 to name the transport (the VS Code client library does), and a server that refused it
 would crash on every start.
 
@@ -987,14 +992,16 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 The CLI walks up from the working directory to the nearest `jazyk.toml` and treats that
 directory as the project root. A [redirect](../compiler/project-settings.md#redirect)
 found above the working directory is a boundary, not a capture: discovery stops there
-and the command runs ad hoc at the working directory. Explicit `[path...]` arguments
-skip discovery and run ad hoc on those files. The out directory defaults to
-`<root>/.jazyk/<set-id>/` for the selected set.
+and the command runs ad hoc at the working directory. Paths never skip discovery: the
+paths `jazyk compile` takes select the document sets that claim them, and `check` and
+`watch` take no paths. Each set's state lives in `<root>/.jazyk/<set-id>/`.
 
 ## Project task commands
 
 `jazyk tasks` lists task definitions and runtime availability. `jazyk runs` includes
 the recent run history. `jazyk run <task-id>` submits a finite task and returns its
 durable run ID. `jazyk run-status <run-id>`, `jazyk run-log <run-id>`, and
-`jazyk run-cancel <run-id>` inspect, read, and cancel it. These commands use local
+`jazyk run-cancel <run-id>` inspect, read, and cancel it. They print JSON and follow
+the [help](#help) rules: `--help` prints their usage, and a missing id, an extra
+argument, or an unknown option is a usage error with exit `2`. These commands use local
 Docker without a Cloud account. See [Task execution](../compiler/task-runtime.md).

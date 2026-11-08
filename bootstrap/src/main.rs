@@ -23,18 +23,5 @@ fn main() {
         }
         return;
     }
-    if matches!(
-        args.get(1).map(String::as_str),
-        Some("tasks" | "runs" | "run" | "run-status" | "run-log" | "run-cancel")
-    ) {
-        match jazyk::task_runtime::cli(&args[1..]) {
-            Ok(value) => println!("{}", serde_json::to_string_pretty(&value).unwrap()),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
     jazyk::launcher::run();
 }

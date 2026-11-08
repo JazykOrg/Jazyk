@@ -306,6 +306,85 @@ pub fn config_set(proj: &Project, args: &str) -> String {
     }
 }
 
+// The commands that read or change one document set's graph.
+// Mirrors docs/frontends/acp.md#slash-commands.
+pub const GRAPH_COMMANDS: &[&str] = &[
+    "status", "board", "preview", "explain", "ripple", "questions", "compile", "generate",
+    "verify", "release",
+];
+
+// Why a graph command found no single set: the project has none, or several.
+#[derive(Debug)]
+pub enum ScopeRefusal {
+    NoSets(String),
+    Several(String),
+}
+
+impl ScopeRefusal {
+    pub fn message(self) -> String {
+        match self {
+            ScopeRefusal::NoSets(m) | ScopeRefusal::Several(m) => m,
+        }
+    }
+}
+
+// The one document set a graph command addresses: the set already chosen, or the
+// project's only set. Never the project's shared `.jazyk/` directory.
+// Mirrors docs/frontends/acp.md#slash-commands.
+pub fn graph_scope(proj: &Project, cmd: &str) -> Result<Project, ScopeRefusal> {
+    if proj.set_id.is_some() {
+        return Ok(proj.clone());
+    }
+    let workspace = crate::document_sets::Workspace::load(&proj.root)
+        .map_err(|(_, e)| ScopeRefusal::NoSets(e))?;
+    match workspace.sets.len() {
+        0 => Err(ScopeRefusal::NoSets(
+            "this project has no document set yet; add one with `jazyk sets add NAME --docs PATH`".into(),
+        )),
+        1 => workspace
+            .resolve(None)
+            .map_err(|(_, e)| ScopeRefusal::NoSets(e)),
+        n => {
+            let cli = match cmd {
+                "board" => "preview",
+                "questions" => "answer",
+                "generate" => "gen",
+                "verify" => "test",
+                c => c,
+            };
+            let names: Vec<&str> = workspace.sets.iter().map(|s| s.name.as_str()).collect();
+            Err(ScopeRefusal::Several(format!(
+                "choose a document set: this project has {} ({}), and /{} works on one; run `jazyk {} --set NAME`",
+                n,
+                names.join(", "),
+                cmd,
+                cli
+            )))
+        }
+    }
+}
+
+// The sets bare `jazyk compile` would build: every set with documents whose
+// compile is pending, in configuration order. Mirrors docs/compiler/document-sets.md.
+pub fn dirty_sets(root: &std::path::Path) -> Result<(Vec<Project>, String), String> {
+    let workspace = crate::document_sets::Workspace::load(root).map_err(|(_, e)| e)?;
+    let summary = workspace.summary();
+    let dirty: Vec<String> = summary["sets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["dirty"] == true && s["state"] != "empty")
+        .filter_map(|s| s["id"].as_str().map(str::to_string))
+        .collect();
+    let projects = workspace
+        .sets
+        .iter()
+        .filter(|s| dirty.contains(&s.id))
+        .filter_map(|s| workspace.resolve(Some(&s.id)).ok())
+        .collect();
+    Ok((projects, workspace.hash.clone()))
+}
+
 // The board as the scheduler would derive it now: the summary line, one line per
 // goal, and the batches. Shared by the proxy, the GUI pane, and the CLI.
 // Mirrors docs/frontends/acp.md#slash-commands.

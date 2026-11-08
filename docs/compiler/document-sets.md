@@ -348,7 +348,7 @@ jazyk sets list
 jazyk sets add feature-xyz --docs docs/xyz.md --docs 'docs-xyz/**/*.md' --source 'src/**'
 jazyk sets preview feature-xyz
 jazyk compile --set feature-xyz
-jazyk compile --dirty
+jazyk compile
 jazyk status
 ```
 

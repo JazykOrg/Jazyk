@@ -944,11 +944,36 @@ fn run_command(
     };
     let proj = &proj;
     let llm = st.llm.lock().unwrap().clone();
-    let say = |text: String| {
-        let _ = up.send_notification(SessionNotification::new(
-            sid_of(sid),
-            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text))),
-        ));
+    // A graph command works on one document set, never on the project's shared
+    // `.jazyk/`; bare /compile in a project of several sets builds every dirty one.
+    // Mirrors docs/frontends/acp.md#slash-commands.
+    let scoped;
+    let (proj, out) = if commands::GRAPH_COMMANDS.contains(&cmd) {
+        match commands::graph_scope(proj, cmd) {
+            Ok(p) => {
+                scoped = p;
+                let out = scoped.out.clone();
+                (&scoped, out)
+            }
+            Err(commands::ScopeRefusal::Several(_)) if cmd == "compile" => {
+                let sets = match commands::dirty_sets(&proj.root) {
+                    Ok((sets, _)) => sets,
+                    Err(e) => return e,
+                };
+                if sets.is_empty() {
+                    return "no dirty document sets".into();
+                }
+                let mut text = String::new();
+                for set in &sets {
+                    text.push_str(&format!("\n{}", set.set_name.clone().unwrap_or_default()));
+                    text.push_str(&compile_in(st, up, sid, set, &set.out, &llm));
+                }
+                return text;
+            }
+            Err(refusal) => return refusal.message(),
+        }
+    } else {
+        (proj, st.out.clone())
     };
     match cmd {
         "init" => format!(
@@ -1002,15 +1027,15 @@ fn run_command(
                 Err(_) => reply,
             }
         }
-        "questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
+        "questions" => crate::answer::questions_summary(&out).unwrap_or_else(|| {
             "no standing questions; every open finding is either unprompted or already answered"
                 .into()
         }),
         "status" => {
             // The verdict with its counts, and the board summary beside it.
             // Mirrors docs/frontends/acp.md#slash-commands.
-            let s = crate::store::Store::load(&st.out);
-            let board = crate::board::Board::compute(proj, &st.out);
+            let s = crate::store::Store::load(&out);
+            let board = crate::board::Board::compute(proj, &out);
             let c = board.counts();
             format!(
                 "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}\n{}\nboard: {} open, {} ready, {} blocked, {} parked, {} failed",
@@ -1027,48 +1052,25 @@ fn run_command(
                 c.failed
             )
         }
-        "board" => commands::board_text(proj, &st.out),
-        "preview" => commands::preview_text(proj, &st.out, args),
-        "explain" => commands::explain_text(proj, &st.out, args),
-        "ripple" => commands::ripple_text(proj, &st.out, args),
+        "board" => commands::board_text(proj, &out),
+        "preview" => commands::preview_text(proj, &out, args),
+        "explain" => commands::explain_text(proj, &out, args),
+        "ripple" => commands::ripple_text(proj, &out, args),
         "release" => {
-            crate::control::release(proj, &st.out, None);
+            crate::control::release(proj, &out, None);
             "released: pending compile and generate work is approved".into()
         }
-        "compile" => {
-            say("compiling…\n".into());
-            st.building
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), st.out.clone());
-            let report = crate::reconcile::compile(proj, &llm, &st.out, &trace);
-            // The watcher takes the plan back where the build left it: record what
-            // remains without republishing over the finished checklist.
-            *st.plan_seen.lock().unwrap() =
-                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &st.out));
-            st.building
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            // The verdict carries its counts; the board summary rides beside it.
-            let board = crate::board::Board::compute(proj, &st.out);
-            format!(
-                "\n{}; {} session(s), {} mutation(s), {} parked, coverage {}%\n{}",
-                report.verdict,
-                report.sessions,
-                report.applied,
-                report.parked,
-                report.coverage_pct,
-                board.summary_line()
-            )
-        }
+        "compile" => compile_in(st, up, sid, proj, &out, &llm),
         "generate" | "verify" => {
-            let runner = match crate::acp::runner::AcpRunner::start(proj, &llm, &st.out) {
+            let runner = match crate::acp::runner::AcpRunner::start(proj, &llm, &out) {
                 Ok(r) => r,
                 Err(e) => return format!("agent failed to start: {}", e),
             };
-            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), st.out.clone());
-            let store = crate::store::Store::load(&st.out);
+            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), out.clone());
+            let store = crate::store::Store::load(&out);
             let gs = crate::gen::GenSettings::resolve(proj);
             let result = if cmd == "generate" {
-                let _guard = match crate::control::begin_internal_build(proj, &st.out, "generate") {
+                let _guard = match crate::control::begin_internal_build(proj, &out, "generate") {
                     Ok(g) => g,
                     Err(e) => return format!("refused: {}", e),
                 };
@@ -1082,7 +1084,7 @@ fn run_command(
                 crate::verify::run_all(&store, &runner, &gs, &[], None, false, &trace)
             };
             *st.plan_seen.lock().unwrap() =
-                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &st.out));
+                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &out));
             st.building
                 .store(false, std::sync::atomic::Ordering::Relaxed);
             match result {
@@ -1092,6 +1094,45 @@ fn run_command(
         }
         _ => "unknown command".into(),
     }
+}
+
+// One set's build narrated into the open prompt. Mirrors docs/frontends/acp.md#slash-commands.
+fn compile_in(
+    st: &Arc<ProxyState>,
+    up: &ConnectionTo<Client>,
+    sid: &str,
+    proj: &crate::project::Project,
+    out: &std::path::Path,
+    llm: &crate::llm::Llm,
+) -> String {
+    let say = |text: String| {
+        let _ = up.send_notification(SessionNotification::new(
+            sid_of(sid),
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text))),
+        ));
+    };
+    say("compiling…\n".into());
+    st.building
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), out.to_path_buf());
+    let report = crate::reconcile::compile(proj, llm, out, &trace);
+    // The watcher takes the plan back where the build left it: record what
+    // remains without republishing over the finished checklist.
+    *st.plan_seen.lock().unwrap() =
+        crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, out));
+    st.building
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    // The verdict carries its counts; the board summary rides beside it.
+    let board = crate::board::Board::compute(proj, out);
+    format!(
+        "\n{}; {} session(s), {} mutation(s), {} parked, coverage {}%\n{}",
+        report.verdict,
+        report.sessions,
+        report.applied,
+        report.parked,
+        report.coverage_pct,
+        board.summary_line()
+    )
 }
 
 // Build progress narrated as message chunks: one line per session lifecycle event.

@@ -17,7 +17,7 @@ mod outfiles;
 mod product;
 mod projfiles;
 mod server;
-mod state;
+pub(crate) mod state;
 mod views_api;
 
 use state::SharedState;
@@ -177,7 +177,13 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
     let token = if gopts.no_token {
         None
     } else {
-        Some(state::mint_token())
+        match state::mint_token() {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("jazyk: gui: {}", e);
+                return 1;
+            }
+        }
     };
     let st = Arc::new(AppState {
         root: proj.root.clone(),

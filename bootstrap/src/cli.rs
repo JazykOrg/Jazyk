@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 #[derive(Default)]
 pub struct Options {
     pub set: Option<String>,
-    pub dirty: bool,
     pub docs: Vec<String>,
     pub source: Vec<String>,
     pub roots: Vec<String>,
@@ -549,11 +548,19 @@ fn verdict_line(r: &reconcile::BuildReport) -> String {
 }
 
 pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
-    use crate::document_sets::{Workspace, included};
+    use crate::document_sets::Workspace;
     let cwd=std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root=project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
     let workspace=match Workspace::load(&root) { Ok(w)=>w, Err((_,e))=>{eprintln!("jazyk: {}",e);return 2;} };
     if workspace.sets.is_empty() { eprintln!("jazyk: no document sets; use `jazyk sets add NAME --docs PATH`"); return 2; }
+    // A path selects the sets claiming it; one no set claims selects nothing and is
+    // a usage error, never a silent no-op (docs/frontends/cli.md#jazyk-compile).
+    if opts.set.is_none() {
+        if let Some(path)=paths.iter().find(|p| !workspace.sets.iter().any(|set| set_claims(&workspace,set,&cwd,p))) {
+            eprintln!("jazyk: no document set claims `{}`; `jazyk sets list` shows what each set compiles",path);
+            return 2;
+        }
+    }
     let summary=workspace.summary();
     let mut code=0;
     let mut selected=0;
@@ -562,9 +569,7 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
             match workspace.select(selector) { Ok(s) if s.id == set.id => {}, Ok(_) => continue,
                 Err((_,e)) => {eprintln!("jazyk: {}",e);return 2;} }
         } else if !paths.is_empty() {
-            if !paths.iter().any(|path| cwd.join(path).strip_prefix(&root).ok()
-                .is_some_and(|rel| included(&set.docs, &rel.to_string_lossy()) || workspace.files().iter()
-                    .any(|f| f.starts_with(&format!("{}/",rel.display())) && included(&set.docs,f)))) {continue;}
+            if !paths.iter().any(|path| set_claims(&workspace, set, &cwd, path)) {continue;}
         } else if !summary["sets"].as_array().unwrap().iter().any(|s| s["id"]==set.id && s["dirty"]==true && s["state"]!="empty") {continue;}
         selected+=1;
         let mut options=opts.clone(); options.set=Some(set.id.clone());
@@ -580,6 +585,17 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
     }
     if selected==0 { println!("No dirty document sets."); }
     code
+}
+
+// Whether a set's documents include `path` (relative to `cwd`), or a file under it
+// when it names a directory.
+pub(crate) fn set_claims(workspace: &crate::document_sets::Workspace, set: &crate::document_sets::DocumentSet, cwd: &std::path::Path, path: &str) -> bool {
+    use crate::document_sets::included;
+    cwd.join(path).strip_prefix(&workspace.root).ok().is_some_and(|rel| {
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        included(&set.docs, &rel)
+            || workspace.files().iter().any(|f| f.starts_with(&format!("{}/", rel)) && included(&set.docs, f))
+    })
 }
 
 pub fn run_sets(args: &[String], opts: &Options) -> i32 {
@@ -2313,6 +2329,54 @@ pub fn run_query(opts: &Options, query: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    // The task commands go through the launcher like every other command: help,
+    // arity, and unknown options are the launcher's (docs/frontends/cli.md#help).
+    #[test]
+    fn task_commands_have_shapes_and_help() {
+        for (cmd, arity) in [("tasks", 0), ("runs", 0), ("run", 1), ("run-status", 1), ("run-log", 1), ("run-cancel", 1)] {
+            let (n, extra) = crate::launcher::command_shape(cmd).unwrap_or_else(|| panic!("no shape for {}", cmd));
+            assert_eq!(n, Some(arity), "{}", cmd);
+            assert!(extra.is_empty(), "{}", cmd);
+            let usage = crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for {}", cmd));
+            assert!(usage.starts_with(&format!("usage: jazyk {}", cmd)), "{}", usage);
+            assert!(usage.contains("2 on a usage error"), "{}", usage);
+        }
+        let main = include_str!("main.rs");
+        assert!(!main.contains("task_runtime::cli"), "main.rs must not bypass the launcher");
+    }
+
+    // `check` and `watch` take no paths, `compile` drops the inert `--dirty`, and a
+    // compile path selects exactly the sets claiming it
+    // (docs/frontends/cli.md#jazyk-compile, #project-discovery).
+    #[test]
+    fn compile_paths_select_claiming_sets_and_other_builds_take_none() {
+        use serde_json::json;
+        for cmd in ["check", "watch"] {
+            assert_eq!(crate::launcher::command_shape(cmd).unwrap().0, Some(0), "{}", cmd);
+            assert!(!crate::launcher::cmd_usage(cmd).unwrap().contains("path..."), "{}", cmd);
+        }
+        let (_, extra) = crate::launcher::command_shape("compile").unwrap();
+        assert!(!extra.contains(&"--dirty"));
+        assert!(!crate::launcher::cmd_usage("compile").unwrap().contains("--dirty"));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("docs/orders")).unwrap();
+        std::fs::write(root.join("docs/orders/a.md"), "# A").unwrap();
+        std::fs::write(root.join("docs/billing.md"), "# B").unwrap();
+        for (id, docs) in [("ds_orders", "docs/orders/**/*.md"), ("ds_billing", "docs/billing.md")] {
+            let w = crate::document_sets::Workspace::load(root).unwrap();
+            crate::document_sets::edit(root, &json!({"baseHash": w.hash, "set": {"id": id, "name": id, "docs": [docs]}}), false).unwrap();
+        }
+        let w = crate::document_sets::Workspace::load(root).unwrap();
+        let claims = |path: &str| -> Vec<String> {
+            w.sets.iter().filter(|s| super::set_claims(&w, s, root, path)).map(|s| s.id.clone()).collect()
+        };
+        assert_eq!(claims("docs/orders/a.md"), vec!["ds_orders"]);
+        assert_eq!(claims("docs/orders"), vec!["ds_orders"]);
+        assert_eq!(claims("docs/billing.md"), vec!["ds_billing"]);
+        assert!(claims("README.md").is_empty());
+        assert_eq!(super::set_claims(&w, &w.sets[0], &root.join("docs"), "orders/a.md"), w.sets[0].id == "ds_orders");
+    }
     use super::*;
     use crate::project::{GlobalLlm, LlmSettings};
 

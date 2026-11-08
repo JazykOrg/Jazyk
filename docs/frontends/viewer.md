@@ -77,9 +77,13 @@ never compiles.
     section. A view with no level (a curated view, an object or state view) says
     which entity or machine it belongs to instead.
   - The rendering, inline. The viewer reads `<out>/diagrams/<kind>/<slug>.svg` at
-    render time and embeds it as an `<svg>` element: sanitized (`script` and
-    `foreignObject` elements, `on*` attributes, `javascript:` links, the XML
-    declaration and processing instructions stripped), the `viewBox` kept and the hard
+    render time and embeds it as an `<svg>` element: sanitized by an allowlist over an
+    XML parse (only static drawing, text, structure, paint, and filter elements and their
+    geometry and presentation attributes survive; `script`, `foreignObject`, `style`,
+    `image`, and animation elements drop with their subtrees; `on*` attributes drop; a
+    link stays only as a fragment or a relative path, judged on the decoded value; the
+    XML declaration, comments, and processing instructions drop; a file that does not
+    parse renders no image), the `viewBox` kept and the hard
     `width` and `height` dropped (the attributes and the same declarations in the root
     `style`), the rendering's own width kept as the figure's maximum so a small diagram
     scales down to the card and never up. Every [drill-down](../compiler/diagrams.md#drill-down)

@@ -58,6 +58,7 @@ pub mod reconcile;
 pub mod render;
 pub mod runner;
 mod scoped_state;
+pub mod selection;
 pub mod session;
 pub mod session_recovery;
 pub mod store;

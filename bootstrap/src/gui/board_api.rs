@@ -16,6 +16,30 @@ pub async fn board(State(st): State<SharedState>) -> Json<Value> {
             .expect("board task panicked"),
     )
 }
+pub async fn selected_board(
+    State(st): State<SharedState>,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let proj = st.proj();
+    let out = st.out.clone();
+    if proj.set_id.is_none() {
+        return super::api::err(
+            axum::http::StatusCode::BAD_REQUEST,
+            "a selection needs a document set: send setId",
+        );
+    }
+    match tokio::task::spawn_blocking(move || {
+        crate::webapi::board::selected_board_value(&proj, &out, &body)
+    })
+    .await
+    .expect("board task panicked")
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => super::api::err(axum::http::StatusCode::BAD_REQUEST, e),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct PreviewQ {
     goal: Option<String>,

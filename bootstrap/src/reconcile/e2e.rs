@@ -2357,3 +2357,110 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
     assert_eq!(after.graph.requirements.len(), 12);
     crate::vfs::remove_dir_all(&dir).ok();
 }
+
+// A selected build runs only the goals in its selection: the selected document's
+// sections reconcile ahead of the root document they would otherwise wait for, the
+// other document's sections stay open, and the verdict stays honest. A selection
+// widened before the next derivation reports on the trace and runs in the same
+// build. Mirrors docs/compiler/compilation.md#selected-builds.
+#[test]
+fn a_selected_build_runs_only_its_selection_and_takes_a_widening() {
+    use crate::selection::{Handle, Item};
+    let (_dir, project) = f1_copy("selected");
+    let runner = ScriptedRunner::new(&project);
+    let doc = |p: &str| Item {
+        path: p.into(),
+        lines: None,
+    };
+    let handle = Handle::new(Some(vec![doc("docs/catalog.md")]));
+    let (report, events) = {
+        let _g = crate::selection::enter(handle.clone());
+        build(&project, &runner)
+    };
+    let batch_targets: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            TraceEvent::BatchStart { goals, .. } => Some(goals.clone()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|g| g["target"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        batch_targets
+            .iter()
+            .any(|t| t.starts_with("docs/catalog.md")),
+        "{:?}",
+        batch_targets
+    );
+    assert!(
+        !batch_targets
+            .iter()
+            .any(|t| t.starts_with("docs/system.md")),
+        "{:?}",
+        batch_targets
+    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        TraceEvent::Board {
+            selection: Some(_),
+            ..
+        }
+    )));
+    assert!(!report.converged(), "verdict: {}", report.verdict);
+    assert!(handle.sealed());
+    let board = crate::board::Board::compute(&project, &project.out);
+    assert!(board
+        .open_goals()
+        .iter()
+        .any(|g| g.kind == "reconcile-section" && g.target.starts_with("docs/system.md")));
+    assert!(!board
+        .open_goals()
+        .iter()
+        .any(|g| g.kind == "reconcile-section" && g.target.starts_with("docs/catalog.md")));
+
+    // A second selected build, widened to the whole set before it derives.
+    let handle = Handle::new(Some(vec![doc("docs/catalog.md")]));
+    assert_eq!(
+        handle.widen(Some(vec![doc("docs/system.md")])),
+        crate::selection::Widen::Widened
+    );
+    let (report, events) = {
+        let _g = crate::selection::enter(handle.clone());
+        build(&project, &runner)
+    };
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, TraceEvent::Selection { .. })));
+    assert!(report.converged(), "verdict: {}", report.verdict);
+}
+
+// The selected board lists only the goals in the selection, counts the rest, and
+// resolves a line range to the sections it overlaps.
+#[test]
+fn the_selected_board_lists_only_the_selection() {
+    let (_dir, project) = f1_copy("selected-board");
+    let body = serde_json::json!({"selection": [{"path": "docs/catalog.md", "lines": [5, 6]}]});
+    let v = crate::webapi::board::selected_board_value(&project, &project.out, &body).unwrap();
+    let targets: Vec<&str> = v["goals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|g| g["target"].as_str())
+        .collect();
+    assert!(!targets.is_empty(), "{v}");
+    assert!(
+        targets.iter().all(|t| t.starts_with("docs/catalog.md")),
+        "{:?}",
+        targets
+    );
+    assert!(
+        targets.iter().any(|t| t.ends_with("/product")),
+        "{:?}",
+        targets
+    );
+    assert!(v["outside"].as_u64().unwrap() > 0);
+    assert_eq!(v["selection"][0]["documents"][0], "docs/catalog.md");
+    let bad = serde_json::json!({"selection": [{"path": "docs/nope.md"}]});
+    assert!(crate::webapi::board::selected_board_value(&project, &project.out, &bad).is_err());
+}

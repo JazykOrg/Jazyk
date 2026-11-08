@@ -154,7 +154,10 @@ fn api_routes() -> Router<SharedState> {
         .route("/project", get(api::project))
         .route("/status", get(api::status))
         .route("/graph", get(api::graph))
-        .route("/board", get(board_api::board))
+        .route(
+            "/board",
+            get(board_api::board).post(board_api::selected_board),
+        )
         .route("/preview", get(board_api::preview))
         .route("/explain", get(board_api::explain))
         .route("/ripple", get(board_api::ripple))

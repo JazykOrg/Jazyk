@@ -72,6 +72,19 @@ proposals remain visible. Binding and generation carry open error diagnostics in
 their packages and record affected rows as
 [`contradicted`](../consumers/gen.md#rows-recorded-over-an-open-contradiction).
 
+A workflow can carry a [selection](./compilation.md#selected-builds). It narrows
+every action that runs goals or ledger rows:
+
+- `compile` runs only selected goals. It finishes when no mandatory graph goal in the
+  selection remains open, parked, or failed. Work outside the selection does not hold
+  it.
+- `bind`, `generate`, `test`, and `review` take the entities and requirements anchored
+  in the selected sections as their targets. An action with no selected target
+  reports `Nothing in the selection` and succeeds without a session.
+- Before `bind` and `generate`, only the selected documents must be compiled, and
+  only selected mandatory graph work must be finished.
+- `build` and `task` actions ignore the selection. They run as usual.
+
 A changed task definition after submission blocks its run; it never substitutes a
 new command. Every task uses the existing snapshot, idempotency, cancellation, and
 retained-product contract.

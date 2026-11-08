@@ -242,10 +242,12 @@ The write slice per kind is on the kind's page and in the catalog: entity, requi
 and coverage tools for `reconcile-section`; judgment tools for `rejudge-pair` and
 `review-entity`; view tools for the view kinds; the [binding](./tools.md#binding-tools),
 [generation](./tools.md#generation-tools), and
-[verification](./tools.md#verification-tools) tools for the ledger kinds. A `bind`,
-`generate`, or `verify` batch adds the
-[file and command tools](./goals/generate.md#file-and-command-tools) when the
-executor's profile sets `serve_files` ([generation sessions](#generation-sessions)). A
+[verification](./tools.md#verification-tools) tools for the ledger kinds. When the
+executor's profile sets `serve_files` ([generation sessions](#generation-sessions)), a
+`bind` or `generate` batch adds the
+[file tools](./goals/generate.md#file-and-command-tools) `read_text_file`,
+`write_text_file`, and `list_files`, and a `verify` batch adds only the read-only
+`read_text_file` and `list_files` ([verify tools](./goals/verify.md#tools)). A
 tool outside the batch's toolset is not served, so the model cannot call it.
 
 A batch resolves to exactly one executor: the scheduler never groups goals whose kinds

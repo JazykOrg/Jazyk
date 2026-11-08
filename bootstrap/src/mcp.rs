@@ -2121,7 +2121,8 @@ impl McpServer {
             let mut result = self.handle_local(method, params)?;
             let tools = result["tools"].as_array_mut().unwrap();
             for t in tools.iter_mut() {
-                if crate::agent_workflows::TOOLS.contains(&t["name"].as_str().unwrap_or_default()) { continue; }
+                // Project-wide tools take no set: project_context says so in its description.
+                if crate::agent_workflows::TOOLS.contains(&t["name"].as_str().unwrap_or_default()) || t["name"] == "project_context" { continue; }
                 t["inputSchema"]["properties"]["setId"] = json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});
             }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
@@ -5939,6 +5940,20 @@ mod tests {
         assert!(text.contains("\n  \""), "{text}");
         let parsed: Value = serde_json::from_str(text).unwrap();
         assert_eq!(parsed["sets"][0]["id"], "ds_main");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // project_context is project-wide: its schema takes no setId, while set tools do.
+    #[test]
+    fn project_context_schema_takes_no_set_id() {
+        let dir = bare_dir("context-schema");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let list = serving.handle("tools/list", &json!({})).unwrap();
+        let tool = |name: &str| list["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).cloned().unwrap();
+        let context = tool("project_context");
+        assert!(context["inputSchema"]["properties"]["setId"].is_null(), "{context}");
+        assert_eq!(context["inputSchema"]["additionalProperties"], false);
+        assert!(tool("search")["inputSchema"]["properties"]["setId"].is_object());
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

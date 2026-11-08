@@ -1409,6 +1409,24 @@ impl Board {
 
     fn form_batches(&self, store: &Store, proj: &Project) -> Vec<Batch> {
         let ready: Vec<&Goal> = self.ready_goals();
+        // Generation runs leaf first over the relationships and the containment tree:
+        // every ready generate target's position in that order.
+        // Mirrors docs/compiler/goals/generate.md#readiness.
+        let generate_targets: Vec<String> = ready
+            .iter()
+            .filter(|g| g.kind == "generate")
+            .map(|g| g.target.clone())
+            .collect();
+        let topo: BTreeMap<String, usize> = crate::gen::generation_order(store, &generate_targets)
+            .into_iter()
+            .enumerate()
+            .map(|(i, t)| (t, i))
+            .collect();
+        let generate_rank = |g: &Goal| {
+            (g.kind == "generate")
+                .then(|| topo.get(&g.target).copied())
+                .flatten()
+        };
         let executor = |g: &Goal| proj.executors.resolve(&g.kind, &g.class).map(String::from);
         // Group key: class, tier, executor. GC goals sit after the compile tiers,
         // mandatory before optional.
@@ -1504,15 +1522,15 @@ impl Board {
                 ids.sort_by_key(|id| {
                     let g = self.goal(id).unwrap();
                     let parked = !matches!(g.state, GoalState::Parked);
-                    let order = match g.kind.as_str() {
-                        "rejudge-pair" => 0,
-                        "generate" => 0,
-                        "bind" => 2,
-                        "abstract-entity" => usize::MAX - entity_depth(store, &g.target),
-                        "reconcile-section" => section_order(store, &g.target),
-                        _ => 1,
+                    let (kind, order) = match g.kind.as_str() {
+                        "rejudge-pair" => (0, 0),
+                        "generate" => (0, generate_rank(g).unwrap_or(usize::MAX)),
+                        "bind" => (2, 0),
+                        "abstract-entity" => (1, usize::MAX - entity_depth(store, &g.target)),
+                        "reconcile-section" => (1, section_order(store, &g.target)),
+                        _ => (1, 0),
                     };
-                    (parked, order, id.clone())
+                    (parked, kind, order, id.clone())
                 });
                 for id in ids {
                     let g = self.goal(&id).unwrap();
@@ -1600,12 +1618,20 @@ impl Board {
                 .and_then(|g| target_doc(&g.target))
                 .and_then(|d| self.doc_levels.get(&d).copied())
                 .unwrap_or(0);
+            // Generation batches follow the leaf-first order of their earliest goal.
+            let generation = b
+                .goals
+                .iter()
+                .filter_map(|id| self.goal(id))
+                .filter_map(|g| generate_rank(g))
+                .min();
             (
                 matches!(b.class, Class::Gc),
                 b.tier.unwrap_or(0),
                 optional,
                 !parked,
                 level,
+                generation,
                 b.locality.clone(),
             )
         };
@@ -3157,6 +3183,48 @@ pub(crate) mod tests {
         for bt in b.batches.iter().filter(|bt| bt.goals.iter().any(|id| id.starts_with("g:derive-criteria:"))) {
             assert!(bt.goals.iter().all(|id| id.starts_with("g:derive-criteria:")), "{:?}", bt);
         }
+    }
+
+    // Generation batches follow the leaf-first order over the relationships: the part
+    // a whole composes generates before the whole, whatever their ids.
+    // Mirrors docs/compiler/goals/generate.md#readiness.
+    #[test]
+    fn generate_batches_run_leaf_first() {
+        let mut s = Store::default();
+        for (eid, rid, crit) in [("ent:a-order", "req:r-a", "crit:a-1"), ("ent:z-line", "req:r-z", "crit:z-1")] {
+            s.graph.entities.insert(eid.into(), Entity { name: eid.into(), ..Default::default() });
+            s.graph.requirements.insert(
+                rid.into(),
+                Requirement { statement: format!("The {} answers.", eid), entities: vec![eid.into()], ..Default::default() },
+            );
+            s.graph.criteria.insert(
+                crit.into(),
+                Criterion { requirement: rid.into(), statement: format!("Asked once, the {} answers.", eid), kind: "positive".into(), ..Default::default() },
+            );
+        }
+        s.graph.relationships.insert(
+            "rel:a-order~z-line".into(),
+            crate::model::Relationship {
+                members: vec!["ent:a-order".into(), "ent:z-line".into()],
+                contributions: vec![crate::model::Contribution {
+                    a: "ent:a-order".into(),
+                    b: "ent:z-line".into(),
+                    r#type: "composition".into(),
+                    cardinality: None,
+                    requirements: vec!["req:r-a".into()],
+                }],
+            },
+        );
+        let proj = Project { out: s.out.clone(), gen_deliverable: Some("product".into()), ..Default::default() };
+        let control = Control { generate: "auto".into(), ..control_auto() };
+        let b = Board::derive(&s, &proj, &control);
+        let pos = |id: &str| {
+            b.batches
+                .iter()
+                .position(|bt| bt.goals.iter().any(|g| g == id))
+                .unwrap_or_else(|| panic!("{} unbatched: {:?}", id, b.batches))
+        };
+        assert!(pos("g:generate:ent:z-line") < pos("g:generate:ent:a-order"), "{:?}", b.batches);
     }
 
     // A ledger locality is a wall: the batch flushes before and after it, and its

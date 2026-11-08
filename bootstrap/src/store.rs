@@ -1171,6 +1171,13 @@ pub fn stored_doc(out: &Path, rel: &str) -> Option<DocRecord> {
     yaml_to(&out.join("docs").join(format!("{}.yaml", rel)))
 }
 
+// Drop repeated ids, keeping each first occurrence in place. A rewire or resolve can
+// make two ids equal anywhere in the list, so adjacent-only `Vec::dedup` is not enough.
+fn dedup_keep_order(v: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    v.retain(|x| seen.insert(x.clone()));
+}
+
 // A store write that failed is reported with its path, never dropped.
 fn report_write(path: &Path, r: std::io::Result<()>) {
     if let Err(e) = r {
@@ -3994,12 +4001,12 @@ impl Store {
                     let rewire_provenance = |p: &mut Option<Provenance>| {
                         if let Some(Provenance::Derived { from, .. }) = p.as_mut() {
                             from.iter_mut().for_each(rewire);
-                            from.dedup();
+                            dedup_keep_order(from);
                         }
                     };
                     for r in self.graph.requirements.values_mut() {
                         r.entities.iter_mut().for_each(rewire);
-                        r.entities.dedup();
+                        dedup_keep_order(&mut r.entities);
                         for edge in r.edges.iter_mut() {
                             rewire(&mut edge.a);
                             rewire(&mut edge.b);
@@ -4023,9 +4030,9 @@ impl Store {
                     }
                     for v in self.graph.views.values_mut() {
                         v.members.iter_mut().for_each(rewire);
-                        v.members.dedup();
+                        dedup_keep_order(&mut v.members);
                         v.collapse.iter_mut().for_each(rewire);
-                        v.collapse.dedup();
+                        dedup_keep_order(&mut v.collapse);
                         for x in v.excluded.iter_mut() {
                             rewire(&mut x.id);
                         }
@@ -4038,7 +4045,7 @@ impl Store {
                     }
                     for d in self.graph.diagnostics.values_mut() {
                         d.subjects.iter_mut().for_each(rewire);
-                        d.subjects.dedup();
+                        dedup_keep_order(&mut d.subjects);
                     }
                     let adopt_parent = match (
                         self.graph.entities[&keep].parent.is_none(),
@@ -4103,7 +4110,7 @@ impl Store {
                         .iter()
                         .map(|e| resolve(&remap, self, e))
                         .collect();
-                    requirement.entities.dedup();
+                    dedup_keep_order(&mut requirement.entities);
                     for edge in requirement.edges.iter_mut() {
                         edge.a = resolve(&remap, self, &edge.a);
                         edge.b = resolve(&remap, self, &edge.b);
@@ -4334,7 +4341,7 @@ impl Store {
                     let resolved_entities = entities.map(|es| {
                         let mut v: Vec<String> =
                             es.iter().map(|e| resolve(&remap, self, e)).collect();
-                        v.dedup();
+                        dedup_keep_order(&mut v);
                         v
                     });
                     if let Some(es) = &resolved_entities {
@@ -4791,12 +4798,13 @@ impl Store {
                         .iter()
                         .map(|x| resolve(&remap, self, x))
                         .collect();
-                    view.members.dedup();
+                    dedup_keep_order(&mut view.members);
                     view.collapse = view
                         .collapse
                         .iter()
                         .map(|x| resolve(&remap, self, x))
                         .collect();
+                    dedup_keep_order(&mut view.collapse);
                     for x in view.excluded.iter_mut() {
                         x.id = resolve(&remap, self, &x.id);
                     }
@@ -8397,6 +8405,73 @@ mod tests {
         assert!(r.skipped[0].contains("own ancestor"), "{:?}", r.skipped);
     }
 
+    // A rewire or resolve that makes two ids equal anywhere in a list leaves one, in
+    // first-occurrence order, not only when the two sat side by side.
+    #[test]
+    fn merge_and_resolve_drop_non_adjacent_duplicates() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nbuyer, cart, and customer\n");
+        s.apply(
+            vec![
+                create("ent:buyer", "Buyer"),
+                create("ent:cart", "Cart"),
+                create("ent:customer", "Customer"),
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: Requirement {
+                        statement: "The buyer fills the cart for the customer.".into(),
+                        entities: vec!["ent:buyer".into(), "ent:cart".into(), "ent:customer".into()],
+                        source: Some(mention("t.md", "/t", "buyer, cart, and customer")),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateView {
+                    id: "view:class/shop".into(),
+                    view: View {
+                        kind: "class".into(),
+                        title: "Shop".into(),
+                        members: vec!["ent:buyer".into(), "ent:cart".into(), "ent:customer".into()],
+                        provenance: Some(derived(&["ent:buyer", "ent:cart", "ent:customer"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::MergeEntities {
+                keep: "ent:buyer".into(),
+                absorb: "ent:customer".into(),
+                reason: "same concept".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(s.graph.requirements["req:t-1"].entities, vec!["ent:buyer", "ent:cart"]);
+        assert_eq!(s.graph.views["view:class/shop"].members, vec!["ent:buyer", "ent:cart"]);
+        // A staged list naming the absorbed id and its survivor apart resolves to one.
+        let r = s.apply(
+            vec![Op::CreateView {
+                id: "view:class/again".into(),
+                view: View {
+                    kind: "class".into(),
+                    title: "Again".into(),
+                    members: vec!["ent:customer".into(), "ent:cart".into(), "ent:buyer".into()],
+                    collapse: vec!["ent:customer".into(), "ent:cart".into(), "ent:buyer".into()],
+                    provenance: Some(derived(&["ent:buyer"])),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let v = s.graph.views.values().find(|v| v.title == "Again").unwrap();
+        assert_eq!(v.members, vec!["ent:buyer", "ent:cart"]);
+        assert_eq!(v.collapse, vec!["ent:buyer", "ent:cart"]);
+    }
     // A move alone writes `parent` on the parent left and the one joined and no
     // `fields` record on the child; a move with a definition still reviews the child.
     // Mirrors docs/compiler/goals/review-entity.md#created-when.

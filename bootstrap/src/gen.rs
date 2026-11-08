@@ -2175,6 +2175,20 @@ pub fn mark(
             ));
         }
     }
+    // Under a built medium the build is the only thing that makes an artifact exist,
+    // so a manifest without one is rejected, not quietly accepted
+    // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+    // Every rejection runs before the strip below rewrites files: a rejected record
+    // leaves the markers in place for the retry.
+    let manifest_build = manifest["build"]["run"].as_str().is_some_and(|r| !r.trim().is_empty());
+    if pre.build.is_none() && !manifest_build {
+        if let Some(m) = pre.medium.as_ref().filter(|m| m.is_built()) {
+            return Err(format!(
+                "this deliverable is {} and no build is recorded: return `build` with the command that produces `{}`, its `cwd`, and `produces` listing `{}`",
+                m.form, m.artifact, m.artifact
+            ));
+        }
+    }
     // Strip marker lines from the manifest files and collect the sites they anchor.
     // The marker is a wire format: the worker localizes while writing, the harness
     // records and cleans. Runs before hashing so every hash sees the stripped bytes.
@@ -2256,17 +2270,8 @@ pub fn mark(
                     last_run: None,
                 });
             }
-            // Under a built medium the build is the only thing that makes an artifact
-            // exist, so a manifest without one is rejected, not quietly accepted
-            // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-            None => {
-                if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
-                    return Err(format!(
-                        "this deliverable is {} and no build is recorded: return `build` with the command that produces `{}`, its `cwd`, and `produces` listing `{}`",
-                        m.form, m.artifact, m.artifact
-                    ));
-                }
-            }
+            // A built medium without a build was rejected before the strip.
+            None => {}
         }
     }
     for path in &support {
@@ -4060,10 +4065,13 @@ mod tests {
         assert_eq!(task["medium"]["artifact"], "jazyk.pptx");
 
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
-        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        // A marked file: the rejection must leave its markers for the retry.
+        let marked = "// req:shop-1 hash:abcd1234\nfn hold() {}\n";
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), marked).ok();
         let no_build = serde_json::json!({"files": ["src/cart.rs"], "tests": []});
         let err = mark(&s, "ent:cart", None, &no_build, &gs).unwrap_err();
         assert!(err.contains("no build is recorded"), "{}", err);
+        assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap(), marked);
 
         // A build that forgets the artifact still produces it: the decision fills it in.
         mark(

@@ -878,13 +878,11 @@ definitions:
       - flow-unplaced
   changeRecord:
     description: >-
-      One file under changes/<kind>/, named by its subject. Written at commit, read by goal derivation as
+      One file under changes/<kind>/, named by its subject, holding kind, subject, via,
+      and detail; id, generation, and mutation are local in causes.yaml. Written at commit, read by goal derivation as
       a goal's change, cleared when the goal resolves
     type: object
     required:
-      - id
-      - generation
-      - mutation
       - kind
       - subject
     properties:

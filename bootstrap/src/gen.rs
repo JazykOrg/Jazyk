@@ -818,8 +818,8 @@ impl Ledger {
         }
         let mut wide = serde_norway::to_value(self).unwrap_or(serde_norway::Value::Null);
         if let serde_norway::Value::Mapping(m) = &mut wide {
-            m.remove("entities");
-            m.remove("requirements");
+            m.shift_remove("entities");
+            m.shift_remove("requirements");
         }
         match serde_norway::to_string(&wide) {
             Ok(t) => write(&path, &t),

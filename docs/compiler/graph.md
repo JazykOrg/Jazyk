@@ -34,6 +34,8 @@ it and the next build reconciles from empty.
   build.yaml             # local: generation, verdict, costs, budgets spent, open
                          # diagnostic counts by severity, document content hashes
   markers.yaml           # local: the created and updated generation of every node
+  causes.yaml            # local: the id, generation, and mutation of every open
+                         # change record
   graph/                 # one file per node, see node files
     entities/<file id>.yaml        # one entity
     requirements/<file id>.yaml    # one requirement
@@ -90,8 +92,11 @@ not. It is `status.yaml` and one directory per kind of record, one file per reco
     answers, MCP sessions) read the stamp to order documents by
     [link level](./reconciler.md#link-levels) when they recompute derived data.
   - `reevaluate`: anchors placed with `reevaluate`, listed as stale until addressed.
-- `changes/<kind>/<subject file id>.yaml`: one open [change record](#change-records).
-  A kind and a subject hold at most one record, so the pair names the file.
+- `changes/<kind>/<subject file id>.yaml`: one open [change record](#change-records):
+  its `kind`, `subject`, `via`, and `detail`. A kind and a subject hold at most one
+  record, so the pair names the file. The record's `id`, `generation`, and `mutation`
+  point into this checkout's journal and are local, in `causes.yaml`. Two branches
+  that dirty the same subject the same way write the same bytes.
 - `parked/<goal file id>.yaml`: one goal left open when a budget ran out, the whole goal
   record. `failed/<goal file id>.yaml`: `{goal, reason}` for one goal a session marked
   failed, `goal` the whole record. Both persist whole, `change` payload included, so a
@@ -103,8 +108,9 @@ not. It is `status.yaml` and one directory per kind of record, one file per reco
   verdict, score, generation}`, the memory that keeps a judged pair off the board while
   its score holds ([verdicts are remembered](./goals/dedupe-candidates.md#verdicts-are-remembered)).
 
-Record files are named like node files ([node files](#node-files)) and start with the
-`id` they are named by: the subject, the goal id, the document path, or the pair. Two
+Record files are named like node files ([node files](#node-files)). A parked, failed,
+alignment, or lookalike file starts with the `id` it is named by: the goal id, the
+document path, or the pair. Two
 branches that dirty different subjects, park different goals, or judge different pairs
 write different files.
 
@@ -124,6 +130,11 @@ write different files.
   reconcile. A document without an entry (a fresh checkout, a document another branch
   changed) takes part in [alignment](./alignment.md) as changed. Its unchanged sections
   match their records exactly, so nothing dirties.
+
+`causes.yaml` maps each open change record, by kind and subject, to its `id`,
+`generation`, and `mutation`, the commit that wrote it. A record without an entry (a
+fresh checkout, a record another branch committed) reads with generation `0` and an
+id built from it: its cause lies in a journal this checkout does not hold.
 
 `markers.yaml` maps every node id to `[created, updated]`, its
 [generation markers](./model.md#shared-fields). It is local for the same reason as the
@@ -201,7 +212,8 @@ Everything else is local: rebuilt on demand, or a log of what ran.
   - `build.yaml`: the generation, the last build's verdict, costs, and spend, and the
     document content hashes. These change on every run, so two branches would conflict
     on them at every merge.
-  - `markers.yaml`: the generation markers, local like the generation they name.
+  - `markers.yaml` and `causes.yaml`: the generation markers and the causes of the
+    change records, local like the generation they name.
   - `graph/default-views/`, `graph/relationships/`, and `graph/state-machines/`:
     derived, recomputed at load when missing and on every commit.
   - `diagrams/` and `docsgen/`: deterministic output, rewritten at every build's tail.
@@ -258,8 +270,8 @@ changed different things.
 
 The journal files the store mints from the generation must not repeat the ones a
 merged branch committed. A load therefore takes the generation as the larger of
-`build.yaml` and the floor: the highest generation any change record or lookalike
-verdict in the status names. The next commit writes the result to `build.yaml`. A
+`build.yaml` and the floor: the highest generation the status names (a lookalike
+verdict, or a change record whose cause this checkout holds). The next commit writes the result to `build.yaml`. A
 writer's `store-moved` check compares the same value. No node id and no record id
 carries a counter ([identifiers](./model.md#identifiers)), so two branches never mint
 one id for two different things.
@@ -300,9 +312,11 @@ files, default views local, document records without line numbers or content has
 and the ledger split per row ([the ledger](../consumers/gen.md#the-ledger)).
 
 - A version 3 store (the node files, with the status, the markers, the default views,
-  and the ledger each in one place) loads as it is and is written in the version 4
-  layout by its next save. Its ids stay: ids are immutable, and a version 3 id keeps
-  resolving. Only ids minted from then on take the version 4 form.
+  and the ledger each in one place) loads as it is. The opening of the next build
+  rewrites it whole in the version 4 layout, under the lock, before any goal derives,
+  so a build with nothing to do still leaves no file in the old form; a commit before
+  that writes the version 4 layout too. Its ids stay: ids are immutable, and a version
+  3 id keeps resolving. Only ids minted from then on take the version 4 form.
 - An out directory whose `status.yaml` carries any other version, or none, is archived
   whole to `<out>.bak` (a sibling directory; an existing `.bak` is replaced) at the
   start of a build, and the store starts empty. The next build reconciles from the
@@ -672,7 +686,8 @@ its `change` from exactly one record.
 - `id` is `c<generation>-<hash>`, the generation that wrote it and the four-character
   [id hash](./model.md#identifiers) of its `kind` and `subject`. Two branches never
   give one id to two records. The record lives in `changes/<kind>/<subject file
-  id>.yaml`. `mutation`
+  id>.yaml`; its `id`, `generation`, and `mutation` live in the local `causes.yaml`
+  ([storage layout](#storage-layout)). `mutation`
   names the journal mutation behind it, `0` for a store-level cause (the sweep, a
   recompute, a check).
 - `subject` is a node id, a full section reference `doc.md#/ref`, or `scope:<scope>`

@@ -166,7 +166,7 @@ affected bindings and checks. They never silently preserve a clean verdict.
   <set-id>/
     graph/ docs/ journal/ diagrams/ docsgen/ gen/ trace/ sessions/
     status.yaml changes/ parked/ failed/ alignment/ lookalikes/
-    build.yaml markers.yaml control.yaml workers/ leases/ .lock
+    build.yaml markers.yaml causes.yaml control.yaml workers/ leases/ .lock
 ```
 
 - Each set lives directly at `.jazyk/<set-id>/` and owns the existing store shape
@@ -246,6 +246,7 @@ The generated file ignores everything, then keeps the committed paths:
 A path the file does not name is local, so a new kind of output never enters a commit
 by accident: the journal, logs, snapshots, diagrams, docsgen, the derived graph kinds
 (`default-views/`, `relationships/`, `state-machines/`), `build.yaml`, `markers.yaml`,
+`causes.yaml`,
 the control plane, and `.bak` archives all stay out.
 
 Existing repository rules that ignore `.jazyk` itself must be removed or narrowed;

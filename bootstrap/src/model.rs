@@ -873,8 +873,13 @@ pub struct DocAlignment {
 // Mirrors docs/compiler/graph.md#change-records.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChangeRecord {
+    // Local: a record file holds kind, subject, via, and detail; causes.yaml holds these.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub generation: u64,
+    #[serde(default)]
     pub mutation: usize,
     pub kind: String,
     pub subject: String,

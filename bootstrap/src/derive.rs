@@ -1768,7 +1768,7 @@ pub fn record_ledger_stale(store: &mut Store, gs: &crate::gen::GenSettings) {
         }
     }
     if changed {
-        store.save_status();
+        store.write_status("ledger-stale records").ok();
     }
 }
 

@@ -1342,6 +1342,7 @@ mod tests {
         (".jazyk/ds_main/workers/w.yaml", false),
         (".jazyk/ds_main/leases/build.yaml", false),
         (".jazyk/ds_main/.lock", false),
+        (".jazyk/ds_main/.committing", false),
         (".jazyk/ds_main/feedback.jsonl", false),
         (".jazyk/ds_main/decompile/drafts.yaml", false),
         (".jazyk/ds_main.bak/status.yaml", false),

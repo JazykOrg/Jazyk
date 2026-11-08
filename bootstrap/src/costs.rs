@@ -398,7 +398,7 @@ mod tests {
         );
         // A merged requirement resolves to its survivor's document.
         g.redirects.insert("req:orders-9".into(), "req:orders-1".into());
-        store.save();
+        store.save_for_test();
         let mut entries = vec![
             JournalEntry {
                 build: "g1".into(),

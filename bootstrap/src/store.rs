@@ -1483,7 +1483,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let tmp = path.with_file_name(format!(".{}.{}.tmp", name, crate::sys::process_id()));
-    crate::vfs::write(&tmp, bytes)?;
+    write_durable(&tmp, bytes)?;
     // Native executable and private files retain their mode across replacement.
     #[cfg(not(target_arch = "wasm32"))]
     if !crate::vfs::is_scoped() {
@@ -1498,7 +1498,69 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         crate::vfs::remove_file(&tmp).ok();
         return Err(e);
     }
+    if let Some(parent) = path.parent() {
+        TOUCHED_DIRS.with(|t| t.borrow_mut().insert(parent.to_path_buf()));
+    }
     Ok(())
+}
+
+// The directories renames landed in since the last flush.
+thread_local! {
+    static TOUCHED_DIRS: std::cell::RefCell<BTreeSet<PathBuf>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+// A temporary file's bytes reach the disk before the rename publishes them, so a crash
+// never leaves a renamed file empty. An in-memory tree has no disk.
+// Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+fn write_durable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !crate::vfs::is_scoped() {
+        use std::io::Write;
+        let mut f = std::fs::File::create(path)?;
+        let written = f.write_all(bytes).and_then(|()| sync_file(&f));
+        if let Err(e) = written {
+            drop(f);
+            std::fs::remove_file(path).ok();
+            return Err(e);
+        }
+        return Ok(());
+    }
+    crate::vfs::write(path, bytes)
+}
+
+// fsync. On Apple platforms `sync_all` issues F_FULLFSYNC, a drive cache flush per
+// file; plain fsync gives the same ordering against a crash of the system.
+#[cfg(not(target_arch = "wasm32"))]
+fn sync_file(f: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::fd::AsRawFd;
+        if unsafe { libc::fsync(f.as_raw_fd()) } == 0 {
+            return Ok(());
+        }
+        Err(std::io::Error::last_os_error())
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    f.sync_all()
+}
+
+// Flush the directories renames landed in, so the renames themselves survive a crash.
+// Windows has no directory handle to flush; an in-memory tree has no disk.
+fn sync_touched_dirs() {
+    let dirs = TOUCHED_DIRS.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    if !crate::vfs::is_scoped() {
+        for d in dirs {
+            if let Ok(f) = std::fs::File::open(&d) {
+                if let Err(e) = sync_file(&f) {
+                    eprintln!("[jazyk] error: cannot flush {}: {}", d.display(), e);
+                }
+            }
+        }
+    }
+    #[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+    drop(dirs);
 }
 
 // The stored record of one document, as the last build left it; None when the
@@ -1805,19 +1867,38 @@ impl Store {
     }
 
     fn load_uncached(out: &Path) -> Store {
-        // Readers never take the lock: read the generation counter, load every shard,
-        // and retry if the counter moved mid-read (a commit landed between shards).
+        // Readers never take the lock. A read counts when no commit was in progress at
+        // its start or its end and the generation held still across it; otherwise it
+        // waits and retries. A store that never holds still within the wait loads
+        // read-only with a `store-busy` error, never as a mix of two commits.
         // A store of another version reads as empty; only a build archives it.
         // Mirrors docs/compiler/graph.md#concurrency and #store-version.
-        let counter = || read_generation(out);
-        let mut attempts = 0;
+        let started = crate::sys::Instant::now();
+        let mut attempts = 0u32;
         let store = loop {
-            let before = counter();
-            let store = Self::load_once(out);
+            if !commit_in_progress(out) {
+                let before = read_generation(out);
+                let store = Self::load_once(out);
+                if !commit_in_progress(out) && read_generation(out) == before {
+                    break store;
+                }
+            }
             attempts += 1;
-            if counter() == before || attempts == 4 {
+            let wait = read_wait();
+            if started.elapsed() >= wait || (cfg!(target_arch = "wasm32") && attempts >= 4) {
+                let mut store = Self::load_once(out);
+                store.load_errors.insert(
+                    0,
+                    format!(
+                        "store-busy: {} kept changing for {} ms of reads ({} attempts); retry once its commit finishes",
+                        out.display(),
+                        wait.as_millis(),
+                        attempts
+                    ),
+                );
                 break store;
             }
+            crate::sys::sleep(std::time::Duration::from_millis(u64::from(attempts.min(10)) * 10));
         };
         for e in &store.load_errors {
             eprintln!("[jazyk] error: {} did not load: {}", out.display(), e);
@@ -1989,6 +2070,9 @@ impl Store {
     // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
     fn unreadable(&self) -> Option<String> {
         self.load_errors.first().map(|e| {
+            if e.starts_with("store-busy:") {
+                return e.clone();
+            }
             format!(
                 "store-unreadable: {} (repair or remove the file, then retry)",
                 e
@@ -2037,10 +2121,12 @@ impl Store {
         Some(why)
     }
 
-    // Node files and doc records first, then the files of removed nodes, `status.yaml`
-    // last: its generation is the commit point a reader checks.
+    // Node files and doc records first, then the files of removed nodes, the status
+    // last: the generation in `build.yaml` is the commit point a reader checks. The
+    // commit marker spans every write. Callers hold the lock and checked the refusal;
+    // outside this module `write_status` is the only way to write.
     // Mirrors docs/compiler/graph.md#writes-and-unreadable-files and #node-files.
-    pub fn save(&self) {
+    fn save(&self) {
         if let Some(why) = self.unreadable() {
             eprintln!(
                 "[jazyk] error: refusing to write {}: {}",
@@ -2049,6 +2135,18 @@ impl Store {
             );
             return;
         }
+        let _marker = CommitMarker::begin(&self.out);
+        self.save_nodes();
+        self.save_status_files();
+    }
+
+    // A test's seed of a store on disk, written as a commit writes it.
+    #[cfg(test)]
+    pub(crate) fn save_for_test(&self) {
+        self.save();
+    }
+
+    fn save_nodes(&self) {
         let g = self.out.join("graph");
         let mut markers = Markers::new();
         let redirects: BTreeMap<String, RedirectFile> = self
@@ -2131,7 +2229,6 @@ impl Store {
                 }
             }
         }
-        self.save_status();
     }
 
     // A commit's write: the mentions in their canonical order, then the files.
@@ -2140,8 +2237,9 @@ impl Store {
         self.save();
     }
 
-    // Every status write stamps the store version.
-    pub fn save_status(&self) {
+    // The status alone, inside the commit marker. Callers hold the lock and checked
+    // the refusal. Every status write stamps the store version.
+    fn save_status(&self) {
         if let Some(why) = self.unreadable() {
             eprintln!(
                 "[jazyk] error: refusing to write {}: {}",
@@ -2150,6 +2248,24 @@ impl Store {
             );
             return;
         }
+        let _marker = CommitMarker::begin(&self.out);
+        self.save_status_files();
+    }
+
+    // A status write outside a changeset (a build's opening, absorbed derivations,
+    // parked and failed goals, the verdict): under the lock and refused like a commit,
+    // so a store that is unreadable, of another version, or behind the disk never
+    // overwrites what it has not seen. Mirrors docs/compiler/graph.md#concurrency.
+    pub fn write_status(&self, what: &str) -> Result<(), String> {
+        let _flock = FileLock::acquire(&self.out);
+        if let Some(why) = self.refuse(what) {
+            return Err(why);
+        }
+        self.save_status();
+        Ok(())
+    }
+
+    fn save_status_files(&self) {
         // status.yaml, then build.yaml: the generation there is the commit point.
         // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
         let mut status = self.status.clone();
@@ -2170,8 +2286,11 @@ impl Store {
                 .map(|(d, r)| (d.clone(), r.content_hash.clone()))
                 .collect(),
         };
+        // Every file the commit point covers is on disk before it moves.
+        sync_touched_dirs();
         let path = self.out.join(BUILD_FILE);
         report_write(&path, write_yaml(&path, &build));
+        sync_touched_dirs();
     }
 
     // The journal entry for one commit. Mirrors docs/compiler/graph.md#journal.
@@ -7566,6 +7685,93 @@ impl FileLock {
     }
 }
 
+// How long a reader waits for a consistent read before it reports `store-busy`.
+const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(test)]
+thread_local! {
+    static READ_WAIT_OVERRIDE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn read_wait() -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(w) = READ_WAIT_OVERRIDE.with(|o| o.get()) {
+        return w;
+    }
+    READ_WAIT
+}
+
+// The commit marker: present while a writer rewrites the store's files, removed once
+// the commit point is written. Mirrors docs/compiler/graph.md#concurrency.
+pub const COMMIT_MARKER: &str = ".committing";
+
+struct CommitMarker {
+    path: Option<PathBuf>,
+}
+
+impl CommitMarker {
+    // A nested begin (a save inside a save) leaves the marker to the outer one.
+    fn begin(out: &Path) -> CommitMarker {
+        let path = out.join(COMMIT_MARKER);
+        let outer = MARKING.with(|m| m.borrow_mut().insert(path.clone()));
+        if !outer {
+            return CommitMarker { path: None };
+        }
+        if let Err(e) = crate::vfs::create_dir_all(out)
+            .and_then(|()| write_durable(&path, crate::sys::process_id().to_string().as_bytes()))
+        {
+            eprintln!("[jazyk] error: cannot write {}: {}", path.display(), e);
+        }
+        CommitMarker { path: Some(path) }
+    }
+}
+
+impl Drop for CommitMarker {
+    fn drop(&mut self) {
+        if let Some(p) = self.path.take() {
+            if let Err(e) = crate::vfs::remove_file(&p) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("[jazyk] error: cannot remove {}: {}", p.display(), e);
+                }
+            }
+            MARKING.with(|m| m.borrow_mut().remove(&p));
+        }
+    }
+}
+
+thread_local! {
+    static MARKING: std::cell::RefCell<BTreeSet<PathBuf>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+// Whether a writer is rewriting the store now: the marker is present and a writer holds
+// `.lock`. A marker no writer holds is left by a writer that stopped mid-commit; the
+// next commit replaces it, and reads proceed on what the disk holds. An in-memory tree
+// belongs to one thread, which cannot read while it writes, so its marker is always a
+// leftover. Mirrors docs/compiler/graph.md#concurrency.
+fn commit_in_progress(out: &Path) -> bool {
+    if !out.join(COMMIT_MARKER).vexists() {
+        return false;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if !crate::vfs::is_scoped() {
+        // A shared probe of the writers' advisory lock: it fails only while a writer
+        // holds it, and it creates nothing.
+        let Ok(file) = std::fs::File::open(out.join(".lock")) else {
+            return false;
+        };
+        return match fs2::FileExt::try_lock_shared(&file) {
+            Ok(()) => {
+                fs2::FileExt::unlock(&file).ok();
+                false
+            }
+            Err(_) => true,
+        };
+    }
+    false
+}
+
 // The markers this thread holds on in-memory trees.
 thread_local! {
     static SCOPED_LOCKS: std::cell::RefCell<BTreeSet<PathBuf>> =
@@ -11029,6 +11235,135 @@ mod tests {
         // A zero cached figure leaves the field absent rather than writing 0.
         Store::stamp_reported(&out, 4, 100, Some(0)).unwrap();
         assert_eq!(read(4).cached_tokens, None);
+    }
+
+    // A status write outside a changeset waits for the lock and is refused like a
+    // commit when another writer landed first. Mirrors docs/compiler/graph.md#concurrency.
+    #[test]
+    fn a_status_write_takes_the_lock_and_is_refused_when_the_store_moved() {
+        let out = own_dir("status-write");
+        let mut a = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        assert_eq!(a.apply(vec![create("ent:a", "A")], &session()).applied, 1);
+        let held = FileLock::acquire(&out);
+        let mut fresh = Store::load(&out);
+        fresh.status.roots = vec!["main.md".into()];
+        let writer = std::thread::spawn(move || fresh.write_status("roots"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!writer.is_finished(), "a status write ran under a held lock");
+        drop(held);
+        assert!(writer.join().unwrap().is_ok());
+        assert_eq!(Store::load(&out).status.roots, vec!["main.md".to_string()]);
+        let mut b = Store::load(&out);
+        assert_eq!(b.apply(vec![create("ent:b", "B")], &session()).applied, 1);
+        a.status.roots = vec!["stale.md".into()];
+        let why = a.write_status("roots").unwrap_err();
+        assert!(why.starts_with("store-moved:"), "{}", why);
+        let disk = Store::load(&out);
+        assert_eq!(disk.status.roots, vec!["main.md".to_string()]);
+        assert_eq!(disk.status.generation, 2);
+    }
+
+    // A reader never accepts a store a commit is rewriting: it waits while the marker
+    // stands under a held lock and reads the finished commit. A marker no writer holds
+    // is a leftover and is read past at once. Mirrors docs/compiler/graph.md#concurrency.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_reader_waits_for_a_commit_in_progress() {
+        let out = own_dir("reader-wait");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        assert_eq!(s.apply(vec![create("ent:a", "A")], &session()).applied, 1);
+        // A writer mid-commit: the lock held, the marker down, one node file rewritten,
+        // the commit point not yet moved.
+        let held = FileLock::acquire(&out);
+        crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
+        let mut next = Store::load(&out);
+        next.graph.entities.insert("ent:b".into(), next.graph.entities["ent:a"].clone());
+        next.status.generation = 2;
+        next.save_nodes();
+        let reader = {
+            let out = out.clone();
+            std::thread::spawn(move || Store::load(&out))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!reader.is_finished(), "a reader accepted a half-committed store");
+        next.save_status_files();
+        crate::vfs::remove_file(out.join(COMMIT_MARKER)).unwrap();
+        drop(held);
+        let read = reader.join().unwrap();
+        assert!(read.load_errors.is_empty(), "{:?}", read.load_errors);
+        assert_eq!(read.status.generation, 2);
+        assert!(read.graph.entities.contains_key("ent:b"));
+        // A marker left by a writer that stopped: no lock is held, nothing waits.
+        crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
+        let started = std::time::Instant::now();
+        let read = Store::load(&out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(read.load_errors.is_empty(), "{:?}", read.load_errors);
+        // The next commit replaces the leftover and removes it.
+        let mut w = Store::load(&out);
+        assert_eq!(w.apply(vec![create("ent:c", "C")], &session()).applied, 1);
+        assert!(!out.join(COMMIT_MARKER).vexists());
+    }
+
+    // A store that never holds still within the wait loads read-only with `store-busy`
+    // instead of a mix of two commits. Mirrors docs/compiler/graph.md#concurrency.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_reader_that_never_reads_a_still_store_reports_store_busy() {
+        let out = own_dir("reader-busy");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        assert_eq!(s.apply(vec![create("ent:a", "A")], &session()).applied, 1);
+        let held = FileLock::acquire(&out);
+        crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
+        let reader = {
+            let out = out.clone();
+            std::thread::spawn(move || {
+                READ_WAIT_OVERRIDE.with(|o| o.set(Some(std::time::Duration::from_millis(200))));
+                Store::load(&out)
+            })
+        };
+        let mut busy = reader.join().unwrap();
+        drop(held);
+        assert!(busy.load_errors[0].starts_with("store-busy:"), "{:?}", busy.load_errors);
+        let r = busy.apply(vec![create("ent:b", "B")], &session());
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].starts_with("store-busy:"), "{:?}", r.skipped);
+        crate::vfs::remove_file(out.join(COMMIT_MARKER)).unwrap();
+    }
+
+    // Every committed file reaches the disk before its rename: no temporary file is
+    // left beside it, and the directories the renames landed in are flushed.
+    #[test]
+    fn a_commit_leaves_no_temporary_files_and_no_marker() {
+        let out = own_dir("durable");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        assert_eq!(s.apply(vec![create("ent:a", "A")], &session()).applied, 1);
+        let mut files = Vec::new();
+        fn walk(d: &Path, files: &mut Vec<String>) {
+            for e in crate::vfs::read_dir(d).unwrap().flatten() {
+                let p = e.path();
+                if p.vis_dir() {
+                    walk(&p, files);
+                } else {
+                    files.push(e.file_name().to_string_lossy().to_string());
+                }
+            }
+        }
+        walk(&out, &mut files);
+        assert!(!files.iter().any(|f| f.ends_with(".tmp") || f == COMMIT_MARKER), "{:?}", files);
+        assert!(TOUCHED_DIRS.with(|t| t.borrow().is_empty()), "every touched directory was flushed");
     }
 
     // An in-memory store's marker lock: a stale marker is taken over at once, a nested

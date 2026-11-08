@@ -1075,7 +1075,7 @@ pub(super) mod tests {
                 },
             );
             store.graph.diagnostics.insert("diag:shared".into(),serde_json::from_value(json!({"rule":"example","severity":"warning","lifecycle":"open","subjects":[],"message":"Example finding"})).unwrap());
-            store.save();
+            store.save_for_test();
         }
         let response = send(st.clone(), get_from("/api/graph", "https://sets.test")).await;
         assert_eq!(response.status(), StatusCode::OK);

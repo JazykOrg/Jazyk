@@ -630,18 +630,37 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
 // parked goal resumes first, and a session cannot resolve one whose cause is the
 // ruling owed (docs/compiler/reconciler.md#flip-detection).
 fn parked_state(p: &Goal) -> GoalState {
-    let flip = p.cause.as_ref().is_some_and(|c| c.via == "flip-detection");
-    if !flip {
+    let Some(subject) = flip_subject(p) else {
         return GoalState::Parked;
-    }
-    let subject = p.change["reparent"]
-        .as_str()
-        .or_else(|| p.change["subject"].as_str())
-        .unwrap_or(&p.target)
-        .to_string();
+    };
     GoalState::Blocked {
         on: format!("human: unstable-derivation ruling on {}", subject),
     }
+}
+
+// The node a flip-parked entry waits on a ruling for; None for any other park.
+pub(crate) fn flip_subject(p: &Goal) -> Option<String> {
+    if !p.cause.as_ref().is_some_and(|c| c.via == "flip-detection") {
+        return None;
+    }
+    Some(
+        p.change["reparent"]
+            .as_str()
+            .or_else(|| p.change["subject"].as_str())
+            .unwrap_or(&p.target)
+            .to_string(),
+    )
+}
+
+// Whether the unstable-derivation ruling on a subject is still owed: an open
+// diagnostic naming it carries no answer yet.
+fn ruling_owed(store: &Store, subject: &str) -> bool {
+    store.graph.diagnostics.values().any(|d| {
+        d.lifecycle == "open"
+            && d.rule == "unstable-derivation"
+            && d.answer.is_none()
+            && d.subjects.iter().any(|s| s == subject)
+    })
 }
 
 // `b<generation>-<n>`, the id a batch lease is filed under.
@@ -734,6 +753,32 @@ impl Board {
         for entry in &store.status.parked {
             let p = &entry.goal;
             let mut kept = true;
+            // A pair parked by flip detection stays parked while its ruling is owed,
+            // whatever change the goal derives with now (the parked change names the
+            // flip, never the goal's own records); answering the ruling clears it.
+            // Mirrors docs/compiler/reconciler.md#flip-detection.
+            if let Some(subject) = flip_subject(p) {
+                if !ruling_owed(store, &subject) {
+                    dropped_parked.push(p.id.clone());
+                    continue;
+                }
+                match goals.iter_mut().find(|g| g.id == p.id) {
+                    Some(g) => g.state = parked_state(p),
+                    None if target_exists(store, &p.target) => {
+                        let mut g = p.clone();
+                        g.state = parked_state(p);
+                        goals.push(g);
+                    }
+                    None => {
+                        dropped_parked.push(p.id.clone());
+                        continue;
+                    }
+                }
+                if let Some(r) = &entry.reason {
+                    parked_reasons.insert(p.id.clone(), r.clone());
+                }
+                continue;
+            }
             match goals.iter_mut().find(|g| g.id == p.id) {
                 Some(g) => {
                     if g.change == p.change || p.change.is_null() {
@@ -3475,10 +3520,56 @@ pub(crate) mod tests {
         flip.change = json!({"reparent": "ent:row-of-shops", "between": ["ent:a", "ent:b"]});
         flip.cause = Some(crate::model::Cause { generation: 95, mutation: 0, via: "flip-detection".into() });
         ruled.status.parked.push(flip.clone().into());
+        ruled.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:row-of-shops"));
         let b = derive(&ruled);
         let g = b.goal(&flip.id).expect("the flip entry stands");
         assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:row-of-shops")), "{:?}", g.state);
         assert!(!b.is_ready(&flip.id));
+        assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
+        // Answering the ruling clears the entry.
+        ruled.graph.diagnostics.get_mut("diag:unstable-derivation-1").unwrap().answer =
+            Some(crate::model::DiagnosticAnswer { choice: Some(0), text: "keep".into(), status: "applied".into(), error: None });
+        let b = derive(&ruled);
+        assert!(b.dropped_parked.contains(&flip.id), "{:?}", b.dropped_parked);
+    }
+
+    fn unstable_ruling(subject: &str) -> crate::model::Diagnostic {
+        crate::model::Diagnostic {
+            rule: "unstable-derivation".into(),
+            severity: "warning".into(),
+            subjects: vec![subject.into()],
+            message: "flips".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            prompt: None,
+            answer: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    // A goal parked by flip detection stays parked when it derives again: its parked
+    // change names the flip, never the goal's own records, so a change comparison
+    // would drop it at once. Mirrors docs/compiler/reconciler.md#flip-detection.
+    #[test]
+    fn a_flip_parked_goal_stays_parked_when_it_derives_again() {
+        let mut s = settled_store();
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        let derived = derive(&s)
+            .goal("g:review-entity:ent:customer")
+            .cloned()
+            .expect("the entity change derives a review");
+        let mut flip = derived.clone();
+        flip.change = json!({"unstable": "customer", "subject": "ent:customer"});
+        flip.cause = Some(crate::model::Cause { generation: 40, mutation: 0, via: "flip-detection".into() });
+        s.status.parked.push(flip.clone().into());
+        s.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:customer"));
+        let b = derive(&s);
+        let g = b.goal(&flip.id).expect("the flip entry stands");
+        assert_eq!(g.change, derived.change, "the goal keeps its derived change");
+        assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:customer")), "{:?}", g.state);
+        assert!(!b.dropped_parked.contains(&flip.id));
         assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
     }
 

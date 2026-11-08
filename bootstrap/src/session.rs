@@ -706,8 +706,15 @@ impl Trace {
 // the assembled prompt. Mirrors docs/compiler/sessions.md#the-prompt.
 const AGENT_CONTRACT: &str = include_str!("../../docs/compiler/goals/prompts/agent-contract.md");
 
-// The feedback contract, spliced in as the contract's second paragraph.
+// The feedback contract, filled into the contract's `{feedback}` slot.
 const FEEDBACK_NOTE: &str = include_str!("../../docs/compiler/goals/prompts/feedback-note.md");
+
+// The per-kind gate lines and the prompt's block framing.
+// Mirrors docs/compiler/sessions.md#payload-files.
+pub(crate) const GATES: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/gates.md"));
+pub(crate) const BLOCKS: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/session-blocks.md"));
 
 // The protocol line; {target} is the batch id.
 const WORKER_PROTOCOL: &str = include_str!("../../docs/compiler/goals/prompts/worker-protocol.md");
@@ -729,13 +736,11 @@ pub enum Protocol {
     OpenBatch,
 }
 
-// The note rides directly under the first paragraph: the first says what the session
-// is, the second how to report that the rest of the prompt failed it.
-pub(crate) fn with_feedback_note(system: &str) -> String {
-    match system.split_once("\n\n") {
-        Some((role, rest)) => format!("{}\n\n{}\n\n{}", role.trim_end(), FEEDBACK_NOTE, rest),
-        None => format!("{}\n\n{}", system.trim_end(), FEEDBACK_NOTE),
-    }
+// The agent contract with the feedback note in its `{feedback}` slot: the first
+// paragraph says what the session is, the second how to report that the rest of the
+// prompt failed it. Mirrors docs/compiler/sessions.md#the-prompt.
+pub(crate) fn agent_contract() -> String {
+    crate::payload::fill(AGENT_CONTRACT, &[("feedback", FEEDBACK_NOTE.trim_end())])
 }
 
 // The skill payloads, embedded at compile time. Mirrors docs/compiler/sessions.md#skills.
@@ -1026,95 +1031,82 @@ impl ProjectBlock {
     }
 
     fn render(&self) -> String {
-        let mut s = String::from("## Project\n");
-        s.push_str(&format!(
-            "- generation {}, {} mode\n",
-            self.generation, self.mode
+        let line = |name: &str, vars: &[(&str, &str)]| BLOCKS.fill(name, vars) + "\n";
+        let mut s = line("project", &[]);
+        s.push_str(&line(
+            "project-generation",
+            &[("generation", &self.generation.to_string()), ("mode", &self.mode)],
         ));
         // The judgment findings on the graph; the checks' findings arrive with the
         // build's tail. Mirrors docs/compiler/sessions.md#the-prompt.
+        let ratification = self.ratification.to_string();
         if self.diagnostics.is_empty() {
-            s.push_str("- diagnostics: none open (the build's checks file theirs at the tail)\n");
+            s.push_str(&line("project-diagnostics-none", &[]));
         } else {
             let parts: Vec<String> = self
                 .diagnostics
                 .iter()
-                .map(|(sev, n)| format!("{} {}(s)", n, sev))
-                .collect();
-            s.push_str(&format!(
-                "- diagnostics: {} (the build's checks file theirs at the tail){}\n",
-                parts.join(", "),
-                if self.ratification > 0 {
-                    format!(
-                        "; {} of them ratification proposals for derived facts (criteria, groupings), nothing wrong: a human accepts or retracts them",
-                        self.ratification
+                .map(|(sev, n)| {
+                    BLOCKS.fill(
+                        "project-diagnostic-count",
+                        &[("count", &n.to_string()), ("severity", sev)],
                     )
-                } else {
-                    String::new()
-                }
-            ));
-        }
-        s.push_str(&format!(
-            "- board: {} goal(s) in this session; {} elsewhere; {} blocked on human answers{}\n",
-            self.here,
-            self.elsewhere,
-            self.blocked,
-            if self.ratification > 0 {
-                format!(" ({} ratification proposals among them)", self.ratification)
+                })
+                .collect();
+            let note = if self.ratification > 0 {
+                BLOCKS.fill("project-diagnostics-ratification", &[("count", &ratification)])
             } else {
                 String::new()
-            }
+            };
+            s.push_str(&line(
+                "project-diagnostics",
+                &[("counts", &parts.join(", ")), ("ratification", &note)],
+            ));
+        }
+        let note = if self.ratification > 0 {
+            BLOCKS.fill("project-board-ratification", &[("count", &ratification)])
+        } else {
+            String::new()
+        };
+        s.push_str(&line(
+            "project-board",
+            &[
+                ("here", &self.here.to_string()),
+                ("elsewhere", &self.elsewhere.to_string()),
+                ("blocked", &self.blocked.to_string()),
+                ("ratification", &note),
+            ],
         ));
         let rules: Vec<String> = self
             .lint
             .warnings
             .iter()
-            .map(|r| format!("warning: {}", r))
-            .chain(self.lint.errors.iter().map(|r| format!("error: {}", r)))
+            .map(|r| ("warning", r))
+            .chain(self.lint.errors.iter().map(|r| ("error", r)))
             .enumerate()
-            .map(|(i, r)| format!("[{}] {}", i + 1, r))
+            .map(|(i, (severity, rule))| {
+                BLOCKS.fill(
+                    "project-lint-rule",
+                    &[("index", &(i + 1).to_string()), ("severity", severity), ("rule", rule)],
+                )
+            })
             .collect();
         if !rules.is_empty() {
-            s.push_str(&format!("- lint: {}\n", rules.join("; ")));
+            s.push_str(&line("project-lint", &[("rules", &rules.join("; "))]));
         }
         s
     }
 }
 
-// The gate in one line, per kind. The kind's page under docs/compiler/goals/ states
-// the full gate; this is the line the goal block carries.
+// The gate in one line, per kind, from gates.md. The kind's page under
+// docs/compiler/goals/ states the full gate; this is the line the goal block carries.
 pub fn gate_line(kind: &str) -> &'static str {
-    match kind {
-        "place-anchors" => "every proposal decided: place_anchor or orphan_anchor staged for each",
-        "reconcile-section" => {
-            "a coverage mark staged or recorded; stale anchors addressed; every covered claim honest; every + line accounted for"
-        }
-        "rejudge-pair" => {
-            "a verdict for the pair in evidence; for an acting verdict, the mutation or diagnostic that carried it"
-        }
-        "review-entity" => {
-            "definition claimed; one backed verdict per listed lookalike, unreferenced statement, open diagnostic, and composition part"
-        }
-        "retrace" => "nothing on the target points at a dead or missing node",
-        "conform-instance" => {
-            "values and links conform or nonconformant-instance filed; one verdict per declared attribute (inherited included) and link in evidence"
-        }
-        "bind" => "a current ledger row recorded by record_binding",
-        "generate" => "record_generation landed with a live factHash",
-        "verify" => "a verdict recorded on the row with a live factHash",
-        "ratify" => "the human accepts the proposal (a dual write) or retracts the fact",
-        "answer" => "the human answers; applying the answer is an answer session",
-        "declare-edges" => {
-            "typed edges declared, or the justification says the statement is not structural"
-        }
-        "dedupe-candidates" => "merged, or kept separate with the reasoning",
-        "curate-view" => "membership decided: one verdict per matched node in evidence, added, or excluded with a note",
-        "split-view" => "the count is within the limit, no member lost, sub-views linked",
-        "abstract-entity" => {
-            "sub-entities carry parent and derived provenance, detail moved, docs proposals staged"
-        }
-        _ => "the kind's page states the gate",
-    }
+    GATES
+        .sections()
+        .into_iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, line)| line)
+        .unwrap_or_else(|| GATES.get("unknown"))
 }
 
 // The change in one line: the condensed change payload plus the cause.
@@ -1235,22 +1227,23 @@ pub fn session_prompt_elided(
     protocol: Protocol,
 ) -> String {
     let mut s = if include_contract {
-        with_feedback_note(AGENT_CONTRACT)
+        agent_contract()
     } else {
-        String::from("(same agent contract as the earlier batch in this session; unchanged)\n")
+        BLOCKS.get("contract-elided").to_string() + "\n"
     };
     if !s.ends_with('\n') {
         s.push('\n');
     }
     for (name, payload) in skills.active_payloads() {
         if delivered_skills.contains(&name) {
-            s.push_str(&format!(
-                "\n[skill: {} (active; delivered earlier)]\n",
-                name
-            ));
+            s.push('\n');
+            s.push_str(&BLOCKS.fill("skill-delivered", &[("name", &name)]));
+            s.push('\n');
             continue;
         }
-        s.push_str(&format!("\n[skill: {} (active)]\n", name));
+        s.push('\n');
+        s.push_str(&BLOCKS.fill("skill-active", &[("name", &name)]));
+        s.push('\n');
         s.push_str(payload);
         if !s.ends_with('\n') {
             s.push('\n');
@@ -1259,21 +1252,29 @@ pub fn session_prompt_elided(
     s.push('\n');
     s.push_str(&project_block.render());
     if batch.iter().any(|g| matches!(g.kind.as_str(), "bind" | "generate" | "verify")) {
-        s.push_str("\n## Task execution\n");
+        s.push('\n');
+        s.push_str(BLOCKS.get("task-execution"));
+        s.push('\n');
         s.push_str(crate::task_runtime::PROMPT);
     }
-    s.push_str("\n## Goals\n");
+    s.push('\n');
+    s.push_str(BLOCKS.get("goals"));
+    s.push('\n');
+    let item = |name: &str, vars: &[(&str, &str)]| format!("  {}\n", BLOCKS.fill(name, vars));
     // The contract paragraph renders once per kind, under the first goal of that kind;
     // later goals of the kind point at it. Mirrors docs/compiler/sessions.md#the-prompt.
     let mut contracted: BTreeSet<String> = BTreeSet::new();
     // A hint repeated verbatim from an earlier goal renders once.
     let mut hinted: BTreeSet<String> = BTreeSet::new();
     for g in batch {
-        s.push_str(&format!(
-            "- [{}] {}\n",
-            g.id,
-            if g.mandatory { "mandatory" } else { "optional" }
+        s.push_str(&BLOCKS.fill(
+            "goal",
+            &[
+                ("id", &g.id),
+                ("necessity", if g.mandatory { "mandatory" } else { "optional" }),
+            ],
         ));
+        s.push('\n');
         if let Some(k) = goals::kind(&g.kind) {
             let paragraph = k.prompt().trim();
             if !paragraph.is_empty() {
@@ -1284,19 +1285,16 @@ pub fn session_prompt_elided(
                         s.push('\n');
                     }
                 } else {
-                    s.push_str(&format!(
-                        "  Contract: as the first {} goal above.\n",
-                        g.kind
-                    ));
+                    s.push_str(&item("goal-contract-pointer", &[("kind", &g.kind)]));
                 }
             }
         }
-        s.push_str(&format!("  Change: {}\n", change_line(g)));
-        s.push_str(&format!("  Gate: {}\n", gate_line(&g.kind)));
+        s.push_str(&item("goal-change", &[("change", &change_line(g))]));
+        s.push_str(&item("goal-gate", &[("gate", gate_line(&g.kind))]));
         let fresh: Vec<&String> = g.hints.iter().filter(|h| hinted.insert((*h).clone())).collect();
         if !fresh.is_empty() {
             let line: Vec<&str> = fresh.iter().map(|h| h.as_str()).collect();
-            s.push_str(&format!("  Hints: {}\n", line.join("; ")));
+            s.push_str(&item("goal-hints", &[("hints", &line.join("; "))]));
         }
     }
     s.push('\n');
@@ -1305,7 +1303,9 @@ pub fn session_prompt_elided(
     // The items themselves follow the status block: the set is read, not only listed.
     // Mirrors docs/compiler/sessions.md#the-prompt.
     if !loaded.initial_pack.is_empty() {
-        s.push_str("\nLoaded items, as load returns them:\n");
+        s.push('\n');
+        s.push_str(BLOCKS.get("loaded-items"));
+        s.push('\n');
         for t in &loaded.initial_pack {
             // An item's own `## id` header nests under the Loaded block.
             for line in t.trim_end().lines() {
@@ -1325,7 +1325,7 @@ pub fn session_prompt_elided(
         Protocol::Serving => SERVING_PROTOCOL,
         Protocol::OpenBatch => OPEN_BATCH_PROTOCOL,
     };
-    s.push_str(&line.replace("{target}", &project_block.batch));
+    s.push_str(&crate::payload::fill(line, &[("target", &project_block.batch)]));
     if !s.ends_with('\n') {
         s.push('\n');
     }
@@ -1810,9 +1810,9 @@ mod tests {
                 k.kind()
             );
         }
-        let s = with_feedback_note(AGENT_CONTRACT);
+        let s = agent_contract();
         assert!(s.contains("report_feedback"));
-        let rest = AGENT_CONTRACT.split_once("\n\n").map(|(_, r)| r).unwrap();
+        let rest = AGENT_CONTRACT.split_once("{feedback}").map(|(_, r)| r).unwrap();
         assert!(s.ends_with(rest), "nothing of the contract is lost");
     }
 

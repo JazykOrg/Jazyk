@@ -57,6 +57,12 @@ pub struct McpServer {
     // The guard and feedback cap across per-call sessions outside a batch, keyed by
     // the ledger claim they ran under. Mirrors docs/compiler/sessions.md#repeated-calls.
     call_memory: std::sync::Mutex<(Option<String>, crate::tools::CallMemory)>,
+    // Whether the transport carries server-to-client notifications (the stdio loop
+    // does), and the tool names the client last listed: the baseline a
+    // `notifications/tools/list_changed` compares against.
+    // Mirrors docs/frontends/mcp.md#the-work-loop.
+    notifies: std::sync::atomic::AtomicBool,
+    listed: std::sync::Mutex<Option<Vec<String>>>,
 }
 
 #[derive(Default)]
@@ -162,37 +168,38 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
     instructions_in(modes, write, initialized, cfg!(target_arch = "wasm32"))
 }
 
-// A chat in a tab has no build path of its own: the page's Build button runs builds,
-// so a model asked to build says so instead of asking for prose
-// (docs/frontends/wasm.md#chat).
-const TAB_BUILD_NOTE: &str = "You cannot start a build: the Build button at the top of the page builds the documents into the graph. When asked to build, say so. ";
-const WRITER_BUILD_NOTE: &str = "Use compile_document_sets to compile named set IDs, or omit setIds to compile all dirty sets. ";
+// The serving's own instructions and its longer `next` guidance.
+// Mirrors docs/compiler/sessions.md#payload-files.
+pub(crate) const SERVING: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/serving-instructions.md"
+));
 
-// Capability context only. Shared policy comes from agent_workflows::render.
+// Capability context only. Shared policy comes from agent_workflows::render. A chat
+// in a tab has no build path of its own: the page's Build button runs builds, so a
+// model asked to build says so instead of asking for prose
+// (docs/frontends/wasm.md#chat).
 fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) -> String {
     if modes.len() == 1 && modes[0] == "runtime" {
         return crate::task_runtime::PROMPT.to_owned();
     }
-    let mut s = format!("Served toolsets: {}. The actual tools/list catalog is authoritative. ", modes.join(", "));
-    if initialized {
-        s.push_str("The project is already initialized. There is nothing to scaffold. ");
-    } else {
-        s.push_str("NO PROJECT HERE: there is no jazyk.toml or graph yet. For an authorized setup, use init_project if served, then reopen the conversation. Inspection and workflow skill tools need no graph. ");
-    }
+    let mut parts = vec![SERVING.fill("toolsets", &[("modes", &modes.join(", "))])];
+    parts.push(SERVING.get(if initialized { "initialized" } else { "uninitialized" }).to_string());
     if tab {
-        s.push_str("This serving runs in a browser tab without a shell. Binding, generation, and verification are not served here. ");
-        if modes.iter().any(|m| m == "chat") { s.push_str(WRITER_BUILD_NOTE); }
+        parts.push(SERVING.get("tab").to_string());
+        if modes.iter().any(|m| m == "chat") {
+            parts.push(SERVING.get("writer-build-note").to_string());
+        }
     }
     if modes.iter().any(|m| m == "graph") && write {
-        s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
+        parts.push(SERVING.get("graph-write").to_string());
     }
-    s.push_str("Read list_jazyk_skills and read_jazyk_skill for the requested workflow. Active begin_* packages and tool gates supply specific scope, instructions, and evidence. Use report_feedback for wrong or confusing Jazyk instructions or tools. ");
-    s
+    parts.push(SERVING.get("workflow").to_string());
+    parts.iter().map(|p| format!("{} ", p)).collect()
 }
 
 // Restrictions for a reader profile, following the same main policy.
 pub fn reader_instructions() -> String {
-    format!("This serving can only read the project. No tool here changes documents or the graph. Binding, generation, verification, shell execution, and publication are unavailable. {}", TAB_BUILD_NOTE.trim_end())
+    format!("{} {}", SERVING.get("reader"), SERVING.get("tab-build-note"))
 }
 
 impl McpServer {
@@ -203,12 +210,16 @@ impl McpServer {
         }
         // A project file that does not load still lets the agent connect and repair it
         // (docs/frontends/mcp.md#mcp-into-acp-sessions).
-        let policy = crate::agent_workflows::render(&self.project.root).unwrap_or_else(|e| format!(
-            "The project file `{}` does not load: {}. Tools that need the project refuse until it is repaired; edit the file with your own tools.",
-            crate::document_sets::CONFIG, e));
+        let policy = crate::agent_workflows::render(&self.project.root).unwrap_or_else(|e| {
+            SERVING.fill(
+                "project-unloadable",
+                &[("config", crate::document_sets::CONFIG), ("error", &e.to_string())],
+            )
+        });
         let capabilities = if self.bridge.reader { reader_instructions() }
             else { instructions_for(&self.modes, self.write, initialized) };
-        Ok(format!("{policy}\n\n## Serving capabilities\n\n{capabilities}\n{integration}"))
+        let text = SERVING.fill("initialize", &[("policy", &policy), ("capabilities", &capabilities)]);
+        Ok(format!("{text}\n{integration}"))
     }
 
     // Ledger workers carry the execution contract in their opening prompt. A
@@ -358,6 +369,8 @@ impl McpServer {
                 }
             });
         McpServer {
+            notifies: Default::default(),
+            listed: Default::default(),
             children: Default::default(),
             config_revision: std::sync::Mutex::new(project.config_hash.clone()),
             mutation_limit: crate::limits::SESSION_MUTATIONS,
@@ -947,6 +960,7 @@ impl McpServer {
     // cancellation or the end of input reaches a call that is still running.
     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     pub fn serve<R: BufRead + Send + 'static, W: Write>(&self, mut input: R, mut out: W) {
+        self.notifies.store(true, std::sync::atomic::Ordering::SeqCst);
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let interrupts = self.interrupts.clone();
         std::thread::spawn(move || loop {
@@ -972,8 +986,9 @@ impl McpServer {
             if line.trim().is_empty() {
                 continue;
             }
-            let resp = match serde_json::from_str::<Value>(&line) {
-                Ok(message) => self.dispatch_message(&message),
+            let message = serde_json::from_str::<Value>(&line);
+            let resp = match &message {
+                Ok(message) => self.dispatch_message(message),
                 Err(e) => Some(json!({"jsonrpc": "2.0", "id": null,
                     "error": {"code": -32700, "message": format!("parse error: {}", e)}})),
             };
@@ -981,7 +996,54 @@ impl McpServer {
                 writeln!(out, "{}", resp).ok();
                 out.flush().ok();
             }
+            if let Some(note) = message.ok().and_then(|m| self.tools_list_changed(&m)) {
+                writeln!(out, "{}", note).ok();
+                out.flush().ok();
+            }
         }
+    }
+
+    // What initialize advertises: `listChanged` only where the transport can deliver
+    // the notification. Mirrors docs/frontends/mcp.md#the-work-loop.
+    fn capabilities(&self) -> Value {
+        if self.notifies.load(std::sync::atomic::Ordering::SeqCst) {
+            json!({"tools": {"listChanged": true}})
+        } else {
+            json!({"tools": {}})
+        }
+    }
+
+    // The tool names `tools/list` would answer now.
+    fn listed_names(&self) -> Option<Vec<String>> {
+        let list = self.handle("tools/list", &json!({})).ok()?;
+        Some(
+            list["tools"]
+                .as_array()?
+                .iter()
+                .filter_map(|t| t["name"].as_str().map(String::from))
+                .collect(),
+        )
+    }
+
+    // After one message: a client's `tools/list` sets the baseline; any other message
+    // that moved the list since then answers the notification, and the new names
+    // become the baseline. Mirrors docs/frontends/mcp.md#the-work-loop.
+    fn tools_list_changed(&self, message: &Value) -> Option<Value> {
+        fn lists(m: &Value) -> bool {
+            match m {
+                Value::Array(items) => items.iter().any(lists),
+                m => m["method"] == "tools/list" && !m["id"].is_null(),
+            }
+        }
+        let listing = lists(message);
+        if !listing && self.listed.lock().unwrap().is_none() {
+            return None;
+        }
+        let now = self.listed_names()?;
+        let mut listed = self.listed.lock().unwrap();
+        let moved = !listing && listed.as_ref() != Some(&now);
+        *listed = Some(now);
+        moved.then(|| json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}))
     }
 
     // One parsed message, whatever the transport: a request answers its response, a
@@ -1401,7 +1463,7 @@ impl McpServer {
                 "readTools": crate::tools::READ_TOOLS.to_vec(),
                 "goalTools": crate::tools::GOAL_TOOLS.to_vec(),
                 "finishTool": "done",
-                "next": "load what the goals name, stage findings, then done with a one-line summary and final goals claims ({goal, justification, evidence?}) in the same call",
+                "next": SERVING.get("begin-goals-next"),
             })
         };
         *self.open.lock().unwrap() = Some(OpenBatch {
@@ -1497,27 +1559,18 @@ impl McpServer {
                 // instead of "converged" (docs/frontends/mcp.md#compilation-over-mcp).
                 let failed = s2.status.failed.len();
                 let mut parts: Vec<String> = vec![if failed > 0 {
-                    format!(
-                        "compilation incomplete: {} failed goal(s) stand; a change on a goal's subject or a human retry from the board reopens it, and jazyk explain <goal> shows the reason",
-                        failed
-                    )
+                    SERVING.fill("compile-incomplete", &[("failed", &failed.to_string())])
                 } else {
-                    "compilation converged".to_string()
+                    SERVING.get("compile-converged").to_string()
                 }];
                 if optional_ready > 0 {
-                    parts.push(format!(
-                        "{} optional goal(s) stay claimable; beginNext stops at convergence, so begin_goals takes the next batch when you want it, and stopping here is right when your instruction was to converge (the verdict does not wait for them)",
-                        optional_ready
-                    ));
+                    parts.push(SERVING.fill("optional-ready", &[("count", &optional_ready.to_string())]));
                 }
                 if !generate.is_empty() {
-                    parts.push(format!(
-                        "{} generation goal(s) ready (generation_tasks lists them)",
-                        generate.len()
-                    ));
+                    parts.push(SERVING.fill("generation-ready", &[("count", &generate.len().to_string())]));
                 }
                 if parts.len() == 1 {
-                    parts.push("nothing pending".to_string());
+                    parts.push(SERVING.get("nothing-pending").to_string());
                 }
                 reply["next"] = json!(parts.join("; "));
                 reply["ready"] = json!({"generate": generate});
@@ -1532,11 +1585,11 @@ impl McpServer {
             reply["next"] = match board2.batches.first() {
                 Some(b) => {
                     let mut v = board2.batch_json(b);
-                    v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
+                    v["note"] = json!(SERVING.fill("next-batch", &[("batch", &b.id)]));
                     v
                 }
                 None => {
-                    json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"})
+                    json!({"note": SERVING.get("no-batch-ready")})
                 }
             };
             return reply;
@@ -1549,9 +1602,7 @@ impl McpServer {
                 reply["began"] = began;
                 // A session that reached its own stopping point after the claim
                 // releases the batch untouched (docs/frontends/mcp.md#compilation-over-mcp).
-                reply["beganNote"] = json!(
-                    "the next batch is claimed; if this commit was your last, abandon_goals releases it untouched and leaves no trace"
-                );
+                reply["beganNote"] = json!(SERVING.get("began-note"));
                 return reply;
             }
         }
@@ -1561,11 +1612,11 @@ impl McpServer {
         reply["next"] = match board.batches.first() {
             Some(b) => {
                 let mut v = board.batch_json(b);
-                v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
+                v["note"] = json!(SERVING.fill("next-batch", &[("batch", &b.id)]));
                 v
             }
             None => {
-                json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"})
+                json!({"note": SERVING.get("no-batch-ready")})
             }
         };
         reply
@@ -2221,7 +2272,7 @@ impl McpServer {
                     *self.client.lock().unwrap() = Some(name.into());
                 }
                 return Ok(json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
-                    "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                    "capabilities":self.capabilities(),"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
                     "instructions":self.initialize_instructions(self.initialized())?}));
             }
             Err(_) => return self.handle_local(method, params),
@@ -2234,7 +2285,7 @@ impl McpServer {
             }
             return Ok(
                 json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
-                "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                "capabilities":self.capabilities(),"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
                 "instructions":self.initialize_instructions(w.exists)?}),
             );
         }
@@ -2512,7 +2563,7 @@ impl McpServer {
                 // latest the serving speaks (docs/frontends/mcp.md#mcp-into-acp-sessions).
                 Ok(json!({
                     "protocolVersion": negotiate_protocol(&params["protocolVersion"]),
-                    "capabilities": {"tools": {}},
+                    "capabilities": self.capabilities(),
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": self.initialize_instructions(self.initialized())?
                 }))
@@ -2680,7 +2731,7 @@ impl McpServer {
                     } else {
                         tools.push(json!({
                             "name": "update_project_settings",
-                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual|auto), workflow.worker (internal|agent|any), gen.deliverable, gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
+                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual; auto needs a human and is refused), workflow.worker (internal|agent|any), gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
                             "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}, "baseHash": {"type": "string", "description": "configuration hash from list_document_sets"}}, "required": ["settings", "baseHash"], "additionalProperties": false}
                         }));
                     }
@@ -3153,10 +3204,7 @@ impl McpServer {
                                     )
                             })
                             .count();
-                        (stale > 0).then(|| format!(
-                            "{} row(s) went stale since their last run (a test or implementation file changed); run_tests re-baselines them, and any generation work they hold returns to this list afterwards",
-                            stale
-                        ))
+                        (stale > 0).then(|| SERVING.fill("ledger-stale", &[("count", &stale.to_string())]))
                     } else {
                         None
                     };
@@ -3165,11 +3213,11 @@ impl McpServer {
                         "tasks": rows,
                         "count": rows.len(),
                         "next": if rows.is_empty() {
-                            "nothing owed".to_string()
+                            SERVING.get("ledger-nothing-owed").to_string()
                         } else if rows.iter().all(|r| r["gated"] == json!(true)) {
-                            format!("every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {} claims one", begin)
+                            SERVING.fill("ledger-gated", &[("begin", begin)])
                         } else {
-                            format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
+                            SERVING.fill("ledger-ready", &[("begin", begin)])
                         },
                     });
                     if kind == "generate" {
@@ -3179,7 +3227,7 @@ impl McpServer {
                         && !self.current_gen_settings().configured
                     {
                         reply["prerequisites"]["sourceMapping"] = json!(false);
-                        reply["next"] = json!("The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then generation_tasks. An empty generation list is not a completed deliverable.");
+                        reply["next"] = json!(SERVING.get("source-mapping"));
                     }
                     if let Some(n) = stale_note {
                         reply["staleNote"] = json!(n);
@@ -4020,11 +4068,10 @@ impl McpServer {
     // while a build runs. The agent, executor, and model settings stay out of reach.
     // Mirrors docs/frontends/acp.md#project-tools.
     fn update_project_settings(&self, args: &Value) -> Value {
-        const KEYS: [(&str, &[&str]); 5] = [
+        const KEYS: [(&str, &[&str]); 4] = [
             ("workflow.compile", &["manual", "auto"]),
             ("workflow.generate", &["manual", "auto"]),
             ("workflow.worker", &["internal", "agent", "any"]),
-            ("gen.deliverable", &[]),
             ("gen.worker", &["agentic", "pipeline"]),
         ];
         let supported = || KEYS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ");
@@ -4046,6 +4093,12 @@ impl McpServer {
             if !allowed.is_empty() && !allowed.contains(&value) {
                 return json!({"error": {"rule": "bad-value", "message": format!(
                     "`{}` takes one of {}", key, allowed.join(", "))}});
+            }
+            // `auto` is a standing approval of all future work: only a human makes
+            // it (docs/compiler/control-plane.md#modes-and-releases).
+            if matches!(key.as_str(), "workflow.compile" | "workflow.generate") && value == "auto" {
+                return json!({"error": {"rule": "needs-human", "message": format!(
+                    "`{key} = auto` lets work run with no release, so a human sets it: the GUI's workflow toggle, `/config {key} auto` typed in chat, or `[workflow]` in jazyk.toml. Tell the user; `manual` stays editable here.")}});
             }
         }
         let Some(base) = args["baseHash"].as_str() else {
@@ -4847,6 +4900,51 @@ mod tests {
         assert!(crate::store::read_generation(&out) > generation);
         drop(restored);
         crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    // A stdio serving advertises listChanged and announces each move of the list the
+    // client already listed: begin_goals narrows it, abandon_goals restores it, and a
+    // message that moves nothing announces nothing. A serving outside the stdio loop
+    // advertises nothing it cannot deliver. Mirrors docs/frontends/mcp.md#the-work-loop.
+    #[test]
+    fn stdio_announces_tool_list_changes_after_the_first_listing() {
+        let dir = bare_dir("list-changed");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap();
+        let out = project.out.clone();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.compile = "auto".into();
+        control.save(&out);
+        let make = || McpServer::with_bridge(project.clone(), out.clone(), vec!["compile".into()], true, BridgeFlags { ephemeral: true, ..Default::default() });
+        let direct = make().handle("initialize", &json!({})).unwrap();
+        assert_eq!(direct["capabilities"]["tools"], json!({}), "{direct}");
+        let request = |id: u64, method: &str, params: Value| json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string() + "\n";
+        let input = [
+            request(1, "initialize", json!({})),
+            request(2, "ping", json!({})),
+            request(3, "tools/list", json!({})),
+            request(4, "ping", json!({})),
+            request(5, "tools/call", json!({"name":"begin_goals","arguments":{}})),
+            request(6, "ping", json!({})),
+            request(7, "tools/call", json!({"name":"abandon_goals","arguments":{}})),
+        ]
+        .concat();
+        let mut written: Vec<u8> = Vec::new();
+        make().serve(std::io::Cursor::new(input.into_bytes()), &mut written);
+        let lines: Vec<Value> = String::from_utf8(written).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let shape: Vec<String> = lines
+            .iter()
+            .map(|l| l["id"].as_u64().map(|id| id.to_string()).unwrap_or_else(|| l["method"].as_str().unwrap_or("?").to_string()))
+            .collect();
+        assert_eq!(
+            shape,
+            ["1", "2", "3", "4", "5", "notifications/tools/list_changed", "6", "7", "notifications/tools/list_changed"],
+            "{lines:?}"
+        );
+        assert_eq!(lines[0]["result"]["capabilities"]["tools"]["listChanged"], true, "{}", lines[0]);
+        assert_ne!(lines[4]["result"]["isError"], true, "{}", lines[4]);
+        assert_eq!(lines[5], json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"}));
+        crate::vfs::remove_dir_all(dir).ok();
     }
 
     #[test]
@@ -6274,24 +6372,30 @@ mod tests {
         let config = dir.join(crate::document_sets::CONFIG);
         let original = crate::vfs::read_to_string(&config).unwrap();
         let hash = crate::model::hash_hex(&original);
-        for key in ["llm.base_url", "llm.model", "acp.agent", "executors.compile"] {
+        for key in ["llm.base_url", "llm.model", "acp.agent", "executors.compile", "gen.deliverable", "gen.code"] {
             assert_eq!(call(json!({"settings":{key:"x"},"baseHash":hash}))["error"]["rule"], "unsupported-key", "{key}");
         }
         assert_eq!(call(json!({"settings":{"workflow.compile":"sometimes"},"baseHash":hash}))["error"]["rule"], "bad-value");
-        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"}}))["error"]["rule"], "missing-argument");
-        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":"stale"}))["error"]["rule"], "stale-config");
+        // Only a human switches a mode to auto (docs/compiler/control-plane.md#modes-and-releases).
+        for key in ["workflow.compile", "workflow.generate"] {
+            let refused = call(json!({"settings":{key:"auto"},"baseHash":hash}));
+            assert_eq!(refused["error"]["rule"], "needs-human", "{key}");
+            assert!(refused["error"]["message"].as_str().unwrap().contains(&format!("/config {key} auto")));
+        }
+        assert_eq!(call(json!({"settings":{"workflow.worker":"agent"}}))["error"]["rule"], "missing-argument");
+        assert_eq!(call(json!({"settings":{"workflow.worker":"agent"},"baseHash":"stale"}))["error"]["rule"], "stale-config");
         {
             let _held = crate::document_sets::ProjectLock::acquire(&dir, "project.lock").unwrap();
-            assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "project-busy");
+            assert_eq!(call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}))["error"]["rule"], "project-busy");
         }
         let out = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap().out;
         crate::control::claim(&out, crate::control::BUILD_LEASE, "internal-test").unwrap();
-        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "build-running");
+        assert_eq!(call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}))["error"]["rule"], "build-running");
         crate::control::release_lease(&out, crate::control::BUILD_LEASE);
         assert_eq!(crate::vfs::read_to_string(&config).unwrap(), original, "a refused edit wrote the file");
-        let ok = call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}));
+        let ok = call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}));
         let edited = crate::vfs::read_to_string(&config).unwrap();
-        assert!(edited.contains("[workflow]\ncompile = \"auto\""), "{edited}");
+        assert!(edited.contains("[workflow]\nworker = \"agent\""), "{edited}");
         assert_eq!(ok["hash"], crate::model::hash_hex(&edited));
         crate::document_sets::Workspace::load(&dir).unwrap();
         crate::vfs::remove_dir_all(dir).ok();

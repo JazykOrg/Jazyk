@@ -280,6 +280,12 @@ pub struct Medium {
     pub artifact: String,
 }
 
+// The generation pipeline's prompts: the medium decision, the per-entity steps, their
+// corrective retries, and the llm criteria file. Mirrors docs/compiler/sessions.md#payload-files.
+pub(crate) const STEPS: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/generation-steps.md"
+));
+
 impl Medium {
     pub fn is_built(&self) -> bool {
         self.produced == "built"
@@ -287,15 +293,12 @@ impl Medium {
     // The decision as the task packages and prompts state it: one line, no hedging.
     pub fn line(&self) -> String {
         if self.is_built() {
-            format!(
-                "{} produced by a build ({}). The artifact is `{}`; the files you write are the SOURCE that produces it.",
-                self.form, self.toolchain, self.artifact
+            STEPS.fill(
+                "medium-line-built",
+                &[("form", &self.form), ("toolchain", &self.toolchain), ("artifact", &self.artifact)],
             )
         } else {
-            format!(
-                "{} written directly ({}). The files you write ARE the deliverable.",
-                self.form, self.toolchain
-            )
+            STEPS.fill("medium-line-written", &[("form", &self.form), ("toolchain", &self.toolchain)])
         }
     }
 }
@@ -1473,12 +1476,9 @@ pub async fn decide_medium(
     // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
     let existing = list_existing_files(deliverable);
     let mut tree = if existing.is_empty() {
-        "The deliverable directory is empty: decide from the statements alone.".to_string()
+        STEPS.get("decide-tree-empty").to_string()
     } else {
-        format!(
-            "The deliverable directory already holds these files:\n{}\nAn existing tree pins the medium: decide the form and toolchain these files already use (their language, build manifest, and test layout), never a different one.",
-            existing.join("\n")
-        )
+        STEPS.fill("decide-tree-existing", &[("files", &existing.join("\n"))])
     };
     // Run commands recorded before any entity generated (bound tests) pin the
     // toolchain the same way an existing tree does: a re-decision after a divergence
@@ -1493,35 +1493,26 @@ pub async fn decide_medium(
     commands.sort();
     commands.dedup();
     if !commands.is_empty() {
-        tree.push_str(&format!(
-            "\n\nThe ledger already records these test run commands:\n{}\nRecorded commands pin the toolchain: decide the toolchain these commands run under, never a different one.",
-            commands.iter().take(10).map(|c| format!("- {}", c)).collect::<Vec<_>>().join("\n")
+        tree.push_str("\n\n");
+        tree.push_str(&STEPS.fill(
+            "decide-commands",
+            &[(
+                "commands",
+                &commands.iter().take(10).map(|c| format!("- {}", c)).collect::<Vec<_>>().join("\n"),
+            )],
         ));
     }
-    let system =
-        "You decide what a deliverable is made of. Answer with one JSON object and nothing else.";
-    let user = format!(
-        "These statements are the whole specification of one deliverable.\n\n{}\n\nEntities: {}\n\n{}\n\n\
-         Decide the deliverable's medium.\n\
-         - `form`: what the deliverable is, in a few words (e.g. `Rust library`, `Microsoft PowerPoint deck`, `printed book`).\n\
-         - `produced`: `written` when the files a generator writes ARE the deliverable (source code, a manuscript, a configuration). \
-         `built` when the medium is a format a tool must produce (a slide deck, a PDF, an image, a compiled binary): the files are the source, and a command turns them into the artifact.\n\
-         - `toolchain`: what writes or builds it (e.g. `rustc and cargo test`, `python3 with python-pptx`). Name a library that can actually emit the format.\n\
-         - `artifact`: for `built` only, the file the build produces, relative to the deliverable directory (e.g. `jazyk.pptx`). Empty for `written`.\n\n\
-         Reply with exactly: {{\"form\": \"...\", \"produced\": \"written\"|\"built\", \"toolchain\": \"...\", \"artifact\": \"...\"}}",
-        body,
-        entities.join(", "),
-        tree
+    let system = STEPS.get("decide-system");
+    let user = STEPS.fill(
+        "decide-user",
+        &[("statements", &body), ("entities", &entities.join(", ")), ("tree", &tree)],
     );
     let mut last = String::new();
     for attempt in 0..2 {
         let ask = if attempt == 0 {
             user.clone()
         } else {
-            format!(
-                "{}\n\nYour previous answer was rejected: {}. Reply with the JSON object only.",
-                user, last
-            )
+            STEPS.fill("decide-retry", &[("request", &user), ("reason", &last)])
         };
         let reply = runner.ask(
             system,
@@ -5883,17 +5874,24 @@ fn snapshot_pipeline_baseline(out: &Path, gs: &GenSettings, rel: &str,
 // already made; this states what follows from it, in the imperative.
 fn medium_directive(medium: &Option<Medium>) -> String {
     match medium {
-        Some(m) if m.is_built() => format!(
-            "The deliverable is {}. You cannot type that format out, so the file you write is the SOURCE THAT PRODUCES IT: real, runnable {} that contributes this entity's part of `{}`. One entry point, recorded as the build, runs every entity's part and writes the artifact, so write your part as something that entry can include: a function it calls, a module it imports. Do NOT write a document describing the artifact, an outline of it, a placeholder, or a manifest listing what it would contain: prose about a deck is not a deck, and it satisfies nothing. Do NOT write the artifact file itself by hand.",
-            m.form, if m.toolchain.is_empty() { "source" } else { &m.toolchain }, m.artifact
+        Some(m) if m.is_built() => STEPS.fill(
+            "directive-built",
+            &[
+                ("form", &m.form),
+                ("toolchain", if m.toolchain.is_empty() { "source" } else { &m.toolchain }),
+                ("artifact", &m.artifact),
+            ],
         ),
-        Some(m) => format!(
-            "The deliverable is {}, written directly: the file you write IS the artifact{}.",
-            m.form,
-            if m.toolchain.is_empty() { String::new() } else { format!(" ({})", m.toolchain) }
-        ),
+        Some(m) => {
+            let toolchain = if m.toolchain.is_empty() {
+                String::new()
+            } else {
+                STEPS.fill("directive-written-toolchain", &[("toolchain", &m.toolchain)])
+            };
+            STEPS.fill("directive-written", &[("form", &m.form), ("toolchain", &toolchain)])
+        }
         // No decision on record (an external worker's package): fall back to deriving it.
-        None => "Decide the medium from the requirements above: when they name a format you cannot type out (a slide deck, a PDF, an image, a compiled binary), write the SOURCE that produces it and record its build in the manifest step; otherwise the file you write is the artifact.".to_string(),
+        None => STEPS.get("directive-undecided").to_string(),
     }
 }
 
@@ -5926,7 +5924,7 @@ async fn gen_one_inner(
     let medium: Option<Medium> = serde_json::from_value(task["medium"].clone()).ok();
     let medium_line = match &medium {
         Some(m) => m.line(),
-        None => "not decided; derive it from the requirements".to_string(),
+        None => STEPS.get("medium-undecided").to_string(),
     };
     let run_commands = task["runCommands"]
         .as_array()
@@ -5937,41 +5935,47 @@ async fn gen_one_inner(
                 .join(", ")
         })
         .unwrap_or_default();
-    let header = format!(
-        "The deliverable: {}\n{}\nEntity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity's component group; never write to a file of an entity outside yours{}. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
-        medium_line,
-        // A standing build failure means the artifact does not exist: whoever
-        // regenerates next has to fix what broke (docs/consumers/gen.md#the-build).
-        match &task["buildError"] {
-            serde_json::Value::Null => String::new(),
-            e => {
-                let yours: Vec<&str> = e["yours"].as_array().map(|a| a.iter().filter_map(|f| f.as_str()).collect()).unwrap_or_default();
-                format!(
-                    "\nTHE BUILD IS CURRENTLY BROKEN, so the artifact does not exist. It last failed with:\n{}\n{}Write source that runs against the real library API: import the library the toolchain names, exactly as it is spelled, and call the functions it really has. Do not repeat a call or an import the failure above already rejected.\n",
-                    e["error"].as_str().unwrap_or_default(),
-                    if yours.is_empty() {
-                        "The failure is not in a file you own here, but do not add another like it. ".to_string()
-                    } else {
-                        format!("THE FAILURE IS IN YOUR OWN FILE ({}). Fixing it is this task's first job. ", yours.join(", "))
-                    }
+    // A standing build failure means the artifact does not exist: whoever
+    // regenerates next has to fix what broke (docs/consumers/gen.md#the-build).
+    let build_error = match &task["buildError"] {
+        serde_json::Value::Null => String::new(),
+        e => {
+            let yours: Vec<&str> = e["yours"].as_array().map(|a| a.iter().filter_map(|f| f.as_str()).collect()).unwrap_or_default();
+            let whose = if yours.is_empty() {
+                STEPS.get("build-broken-elsewhere").to_string()
+            } else {
+                STEPS.fill("build-broken-yours", &[("files", &yours.join(", "))])
+            };
+            format!(
+                "\n{}\n",
+                STEPS.fill(
+                    "build-broken",
+                    &[("error", e["error"].as_str().unwrap_or_default()), ("whose", &(whose + " "))],
                 )
-            }
-        },
-        id,
-        task["name"].as_str().unwrap_or_default(),
-        task["context"].as_str().unwrap_or_default(),
-        task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
-        match shared_with(store, id) {
-            v if v.is_empty() => String::new(),
-            v => format!(" (your group, whose files you may extend: {})", v.join(", ")),
-        },
-        serde_json::to_string(&task["generatedFiles"]).unwrap_or_default(),
-        if run_commands.is_empty() { "(none yet; this task establishes them)" } else { &run_commands },
-        match &task["build"] {
-            serde_json::Value::Null => "(none yet)".to_string(),
-            b => b.to_string(),
-        },
-    );
+            )
+        }
+    };
+    let header = STEPS.fill(
+        "header",
+        &[
+            ("medium", &medium_line),
+            ("build_error", &build_error),
+            ("id", id),
+            ("name", task["name"].as_str().unwrap_or_default()),
+            ("context", task["context"].as_str().unwrap_or_default()),
+            ("changed", &task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()),
+            ("group", &match shared_with(store, id) {
+                v if v.is_empty() => String::new(),
+                v => STEPS.fill("header-group", &[("group", &v.join(", "))]),
+            }),
+            ("generated", &serde_json::to_string(&task["generatedFiles"]).unwrap_or_default()),
+            ("commands", if run_commands.is_empty() { STEPS.get("header-commands-none") } else { &run_commands }),
+            ("build", &match &task["build"] {
+                serde_json::Value::Null => STEPS.get("header-build-none").to_string(),
+                b => b.to_string(),
+            }),
+        ],
+    ) + "\n";
     // File ownership: a path recorded for an entity outside this one's component
     // group is off limits. One corrective retry, then the task fails.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
@@ -5983,12 +5987,14 @@ async fn gen_one_inner(
         .unwrap_or_default();
     let parts = groups.len();
     let req_line = |r: &serde_json::Value| {
-        format!(
-            "- {} [{}]: {}\n  quote: {}",
-            r["id"].as_str().unwrap_or(""),
-            r["testName"].as_str().unwrap_or(""),
-            r["statement"].as_str().unwrap_or(""),
-            r["quote"].as_str().unwrap_or("")
+        STEPS.fill(
+            "requirement",
+            &[
+                ("id", r["id"].as_str().unwrap_or("")),
+                ("test", r["testName"].as_str().unwrap_or("")),
+                ("statement", r["statement"].as_str().unwrap_or("")),
+                ("quote", r["quote"].as_str().unwrap_or("")),
+            ],
         )
     };
 
@@ -6005,14 +6011,26 @@ async fn gen_one_inner(
             .map(|a| a.iter().map(req_line).collect())
             .unwrap_or_default();
         let user = if k == 0 {
-            format!(
-                "{}\n{}\nWrite the implementing content for this entity. Choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Write more files the same way when this part needs them (a dependency manifest, an entry point, a second module): another `FILE: <path>` line on its own, then that file. The first file is this entity's part. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
-                header, medium_directive(&medium), parts, req_lines.join("\n")
-            )
+            STEPS.fill(
+                "product-first",
+                &[
+                    ("header", &header),
+                    ("directive", &medium_directive(&medium)),
+                    ("parts", &parts.to_string()),
+                    ("requirements", &req_lines.join("\n")),
+                ],
+            ) + "\n"
         } else {
-            format!(
-                "{}\nRequirements (group {} of {}):\n{}\n\nThe file `{}` so far:\n{}\nReturn ONLY additional content to append, no FILE line.",
-                header, k + 1, parts, req_lines.join("\n"), product_rel, crate::llm::truncate(&code, 20_000)
+            STEPS.fill(
+                "product-more",
+                &[
+                    ("header", &header),
+                    ("group", &(k + 1).to_string()),
+                    ("parts", &parts.to_string()),
+                    ("requirements", &req_lines.join("\n")),
+                    ("path", &product_rel),
+                    ("code", &crate::llm::truncate(&code, 20_000)),
+                ],
             )
         };
         let reply = runner
@@ -6030,10 +6048,10 @@ async fn gen_one_inner(
             let mut written = match parse_file_replies(&reply) {
                 Ok(v) => v,
                 Err(e) => {
-                    let retry = format!(
-                        "{}\nYour reply was not in the required shape ({}). This step takes no JSON. Reply exactly like this, the FILE line first and the file after it:\n\nFILE: path/of/your/choice.ext\n<the content>\n",
-                        user, e
-                    );
+                    let retry = STEPS.fill(
+                        "product-format-retry",
+                        &[("request", &user), ("error", &e.to_string())],
+                    ) + "\n";
                     let again = runner
                         .ask(
                             instructions,
@@ -6064,9 +6082,9 @@ async fn gen_one_inner(
                 }
             }
             if let Some(owner) = owner_of(&path) {
-                let retry = format!(
-                    "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
-                    user, path, owner
+                let retry = STEPS.fill(
+                    "owner-retry",
+                    &[("request", &user), ("path", &path), ("owner", &owner)],
                 );
                 let reply2 = runner
                     .ask(
@@ -6107,20 +6125,19 @@ async fn gen_one_inner(
         .flat_map(|g| g.as_array().cloned().unwrap_or_default())
         .collect();
     let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
-    let tests_user = format!(
-        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it; more files follow the same way, each after its own `FILE: <path>` line, when the tests need them (a fixture, a conftest). The first file is the tests artifact. If no requirement can be tested programmatically, reply with exactly `NONE`.\nA test must be falsifiable: its assertion has to FAIL when the requirement is violated. Before writing one, ask what change to the artifact would break this requirement, and assert on exactly that. Asserting on unrelated text, on a heading, or on a keyword that is present either way is worse than no test: it reports a pass while the requirement is unmet. If a requirement is about something this artifact does not carry, do NOT invent a stand-in assertion for it. Leave it out of this file; the manifest step declares it `llm` and a human or an agent judges it.\n{}\nRequirements:\n{}\n\nThe product file:\n{}\n",
-        header,
-        match &medium {
-            Some(m) if m.is_built() => format!(
-                "The artifact is `{}`, produced by the build. Every test opens that file and asserts on what is inside it. A test that reads the source that produces it, or any document beside it, verifies nothing.",
-                m.artifact
-            ),
-            _ => "When the artifact is produced by a build, the test opens what the build produced, never the source that produces it.".to_string(),
-        },
-        product_rel,
-        req_lines.join("\n"),
-        crate::llm::truncate(&code, 16_000)
-    );
+    let tests_user = STEPS.fill(
+        "tests",
+        &[
+            ("header", &header),
+            ("product", &product_rel),
+            ("artifact_rule", &match &medium {
+                Some(m) if m.is_built() => STEPS.fill("tests-built", &[("artifact", &m.artifact)]),
+                _ => STEPS.get("tests-default").to_string(),
+            }),
+            ("requirements", &req_lines.join("\n")),
+            ("code", &crate::llm::truncate(&code, 16_000)),
+        ],
+    ) + "\n";
     let tests_reply = runner
         .ask(instructions, &tests_user, &format!("gen {}", id), "tests").await
         .map_err(|e| pipeline::step_error("tests file".into(), e))?;
@@ -6154,9 +6171,9 @@ async fn gen_one_inner(
                 Some(v.remove(0))
             }
             Err(e) => {
-                let retry = format!(
-                    "{}\nYour reply was not in the required shape ({}). This step is not the manifest step and takes no JSON. Reply exactly like this, the FILE line first and the test file after it:\n\nFILE: tests/test_example.py\nimport unittest\n\nclass TestExample(unittest.TestCase):\n    def test_name_from_the_list(self):\n        ...\n\nOr reply with exactly NONE when no requirement here can be tested programmatically.",
-                    tests_user, e
+                let retry = STEPS.fill(
+                    "tests-format-retry",
+                    &[("request", &tests_user), ("error", &e.to_string())],
                 );
                 let again = runner
                     .ask(
@@ -6175,10 +6192,10 @@ async fn gen_one_inner(
         };
         if let Some((mut path, mut body)) = parsed {
             if let Some(owner) = owner_of(&path) {
-                let retry = format!(
-                "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
-                tests_user, path, owner
-            );
+                let retry = STEPS.fill(
+                    "owner-retry",
+                    &[("request", &tests_user), ("path", &path), ("owner", &owner)],
+                );
                 let reply2 = runner
                     .ask(instructions, &retry, &format!("gen {}", id), "tests retry").await
                     .map_err(|e| pipeline::step_error("tests retry".into(), e))?;
@@ -6222,44 +6239,47 @@ async fn gen_one_inner(
             || (!tests_base.is_empty() && run.contains(&tests_base))
             || (!name.is_empty() && run.contains(name))
     };
-    let manifest_user = format!(
-        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nRecorded run commands already in use (reuse this toolchain, never introduce a second test runner): {}\nBuild already recorded for this deliverable: {}\nThe build's entry point and its current content (rewrite it in supportFiles so it includes your part; empty when there is no build yet): {}\nTest names the harness found in the tests file (declare each of these programmatic with its run command; declare a requirement whose name is absent as llm): {}\nEach programmatic run command must invoke the tests artifact and select only that test: the command text must reference the tests file path or the testName. A command that only runs the product is invalid.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"build\": {{\"run\": \"...\", \"cwd\": \".\", \"produces\": [\"...\"]}}, \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}], \"choices\": [{{\"choice\": \"one sentence\", \"scope\": \"product\"|\"behavior\"|\"detail\", \"reasoning\": \"...\", \"requirements\": [\"req:...\"]}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). choices lists what you had to invent because no statement decides it: the choice in one sentence, its scope (product, behavior, or detail), your reasoning, and the requirements it fills in when any exist; an empty array when you invented nothing. A run command that cannot execute from a fresh checkout of the deliverable is a defect: if it needs a runner or build file no listed file provides (a package.json for npx jest, a Cargo.toml for cargo test), you MUST return that file in supportFiles.\n{} Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
-        id,
-        files,
-        task["deliverable"].as_str().unwrap_or_default(),
-        if run_commands.is_empty() { "(none yet; this task establishes the toolchain)" } else { &run_commands },
-        match &task["build"] {
-            serde_json::Value::Null => "(none; record one only if the medium must be built)".to_string(),
-            b => b.to_string(),
-        },
-        match &task["buildEntry"] {
-            serde_json::Value::Null => "(none yet)".to_string(),
-            e => format!(
-                "`{}`:\n{}",
-                e["path"].as_str().unwrap_or_default(),
-                e["content"].as_str().unwrap_or_default()
-            ),
-        },
-        if found_names.is_empty() { "(none)".to_string() } else { found_names.join(", ") },
-        // The medium is already decided, so the build is an obligation or a
-        // non-question; it is never the worker's call
-        // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-        match (&medium, &task["build"]) {
-            (Some(m), serde_json::Value::Null) if m.is_built() => format!(
-                "`build` is REQUIRED here and no build is recorded yet: this deliverable is {}, so return `build` with the exact command that produces `{}`, `cwd` relative to the deliverable, and `produces` listing `{}`. What the build runs must be a NEW support file you return in supportFiles, never the product file above: every later entity adds its own part to the artifact by rewriting that entry, and it cannot rewrite a file you own. So return the entry as a support file that IMPORTS the product file you wrote and calls into it, then writes `{}`. The entry composes parts; it never re-implements one. A manifest without the build is rejected.",
-                m.form, m.artifact, m.artifact, m.artifact
-            ),
-            (_, serde_json::Value::Null) => "Omit `build` entirely: the files you wrote are themselves the deliverable.".to_string(),
-            (Some(m), _) if m.is_built() => format!(
-                "A build is already recorded; omit `build` and reuse it. Its entry point is shown above with its current content: your part is NOT in the artifact until that entry imports your file and calls into it, so return the entry in supportFiles, rewritten to import your product file the same way it imports the others, still producing `{}`. Keep every part it already composes, and never re-implement a part inside the entry.",
-                m.artifact
-            ),
-            _ => "A build is already recorded for this deliverable; omit `build` and reuse it.".to_string(),
-        },
-        all_reqs.iter().map(|r| format!("- {} [{}]", r["id"].as_str().unwrap_or(""), r["testName"].as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"),
-        tests_rel,
-        crate::llm::truncate(&tests_code, 12_000)
-    );
+    let manifest_user = STEPS.fill(
+        "manifest",
+        &[
+            ("id", id),
+            ("files", &format!("{:?}", files)),
+            ("deliverable", task["deliverable"].as_str().unwrap_or_default()),
+            ("commands", if run_commands.is_empty() { STEPS.get("manifest-commands-none") } else { &run_commands }),
+            ("build", &match &task["build"] {
+                serde_json::Value::Null => STEPS.get("manifest-build-none").to_string(),
+                b => b.to_string(),
+            }),
+            ("entry", &match &task["buildEntry"] {
+                serde_json::Value::Null => STEPS.get("manifest-entry-none").to_string(),
+                e => STEPS.fill(
+                    "manifest-entry",
+                    &[
+                        ("path", e["path"].as_str().unwrap_or_default()),
+                        ("content", e["content"].as_str().unwrap_or_default()),
+                    ],
+                ),
+            }),
+            ("names", &if found_names.is_empty() { STEPS.get("manifest-names-none").to_string() } else { found_names.join(", ") }),
+            // The medium is already decided, so the build is an obligation or a
+            // non-question; it is never the worker's call
+            // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+            ("build_rule", &match (&medium, &task["build"]) {
+                (Some(m), serde_json::Value::Null) if m.is_built() => STEPS.fill(
+                    "manifest-build-required",
+                    &[("form", &m.form), ("artifact", &m.artifact)],
+                ),
+                (_, serde_json::Value::Null) => STEPS.get("manifest-build-omit").to_string(),
+                (Some(m), _) if m.is_built() => {
+                    STEPS.fill("manifest-build-reuse-built", &[("artifact", &m.artifact)])
+                }
+                _ => STEPS.get("manifest-build-reuse").to_string(),
+            }),
+            ("requirements", &all_reqs.iter().map(|r| STEPS.fill("manifest-requirement", &[("id", r["id"].as_str().unwrap_or("")), ("test", r["testName"].as_str().unwrap_or(""))])).collect::<Vec<_>>().join("\n")),
+            ("tests", &tests_rel),
+            ("tests_code", &crate::llm::truncate(&tests_code, 12_000)),
+        ],
+    ) + "\n";
     let manifest_reply = runner
         .ask(
             instructions,
@@ -6279,9 +6299,9 @@ async fn gen_one_inner(
         // Malformed JSON is a shape failure, not a content failure: one corrective
         // round with the parser's complaint quoted back.
         Err(e) => {
-            let retry = format!(
-                "{}\nYour reply was not valid JSON ({}). Reply again with the same object, valid JSON this time, nothing else: no prose, no trailing commas, every string quoted.",
-                manifest_user, e
+            let retry = STEPS.fill(
+                "manifest-format-retry",
+                &[("request", &manifest_user), ("error", &e.to_string())],
             );
             let again = runner
                 .ask(
@@ -6316,15 +6336,12 @@ async fn gen_one_inner(
             let selector = if !declared_name.is_empty() && tests_code.contains(&declared_name) { &declared_name } else { name };
             let has_run = !run.is_empty() && runs_the_test(&run, selector);
             if present && !(programmatic && has_run) {
-                Some(format!(
-                    "- {} [{}] is present in the tests file; declare it programmatic with a run command that invokes the tests file and selects this test (reference `{}` or the testName in the command)",
-                    rid, name, tests_rel
+                Some(STEPS.fill(
+                    "mismatch-undeclared",
+                    &[("id", rid), ("test", name), ("tests", &tests_rel)],
                 ))
             } else if !present && programmatic {
-                Some(format!(
-                    "- {} is declared programmatic but `{}` does not appear in the tests file; declare it llm or fix the name",
-                    rid, name
-                ))
+                Some(STEPS.fill("mismatch-absent", &[("id", rid), ("test", name)]))
             } else {
                 None
             }
@@ -6385,12 +6402,9 @@ async fn gen_one_inner(
                 })
                 .collect();
             if !missing.is_empty() {
-                mismatches.push(format!(
-                    "- the build entry `{}` does not name these parts, so `{}` will not carry them: {}. Return `{}` in supportFiles, importing each one and calling into it, and keep everything it already composes; never re-implement a part inside the entry",
-                    entry,
-                    m.artifact,
-                    missing.join(", "),
-                    entry
+                mismatches.push(STEPS.fill(
+                    "mismatch-entry",
+                    &[("entry", entry), ("artifact", &m.artifact), ("missing", &missing.join(", "))],
                 ));
             }
         }
@@ -6407,9 +6421,9 @@ async fn gen_one_inner(
             .trim()
             .is_empty();
         if !recorded && !given {
-            mismatches.push(format!(
-                "- `build` is missing: this deliverable is {}, so the manifest must carry the command that produces `{}` (`run`, `cwd`, `produces`)",
-                m.form, m.artifact
+            mismatches.push(STEPS.fill(
+                "mismatch-build",
+                &[("form", &m.form), ("artifact", &m.artifact)],
             ));
         }
     }
@@ -6417,11 +6431,13 @@ async fn gen_one_inner(
         // The previous answer goes back with the complaint: a correction changes what
         // the complaint names and nothing else
         // (docs/consumers/gen.md#file-ownership-and-conventions).
-        let retry = format!(
-            "{}\nYour answer was:\n{}\n\nIt has these problems:\n{}\nReturn the corrected, complete JSON manifest object, same schema, no prose. Change only what the problems name; keep every other field exactly as you gave it, supportFiles and build included.",
-            manifest_user,
-            serde_json::to_string_pretty(&manifest_json).unwrap_or_default(),
-            mismatches.join("\n")
+        let retry = STEPS.fill(
+            "manifest-retry",
+            &[
+                ("request", &manifest_user),
+                ("answer", &serde_json::to_string_pretty(&manifest_json).unwrap_or_default()),
+                ("problems", &mismatches.join("\n")),
+            ],
         );
         let retry_reply = runner.ask(instructions, &retry, &format!("gen {}", id), "manifest retry").await;
         if let Err(reason) = &retry_reply {
@@ -6520,15 +6536,16 @@ async fn gen_one_inner(
             if let Some(p) = crit_path.parent() {
                 crate::vfs::create_dir_all(p).ok();
             }
-            let criteria = format!(
-                "---\nrequirement: {}\nhash: {}\n---\n\n# Verify {}\n\nStatement: {}\n\n> {}\n\nImplementing files (under the deliverable):\n- {}\n\nConfirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.\n",
-                rid,
-                r["hash"].as_str().unwrap_or_default(),
-                rid,
-                r["statement"].as_str().unwrap_or_default(),
-                r["quote"].as_str().unwrap_or_default(),
-                product_rel,
-            );
+            let criteria = STEPS.fill(
+                "llm-criteria",
+                &[
+                    ("id", rid),
+                    ("hash", r["hash"].as_str().unwrap_or_default()),
+                    ("statement", r["statement"].as_str().unwrap_or_default()),
+                    ("quote", r["quote"].as_str().unwrap_or_default()),
+                    ("files", &product_rel),
+                ],
+            ) + "\n";
             crate::vfs::write(&crit_path, criteria).ok();
             tests_manifest.push(serde_json::json!({
                 "requirement": rid, "kind": "llm",

@@ -17,6 +17,11 @@ pub fn instructions() -> String {
     include_str!("../../docs/compiler/goals/prompts/decompile-contract.md").into()
 }
 
+// The internal worker's role line around the contract, its scope request, and its
+// retry. Mirrors docs/consumers/decompile.md#draft-goals.
+pub(crate) const WORKER: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/decompile-worker.md"));
+
 // ---------------------------------------------------------------------------
 // drafts.yaml: each submitted draft's path and content hash, what ratification reads.
 
@@ -321,28 +326,23 @@ pub async fn run_all(
         }
         trace.line("decompile", &format!("drafting scope {}", scope));
         let pkg = task(proj, store, gs, scope)?;
-        let system = format!(
-            "You are the decompilation worker of jazyk, a natural language compiler. {} \
-             Reply with exactly one file: a line `FILE: <docs-relative path>` (use the suggested path unless a better name exists), then the full markdown content.",
-            instructions()
-        );
-        let user = format!(
-            "# Scope: {}\nsuggested path: {}\nlint rules: {}\n\n## Inventory (tests first)\n{}\n",
-            scope,
-            pkg["suggestedPath"].as_str().unwrap_or(""),
-            pkg["lintRules"],
-            pkg["inventory"]
-        );
+        let system = WORKER.fill("system", &[("contract", &instructions())]);
+        let user = WORKER.fill(
+            "scope",
+            &[
+                ("scope", scope),
+                ("path", pkg["suggestedPath"].as_str().unwrap_or("")),
+                ("lint", &pkg["lintRules"].to_string()),
+                ("inventory", &pkg["inventory"].to_string()),
+            ],
+        ) + "\n";
         let mut last_err = String::new();
         let mut ok = false;
         for attempt in 0..2 {
             let prompt = if attempt == 0 || last_err.is_empty() {
                 user.clone()
             } else {
-                format!(
-                    "{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.",
-                    user, last_err
-                )
+                WORKER.fill("retry", &[("request", &user), ("reason", &last_err)])
             };
             let reply = match runner.ask_traced(
                 &system,

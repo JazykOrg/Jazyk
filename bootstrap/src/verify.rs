@@ -11,6 +11,40 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+// What a judge reads: the criterion or the row's criteria, the context, and the
+// implementing files. One builder for every llm verdict.
+// Mirrors docs/compiler/sessions.md#payload-files.
+pub(crate) const JUDGE: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/judge-input.md"));
+
+// The implementing files as the judge sees them: each readable file under the
+// deliverable, truncated, under its own `=== path ===` line.
+pub(crate) fn judge_files<'a>(gs: &GenSettings, paths: impl IntoIterator<Item = &'a str>) -> String {
+    let mut files = String::new();
+    for path in paths {
+        if let Ok(text) = crate::vfs::read_to_string(gs.deliverable.join(path)) {
+            files.push('\n');
+            files.push_str(&JUDGE.fill(
+                "file",
+                &[("path", path), ("text", &crate::llm::truncate(&text, 12_000))],
+            ));
+        }
+    }
+    files
+}
+
+// The judge's input. `statement` names one criterion when the judge decides one;
+// `ask` is the closing instruction, filled.
+pub(crate) fn judge_input(statement: Option<&str>, criteria: &str, context: &str, files: &str, ask: &str) -> String {
+    let criterion = statement
+        .map(|s| JUDGE.fill("criterion", &[("statement", s)]) + "\n")
+        .unwrap_or_default();
+    JUDGE.fill(
+        "input",
+        &[("criterion", &criterion), ("criteria", criteria), ("context", context), ("files", files), ("ask", ask)],
+    )
+}
+
 // Derived status, first match wins. Mirrors
 // docs/consumers/gen.md#status-is-derived-never-stored.
 pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (String, String) {
@@ -2770,20 +2804,10 @@ async fn judge_llm_criteria(
     trace: &crate::session::Trace,
 ) -> Result<Value, JudgmentError> {
     let package = task(store, rid, gs).map_err(JudgmentError::Invalid)?;
-    let mut files = String::new();
-    for path in package["files"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-    {
-        if let Ok(text) = crate::vfs::read_to_string(gs.deliverable.join(path)) {
-            files.push_str(&format!(
-                "\n=== {path} ===\n{}",
-                crate::llm::truncate(&text, 12_000)
-            ));
-        }
-    }
+    let files = judge_files(
+        gs,
+        package["files"].as_array().into_iter().flatten().filter_map(Value::as_str),
+    );
     let mut results = Vec::new();
     for test in package["criterionTests"]
         .as_array()
@@ -2794,7 +2818,13 @@ async fn judge_llm_criteria(
         if trace.is_cancelled() {
             return Err(JudgmentError::Invalid("Verification cancelled".into()));
         }
-        let input=format!("Criterion: {}\n{}\n\nContext:\n{}\n\nImplementing files:{files}\n\nJudge this criterion only. Reply with PASS or FAIL, then your observed evidence.",test["statement"],test["criteria"].as_str().unwrap_or_default(),package["context"].as_str().unwrap_or_default());
+        let input = judge_input(
+            test["statement"].as_str(),
+            test["criteria"].as_str().unwrap_or_default(),
+            package["context"].as_str().unwrap_or_default(),
+            &files,
+            JUDGE.get("ask-criterion"),
+        );
         let reply = runner
             .ask_traced(
                 include_str!("../../docs/compiler/goals/prompts/verify-criterion-contract.md"),
@@ -2994,23 +3024,16 @@ pub(crate) async fn run_without_build(
         let verdict = if row_kind == "llm" {
             match task(store, &rid, gs) {
                 Ok(task_pkg) => {
-                    let mut evidence_input = String::new();
-                    for f in task_pkg["files"].as_array().cloned().unwrap_or_default() {
-                        if let Some(f) = f.as_str() {
-                            if let Ok(content) = crate::vfs::read_to_string(gs.deliverable.join(f)) {
-                                evidence_input.push_str(&format!(
-                                    "\n=== {} ===\n{}",
-                                    f,
-                                    crate::llm::truncate(&content, 12_000)
-                                ));
-                            }
-                        }
-                    }
-                    let user = format!(
-                        "{}\n\nContext:\n{}\n\nImplementing files:{}\n\nReply with a verdict line `PASS` or `FAIL`, then your reasoning.",
+                    let evidence_input = judge_files(
+                        gs,
+                        task_pkg["files"].as_array().into_iter().flatten().filter_map(Value::as_str),
+                    );
+                    let user = judge_input(
+                        None,
                         task_pkg["criteria"].as_str().unwrap_or_default(),
                         task_pkg["context"].as_str().unwrap_or_default(),
-                        evidence_input
+                        &evidence_input,
+                        JUDGE.get("ask-row"),
                     );
                     match runner.ask_traced(
                         task_pkg["instructions"].as_str().unwrap_or_default(),

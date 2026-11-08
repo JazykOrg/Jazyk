@@ -450,10 +450,15 @@ Setup and configuration are chat tools too, routed through the same edit delegat
 - `update_project_settings({settings, baseHash})`: edits to `jazyk.toml`, rendered
   as minimal edits, never a whole-file rewrite. `settings` maps a dotted key to a
   string value. The editable keys are `workflow.compile`, `workflow.generate`,
-  `workflow.worker`, `gen.deliverable`, and `gen.worker`, with the values
+  `workflow.worker`, and `gen.worker`, with the values
   [project settings](../compiler/project-settings.md) allows. The agent, executor,
   and model settings are not editable here, so a chat cannot repoint the agent
-  command or the model endpoint. Document-set selections use the document-set tools.
+  command or the model endpoint. `auto` for `workflow.compile` or
+  `workflow.generate` lets work run with no release, so it needs a human: the tool
+  refuses it (`needs-human`) and the message names the human paths (the GUI's
+  workflow toggle, `/config workflow.compile auto` typed in chat, or `[workflow]` in
+  `jazyk.toml`). No tool call asks a human mid-call, so a model cannot carry that
+  approval. `manual` stays editable: it only adds a gate. Document-set selections use the document-set tools.
   `baseHash` is the configuration hash `list_document_sets` returns. A stale hash is
   refused, and so is any edit while a build runs or another project operation holds
   the project lock. The reply carries the new hash. An uninitialized directory has

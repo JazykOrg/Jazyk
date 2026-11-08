@@ -263,8 +263,8 @@ session spend its budget on it:
   the answer is unchanged and to act on it.
 - The third is refused with a `repeated-call` error naming the tool and the way forward:
   act on the answer already given, or finish with `done`. Before refusing, a read
-  without side effects answers again and any other call checks whether the session
-  staged a mutation since its last answer: a moved state is no repeat.
+  without side effects answers again and any other call checks whether a mutation was
+  staged or committed since its last answer: a moved state is no repeat.
 - A repeat whose answer differs from the previous one is no repeat: the state moved
   between them (a file rewritten, a refusal repaired), so it carries no `repeat` field
   and the count starts again. A `record_binding` that was refused for a missing test

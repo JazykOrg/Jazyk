@@ -69,9 +69,11 @@ loaded set as a stub.
   truncated, the caller can refine the query to find an unlisted title. A bare empty
   list reads as "ask again", and models loop on it; the inventory and next step
   let the caller proceed.
-- `read_section({ref})`: one section's raw body and its child titles. A bare document
-  name (`orders.md`, or `orders.md#`) reads the document's root section, the way a
-  reader opens a file to see what it is about.
+- `read_section({ref, line?})`: one section's raw body and its child titles. A bare
+  document name (`orders.md`, or `orders.md#`) reads the document's root section, the
+  way a reader opens a file to see what it is about. The body is capped at 400 lines and
+  16 KiB from `line` (default `1`); when more remains the reply carries `truncated:
+  true`, `totalLines`, and `nextLine`. A single longer line returns a UTF-8-safe prefix.
 - `get_entity({id})`: one entity with its definition, stereotype, parent, children,
   attributes, mentions, requirements, relationships, and its derived state machine
   when one exists; `parent`, `stereotype`, `attributes`, and `children` appear only
@@ -86,9 +88,10 @@ loaded set as a stub.
   ([drill-down](./diagrams.md#drill-down)). `children` is computed from the
   containment tree and the [level views](./diagrams.md#level-views) at call time,
   never stored on the view.
-- `diagnostics({lifecycle?, rule?, subject?})`: the diagnostics, `open` by default
-  (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
-  further). Each entry carries id, rule, severity, lifecycle, triage, subjects,
+- `diagnostics({lifecycle?, rule?, subject?, offset?})`: the diagnostics, `open` by
+  default (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
+  further). One reply lists at most 50 entries from `offset` (default `0`); `count` is
+  the number that match, and a cut listing carries `truncated: true` and `nextOffset`. Each entry carries id, rule, severity, lifecycle, triage, subjects,
   message, whether it carries an unanswered prompt, and `owner: harness` on the
   build's own bookkeeping rules (`incomplete-build`, `ratification-pending`,
   `criterion-missing`, `unstable-*`), which no session resolves

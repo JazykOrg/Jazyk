@@ -155,8 +155,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_section",
-            description: "Read one section's raw body and its child section titles. ref is a full section reference (doc.md#/ref).",
-            parameters: obj(json!({"ref": {"type": "string"}}), &["ref"]),
+            description: "Read one section's raw body and its child section titles. ref is a full section reference (doc.md#/ref). The body is capped at 400 lines and 16 KiB from line (default 1); a cut body carries truncated, totalLines, and nextLine.",
+            parameters: obj(json!({"ref": {"type": "string"}, "line": {"type": "integer", "minimum": 1}}), &["ref"]),
         },
         ToolDef {
             name: "get_entity",
@@ -170,9 +170,9 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "diagnostics",
-            description: "List diagnostics: id, rule, severity, lifecycle, triage, subjects, message. Open ones by default; lifecycle takes open, resolved, or all; rule and subject narrow further.",
+            description: "List diagnostics: id, rule, severity, lifecycle, triage, subjects, message. Open ones by default; lifecycle takes open, resolved, or all; rule and subject narrow further. At most 50 entries from offset (default 0); count is the number that match, and a cut listing carries truncated and nextOffset.",
             parameters: obj(
-                json!({"lifecycle": {"type": "string", "enum": ["open", "resolved", "all"]}, "rule": {"type": "string"}, "subject": {"type": "string"}}),
+                json!({"lifecycle": {"type": "string", "enum": ["open", "resolved", "all"]}, "rule": {"type": "string"}, "subject": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}}),
                 &[],
             ),
         },
@@ -753,6 +753,11 @@ pub const GRAPH_WRITE_TOOLS: [&str; 21] = [
 // The files one list_files reply names at most.
 // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
 const LIST_FILES_LIMIT: usize = 500;
+// The caps of one read_section body and one diagnostics page.
+// Mirrors docs/compiler/tools.md#read-tools.
+const READ_SECTION_LINES: usize = 400;
+const READ_SECTION_BYTES: usize = 16 * 1024;
+const DIAGNOSTICS_PAGE: usize = 50;
 // The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
 pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
 // The batch claim of a rejudge-pair session: a goal tool served in that kind's slice
@@ -5716,6 +5721,21 @@ impl ToolSession {
         self.dispatch_gated(name, args)
     }
 
+    // One page of a diagnostics listing: at most DIAGNOSTICS_PAGE entries from
+    // `offset`, `count` the number that match. Mirrors docs/compiler/tools.md#read-tools.
+    fn diagnostics_page(list: Vec<Value>, args: &Value) -> Value {
+        let count = list.len();
+        let offset = args["offset"].as_u64().map(|o| o as usize).unwrap_or(0);
+        let page: Vec<Value> = list.into_iter().skip(offset).take(DIAGNOSTICS_PAGE).collect();
+        let next = offset.saturating_add(page.len());
+        let mut v = json!({"diagnostics": page, "count": count});
+        if next < count {
+            v["truncated"] = json!(true);
+            v["nextOffset"] = json!(next);
+        }
+        v
+    }
+
     // The comparable text of an answer, for the repeated-call guard.
     fn answer_text(result: &Result<Value, ToolError>) -> String {
         match result {
@@ -6031,7 +6051,35 @@ impl ToolSession {
                     .filter(|(_, c)| c.parent.as_deref() == Some(sec.as_str()))
                     .map(|(r, c)| format!("{}#{} ({})", doc, r, c.title))
                     .collect();
-                let reply = json!({"title": s.title, "raw": s.raw, "children": children});
+                // Bounded by lines and bytes from `line`, as file reads are.
+                // Mirrors docs/compiler/tools.md#read-tools.
+                let start = args["line"].as_u64().map(|l| (l as usize).saturating_sub(1)).unwrap_or(0);
+                let total = s.raw.split_inclusive('\n').count();
+                let mut body = String::new();
+                let mut taken = 0usize;
+                for line in s.raw.split_inclusive('\n').skip(start).take(READ_SECTION_LINES) {
+                    if body.len() + line.len() > READ_SECTION_BYTES {
+                        if taken == 0 {
+                            let mut end = READ_SECTION_BYTES.min(line.len());
+                            while !line.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            body.push_str(&line[..end]);
+                            taken = 1;
+                        }
+                        break;
+                    }
+                    body.push_str(line);
+                    taken += 1;
+                }
+                let mut reply = json!({"title": s.title, "raw": body, "children": children});
+                if start > 0 || start + taken < total || body.len() < s.raw.len() {
+                    reply["totalLines"] = json!(total);
+                }
+                if start + taken < total {
+                    reply["truncated"] = json!(true);
+                    reply["nextLine"] = json!(start + taken + 1);
+                }
                 self.loaded
                     .load_stub(&self.snapshot, &format!("{}#{}", doc, sec));
                 Ok(reply)
@@ -6239,14 +6287,14 @@ impl ToolSession {
                             }
                         })
                         .collect();
-                    let mut v = json!({"diagnostics": list, "count": list.len()});
+                    let mut v = Self::diagnostics_page(list, args);
                     if !bookkeeping.is_empty() {
                         v["bookkeeping"] = json!(bookkeeping);
                         v["bookkeepingNote"] = json!("the build's own records, never a session's to resolve; pass rule to list them");
                     }
                     return Ok(v);
                 }
-                Ok(json!({"diagnostics": list, "count": list.len()}))
+                Ok(Self::diagnostics_page(list, args))
             }
             "upsert_entity" => {
                 let name_arg = Self::str_arg(args, "name")?;
@@ -11796,6 +11844,42 @@ mod tests {
         }
         assert!(toolset("curate-view").contains(&"update_view"));
         assert!(!toolset("no-such-task").contains(&"mark_goal_done"));
+    }
+
+    // read_section and diagnostics replies are bounded and page on.
+    // Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn read_section_and_diagnostics_replies_are_capped() {
+        let mut t = session();
+        let mut body = String::from("# Big\n");
+        for i in 0..(READ_SECTION_LINES + 20) {
+            body.push_str(&format!("Line {} of the long section.\n", i));
+        }
+        t.snapshot.docs.insert(
+            "big.md".into(),
+            DocRecord {
+                content_hash: hash_hex(&body),
+                sections: crate::md::parse_sections(&body),
+                coverage: BTreeMap::new(),
+            },
+        );
+        let v = t.dispatch("read_section", &json!({"ref": "big.md"})).unwrap();
+        assert_eq!(v["truncated"], true, "{}", v["nextLine"]);
+        let next = v["nextLine"].as_u64().unwrap();
+        assert!(v["raw"].as_str().unwrap().len() <= READ_SECTION_BYTES);
+        let rest = t.dispatch("read_section", &json!({"ref": "big.md", "line": next})).unwrap();
+        assert!(rest.get("truncated").is_none(), "{}", rest["nextLine"]);
+        assert!(rest["raw"].as_str().unwrap().contains(&format!("Line {} of", READ_SECTION_LINES + 19)));
+        for i in 0..(DIAGNOSTICS_PAGE + 7) {
+            t.snapshot.graph.diagnostics.insert(format!("diag:x-{:03}", i), open_diag("ambiguity", &["ent:customer"]));
+        }
+        let v = t.dispatch("diagnostics", &json!({})).unwrap();
+        assert_eq!(v["diagnostics"].as_array().unwrap().len(), DIAGNOSTICS_PAGE);
+        assert_eq!(v["count"], DIAGNOSTICS_PAGE + 7);
+        assert_eq!(v["nextOffset"], DIAGNOSTICS_PAGE);
+        let v = t.dispatch("diagnostics", &json!({"offset": DIAGNOSTICS_PAGE})).unwrap();
+        assert_eq!(v["diagnostics"].as_array().unwrap().len(), 7);
+        assert!(v.get("truncated").is_none());
     }
 
     // The graph --write serving is what tools.md#toolsets names: the read tools, the

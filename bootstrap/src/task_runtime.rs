@@ -282,7 +282,7 @@ pub(crate) fn may_contain_product(products: &[String], dir: &str) -> bool {
     let dir = format!("{dir}/");
     products.iter().any(|pattern| {
         let prefix = &pattern[..pattern
-            .find(|c: char| matches!(c, '*' | '?' | '[' | '{'))
+            .find(['*', '?', '[', '{'])
             .unwrap_or(pattern.len())];
         prefix.starts_with(&dir) || dir.starts_with(prefix)
     })
@@ -1368,7 +1368,7 @@ pub fn validate_result(
     }
     if result["log"]
         .as_str()
-        .map_or(true, |s| s.len() > 2 * 1024 * 1024)
+        .is_none_or(|s| s.len() > 2 * 1024 * 1024)
     {
         return Err("Invalid worker log.".into());
     }

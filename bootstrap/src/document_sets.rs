@@ -758,7 +758,7 @@ fn resolve_role_edits(
                 let opposite = intent.role.opposite();
                 let opposing = opposite.patterns_mut(set);
                 if opposing.is_empty()
-                    || (!explicit && !known_role_overlap(opposing, &[pattern.clone()], &files))
+                    || (!explicit && !known_role_overlap(opposing, std::slice::from_ref(&pattern), &files))
                 {
                     continue;
                 }

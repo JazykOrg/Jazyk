@@ -907,7 +907,7 @@ mod tests {
             &store,
             &judge,
             &gs,
-            &[selected.clone()],
+            std::slice::from_ref(&selected),
             &Trace::stderr(crate::session::TraceLevel::Quiet),
         )
         .unwrap();
@@ -972,7 +972,7 @@ mod tests {
         let first = &ledger.requirements["req:shop-1"].tests["crit:first"].test;
         let exact = path(&gs, &first.artifact);
         assert_eq!(
-            plan(&project, &store, &gs, &[exact.clone()]).unwrap().len(),
+            plan(&project, &store, &gs, std::slice::from_ref(&exact)).unwrap().len(),
             1
         );
         assert!(plan(&project, &store, &gs, &[format!("{exact}.backup")]).is_err());

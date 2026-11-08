@@ -991,8 +991,8 @@ pub(crate) fn validate_criteria_file(store: &Store, rid: &str, criterion: Option
         };
         if local_id(&header.requirement)? != rid { return Err(format!("requirement must be {rid}")); }
         let cid = header.criterion.as_deref().map(local_id).transpose()?;
-        if criterion.is_some() && cid.as_deref() != criterion {
-            return Err(format!("criterion must be {}", criterion.unwrap()));
+        if let Some(c) = criterion.filter(|c| cid.as_deref() != Some(*c)) {
+            return Err(format!("criterion must be {}", c));
         }
         let statement = if let Some(cid) = cid.as_deref() {
             &store.graph.criteria.get(cid).filter(|c| c.requirement == rid)
@@ -2444,33 +2444,30 @@ pub fn mark(
     // One build per deliverable: the first task that needs one establishes it, later
     // tasks receive it in their package and reuse it.
     // Mirrors docs/consumers/gen.md#the-build.
+    // A built medium without a build was rejected before the strip.
     if ledger.build.is_none() {
-        match manifest["build"]["run"]
+        if let Some(run) = manifest["build"]["run"]
             .as_str()
             .map(str::trim)
             .filter(|r| !r.is_empty())
         {
-            Some(run) => {
-                let mut produces = build_produces.clone();
-                // A built medium names its artifact; a build that forgets to list it
-                // would pass its own check while producing nothing.
-                if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
-                    if !produces
-                        .iter()
-                        .any(|p| p.trim_start_matches("./") == m.artifact)
-                    {
-                        produces.push(m.artifact.clone());
-                    }
+            let mut produces = build_produces.clone();
+            // A built medium names its artifact; a build that forgets to list it
+            // would pass its own check while producing nothing.
+            if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
+                if !produces
+                    .iter()
+                    .any(|p| p.trim_start_matches("./") == m.artifact)
+                {
+                    produces.push(m.artifact.clone());
                 }
-                ledger.build = Some(Build {
-                    run: run.to_string(),
-                    cwd: build_cwd.clone(),
-                    produces,
-                    last_run: None,
-                });
             }
-            // A built medium without a build was rejected before the strip.
-            None => {}
+            ledger.build = Some(Build {
+                run: run.to_string(),
+                cwd: build_cwd.clone(),
+                produces,
+                last_run: None,
+            });
         }
     }
     for path in &support {
@@ -5980,7 +5977,7 @@ async fn gen_one_inner(
     // group is off limits. One corrective retry, then the task fails.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     let ledger = ledger_snapshot;
-    let owner_of = |path: &str| -> Option<String> { file_owner(store, &ledger, id, path) };
+    let owner_of = |path: &str| -> Option<String> { file_owner(store, ledger, id, path) };
     let groups = task["requirementGroups"]
         .as_array()
         .cloned()

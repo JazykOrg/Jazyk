@@ -39,7 +39,7 @@ impl Scope {
         if resume.is_some() && crate::vfs::is_scoped() {
             let claims = STATE.with(|s| {
                 let state = s.borrow();
-                state.error.is_none().then(|| state.claims.clone()).unwrap_or_default()
+                if state.error.is_none() { state.claims.clone() } else { Default::default() }
             });
             for claim in claims {
                 if let Err(error) = crate::control::release_owned_lease(&claim) {

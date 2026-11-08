@@ -6,6 +6,10 @@
 // modules need a process, sockets, or threads and are gated off the wasm build.
 // The wasm module exists only there.
 
+// Wide argument lists and tuple-shaped locals carry the documented records through one
+// call; naming each would add types used once.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 // Core: the graph, the reconciler, and everything they need. Compiles for both
 // targets against crate::vfs instead of std::fs.
 pub mod align;

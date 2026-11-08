@@ -395,7 +395,7 @@ impl Llm {
         let mut emit = |event| {
             if let crate::harness::AgentEvent::Message(text) = event { output.push_str(&text); }
         };
-        let mut memory = crate::harness::MemoryRecovery::default();
+        let mut memory = crate::harness::MemoryRecovery;
         #[cfg(not(target_arch = "wasm32"))]
         let mut durable = if crate::vfs::is_scoped() {
             let key = format!("utility:{}", crate::model::hash_hex(&json!([label, step, system, user]).to_string()));

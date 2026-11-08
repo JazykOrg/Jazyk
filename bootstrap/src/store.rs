@@ -1394,7 +1394,7 @@ pub fn fill_section_lines(rec: &mut DocRecord) {
         }
     }
     for list in children.values_mut() {
-        list.sort_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)));
+        list.sort_by_key(|a| (a.1, a.0));
     }
     let mut order: Vec<String> = Vec::new();
     let mut stack: Vec<String> = children
@@ -2167,7 +2167,7 @@ impl Store {
                 let derived = by_reference.get(id);
                 let mut own = e.clone();
                 if let Some(d) = derived {
-                    own.mentions.retain(|m| !d.contains(&m));
+                    own.mentions.retain(|m| !d.contains(m));
                 }
                 (id.clone(), node_value(id, &own, &mut markers))
             })
@@ -5628,10 +5628,10 @@ impl Store {
                     let res = |v: Vec<String>| -> Vec<String> {
                         v.iter().map(|x| resolve(&remap, self, x)).collect()
                     };
-                    let members = members.map(&res);
+                    let members = members.map(res);
                     let add_members = res(add_members);
                     let remove_members = res(remove_members);
-                    let collapse = collapse.map(&res);
+                    let collapse = collapse.map(res);
                     let exclude: Vec<Exclusion> = exclude
                         .into_iter()
                         .map(|x| Exclusion {

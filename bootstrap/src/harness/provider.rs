@@ -120,7 +120,7 @@ pub(crate) fn response_message(
     // Providers can reuse an opaque call id in later replies. GDK tracks
     // answered calls across the conversation, so scope ids to the durable
     // inference identity before they enter that conversation.
-    let scope = crate::model::hash_hex(&attempt_id);
+    let scope = crate::model::hash_hex(attempt_id);
     let mut ids = std::collections::HashSet::new();
     let mut original_ids = serde_json::Map::new();
     for content in &mut message.content {

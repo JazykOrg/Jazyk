@@ -634,8 +634,10 @@ async fn drive(
             });
             let model = ProviderModel::new(provider, config.clone());
             let parts = super::compaction::context(state.conversation.messages(), args.conversation);
-            let mut templates = Templates::default();
-            templates.compaction = COMPACTION_REQUEST.to_string();
+            let templates = Templates {
+                compaction: COMPACTION_REQUEST.to_string(),
+                ..Default::default()
+            };
             let future = goose_context_management::summarize(&model, None, &templates, &parts.summary);
             match drive_future(
                 future,

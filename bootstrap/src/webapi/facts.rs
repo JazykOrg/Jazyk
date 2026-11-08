@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn a_limit_bump_lands_on_the_entity() {
         let (proj, out) = fixture("bump");
-        let rid = shop_req(&out);
+        let _rid = shop_req(&out);
         let v = edit_fact_core(
             &proj,
             &out,

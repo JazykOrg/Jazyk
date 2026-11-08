@@ -1647,7 +1647,7 @@ impl Board {
                 .goals
                 .iter()
                 .filter_map(|id| self.goal(id))
-                .filter_map(|g| generate_rank(g))
+                .filter_map(&generate_rank)
                 .min();
             (
                 matches!(b.class, Class::Gc),

@@ -527,7 +527,7 @@ impl McpServer {
                 if !boards.contains_key(&id) {
                     let Ok(p) = w.resolve(Some(&id)) else { continue };
                     let board = crate::board::Board::compute(&p, &p.out);
-                    stale |= board.goals.iter().any(|g| Self::dirtied(g));
+                    stale |= board.goals.iter().any(Self::dirtied);
                     boards.insert(id.clone(), (board, Store::load(&p.out), crate::gen::Ledger::load(&p.out)));
                 }
                 let (board, store, ledger) = &boards[&id];

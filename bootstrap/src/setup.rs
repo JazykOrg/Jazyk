@@ -768,9 +768,9 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
             let word = if i.enabled() { s.word() } else { "unsupported" };
             println!("  {:w$}  {:11} {}", row.name, word, if i.enabled() { row.note } else { String::new() }, w = width);
         }
-        println!("  {:w$}  {:11} {}", "agents-md", crate::agents_md::state(&root), "AGENTS.md jazyk section", w = width);
+        println!("  {:w$}  {:11} AGENTS.md jazyk section", "agents-md", crate::agents_md::state(&root), w = width);
         let trust = crate::agent_context::home().map(|h| crate::agent_context::trust_state(&h, &root)).unwrap_or("none");
-        println!("  {:w$}  {:11} {}", "trust", trust, "project MCP servers and skills", w = width);
+        println!("  {:w$}  {:11} project MCP servers and skills", "trust", trust, w = width);
         if !tty && !opts.list {
             println!("\n`{} --remove NAMES` removes; on a terminal, `{}` adds and removes.", change, change);
         }

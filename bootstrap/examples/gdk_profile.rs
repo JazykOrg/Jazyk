@@ -243,33 +243,36 @@ mod native {
                 }
             };
             let (outcomes, ()) = futures::join!(futures::future::join_all(tasks), cancel);
-            let metrics = metrics.borrow();
-            let latencies: Vec<_> = outcomes
-                .iter()
-                .filter(|outcome| outcome.stop == Stop::Cancelled)
-                .map(|outcome| {
-                    outcome
-                        .finished_us
-                        .saturating_sub(cancel_requested.get().unwrap())
-                })
-                .collect();
-            let errors: Vec<_> = outcomes
-                .iter()
-                .filter_map(|outcome| match &outcome.stop {
-                    Stop::Error(error) => Some(error),
-                    _ => None,
-                })
-                .collect();
-            assert!(errors.is_empty(), "{errors:?}");
-            output(
-                json!({"event":"result","active":active,"idle":idle,"modelDelayMs":delay,"cancelEvery":cancel_every,
-                "elapsedUs":start.elapsed().as_micros() as u64,"completed":outcomes.iter().filter(|outcome|outcome.stop==Stop::EndTurn).count(),
-                "cancelled":latencies.len(),"models":metrics.model_requests,"tools":metrics.tools,
-                "firstModelUs":{"min":metrics.first_model_us.iter().min(),"p50":percentile(&metrics.first_model_us,50),"p95":percentile(&metrics.first_model_us,95),"max":metrics.first_model_us.iter().max()},
-                "cancelLatencyUs":{"p50":percentile(&latencies,50),"max":latencies.iter().max()},
-                "checkpoints":{"count":metrics.checkpoints_us.len(),"serializationUsP50":percentile(&metrics.checkpoints_us,50),"serializationUsP95":percentile(&metrics.checkpoints_us,95),
-                    "maxBytes":metrics.checkpoint_bytes.iter().max(),"totalBytes":metrics.checkpoint_bytes.iter().sum::<usize>()}}),
-            );
+            let outcomes = {
+                let metrics = metrics.borrow();
+                let latencies: Vec<_> = outcomes
+                    .iter()
+                    .filter(|outcome| outcome.stop == Stop::Cancelled)
+                    .map(|outcome| {
+                        outcome
+                            .finished_us
+                            .saturating_sub(cancel_requested.get().unwrap())
+                    })
+                    .collect();
+                let errors: Vec<_> = outcomes
+                    .iter()
+                    .filter_map(|outcome| match &outcome.stop {
+                        Stop::Error(error) => Some(error),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(errors.is_empty(), "{errors:?}");
+                output(
+                    json!({"event":"result","active":active,"idle":idle,"modelDelayMs":delay,"cancelEvery":cancel_every,
+                    "elapsedUs":start.elapsed().as_micros() as u64,"completed":outcomes.iter().filter(|outcome|outcome.stop==Stop::EndTurn).count(),
+                    "cancelled":latencies.len(),"models":metrics.model_requests,"tools":metrics.tools,
+                    "firstModelUs":{"min":metrics.first_model_us.iter().min(),"p50":percentile(&metrics.first_model_us,50),"p95":percentile(&metrics.first_model_us,95),"max":metrics.first_model_us.iter().max()},
+                    "cancelLatencyUs":{"p50":percentile(&latencies,50),"max":latencies.iter().max()},
+                    "checkpoints":{"count":metrics.checkpoints_us.len(),"serializationUsP50":percentile(&metrics.checkpoints_us,50),"serializationUsP95":percentile(&metrics.checkpoints_us,95),
+                        "maxBytes":metrics.checkpoint_bytes.iter().max(),"totalBytes":metrics.checkpoint_bytes.iter().sum::<usize>()}}),
+                );
+                outcomes
+            };
             // Keep owned session state resident long enough for external sampling.
             async_io::Timer::after(Duration::from_millis(200)).await;
             std::hint::black_box((idle_sessions, outcomes));

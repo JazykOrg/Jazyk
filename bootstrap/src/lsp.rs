@@ -32,6 +32,8 @@ pub struct Lsp {
 
 // How `jazyk.compile` runs: over stdio in a thread under the build lease, with the
 // LLM options `jazyk lsp` resolved; inside the GUI server as a GUI job.
+// One per server, so the unboxed options cost nothing worth boxing.
+#[allow(clippy::large_enum_variant)]
 pub enum Compiler {
     Stdio {
         opts: crate::cli::Options,

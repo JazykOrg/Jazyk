@@ -310,6 +310,138 @@ impl SessionRunner for InProcessRunner {
     }
 }
 
+// The answer sessions a tab owes. A tab runs nothing in the background, so a reply
+// recorded as `handling` waits, and a build runs one session per such answer before
+// its first batch (docs/frontends/wasm.md#the-inbox): the `chat` serving, the
+// handling prompt a native answer session gets, and the page's model. The outcome
+// lands on the answer, `handled` or `failed`, the way the native handler records it.
+// Answers one line per session for the build's reply.
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+pub async fn run_answers(project: &Project, llm: &Llm, out: &Path, trace: &Trace) -> Vec<Value> {
+    let mut results = Vec::new();
+    for id in crate::answer::handling_ids(out) {
+        let label = format!("answer {}", id);
+        trace.event(TraceEvent::SessionStart {
+            label: label.clone(),
+            goals: Vec::new(),
+            task: "answer".into(),
+            target: id.clone(),
+            doc: None,
+            dirty: 0,
+            sections: Vec::new(),
+            stale: 0,
+            proposals: 0,
+        });
+        let outcome = run_answer(project, llm, out, &id, &label, trace).await;
+        if outcome.as_ref().err().is_some_and(|error| crate::session_recovery::is_interruption(error)) {
+            break;
+        }
+        match &outcome {
+            Ok(rounds) => trace.event(TraceEvent::SessionDone {
+                label: label.clone(),
+                goals: Vec::new(),
+                staged: 0,
+                rounds: *rounds,
+                mode: "done".into(),
+                summary: String::new(),
+            }),
+            Err(e) => trace.event(TraceEvent::SessionFailed {
+                label: label.clone(),
+                goals: Vec::new(),
+                attempt: 1,
+                error: e.clone(),
+            }),
+        }
+        let recorded = outcome.as_ref().map(|_| ()).map_err(|e| e.clone());
+        crate::answer::record_outcome(out, &id, &recorded);
+        results.push(match outcome {
+            Ok(_) => json!({"id": id, "status": "handled"}),
+            Err(e) => json!({"id": id, "status": "failed", "error": e}),
+        });
+    }
+    results
+}
+
+// One answer session: answers the rounds it took, or why it failed.
+#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
+async fn run_answer(
+    project: &Project,
+    llm: &Llm,
+    out: &Path,
+    id: &str,
+    label: &str,
+    trace: &Trace,
+) -> Result<u32, String> {
+    let prompt = crate::answer::handling_prompt(out, id)?;
+    let server = McpServer::with_bridge(
+        project.clone(),
+        out.to_path_buf(),
+        vec!["chat".to_string()],
+        false,
+        crate::mcp::BridgeFlags {
+            ephemeral: true,
+            ..Default::default()
+        },
+    );
+    server
+        .handle(
+            "initialize",
+            &json!({"protocolVersion": "2024-11-05", "clientInfo": {"name": "jazyk-wasm-answer"}}),
+        )
+        .map_err(|e| format!("serving: {}", e.1))?;
+    let key = format!("answer:{}:{id}", out.display());
+    let mut recovery = crate::session_recovery::McpRecovery::new(&server, key.clone())?;
+    let mut model = harness::provider::DefaultModelHost::new(llm);
+    let mut mcp_tools = crate::session_recovery::McpTools::plain(&server);
+    let tools = InProcessRunner::tools_of(&server).map_err(|e| format!("serving: {}", e))?;
+    let mut history: Vec<Value> = vec![json!({"role": "user", "content": prompt})];
+    let batch = BatchRun {
+        id: label.to_string(),
+        goals: Vec::new(),
+        executor: None,
+    };
+    let mut lt = LoopTrace::new(trace, &batch);
+    let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
+        match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
+            Ok(v) => {
+                let text = v["content"][0]["text"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| v.to_string());
+                if v["isError"].as_bool().unwrap_or(false) {
+                    Err(text)
+                } else {
+                    Ok(text)
+                }
+            }
+            Err((_, m)) => Err(m),
+        }
+    };
+    let mut emit = |ev: AgentEvent| lt.on_event(ev);
+    let never_cancelled = || trace.is_cancelled();
+    let stop = harness::run_with_hosts(LoopArgs {
+        llm,
+        history: &mut history,
+        tools: &tools,
+        dispatch: &mut dispatch,
+        emit: &mut emit,
+        cancelled: &never_cancelled,
+        max_rounds: crate::limits::agent_max_rounds(),
+        label: label.to_string(),
+        conversation: false,
+        inputs: None,
+        input_close: None,
+    }, "", &mut model, &mut mcp_tools, &mut recovery).await;
+    lt.finish();
+    let rounds = crate::session_recovery::saved_usage(&key).map(|u| u.2).unwrap_or(lt.rounds);
+    match stop {
+        Stop::EndTurn => Ok(rounds),
+        Stop::Suspended => Err("suspended".into()),
+        Stop::Error(error) if crate::session_recovery::is_interruption(&error) => Err(error),
+        other => Err(crate::runner::unlanded_reason(&other, rounds)),
+    }
+}
+
 #[cfg(test)]
 mod ledger_failure_tests {
     use super::*;
@@ -479,137 +611,5 @@ mod ledger_failure_tests {
         }
         assert_eq!(ledger_failure(&Stop::Error("Local model request failed.".into()), 3),
             Some("the model call failed: Local model request failed.".into()));
-    }
-}
-
-// The answer sessions a tab owes. A tab runs nothing in the background, so a reply
-// recorded as `handling` waits, and a build runs one session per such answer before
-// its first batch (docs/frontends/wasm.md#the-inbox): the `chat` serving, the
-// handling prompt a native answer session gets, and the page's model. The outcome
-// lands on the answer, `handled` or `failed`, the way the native handler records it.
-// Answers one line per session for the build's reply.
-#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
-pub async fn run_answers(project: &Project, llm: &Llm, out: &Path, trace: &Trace) -> Vec<Value> {
-    let mut results = Vec::new();
-    for id in crate::answer::handling_ids(out) {
-        let label = format!("answer {}", id);
-        trace.event(TraceEvent::SessionStart {
-            label: label.clone(),
-            goals: Vec::new(),
-            task: "answer".into(),
-            target: id.clone(),
-            doc: None,
-            dirty: 0,
-            sections: Vec::new(),
-            stale: 0,
-            proposals: 0,
-        });
-        let outcome = run_answer(project, llm, out, &id, &label, trace).await;
-        if outcome.as_ref().err().is_some_and(|error| crate::session_recovery::is_interruption(error)) {
-            break;
-        }
-        match &outcome {
-            Ok(rounds) => trace.event(TraceEvent::SessionDone {
-                label: label.clone(),
-                goals: Vec::new(),
-                staged: 0,
-                rounds: *rounds,
-                mode: "done".into(),
-                summary: String::new(),
-            }),
-            Err(e) => trace.event(TraceEvent::SessionFailed {
-                label: label.clone(),
-                goals: Vec::new(),
-                attempt: 1,
-                error: e.clone(),
-            }),
-        }
-        let recorded = outcome.as_ref().map(|_| ()).map_err(|e| e.clone());
-        crate::answer::record_outcome(out, &id, &recorded);
-        results.push(match outcome {
-            Ok(_) => json!({"id": id, "status": "handled"}),
-            Err(e) => json!({"id": id, "status": "failed", "error": e}),
-        });
-    }
-    results
-}
-
-// One answer session: answers the rounds it took, or why it failed.
-#[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
-async fn run_answer(
-    project: &Project,
-    llm: &Llm,
-    out: &Path,
-    id: &str,
-    label: &str,
-    trace: &Trace,
-) -> Result<u32, String> {
-    let prompt = crate::answer::handling_prompt(out, id)?;
-    let server = McpServer::with_bridge(
-        project.clone(),
-        out.to_path_buf(),
-        vec!["chat".to_string()],
-        false,
-        crate::mcp::BridgeFlags {
-            ephemeral: true,
-            ..Default::default()
-        },
-    );
-    server
-        .handle(
-            "initialize",
-            &json!({"protocolVersion": "2024-11-05", "clientInfo": {"name": "jazyk-wasm-answer"}}),
-        )
-        .map_err(|e| format!("serving: {}", e.1))?;
-    let key = format!("answer:{}:{id}", out.display());
-    let mut recovery = crate::session_recovery::McpRecovery::new(&server, key.clone())?;
-    let mut model = harness::provider::DefaultModelHost::new(llm);
-    let mut mcp_tools = crate::session_recovery::McpTools::plain(&server);
-    let tools = InProcessRunner::tools_of(&server).map_err(|e| format!("serving: {}", e))?;
-    let mut history: Vec<Value> = vec![json!({"role": "user", "content": prompt})];
-    let batch = BatchRun {
-        id: label.to_string(),
-        goals: Vec::new(),
-        executor: None,
-    };
-    let mut lt = LoopTrace::new(trace, &batch);
-    let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
-        match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
-            Ok(v) => {
-                let text = v["content"][0]["text"]
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| v.to_string());
-                if v["isError"].as_bool().unwrap_or(false) {
-                    Err(text)
-                } else {
-                    Ok(text)
-                }
-            }
-            Err((_, m)) => Err(m),
-        }
-    };
-    let mut emit = |ev: AgentEvent| lt.on_event(ev);
-    let never_cancelled = || trace.is_cancelled();
-    let stop = harness::run_with_hosts(LoopArgs {
-        llm,
-        history: &mut history,
-        tools: &tools,
-        dispatch: &mut dispatch,
-        emit: &mut emit,
-        cancelled: &never_cancelled,
-        max_rounds: crate::limits::agent_max_rounds(),
-        label: label.to_string(),
-        conversation: false,
-        inputs: None,
-        input_close: None,
-    }, "", &mut model, &mut mcp_tools, &mut recovery).await;
-    lt.finish();
-    let rounds = crate::session_recovery::saved_usage(&key).map(|u| u.2).unwrap_or(lt.rounds);
-    match stop {
-        Stop::EndTurn => Ok(rounds),
-        Stop::Suspended => Err("suspended".into()),
-        Stop::Error(error) if crate::session_recovery::is_interruption(&error) => Err(error),
-        other => Err(crate::runner::unlanded_reason(&other, rounds)),
     }
 }

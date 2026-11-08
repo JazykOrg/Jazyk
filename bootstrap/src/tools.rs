@@ -1602,6 +1602,29 @@ pub struct ToolSession {
     // The project's lint rules, numbered as the project block renders them: a review
     // names each one in its evidence (docs/compiler/goals/review-entity.md#gate).
     pub lint: crate::project::Linting,
+    // The session's opening prompt carries the task execution contract and, for a
+    // batch holding a generate goal, the generation contract: begin_binding and
+    // begin_generation answer as they do to an owned worker
+    // (docs/compiler/goals/generate.md#what-the-model-sees).
+    #[serde(default)]
+    pub opening_contracts: bool,
+}
+
+// A begin_binding or begin_generation reply to a session whose opening prompt
+// already carries the task execution contract: the binding contract alone, and the
+// generation contract only when the opening did not carry it. One rule for an owned
+// MCP worker and an in-process session. Mirrors docs/compiler/goals/bind.md#what-the-model-sees.
+pub fn opened_package(name: &str, value: &mut Value, generation_in_prompt: bool) {
+    match name {
+        "begin_binding" => value["instructions"] = json!(crate::bind::contract()),
+        "begin_generation" if generation_in_prompt => {
+            if let Some(o) = value.as_object_mut() {
+                o.remove("instructions");
+            }
+        }
+        "begin_generation" => value["instructions"] = json!(crate::gen::contract()),
+        _ => {}
+    }
 }
 
 impl ToolSession {
@@ -1650,6 +1673,7 @@ impl ToolSession {
             last_condensed: Default::default(),
             implicit_done: false,
             lint: Default::default(),
+            opening_contracts: false,
         }
     }
 
@@ -8001,8 +8025,13 @@ impl ToolSession {
                 let entity = Self::str_arg(args, "entity")?;
                 let gs = self.gen_settings();
                 let id = self.snapshot.resolve_id(&entity).to_string();
-                crate::gen::task_package(&self.snapshot, &id, &gs)
-                    .map_err(|e| ToolError::new("unknown-id", e))
+                let mut v = crate::gen::task_package(&self.snapshot, &id, &gs)
+                    .map_err(|e| ToolError::new("unknown-id", e))?;
+                if self.opening_contracts {
+                    let in_prompt = self.scope.goals.iter().any(|g| g.kind == "generate");
+                    opened_package("begin_generation", &mut v, in_prompt);
+                }
+                Ok(v)
             }
             "record_medium" => {
                 // The external worker's decision, recorded once. Mirrors
@@ -8120,8 +8149,12 @@ impl ToolSession {
             "begin_binding" => {
                 let rid = Self::str_arg(args, "requirement")?;
                 let gs = self.gen_settings();
-                crate::bind::task(&self.snapshot, &rid, &gs)
-                    .map_err(|e| ToolError::new("unknown-id", e))
+                let mut v = crate::bind::task(&self.snapshot, &rid, &gs)
+                    .map_err(|e| ToolError::new("unknown-id", e))?;
+                if self.opening_contracts {
+                    opened_package("begin_binding", &mut v, false);
+                }
+                Ok(v)
             }
             "record_binding" => {
                 let rid = Self::str_arg(args, "requirement")?;

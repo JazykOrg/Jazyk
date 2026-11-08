@@ -293,14 +293,8 @@ impl McpServer {
         let Ok(mut value) = serde_json::from_str::<Value>(text) else {
             return reply;
         };
-        if name == "begin_binding" {
-            value["instructions"] = json!(crate::bind::contract());
-        } else if name == "begin_generation" {
-            if self.has_generation_contract() {
-                value.as_object_mut().unwrap().remove("instructions");
-            } else {
-                value["instructions"] = json!(crate::gen::contract());
-            }
+        if matches!(name, "begin_binding" | "begin_generation") {
+            crate::tools::opened_package(name, &mut value, self.has_generation_contract());
         } else {
             value = crate::task_runtime::worker_response(name, value);
         }

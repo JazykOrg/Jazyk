@@ -1687,6 +1687,9 @@ pub fn case_session_batch(
     s.lint = lint.clone();
     s.loaded = loaded;
     s.skills = skills;
+    // The prompt opened with the deliverable contracts a build session opens with
+    // (docs/benchmark/benchmark.md#runs).
+    s.opening_contracts = true;
     s.caller = crate::feedback::Caller {
         source: "benchmark".into(),
         target: item.target.clone(),
@@ -2715,6 +2718,59 @@ mod tests {
         assert!(inputs.contains_key("docs/greeter.md"));
         assert!(!inputs.contains_key(".jazyk/ds_main/private.yaml"));
         crate::vfs::remove_dir_all(root).ok();
+    }
+
+    // A generate and a bind case read the contract texts an owned worker reads: the
+    // generation contract once, after the prompt, and begin_generation without it;
+    // the execution contract once in the prompt and begin_binding with the binding
+    // contract alone. Mirrors docs/benchmark/benchmark.md#runs.
+    #[test]
+    fn deliverable_cases_read_the_contracts_live_runs_read() {
+        let cases = parse_cases();
+        let case = cases.iter().find(|c| c.name == "gen-basic").unwrap();
+        let root = own_dir("opening-contract-gen");
+        prepare_runtime_fixture(case, &root).unwrap();
+        let store = sandbox(case, &root);
+        let gs = fixture_gen_settings(&root).unwrap();
+        let item = crate::model::WorkItem {
+            task: case.task_type.clone(),
+            target: case.target.clone(),
+            dirty_sections: Vec::new(),
+            stale_anchors: Vec::new(),
+            proposals: Vec::new(),
+        };
+        let cs = case_session(store, &item, &case.lint, &gs, None);
+        let contract = crate::gen::contract();
+        assert_eq!(cs.prompt.matches(contract.as_str()).count(), 1);
+        assert_eq!(cs.prompt.matches(crate::task_runtime::PROMPT).count(), 1);
+        let mut worker = cs.session;
+        let reply = worker
+            .dispatch(
+                "begin_generation",
+                &serde_json::json!({"entity": "ent:greeter"}),
+            )
+            .unwrap();
+        assert!(reply.get("instructions").is_none(), "{}", reply);
+        assert!(reply["factHash"].is_string(), "{}", reply);
+        crate::vfs::remove_dir_all(&root).ok();
+
+        let case = cases.iter().find(|c| c.name == "bind-descriptor").unwrap();
+        let tmp = own_dir("opening-contract-bind");
+        let (store, goal) = seed_derived(case, &tmp).unwrap();
+        let gs = fixture_gen_settings(&tmp).unwrap();
+        let item = crate::model::WorkItem::from_goal(&goal);
+        let cs = case_session(store, &item, &case.lint, &gs, Some(&goal));
+        assert!(!cs.prompt.contains(contract.as_str()));
+        assert_eq!(cs.prompt.matches(crate::task_runtime::PROMPT).count(), 1);
+        let mut worker = cs.session;
+        let reply = worker
+            .dispatch(
+                "begin_binding",
+                &serde_json::json!({"requirement": goal.target}),
+            )
+            .unwrap();
+        assert_eq!(reply["instructions"], crate::bind::contract(), "{}", reply);
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // A case session runs in process with its batch open and no begin_goals among its

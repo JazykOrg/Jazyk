@@ -1299,7 +1299,7 @@ mod tests {
         );
     }
 
-    const CHECKOUT_PATHS: [(&str, bool); 44] = [
+    const CHECKOUT_PATHS: [(&str, bool); 45] = [
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
         (".jazyk/ds_main/status.yaml", true),

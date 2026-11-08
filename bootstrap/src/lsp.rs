@@ -2363,6 +2363,53 @@ mod tests {
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 
+    // A cursor position is in UTF-16 code units, the LSP's default encoding: an
+    // astral character before a name counts two, so the name under the cursor is the
+    // one the editor shows there, not the one a character count would find.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn cursor_positions_count_astral_characters_as_two_units() {
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-lsp-astral-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
+        let out = tmp.join(".jazyk");
+        crate::vfs::create_dir_all(&out).unwrap();
+        let mut lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 1, "method": "initialize", "params": {}}),
+            &mut wire,
+        );
+        let uri = path_to_uri(&tmp.join("shop.md"));
+        lsp.handle(
+            json!({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri,
+                "text": "\u{1F600}\u{1F600} The Order Service takes.\n\u{1D538} second line Order Service\n"}}}),
+            &mut wire,
+        );
+        let mut id = 10;
+        let mut hits = |line: u64, character: u64| -> bool {
+            id += 1;
+            let mut wire: Vec<u8> = Vec::new();
+            lsp.handle(
+                json!({"id": id, "method": "textDocument/typeDefinition", "params": {
+                    "textDocument": {"uri": uri}, "position": {"line": line, "character": character}}}),
+                &mut wire,
+            );
+            let reply = String::from_utf8_lossy(&wire).to_string();
+            reply.contains("order-service.md")
+        };
+        // Line 0: two emoji (four units) and "The " put the name at units 9..22.
+        assert!(!hits(0, 8), "a character count put the name at 7");
+        assert!(hits(0, 9));
+        assert!(hits(0, 21), "the name's last unit");
+        assert!(!hits(0, 22));
+        // Line 1: one astral letter (two units) puts the name at units 15..28.
+        assert!(!hits(1, 14));
+        assert!(hits(1, 15));
+        assert!(hits(1, 27));
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
     // Over the wire: the capability is advertised, hover carries the short card, and
     // type definition lands on the entity's card at line 0 while definition stays the
     // defining mention. Mirrors docs/frontends/lsp.md#capabilities.

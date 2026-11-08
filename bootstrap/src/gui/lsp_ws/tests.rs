@@ -1,6 +1,6 @@
 // The editor's language server over WebSocket: the Content-Length unframing toward
 // the socket, the inbound queue, the upgrade's origin and token checks, and a whole
-// session over a real loopback socket. Mirrors docs/frontends/gui.md#editor and
+// session over a real loopback socket. Mirrors docs/frontends/lsp.md and
 // docs/frontends/gui.md#serving.
 use super::*;
 use std::io::{Read, Write};

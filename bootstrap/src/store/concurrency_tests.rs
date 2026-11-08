@@ -85,7 +85,9 @@ fn racing_writers_from_one_generation_land_exactly_one_commit() {
     for (_, applied, skipped) in &results {
         if *applied == 0 {
             assert!(
-                skipped.first().is_some_and(|s| s.starts_with("store-moved:")),
+                skipped
+                    .first()
+                    .is_some_and(|s| s.starts_with("store-moved:")),
                 "{skipped:?}"
             );
         }
@@ -133,7 +135,9 @@ fn writers_that_reload_after_store_moved_all_land_in_turn() {
                         return refused;
                     }
                     assert!(
-                        r.skipped.first().is_some_and(|s| s.starts_with("store-moved:")),
+                        r.skipped
+                            .first()
+                            .is_some_and(|s| s.starts_with("store-moved:")),
                         "{:?}",
                         r.skipped
                     );

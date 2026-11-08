@@ -14,7 +14,9 @@ fn crlf(text: &str) -> String {
     text.replace('\n', "\r\n")
 }
 
-fn shape(sections: &BTreeMap<String, Section>) -> Vec<(String, String, String, String, String, [usize; 2])> {
+fn shape(
+    sections: &BTreeMap<String, Section>,
+) -> Vec<(String, String, String, String, String, [usize; 2])> {
     sections
         .iter()
         .map(|(k, s)| {
@@ -151,7 +153,9 @@ fn a_dual_write_across_a_crlf_break_keeps_crlf_and_reparses() {
         reparsed.keys().collect::<Vec<_>>(),
         sections.keys().collect::<Vec<_>>()
     );
-    assert!(reparsed["/shop/cart"].raw.contains("Items wait until checkout."));
+    assert!(reparsed["/shop/cart"]
+        .raw
+        .contains("Items wait until checkout."));
     assert_eq!(reparsed["/shop/orders"].hash, sections["/shop/orders"].hash);
     // The preamble takes an append like any section.
     let pre = sections["/"].raw.clone();
@@ -187,7 +191,10 @@ fn a_dual_write_into_a_mixed_line_ending_document_finds_its_section() {
     .unwrap();
     assert!(
         edit.full.contains("and the total.")
-            && edit.full.trim_end().ends_with("An order ships within a day."),
+            && edit
+                .full
+                .trim_end()
+                .ends_with("An order ships within a day."),
         "{:?}",
         edit.full
     );
@@ -204,5 +211,7 @@ fn a_dual_write_into_a_mixed_line_ending_document_finds_its_section() {
         "records the street address",
     )
     .unwrap();
-    assert!(replaced.full.contains("records the street address\nand the total."));
+    assert!(replaced
+        .full
+        .contains("records the street address\nand the total."));
 }

@@ -2,7 +2,7 @@
 // prompt, queue inputs, cancel, delete, and come back after a restart; slash
 // commands run against zero, one, and several document sets. No agent process is
 // started: prompts that reach the agent name a profile that does not exist.
-// Mirrors docs/frontends/gui.md#chat and docs/frontends/acp.md#slash-commands.
+// Mirrors docs/frontends/gui.md#chat-input-admission and docs/frontends/acp.md#slash-commands.
 use super::*;
 
 const NO_AGENT: &str = "jazyk-test-no-such-agent";

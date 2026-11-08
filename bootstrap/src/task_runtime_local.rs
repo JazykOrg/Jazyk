@@ -621,6 +621,96 @@ pub fn supervise(dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    // A fake container engine: a shell script at an absolute path, selected for this
+    // test thread only (the engine choice is thread-local). No real engine runs.
+    #[cfg(unix)]
+    fn fake_engine(tag: &str, script: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-fake-engine-{}-{}-{}",
+            tag,
+            crate::sys::process_id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("engine");
+        fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        ENGINE.with(|e| *e.borrow_mut() = path.to_string_lossy().into_owned());
+        dir
+    }
+
+    #[cfg(unix)]
+    fn reset_engine(dir: &std::path::Path) {
+        ENGINE.with(|e| *e.borrow_mut() = "docker".into());
+        SUPERVISOR.with(|s| *s.borrow_mut() = None);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // An engine answering far past 64 KB on both streams finishes with its own status:
+    // the answer keeps its first 64 KB, and a failure reports its stderr, capped.
+    #[cfg(unix)]
+    #[test]
+    fn engine_output_past_the_cap_is_drained_and_kept_to_its_head() {
+        let dir = fake_engine(
+            "drain",
+            "if [ \"$1\" = fail ]; then head -c 300000 /dev/zero | tr '\\0' e 1>&2; exit 3; fi\nhead -c 200000 /dev/zero | tr '\\0' a; head -c 200000 /dev/zero 1>&2",
+        );
+        let out = docker(&["image", "ls"]).unwrap();
+        assert_eq!(out.len(), 65536);
+        assert!(out.bytes().all(|b| b == b'a'));
+        let err = docker(&["fail"]).unwrap_err();
+        assert_eq!(err.chars().count(), 2000);
+        assert!(err.chars().all(|c| c == 'e'));
+        reset_engine(&dir);
+    }
+
+    // A probe that hangs times out and the engine is killed; a missing engine is
+    // reported unavailable.
+    #[cfg(unix)]
+    #[test]
+    fn a_hanging_engine_probe_times_out() {
+        let dir = fake_engine("timeout", "exec sleep 60");
+        assert_eq!(
+            docker(&["info", "--format", "json"]).unwrap_err(),
+            "Container engine operation timed out."
+        );
+        ENGINE.with(|e| *e.borrow_mut() = dir.join("missing").to_string_lossy().into_owned());
+        let err = docker(&["info"]).unwrap_err();
+        assert!(err.contains("is unavailable"), "{err}");
+        reset_engine(&dir);
+    }
+
+    // A supervised run's cancel file stops a running engine command, and so does a
+    // supervisor past its lifetime; cleanup commands still run to the end.
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_stops_engine_commands_but_not_cleanup() {
+        let dir = fake_engine(
+            "cancel",
+            "case \"$1\" in stop|rm|inspect) echo cleaned;; *) exec sleep 60;; esac",
+        );
+        let run = dir.join("run");
+        fs::create_dir_all(&run).unwrap();
+        fs::write(run.join("cancel"), b"cancelled").unwrap();
+        SUPERVISOR.with(|s| *s.borrow_mut() = Some((run.clone(), Instant::now())));
+        assert_eq!(
+            docker(&["run", "--rm", "helper"]).unwrap_err(),
+            "Task setup cancelled."
+        );
+        assert_eq!(docker(&["stop", "c1"]).unwrap(), "cleaned");
+        fs::remove_file(run.join("cancel")).unwrap();
+        if let Some(old) = Instant::now().checked_sub(Duration::from_secs(601)) {
+            SUPERVISOR.with(|s| *s.borrow_mut() = Some((run.clone(), old)));
+            assert_eq!(
+                docker(&["cp", "a", "b"]).unwrap_err(),
+                "Task setup cancelled."
+            );
+        }
+        reset_engine(&dir);
+    }
+
     // A child writing past the cap keeps its pipe drained: it finishes with its own
     // status instead of dying on a broken pipe, and the reader keeps the head.
     #[cfg(unix)]

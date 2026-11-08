@@ -62,25 +62,6 @@ fn level_anchor(target: &str) -> String {
     format!("#l-{}", esc(target))
 }
 
-// The name a level section shows: the node's name, or the scope's name.
-fn level_name(store: &Store, target: &str) -> String {
-    match crate::board::scope_target(target) {
-        Some(scope) => {
-            let mut cs = scope.chars();
-            match cs.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + cs.as_str(),
-                None => String::new(),
-            }
-        }
-        None => store
-            .graph
-            .entities
-            .get(target)
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| target.to_string()),
-    }
-}
-
 // An entity's name linked to its card; the bare id when the store does not hold it.
 fn name_link(store: &Store, id: &str) -> String {
     let resolved = store.resolve_id(id);
@@ -112,7 +93,7 @@ fn level_link(store: &Store, target: &str) -> Option<String> {
     Some(format!(
         "<a class=\"n\" href=\"{}\">{}</a>",
         level_anchor(target),
-        esc(&level_name(store, target))
+        esc(&crate::card::level_name(store, target))
     ))
 }
 
@@ -142,62 +123,29 @@ fn crumb_links(store: &Store, crumbs: &[Crumb], to_levels: bool, link_last: bool
         .join(" › ")
 }
 
-fn kind_of(view_id: &str) -> &str {
-    view_id
-        .strip_prefix("view:")
-        .and_then(|r| r.split('/').next())
-        .unwrap_or("view")
-}
-
-fn step_count(store: &Store, view_id: &str) -> usize {
-    store
-        .graph
-        .views
-        .get(view_id)
-        .map(|v| v.members.len())
-        .unwrap_or(0)
-}
-
 // One line per flow cluster: the title, the use case and sequence view cards as
-// links, and the step count. A cluster is one line, never one per kind. The same
-// grouping docsgen's cards use.
+// links, and the step count. The same grouping docsgen's cards use (crate::card).
 fn cluster_lines(store: &Store, view_ids: &[String]) -> Vec<String> {
-    let mut clusters: Vec<(String, Vec<String>)> = Vec::new();
-    for vid in view_ids {
-        let slug = vid.rsplit('/').next().unwrap_or(vid).to_string();
-        match clusters.iter_mut().find(|(s, _)| *s == slug) {
-            Some((_, ids)) => ids.push(vid.clone()),
-            None => clusters.push((slug, vec![vid.clone()])),
-        }
-    }
-    clusters
+    crate::card::flow_clusters(store, view_ids)
         .into_iter()
-        .map(|(_, mut ids)| {
-            ids.sort_by_key(|v| match kind_of(v) {
-                "usecase" => 0,
-                "sequence" => 1,
-                _ => 2,
-            });
-            let title = ids
+        .map(|c| {
+            let kinds: Vec<String> = c
+                .views
                 .iter()
-                .find_map(|v| store.graph.views.get(v).map(|x| x.title.clone()))
-                .unwrap_or_default();
-            let kinds: Vec<String> = ids
-                .iter()
-                .map(|v| {
-                    let label = match kind_of(v) {
-                        "usecase" => "use case".to_string(),
-                        k => k.replace('-', " "),
-                    };
+                .map(|(v, label)| {
                     if store.graph.views.contains_key(v) {
-                        format!("<a class=\"n\" href=\"#n-{}\">{}</a>", esc(v), esc(&label))
+                        format!("<a class=\"n\" href=\"#n-{}\">{}</a>", esc(v), esc(label))
                     } else {
                         format!("<span class=\"id\">{}</span>", esc(v))
                     }
                 })
                 .collect();
-            let steps = ids.iter().map(|v| step_count(store, v)).max().unwrap_or(0);
-            format!("{} · {} ({} steps)", esc(&title), kinds.join(" · "), steps)
+            format!(
+                "{} · {} ({} steps)",
+                esc(&c.title),
+                kinds.join(" · "),
+                c.steps
+            )
         })
         .collect()
 }
@@ -244,7 +192,7 @@ fn level_views(store: &Store, walk: &Walk, target: &str) -> Vec<String> {
         .map(|(v, _)| v.clone())
         .collect();
     flows.sort_by(|a, b| {
-        let rank = |v: &str| match kind_of(v) {
+        let rank = |v: &str| match crate::card::view_kind(v) {
             "usecase" => 0,
             "sequence" => 1,
             _ => 2,
@@ -1012,7 +960,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     }
     for target in &targets {
         let mut body = String::new();
-        let name = level_name(store, target);
+        let name = crate::card::level_name(store, target);
         let _ = write!(
             body,
             "<h3 id=\"l-{}\">{} <span class=\"k\">{}</span></h3>",

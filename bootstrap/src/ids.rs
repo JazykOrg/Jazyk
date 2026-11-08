@@ -46,6 +46,13 @@ pub fn slug(text: &str) -> String {
     }
 }
 
+// The slug part of an entity id: `ent:order` → `order`, the name every per-entity
+// path and derived id carries (`sm:order`, `view:state/order`, the ledger key, the
+// card page). An id without the prefix is its own slug.
+pub fn entity_slug(id: &str) -> &str {
+    id.strip_prefix("ent:").unwrap_or(id)
+}
+
 // 64-bit FNV-1a, the hash file ids use too.
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -105,6 +112,13 @@ pub fn plain_or_unique(plain: &str, key: &str, taken: impl Fn(&str) -> bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entity_slug_drops_the_entity_prefix_only() {
+        assert_eq!(entity_slug("ent:order"), "order");
+        assert_eq!(entity_slug("order"), "order");
+        assert_eq!(entity_slug("req:order-1"), "req:order-1");
+    }
 
     #[test]
     fn slug_collapses_runs_transliterates_and_bounds_length() {

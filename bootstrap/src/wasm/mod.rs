@@ -61,7 +61,8 @@ pub fn boot(root_path: &str) -> String {
     let root = std::path::PathBuf::from(root_path);
     ROOT.with(|r| *r.borrow_mut() = root.clone());
     // A tree with no jazyk.toml boots too, with the defaults: the setup wizard
-    // writes the file (docs/frontends/gui.md#the-setup-wizard).
+    // writes the file through `PUT /api/settings` (docs/frontends/gui.md#api; the
+    // wizard is jazyk-cloud docs/editor/editor.md#the-setup-wizard).
     // Share the native worker allowance; the selected model owns its ceiling.
     crate::llm::set_max_completion_tokens(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS);
     // Conversations belong to the project they were about.

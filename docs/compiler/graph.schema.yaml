@@ -6,15 +6,18 @@ description: |-
   - graph/entities/<file id>.yaml is one entity
   - graph/requirements/<file id>.yaml is one requirement
   - graph/criteria/<file id>.yaml is one criterion
-  - graph/views/<file id>.yaml is one view (curated or a default the store derives)
+  - graph/views/<file id>.yaml is one curated view
+  - graph/default-views/<file id>.yaml is one default view (derived, local, rewritten on every commit)
   - graph/diagnostics/<file id>.yaml is one diagnostic
   - graph/redirects/<file id>.yaml is one object, `to` the surviving id
-  - graph/relationships/<file id>.yaml is one relationship (derived, rewritten on every commit)
-  - graph/state-machines/<file id>.yaml is one stateMachine (derived, rewritten on every commit)
+  - graph/relationships/<file id>.yaml is one relationship (derived, local, rewritten on every commit)
+  - graph/state-machines/<file id>.yaml is one stateMachine (derived, local, rewritten on every commit)
+  Every node file starts with the node's `id`. Generation markers (`created`,
+  `updated`) and the mentions an entity gains from requirements are not written.
   A file id is the node id, `:` written as `~` and `/` as `+`, every byte outside
   lowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.
   A file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the
-  file then carries the full id under `id`.
+  load then reads the full id from the file's `id`.
   - docs/<mirrored doc path>.yaml is one docRecord per source document
   - journal/g<generation>.yaml is one journalEntry per generation
   - status.yaml is one status object
@@ -24,6 +27,9 @@ description: |-
   - alignment/<doc file id>.yaml is one docAlignment
   - lookalikes/<pair file id>.yaml is one lookalikeVerdict
   - build.yaml is one buildState object (local, never committed)
+  - markers.yaml maps each node id to [created, updated] (local, never committed)
+  - causes.yaml maps each change record's kind and subject to its id, generation, and
+    mutation (local, never committed)
   Goals are derived from these files and never stored; goal ids appear only in
   journal entries and the parked/ and failed/ records.
 definitions:
@@ -1289,6 +1295,13 @@ definitions:
         additionalProperties:
           type: integer
           minimum: 0
+      docs:
+        type: object
+        description: >-
+          Document path to the content hash of the source file at last reconcile. A
+          document without an entry takes part in alignment as changed
+        additionalProperties:
+          type: string
   sectionOp:
     description: One computed section change
     type: object

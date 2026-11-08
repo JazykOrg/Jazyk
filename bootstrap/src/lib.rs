@@ -103,3 +103,72 @@ pub mod wasm;
 pub mod workflow;
 
 pub mod model_api;
+
+// Every schema in docs/ with a jazyk.org `$id` is published as its JSON form under
+// site/schemas/, and the two never drift. `JAZYK_WRITE_SCHEMAS=1` writes the files.
+// Mirrors docs/site.md#schemas.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod site_schemas {
+    use std::path::{Path, PathBuf};
+
+    const PREFIX: &str = "https://jazyk.org/schemas/";
+
+    fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                sources(&p, out);
+            } else if p.to_string_lossy().ends_with(".schema.yaml") {
+                out.push(p);
+            }
+        }
+    }
+
+    #[test]
+    fn published_schemas_match_their_yaml_sources() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let site = root.join("site/schemas");
+        let write = std::env::var("JAZYK_WRITE_SCHEMAS").is_ok_and(|v| v == "1");
+        let mut found = Vec::new();
+        sources(&root.join("docs"), &mut found);
+        found.sort();
+        let mut published = std::collections::BTreeSet::new();
+        let mut stale = Vec::new();
+        for src in found {
+            let yaml: serde_norway::Value =
+                serde_norway::from_str(&std::fs::read_to_string(&src).unwrap())
+                    .unwrap_or_else(|e| panic!("{}: {e}", src.display()));
+            let Some(name) = yaml
+                .get("$id")
+                .and_then(|v| v.as_str())
+                .and_then(|id| id.strip_prefix(PREFIX))
+                .map(String::from)
+            else {
+                continue;
+            };
+            let json = format!("{}\n", serde_json::to_string_pretty(&yaml).unwrap());
+            let target = site.join(&name);
+            if write {
+                std::fs::create_dir_all(&site).unwrap();
+                std::fs::write(&target, &json).unwrap();
+            } else if std::fs::read_to_string(&target).ok().as_deref() != Some(json.as_str()) {
+                stale.push(format!("{} from {}", target.display(), src.display()));
+            }
+            published.insert(name);
+        }
+        for e in std::fs::read_dir(&site).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !published.contains(&name) {
+                stale.push(format!(
+                    "{}: no schema in docs/ names it",
+                    e.path().display()
+                ));
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "published schemas drifted (run with JAZYK_WRITE_SCHEMAS=1):\n{}",
+            stale.join("\n")
+        );
+    }
+}

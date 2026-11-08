@@ -1,0 +1,647 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jazyk.org/schemas/project-settings.json",
+  "title": "Jazyk Project Settings",
+  "description": "Project configuration at .jazyk/jazyk.toml. All paths resolve from the project folder. Each set owns an independent graph.",
+  "type": "object",
+  "properties": {
+    "llm": {
+      "type": "object",
+      "description": "LLM backend for the embedded agent, an OpenAI-compatible chat completions endpoint. Resolved per field: CLI flag, then environment variable, then this table, then global config, then built-in default",
+      "properties": {
+        "api": {
+          "type": "string",
+          "enum": [
+            "chat_completions",
+            "responses"
+          ],
+          "default": "chat_completions"
+        },
+        "reasoning_summary": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "concise",
+            "detailed"
+          ]
+        },
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the OpenAI-compatible endpoint"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model id"
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the environment variable holding the API key"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "Literal API key. Prefer api_key_env in tracked files"
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Sampling temperature",
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "acp": {
+      "type": "object",
+      "description": "Downstream ACP agent selection. Resolved per field: CLI flag, then environment variable, then this table, then global config, then the built-in default",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Name of the agent profile to use for every session an executor override does not claim. 'embedded' is built in and runs 'jazyk agent'",
+          "default": "embedded"
+        },
+        "agents": {
+          "type": "object",
+          "description": "Agent profiles, keyed by profile name",
+          "additionalProperties": {
+            "type": "object",
+            "description": "One agent profile",
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "Executable that starts the agent"
+              },
+              "args": {
+                "type": "array",
+                "description": "Arguments passed to the command",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "description": "Extra environment variables for the agent process",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "serve_files": {
+                "type": "boolean",
+                "description": "Serve file and command tools into the agent's generation sessions, for agents that bring no editor of their own",
+                "default": false
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "executors": {
+      "type": "object",
+      "description": "Executor overrides per goal kind or goal class. A key is a session-running goal kind or a class (compile, gc); a value is an ACP profile name. Resolved per batch: the --agent flag, then JAZYK_ACP_AGENT, then the kind's key, then the class's key (project table over global config for each), then the acp agent",
+      "propertyNames": {
+        "type": "string",
+        "enum": [
+          "compile",
+          "gc",
+          "place-anchors",
+          "reconcile-section",
+          "rejudge-pair",
+          "review-entity",
+          "retrace",
+          "conform-instance",
+          "derive-criteria",
+          "bind",
+          "generate",
+          "verify",
+          "declare-edges",
+          "dedupe-candidates",
+          "curate-view",
+          "split-view",
+          "abstract-entity"
+        ]
+      },
+      "additionalProperties": {
+        "type": "string",
+        "description": "A profile name, 'embedded' or one of acp.agents"
+      }
+    },
+    "gen": {
+      "type": "object",
+      "description": "Generation workflow settings",
+      "properties": {
+        "deliverable": {
+          "type": "string",
+          "description": "Accepted and ignored in an older file; no tool writes it. The deliverable is the project root and the set's source scopes it"
+        },
+        "worker": {
+          "type": "string",
+          "description": "The built-in generation worker. 'agentic' runs each generate goal as a session with file and command tools; 'pipeline' keeps the fixed file-reply sequence",
+          "enum": [
+            "agentic",
+            "pipeline"
+          ],
+          "default": "agentic"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "description": "Defaults for the control plane. The live values sit in control.yaml in the out directory",
+      "properties": {
+        "compile": {
+          "type": "string",
+          "description": "manual gates compilation behind a release; auto lets a watcher act as changes land",
+          "enum": [
+            "manual",
+            "auto"
+          ],
+          "default": "manual"
+        },
+        "generate": {
+          "type": "string",
+          "description": "manual gates generation behind a release; auto lets a watcher act as changes land",
+          "enum": [
+            "manual",
+            "auto"
+          ],
+          "default": "manual"
+        },
+        "worker": {
+          "type": "string",
+          "description": "Who acts on a GUI release",
+          "enum": [
+            "internal",
+            "agent",
+            "any"
+          ],
+          "default": "any"
+        }
+      },
+      "additionalProperties": false
+    },
+    "linting": {
+      "type": "object",
+      "description": "Linting rules for documentation",
+      "properties": {
+        "rules": {
+          "type": "object",
+          "description": "Plain-English rules grouped by the severity they produce. Evaluated by review-entity sessions and by the checks; findings are lint diagnostics",
+          "properties": {
+            "warnings": {
+              "type": "array",
+              "description": "Rules that produce a warning",
+              "items": {
+                "type": "string"
+              }
+            },
+            "errors": {
+              "type": "array",
+              "description": "Rules that produce an error",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "handlers": {
+      "type": "object",
+      "description": "Custom format handlers, keyed by handler name. Tried before built-in handlers",
+      "additionalProperties": {
+        "type": "object",
+        "description": "One handler configuration",
+        "required": [
+          "matcher",
+          "path"
+        ],
+        "properties": {
+          "matcher": {
+            "type": "string",
+            "description": "Glob pattern matching the files this handler claims"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to the handler implementation"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "agents": {
+      "type": "object",
+      "description": "How jazyk treats the project's agent instruction files",
+      "properties": {
+        "block": {
+          "type": "boolean",
+          "description": "Keep the jazyk section of AGENTS.md and the CLAUDE.md and GEMINI.md imports",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp": {
+      "type": "object",
+      "description": "Extra MCP servers for the embedded agent's conversational sessions",
+      "properties": {
+        "servers": {
+          "type": "object",
+          "description": "MCP servers, keyed by server name",
+          "additionalProperties": {
+            "type": "object",
+            "description": "One MCP server. command for stdio, url for streamable HTTP",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "version": {
+      "const": 1
+    },
+    "tasks": {
+      "type": "array",
+      "description": "Finite command execution (task-runtime.md). At most 100 tasks with unique ids",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,60}$"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "command": {
+            "type": "string",
+            "description": "A shell command",
+            "maxLength": 16384
+          },
+          "image": {
+            "type": "string",
+            "default": "python:3.12-slim"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "A project-relative directory, '.' for the project root",
+            "default": "."
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ],
+            "default": "small"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7200,
+            "default": 1800
+          },
+          "env": {
+            "type": "object",
+            "description": "Non-secret environment values",
+            "maxProperties": 40,
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "products": {
+            "type": "array",
+            "description": "Project-relative globs retaining generated outputs",
+            "maxItems": 40,
+            "items": {
+              "type": "string"
+            }
+          },
+          "cache": {
+            "type": "array",
+            "description": "Project-relative globs of disposable files restored before execution and saved after command success",
+            "maxItems": 40,
+            "items": {
+              "type": "string"
+            }
+          },
+          "reports": {
+            "type": "array",
+            "description": "Project-relative globs of JUnit results",
+            "maxItems": 40,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "docs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ds_[A-Za-z0-9_-]+$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "docs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "llm": {
+            "type": "object",
+            "description": "LLM backend for the embedded agent, an OpenAI-compatible chat completions endpoint. Resolved per field: CLI flag, then environment variable, then this table, then global config, then built-in default",
+            "properties": {
+              "base_url": {
+                "type": "string",
+                "description": "Base URL of the OpenAI-compatible endpoint"
+              },
+              "model": {
+                "type": "string",
+                "description": "Model id"
+              },
+              "api_key_env": {
+                "type": "string",
+                "description": "Name of the environment variable holding the API key"
+              },
+              "api_key": {
+                "type": "string",
+                "description": "Literal API key. Prefer api_key_env in tracked files"
+              },
+              "temperature": {
+                "type": "number",
+                "description": "Sampling temperature",
+                "default": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "acp": {
+            "type": "object",
+            "description": "Downstream ACP agent selection. Resolved per field: CLI flag, then environment variable, then this table, then global config, then the built-in default",
+            "properties": {
+              "agent": {
+                "type": "string",
+                "description": "Name of the agent profile to use for every session an executor override does not claim. 'embedded' is built in and runs 'jazyk agent'",
+                "default": "embedded"
+              },
+              "agents": {
+                "type": "object",
+                "description": "Agent profiles, keyed by profile name",
+                "additionalProperties": {
+                  "type": "object",
+                  "description": "One agent profile",
+                  "required": [
+                    "command"
+                  ],
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "description": "Executable that starts the agent"
+                    },
+                    "args": {
+                      "type": "array",
+                      "description": "Arguments passed to the command",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "env": {
+                      "type": "object",
+                      "description": "Extra environment variables for the agent process",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "serve_files": {
+                      "type": "boolean",
+                      "description": "Serve file and command tools into the agent's generation sessions, for agents that bring no editor of their own",
+                      "default": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "executors": {
+            "type": "object",
+            "description": "Executor overrides per goal kind or goal class. A key is a session-running goal kind or a class (compile, gc); a value is an ACP profile name. Resolved per batch: the --agent flag, then JAZYK_ACP_AGENT, then the kind's key, then the class's key (project table over global config for each), then the acp agent",
+            "propertyNames": {
+              "type": "string",
+              "enum": [
+                "compile",
+                "gc",
+                "place-anchors",
+                "reconcile-section",
+                "rejudge-pair",
+                "review-entity",
+                "retrace",
+                "conform-instance",
+                "derive-criteria",
+                "bind",
+                "generate",
+                "verify",
+                "declare-edges",
+                "dedupe-candidates",
+                "curate-view",
+                "split-view",
+                "abstract-entity"
+              ]
+            },
+            "additionalProperties": {
+              "type": "string",
+              "description": "A profile name, 'embedded' or one of acp.agents"
+            }
+          },
+          "gen": {
+            "type": "object",
+            "description": "Generation workflow settings",
+            "properties": {
+              "deliverable": {
+                "type": "string",
+                "description": "Accepted and ignored in an older file; no tool writes it. The deliverable is the project root and the set's source scopes it"
+              },
+              "worker": {
+                "type": "string",
+                "description": "The built-in generation worker. 'agentic' runs each generate goal as a session with file and command tools; 'pipeline' keeps the fixed file-reply sequence",
+                "enum": [
+                  "agentic",
+                  "pipeline"
+                ],
+                "default": "agentic"
+              }
+            },
+            "additionalProperties": false
+          },
+          "workflow": {
+            "type": "object",
+            "description": "Defaults for the control plane. The live values sit in control.yaml in the out directory",
+            "properties": {
+              "compile": {
+                "type": "string",
+                "description": "manual gates compilation behind a release; auto lets a watcher act as changes land",
+                "enum": [
+                  "manual",
+                  "auto"
+                ],
+                "default": "manual"
+              },
+              "generate": {
+                "type": "string",
+                "description": "manual gates generation behind a release; auto lets a watcher act as changes land",
+                "enum": [
+                  "manual",
+                  "auto"
+                ],
+                "default": "manual"
+              },
+              "worker": {
+                "type": "string",
+                "description": "Who acts on a GUI release",
+                "enum": [
+                  "internal",
+                  "agent",
+                  "any"
+                ],
+                "default": "any"
+              }
+            },
+            "additionalProperties": false
+          },
+          "linting": {
+            "type": "object",
+            "description": "Linting rules for documentation",
+            "properties": {
+              "rules": {
+                "type": "object",
+                "description": "Plain-English rules grouped by the severity they produce. Evaluated by review-entity sessions and by the checks; findings are lint diagnostics",
+                "properties": {
+                  "warnings": {
+                    "type": "array",
+                    "description": "Rules that produce a warning",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "errors": {
+                    "type": "array",
+                    "description": "Rules that produce an error",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "handlers": {
+            "type": "object",
+            "description": "Custom format handlers, keyed by handler name. Tried before built-in handlers",
+            "additionalProperties": {
+              "type": "object",
+              "description": "One handler configuration",
+              "required": [
+                "matcher",
+                "path"
+              ],
+              "properties": {
+                "matcher": {
+                  "type": "string",
+                  "description": "Glob pattern matching the files this handler claims"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Path to the handler implementation"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ]
+}

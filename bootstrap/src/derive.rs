@@ -2,6 +2,7 @@
 // (per-direction contributions), state machines, default views (with the flow
 // clustering), query membership, and the limit counts that write threshold-crossed
 // records. Mirrors docs/compiler/graph.md#derived-data.
+use crate::ids::entity_slug;
 use crate::limits;
 use crate::md;
 use crate::model::*;
@@ -86,10 +87,6 @@ pub fn recompute_relationships(store: &mut Store) {
         }
     }
     store.graph.relationships = rels;
-}
-
-pub fn entity_slug(id: &str) -> &str {
-    id.strip_prefix("ent:").unwrap_or(id)
 }
 
 // Instance -> type, from the instantiation groups.

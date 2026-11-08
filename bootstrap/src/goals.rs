@@ -673,31 +673,7 @@ pub fn content_token_words(
     statement: &str,
     entities: &[String],
 ) -> Vec<(String, String)> {
-    let mut name_toks: BTreeSet<String> = BTreeSet::new();
-    for e in entities {
-        if let Some(ent) = store.graph.entities.get(store.resolve_id(e)) {
-            for n in std::iter::once(&ent.name).chain(ent.aliases.iter()) {
-                for t in store::normalize_statement(n).split(' ') {
-                    name_toks.insert(stem(t));
-                }
-            }
-        }
-    }
-    store::normalize_statement(statement)
-        .split(' ')
-        .filter(|t| store::is_content_token(t))
-        .map(|t| (stem(t), t.to_string()))
-        .filter(|(stemmed, _)| store::is_content_token(stemmed) && !name_toks.contains(stemmed))
-        .collect()
-}
-
-fn stem(t: &str) -> String {
-    for suffix in ["ing", "ed", "s"] {
-        if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
-            return t[..t.len() - suffix.len()].to_string();
-        }
-    }
-    t.to_string()
+    store.content_token_words(statement, entities, store::suffix_stem)
 }
 
 // Name tokens of an entity: name and aliases, normalized, stop words dropped, stemmed.
@@ -712,7 +688,7 @@ pub fn name_tokens(e: &Entity) -> BTreeSet<String> {
                 .collect::<Vec<_>>()
         })
         .filter(|t| !t.is_empty() && !STOP.contains(&t.as_str()))
-        .map(|t| stem(&t))
+        .map(|t| store::suffix_stem(&t))
         .collect()
 }
 
@@ -3541,7 +3517,7 @@ impl GoalKind for Bind {
                 if let Some(row) = ledger.requirements.get(&rid) {
                     hints.push(format!("previous test: {}", row.test.name));
                 }
-                if let Some(e) = ledger.entities.get(&crate::gen::slug_of(&entity)) {
+                if let Some(e) = ledger.entities.get(crate::ids::entity_slug(&entity)) {
                     if !e.files.is_empty() {
                         hints.push(format!("entity files: {}", e.files.join(", ")));
                     }
@@ -6225,7 +6201,7 @@ impl GoalKind for AbstractEntity {
                         c.count, c.soft, c.limit, c.soft, c.hard
                     ));
                     if c.limit == "states-per-state-machine" {
-                        hints.push(format!("load sm:{}", crate::derive::entity_slug(&id)));
+                        hints.push(format!("load sm:{}", crate::ids::entity_slug(&id)));
                     }
                 }
                 for (tok, n, section) in cohesion_groups(store, &id) {

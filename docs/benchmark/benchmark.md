@@ -42,6 +42,12 @@ field. See [cases](./cases.md#case-format).
   first caps-split snippet measured held an empty set behind a prompt listing eleven
   items, and every `unload` of them bounced). Only the store and the
   fixture differ from a build.
+- A `generate` or `bind` case opens with the deliverable contracts a build session
+  opens with: the task execution contract, and for `generate` the generation
+  contract after the prompt. Its `begin_generation` and `begin_binding` replies are
+  the ones an owned worker reads, so the case grades the text live runs use
+  ([generate](../compiler/goals/generate.md#what-the-model-sees),
+  [bind](../compiler/goals/bind.md#what-the-model-sees)).
 - Cases never touch the project graph. See [execution](./cases.md#execution).
 - Each runnable fixture has project settings and its input documents on disk. Its
   graph and ledger live under `.jazyk/ds_main`, and generated files live under

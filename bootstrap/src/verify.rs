@@ -162,7 +162,7 @@ pub fn status_with(
     let generated_here = || {
         ledger
             .entities
-            .get(&crate::gen::slug_of(&row.entity))
+            .get(crate::ids::entity_slug(&row.entity))
             .map(|e| {
                 e.fact_hash == crate::gen::fact_hash(store, &row.entity)
                     && !crate::gen::implementation_outside_source(gs, ledger, &e.files)
@@ -1551,7 +1551,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 .replace('\\', "/");
             let files = ledger
                 .entities
-                .get(&crate::gen::slug_of(&owner))
+                .get(crate::ids::entity_slug(&owner))
                 .map(|e| e.files.clone())
                 .unwrap_or_default();
             let test = crate::gen::TestRef {

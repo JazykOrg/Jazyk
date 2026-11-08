@@ -45,7 +45,7 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   `decree` (a human write on the graph). Derived and decreed facts carry a ratification
   proposal toward prose; accepting it flips the provenance to `quote`.
 - Goals and the board: the reconciler derives goals from disk (docs, graph, ledger, the
-  change records in `status.yaml`) and never stores them. A goal is `g:<kind>:<target>`;
+  change records under `changes/`) and never stores them. A goal is `g:<kind>:<target>`;
   its `change` is its identity across re-derivations and its `cause` names the committed
   mutation that opened it. Compile goals bring the graph in line with the docs
   (`place-anchors`, `reconcile-section`, `rejudge-pair`, `review-entity`, `retrace`,
@@ -70,20 +70,28 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   gates; the changeset commits atomically, or the session gets up to four attempts and then parks.
 - The store: one YAML file per node under `.jazyk/<set>/graph/<kind>/`, named by a
   reversible file id (`ent:order` → `ent~order.yaml`; past 180 bytes a prefix and a
-  hash, with the full id inside), natural-key upserts, changesets committed atomically
+  hash), each file starting with its `id` and holding only the node's own facts
+  (generation markers and requirement-derived entity mentions stay out), ids minted
+  from natural keys with no counter (`req:<stem>-<hash>`, `crit:<stem>-<hash>`,
+  `diag:<rule>-<hash>`; the slug part transliterated, collapsed to single `-`, cut to
+  32 characters), natural-key upserts, changesets committed atomically
   behind `.lock`, one journal entry per generation with `opened_goals` and
   `resolved_goals` (each with its justification; a human save that dirties sections
   journals as an `edit` entry, so every ripple roots in a generation), the
-  deterministic GC sweep at commit, `version: 3` in `status.yaml` (a mismatch archives
-  the out directory to `<out>.bak` and the next build reconciles from empty; no
-  migration code, ever).
-- Committed and local state: a repository commits each set's `status.yaml` (only what
-  goal derivation reads), the non-derived node files, `docs/`, and `gen/`, so any
-  commit of any branch compiles incrementally. Everything else is local: derived
-  relationships and state machines (recomputed at load when missing), diagrams,
-  docsgen, the journal, logs, the control plane, and `build.yaml` (the generation,
-  the last verdict, costs, spend). The generation is a local counter raised at load to
-  the highest generation `status.yaml` names, so parallel branches never conflict on
+  deterministic GC sweep at commit, `version: 4` in `status.yaml` (a version 3 store
+  loads as it is and its next save writes the version 4 layout, ids kept; any other
+  mismatch archives the out directory to `<out>.bak` and the next build reconciles
+  from empty; no other migration code).
+- Committed and local state: a repository commits each set's status (`status.yaml`
+  plus one file per record under `changes/`, `parked/`, `failed/`, `alignment/`,
+  `lookalikes/`; only what goal derivation reads), the non-derived node files
+  (diagnostics included), `docs/` section trees (no line numbers, no file hash), and
+  `gen/` (the ledger, one file per row), so any commit of any branch compiles
+  incrementally. Everything else is local: derived default views, relationships and
+  state machines (recomputed at load when missing), diagrams, docsgen, the journal,
+  logs, the control plane, `markers.yaml` (generation markers), and `build.yaml` (the
+  generation, the last verdict, costs, spend, document content hashes). The generation
+  is a local counter raised at load to the highest generation the status names, so parallel branches never conflict on
   it. The engine generates `.jazyk/.gitignore` from this split
   (`docs/compiler/graph.md#committed-and-local-state`).
 - Derived data, recomputed on every commit, no write tool: relationships from
@@ -160,11 +168,12 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 - `.jazyk/jazyk.toml`: the live project file with named document sets.
   The dogfood graph lands in `.jazyk/ds_main/` (this repository's root `.gitignore`
   keeps it out of git): `graph/<kind>/<file id>.yaml` node files (entities,
-  requirements, criteria, views, diagnostics, redirects; derived relationships and
-  state-machines rewritten every commit), `docs/` section trees + coverage,
+  requirements, criteria, views, diagnostics, redirects; derived default-views,
+  relationships and state-machines rewritten every commit), `docs/` section trees + coverage,
   `journal/g<N>.yaml`, `diagrams/<kind>/<slug>.puml` and `.svg`, `docsgen/`, `gen/`,
-  `trace/`, `sessions/`, `status.yaml` (version, change records, parked, failed,
-  alignment, lookalikes), `build.yaml` (generation, verdict, costs, spend).
+  `trace/`, `sessions/`, the status (`status.yaml`, `changes/`, `parked/`, `failed/`,
+  `alignment/`, `lookalikes/`), `build.yaml` (generation, verdict, costs, spend),
+  `markers.yaml`.
 - `bootstrap/src/`: model.rs (node kinds, provenance, change records, journal entry,
   status), store.rs (node files and file ids, the status split, natural keys, changesets, gates at commit, journal, GC
   sweep, store version and archive), limits.rs (the limits registry and the session and

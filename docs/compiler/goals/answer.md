@@ -10,7 +10,7 @@ honest: a build with open questions is `converged, 2 blocked`, never silently do
 
 - Class: compile. Blocked on a human: it never blocks convergence and rides in the
   verdict as a count.
-- Unit: one diagnostic. Goal id `g:answer:diag:<rule>-<n>`.
+- Unit: one diagnostic. Goal id `g:answer:diag:<rule>-<hash>`.
 - Skill: none. No contract paragraph: `prompts/` carries no `answer.md`.
 
 ## Created when
@@ -213,7 +213,7 @@ Two replies have consequences the harness owns:
 - `jazyk compile` prints `N blocked` in its board summary line; the session prompt's
   `## Project` block counts goals blocked on human answers; `jazyk status` shows the
   board counts; `jazyk watch` prints one line when the goal opens and one when it
-  resolves; `jazyk explain g:answer:diag:<rule>-<n>` prints which commit filed the
+  resolves; `jazyk explain g:answer:diag:<rule>-<hash>` prints which commit filed the
   prompt, the question with its options, and where to answer
   ([CLI](../../frontends/cli.md#jazyk-explain)).
 - The GUI board shows a card in the compile column, blocked with the reason

@@ -131,6 +131,9 @@ catalog or prompt affects only a new inference identity. Reformatting a saved
 inference does not replace its original request. Replaying that already counted
 inference does not consume another round or exceed the original round budget.
 Tool dispatch still uses the restored session's current authorization gates.
+A checkpoint keeps the saved requests and responses of the current transition only.
+Once a transition ends, its responses are in the conversation and no later
+inference reuses their identities, so they leave the checkpoint.
 
 Remote effects use destination idempotency or queryable receipts. An uncertain
 outcome is reconciled before continuation. If it cannot be proven, execution

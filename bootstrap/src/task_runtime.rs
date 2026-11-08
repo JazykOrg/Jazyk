@@ -965,7 +965,10 @@ mod tests {
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), format!("{text}{}", task("old", "true"))).unwrap();
         assert!(sweep_unused(&root, None).unwrap().is_empty());
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), &text).unwrap();
-        // A build's own --out ledger counts as a use.
+        // A build's own --out ledger counts as a use: the ledger is now this one file.
+        for f in crate::gen::Ledger::files(&out) {
+            crate::vfs::remove_file(f).ok();
+        }
         crate::vfs::write(out.join("gen/ledger.yaml"), format!("tasks:\n  suite: {{createdBy: x, createdAt: x, definition: '{}'}}\n", kept[1].hash())).unwrap();
         let other = root.join("elsewhere");
         crate::vfs::create_dir_all(other.join("gen")).unwrap();

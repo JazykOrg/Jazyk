@@ -89,8 +89,8 @@ is.
 ### Verdicts are remembered
 
 A kept pair must not be asked about again on every build: a no-op rebuild derives zero
-goals. `status.yaml` keeps a `lookalikes` list
-([storage layout](../graph.md#storage-layout)), one entry per pair kept apart:
+goals. The status keeps one file per pair kept apart under `lookalikes/`
+([storage layout](../graph.md#storage-layout)):
 `{pair, verdict: separate, score, generation}`.
 
 - Resolving the goal with `separate` writes the entry with the pair's score at judgment

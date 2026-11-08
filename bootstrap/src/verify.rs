@@ -52,9 +52,10 @@ pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, led
     }
     for cid in store.criteria_of(rid) {
         let Some(test)=row.tests.get(&cid) else{return ("unverified".into(),"criterion-unbound".into())};
-        // A criterion test renamed or deleted by hand judges nothing, like the
-        // headline's: bind work, never a verdict read from an empty run.
-        if test.test.kind == "programmatic" {
+        // A legacy criterion command renamed or deleted by hand judges nothing, like
+        // the headline's: bind work, never a verdict read from an empty run. A task
+        // report reads a missing case as unverified on its own.
+        if test.test.kind == "programmatic" && !test.test.run.starts_with("task:") {
             let path = artifact_path(&store.out, gs, &test.test);
             if !path.vexists() || !artifact_names(&path, &test.test.name) {
                 return ("missing".into(), "artifact-gone".into());

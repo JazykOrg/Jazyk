@@ -221,11 +221,12 @@ pub struct Project {
     pub out: PathBuf,
     pub docs_glob: Vec<String>,
     pub roots: Vec<String>,
-    // [gen] settings: where the deliverable lives. Never what it is; the medium is a
+    // Where the deliverable lives: the project root when the set has a `source`, from
+    // the document set, never from a `[gen]` key. Never what it is; the medium is a
     // fact the documents state.
     pub gen_deliverable: Option<String>,
     pub gen_worker: Option<String>,
-    // [gen] code: globs scoping which deliverable files count as implementation for
+    // The set's `source` globs: which deliverable files count as implementation for
     // the unclaimed report and decompilation. Empty means every file under the
     // deliverable minus the standard exclusions.
     // Mirrors docs/compiler/project-settings.md#generation.
@@ -447,14 +448,8 @@ impl Project {
         if let Some(f) = t.array("roots.files") {
             p.roots = f;
         }
-        if let Some(v) = t.string("gen.deliverable") {
-            p.gen_deliverable = Some(v);
-        }
         if let Some(v) = t.string("gen.worker") {
             p.gen_worker = Some(v);
-        }
-        if let Some(v) = t.array("gen.code") {
-            p.gen_code = v;
         }
         if let Some(v) = t.string("workflow.compile") {
             p.workflow.compile = v;

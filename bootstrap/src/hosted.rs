@@ -846,7 +846,7 @@ mod tests {
                     ..Default::default()
                 },
             );
-            store.save();
+            store.save_for_test();
             let programmatic = |artifact| json!({"kind":"programmatic", "label":"test", "artifact":artifact, "name":"test", "run":"python test.py"});
             let ledger: crate::gen::Ledger = serde_json::from_value(json!({
                 "support":["spec/product/package.json"],

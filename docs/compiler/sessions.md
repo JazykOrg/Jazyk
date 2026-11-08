@@ -52,8 +52,8 @@ The prompt is assembled, never authored per goal. The same disk state renders th
 prompt, so it can be shown before it is spent. The parts, in order:
 
 1. The agent contract, [`goals/prompts/agent-contract.md`](./goals/prompts/agent-contract.md),
-   with [`feedback-note.md`](./goals/prompts/feedback-note.md) spliced in as its second
-   paragraph. The contract states the job (resolve the listed goals with the tools over
+   with [`feedback-note.md`](./goals/prompts/feedback-note.md) filled into its
+   `{feedback}` slot, the second paragraph. The contract states the job (resolve the listed goals with the tools over
    the loaded graph, finish with `done`), the graph invariants, the loading rules, the
    staging rules, the review asymmetry, and the finish contract. The feedback note says
    that a confusing instruction, tool, argument, or error message goes to
@@ -69,7 +69,8 @@ prompt, so it can be shown before it is spent. The parts, in order:
    by its number ([the gate](./goals/review-entity.md#gate)).
 4. `## Goals`: one block per goal in the batch: the line `- [g:...] mandatory|optional`,
    the kind's contract paragraph (its payload file under `goals/prompts/`), the change in
-   one line, the gate in one line, and the hints. The contract paragraph renders once
+   one line, the gate in one line (the kind's section of
+   [`gates.md`](./goals/prompts/gates.md)), and the hints. The contract paragraph renders once
    per kind, under the first goal of that kind in the batch; a later goal of the same
    kind carries `Contract: as the first <kind> goal above` in its place, so a batch of
    eight pairs reads the pair contract once. The change line renders the change record
@@ -164,6 +165,54 @@ session prompt; over plain MCP `begin_goals` carries the same assembly as
 client already received in the same serving
 ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)). The prompt has one
 source whoever consumes it.
+
+## Payload files
+
+Every model-facing text lives in a payload file under `goals/prompts/` or `skills/`,
+embedded into the binary at compile time. Code assembles payloads and fills their
+placeholders; it never carries prompt prose of its own. Tool descriptions are the one
+exception: they live in the tool registry beside their schemas
+([tools](./tools.md)).
+
+- A whole-file payload is one text: the agent contract, a protocol line, a contract
+  paragraph, a skill.
+- A fragment file holds many short texts for one consumer. A marker line
+  `<!-- name -->` opens each section, and the section runs to the next marker. Trailing
+  newlines are dropped, so blank lines may separate sections. Markers never reach the
+  model.
+- A placeholder is `{name}`: lowercase letters, digits, and underscores. Filling is one
+  pass, so a value that holds `{text}` (a quote, a human's reply) is never filled
+  again. Braces in any other shape (`{"batch": ...}`, `{goal, justification}`) are
+  literal text.
+
+The fragment files:
+
+- [`gates.md`](./goals/prompts/gates.md): the one-line gate per goal kind.
+- [`session-blocks.md`](./goals/prompts/session-blocks.md): the prompt's framing (the
+  elided contract line, the skill and task headers, the `## Project` lines, the goal
+  block labels).
+- [`agent-context.md`](./goals/prompts/agent-context.md): the framing around what a
+  conversation picks up ([agent context](../frontends/agent-context.md)).
+- [`serving-instructions.md`](./goals/prompts/serving-instructions.md): an MCP
+  serving's initialize instructions and the longer `next` guidance in its replies
+  ([MCP](../frontends/mcp.md)).
+- [`generation-steps.md`](./goals/prompts/generation-steps.md): the built-in
+  generation worker's medium decision, its product, tests, and manifest steps, their
+  corrective retries, and the criteria file for an `llm` test
+  ([generation](../consumers/gen.md)).
+- [`judge-input.md`](./goals/prompts/judge-input.md): what an `llm` verdict reads, one
+  builder for every judge.
+- [`decompile-worker.md`](./goals/prompts/decompile-worker.md): the built-in drafting
+  worker's role line, scope request, and retry ([decompile](../consumers/decompile.md)).
+- [`answer-handling.md`](./goals/prompts/answer-handling.md): the handling contract for
+  an answered question ([questions in chat](../frontends/acp.md#questions-in-chat)).
+
+[`integration-context.md`](./goals/prompts/integration-context.md) frames the project
+integration facts in initialize instructions
+([project integration context](../frontends/mcp.md#project-integration-context)).
+
+A table test names every section with its placeholders: each renders with all of them
+filled and none left over, and every goal kind has its gate line.
 
 ## Skills
 

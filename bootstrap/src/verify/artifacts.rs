@@ -396,21 +396,17 @@ async fn run_cached(
                     .and_then(|id| store.graph.criteria.get(id))
                     .map(|c| c.statement.as_str())
                     .unwrap_or("");
-                let mut files = String::new();
-                for file in package["files"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                {
-                    let text =
-                        crate::vfs::read_to_string(gs.deliverable.join(file)).unwrap_or_default();
-                    files.push_str(&format!(
-                        "\n=== {file} ===\n{}",
-                        crate::llm::truncate(&text, 12_000)
-                    ));
-                }
-                let input=format!("Criterion: {statement}\n{criteria}\n\nContext:\n{}\n\nImplementing files:{files}\n\nJudge only {}. Reply PASS or FAIL with observed evidence.",package["context"].as_str().unwrap_or_default(),bound.test.name);
+                let files = judge_files(
+                    gs,
+                    package["files"].as_array().into_iter().flatten().filter_map(Value::as_str),
+                );
+                let input = judge_input(
+                    Some(statement),
+                    &criteria,
+                    package["context"].as_str().unwrap_or_default(),
+                    &files,
+                    &JUDGE.fill("ask-test", &[("test", &bound.test.name)]),
+                );
                 let reply = runner
                     .ask_traced(
                         include_str!(
@@ -1018,7 +1014,7 @@ mod tests {
             row.hashes.files = crate::gen::hash_implementing(&store.out, &gs, &row.files);
             row.verdict = "none".into();
             ledger.save(&store.out).unwrap();
-            store.save();
+            store.save_for_test();
             projects.push(project);
         }
         projects

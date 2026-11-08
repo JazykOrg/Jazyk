@@ -283,9 +283,8 @@ worker = "agentic"
   except the [allowed project scaffolding](./document-sets.md#matching-and-file-roles),
   `target`, and `node_modules`).
 
-- `deliverable`: accepted and ignored. An older file may still carry it, and
-  `update_project_settings` still writes it, but generation always uses the project
-  root and the set's `source`.
+- `deliverable`: accepted and ignored. An older file may still carry it, but no tool
+  writes it, and generation always uses the project root and the set's `source`.
 
 - `worker`: the built-in generation worker. `agentic` (default) runs each
   [`generate`](./goals/generate.md) goal as a session with file and command tools;

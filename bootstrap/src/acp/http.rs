@@ -232,17 +232,29 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // One directory per fixture. A clock reading is not unique: parallel tests start in
+    // the same microsecond, shared one root, and the first to finish removed it under
+    // the others ("no graph found").
+    fn fixture_dir() -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "jazyk-mcp-http-test-{}-{}",
+            crate::sys::process_id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn every_fixture_has_a_directory_of_its_own() {
+        let dirs: std::collections::BTreeSet<PathBuf> = (0..64).map(|_| fixture_dir()).collect();
+        assert_eq!(dirs.len(), 64);
+    }
+
     // A fixture project with a tiny store: one document, one entity, so a read tool
     // has something to answer with.
     fn fixture() -> (crate::project::Project, PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "jazyk-mcp-http-test-{}-{}",
-            crate::sys::process_id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = fixture_dir();
+        crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
             { let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path },

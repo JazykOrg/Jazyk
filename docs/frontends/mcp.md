@@ -327,6 +327,19 @@ only where the agent asks for it.
 catalog so clients can discover its lifecycle. After `begin_goals`, it advertises
 the batch's toolset. Embedded native, ACP and browser runners refresh this list
 before each model step. External clients can list again after a batch change.
+
+A stdio serving tells its client when the list moves:
+
+- `initialize` advertises `capabilities.tools.listChanged: true`. A serving over
+  [HTTP](#mcp-over-http) advertises no `listChanged`: that transport carries no
+  server-to-client messages.
+- After the client's first `tools/list`, the serving compares the tool names it would
+  list now with the ones the client last listed, after every message it answers. When
+  they differ (`begin_goals`, `done`, `abandon_goals`, `init_project`, a set-local
+  batch opening or closing), it writes
+  `{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}` right after the
+  response that moved them, and the names it compared become the new baseline.
+- A client that never lists tools gets no notification.
 File reads and the current-set matcher repair tools remain available during a
 Bind or Generate batch when that serving supports them. Verify retains file reads
 and listing without gaining file writes or matcher repair.

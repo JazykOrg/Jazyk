@@ -79,7 +79,10 @@ release without changing workflow modes. The agent only calls it for work the us
 requested, never to act on unrelated pending goals. Binding commits can advance
 the graph; the same requested workflow can release its generation phase again.
 Ratification, diagnostic answers, publishing credentials, and external publication
-keep their separate authorization rules.
+keep their separate authorization rules. Switching a mode to `auto` is a standing
+approval of all future work, so only a human makes it (the GUI toggle, a CLI flag,
+`/config` typed in chat, or the project file); `update_project_settings` refuses
+`auto` from a model ([project tools](../frontends/acp.md#project-tools)).
 
 A typed command approval covers the command's own work: its sessions carry the run's build token, and a release
 gate never refuses a session holding one, only real readiness does; `jazyk gen` also

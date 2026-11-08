@@ -223,7 +223,7 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
             from("", states("worker"), false),
         ),
         (
-            "gen.deliverable",
+            "deliverable",
             gs.deliverable.display().to_string(),
             from("", proj.gen_deliverable.is_some(), false),
         ),
@@ -259,14 +259,13 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
 // The keys `/config` will edit, the same set the chat tool takes; `executors.<kind>`
 // and `executors.<class>` route sessions of that kind or class to a profile.
 // Mirrors docs/frontends/acp.md#project-tools.
-pub const CONFIG_KEYS: [&str; 8] = [
+pub const CONFIG_KEYS: [&str; 7] = [
     "acp.agent",
     "llm.model",
     "llm.base_url",
     "workflow.compile",
     "workflow.generate",
     "workflow.worker",
-    "gen.deliverable",
     "gen.worker",
 ];
 

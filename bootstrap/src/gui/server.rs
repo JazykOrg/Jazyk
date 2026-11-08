@@ -611,10 +611,14 @@ pub(super) mod tests {
     }
 
     pub(crate) fn state(token: Option<&str>, gui_origin: &str) -> SharedState {
+        // One root per call: tests sharing an origin run in parallel and each removes
+        // its own root when done.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "jazyk-gui-server-test-{}-{}",
+            "jazyk-gui-server-test-{}-{}-{}",
             crate::sys::process_id(),
-            gui_origin.replace(|c: char| !c.is_alphanumeric(), "_")
+            gui_origin.replace(|c: char| !c.is_alphanumeric(), "_"),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).unwrap();
         let proj = crate::project::Project::load(&root);
@@ -1075,7 +1079,7 @@ pub(super) mod tests {
                 },
             );
             store.graph.diagnostics.insert("diag:shared".into(),serde_json::from_value(json!({"rule":"example","severity":"warning","lifecycle":"open","subjects":[],"message":"Example finding"})).unwrap());
-            store.save();
+            store.save_for_test();
         }
         let response = send(st.clone(), get_from("/api/graph", "https://sets.test")).await;
         assert_eq!(response.status(), StatusCode::OK);

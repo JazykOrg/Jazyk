@@ -2086,7 +2086,7 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
             .status
             .parked
             .retain(|p| !board.dropped_parked.contains(&p.goal.id));
-        store.save_status();
+        store.write_status("absorb derivation").ok();
     }
 }
 
@@ -2223,7 +2223,7 @@ pub(crate) async fn compile_under(
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();
-        store.save_status();
+        store.write_status("build opening").ok();
     }
     let (parsed, _links) = parse_all(proj);
     if !resuming {
@@ -2239,7 +2239,7 @@ pub(crate) async fn compile_under(
             .filter(|d| proj.is_root_file(d))
             .cloned()
             .collect();
-        store.save_status();
+        store.write_status("build roots").ok();
         sweep(&mut store, trace);
     }
     // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):
@@ -2944,7 +2944,7 @@ pub fn finalize(
         s.status.verdict.state = "incomplete".into();
         s.status.costs = costs.clone();
         s.status.spent.tokens += crate::llm::take_tokens_delta();
-        s.save_status();
+        s.write_status("stopped build").ok();
         trace.line("build", "stopped; completed commits retained");
         return BuildReport {
             verdict: s.status.verdict.to_string(),
@@ -3052,7 +3052,7 @@ pub fn finalize(
     });
     wrote |= s.status.changes.len() != before;
     if wrote {
-        s.save_status();
+        s.write_status("flow placement records").ok();
     }
 
     // The verdict: the board after the checks, blocked and optional riding as counts.
@@ -3101,7 +3101,7 @@ pub fn finalize(
     // assignment would clobber the spend of builds this process did not run.
     s.status.spent.tokens += crate::llm::take_tokens_delta();
     s.status.diagnostics = s.open_diag_counts();
-    s.save_status();
+    s.write_status("verdict").ok();
     trace.line("build", &s.status.verdict.to_string());
 
     let (mut errors, mut warnings) = (0usize, 0usize);
@@ -4662,13 +4662,12 @@ mod tests {
     }
 
     fn journal_dir() -> std::path::PathBuf {
+        // A counter, not the clock: parallel tests read the same clock value.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "jazyk-flip-test-{}-{}",
             crate::sys::process_id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         crate::vfs::create_dir_all(dir.join("journal")).unwrap();
         dir

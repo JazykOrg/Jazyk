@@ -725,6 +725,8 @@ pub struct Board {
     pub reopened: Vec<String>,
     // Parked entries whose target is gone or whose change moved on.
     pub dropped_parked: Vec<String>,
+    // Failed ledger entries the ledger no longer derives.
+    pub dropped_failed: Vec<String>,
     // Why each parked goal parked, by goal id, from its stored entry.
     // Mirrors docs/compiler/reconciler.md#parked-and-failed.
     pub parked_reasons: BTreeMap<String, String>,
@@ -774,6 +776,7 @@ impl Board {
         let mut dropped_parked = Vec::new();
         let mut parked_reasons = BTreeMap::new();
         let mut reopened = Vec::new();
+        let mut dropped_failed = Vec::new();
         for entry in &store.status.parked {
             let p = &entry.goal;
             let mut kept = true;
@@ -845,12 +848,18 @@ impl Board {
                     }
                 }
                 None => {
-                    if target_exists(store, &f.goal.target) {
+                    // A ledger goal is the ledger's to derive, failed or parked: a
+                    // failure about a row that reads current has nothing left to say.
+                    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+                    let ledger_kind = LEDGER_KINDS.contains(&f.goal.kind.as_str());
+                    if target_exists(store, &f.goal.target) && !ledger_kind {
                         let mut g = f.goal.clone();
                         g.state = GoalState::Failed {
                             reason: f.reason.clone(),
                         };
                         goals.push(g);
+                    } else if ledger_kind {
+                        dropped_failed.push(f.goal.id.clone());
                     }
                 }
             }
@@ -1038,6 +1047,7 @@ impl Board {
             lapsed,
             reopened,
             dropped_parked,
+            dropped_failed,
             parked_reasons,
             verdict: store.status.verdict.clone(),
             open_diags: store.open_diag_counts(),
@@ -3558,6 +3568,12 @@ pub(crate) mod tests {
         let b = derive(&verified);
         assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
         assert!(b.dropped_parked.contains(&done.id));
+        // A failed ledger goal the ledger no longer derives drops the same way.
+        verified.status.parked.clear();
+        verified.status.failed.push(crate::model::FailedGoal { goal: done.clone(), reason: "the test cannot run".into() });
+        let b = derive(&verified);
+        assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
+        assert!(b.dropped_failed.contains(&done.id), "{:?}", b.dropped_failed);
         // An entry parked by flip detection resumes blocked on the ruling, whatever
         // state it was written with, so no batch takes it.
         let mut ruled = settled_store();

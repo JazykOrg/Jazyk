@@ -2077,11 +2077,11 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
     if !board.lapsed.is_empty() {
         store.clear_changes(&board.lapsed);
     }
-    if !board.reopened.is_empty() || !board.dropped_parked.is_empty() {
+    if !board.reopened.is_empty() || !board.dropped_parked.is_empty() || !board.dropped_failed.is_empty() {
         store
             .status
             .failed
-            .retain(|f| !board.reopened.contains(&f.goal.id));
+            .retain(|f| !board.reopened.contains(&f.goal.id) && !board.dropped_failed.contains(&f.goal.id));
         store
             .status
             .parked
@@ -2924,7 +2924,21 @@ pub fn finalize(
     costs: &Costs,
     trace: &Trace,
 ) -> BuildReport {
+    // Parked goals persist whole, deduplicated by id; a cancelled build keeps the
+    // ones it parked before the stop. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    let keep_parked = |s: &mut Store, parked: Vec<ParkedGoal>| {
+        for g in parked {
+            match s.status.parked.iter_mut().find(|p| p.goal.id == g.goal.id) {
+                Some(p) => *p = g,
+                None => s.status.parked.push(g),
+            }
+        }
+    };
     if trace.is_cancelled() {
+        keep_parked(s, parked);
+        s.status
+            .parked
+            .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.goal.id));
         let control = Control::load(proj, &s.out);
         s.status.verdict = Board::derive(s, proj, &control).verdict();
         s.status.verdict.state = "incomplete".into();
@@ -2945,14 +2959,9 @@ pub fn finalize(
     if !settled.is_empty() {
         trace.line("build", &format!("settle: {}", settled.join("; ")));
     }
-    // Parked goals persist whole, deduplicated by id; flip detection adds its pairs.
+    // Flip detection adds its pairs to the build's parks.
     let (flips, flipped) = flip_detection(s);
-    for g in parked.into_iter().chain(flipped) {
-        match s.status.parked.iter_mut().find(|p| p.goal.id == g.goal.id) {
-            Some(p) => *p = g,
-            None => s.status.parked.push(g),
-        }
-    }
+    keep_parked(s, parked.into_iter().chain(flipped).collect());
     s.status
         .parked
         .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.goal.id));
@@ -6049,6 +6058,39 @@ mod tests {
         assert_eq!(run.sessions, 4);
         assert_eq!(run.parked.len(), 1);
         assert!(run.parked[0].reason.as_deref().unwrap().contains("after 4 attempts"));
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A stopped build keeps the goals it parked before the stop.
+    // Mirrors docs/compiler/compilation.md#a-build.
+    #[test]
+    fn a_cancelled_build_keeps_the_goals_it_parked() {
+        use std::sync::Arc;
+        let out = std::env::temp_dir().join(format!("jazyk-cancel-parks-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let text = "# Main\n\nThe system accepts an order.\n";
+        let parsed: ParsedDocs = [("docs/main.md".into(), (hash_hex(text), crate::md::parse_sections(text)))].into();
+        let mut store = Store { out: out.clone(), ..Default::default() };
+        store.sync_docs(&parsed);
+        let project = crate::board::tests::project_for(&store);
+        let cancel: Arc<std::sync::atomic::AtomicBool> = Default::default();
+        let trace = Trace::to_sink(crate::session::TraceLevel::Normal, Arc::new(|_: &TraceEvent| {}), cancel.clone());
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let goal = Goal {
+            id: "g:reconcile-section:docs/main.md#/main".into(),
+            kind: "reconcile-section".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "docs/main.md#/main".into(),
+            ..Default::default()
+        };
+        let parked = vec![ParkedGoal::new(goal.clone(), "left open after 4 attempts in session b1-1")];
+        let report = finalize(&mut store, &project, parked, &Costs::default(), &trace);
+        assert!(report.verdict.starts_with("incomplete"), "{}", report.verdict);
+        assert!(store.status.parked.iter().any(|p| p.goal.id == goal.id), "{:?}", store.status.parked);
+        let reloaded = Store::load(&out);
+        assert!(reloaded.status.parked.iter().any(|p| p.goal.id == goal.id), "the entry is on disk");
         crate::vfs::remove_dir_all(&out).ok();
     }
 

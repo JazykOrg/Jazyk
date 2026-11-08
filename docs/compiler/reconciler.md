@@ -734,9 +734,11 @@ failed goal survives a re-derivation that would otherwise drop it.
 
 The park `reason` says which road ran out, in the words the trace uses: the retry
 (`left open after 4 attempts in session b12-3`), the build cap or the `--sessions`
-limit, the dead-endpoint breaker with the last error, a cancelled build, a reopen cycle
+limit, the dead-endpoint breaker with the last error, a reopen cycle
 (`reopened-after-resolve: ...`), or a flip (`cross-class flip: ...`,
-`reparent flip: ...`). An entry written without one reads with no reason. The reason
+`reparent flip: ...`). A cancelled build keeps the entries it parked before the stop
+and parks nothing for the stop itself. An entry written without one reads with no
+reason. The reason
 rides wherever a parked goal is shown: the `incomplete-build` diagnostic's message,
 `jazyk explain` (a `parked:` line), the whole-build report of `jazyk ripple`, the
 board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status`.
@@ -781,7 +783,8 @@ board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status
   ledger goal (`bind`, `generate`, `verify`) the ledger no longer derives drops too:
   the ledger judges what landed, so a verify goal parked mid-run whose row reads
   verified since has nothing to resume (the slides example carried two such goals
-  across every run).
+  across every run). A failed ledger goal the ledger no longer derives drops the same
+  way: the failure was about a row or record that now reads current.
 
 ## Flip detection
 

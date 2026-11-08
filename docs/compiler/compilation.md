@@ -62,7 +62,9 @@ makes zero LLM calls.
 
 A user stop retains completed commits and drops the active session. It saves the
 incomplete verdict and spend, then releases the build lease. It runs no further
-checks, rendering, or docsgen. Remaining goals stay open. The next Build reads current
+checks, rendering, or docsgen. Goals the build parked before the stop stay parked
+with their reasons ([parked and failed](./reconciler.md#parked-and-failed)); the rest
+stay open. The next Build reads current
 saved documents, derives the board, and runs the ordinary lifecycle. Stop is not a
 failed session and creates no cancellation diagnostic.
 

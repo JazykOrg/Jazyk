@@ -916,6 +916,11 @@ async fn handle_action(
         } => {
             let started = crate::sys::Instant::now();
             if let Some(receipt) = state.tool_receipts.get(&id) {
+                if receipt.args.as_ref().is_some_and(|digest| *digest != super::arguments_digest(&parameters)) {
+                    return Err(Stop::Error(format!(
+                        "execution-uncertain: Tool call '{id}' replays with arguments that differ from its recorded receipt; reconcile it before resuming"
+                    )));
+                }
                 let _ = reply.send(if receipt.ok {
                     Ok(receipt.result.clone())
                 } else {
@@ -991,14 +996,17 @@ async fn handle_action(
             } else if ok {
                 state.consecutive_tool_errors = 0;
             }
+            let digest = Some(super::arguments_digest(&parameters));
             let receipt = match &result {
                 Ok(result) => ToolReceipt {
                     result: result.clone(),
                     ok,
+                    args: digest,
                 },
                 Err(error) => ToolReceipt {
                     result: error.clone(),
                     ok: false,
+                    args: digest,
                 },
             };
             state.tool_receipts.insert(id.clone(), receipt.clone());

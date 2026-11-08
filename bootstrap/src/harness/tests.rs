@@ -253,6 +253,30 @@ fn saved_tool_receipt_is_reused_after_restart() {
 }
 
 #[test]
+fn a_tool_receipt_replayed_with_other_arguments_is_refused() {
+    let mut host = Host::new(vec![call(), response("finished")]);
+    let mut store = Store {
+        fail: Some(CheckpointPhase::AfterTool),
+        ..Default::default()
+    };
+    let mut history = vec![json!({"role":"user","content":"Run the fixture"})];
+    let mut calls = 0;
+    let mut dispatch = |_: &str, _: &Value| {
+        calls += 1;
+        Ok("result".into())
+    };
+    assert!(matches!(run(&mut host, &mut store, &mut history, &mut dispatch, &mut |_| {}), Stop::Error(_)));
+    let saved = store.saved.as_mut().unwrap();
+    assert_eq!(saved.tool_receipts.len(), 1);
+    let receipt = saved.tool_receipts.values_mut().next().unwrap();
+    assert!(receipt.args.is_some(), "a receipt records its argument digest");
+    receipt.args = Some(super::arguments_digest(&json!({"other":"arguments"})));
+    let stop = run(&mut host, &mut store, &mut history, &mut dispatch, &mut |_| {});
+    assert!(matches!(stop, Stop::Error(ref error) if error.starts_with("execution-uncertain:")), "{stop:?}");
+    assert_eq!(calls, 1, "a refused replay never executes the call again");
+}
+
+#[test]
 fn unfinished_tool_intention_requires_reconciliation() {
     let mut host = Host::new(vec![call(), response("finished")]);
     let mut store = Store {

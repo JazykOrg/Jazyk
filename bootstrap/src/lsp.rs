@@ -1456,7 +1456,7 @@ mod tests {
         for id in ["ds_a", "ds_b"] {
             let mut s = crate::store::Store::load(&tmp.join(".jazyk").join(id));
             s.status.generation = 1;
-            s.save();
+            s.save_for_test();
         }
         let out = tmp.join(".jazyk");
         let first = super::store_fingerprint(&tmp, &out);
@@ -1476,7 +1476,7 @@ mod tests {
         // One set's generation moves: the fingerprint and the loaded store follow.
         let mut s = crate::store::Store::load(&out.join("ds_b"));
         s.status.generation = 2;
-        s.save_status();
+        s.save_for_test();
         let second = super::store_fingerprint(&tmp, &out);
         assert_ne!(first, second);
         lsp.refresh(&mut sink);

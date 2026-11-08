@@ -32,7 +32,7 @@ fn forced_generation_resumes_after_matcher_repair_without_replaying_a_completed_
                 &store.graph.criteria[&criterion].statement) + "\nPASS only when the greeting is Hello. FAIL otherwise.\n");
             facts.insert(name.to_string(), fact_hash(&store,&entity));
         }
-        store.save();
+        store.save_for_test();
         let mut ledger = Ledger::load(&project.out);
         ledger.medium = Some(Medium { form:"text".into(), produced:"written".into(), toolchain:String::new(), artifact:String::new() });
         ledger.save(&project.out).unwrap();

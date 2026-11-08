@@ -63,6 +63,7 @@ it and the next build reconciles from empty.
   workers/, leases/      # who is acting, see control-plane.md
   feedback.jsonl         # report_feedback entries
   .lock                  # single-writer lock
+  .committing            # commit marker, present while a commit writes
 ```
 
 The store owns the status, `build.yaml`, `markers.yaml`, `graph/`, `docs/`, and `journal/`. `diagrams/` is build
@@ -221,7 +222,7 @@ Everything else is local: rebuilt on demand, or a log of what ran.
     so two branches add different files under the same names, and a merge would
     conflict on every one. See [a fresh checkout](#a-fresh-checkout).
   - `trace/`, `sessions/`, `snapshots/`, `feedback.jsonl`: logs.
-  - `control.yaml`, `workers/`, `leases/`, `.lock`: who is acting here and what this
+  - `control.yaml`, `workers/`, `leases/`, `.lock`, `.committing`: who is acting here and what this
     operator released. The workflow defaults come from `jazyk.toml`, which is
     committed ([modes and releases](./control-plane.md#modes-and-releases)).
   - Everything else under the out directory (decompile drafts, benchmark results,
@@ -283,7 +284,10 @@ that wrote them. `jazyk ripple` follows the local journal only.
 
 Every file the store writes (a node file, a doc record, a status file, a journal entry,
 `build.yaml`) lands through a sibling temporary file renamed into place, so a reader or
-a crash never sees a half-written file. Native replacement preserves the existing
+a crash never sees a half-written file. The temporary file is flushed to disk (`fsync`)
+before the rename, and the directories the renames landed in are flushed before and
+after `build.yaml` is written, so a crash never leaves an empty file or a commit point
+ahead of the files it covers. Native replacement preserves the existing
 file permissions. `save` writes `build.yaml` last: its generation
 is the commit point a reader checks. A write that fails is reported with its path and the error,
 never dropped.
@@ -299,7 +303,7 @@ reads the same before and after the commit.
 
 A file that exists but does not parse makes the store read-only. The load reports the
 file and the parse error, reads continue with what did parse, and every writer
-(`apply`, the sweep, record clearing, a persisting alignment) refuses with
+(`apply`, the sweep, record clearing, a status write, a persisting alignment) refuses with
 `store-unreadable` naming the file until it is repaired or removed. A node file is never
 read as empty because it failed to parse: that would let the next commit overwrite it,
 and the sweep would collect the requirements of a document whose record did not load.
@@ -1024,10 +1028,21 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
   first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites
   commits it has not seen. The caller reloads and restages.
+- A status write outside a changeset (a build's opening, the goals a derivation lapsed,
+  parked and failed goals, the verdict) is a writer too: it takes the lock and is
+  refused the same way (`store-unreadable`, `store-version`, `store-moved`).
+- A writer puts down the commit marker `.committing` before its first file and removes
+  it after `build.yaml`. A marker present while no writer holds `.lock` was left by a
+  writer that stopped mid-commit; the next commit replaces it.
 - Compilation is sequential: one build at a time (the build lease enforces it), one
   session at a time within it. See [workers and leases](./control-plane.md#workers-and-leases).
 - Human paths (chat dual writes, decrees, triage, answers) commit between sessions under
   the same lock. A running session's staged creates are reconciled against them at
   commit by natural key ([changesets](#changesets)).
-- Readers (e.g. the [MCP server](../frontends/mcp.md)) do not lock. They read the generation
-  counter, load the node files, and retry if the counter moved mid-read.
+- Readers (e.g. the [MCP server](../frontends/mcp.md)) do not lock. A read counts when
+  no commit is in progress at its start and at its end (the marker is present and a
+  writer holds `.lock`) and the generation counter held still across it. Otherwise the
+  reader waits and retries. A store that never holds still for ten seconds loads
+  read-only with `store-busy`, never as a mix of two commits.
+- A store in an in-memory workspace is read and written by one thread, so a reader never
+  meets a commit in progress there and a marker in it is always a leftover.

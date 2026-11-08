@@ -1685,7 +1685,7 @@ impl McpServer {
         let parked_before = s.status.parked.len();
         s.status.parked.retain(|p| !batch_ids.contains(&p.goal.id));
         if !failed.is_empty() || parked_before != s.status.parked.len() {
-            s.save_status();
+            s.write_status("failed and parked goals").ok();
         }
         // The board re-derives; the goals this commit opened land on its journal
         // entry. Mirrors docs/compiler/graph.md#journal.
@@ -4320,7 +4320,7 @@ mod tests {
         let mut store = Store::load(&project.out);
         store.graph.requirements.insert("req:hosting-3".into(), crate::model::Requirement {statement:"The deployment runs on main.".into(), ..Default::default()});
         store.graph.criteria.insert("crit:hosting-11".into(), crate::model::Criterion {requirement:"req:hosting-3".into(),statement:"A push to master triggers deployment.".into(),kind:"positive".into(), ..Default::default()});
-        store.save();
+        store.save_for_test();
         let serving = McpServer::with_bridge(project.clone(), project.out.clone(), vec!["chat".into()], false, BridgeFlags {ephemeral:true,..Default::default()});
         let reply = serving.handle("tools/call", &json!({"name":"update_criterion","arguments":{"id":"crit:hosting-11","statement":"A push to main triggers deployment."}})).unwrap();
         assert_ne!(reply["isError"],true,"{reply}");
@@ -4364,7 +4364,7 @@ mod tests {
         store.graph.entities.insert("ent:page".into(), crate::model::Entity {
             name: "Page".into(), ..Default::default()
         });
-        store.save();
+        store.save_for_test();
         let server = McpServer::with_bridge(project.clone(), project.out,
             vec!["generate".into()], false,
             BridgeFlags { ephemeral: true, serve_files: true, ..Default::default() });
@@ -4455,7 +4455,7 @@ mod tests {
         store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
             statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default()
         });
-        store.save();
+        store.save_for_test();
         let make = |project:crate::project::Project| McpServer::with_bridge(project.clone(), project.out.clone(),
             vec!["generate".into()], false, BridgeFlags { ephemeral:true, serve_files:true, ..Default::default() });
         let server = make(project.clone());
@@ -4529,7 +4529,7 @@ mod tests {
             statement:"The project greets the reader.".into(),entities:vec!["ent:greeter".into()],..Default::default()});
         store.graph.criteria.insert("crit:greet".into(),crate::model::Criterion{
             requirement:"req:greet".into(),statement:"The greeting says hello.".into(),kind:"positive".into(),..Default::default()});
-        store.save();
+        store.save_for_test();
         // This takes the real native project.lock, not a flag that bypasses it.
         let guard = crate::control::begin_internal_build(&project,&out,"generate").unwrap();
         let token = crate::control::build_lease(&out).unwrap().worker;
@@ -4675,7 +4675,7 @@ mod tests {
         store.graph.criteria.insert("crit:greet".into(), crate::model::Criterion {
             requirement:"req:greet".into(),statement:"The greeting says hello.".into(),kind:"positive".into(),..Default::default()
         });
-        store.save();
+        store.save_for_test();
         let mut ledger = crate::gen::Ledger::load(&out);
         ledger.medium = Some(crate::gen::Medium {
             form:"text".into(),produced:"written".into(),toolchain:String::new(),artifact:String::new()
@@ -4820,7 +4820,7 @@ mod tests {
         store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
             statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default()
         });
-        store.save();
+        store.save_for_test();
         let mut control = crate::control::Control::load(&project, &out);
         control.generate = "auto".into();
         control.save(&out);
@@ -5533,7 +5533,7 @@ mod tests {
         s.graph
             .entities
             .insert("ent:tool".into(), ent("Tool", Some("ent:area")));
-        s.save();
+        s.save_for_test();
         let mut ledger = crate::gen::Ledger::load(&out);
         ledger.entities.insert(
             "receipt".into(),
@@ -5681,7 +5681,7 @@ mod tests {
         let mut store = Store::load(&project.out);
         store.graph.entities.insert("ent:deck".into(), crate::model::Entity { name:"Deck".into(), ..Default::default() });
         store.graph.requirements.insert("req:deck".into(), crate::model::Requirement { statement:"The deck contains three slides.".into(), entities:vec!["ent:deck".into()], ..Default::default() });
-        store.save();
+        store.save_for_test();
         let workspace = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
         let server = McpServer::with_bridge(workspace.clone(), workspace.out, vec!["chat".into()], false, BridgeFlags::default());
         let call = |name, args| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
@@ -5723,7 +5723,7 @@ mod tests {
         store.sync_docs(&parsed);
         store.graph.entities.insert("ent:greeter".into(), crate::model::Entity { name:"Greeter".into(), ..Default::default() });
         store.graph.requirements.insert("req:greet".into(), crate::model::Requirement { statement:"The greeter says hello.".into(), entities:vec!["ent:greeter".into()], ..Default::default() });
-        store.save();
+        store.save_for_test();
         let server = chat_server(&dir);
         let call = |name, args| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
         let decode = |reply: Value| serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap();
@@ -6639,7 +6639,7 @@ mod tests {
         let (parsed, _) = crate::reconcile::parse_all(&project);
         let mut store = Store::load(&project.out);
         store.sync_docs(&parsed);
-        store.save();
+        store.save_for_test();
         let serving = McpServer::new(project.clone(), project.out.clone(), vec!["graph".into()], false);
         let call = |name: &str, args: Value| serving.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
         let first = call("search", json!({"query":"sorts"}));

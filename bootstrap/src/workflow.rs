@@ -449,7 +449,7 @@ mod tests {
             store.status.changes.push(ChangeRecord::new(33, 1, 0, crate::store::CHANGE_PROMPT_UNANSWERED, id, "report_diagnostic"));
         }
         crate::derive::record_ledger_stale(&mut store, &gen::GenSettings::resolve(&project));
-        store.save();
+        store.save_for_test();
         gen::Ledger { medium: Some(gen::Medium { form: "Markdown page".into(), produced: "written".into(), toolchain: "text".into(), artifact: "src/site.md".into() }), ..Default::default() }.save(&project.out).unwrap();
         crate::vfs::write(project.out.join("control.yaml"), "compile: manual\ngenerate: manual\nreleased:\n  compile: {}\n  generate: 0\n").unwrap();
         fs.snapshot()

@@ -148,7 +148,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        s.save();
+        s.save_for_test();
         let gs = GenSettings {
             configured: true,
             deliverable: out.join("product"),

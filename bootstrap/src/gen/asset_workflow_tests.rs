@@ -129,7 +129,7 @@ fn fixture() -> Snapshot {
         )
         .unwrap();
     }
-    store.save();
+    store.save_for_test();
     Ledger {
         medium: Some(Medium {
             form: "HTML page".into(),
@@ -173,7 +173,7 @@ fn reanchor(files: &Snapshot, quote: &str, extra: &[(&str, &[u8])]) -> Snapshot 
     store.status.alignment.clear();
     cover(&mut store);
     crate::derive::record_ledger_stale(&mut store, &GenSettings::resolve(&project));
-    store.save();
+    store.save_for_test();
     fs.snapshot()
 }
 

@@ -342,8 +342,9 @@ opened   g:rejudge-pair:req:orders-6~req:payment-9  (g88 via entities)
 
 A build that ends `incomplete` (work parked, e.g. by a transient endpoint outage)
 retries on its own with backoff (30s doubling to 5 minutes, reset by any file change)
-instead of idling until the next edit.
-[Parked goals](../compiler/reconciler.md#parked-and-failed) resume first. Unfinished
+instead of idling until the next edit. The verdict that decides it is the named set's
+with `--set`, otherwise that of each set the watch compiles (the sets the paths claim,
+or every set). [Parked goals](../compiler/reconciler.md#parked-and-failed) resume first. Unfinished
 work is never silent, and watch is the loop that owns resuming it.
 
 ### jazyk monitor

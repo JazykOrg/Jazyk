@@ -1014,7 +1014,7 @@ mod tests {
             row.hashes.files = crate::gen::hash_implementing(&store.out, &gs, &row.files);
             row.verdict = "none".into();
             ledger.save(&store.out).unwrap();
-            store.save();
+            store.save_for_test();
             projects.push(project);
         }
         projects

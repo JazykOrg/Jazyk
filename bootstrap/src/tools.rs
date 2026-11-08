@@ -155,8 +155,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_section",
-            description: "Read one section's raw body and its child section titles. ref is a full section reference (doc.md#/ref).",
-            parameters: obj(json!({"ref": {"type": "string"}}), &["ref"]),
+            description: "Read one section's raw body and its child section titles. ref is a full section reference (doc.md#/ref). The body is capped at 400 lines and 16 KiB from line (default 1); a cut body carries truncated, totalLines, and nextLine.",
+            parameters: obj(json!({"ref": {"type": "string"}, "line": {"type": "integer", "minimum": 1}}), &["ref"]),
         },
         ToolDef {
             name: "get_entity",
@@ -170,9 +170,9 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "diagnostics",
-            description: "List diagnostics: id, rule, severity, lifecycle, triage, subjects, message. Open ones by default; lifecycle takes open, resolved, or all; rule and subject narrow further.",
+            description: "List diagnostics: id, rule, severity, lifecycle, triage, subjects, message. Open ones by default; lifecycle takes open, resolved, or all; rule and subject narrow further. At most 50 entries from offset (default 0); count is the number that match, and a cut listing carries truncated and nextOffset.",
             parameters: obj(
-                json!({"lifecycle": {"type": "string", "enum": ["open", "resolved", "all"]}, "rule": {"type": "string"}, "subject": {"type": "string"}}),
+                json!({"lifecycle": {"type": "string", "enum": ["open", "resolved", "all"]}, "rule": {"type": "string"}, "subject": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}}),
                 &[],
             ),
         },
@@ -654,11 +654,6 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}, "version": {"type": "string", "enum": ["changes", "input"]}}), &["run_id"]),
         },
         ToolDef {
-            name: "run_command",
-            description: "Execute a shell command under the deliverable directory (cwd is deliverable-relative, default .). Returns the exit code and output tail. Use it to run the build you wrote and read its failures; record the final commands in the manifest.",
-            parameters: obj(json!({"command": {"type": "string"}, "cwd": {"type": "string"}}), &["command"]),
-        },
-        ToolDef {
             name: "mark_goal_done",
             description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], parts: [{id, verdict: parented|edge-fixed|kept, reason}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike, unreferenced statement, open diagnostic, and composition part the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]} (one per declared attribute, inherited included, and per link); derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work: a listed item without a verdict is refused as *-unjudged, a verdict the staged work does not carry as *-unbacked, each naming the repair.",
             parameters: goal_claim_parameters(),
@@ -716,6 +711,53 @@ pub const READ_TOOLS: [&str; 9] = [
     "get_view",
     "diagnostics",
 ];
+// The calls without side effects whose answer the repeated-call guard recomputes before
+// it refuses a third identical call. Mirrors docs/compiler/sessions.md#repeated-calls.
+const REANSWERABLE_TOOLS: [&str; 10] = [
+    "graph_status",
+    "search",
+    "read_section",
+    "get_entity",
+    "get_view",
+    "diagnostics",
+    "read_text_file",
+    "list_files",
+    "generation_tasks",
+    "binding_tasks",
+];
+// The graph write tools, each all or nothing at staging.
+// Mirrors docs/compiler/tools.md#write-tools.
+pub const GRAPH_WRITE_TOOLS: [&str; 21] = [
+    "upsert_entity",
+    "update_entity",
+    "delete_entity",
+    "merge_entities",
+    "group_entities",
+    "dissolve_entity",
+    "upsert_requirement",
+    "update_requirement",
+    "delete_requirement",
+    "upsert_criterion",
+    "update_criterion",
+    "delete_criterion",
+    "set_coverage",
+    "report_diagnostic",
+    "update_diagnostic",
+    "resolve_diagnostic",
+    "place_anchor",
+    "orphan_anchor",
+    "upsert_view",
+    "update_view",
+    "delete_view",
+];
+// The files one list_files reply names at most.
+// Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+const LIST_FILES_LIMIT: usize = 500;
+// The caps of one read_section body and one diagnostics page.
+// Mirrors docs/compiler/tools.md#read-tools.
+const READ_SECTION_LINES: usize = 400;
+const READ_SECTION_BYTES: usize = 16 * 1024;
+const DIAGNOSTICS_PAGE: usize = 50;
 // The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
 pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
 // The batch claim of a rejudge-pair session: a goal tool served in that kind's slice
@@ -732,12 +774,11 @@ pub const VERIFY_TOOLS: [&str; 4] = [
     "run_tests",
     "record_verdict",
 ];
-// In-process only: a generation turn's file and command tools, never served over MCP.
-pub const FILE_TOOLS: [&str; 4] = [
+// In-process only: a generation turn's file tools, never served over MCP.
+pub const FILE_TOOLS: [&str; 3] = [
     "read_text_file",
     "write_text_file",
     "list_files",
-    "run_command",
 ];
 // The view tools, served beside the write tools. See docs/compiler/tools.md#view-tools.
 pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];
@@ -784,7 +825,7 @@ pub fn toolset_for_kinds(kinds: &[&str]) -> Vec<&'static str> {
         }
     }
     for t in GOAL_TOOLS {
-        if t != "run_command" && !v.contains(&t) {
+        if !v.contains(&t) {
             v.push(t);
         }
     }
@@ -808,10 +849,10 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         _ => None,
     } {
         let mut v = toolset_for_kinds(&[kind]);
-        // The in-process ledger workers get the file and command tools.
+        // The in-process ledger workers get the file tools.
         if matches!(task, "generate-entity" | "bind-requirement") {
             for t in FILE_TOOLS {
-                if t != "run_command" && !v.contains(&t) {
+                if !v.contains(&t) {
                     v.push(t);
                 }
             }
@@ -840,38 +881,20 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         // The compile serving's write surface; the lifecycle tools live in the server.
         "mcp-compile" => {
             let mut v = READ_TOOLS.to_vec();
-            v.extend([
-                "upsert_entity",
-                "update_entity",
-                "delete_entity",
-                "merge_entities",
-                "group_entities",
-                "dissolve_entity",
-                "upsert_requirement",
-                "update_requirement",
-                "delete_requirement",
-                "upsert_criterion",
-                "update_criterion",
-                "delete_criterion",
-                "set_coverage",
-                "report_diagnostic",
-                "update_diagnostic",
-                "resolve_diagnostic",
-                "place_anchor",
-                "orphan_anchor",
-                PAIR_SETTLE_TOOL,
-            ]);
-            v.extend(VIEW_TOOLS);
+            v.extend(GRAPH_WRITE_TOOLS);
+            v.push(PAIR_SETTLE_TOOL);
             v.extend(GOAL_TOOLS);
             v
         }
-        "mcp-write" => catalog()
-            .iter()
-            .map(|t| t.name)
-            .filter(|n| {
-                !GOAL_TOOLS.contains(n) && !FILE_TOOLS.contains(n) && !CHAT_TOOLS.contains(n)
-            })
-            .collect(),
+        // `jazyk mcp graph --write`: the read tools, the raw write tools, and the
+        // view tools, plus the task runtime tools a writable serving carries.
+        // Mirrors docs/compiler/tools.md#toolsets and docs/compiler/tools.md#task-runtime-tools.
+        "mcp-write" => {
+            let mut v = READ_TOOLS.to_vec();
+            v.extend(GRAPH_WRITE_TOOLS);
+            v.extend(crate::task_runtime::TOOLS);
+            v
+        }
         _ => READ_TOOLS.to_vec(),
     };
     if matches!(task, "mcp-generate" | "mcp-verify") { v.extend(crate::task_runtime::TOOLS); }
@@ -1497,7 +1520,7 @@ pub fn harness_owned_rule(rule: &str) -> bool {
 #[derive(Default, Clone)]
 pub struct CallMemory {
     repeats: std::collections::BTreeMap<String, u32>,
-    last_answers: std::collections::BTreeMap<String, String>,
+    last_answers: std::collections::BTreeMap<String, (String, (u64, usize))>,
     feedback_count: usize,
 }
 
@@ -1521,8 +1544,9 @@ pub struct ToolSession {
     // The repeated-call guard, keyed per open batch: the same call with the same
     // arguments has the same answer (docs/compiler/sessions.md#repeated-calls).
     repeats: std::collections::BTreeMap<String, u32>,
-    // The last answer per repeat key: a repeat whose answer changed is no repeat.
-    last_answers: std::collections::BTreeMap<String, String>,
+    // The last answer per repeat key, with the generation and staged-mutation count it
+    // was given under: a repeat whose answer changed is no repeat.
+    last_answers: std::collections::BTreeMap<String, (String, (u64, usize))>,
     refusals: u32,
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
@@ -2890,6 +2914,117 @@ impl ToolSession {
         Ok(())
     }
 
+    // The evidence checks of one claim, read-only over the store plus the staged work:
+    // mark_goal_done runs them before anything stages, and done runs them again over
+    // the final changeset. Mirrors docs/compiler/tools.md#goal-tools.
+    fn claim_evidence(&self, gs: &GoalScope, goal: &str, evidence: &Value) -> Result<(), ToolError> {
+        if gs.kind == "review-entity" {
+            self.review_evidence(goal, &gs.target, evidence)?;
+            // One lint entry per declared rule, filed backed by a lint finding on the
+            // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
+            self.lint_evidence(goal, &gs.target, evidence)?;
+        }
+        self.kind_evidence(gs, goal, evidence)?;
+        if gs.kind == "derive-criteria" {
+            self.criteria_evidence(goal, evidence)?;
+        }
+        Ok(())
+    }
+
+    // The criteria a requirement carries once the staged work applies.
+    fn criteria_after(&self, rid: &str) -> usize {
+        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
+        let rid = r(rid);
+        let deleted = |id: &str| {
+            self.staged.iter().any(|o| matches!(o, Op::DeleteCriterion { id: d, .. } if d == id))
+        };
+        let committed = self
+            .snapshot
+            .criteria_of(&rid)
+            .into_iter()
+            .filter(|id| !deleted(id))
+            .count();
+        let staged = self
+            .staged
+            .iter()
+            .filter(|o| matches!(o, Op::CreateCriterion { id, criterion } if r(&criterion.requirement) == rid && !deleted(id)))
+            .count();
+        committed + staged
+    }
+
+    // derive-criteria: one entry per requirement, complete backed by a criterion,
+    // open-question backed by an invented-choice prompt, both read after the staged
+    // work applies (docs/compiler/goals/derive-criteria.md#gate).
+    fn criteria_evidence(&self, goal: &str, evidence: &Value) -> Result<(), ToolError> {
+        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
+        {
+            let Some(list) = evidence["requirements"].as_array() else {
+                return Err(ToolError::new(
+                    "bad-evidence",
+                    format!(
+                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed; received {}",
+                        goal,
+                        match &evidence {
+                            Value::Null => "no evidence".to_string(),
+                            Value::String(_) => "a string that is not JSON".to_string(),
+                            Value::Array(_) => "a bare array (wrap it: {requirements: [...]})".to_string(),
+                            Value::Object(m) => format!("an object with keys {}", m.keys().cloned().collect::<Vec<_>>().join(", ")),
+                            other => other.to_string(),
+                        }
+                    ),
+                ));
+            };
+            for e in list {
+                let rid = e["id"].as_str().unwrap_or("").to_string();
+                let has_criterion = self.criteria_after(&rid) > 0;
+                match e["verdict"].as_str() {
+                    Some("complete") | Some("stated-only") => {
+                        if !has_criterion {
+                            return Err(ToolError::new(
+                                "criterion-missing",
+                                format!(
+                                    "{} claims {} {}, but no criterion is recorded or staged on it; upsert_criterion, or verdict open-question with an invented-choice prompt",
+                                    goal, rid, e["verdict"].as_str().unwrap_or("")
+                                ),
+                            ));
+                        }
+                    }
+                    Some("open-question") => {
+                        // Any open question naming the requirement backs the verdict:
+                        // a standing contradiction with its prompt is the question
+                        // (docs/compiler/goals/derive-criteria.md#gate).
+                        let asks = crate::goals::asks_for_answer;
+                        let names = |d: &Diagnostic| {
+                            asks(&d.rule, &d.prompt) && d.subjects.iter().any(|s| r(s) == r(&rid))
+                        };
+                        let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. } if names(diagnostic)))
+                            || self.open_diagnostics().iter().any(|(_, d)| names(d));
+                        if !prompted {
+                            return Err(ToolError::new(
+                                "unbacked-question",
+                                format!(
+                                    "{} claims {} open-question, but no open diagnostic with a prompt names it; report_diagnostic rule invented-choice with a prompt carrying the options, unless a standing contradiction, decision, or ambiguity already asks",
+                                    goal, rid
+                                ),
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(ToolError::new(
+                            "bad-verdict",
+                            format!(
+                                "verdict `{}` for {}: complete, stated-only, or open-question",
+                                other.unwrap_or("?"),
+                                rid
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn mark_goal_done(&mut self, args: &Value) -> Result<Value, ToolError> {
         let goal = Self::str_arg(args, "goal")?;
         let Some(gs) = self.scope.goal(&goal).cloned() else {
@@ -2925,21 +3060,32 @@ impl ToolSession {
         // Mirrors docs/compiler/goals/review-entity.md#gate.
         // Every check reads before anything stages, so a refused claim leaves the
         // changeset as it was.
-        if gs.kind == "review-entity" {
-            self.review_evidence(&goal, &gs.target, &evidence)?;
-            // One lint entry per declared rule, filed backed by a lint finding on the
-            // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
-            self.lint_evidence(&goal, &gs.target, &evidence)?;
-        }
-        self.kind_evidence(&gs, &goal, &evidence)?;
+        self.claim_evidence(&gs, &goal, &evidence)?;
         if gs.kind == "review-entity" {
             if let Some(list) = evidence["unreferenced"].as_array() {
                 let target = self.snapshot.resolve_id(&gs.target).to_string();
-                let word_matches: Vec<String> = list
+                // A repeated claim stages only the word matches no earlier claim staged.
+                let staged_already: BTreeSet<String> = self
+                    .staged
+                    .iter()
+                    .filter_map(|o| match o {
+                        Op::UpdateEntity { id, not_about_add, .. } if *id == target => {
+                            Some(not_about_add.clone())
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                let mut word_matches: Vec<String> = Vec::new();
+                for id in list
                     .iter()
                     .filter(|e| e["verdict"].as_str() == Some("word-match"))
                     .map(|e| Self::evidence_id(e, "id"))
-                    .collect();
+                {
+                    if !staged_already.contains(&id) && !word_matches.contains(&id) {
+                        word_matches.push(id);
+                    }
+                }
                 if !word_matches.is_empty() {
                     self.review_staged_note = Some(format!(
                         "the word-match verdicts stage one update on {} (its not_about list); done counts it as applied",
@@ -2960,73 +3106,6 @@ impl ToolSession {
                         add_attributes: Vec::new(),
                         provenance: None,
                     })?;
-                }
-            }
-        }
-        // derive-criteria: one entry per requirement, complete backed by a criterion,
-        // open-question backed by an invented-choice prompt
-        // (docs/compiler/goals/derive-criteria.md#gate).
-        if gs.kind == "derive-criteria" {
-            let Some(list) = evidence["requirements"].as_array() else {
-                return Err(ToolError::new(
-                    "bad-evidence",
-                    format!(
-                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed; received {}",
-                        goal,
-                        match &evidence {
-                            Value::Null => "no evidence".to_string(),
-                            Value::String(_) => "a string that is not JSON".to_string(),
-                            Value::Array(_) => "a bare array (wrap it: {requirements: [...]})".to_string(),
-                            Value::Object(m) => format!("an object with keys {}", m.keys().cloned().collect::<Vec<_>>().join(", ")),
-                            other => other.to_string(),
-                        }
-                    ),
-                ));
-            };
-            for e in list {
-                let rid = e["id"].as_str().unwrap_or("").to_string();
-                let has_criterion = !self.snapshot.criteria_of(&rid).is_empty()
-                    || self.staged.iter().any(|o| matches!(o, Op::CreateCriterion { criterion, .. } if criterion.requirement == rid));
-                match e["verdict"].as_str() {
-                    Some("complete") | Some("stated-only") => {
-                        if !has_criterion {
-                            return Err(ToolError::new(
-                                "criterion-missing",
-                                format!(
-                                    "{} claims {} {}, but no criterion is recorded or staged on it; upsert_criterion, or verdict open-question with an invented-choice prompt",
-                                    goal, rid, e["verdict"].as_str().unwrap_or("")
-                                ),
-                            ));
-                        }
-                    }
-                    Some("open-question") => {
-                        // Any open question naming the requirement backs the verdict:
-                        // a standing contradiction with its prompt is the question
-                        // (docs/compiler/goals/derive-criteria.md#gate).
-                        let asks = crate::goals::asks_for_answer;
-                        let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
-                            if asks(&diagnostic.rule, &diagnostic.prompt) && diagnostic.subjects.iter().any(|s| s == &rid)))
-                            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && asks(&d.rule, &d.prompt) && d.subjects.iter().any(|s| s == &rid));
-                        if !prompted {
-                            return Err(ToolError::new(
-                                "unbacked-question",
-                                format!(
-                                    "{} claims {} open-question, but no open diagnostic with a prompt names it; report_diagnostic rule invented-choice with a prompt carrying the options, unless a standing contradiction, decision, or ambiguity already asks",
-                                    goal, rid
-                                ),
-                            ));
-                        }
-                    }
-                    other => {
-                        return Err(ToolError::new(
-                            "bad-verdict",
-                            format!(
-                                "verdict `{}` for {}: complete, stated-only, or open-question",
-                                other.unwrap_or("?"),
-                                rid
-                            ),
-                        ));
-                    }
                 }
             }
         }
@@ -4051,7 +4130,7 @@ impl ToolSession {
             scope: Self::opt_str(v, "scope"),
             parent,
             stereotype: Self::opt_str(v, "stereotype"),
-            depth: v["depth"].as_u64().map(|d| d as u32),
+            depth: v["depth"].as_u64().map(|d| u32::try_from(d).unwrap_or(u32::MAX)),
         };
         if q.scope.is_none() && q.parent.is_none() && q.stereotype.is_none() {
             return Ok(None);
@@ -4170,6 +4249,20 @@ impl ToolSession {
     const READ_FILE_LINES: usize = 400;
     const READ_FILE_BYTES: usize = 64 * 1024;
 
+    // Whether a file tool path, as named or after its links resolve, is a protected
+    // path: credentials, hidden paths, Git internals, compiler state, nested projects.
+    fn protected_file(&self, rel: &str, path: &std::path::Path) -> bool {
+        let base = self.deliverable_root();
+        let open = |relative: &str| crate::task_runtime::safe_path(relative)
+            && crate::document_sets::allowed_components(relative)
+            && !crate::task_runtime::protected(relative)
+            && crate::document_sets::contained_relative(&base, relative);
+        let resolved = path.strip_prefix(&base)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        !open(rel.trim().trim_start_matches("./")) || !open(&resolved)
+    }
+
     fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         match name {
             "read_text_file" => {
@@ -4177,15 +4270,7 @@ impl ToolSession {
                 let path = self.deliverable_path(&rel)?;
                 // Listing and task snapshots exclude credentials and internal state.
                 // A guessed path, including an alias through a symlink, keeps that fence.
-                let base = self.deliverable_root();
-                let readable = |relative: &str| crate::task_runtime::safe_path(relative)
-                    && crate::document_sets::allowed_components(relative)
-                    && !crate::task_runtime::protected(relative)
-                    && crate::document_sets::contained_relative(&base, relative);
-                let resolved = path.strip_prefix(&base)
-                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_default();
-                if !readable(rel.trim().trim_start_matches("./")) || !readable(&resolved) {
+                if self.protected_file(&rel, &path) {
                     return Err(ToolError::new("protected-path", format!(
                         "`{rel}` is a protected path; file reads exclude credentials, hidden paths, Git internals, private compiler state and nested projects"
                     )));
@@ -4262,6 +4347,13 @@ impl ToolSession {
                 let content = args["content"].as_str().ok_or_else(|| ToolError::new("bad-args", "content must be a string".into()))?.to_owned();
                 if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));}
                 let path = self.deliverable_path(&rel)?;
+                // The protected-path fence holds with or without a workspace.
+                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+                if self.protected_file(&rel, &path) {
+                    return Err(ToolError::new("protected-path", format!(
+                        "`{rel}` is a protected path; file writes exclude credentials, hidden paths, Git internals, private compiler state and nested projects"
+                    )));
+                }
                 // File ownership: a path recorded for an entity outside this session's
                 // component group is off limits; the group shares its files.
                 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
@@ -4334,14 +4426,24 @@ impl ToolSession {
                 } else {
                     self.deliverable_path(&rel)?
                 };
+                // Breadth first in name order, each directory once after its links
+                // resolve, stopping at the listing cap.
+                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
                 let mut out: Vec<String> = Vec::new();
-                let mut stack = vec![root.clone()];
-                while let Some(dir) = stack.pop() {
+                let mut truncated = false;
+                let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+                if let Ok(c) = root.vcanonicalize() {
+                    seen.insert(c);
+                }
+                let mut queue = std::collections::VecDeque::from([root.clone()]);
+                'walk: while let Some(dir) = queue.pop_front() {
                     let Ok(entries) = crate::vfs::read_dir(&dir) else {
                         continue;
                     };
-                    for e in entries.flatten() {
-                        let p = e.path();
+                    let mut paths: Vec<std::path::PathBuf> =
+                        entries.flatten().map(|e| e.path()).collect();
+                    paths.sort();
+                    for p in paths {
                         let Ok(relative) = p.strip_prefix(&base) else {
                             continue;
                         };
@@ -4351,55 +4453,36 @@ impl ToolSession {
                         }
                         // A link pointing out of the deliverable is not listed:
                         // what cannot be read is not offered.
-                        if p.vcanonicalize().is_ok_and(|c| !c.starts_with(&base)) {
+                        let canonical = p.vcanonicalize();
+                        if canonical.as_ref().is_ok_and(|c| !c.starts_with(&base)) {
                             continue;
                         }
                         if p.vis_dir() {
-                            stack.push(p);
-                        } else if let Ok(r) = p.strip_prefix(&base) {
-                            out.push(r.to_string_lossy().replace('\\', "/"));
+                            // A directory reached again through a link is a loop.
+                            if let Ok(c) = canonical {
+                                if !seen.insert(c) {
+                                    continue;
+                                }
+                            }
+                            queue.push_back(p);
+                        } else {
+                            if out.len() >= LIST_FILES_LIMIT {
+                                truncated = true;
+                                break 'walk;
+                            }
+                            out.push(relative);
                         }
                     }
                 }
                 out.sort();
-                out.truncate(500);
                 let mut reply = json!({"files": out});
+                if truncated {
+                    reply["truncated"] = json!(true);
+                }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
                 }
                 Ok(reply)
-            }
-            "run_command" => {
-                let command = Self::str_arg(args, "command")?;
-                let cwd_rel = Self::opt_str(args, "cwd").unwrap_or_else(|| ".".into());
-                let cwd_rel = match crate::gen::unroot(&self.gen.deliverable, &cwd_rel) {
-                    Some(under) if under.is_empty() => ".".to_string(),
-                    Some(under) => under,
-                    None => cwd_rel,
-                };
-                let cwd = if cwd_rel == "." {
-                    self.gen.deliverable.clone()
-                } else {
-                    self.deliverable_path(&cwd_rel)?
-                };
-                let out = crate::sys::run_shell(&command, &cwd)
-                    .map_err(|e| {
-                        ToolError::new(
-                            "io-error",
-                            format!("cannot run `{}` in {}: {}", command, cwd.display(), e),
-                        )
-                    })?;
-                let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-                text.push_str(&String::from_utf8_lossy(&out.stderr));
-                let tail: String = {
-                    let lines: Vec<&str> = text.lines().collect();
-                    let start = lines.len().saturating_sub(60);
-                    lines[start..].join("\n")
-                };
-                Ok(json!({
-                    "exitCode": out.code,
-                    "output": crate::llm::truncate(&tail, 6000),
-                }))
             }
             _ => unreachable!(),
         }
@@ -5398,8 +5481,23 @@ impl ToolSession {
                 | "record_generation" | "record_binding" | PAIR_SETTLE_TOOL
         ) || crate::task_runtime::TOOLS.contains(&name);
         if !exempt {
+            // A load keys on the target it resolves to, so an alias and its id are one
+            // call, and counts only while that target is loaded: a refused load or an
+            // evicted target starts again.
             let key = if name == "load" {
-                format!("load|{}", args["target"].as_str().unwrap_or_default())
+                let raw = args["target"].as_str().unwrap_or_default();
+                let id = self.canon_entity_id(raw).unwrap_or_else(|| raw.to_string());
+                let id = self.snapshot.resolve_id(&id).to_string();
+                let loaded = self
+                    .loaded
+                    .items
+                    .iter()
+                    .any(|i| i.target == id && i.what != "stub");
+                let key = format!("load|{}", id);
+                if !loaded {
+                    self.repeats.remove(&key);
+                }
+                key
             } else {
                 format!("{}|{}", name, args)
             };
@@ -5409,6 +5507,29 @@ impl ToolSession {
                 *c
             };
             if seen >= 3 {
+                // The state may have moved since the last answer: a pure read answers
+                // again and is compared, any other call compares the generation and the
+                // staged mutations it was answered under.
+                let staged = self.state_mark();
+                let moved = if REANSWERABLE_TOOLS.contains(&name) {
+                    let result = self.dispatch_gated(name, args);
+                    let answer = Self::answer_text(&result);
+                    if self.last_answers.get(&key).map(|(a, _)| a) != Some(&answer) {
+                        self.last_answers.insert(key.clone(), (answer, self.state_mark()));
+                        self.repeats.insert(key, 1);
+                        return result;
+                    }
+                    false
+                } else {
+                    self.last_answers.get(&key).map(|(_, n)| *n) != Some(staged)
+                };
+                if moved {
+                    self.repeats.insert(key.clone(), 1);
+                    let result = self.dispatch_gated(name, args);
+                    let answer = Self::answer_text(&result);
+                    self.last_answers.insert(key, (answer, self.state_mark()));
+                    return result;
+                }
                 self.refusals += 1;
                 // Past eight refusals in one batch, the serving finishes the session
                 // implicitly: the staged work commits under the same gates the budget
@@ -5427,13 +5548,11 @@ impl ToolSession {
             // A repeat is marked only when its answer matches the previous one; a
             // changed answer means the state moved, and the count starts again.
             let result = self.dispatch_gated(name, args);
-            let answer = match &result {
-                Ok(v) => v.to_string(),
-                Err(e) => format!("{}: {}", e.rule, e.message),
-            };
+            let answer = Self::answer_text(&result);
             // A load of a loaded target is a repeat by target, whatever it answers.
-            let same = name == "load" || self.last_answers.get(&key) == Some(&answer);
-            self.last_answers.insert(key.clone(), answer);
+            let same = name == "load"
+                || self.last_answers.get(&key).map(|(a, _)| a) == Some(&answer);
+            self.last_answers.insert(key.clone(), (answer, self.state_mark()));
             if seen == 2 {
                 if !same {
                     self.repeats.insert(key, 1);
@@ -5452,6 +5571,35 @@ impl ToolSession {
         self.dispatch_gated(name, args)
     }
 
+    // One page of a diagnostics listing: at most DIAGNOSTICS_PAGE entries from
+    // `offset`, `count` the number that match. Mirrors docs/compiler/tools.md#read-tools.
+    fn diagnostics_page(list: Vec<Value>, args: &Value) -> Value {
+        let count = list.len();
+        let offset = args["offset"].as_u64().map(|o| o as usize).unwrap_or(0);
+        let page: Vec<Value> = list.into_iter().skip(offset).take(DIAGNOSTICS_PAGE).collect();
+        let next = offset.saturating_add(page.len());
+        let mut v = json!({"diagnostics": page, "count": count});
+        if next < count {
+            v["truncated"] = json!(true);
+            v["nextOffset"] = json!(next);
+        }
+        v
+    }
+
+    // The state a call is answered under, for the repeated-call guard: the committed
+    // generation (per-call servings commit between calls) and the staged mutations.
+    fn state_mark(&self) -> (u64, usize) {
+        (self.snapshot.status.generation, self.staged.len())
+    }
+
+    // The comparable text of an answer, for the repeated-call guard.
+    fn answer_text(result: &Result<Value, ToolError>) -> String {
+        match result {
+            Ok(v) => v.to_string(),
+            Err(e) => format!("{}: {}", e.rule, e.message),
+        }
+    }
+
     fn dispatch_gated(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         // Reads see the session's snapshot, not its staged mutations. Saying so on
         // every read while writes are staged stops the caller from concluding a
@@ -5465,7 +5613,31 @@ impl ToolSession {
             });
         }
         let before = self.staged.len();
-        let mut v = self.dispatch_inner(name, args)?;
+        // A graph write is all or nothing: a refused one leaves neither staged ops
+        // nor lookup entries behind. Mirrors docs/compiler/tools.md#write-tools.
+        let saved = GRAPH_WRITE_TOOLS.contains(&name).then(|| {
+            (
+                self.staged_entities.clone(),
+                self.staged_diags.clone(),
+                self.staged_reqs.clone(),
+                self.staged_views.clone(),
+                self.staged_parents.clone(),
+                self.taken_ids.clone(),
+            )
+        });
+        let result = self.dispatch_inner(name, args);
+        if let (Err(_), Some(saved)) = (&result, saved) {
+            self.staged.truncate(before);
+            (
+                self.staged_entities,
+                self.staged_diags,
+                self.staged_reqs,
+                self.staged_views,
+                self.staged_parents,
+                self.taken_ids,
+            ) = saved;
+        }
+        let mut v = result?;
         // A mutating reply previews the goals the mutation will open at commit and
         // re-renders the condensed status block.
         // Mirrors docs/compiler/reconciler.md#bubbling.
@@ -5507,7 +5679,8 @@ impl ToolSession {
         match name {
             "load" => {
                 let target = Self::str_arg(args, "target")?;
-                let depth = args["depth"].as_u64().unwrap_or(1).max(1) as u32;
+                // A depth past u32 saturates instead of wrapping to a shallow load.
+                let depth = u32::try_from(args["depth"].as_u64().unwrap_or(1).max(1)).unwrap_or(u32::MAX);
                 let id = self.canon_entity_id(&target).unwrap_or(target);
                 self.refuse_past_high_water("load", Some(&id))?;
                 let text = self
@@ -5615,12 +5788,29 @@ impl ToolSession {
                 // The drill-down links: computed here from the containment tree and
                 // the level views, never stored. Mirrors docs/compiler/tools.md#read-tools.
                 let children = self.view_children(v);
+                // The relationships among the members, lifted and collapsed as the
+                // rendering draws them. Mirrors docs/compiler/tools.md#read-tools.
+                let relationships: Vec<Value> =
+                    crate::render::view_relationships(&self.snapshot, &id, v)
+                        .into_iter()
+                        .map(|(a, b, ty, cardinality, count)| {
+                            let mut r = json!({"a": a, "b": b, "type": ty});
+                            if let Some(c) = cardinality {
+                                r["cardinality"] = json!(c);
+                            }
+                            if count > 1 {
+                                r["count"] = json!(count);
+                            }
+                            r
+                        })
+                        .collect();
                 let reply = json!({
                     "id": id, "kind": v.kind, "title": v.title, "members": v.members,
                     "excluded": v.excluded.iter().map(|x| json!({"id": x.id, "note": x.note})).collect::<Vec<_>>(),
                     "collapse": v.collapse, "query": v.query, "default": v.default,
                     "rendering": format!("diagrams/{}/{}.svg", v.kind, slug),
                     "children": children,
+                    "relationships": relationships,
                 });
                 self.loaded.load_stub(&self.snapshot, &id);
                 Ok(reply)
@@ -5734,7 +5924,35 @@ impl ToolSession {
                     .filter(|(_, c)| c.parent.as_deref() == Some(sec.as_str()))
                     .map(|(r, c)| format!("{}#{} ({})", doc, r, c.title))
                     .collect();
-                let reply = json!({"title": s.title, "raw": s.raw, "children": children});
+                // Bounded by lines and bytes from `line`, as file reads are.
+                // Mirrors docs/compiler/tools.md#read-tools.
+                let start = args["line"].as_u64().map(|l| (l as usize).saturating_sub(1)).unwrap_or(0);
+                let total = s.raw.split_inclusive('\n').count();
+                let mut body = String::new();
+                let mut taken = 0usize;
+                for line in s.raw.split_inclusive('\n').skip(start).take(READ_SECTION_LINES) {
+                    if body.len() + line.len() > READ_SECTION_BYTES {
+                        if taken == 0 {
+                            let mut end = READ_SECTION_BYTES.min(line.len());
+                            while !line.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            body.push_str(&line[..end]);
+                            taken = 1;
+                        }
+                        break;
+                    }
+                    body.push_str(line);
+                    taken += 1;
+                }
+                let mut reply = json!({"title": s.title, "raw": body, "children": children});
+                if start > 0 || start + taken < total || body.len() < s.raw.len() {
+                    reply["totalLines"] = json!(total);
+                }
+                if start + taken < total {
+                    reply["truncated"] = json!(true);
+                    reply["nextLine"] = json!(start + taken + 1);
+                }
                 self.loaded
                     .load_stub(&self.snapshot, &format!("{}#{}", doc, sec));
                 Ok(reply)
@@ -5942,14 +6160,14 @@ impl ToolSession {
                             }
                         })
                         .collect();
-                    let mut v = json!({"diagnostics": list, "count": list.len()});
+                    let mut v = Self::diagnostics_page(list, args);
                     if !bookkeeping.is_empty() {
                         v["bookkeeping"] = json!(bookkeeping);
                         v["bookkeepingNote"] = json!("the build's own records, never a session's to resolve; pass rule to list them");
                     }
                     return Ok(v);
                 }
-                Ok(json!({"diagnostics": list, "count": list.len()}))
+                Ok(Self::diagnostics_page(list, args))
             }
             "upsert_entity" => {
                 let name_arg = Self::str_arg(args, "name")?;
@@ -7674,7 +7892,7 @@ impl ToolSession {
                 }
                 Ok(reply)
             }
-            "read_text_file" | "write_text_file" | "list_files" | "run_command" => {
+            "read_text_file" | "write_text_file" | "list_files" => {
                 self.file_tool(name, args)
             }
             // An external agent's own report of what its run billed for the open batch.
@@ -7842,11 +8060,14 @@ impl ToolSession {
                 if let Some(e) = self.dishonest_covered() {
                     return Err(e);
                 }
-                // Every resolution's gate still holds over the final changeset.
+                // Every resolution's gate and evidence still hold over the final
+                // changeset: work staged after a claim cannot undo what backs it.
                 let scopes: Vec<GoalScope> = self.scope.goals.clone();
                 for gs in &scopes {
-                    if matches!(self.outcomes.get(&gs.goal), Some(GoalOutcome::Done { .. })) {
+                    if let Some(GoalOutcome::Done { evidence, .. }) = self.outcomes.get(&gs.goal) {
+                        let evidence = evidence.clone();
                         self.goal_gate(gs)?;
+                        self.claim_evidence(gs, &gs.goal, &evidence)?;
                     }
                 }
                 // The union of the batch's kinds' gates over the whole changeset.
@@ -10185,6 +10406,14 @@ mod tests {
             "{:?}",
             t.staged.len()
         );
+        // A repeated claim stages no second update.
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:review-entity:ent:customer", "justification": "Reviewed.",
+                    "evidence": {"definition": "current", "unreferenced": [{"id": "req:a", "verdict": "word-match", "reason": "the Customer is the object here"}]}}),
+        )
+        .unwrap();
+        assert_eq!(t.staged.len(), 1, "{:?}", t.staged.len());
     }
 
     fn open_diag(rule: &str, subjects: &[&str]) -> Diagnostic {
@@ -10582,6 +10811,47 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "criteria-unjudged", "{}", err.message);
         assert!(err.message.contains("req:b"), "{}", err.message);
+    }
+
+    // A claim reads the store after the staged work, at the mark and again at done:
+    // a criterion deleted in the session backs no verdict.
+    // Mirrors docs/compiler/sessions.md#resolving-failing-parking.
+    #[test]
+    fn derive_criteria_evidence_reads_the_staged_work_at_mark_and_done() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:sort".into(), plain("Sort"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "The utility sorts.".into(),
+                entities: vec!["ent:sort".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.criteria.insert(
+            "crit:a-1".into(),
+            crate::model::Criterion {
+                requirement: "req:a".into(),
+                statement: "Three lines come out ordered.".into(),
+                kind: "positive".into(),
+                ..Default::default()
+            },
+        );
+        let goals = one_goal("derive-criteria", "ent:sort", json!({"none": ["req:a"], "revised": []}));
+        let claim = json!({"goal": "g:derive-criteria:ent:sort", "justification": "Criteria written.",
+                "evidence": {"requirements": [{"id": "req:a", "criteria": ["crit:a-1"], "verdict": "stated-only"}]}});
+        let delete = json!({"id": "crit:a-1", "reason": "wrong"});
+        // A delete staged before the claim.
+        let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        t.dispatch("delete_criterion", &delete).unwrap();
+        let err = t.dispatch("mark_goal_done", &claim).unwrap_err();
+        assert_eq!(err.rule, "criterion-missing", "{}", err.message);
+        // A delete staged after the claim is caught at done.
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        t.dispatch("mark_goal_done", &claim).unwrap();
+        t.dispatch("delete_criterion", &delete).unwrap();
+        let err = t.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        assert_eq!(err.rule, "criterion-missing", "{}", err.message);
     }
 
     // Mirrors docs/compiler/tools.md#write-tools: remove_parent takes an entity out of
@@ -11455,6 +11725,120 @@ mod tests {
         assert!(!toolset("no-such-task").contains(&"mark_goal_done"));
     }
 
+    // read_section and diagnostics replies are bounded and page on.
+    // Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn read_section_and_diagnostics_replies_are_capped() {
+        let mut t = session();
+        let mut body = String::from("# Big\n");
+        for i in 0..(READ_SECTION_LINES + 20) {
+            body.push_str(&format!("Line {} of the long section.\n", i));
+        }
+        t.snapshot.docs.insert(
+            "big.md".into(),
+            DocRecord {
+                content_hash: hash_hex(&body),
+                sections: crate::md::parse_sections(&body),
+                coverage: BTreeMap::new(),
+            },
+        );
+        let v = t.dispatch("read_section", &json!({"ref": "big.md"})).unwrap();
+        assert_eq!(v["truncated"], true, "{}", v["nextLine"]);
+        let next = v["nextLine"].as_u64().unwrap();
+        assert!(v["raw"].as_str().unwrap().len() <= READ_SECTION_BYTES);
+        let rest = t.dispatch("read_section", &json!({"ref": "big.md", "line": next})).unwrap();
+        assert!(rest.get("truncated").is_none(), "{}", rest["nextLine"]);
+        assert!(rest["raw"].as_str().unwrap().contains(&format!("Line {} of", READ_SECTION_LINES + 19)));
+        for i in 0..(DIAGNOSTICS_PAGE + 7) {
+            t.snapshot.graph.diagnostics.insert(format!("diag:x-{:03}", i), open_diag("ambiguity", &["ent:customer"]));
+        }
+        let v = t.dispatch("diagnostics", &json!({})).unwrap();
+        assert_eq!(v["diagnostics"].as_array().unwrap().len(), DIAGNOSTICS_PAGE);
+        assert_eq!(v["count"], DIAGNOSTICS_PAGE + 7);
+        assert_eq!(v["nextOffset"], DIAGNOSTICS_PAGE);
+        let v = t.dispatch("diagnostics", &json!({"offset": DIAGNOSTICS_PAGE})).unwrap();
+        assert_eq!(v["diagnostics"].as_array().unwrap().len(), 7);
+        assert!(v.get("truncated").is_none());
+    }
+
+    // docs/compiler/tools.schema.yaml specifies every catalog tool's request: one
+    // definition per tool (camelCase, `Request` suffix optional) with the same
+    // property names and the same required fields.
+    #[test]
+    fn the_tool_schema_matches_the_catalog() {
+        let text = include_str!("../../docs/compiler/tools.schema.yaml");
+        let schema: Value = serde_norway::from_str(text).expect("tools.schema.yaml parses");
+        let defs = schema["definitions"].as_object().expect("definitions");
+        let camel = |name: &str| {
+            let mut out = String::new();
+            let mut up = false;
+            for c in name.chars() {
+                if c == '_' {
+                    up = true;
+                } else if up {
+                    out.extend(c.to_uppercase());
+                    up = false;
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let names = |v: &Value, key: &str| -> BTreeSet<String> {
+            match key {
+                "required" => v["required"].as_array().into_iter().flatten()
+                    .filter_map(|x| x.as_str().map(String::from)).collect(),
+                _ => v["properties"].as_object().into_iter().flatten()
+                    .map(|(k, _)| k.clone()).collect(),
+            }
+        };
+        // report_diagnostic: tools.md and the schema require reasoning, the catalog
+        // and the served prompts leave it optional; an owner decision settles which.
+        let pending: [(&str, &str); 1] = [("report_diagnostic", "reasoning")];
+        let mut drift: Vec<String> = Vec::new();
+        for mut tool in catalog() {
+            // The catalog's done is a worker's; the schema's adds the MCP beginNext.
+            if tool.name == "done" {
+                tool.parameters = done_parameters(true);
+            }
+            let base = camel(tool.name);
+            let Some(def) = defs.get(&format!("{}Request", base)).or_else(|| defs.get(&base)) else {
+                drift.push(format!("{}: no {}Request or {} definition", tool.name, base, base));
+                continue;
+            };
+            for key in ["properties", "required"] {
+                let (want, mut have) = (names(&tool.parameters, key), names(def, key));
+                for (t, field) in pending {
+                    if t == tool.name && key == "required" {
+                        have.remove(field);
+                    }
+                }
+                if want != have {
+                    drift.push(format!("{} {}: catalog {:?}, schema {:?}", tool.name, key, want, have));
+                }
+            }
+        }
+        assert!(drift.is_empty(), "tools.schema.yaml drifted from the catalog:\n{}", drift.join("\n"));
+    }
+
+    // The graph --write serving is what tools.md#toolsets names: the read tools, the
+    // raw write tools and view tools, the task runtime tools, feedback, and spend.
+    #[test]
+    fn the_write_serving_is_the_documented_set() {
+        let served = toolset("mcp-write");
+        let mut expected: Vec<&str> = READ_TOOLS.to_vec();
+        expected.extend(GRAPH_WRITE_TOOLS);
+        expected.extend(crate::task_runtime::TOOLS);
+        expected.extend([FEEDBACK_TOOL, SPEND_TOOL]);
+        let mut a = served.clone();
+        a.sort();
+        expected.sort();
+        assert_eq!(a, expected);
+        for absent in ["record_generation", "begin_binding", "record_verdict", PAIR_SETTLE_TOOL, "mark_goal_done"] {
+            assert!(!served.contains(&absent), "{absent}");
+        }
+    }
+
     #[test]
     fn generation_workers_can_resolve_an_undecided_medium() {
         for task in ["generate", "bind", "generate-entity", "bind-requirement", "mcp-generate"] {
@@ -11466,6 +11850,7 @@ mod tests {
             let prompt = crate::goals::kind(kind).unwrap().prompt();
             assert!(!prompt.contains("run_command"), "{kind} advertises an unavailable command tool");
             assert!(!toolset(kind).contains(&"run_command"));
+            assert!(!catalog().iter().any(|t| t.name == "run_command"), "the catalog keeps an unserved command tool");
             for name in crate::task_runtime::TOOLS {
                 assert!(toolset(kind).contains(&name), "{kind} lacks {name}");
             }
@@ -12067,6 +12452,88 @@ mod tests {
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
     }
 
+    // A refused load never counts, an alias and its id are one load, and a third
+    // identical call whose state moved answers instead of being refused.
+    // Mirrors docs/compiler/sessions.md#repeated-calls.
+    #[test]
+    fn repeated_call_guard_follows_state_not_raw_arguments() {
+        let mut t = session();
+        for _ in 0..4 {
+            let err = t.dispatch("load", &json!({"target": "ent:nope"})).unwrap_err();
+            assert_ne!(err.rule, "repeated-call");
+        }
+        t.dispatch("load", &json!({"target": "Customer"})).unwrap();
+        let v = t.dispatch("load", &json!({"target": "ent:customer"})).unwrap();
+        assert!(v["repeat"].is_string(), "{}", v);
+        // A read whose answer moved after its marked repeat answers on the third call.
+        let args = json!({"query": "gizmo"});
+        t.dispatch("search", &args).unwrap();
+        assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+        t.snapshot.graph.entities.insert("ent:gizmo".into(), plain("Gizmo"));
+        let v = t.dispatch("search", &args).unwrap();
+        assert!(v.get("repeat").is_none(), "{}", v);
+        // A write refused twice answers again once the session staged a mutation.
+        let args = json!({"id": "ent:sprocket", "reason": "unused"});
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.dispatch("delete_entity", &args).unwrap_err();
+        let up = json!({"name": "Sprocket", "definition": "a toothed wheel", "mention": {"section": "shop.md#/shop/cart", "quote": "a Sprocket"}});
+        t.dispatch("upsert_entity", &up).unwrap();
+        let third = t.dispatch("delete_entity", &args);
+        assert!(third.as_ref().err().map(|e| e.rule.as_str()) != Some("repeated-call"), "{:?}", third.err());
+        // With nothing moved, the third call is refused.
+        let args = json!({"id": "ent:ghost", "reason": "unused"});
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.dispatch("delete_entity", &args).unwrap_err();
+        assert_eq!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
+        // A commit between per-call sessions moves the state as well.
+        let args = json!({"id": "ent:phantom", "reason": "unused"});
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.snapshot.status.generation += 1;
+        assert_ne!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
+    }
+
+    // A refused write stages nothing and leaves no lookup entry behind.
+    // Mirrors docs/compiler/tools.md#write-tools.
+    #[test]
+    fn a_refused_write_leaves_no_staged_lookup_entries() {
+        let mut t = session();
+        t.snapshot.graph.entities.insert("ent:gadget".into(), plain("Gadget"));
+        t.mutation_limit = 0;
+        let up = json!({"name": "Sprocket", "definition": "a toothed wheel", "mention": {"section": "shop.md#/shop/cart", "quote": "a Sprocket"}});
+        assert_eq!(t.dispatch("upsert_entity", &up).unwrap_err().rule, "mutation-budget");
+        let err = t
+            .dispatch("update_entity", &json!({"id": "ent:customer", "parent": "ent:gadget"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "mutation-budget");
+        assert!(t.staged.is_empty());
+        assert!(t.staged_entities.is_empty());
+        assert!(t.staged_parents.is_empty());
+        assert!(t.taken_ids.is_empty());
+        // With budget again, the same create mints the same id it would have.
+        t.mutation_limit = 64;
+        let v = t.dispatch("upsert_entity", &up).unwrap();
+        assert_eq!(v["id"], "ent:sprocket", "{}", v);
+    }
+
+    // A depth past u32 saturates: it loads deep, never wraps to a shallow load.
+    #[test]
+    fn a_huge_load_depth_saturates_instead_of_wrapping() {
+        let mut t = session();
+        t.snapshot.graph.entities.insert("ent:order".into(), plain("Order"));
+        t.snapshot.graph.requirements.insert(
+            "req:a".into(),
+            quoted_req("A Customer places an Order.", &["ent:customer", "ent:order"], "Customer"),
+        );
+        t.dispatch("load", &json!({"target": "ent:customer", "depth": 4294967296u64}))
+            .unwrap();
+        assert!(
+            t.loaded.items.iter().any(|i| i.target == "ent:order" && i.what.starts_with("full")),
+            "{:?}",
+            t.loaded.items.iter().map(|i| (&i.target, &i.what)).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn rejected_ledger_records_can_retry_after_test_source_repair() {
         for name in ["record_generation", "record_binding"] {
@@ -12471,6 +12938,61 @@ mod tests {
             assert!(err.message.contains(id), "{}", err.message);
         }
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // write_text_file keeps the protected-path fence when no workspace exists.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    #[test]
+    fn writes_refuse_protected_paths_without_a_workspace() {
+        let base = std::env::temp_dir().join(format!(
+            "jazyk-protected-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        crate::vfs::create_dir_all(&base).unwrap();
+        let mut t = session();
+        t.gen.deliverable = base.clone();
+        for path in [".env", ".git/config", ".jazyk/status.yaml", "keys/server.pem", "a/.ssh/id_rsa"] {
+            let err = t
+                .dispatch("write_text_file", &json!({"path": path, "content": "x"}))
+                .unwrap_err();
+            assert_eq!(err.rule, "protected-path", "{path}: {}", err.message);
+            assert!(!base.join(path).vexists(), "{path}");
+        }
+        t.dispatch("write_text_file", &json!({"path": "src/ok.txt", "content": "fine"}))
+            .unwrap();
+        assert!(base.join("src/ok.txt").vexists());
+        crate::vfs::remove_dir_all(&base).ok();
+    }
+
+    // list_files walks a directory reached again through a link once, and stops at
+    // the listing cap with truncated set.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    #[cfg(unix)]
+    #[test]
+    fn list_files_survives_symlink_loops_and_stops_at_the_cap() {
+        let base = std::env::temp_dir().join(format!(
+            "jazyk-listing-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        let deliverable = base.join("deliverable");
+        crate::vfs::create_dir_all(deliverable.join("a")).unwrap();
+        crate::vfs::write(deliverable.join("a").join("one.txt"), "1\n").unwrap();
+        std::os::unix::fs::symlink(&deliverable, deliverable.join("a").join("loop")).unwrap();
+        let mut t = session();
+        t.gen.deliverable = deliverable.clone();
+        let v = t.dispatch("list_files", &json!({})).unwrap();
+        assert_eq!(v["files"], json!(["a/one.txt"]), "{}", v);
+        assert!(v.get("truncated").is_none(), "{}", v);
+        crate::vfs::create_dir_all(deliverable.join("b")).unwrap();
+        for i in 0..LIST_FILES_LIMIT + 5 {
+            crate::vfs::write(deliverable.join("b").join(format!("f{:04}.txt", i)), "x").unwrap();
+        }
+        let v = t.dispatch("list_files", &json!({})).unwrap();
+        assert_eq!(v["files"].as_array().unwrap().len(), LIST_FILES_LIMIT, "{}", v["truncated"]);
+        assert_eq!(v["truncated"], true);
+        crate::vfs::remove_dir_all(&base).ok();
     }
 
     // The file tools' sandbox holds after symlinks resolve: a link inside the
@@ -13347,6 +13869,49 @@ mod tests {
             }),
             "{:?}",
             opens
+        );
+    }
+
+    // get_view carries the relationships among its members, a hidden member's lifted
+    // to its nearest shown ancestor. Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn get_view_lists_member_relationships_lifted() {
+        let mut s = Store::default();
+        for (id, name) in [("ent:server", "Server"), ("ent:db", "Database"), ("ent:cache", "Cache")] {
+            s.graph.entities.insert(id.into(), plain(name));
+        }
+        s.graph.entities.insert("ent:model".into(), under("Model", "ent:server"));
+        let rel = |a: &str, b: &str, ty: &str| Relationship {
+            members: vec![a.into(), b.into()],
+            contributions: vec![Contribution {
+                a: a.into(),
+                b: b.into(),
+                r#type: ty.into(),
+                cardinality: Some("1".into()),
+                requirements: vec!["req:x".into()],
+            }],
+        };
+        s.graph.relationships.insert("rel:1".into(), rel("ent:model", "ent:db", "dependency"));
+        s.graph.relationships.insert("rel:2".into(), rel("ent:server", "ent:cache", "association"));
+        s.graph.views.insert(
+            "view:class/backend".into(),
+            View {
+                kind: "class".into(),
+                title: "Backend".into(),
+                members: vec!["ent:server".into(), "ent:db".into(), "ent:cache".into()],
+                ..Default::default()
+            },
+        );
+        let mut t = ToolSession::new(s, WorkScope::serving("mcp-compile"), 64, 24_000);
+        let r = t.dispatch("get_view", &json!({"id": "view:class/backend"})).unwrap();
+        assert_eq!(
+            r["relationships"],
+            json!([
+                {"a": "ent:server", "b": "ent:cache", "type": "association", "cardinality": "1"},
+                {"a": "ent:server", "b": "ent:db", "type": "dependency"},
+            ]),
+            "{}",
+            r["relationships"]
         );
     }
 

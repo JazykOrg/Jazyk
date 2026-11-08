@@ -162,13 +162,18 @@ definitions:
         type: string
     additionalProperties: false
   searchRequest:
-    description: Request payload of search. Deterministic lookup over names and aliases
+    description: >-
+      Request payload of search. Deterministic lookup over names and aliases. One of
+      query or queries; queries answers several names in one call, one result per query
     type: object
-    required:
-      - query
     properties:
       query:
         type: string
+      queries:
+        type: array
+        minItems: 1
+        items:
+          type: string
       kind:
         type: string
         enum:
@@ -231,6 +236,11 @@ definitions:
       ref:
         type: string
         description: A section reference, /ref or doc.md#/ref
+      line:
+        type: integer
+        minimum: 1
+        default: 1
+        description: The first body line returned; the body is capped at 400 lines and 16 KiB
     additionalProperties: false
   getEntityRequest:
     description: Request payload of get_entity
@@ -328,6 +338,11 @@ definitions:
       subject:
         type: string
         description: A node id or section reference
+      offset:
+        type: integer
+        minimum: 0
+        default: 0
+        description: The first entry listed; one reply lists at most 50
     additionalProperties: false
   diagnosticsResponse:
     description: Response of diagnostics
@@ -501,6 +516,14 @@ definitions:
         type: array
         items:
           type: string
+      remove_aliases:
+        type: array
+        items:
+          type: string
+        description: Wordings the documents turn out not to use
+      remove_parent:
+        type: boolean
+        description: Take the entity out of the containment tree
       stereotype:
         type: string
       parent:
@@ -701,6 +724,88 @@ definitions:
     additionalProperties: false
   deleteRequirement:
     description: Request payload of delete_requirement
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  criterionKind:
+    type: string
+    enum:
+      - positive
+      - negative
+      - boundary
+      - quality
+  upsertCriterion:
+    description: >-
+      Request payload of upsert_criterion. Exactly one of section plus quote (a stated
+      criterion) or provenance.derived (from names the requirement). The same statement
+      on the same requirement updates in place
+    type: object
+    required:
+      - requirement
+      - statement
+      - kind
+    properties:
+      requirement:
+        type: string
+      statement:
+        type: string
+      kind:
+        $ref: '#/definitions/criterionKind'
+      measure:
+        type: string
+        description: The measure of a quality criterion
+      given:
+        type: string
+      when:
+        type: string
+      then:
+        type: string
+      entities:
+        type: array
+        items:
+          type: string
+      section:
+        type: string
+      quote:
+        type: string
+      provenance:
+        description: A criterion the documents do not state
+        $ref: 'graph.json#/definitions/derivedProvenance'
+    additionalProperties: false
+  updateCriterion:
+    description: Request payload of update_criterion. A field given replaces the stored one; the id and the owning requirement stay
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      statement:
+        type: string
+      kind:
+        $ref: '#/definitions/criterionKind'
+      measure:
+        type: string
+      given:
+        type: string
+      when:
+        type: string
+      then:
+        type: string
+      entities:
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  deleteCriterion:
+    description: Request payload of delete_criterion, for a criterion the documents no longer support
     type: object
     required:
       - id
@@ -1039,6 +1144,22 @@ definitions:
     properties:
       summary:
         type: string
+      goals:
+        type: array
+        minItems: 1
+        description: Final claims, validated like mark_goal_done
+        items:
+          type: object
+          required:
+            - goal
+            - justification
+          properties:
+            goal:
+              type: string
+            justification:
+              type: string
+            evidence: {}
+          additionalProperties: false
       beginNext:
         type: boolean
         default: false
@@ -1248,7 +1369,7 @@ definitions:
         type: integer
         minimum: 0
         default: 300
-        description: 0 waits indefinitely
+        description: Capped at 3600 seconds; 0 waits for the cap
     additionalProperties: false
   recentEdits:
     description: Request payload of recent_edits
@@ -1576,6 +1697,23 @@ definitions:
         type: string
         description: What was unclear and what would have helped
     additionalProperties: false
+  reportSpend:
+    description: >-
+      Request payload of report_spend. What the caller's own run billed for the open
+      batch; a second call replaces the first. Refused outside an open batch
+    type: object
+    required:
+      - tokens
+    properties:
+      tokens:
+        type: integer
+        minimum: 1
+        description: Input plus output tokens billed across every round of the batch
+      cached:
+        type: integer
+        minimum: 0
+        description: The input tokens among them served from the prompt cache
+    additionalProperties: false
   reportFeedbackResponse:
     description: Response of report_feedback
     type: object
@@ -1683,6 +1821,11 @@ definitions:
         items:
           type: string
     additionalProperties: false
+  generationTasksRequest:
+    description: Request payload of generation_tasks
+    type: object
+    properties: {}
+    additionalProperties: false
   generationTasksResponse:
     description: Response of generation_tasks
     type: object
@@ -1716,6 +1859,28 @@ definitions:
     properties:
       entity:
         type: string
+    additionalProperties: false
+  recordMedium:
+    description: >-
+      Request payload of record_medium. What the deliverable is made of when no session
+      has decided it yet; refused once an entity is generated
+    type: object
+    required:
+      - form
+      - produced
+    properties:
+      form:
+        type: string
+      produced:
+        type: string
+        enum:
+          - written
+          - built
+      toolchain:
+        type: string
+      artifact:
+        type: string
+        description: What the build produces, when built
     additionalProperties: false
   recordGeneration:
     description: Request payload of record_generation. The manifest binds the written files to the graph
@@ -1775,6 +1940,11 @@ definitions:
                 type: string
           additionalProperties: false
     additionalProperties: false
+  bindingTasksRequest:
+    description: Request payload of binding_tasks
+    type: object
+    properties: {}
+    additionalProperties: false
   bindingTasksResponse:
     description: Response of binding_tasks
     type: object
@@ -1814,8 +1984,6 @@ definitions:
     required:
       - requirement
       - files
-      - test
-      - verdict
     properties:
       requirement:
         type: string
@@ -1823,6 +1991,10 @@ definitions:
         type: array
         items:
           type: string
+      tests:
+        type: array
+        items:
+          $ref: '#/definitions/testRow'
       test:
         $ref: '#/definitions/testRow'
       verdict:
@@ -1887,13 +2059,16 @@ definitions:
         type: string
     additionalProperties: false
   runTests:
-    description: Request payload of run_tests. Every programmatic row when requirements is absent
+    description: Request payload of run_tests. Every non-verified programmatic row when requirements is absent
     type: object
     properties:
       requirements:
         type: array
         items:
           type: string
+      all:
+        type: boolean
+        description: Rerun every programmatic row, verified ones included
     additionalProperties: false
   recordVerdict:
     description: Request payload of record_verdict
@@ -1913,6 +2088,210 @@ definitions:
         type: string
       evidence:
         type: string
+      criteria:
+        description: One entry per bound LLM criterion test, required when several are bound
+        type: array
+        items:
+          type: object
+          required:
+            - criterion
+            - verdict
+            - factHash
+          properties:
+            criterion:
+              type: string
+            verdict:
+              type: string
+              enum:
+                - pass
+                - fail
+            factHash:
+              type: string
+            evidence:
+              type: string
+          additionalProperties: false
+    additionalProperties: false
+  readTextFile:
+    description: >-
+      Request payload of read_text_file. path is relative to the deliverable; limit
+      defaults to 400 lines and the content is capped at 64 KiB
+    type: object
+    required:
+      - path
+    properties:
+      path:
+        type: string
+      line:
+        type: integer
+        description: The first line, 1-based
+      limit:
+        type: integer
+    additionalProperties: false
+  writeTextFile:
+    description: >-
+      Request payload of write_text_file. old_text requires expectedHash and cannot
+      combine with append
+    type: object
+    required:
+      - path
+      - content
+    properties:
+      path:
+        type: string
+      content:
+        type: string
+      append:
+        type: boolean
+      old_text:
+        type: string
+        description: Literal text matching exactly once, replaced by content
+      expectedHash:
+        type: string
+    additionalProperties: false
+  listFiles:
+    description: Request payload of list_files. At most 500 files, breadth first in name order
+    type: object
+    properties:
+      path:
+        type: string
+        description: A subdirectory to list
+    additionalProperties: false
+  taskContext:
+    description: Request payload of task_context
+    type: object
+    properties:
+      before:
+        type: string
+        description: The next_cursor of a previous reply, for older runs
+      task_ids:
+        type: array
+        items:
+          type: string
+        description: Full definitions for these tasks only
+    additionalProperties: false
+  updateTasks:
+    description: Request payload of update_tasks. Replaces the flat task list at the expected revision
+    type: object
+    required:
+      - expected_revision
+      - tasks
+    properties:
+      expected_revision:
+        type: string
+      tasks:
+        type: array
+        items:
+          type: object
+          description: One project task (task-runtime.md)
+    additionalProperties: false
+  runTask:
+    description: Request payload of run_task. Runs one saved task in a fresh isolated environment
+    type: object
+    required:
+      - task_id
+      - expected_revision
+      - operation_key
+    properties:
+      task_id:
+        type: string
+      expected_revision:
+        type: string
+      operation_key:
+        type: string
+      size:
+        type: string
+        enum:
+          - small
+          - medium
+          - large
+      timeout_seconds:
+        type: integer
+      wait:
+        type: boolean
+    additionalProperties: false
+  inspectRun:
+    description: Request payload of inspect_run
+    type: object
+    required:
+      - run_id
+    properties:
+      run_id:
+        type: string
+    additionalProperties: false
+  cancelRun:
+    description: Request payload of cancel_run. Idempotent
+    type: object
+    required:
+      - run_id
+    properties:
+      run_id:
+        type: string
+    additionalProperties: false
+  waitRun:
+    description: Request payload of wait_run. Repeating does not extend the deadline
+    type: object
+    required:
+      - run_id
+    properties:
+      run_id:
+        type: string
+      wait_ms:
+        type: integer
+    additionalProperties: false
+  readRunLog:
+    description: Request payload of read_run_log. Offsets and limits count Unicode characters
+    type: object
+    required:
+      - run_id
+    properties:
+      run_id:
+        type: string
+      offset:
+        type: integer
+        default: 0
+      limit:
+        type: integer
+        default: 16000
+        maximum: 64000
+    additionalProperties: false
+  searchRunLog:
+    description: Request payload of search_run_log. Literal text, matching lines with 1-based line numbers
+    type: object
+    required:
+      - run_id
+      - query
+    properties:
+      run_id:
+        type: string
+      query:
+        type: string
+      offset:
+        type: integer
+        default: 0
+        description: Log lines to skip
+      limit:
+        type: integer
+        default: 100
+        maximum: 100
+    additionalProperties: false
+  readRunChanges:
+    description: Request payload of read_run_changes. version input requires path
+    type: object
+    required:
+      - run_id
+    properties:
+      run_id:
+        type: string
+      path:
+        type: string
+      offset:
+        type: integer
+      version:
+        type: string
+        enum:
+          - changes
+          - input
+        default: changes
     additionalProperties: false
   beginDecompile:
     description: Request payload of begin_decompile

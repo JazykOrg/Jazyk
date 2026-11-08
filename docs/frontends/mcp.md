@@ -47,7 +47,7 @@ separated; each adds its tools to the union:
   hand a subagent: the serving is self-contained and touches no project state beyond
   the machine-wide history its report appends.
 - `jazyk mcp graph`: the read tools only, for retrieval consumers. `--write` adds the
-  raw write tools and view tools without the lifecycle, for debugging and manual
+  raw write tools, the view tools, and the task runtime tools without the lifecycle, for debugging and manual
   graph surgery; each write commits as its own changeset, and the commit writes its
   [change records](../compiler/graph.md#change-records) so the next build derives
   the goals the write opened.

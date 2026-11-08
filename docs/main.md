@@ -168,16 +168,17 @@ Consumers work from the graph to do useful work downstream.
 Engine validation runs locally before a change is pushed. Run `cargo test --locked` in
 `bootstrap/` for engine changes and `go test ./...` in `runtime-worker/` for helper
 changes. Changes to portable engine code also require
-`cargo check --locked --target wasm32-unknown-unknown --lib` in `bootstrap/`.
+`cargo check --locked --target wasm32-unknown-unknown --lib` in `bootstrap/`. Engine
+code is formatted with rustfmt's defaults: `cargo fmt --check` in `bootstrap/` passes.
 After any binary change, finish with `cargo build --locked --release` to refresh the
 owner's local binary.
 
 The CI workflow runs for relevant pull requests and on manual dispatch. A push to
-`master` does not start engine CI. Its default checks use the Rust test profile,
-the standalone WASM check, and the Go helper tests. A manual dispatch with
+`master` does not start engine CI. Its default checks use the formatting check, the
+Rust test profile, the standalone WASM check, and the Go helper tests. A manual dispatch with
 `release_validation=true` replaces Rust test-profile validation with a release build
 and release-profile tests. The default run does not verify release-profile behavior.
-Both modes retain the WASM and Go checks. Superseded runs of the same event and
+Both modes retain the formatting, WASM, and Go checks. Superseded runs of the same event and
 ref are cancelled. Rust jobs have a 30-minute limit and Go jobs a 10-minute limit.
 
 An absent CI run after pushing to `master` is expected. Do not dispatch a replacement

@@ -265,7 +265,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 
 - `cd bootstrap && cargo build --locked --release` (binary at
   `bootstrap/target/release/jazyk`), `cargo test --locked`,
-  `cargo clippy --locked --all-targets -- -D warnings`.
+  `cargo clippy --locked --all-targets -- -D warnings`, `cargo fmt --check` (rustfmt
+  defaults; CI checks it).
   `bootstrap/rust-toolchain.toml` pins Rust 1.99.1 with the `wasm32-unknown-unknown`
   target, locally and in CI.
 - Worktrees that share one `CARGO_TARGET_DIR` can run each other's stale test
@@ -306,12 +307,13 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   relevant local checks before pushing: `cd bootstrap && cargo test --locked` for
   engine changes, `cd runtime-worker && go test ./...` for helper changes, and
   `cd bootstrap && cargo check --locked --target wasm32-unknown-unknown --lib` for
-  portable engine changes. Workflow/docs-only changes need workflow syntax,
+  portable engine changes, and `cd bootstrap && cargo fmt --check` for any engine change. Workflow/docs-only changes need workflow syntax,
   trigger/input checks, and documentation link checks rather than engine rebuilds.
 - Preserve the release build requirement above after every binary change.
   Default hosted CI uses the Rust test profile. Explicit manual
   `release_validation=true` runs `cargo build --locked --release` and
-  `cargo test --locked --release` instead. Both modes check WASM and the Go helper.
+  `cargo test --locked --release` instead. Both modes check formatting, WASM, and the
+  Go helper.
 - CI runs automatically for relevant pull requests and supports manual dispatch.
   No engine CI run is expected after a push to `master`. Do not wait for one or
   dispatch replacement CI after routine tasks. Run hosted CI only when the owner

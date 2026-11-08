@@ -881,13 +881,15 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             v.extend(GOAL_TOOLS);
             v
         }
-        "mcp-write" => catalog()
-            .iter()
-            .map(|t| t.name)
-            .filter(|n| {
-                !GOAL_TOOLS.contains(n) && !FILE_TOOLS.contains(n) && !CHAT_TOOLS.contains(n)
-            })
-            .collect(),
+        // `jazyk mcp graph --write`: the read tools, the raw write tools, and the
+        // view tools, plus the task runtime tools a writable serving carries.
+        // Mirrors docs/compiler/tools.md#toolsets and docs/compiler/tools.md#task-runtime-tools.
+        "mcp-write" => {
+            let mut v = READ_TOOLS.to_vec();
+            v.extend(GRAPH_WRITE_TOOLS);
+            v.extend(crate::task_runtime::TOOLS);
+            v
+        }
         _ => READ_TOOLS.to_vec(),
     };
     if matches!(task, "mcp-generate" | "mcp-verify") { v.extend(crate::task_runtime::TOOLS); }
@@ -11794,6 +11796,24 @@ mod tests {
         }
         assert!(toolset("curate-view").contains(&"update_view"));
         assert!(!toolset("no-such-task").contains(&"mark_goal_done"));
+    }
+
+    // The graph --write serving is what tools.md#toolsets names: the read tools, the
+    // raw write tools and view tools, the task runtime tools, feedback, and spend.
+    #[test]
+    fn the_write_serving_is_the_documented_set() {
+        let served = toolset("mcp-write");
+        let mut expected: Vec<&str> = READ_TOOLS.to_vec();
+        expected.extend(GRAPH_WRITE_TOOLS);
+        expected.extend(crate::task_runtime::TOOLS);
+        expected.extend([FEEDBACK_TOOL, SPEND_TOOL]);
+        let mut a = served.clone();
+        a.sort();
+        expected.sort();
+        assert_eq!(a, expected);
+        for absent in ["record_generation", "begin_binding", "record_verdict", PAIR_SETTLE_TOOL, "mark_goal_done"] {
+            assert!(!served.contains(&absent), "{absent}");
+        }
     }
 
     #[test]

@@ -527,7 +527,9 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 - `update_project_settings({settings, baseHash})`: edits to the `workflow` and `gen`
   keys of `jazyk.toml`, rendered as minimal edits under the project lock and a
   configuration hash ([project settings](./project-settings.md)). The agent, executor,
-  and model settings are not editable.
+  and model settings are not editable. `auto` for `workflow.compile` or
+  `workflow.generate` is refused (`needs-human`): only a human switches a mode to
+  `auto` ([control plane](./control-plane.md#modes-and-releases)).
 
 ## Feedback tool
 

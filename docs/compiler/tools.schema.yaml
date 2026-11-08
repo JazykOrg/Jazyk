@@ -1646,14 +1646,14 @@ definitions:
         properties:
           workflow.compile:
             type: string
+            description: auto needs a human (GUI, /config, or the project file) and is refused here
             enum:
               - manual
-              - auto
           workflow.generate:
             type: string
+            description: auto needs a human (GUI, /config, or the project file) and is refused here
             enum:
               - manual
-              - auto
           workflow.worker:
             type: string
             enum:

@@ -2674,7 +2674,7 @@ impl McpServer {
                     } else {
                         tools.push(json!({
                             "name": "update_project_settings",
-                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual|auto), workflow.worker (internal|agent|any), gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
+                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual; auto needs a human and is refused), workflow.worker (internal|agent|any), gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
                             "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}, "baseHash": {"type": "string", "description": "configuration hash from list_document_sets"}}, "required": ["settings", "baseHash"], "additionalProperties": false}
                         }));
                     }
@@ -4036,6 +4036,12 @@ impl McpServer {
             if !allowed.is_empty() && !allowed.contains(&value) {
                 return json!({"error": {"rule": "bad-value", "message": format!(
                     "`{}` takes one of {}", key, allowed.join(", "))}});
+            }
+            // `auto` is a standing approval of all future work: only a human makes
+            // it (docs/compiler/control-plane.md#modes-and-releases).
+            if matches!(key.as_str(), "workflow.compile" | "workflow.generate") && value == "auto" {
+                return json!({"error": {"rule": "needs-human", "message": format!(
+                    "`{key} = auto` lets work run with no release, so a human sets it: the GUI's workflow toggle, `/config {key} auto` typed in chat, or `[workflow]` in jazyk.toml. Tell the user; `manual` stays editable here.")}});
             }
         }
         let Some(base) = args["baseHash"].as_str() else {
@@ -6268,20 +6274,26 @@ mod tests {
             assert_eq!(call(json!({"settings":{key:"x"},"baseHash":hash}))["error"]["rule"], "unsupported-key", "{key}");
         }
         assert_eq!(call(json!({"settings":{"workflow.compile":"sometimes"},"baseHash":hash}))["error"]["rule"], "bad-value");
-        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"}}))["error"]["rule"], "missing-argument");
-        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":"stale"}))["error"]["rule"], "stale-config");
+        // Only a human switches a mode to auto (docs/compiler/control-plane.md#modes-and-releases).
+        for key in ["workflow.compile", "workflow.generate"] {
+            let refused = call(json!({"settings":{key:"auto"},"baseHash":hash}));
+            assert_eq!(refused["error"]["rule"], "needs-human", "{key}");
+            assert!(refused["error"]["message"].as_str().unwrap().contains(&format!("/config {key} auto")));
+        }
+        assert_eq!(call(json!({"settings":{"workflow.worker":"agent"}}))["error"]["rule"], "missing-argument");
+        assert_eq!(call(json!({"settings":{"workflow.worker":"agent"},"baseHash":"stale"}))["error"]["rule"], "stale-config");
         {
             let _held = crate::document_sets::ProjectLock::acquire(&dir, "project.lock").unwrap();
-            assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "project-busy");
+            assert_eq!(call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}))["error"]["rule"], "project-busy");
         }
         let out = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap().out;
         crate::control::claim(&out, crate::control::BUILD_LEASE, "internal-test").unwrap();
-        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "build-running");
+        assert_eq!(call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}))["error"]["rule"], "build-running");
         crate::control::release_lease(&out, crate::control::BUILD_LEASE);
         assert_eq!(crate::vfs::read_to_string(&config).unwrap(), original, "a refused edit wrote the file");
-        let ok = call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}));
+        let ok = call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}));
         let edited = crate::vfs::read_to_string(&config).unwrap();
-        assert!(edited.contains("[workflow]\ncompile = \"auto\""), "{edited}");
+        assert!(edited.contains("[workflow]\nworker = \"agent\""), "{edited}");
         assert_eq!(ok["hash"], crate::model::hash_hex(&edited));
         crate::document_sets::Workspace::load(&dir).unwrap();
         crate::vfs::remove_dir_all(dir).ok();

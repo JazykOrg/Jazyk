@@ -900,7 +900,11 @@ async fn handle_action(
                 json!({"kind":"provider","requestId":id,"purpose":purpose,"round":state.rounds,"ms":started.elapsed().as_millis() as u64}),
             ));
             if purpose == ModelPurpose::Inference {
-                state.model_output_limited = value["choices"][0]["finish_reason"] == "length";
+                // A host may return the Responses envelope itself; its output limit
+                // reads from the status, not a chat finish reason.
+                state.model_output_limited = value["choices"][0]["finish_reason"] == "length"
+                    || (value["object"] == "response"
+                        && crate::model_api::responses_output_limited(&value));
             }
             let _ = reply.send(Ok((id, value)));
         }

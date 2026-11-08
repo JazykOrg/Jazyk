@@ -1466,6 +1466,21 @@ fn truncated_reasoning_is_not_reported_as_a_completed_normal_turn() {
 }
 
 #[test]
+fn a_responses_reply_cut_at_its_output_limit_reports_the_limit() {
+    let limited = json!({"id":"response-cut","object":"response","model":"fixture","status":"incomplete",
+        "incomplete_details":{"reason":"max_output_tokens"},"_jazykResponseRoute":"fixture-route",
+        "output":[{"id":"message-cut","type":"message","role":"assistant","status":"incomplete",
+            "content":[{"type":"output_text","text":"Partial plan","annotations":[]}]}],
+        "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}});
+    let mut host = Host::new(vec![limited.clone(), limited]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Generate"})];
+    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history,
+        &mut |_, _| panic!("no tools requested"));
+    assert!(matches!(stop, Stop::Error(ref error) if error.contains("output token limit")), "{stop:?}");
+}
+
+#[test]
 fn ledger_finish_reminder_is_bounded_and_survives_recovery() {
     let mut host = Host::new(vec![response("Thinking"), response("Cannot continue")]);
     let mut store = Store::default();

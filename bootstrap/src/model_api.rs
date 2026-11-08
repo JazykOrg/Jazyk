@@ -145,14 +145,30 @@ pub fn request(
     Ok(wire)
 }
 
+/// Whether a Responses reply stopped at its output token limit: the counterpart of a
+/// chat completion's `length` finish (docs/compiler/sessions.md, the output limit).
+pub fn responses_output_limited(raw: &Value) -> bool {
+    raw["status"] == "incomplete" && raw["incomplete_details"]["reason"] == "max_output_tokens"
+}
+
 /// Return a portable completion for accounting and GDK parsing, retaining opaque output.
+/// A reply cut at its output limit converts with a `length` finish. Its unfinished
+/// calls are dropped, so a truncated call never dispatches.
 pub fn completion(raw: &Value, binding: &str) -> Result<Value, String> {
-    if raw["status"] != "completed" {
+    let limited = responses_output_limited(raw);
+    if raw["status"] != "completed" && !limited {
         return Err(format!(
             "Responses request did not complete: {}",
             raw["status"]
         ));
     }
+    let mut raw = raw.clone();
+    if limited {
+        if let Some(output) = raw["output"].as_array_mut() {
+            output.retain(|item| item["type"] != "function_call" || item["status"] == "completed");
+        }
+    }
+    let raw = &raw;
     let typed: openai_responses::ResponsesApiResponse =
         serde_json::from_value(raw.clone()).map_err(|e| format!("Invalid Responses reply: {e}"))?;
     let message = openai_responses::responses_api_to_message(&typed).map_err(|e| e.to_string())?;
@@ -173,7 +189,7 @@ pub fn completion(raw: &Value, binding: &str) -> Result<Value, String> {
         .is_some_and(|v| !v.is_empty());
     Ok(
         json!({"id":raw["id"],"model":raw["model"],"object":"chat.completion",
-        "choices":[{"message":message,"finish_reason":if calls {"tool_calls"} else {"stop"}}],
+        "choices":[{"message":message,"finish_reason":if limited {"length"} else if calls {"tool_calls"} else {"stop"}}],
         "usage":{"prompt_tokens":raw["usage"]["input_tokens"],"completion_tokens":raw["usage"]["output_tokens"],"total_tokens":raw["usage"]["total_tokens"],
         "prompt_tokens_details":{"cached_tokens":raw["usage"]["input_tokens_details"]["cached_tokens"]}},
         "_jazykResponsesOutput":{"binding":binding,"items":raw["output"]}}),
@@ -207,6 +223,14 @@ impl ResponseStream {
                 .as_str()
                 .map(|s| ("reasoning_content", s.into()))),
             Some("response.completed") if !self.failed && self.completed.is_none() => {
+                self.completed = Some(event["response"].clone());
+                Ok(None)
+            }
+            Some("response.incomplete")
+                if !self.failed
+                    && self.completed.is_none()
+                    && responses_output_limited(&event["response"]) =>
+            {
                 self.completed = Some(event["response"].clone());
                 Ok(None)
             }
@@ -332,5 +356,24 @@ mod tests {
         let mut incomplete = raw();
         incomplete["status"] = json!("incomplete");
         assert!(completion(&incomplete, "route").is_err());
+        incomplete["incomplete_details"] = json!({"reason":"content_filter"});
+        assert!(completion(&incomplete, "route").is_err());
+    }
+    #[test]
+    fn an_output_limited_reply_maps_to_a_length_finish_without_its_unfinished_call() {
+        let mut limited = raw();
+        limited["status"] = json!("incomplete");
+        limited["incomplete_details"] = json!({"reason":"max_output_tokens"});
+        limited["output"][1]["status"] = json!("incomplete");
+        limited["output"][1]["arguments"] = json!("{\"pa");
+        assert!(responses_output_limited(&limited));
+        let value = completion(&limited, "route").unwrap();
+        assert_eq!(value["choices"][0]["finish_reason"], "length");
+        assert!(value["choices"][0]["message"]["tool_calls"].is_null());
+        let mut stream = ResponseStream::default();
+        stream
+            .event(&json!({"type":"response.incomplete","response":limited}))
+            .unwrap();
+        assert_eq!(stream.finish("route").unwrap()["choices"][0]["finish_reason"], "length");
     }
 }

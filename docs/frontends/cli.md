@@ -977,10 +977,11 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `jazyk --help` (or `-h`, or `jazyk help`) prints the top-level usage: one line per
   command, in four groups in this order, plus the common options. The groups put what
   a person types most at the top and what programs spawn at the bottom:
-  - Start here: `init`, `gui`, `status`, `compile`, `benchmark`, and one line naming
-    the [launcher's](#jazyk) choices, each a command.
+  - Start here: `init`, `setup`, `gui`, `sets`, `status`, `compile`, `benchmark`, and
+    one line naming the [launcher's](#jazyk) choices, each a command.
   - Actions on the project: `check`, `watch`, `gen`, `test`, `decompile`, `docsgen`,
-    `release`, `answer`, `spend`.
+    `release`, `answer`, `spend`, `replay`, and the task commands `tasks`, `runs`,
+    `run`, `run-status`, `run-log`, `run-cancel`.
   - Inspect: `preview`, `explain`, `ripple`, `context`, `query`, `viewer`.
   - Run by IDEs and agents, not by hand: `mcp`, `acp`, `lsp`, `agent`, `monitor`.
 - `jazyk <command> --help` prints that command's usage: its arguments, the options it

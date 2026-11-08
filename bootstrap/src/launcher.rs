@@ -33,7 +33,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("start here", &[
         ("", "the launcher: status, then pick a web UI, IDE, or coding agent to set up and start"),
         ("<choice> [--agent NAME]", "set up and start one launcher choice: vscode, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
-        ("init [--mcp LIST] [--agent NAME] [--acp LIST]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
+        ("init [--mcp LIST] [--agent NAME] [--acp LIST]", "initialize a project here: an empty .jazyk/jazyk.toml and the jazyk section of AGENTS.md"),
         ("setup [ide] [--list] [--remove NAMES]", "check, add, or remove jazyk in IDEs and coding agents"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
@@ -51,6 +51,10 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("release [compile|generate]", "approve gated goals in manual mode without running anything"),
         ("answer <diag|goal> [--option N | --text T]", "answer a prompted diagnostic; without a reply, list its options"),
         ("spend <generation> <tokens> [--cached N]", "record what an external agent's session billed on its journal entry"),
+        ("replay [file|dir...]", "run scripted tool-call replays against the harness, no model"),
+        ("tasks | runs", "the project's task definitions (runs: with recent run history), as JSON"),
+        ("run <task-id>", "submit one finite task and print its durable run"),
+        ("run-status | run-log | run-cancel <run-id>", "inspect, read the log of, or cancel one task run"),
     ]),
     ("inspect", &[
         ("preview [goal|target|batch]", "the next session's prompt, exactly as the model receives it"),

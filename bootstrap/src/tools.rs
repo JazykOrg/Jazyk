@@ -730,6 +730,31 @@ const REANSWERABLE_TOOLS: [&str; 10] = [
     "generation_tasks",
     "binding_tasks",
 ];
+// The graph write tools, each all or nothing at staging.
+// Mirrors docs/compiler/tools.md#write-tools.
+pub const GRAPH_WRITE_TOOLS: [&str; 21] = [
+    "upsert_entity",
+    "update_entity",
+    "delete_entity",
+    "merge_entities",
+    "group_entities",
+    "dissolve_entity",
+    "upsert_requirement",
+    "update_requirement",
+    "delete_requirement",
+    "upsert_criterion",
+    "update_criterion",
+    "delete_criterion",
+    "set_coverage",
+    "report_diagnostic",
+    "update_diagnostic",
+    "resolve_diagnostic",
+    "place_anchor",
+    "orphan_anchor",
+    "upsert_view",
+    "update_view",
+    "delete_view",
+];
 // The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
 pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
 // The batch claim of a rejudge-pair session: a goal tool served in that kind's slice
@@ -854,28 +879,8 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         // The compile serving's write surface; the lifecycle tools live in the server.
         "mcp-compile" => {
             let mut v = READ_TOOLS.to_vec();
-            v.extend([
-                "upsert_entity",
-                "update_entity",
-                "delete_entity",
-                "merge_entities",
-                "group_entities",
-                "dissolve_entity",
-                "upsert_requirement",
-                "update_requirement",
-                "delete_requirement",
-                "upsert_criterion",
-                "update_criterion",
-                "delete_criterion",
-                "set_coverage",
-                "report_diagnostic",
-                "update_diagnostic",
-                "resolve_diagnostic",
-                "place_anchor",
-                "orphan_anchor",
-                PAIR_SETTLE_TOOL,
-            ]);
-            v.extend(VIEW_TOOLS);
+            v.extend(GRAPH_WRITE_TOOLS);
+            v.push(PAIR_SETTLE_TOOL);
             v.extend(GOAL_TOOLS);
             v
         }
@@ -5674,7 +5679,31 @@ impl ToolSession {
             });
         }
         let before = self.staged.len();
-        let mut v = self.dispatch_inner(name, args)?;
+        // A graph write is all or nothing: a refused one leaves neither staged ops
+        // nor lookup entries behind. Mirrors docs/compiler/tools.md#write-tools.
+        let saved = GRAPH_WRITE_TOOLS.contains(&name).then(|| {
+            (
+                self.staged_entities.clone(),
+                self.staged_diags.clone(),
+                self.staged_reqs.clone(),
+                self.staged_views.clone(),
+                self.staged_parents.clone(),
+                self.taken_ids.clone(),
+            )
+        });
+        let result = self.dispatch_inner(name, args);
+        if let (Err(_), Some(saved)) = (&result, saved) {
+            self.staged.truncate(before);
+            (
+                self.staged_entities,
+                self.staged_diags,
+                self.staged_reqs,
+                self.staged_views,
+                self.staged_parents,
+                self.taken_ids,
+            ) = saved;
+        }
+        let mut v = result?;
         // A mutating reply previews the goals the mutation will open at commit and
         // re-renders the condensed status block.
         // Mirrors docs/compiler/reconciler.md#bubbling.
@@ -12301,6 +12330,29 @@ mod tests {
         t.dispatch("delete_entity", &args).unwrap_err();
         t.dispatch("delete_entity", &args).unwrap_err();
         assert_eq!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
+    }
+
+    // A refused write stages nothing and leaves no lookup entry behind.
+    // Mirrors docs/compiler/tools.md#write-tools.
+    #[test]
+    fn a_refused_write_leaves_no_staged_lookup_entries() {
+        let mut t = session();
+        t.snapshot.graph.entities.insert("ent:gadget".into(), plain("Gadget"));
+        t.mutation_limit = 0;
+        let up = json!({"name": "Sprocket", "definition": "a toothed wheel", "mention": {"section": "shop.md#/shop/cart", "quote": "a Sprocket"}});
+        assert_eq!(t.dispatch("upsert_entity", &up).unwrap_err().rule, "mutation-budget");
+        let err = t
+            .dispatch("update_entity", &json!({"id": "ent:customer", "parent": "ent:gadget"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "mutation-budget");
+        assert!(t.staged.is_empty());
+        assert!(t.staged_entities.is_empty());
+        assert!(t.staged_parents.is_empty());
+        assert!(t.taken_ids.is_empty());
+        // With budget again, the same create mints the same id it would have.
+        t.mutation_limit = 64;
+        let v = t.dispatch("upsert_entity", &up).unwrap();
+        assert_eq!(v["id"], "ent:sprocket", "{}", v);
     }
 
     #[test]

@@ -106,6 +106,9 @@ Write tools stage [mutations](./graph.md#mutations) into the open changeset. Eve
 staged mutation passes the [validation gates](./graph.md#validation-gates) when staged;
 a mutating reply previews the goals the mutation will open
 ([bubbling](./reconciler.md#bubbling)) and re-renders the condensed status block.
+A write call is all or nothing: a refused call stages nothing and leaves no trace in
+what later calls see as staged (a `group_entities` that hits the mutation budget
+midway stages neither the grouping nor any reparent).
 
 - `upsert_entity({name, definition?, aliases?, scope?, stereotype?, parent?, attributes?, mention?, provenance?, note?})`
   → `{id, created}`. Keys on `name` plus `scope`, and `parent` joins the key when

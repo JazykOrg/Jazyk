@@ -98,10 +98,22 @@ pub fn render_png(_svg: &str) -> Result<Vec<u8>, RenderError> {
     ))
 }
 
+// The native binary runs under the command timeout (limits::command_timeout), the
+// way every external command does: stdin written and both streams drained on their own
+// threads, so a child that never reads or floods its output cannot stall the build, and
+// a child past the deadline is killed and reported as a renderer error.
+// Mirrors docs/compiler/diagrams.md#the-renderer.
 #[cfg(not(target_arch = "wasm32"))]
 fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
-    use std::io::Write;
+    native_svg_within(bin, puml, crate::limits::command_timeout())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_svg_within(bin: &str, puml: &str, timeout: std::time::Duration) -> Result<String, RenderError> {
+    use std::io::{Read, Write};
     use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
     let fail = |e: &dyn fmt::Display| RenderError(format!("{}: {}", bin, e));
     let mut child = Command::new(bin)
         .args(["-tsvg", "-pipe"])
@@ -110,25 +122,60 @@ fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| fail(&e))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // A child that dies without reading (or before the write finishes) breaks the
-        // pipe; its exit status below is the story, so the write tolerates that one.
-        if let Err(e) = stdin.write_all(puml.as_bytes()) {
-            if e.kind() != std::io::ErrorKind::BrokenPipe {
-                return Err(fail(&e));
-            }
+    // A child that dies without reading (or before the write finishes) breaks the
+    // pipe; its exit status below is the story, so the write tolerates that one.
+    let input = child.stdin.take().map(|mut stdin| {
+        let bytes = puml.as_bytes().to_vec();
+        std::thread::spawn(move || match stdin.write_all(&bytes) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+            _ => Ok(()),
+        })
+    });
+    fn collect<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        if let Some(mut pipe) = pipe {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = pipe.read_to_end(&mut buf);
+                let _ = tx.send(buf);
+            });
         }
+        rx
     }
-    let out = child.wait_with_output().map_err(|e| fail(&e))?;
-    if !out.status.success() {
+    let stdout = collect(child.stdout.take());
+    let stderr = collect(child.stderr.take());
+    let started = Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait().map_err(|e| fail(&e))? {
+            break st;
+        }
+        if started.elapsed() >= timeout {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(RenderError(format!(
+                "{} killed after {}s (JAZYK_COMMAND_TIMEOUT)",
+                bin,
+                timeout.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // A grandchild holding a pipe open past the exit costs its output, never the build.
+    let take = |rx: mpsc::Receiver<Vec<u8>>| rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+    let out = take(stdout);
+    let err = take(stderr);
+    if let Some(Ok(Err(e))) = input.map(|h| h.join()) {
+        return Err(fail(&e));
+    }
+    if !status.success() {
         return Err(RenderError(format!(
             "{} exited with {}: {}",
             bin,
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
+            status,
+            String::from_utf8_lossy(&err).trim()
         )));
     }
-    String::from_utf8(out.stdout).map_err(|e| fail(&e))
+    String::from_utf8(out).map_err(|e| fail(&e))
 }
 
 // The system fonts, loaded once per process: text measures as a viewer would draw it.
@@ -3166,6 +3213,25 @@ mod tests {
         let _ = crate::vfs::remove_dir_all(&dir);
         crate::vfs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // A native binary that hangs is killed at the deadline and reads as a renderer
+    // error (docs/compiler/diagrams.md#the-renderer).
+    #[cfg(unix)]
+    #[test]
+    fn native_binary_past_the_deadline_is_killed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp("native-hang");
+        let stub = dir.join("plantuml");
+        crate::vfs::write(&stub, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Larger than a pipe buffer: a child that never reads stdin cannot stall the write.
+        let puml = format!("@startuml\n{}@enduml\n", "class A\n".repeat(40_000));
+        let started = std::time::Instant::now();
+        let err = native_svg_within(stub.to_str().unwrap(), &puml, std::time::Duration::from_secs(1)).unwrap_err();
+        assert!(err.0.contains("killed after"), "{}", err);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        let _ = crate::vfs::remove_dir_all(&dir);
     }
 
     #[test]

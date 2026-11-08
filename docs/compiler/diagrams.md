@@ -435,7 +435,9 @@ nothing else in the binary knows which implementation sits behind it.
 The official PlantUML native binary (a GraalVM build per platform, no Java runtime) is
 the authorized swap behind the seam: `JAZYK_PLANTUML=<path to native binary>` selects it
 for the process. The binary runs once per diagram with `-tsvg -pipe`, the `.puml` on
-stdin and the SVG on stdout; a non-zero exit is a `RenderError`. It is the cross-check,
+stdin and the SVG on stdout; a non-zero exit is a `RenderError`. It runs under the
+command timeout ([budgets](./graph.md#budgets-and-thresholds)): a binary still running
+at the deadline is killed, and the kill is a `RenderError`. It is the cross-check,
 not the default: CI renders the reference graph and the fixture views
 (`bootstrap/example/f1`, `f2`) through both implementations and diffs the SVGs, so a gap
 in the crate is measured before a reader meets it.

@@ -426,27 +426,37 @@ pub fn cone_with(store: &Store, refs: &Refs, target: &str) -> Cone {
         (None, Some((a, b))) => vec![a.to_string(), b.to_string()],
         (None, None) => vec![target.to_string()],
     };
+    // Each walk keeps its own visited set: a node another seed or the other direction
+    // reached still contributes its own direction's references here.
+    let mut down: BTreeSet<String> = BTreeSet::new();
     for seed in &seeds {
         nodes.insert(seed.clone());
         if scope.is_none() {
+            let mut up: BTreeSet<String> = BTreeSet::from([seed.clone()]);
             let mut frontier = vec![seed.clone()];
             while let Some(id) = frontier.pop() {
                 for r in referents(store, &id) {
-                    if nodes.insert(r.clone()) {
+                    if up.insert(r.clone()) {
+                        frontier.push(r);
+                    }
+                }
+            }
+            nodes.extend(up);
+        }
+        // The downward walks share one set: referrers reached from any seed are
+        // walked down once, which is the same set either way.
+        if down.insert(seed.clone()) {
+            let mut frontier = vec![seed.clone()];
+            while let Some(id) = frontier.pop() {
+                for r in referrers(store, refs, &id) {
+                    if down.insert(r.clone()) {
                         frontier.push(r);
                     }
                 }
             }
         }
-        let mut frontier = vec![seed.clone()];
-        while let Some(id) = frontier.pop() {
-            for r in referrers(store, refs, &id) {
-                if nodes.insert(r.clone()) {
-                    frontier.push(r);
-                }
-            }
-        }
     }
+    nodes.extend(down);
     let mut sections: BTreeSet<String> = BTreeSet::new();
     let mut docs: BTreeSet<String> = BTreeSet::new();
     for n in &nodes {
@@ -3354,6 +3364,36 @@ pub(crate) mod tests {
         assert_eq!(items[0].dirty_sections.len(), 2);
         assert!(b.item_open(&items[0]));
         assert_eq!(b.find_item(None).map(|i| i.target), Some("other.md".into()));
+    }
+
+    // Each direction keeps its own visited set: a node one seed reaches upward still
+    // walks downward from the other seed. Mirrors docs/compiler/reconciler.md#cones.
+    #[test]
+    fn a_node_reached_upward_still_walks_downward_from_the_other_seed() {
+        use crate::model::{Entity, Provenance, Requirement};
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:pricing".into(), Entity {
+            name: "Pricing".into(),
+            provenance: Some(Provenance::Derived { from: vec!["req:b".into()], reasoning: "split".into() }),
+            ..Default::default()
+        });
+        s.graph.entities.insert("ent:discount".into(), Entity {
+            name: "Discount".into(),
+            parent: Some("ent:pricing".into()),
+            ..Default::default()
+        });
+        s.graph.requirements.insert("req:a".into(), Requirement {
+            statement: "Pricing applies to every order.".into(),
+            entities: vec!["ent:pricing".into()],
+            ..Default::default()
+        });
+        s.graph.requirements.insert("req:b".into(), Requirement {
+            statement: "Orders are priced.".into(),
+            ..Default::default()
+        });
+        let c = cone(&s, "req:a~req:b");
+        assert!(c.nodes.contains("ent:pricing"));
+        assert!(c.nodes.contains("ent:discount"), "req:b's downward walk reaches the child: {:?}", c.nodes);
     }
 
     #[test]

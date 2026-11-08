@@ -449,6 +449,9 @@ impl Commit {
 pub struct RecordBatch {
     generation: u64,
     records: Vec<ChangeRecord>,
+    // The highest index this generation already holds outside the batch: a second
+    // batch in one generation numbers after it, so record ids stay unique.
+    offset: usize,
 }
 
 impl RecordBatch {
@@ -456,6 +459,24 @@ impl RecordBatch {
         RecordBatch {
             generation,
             records: Vec::new(),
+            offset: 0,
+        }
+    }
+
+    // A batch that continues numbering after the records of its generation already in
+    // `existing`, for a generation that writes more than one batch.
+    pub fn after(generation: u64, existing: &[ChangeRecord]) -> RecordBatch {
+        let prefix = format!("c{}-", generation);
+        let offset = existing
+            .iter()
+            .filter(|c| c.generation == generation)
+            .filter_map(|c| c.id.strip_prefix(&prefix)?.parse::<usize>().ok())
+            .max()
+            .unwrap_or(0);
+        RecordBatch {
+            generation,
+            records: Vec::new(),
+            offset,
         }
     }
 
@@ -474,7 +495,7 @@ impl RecordBatch {
         {
             return false;
         }
-        let index = self.records.len() + 1;
+        let index = self.offset + self.records.len() + 1;
         self.records.push(
             ChangeRecord::new(self.generation, index, mutation, kind, subject, via)
                 .with_detail(detail),
@@ -561,10 +582,22 @@ impl ProseEdit {
         old_text: &str,
         new_text: &str,
     ) -> Result<ProseEdit, String> {
+        // The parser joins a section's lines with LF; a CRLF document holds the same
+        // section with CRLF, and the edit keeps the document's line endings.
+        let crlf = old_full.contains("\r\n");
+        let eol = |t: &str| {
+            if crlf {
+                t.replace("\r\n", "\n").replace('\n', "\r\n")
+            } else {
+                t.to_string()
+            }
+        };
         let window = section_raw
             .map(str::trim)
             .filter(|raw| !raw.is_empty())
-            .and_then(|raw| old_full.find(raw).map(|b| (b, b + raw.len())));
+            .map(eol)
+            .and_then(|raw| old_full.find(&raw).map(|b| (b, b + raw.len())));
+        let doc_new = eol(new_text);
         let full = if old_text.trim().is_empty() {
             let Some((_, end)) = window else {
                 return Err(format!(
@@ -573,9 +606,10 @@ impl ProseEdit {
                 ));
             };
             format!(
-                "{}\n\n{}{}",
-                old_full[..end].trim_end_matches('\n'),
-                new_text.trim(),
+                "{}{}{}{}",
+                old_full[..end].trim_end_matches(['\r', '\n']),
+                eol("\n\n"),
+                doc_new.trim(),
                 &old_full[end..]
             )
         } else {
@@ -591,7 +625,7 @@ impl ProseEdit {
                     .ok_or_else(stale)?,
                 None => md::locate_bytes(old_full, old_text).ok_or_else(stale)?,
             };
-            format!("{}{}{}", &old_full[..b], new_text, &old_full[e..])
+            format!("{}{}{}", &old_full[..b], doc_new, &old_full[e..])
         };
         Ok(ProseEdit {
             doc: doc.to_string(),
@@ -1486,6 +1520,13 @@ fn apply_markers(graph: &mut Graph, markers: &Markers) {
     mark!(graph.diagnostics);
 }
 
+// Drop repeated ids, keeping each first occurrence in place. A rewire or resolve can
+// make two ids equal anywhere in the list, so adjacent-only `Vec::dedup` is not enough.
+fn dedup_keep_order(v: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    v.retain(|x| seen.insert(x.clone()));
+}
+
 // A store write that failed is reported with its path, never dropped.
 fn report_write(path: &Path, r: std::io::Result<()>) {
     if let Err(e) = r {
@@ -1541,12 +1582,14 @@ pub fn parent_moves_in(entries: &[JournalEntry]) -> Vec<ParentMove> {
             }
             let has =
                 |v: &serde_json::Value, k: &str| v.as_object().is_some_and(|o| o.contains_key(k));
-            if has(mv, "parent") && has(&mv["prior"], "parent") {
+            // A clear journals `clear_parent: true` and no `parent`: a move to none.
+            let cleared = mv["clear_parent"] == true;
+            if (has(mv, "parent") || cleared) && has(&mv["prior"], "parent") {
                 out.push(ParentMove {
                     generation: entry.generation,
                     child: id.to_string(),
                     from: id_or_none(&mv["prior"]["parent"]),
-                    to: id_or_none(&mv["parent"]),
+                    to: if cleared { None } else { id_or_none(&mv["parent"]) },
                 });
             }
         }
@@ -2065,6 +2108,9 @@ impl Store {
         if tokens == 0 || to <= from {
             return;
         }
+        // A journal rewrite is a store write: under the lock, through the atomic
+        // write. Mirrors docs/compiler/graph.md#concurrency.
+        let _flock = FileLock::acquire(out);
         // Only the session entries the turn wrote take a share, so the parts sum to
         // the spend: a checks or settle entry between them bills nothing.
         let entries: Vec<(PathBuf, JournalEntry)> = (from + 1..=to)
@@ -2087,9 +2133,7 @@ impl Store {
         for (i, (p, mut entry)) in entries.into_iter().enumerate() {
             entry.tokens = Some(split(tokens, i));
             entry.cached_tokens = (cached > 0).then(|| split(cached, i));
-            if let Ok(out_text) = serde_norway::to_string(&entry) {
-                crate::vfs::write(&p, out_text).ok();
-            }
+            report_write(&p, write_yaml(&p, &entry));
         }
     }
 
@@ -2115,6 +2159,12 @@ impl Store {
             ));
         }
         let p = out.join("journal").join(format!("g{}.yaml", generation));
+        if !p.vis_file() {
+            return Err(format!("no journal entry g{} under {}", generation, out.display()));
+        }
+        // The read, the check, and the write hold the lock, so two stamps never both
+        // pass the no-figure check. Mirrors docs/compiler/graph.md#concurrency.
+        let _flock = FileLock::acquire(out);
         let text = crate::vfs::read_to_string(&p)
             .map_err(|_| format!("no journal entry g{} under {}", generation, out.display()))?;
         let mut entry = serde_norway::from_str::<JournalEntry>(&text)
@@ -2144,8 +2194,7 @@ impl Store {
         entry.tokens = Some(tokens);
         entry.cached_tokens = cached.filter(|c| *c > 0);
         entry.tokens_source = Some(crate::model::TOKENS_SOURCE_AGENT.to_string());
-        let out_text = serde_norway::to_string(&entry).map_err(|e| e.to_string())?;
-        crate::vfs::write(&p, out_text).map_err(|e| format!("write {}: {}", p.display(), e))?;
+        write_yaml(&p, &entry).map_err(|e| format!("write {}: {}", p.display(), e))?;
         Ok(entry)
     }
 
@@ -2392,11 +2441,13 @@ impl Store {
     }
 
     // Follow merge redirects to the surviving id. A tombstone (empty target) stays dead.
+    // A chain a store written before compaction still holds is followed to its end;
+    // the hop bound only stops a cycle.
     pub fn resolve_id<'a>(&'a self, id: &'a str) -> &'a str {
         let mut cur = id;
         let mut hops = 0;
         while let Some(next) = self.graph.redirects.get(cur) {
-            if next.is_empty() || hops > 8 {
+            if next.is_empty() || hops >= self.graph.redirects.len() {
                 return cur;
             }
             cur = next;
@@ -2655,10 +2706,23 @@ impl Store {
             e.updated = Some(build.to_string());
         }
         self.graph.entities.remove(id);
-        self.graph
-            .redirects
-            .insert(id.to_string(), parent.clone().unwrap_or_default());
+        self.redirect(id, parent.as_deref().unwrap_or_default());
         (parent, children)
+    }
+
+    // Redirect `from` to the surviving `to`, one hop: every redirect that named `from`
+    // as its survivor now names `to`, so no chain grows across merges. A tombstone
+    // (empty `to`) leaves the redirects into `from` alone; they resolve to the dead id.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    fn redirect(&mut self, from: &str, to: &str) {
+        if !to.is_empty() {
+            for target in self.graph.redirects.values_mut() {
+                if target == from {
+                    *target = to.to_string();
+                }
+            }
+        }
+        self.graph.redirects.insert(from.to_string(), to.to_string());
     }
 
     // Whether a node id names an existing entity or requirement.
@@ -4218,13 +4282,14 @@ impl Store {
                             prior.insert("stereotype".into(), serde_json::json!(e.stereotype));
                         }
                     }
-                    let mut moved_between: Option<(Option<String>, String)> = None;
-                    if let Some(p) = &parent {
-                        if e.parent.as_deref() != Some(p.as_str()) {
-                            prior.insert("parent".into(), serde_json::json!(e.parent));
-                            moves.push((rid.clone(), e.parent.clone(), Some(p.clone()), m));
-                            moved_between = Some((e.parent.clone(), p.clone()));
-                        }
+                    // `clear_parent` is a move out of the tree: it wins over `parent`,
+                    // as the apply below does.
+                    let target = if clear_parent { None } else { parent.clone() };
+                    let mut moved_between: Option<(Option<String>, Option<String>)> = None;
+                    if (clear_parent || parent.is_some()) && e.parent != target {
+                        prior.insert("parent".into(), serde_json::json!(e.parent));
+                        moves.push((rid.clone(), e.parent.clone(), target.clone(), m));
+                        moved_between = Some((e.parent.clone(), target.clone()));
                     }
                     if !prior.is_empty() {
                         annotations.push((
@@ -4285,15 +4350,15 @@ impl Store {
                     // record on the child. Mirrors
                     // docs/compiler/goals/review-entity.md#created-when.
                     if let Some((from, to)) = &moved_between {
-                        if let Some(f) = from {
-                            dirt.entity(f, m, "parent");
+                        for p in from.iter().chain(to.iter()) {
+                            dirt.entity(p, m, "parent");
                         }
-                        dirt.entity(to, m, "parent");
                     }
-                    let move_only = parent.is_some()
+                    let move_only = (parent.is_some() || clear_parent)
                         && name.is_none()
                         && definition.is_none()
                         && add_aliases.is_empty()
+                        && remove_aliases.is_empty()
                         && add_mention.is_none()
                         && stereotype.is_none()
                         && set_attributes.is_none()
@@ -4419,12 +4484,12 @@ impl Store {
                     let rewire_provenance = |p: &mut Option<Provenance>| {
                         if let Some(Provenance::Derived { from, .. }) = p.as_mut() {
                             from.iter_mut().for_each(rewire);
-                            from.dedup();
+                            dedup_keep_order(from);
                         }
                     };
                     for r in self.graph.requirements.values_mut() {
                         r.entities.iter_mut().for_each(rewire);
-                        r.entities.dedup();
+                        dedup_keep_order(&mut r.entities);
                         for edge in r.edges.iter_mut() {
                             rewire(&mut edge.a);
                             rewire(&mut edge.b);
@@ -4439,6 +4504,9 @@ impl Store {
                         if let Some(p) = e.parent.as_mut() {
                             rewire(p);
                         }
+                        if let Some(note) = e.distinct_from.remove(&absorb) {
+                            e.distinct_from.entry(keep.clone()).or_insert(note);
+                        }
                         rewire_provenance(&mut e.provenance);
                         for a in e.attributes.iter_mut() {
                             let mut p = Some(a.provenance.clone());
@@ -4448,9 +4516,9 @@ impl Store {
                     }
                     for v in self.graph.views.values_mut() {
                         v.members.iter_mut().for_each(rewire);
-                        v.members.dedup();
+                        dedup_keep_order(&mut v.members);
                         v.collapse.iter_mut().for_each(rewire);
-                        v.collapse.dedup();
+                        dedup_keep_order(&mut v.collapse);
                         for x in v.excluded.iter_mut() {
                             rewire(&mut x.id);
                         }
@@ -4463,7 +4531,7 @@ impl Store {
                     }
                     for d in self.graph.diagnostics.values_mut() {
                         d.subjects.iter_mut().for_each(rewire);
-                        d.subjects.dedup();
+                        dedup_keep_order(&mut d.subjects);
                     }
                     let adopt_parent = match (
                         self.graph.entities[&keep].parent.is_none(),
@@ -4497,6 +4565,25 @@ impl Store {
                                 k.attributes.push(attr);
                             }
                         }
+                        for r in ab.not_about {
+                            if !k.not_about.contains(&r) {
+                                k.not_about.push(r);
+                            }
+                        }
+                        k.not_about.sort();
+                        for (id, note) in ab.distinct_from {
+                            k.distinct_from.entry(id).or_insert(note);
+                        }
+                        // The pair itself is one entity now.
+                        k.distinct_from.remove(&keep);
+                        k.distinct_from.remove(&absorb);
+                        // The higher bump stands on a clash.
+                        for (limit, bump) in ab.limits {
+                            let mine = k.limits.entry(limit).or_insert(bump);
+                            if bump.value > mine.value {
+                                *mine = bump;
+                            }
+                        }
                         if k.definition.as_deref().unwrap_or("").is_empty() {
                             k.definition = ab.definition;
                         }
@@ -4511,7 +4598,7 @@ impl Store {
                         }
                         k.updated = Some(build.clone());
                     }
-                    self.graph.redirects.insert(absorb.clone(), keep.clone());
+                    self.redirect(&absorb, &keep);
                     dirt.entity(&keep, m, "merge");
                     applied.push(Op::MergeEntities {
                         keep,
@@ -4528,7 +4615,7 @@ impl Store {
                         .iter()
                         .map(|e| resolve(&remap, self, e))
                         .collect();
-                    requirement.entities.dedup();
+                    dedup_keep_order(&mut requirement.entities);
                     for edge in requirement.edges.iter_mut() {
                         edge.a = resolve(&remap, self, &edge.a);
                         edge.b = resolve(&remap, self, &edge.b);
@@ -4759,7 +4846,7 @@ impl Store {
                     let resolved_entities = entities.map(|es| {
                         let mut v: Vec<String> =
                             es.iter().map(|e| resolve(&remap, self, e)).collect();
-                        v.dedup();
+                        dedup_keep_order(&mut v);
                         v
                     });
                     if let Some(es) = &resolved_entities {
@@ -4933,7 +5020,9 @@ impl Store {
                             dirt.entities(r.entities.iter(), m);
                             dirt.deleted(&rid, m);
                             // The criteria go with their requirement
-                            // (docs/compiler/graph.md#the-sweep).
+                            // (docs/compiler/graph.md#the-sweep). The requirement's
+                            // delete journals first, at `m`, the index its records
+                            // name; each cascaded criterion delete follows at its own.
                             let gone: Vec<String> = self
                                 .graph
                                 .criteria
@@ -4941,15 +5030,18 @@ impl Store {
                                 .filter(|(_, c)| c.requirement == rid)
                                 .map(|(cid, _)| cid.clone())
                                 .collect();
+                            applied.push(Op::DeleteRequirement {
+                                id: rid.clone(),
+                                reason,
+                            });
                             for cid in gone {
                                 self.graph.criteria.remove(&cid);
-                                dirt.deleted(&cid, m);
+                                dirt.deleted(&cid, applied.len() + 1);
                                 applied.push(Op::DeleteCriterion {
                                     id: cid,
                                     reason: format!("its requirement {} was deleted", rid),
                                 });
                             }
-                            applied.push(Op::DeleteRequirement { id: rid, reason });
                         }
                         None => skipped.push(format!("delete_requirement: unknown id {}", rid)),
                     }
@@ -5221,12 +5313,13 @@ impl Store {
                         .iter()
                         .map(|x| resolve(&remap, self, x))
                         .collect();
-                    view.members.dedup();
+                    dedup_keep_order(&mut view.members);
                     view.collapse = view
                         .collapse
                         .iter()
                         .map(|x| resolve(&remap, self, x))
                         .collect();
+                    dedup_keep_order(&mut view.collapse);
                     for x in view.excluded.iter_mut() {
                         x.id = resolve(&remap, self, &x.id);
                     }
@@ -6725,9 +6818,11 @@ impl Store {
             let entry = self.journal_entry(&build, &Commit::store("align"), mutations);
             entries.push(entry);
         }
-        // Stale anchors and pending proposals, under the last generation written.
+        // Stale anchors and pending proposals, under the last generation written. That
+        // generation may already hold records (the edit batch above, or an earlier
+        // commit's), so the batch numbers after them.
         let generation = self.status.generation;
-        let mut batch = RecordBatch::new(generation);
+        let mut batch = RecordBatch::after(generation, &self.status.changes);
         for (section, anchor) in &stale_at {
             self.push_stale_anchor(&mut batch, 0, section, anchor);
         }
@@ -7340,22 +7435,31 @@ impl FileLock {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
-        for _ in 0..100 {
-            match crate::vfs::create_new(&path, &crate::sys::process_id().to_string()) {
-                Ok(()) => {
-                    return FileLock {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        _file: None,
-                        marker: Some(path),
-                    }
-                }
-                Err(_) => crate::sys::sleep(std::time::Duration::from_millis(100)),
-            }
+        // An in-memory tree belongs to one thread, so no other party can hold its
+        // marker and waiting never frees it. A marker this thread holds is a nested
+        // acquire: it proceeds without taking the marker, which stays its holder's. Any
+        // other marker has no live holder (a snapshot carried it in) and is taken over.
+        let nested = SCOPED_LOCKS.with(|held| held.borrow().contains(&path));
+        if nested {
+            return FileLock {
+                #[cfg(not(target_arch = "wasm32"))]
+                _file: None,
+                marker: None,
+            };
         }
-        eprintln!(
-            "[jazyk] warning: stale lock at {}; proceeding",
-            path.display()
-        );
+        if let Err(e) = crate::vfs::write(&path, crate::sys::process_id().to_string()) {
+            eprintln!(
+                "[jazyk] warning: cannot write {}: {}; writing without the lock",
+                path.display(),
+                e
+            );
+            return FileLock {
+                #[cfg(not(target_arch = "wasm32"))]
+                _file: None,
+                marker: None,
+            };
+        }
+        SCOPED_LOCKS.with(|held| held.borrow_mut().insert(path.clone()));
         FileLock {
             #[cfg(not(target_arch = "wasm32"))]
             _file: None,
@@ -7364,10 +7468,21 @@ impl FileLock {
     }
 }
 
+// The markers this thread holds on in-memory trees.
+thread_local! {
+    static SCOPED_LOCKS: std::cell::RefCell<BTreeSet<PathBuf>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
 impl Drop for FileLock {
     fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(f) = &self._file {
+            fs2::FileExt::unlock(f).ok();
+        }
         if let Some(p) = &self.marker {
             crate::vfs::remove_file(p).ok();
+            SCOPED_LOCKS.with(|held| held.borrow_mut().remove(p));
         }
     }
 }
@@ -8866,6 +8981,307 @@ mod tests {
         assert!(r.skipped[0].contains("own ancestor"), "{:?}", r.skipped);
     }
 
+    // A rewire or resolve that makes two ids equal anywhere in a list leaves one, in
+    // first-occurrence order, not only when the two sat side by side.
+    #[test]
+    fn merge_and_resolve_drop_non_adjacent_duplicates() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nbuyer, cart, and customer\n");
+        s.apply(
+            vec![
+                create("ent:buyer", "Buyer"),
+                create("ent:cart", "Cart"),
+                create("ent:customer", "Customer"),
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: Requirement {
+                        statement: "The buyer fills the cart for the customer.".into(),
+                        entities: vec!["ent:buyer".into(), "ent:cart".into(), "ent:customer".into()],
+                        source: Some(mention("t.md", "/t", "buyer, cart, and customer")),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateView {
+                    id: "view:class/shop".into(),
+                    view: View {
+                        kind: "class".into(),
+                        title: "Shop".into(),
+                        members: vec!["ent:buyer".into(), "ent:cart".into(), "ent:customer".into()],
+                        provenance: Some(derived(&["ent:buyer", "ent:cart", "ent:customer"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::MergeEntities {
+                keep: "ent:buyer".into(),
+                absorb: "ent:customer".into(),
+                reason: "same concept".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(s.graph.requirements["req:t-1"].entities, vec!["ent:buyer", "ent:cart"]);
+        assert_eq!(s.graph.views["view:class/shop"].members, vec!["ent:buyer", "ent:cart"]);
+        // A staged list naming the absorbed id and its survivor apart resolves to one.
+        let r = s.apply(
+            vec![Op::CreateView {
+                id: "view:class/again".into(),
+                view: View {
+                    kind: "class".into(),
+                    title: "Again".into(),
+                    members: vec!["ent:customer".into(), "ent:cart".into(), "ent:buyer".into()],
+                    collapse: vec!["ent:customer".into(), "ent:cart".into(), "ent:buyer".into()],
+                    provenance: Some(derived(&["ent:buyer"])),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let v = s.graph.views.values().find(|v| v.title == "Again").unwrap();
+        assert_eq!(v.members, vec!["ent:buyer", "ent:cart"]);
+        assert_eq!(v.collapse, vec!["ent:buyer", "ent:cart"]);
+    }
+
+    // A merge carries the absorbed entity's `not_about`, `distinct_from`, and `limits`
+    // (the higher bump on a clash) and drops the pair's own note on each other.
+    // Mirrors docs/compiler/graph.md#mutations.
+    #[test]
+    fn merge_unions_not_about_distinct_from_and_limits() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nbuyer and customer\n");
+        let with = |name: &str, not_about: &[&str], distinct: &[(&str, &str)], limits: &[(&str, u64)]| Entity {
+            not_about: not_about.iter().map(|x| x.to_string()).collect(),
+            distinct_from: distinct.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            limits: limits
+                .iter()
+                .map(|(k, v)| (k.to_string(), LimitBump { value: *v }))
+                .collect(),
+            ..entity(name)
+        };
+        s.apply(
+            vec![
+                create("ent:payment", "Payment"),
+                Op::CreateEntity {
+                    id: "ent:customer".into(),
+                    entity: with("Customer", &["req:a-1"], &[("ent:buyer", "told apart")], &[("requirements-per-entity", 70), ("attributes-per-entity", 40)]),
+                },
+                Op::CreateEntity {
+                    id: "ent:buyer".into(),
+                    entity: with("Buyer", &["req:b-1", "req:a-1"], &[("ent:payment", "the payer, not the payment")], &[("requirements-per-entity", 90), ("children-per-entity", 30)]),
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::MergeEntities {
+                keep: "ent:customer".into(),
+                absorb: "ent:buyer".into(),
+                reason: "same concept".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let k = &s.graph.entities["ent:customer"];
+        assert_eq!(k.not_about, vec!["req:a-1", "req:b-1"]);
+        assert_eq!(
+            k.distinct_from.keys().collect::<Vec<_>>(),
+            vec!["ent:payment"],
+            "the pair's own note goes, the absorbed one's other notes stay"
+        );
+        assert_eq!(k.limits["requirements-per-entity"].value, 90);
+        assert_eq!(k.limits["attributes-per-entity"].value, 40);
+        assert_eq!(k.limits["children-per-entity"].value, 30);
+    }
+
+    // Redirects stay one hop: absorbing a survivor repoints the redirects into it, and
+    // a chain an older store left behind still resolves past eight hops.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    #[test]
+    fn merges_compact_redirect_chains() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nshop\n");
+        s.apply(
+            vec![create("ent:a", "A"), create("ent:b", "B"), create("ent:c", "C")],
+            &session(),
+        );
+        for (keep, absorb) in [("ent:b", "ent:a"), ("ent:c", "ent:b")] {
+            let r = s.apply(
+                vec![Op::MergeEntities {
+                    keep: keep.into(),
+                    absorb: absorb.into(),
+                    reason: "same".into(),
+                }],
+                &session(),
+            );
+            assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        }
+        assert_eq!(s.graph.redirects["ent:a"], "ent:c");
+        assert_eq!(s.graph.redirects["ent:b"], "ent:c");
+        let mut old = Store::default();
+        old.graph.entities.insert("ent:end".into(), entity("End"));
+        for i in 0..12 {
+            let to = if i == 11 { "ent:end".to_string() } else { format!("ent:x{}", i + 1) };
+            old.graph.redirects.insert(format!("ent:x{}", i), to);
+        }
+        assert_eq!(old.resolve_id("ent:x0"), "ent:end");
+        // A cycle stops instead of spinning.
+        old.graph.redirects.insert("ent:p".into(), "ent:q".into());
+        old.graph.redirects.insert("ent:q".into(), "ent:p".into());
+        let _ = old.resolve_id("ent:p");
+    }
+
+    // Clearing a parent is a move: the journal records the prior parent, the parent
+    // left gets its `parent` record, the child no `fields` record, and the reparent
+    // history reads the clear. Mirrors docs/compiler/graph.md#journal.
+    #[test]
+    fn clearing_a_parent_is_journaled_as_a_move() {
+        let mut s = Store {
+            out: own_dir("clear-parent"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nshop\n");
+        s.apply(
+            vec![
+                create("ent:orders", "Orders"),
+                Op::CreateEntity {
+                    id: "ent:parcel".into(),
+                    entity: Entity {
+                        parent: Some("ent:orders".into()),
+                        ..entity("Parcel")
+                    },
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::UpdateEntity {
+                id: "ent:parcel".into(),
+                name: None,
+                definition: None,
+                add_aliases: Vec::new(),
+                remove_aliases: Vec::new(),
+                clear_parent: true,
+                not_about_add: Vec::new(),
+                add_mention: None,
+                stereotype: None,
+                parent: None,
+                set_attributes: None,
+                add_attributes: Vec::new(),
+                provenance: None,
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(s.graph.entities["ent:parcel"].parent, None);
+        let records: Vec<(String, String)> = r
+            .changes
+            .iter()
+            .filter(|c| c.kind == CHANGE_ENTITY)
+            .map(|c| (c.subject.clone(), c.via.clone()))
+            .collect();
+        assert!(records.contains(&("ent:orders".into(), "parent".into())), "{:?}", records);
+        assert!(!records.iter().any(|(s, _)| s == "ent:parcel"), "{:?}", records);
+        let entry = journal_entry(&s, r.generation);
+        let moves = parent_moves_in(std::slice::from_ref(&entry));
+        assert_eq!(moves.len(), 1, "{:?}", entry.mutations);
+        assert_eq!(moves[0].child, "ent:parcel");
+        assert_eq!(moves[0].from.as_deref(), Some("ent:orders"));
+        assert_eq!(moves[0].to, None);
+    }
+
+    // A deleted requirement's records name its own journal mutation; each cascaded
+    // criterion delete names its own. Mirrors docs/compiler/graph.md#change-records.
+    #[test]
+    fn a_requirement_delete_names_its_own_mutation() {
+        let mut s = Store {
+            out: own_dir("delete-cascade"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nThe sort utility outputs its lines in ascending order.\n");
+        s.apply(
+            vec![
+                create("ent:sort", "Sort"),
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: Requirement {
+                        statement: "The sort utility outputs its lines in ascending order.".into(),
+                        entities: vec!["ent:sort".into()],
+                        source: Some(mention("t.md", "/t", "outputs its lines in ascending order")),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateCriterion {
+                    id: "crit:new-1".into(),
+                    criterion: Criterion {
+                        requirement: "req:t-1".into(),
+                        statement: "Given one line, the utility outputs that line unchanged.".into(),
+                        kind: "boundary".into(),
+                        provenance: Some(derived(&["req:t-1"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-1".into(),
+                reason: "gone".into(),
+            }],
+            &session(),
+        );
+        let entry = journal_entry(&s, r.generation);
+        let op_at = |m: usize| entry.mutations[m - 1]["op"].as_str().unwrap_or("").to_string();
+        let req = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_REQ_DELETED && c.subject == "req:t-1")
+            .expect("a requirement-deleted record");
+        assert_eq!(op_at(req.mutation), "delete_requirement", "{:?}", entry.mutations);
+        let crit = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_CRIT_DELETED)
+            .expect("a criterion-deleted record");
+        assert_eq!(op_at(crit.mutation), "delete_criterion", "{:?}", entry.mutations);
+    }
+
+    // A CRLF document locates its sections for a dual write the same way an LF one
+    // does, and the edit keeps CRLF. Mirrors docs/compiler/graph.md#mutations.
+    #[test]
+    fn a_crlf_document_takes_a_dual_write_in_its_section() {
+        let lf = "# T\n\n## Alpha\nThe cart holds items.\nIt is shared.\n\n## Beta\nThe cart holds items.\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let sections = crate::md::parse_sections(&crlf);
+        let beta = sections["/t/beta"].raw.clone();
+        let alpha = sections["/t/alpha"].raw.clone();
+        // A replacement scoped to Beta never lands in Alpha's identical sentence.
+        let edit = ProseEdit::locate("t.md", "/t/beta", Some(&beta), &crlf, "The cart holds items.", "The cart holds goods.")
+            .unwrap();
+        assert_eq!(edit.full, crlf.replace("## Beta\r\nThe cart holds items.", "## Beta\r\nThe cart holds goods."));
+        // An append after a multi-line section lands right after it, in CRLF.
+        let edit = ProseEdit::locate("t.md", "/t/alpha", Some(&alpha), &crlf, "", "A cart expires.\nAfter a day.").unwrap();
+        assert!(
+            edit.full.contains("It is shared.\r\n\r\nA cart expires.\r\nAfter a day.\r\n\r\n## Beta"),
+            "{:?}",
+            edit.full
+        );
+        assert!(!edit.full.replace("\r\n", "").contains('\n'), "{:?}", edit.full);
+    }
+
     // A move alone writes `parent` on the parent left and the one joined and no
     // `fields` record on the child; a move with a definition still reviews the child.
     // Mirrors docs/compiler/goals/review-entity.md#created-when.
@@ -10323,6 +10739,77 @@ mod tests {
         assert_eq!(read(4).cached_tokens, None);
     }
 
+    // An in-memory store's marker lock: a stale marker is taken over at once, a nested
+    // acquire never removes its holder's marker, and the holder's release does.
+    // Mirrors docs/compiler/graph.md#concurrency.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_scoped_lock_takes_over_a_stale_marker_and_keeps_a_live_one() {
+        let mut files = BTreeMap::new();
+        files.insert(".jazyk/ds/.lock".to_string(), b"999".to_vec());
+        let _scope = crate::vfs::Scope::enter(&files);
+        let out = PathBuf::from("/project/.jazyk/ds");
+        let marker = out.join(".lock");
+        let started = std::time::Instant::now();
+        let outer = FileLock::acquire(&out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "a stale marker is not waited on");
+        assert!(marker.vexists());
+        drop(FileLock::acquire(&out));
+        assert!(marker.vexists(), "a nested release removed the holder's marker");
+        drop(outer);
+        assert!(!marker.vexists());
+        drop(FileLock::acquire(&out));
+        assert!(!marker.vexists());
+    }
+
+    // A spend stamp rewrites a committed journal entry: it waits for the store lock
+    // a writer holds and lands through the atomic write.
+    // Mirrors docs/compiler/graph.md#concurrency.
+    #[test]
+    fn spend_stamps_wait_for_the_store_lock() {
+        let out = own_dir("stamp-lock");
+        crate::vfs::create_dir_all(out.join("journal")).unwrap();
+        for g in [1, 2] {
+            let entry = JournalEntry {
+                build: format!("g{}", g),
+                generation: g,
+                kind: "session".to_string(),
+                ..Default::default()
+            };
+            crate::vfs::write(
+                out.join("journal").join(format!("g{}.yaml", g)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        }
+        let read = |g: u64| -> JournalEntry {
+            serde_norway::from_str(
+                &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g)))
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let held = FileLock::acquire(&out);
+        let (a, b) = (out.clone(), out.clone());
+        let reported = std::thread::spawn(move || Store::stamp_reported(&a, 2, 500, None));
+        let measured = std::thread::spawn(move || Store::stamp_tokens(&b, 0, 1, 700, 0));
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert_eq!(read(1).tokens, None, "a stamp wrote under a held lock");
+        assert_eq!(read(2).tokens, None, "a stamp wrote under a held lock");
+        drop(held);
+        assert_eq!(reported.join().unwrap().unwrap().tokens, Some(500));
+        measured.join().unwrap();
+        assert_eq!(read(1).tokens, Some(700));
+        assert_eq!(read(2).tokens, Some(500));
+        let leftovers: Vec<String> = crate::vfs::read_dir(out.join("journal"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{:?}", leftovers);
+    }
+
     #[test]
     fn sync_docs_journals_an_edit_entry_with_section_records() {
         let mut s = Store {
@@ -10510,6 +10997,47 @@ mod tests {
         );
         let rec = &s.docs["t.md"];
         assert!(rec.coverage.contains_key("/t/bunch/alpha"));
+    }
+
+    // A save that dirties a section writes its edit records and, in the same
+    // generation, the standing alignment block's record: every id stays unique.
+    #[test]
+    fn sync_docs_numbers_one_generation_without_duplicate_record_ids() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        let parse = |docs: &[(&str, &str)]| -> crate::reconcile::ParsedDocs {
+            docs.iter()
+                .map(|(d, t)| (d.to_string(), (hash_hex(t), crate::md::parse_sections(t))))
+                .collect()
+        };
+        let t1 = "# T\n\n## Beta\nbeta body\n";
+        let u1 = "# U\nunder body\n";
+        s.sync_docs(&parse(&[("t.md", t1), ("u.md", u1)]));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The B betas.".into(),
+                source: Some(mention("t.md", "/t/beta", "beta body")),
+                ..Default::default()
+            },
+        );
+        // Beta is edited in place: its anchor becomes a pending proposal.
+        let t2 = "# T\n\n## Beta\nbeta CHANGED body\n";
+        s.sync_docs(&parse(&[("t.md", t2), ("u.md", u1)]));
+        assert!(s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"));
+        // Another document's edit opens no proposal: its section records and the
+        // standing alignment record share one generation.
+        let u2 = "# U\nunder body, revised\n";
+        s.sync_docs(&parse(&[("t.md", t2), ("u.md", u2)]));
+        let generation = s.status.generation;
+        let here: Vec<&ChangeRecord> =
+            s.status.changes.iter().filter(|c| c.generation == generation).collect();
+        assert!(here.iter().any(|c| c.kind == CHANGE_SECTION_DIRTY));
+        assert!(here.iter().any(|c| c.kind == CHANGE_ALIGNMENT_PENDING));
+        let ids: BTreeSet<&str> = s.status.changes.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), s.status.changes.len(), "{:?}", s.status.changes);
     }
 
     #[test]

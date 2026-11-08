@@ -8,6 +8,7 @@ use crate::gen::{artifact_path, hash_file, GenSettings, Ledger, ReqRow};
 use crate::model::hash_hex;
 use crate::store::Store;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 // Derived status, first match wins. Mirrors
@@ -697,8 +698,8 @@ fn task_case_outcome(result: &Value, name: &str, run_id: &str) -> Result<ProgRun
     })
 }
 
-// Run a row's criterion tests (the programmatic ones whose command differs from the
-// headline's) and record each verdict on its entry; the row's verdict fails when any
+// Run a row's criterion tests (the programmatic ones other than the headline itself)
+// and record each verdict on its entry; the row's verdict fails when any
 // criterion fails. Returns one line per criterion run.
 // Mirrors docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable.
 pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Value> {
@@ -717,6 +718,20 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
     let headline_run = row.test.run.clone();
     let headline_name = row.test.name.clone();
     let headline_verdict = row.verdict.clone();
+    // Identical legacy commands in one directory share one execution
+    // (docs/consumers/gen.md#test-artifact-selection): a criterion test sharing the
+    // headline's command takes the headline's fresh outcome, and criteria sharing a
+    // command with each other run it once.
+    let mut runs: BTreeMap<(String, String), Result<ProgRun, String>> = BTreeMap::new();
+    if row.test.kind == "programmatic" && matches!(row.verdict.as_str(), "pass" | "fail") {
+        if let Some(code) = row.exit_code {
+            let evidence = row.evidence.clone().unwrap_or_default();
+            runs.insert(
+                (row.test.run.clone(), row.test.cwd.clone()),
+                Ok(ProgRun { pass: row.verdict == "pass", code, tail: evidence.clone(), evidence }),
+            );
+        }
+    }
     let mut lines = Vec::new();
     let mut any_fail = false;
     for (cid, t) in row.tests.iter_mut() {
@@ -731,7 +746,7 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
             lines.push(json!({"requirement": rid, "criterion": cid, "verdict": headline_verdict, "note": "the row's headline test"}));
             continue;
         }
-        if t.test.kind != "programmatic" || t.test.run == headline_run {
+        if t.test.kind != "programmatic" {
             continue;
         }
         if crate::vfs::is_scoped() {
@@ -751,7 +766,11 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
             lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": reason}));
             continue;
         }
-        match run_test_ref(gs, &t.test) {
+        let outcome = runs
+            .entry((t.test.run.clone(), t.test.cwd.clone()))
+            .or_insert_with(|| run_test_ref(gs, &t.test))
+            .clone();
+        match outcome {
             Ok(r) if r.runner_failed() => {
                 t.verdict = "none".into();
                 t.exit_code = Some(r.code);
@@ -1041,16 +1060,12 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
         }
         match run_programmatic(store, rid, gs) {
             Ok(r) if r.pass => {
-                mark(
-                    store,
-                    rid,
-                    "pass",
-                    None,
-                    Some(&r.evidence),
-                    Some(r.code),
-                    gs,
-                )
-                .ok();
+                // A verdict that did not land is not a pass: the reply says what the
+                // ledger holds, never what the run hoped to record.
+                if let Err(e) = mark(store, rid, "pass", None, Some(&r.evidence), Some(r.code), gs) {
+                    skipped.push(json!({"requirement": rid, "reason": format!("the test passed but its verdict was not recorded: {e}"), "exitCode": r.code}));
+                    continue;
+                }
                 // The criteria's own tests ride behind the headline.
                 let crit_rows = run_criterion_tests(store, rid, gs);
                 let crit_failed = crit_rows.iter().any(|c| c["verdict"] == "fail");
@@ -1082,16 +1097,10 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             rows.push(json!({"requirement": rid, "verdict": "none", "reason": "runner-failed", "exitCode": r.code, "evidence": r.tail}));
             continue;
         }
-        mark(
-            store,
-            &rid,
-            "fail",
-            None,
-            Some(&r.evidence),
-            Some(r.code),
-            gs,
-        )
-        .ok();
+        if let Err(e) = mark(store, &rid, "fail", None, Some(&r.evidence), Some(r.code), gs) {
+            skipped.push(json!({"requirement": rid, "reason": format!("the test failed but its verdict was not recorded: {e}"), "exitCode": r.code, "evidence": r.tail}));
+            continue;
+        }
         failed += 1;
         rows.push(
             json!({"requirement": rid, "verdict": "fail", "exitCode": r.code, "evidence": r.tail}),
@@ -1166,6 +1175,18 @@ pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str
         row.exit_code = Some(code);
         row.evidence = Some(crate::llm::truncate(evidence, 300));
         row.last_run = Some(now_iso());
+        // A criterion entry that is the headline's test, by name or by its shared
+        // command, learned nothing either: its previous verdict clears too
+        // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+        let (name, run, cwd) = (row.test.name.clone(), row.test.run.clone(), row.test.cwd.clone());
+        for t in row.tests.values_mut() {
+            if t.test.kind == "programmatic" && (t.test.name == name || (t.test.run == run && t.test.cwd == cwd)) {
+                t.verdict = "none".into();
+                t.exit_code = Some(code);
+                t.evidence = row.evidence.clone();
+                t.last_run = row.last_run.clone();
+            }
+        }
         ledger.save(&store.out);
     }
 }
@@ -2113,6 +2134,89 @@ mod tests {
         assert_eq!(row.verdict, "none");
         assert_eq!(row.exit_code, Some(127));
         assert_eq!(status_of(&s, "req:shop-1", row, &gs).1, "runner-failed");
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A runner failure on the headline clears the criterion entry that is the
+    // headline's test: a stale verdict there must not outlive the failed run
+    // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+    #[test]
+    fn headline_runner_failure_clears_its_criterion_entry() {
+        let out = std::env::temp_dir().join(format!("jazyk-headline-runner-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut store, gs) = fixture(&out);
+        store.graph.criteria.insert("c:check".into(), Criterion {
+            requirement: "req:shop-1".into(), statement: "Check items".into(),
+            ..Default::default()
+        });
+        let mut ledger = Ledger::load(&out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        row.tests.insert("c:check".into(), crate::gen::CritTest {
+            test: row.test.clone(), criterion_hash: hash_hex("Check items"),
+            test_hash: row.hashes.test.clone(), verdict: "fail".into(),
+            last_run: None, exit_code: Some(1), evidence: Some("earlier fail".into()),
+        });
+        ledger.save(&out);
+        record_runner_failure(&store, "req:shop-1", 127, "sh: not found");
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.tests["c:check"].verdict, "none");
+        assert_eq!(row.tests["c:check"].exit_code, Some(127));
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs).1, "runner-failed");
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A criterion test sharing the headline's command shares its execution and gets
+    // its verdict (docs/consumers/gen.md#test-artifact-selection).
+    #[test]
+    fn criterion_sharing_the_headline_command_gets_a_verdict() {
+        let out = std::env::temp_dir().join(format!("jazyk-shared-command-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut store, gs) = fixture(&out);
+        store.graph.criteria.insert("c:other".into(), Criterion {
+            requirement: "req:shop-1".into(), statement: "Other check".into(),
+            ..Default::default()
+        });
+        let artifact = gs.deliverable.join("tests/cart.rs");
+        let text = crate::vfs::read_to_string(&artifact).unwrap();
+        crate::vfs::write(&artifact, format!("{text}fn criterion_other() {{}}\n")).unwrap();
+        let run = "echo ran >> runs.txt";
+        let mut ledger = Ledger::load(&out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        row.test.run = run.into();
+        let mut test = row.test.clone();
+        test.name = "criterion_other".into();
+        row.tests.insert("c:other".into(), crate::gen::CritTest {
+            test, criterion_hash: hash_hex("Other check"),
+            test_hash: String::new(), verdict: "none".into(),
+            last_run: None, exit_code: None, evidence: None,
+        });
+        ledger.save(&out);
+        let reply = run_selected(&store, &gs, &[]).unwrap();
+        assert_eq!(reply["passed"], 1, "{reply}");
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.tests["c:other"].verdict, "pass");
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
+        let runs = crate::vfs::read_to_string(gs.deliverable.join("runs.txt")).unwrap();
+        assert_eq!(runs.lines().count(), 1, "one shared execution");
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A run whose verdict cannot be recorded is not counted as a pass.
+    #[test]
+    fn an_unrecorded_verdict_is_not_reported_as_passed() {
+        let out = std::env::temp_dir().join(format!("jazyk-unrecorded-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (store, gs) = fixture(&out);
+        let mut ledger = Ledger::load(&out);
+        ledger.requirements.get_mut("req:shop-1").unwrap().test.run =
+            format!("rm -f '{}'", Ledger::path(&out).display());
+        ledger.save(&out);
+        let reply = run_selected(&store, &gs, &[]).unwrap();
+        assert_eq!(reply["passed"], 0, "{reply}");
+        let reason = reply["skipped"][0]["reason"].as_str().unwrap_or_default();
+        assert!(reason.contains("not recorded"), "{reply}");
         crate::vfs::remove_dir_all(&out).ok();
     }
 

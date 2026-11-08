@@ -4398,6 +4398,20 @@ impl ToolSession {
     const READ_FILE_LINES: usize = 400;
     const READ_FILE_BYTES: usize = 64 * 1024;
 
+    // Whether a file tool path, as named or after its links resolve, is a protected
+    // path: credentials, hidden paths, Git internals, compiler state, nested projects.
+    fn protected_file(&self, rel: &str, path: &std::path::Path) -> bool {
+        let base = self.deliverable_root();
+        let open = |relative: &str| crate::task_runtime::safe_path(relative)
+            && crate::document_sets::allowed_components(relative)
+            && !crate::task_runtime::protected(relative)
+            && crate::document_sets::contained_relative(&base, relative);
+        let resolved = path.strip_prefix(&base)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        !open(rel.trim().trim_start_matches("./")) || !open(&resolved)
+    }
+
     fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         match name {
             "read_text_file" => {
@@ -4405,15 +4419,7 @@ impl ToolSession {
                 let path = self.deliverable_path(&rel)?;
                 // Listing and task snapshots exclude credentials and internal state.
                 // A guessed path, including an alias through a symlink, keeps that fence.
-                let base = self.deliverable_root();
-                let readable = |relative: &str| crate::task_runtime::safe_path(relative)
-                    && crate::document_sets::allowed_components(relative)
-                    && !crate::task_runtime::protected(relative)
-                    && crate::document_sets::contained_relative(&base, relative);
-                let resolved = path.strip_prefix(&base)
-                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_default();
-                if !readable(rel.trim().trim_start_matches("./")) || !readable(&resolved) {
+                if self.protected_file(&rel, &path) {
                     return Err(ToolError::new("protected-path", format!(
                         "`{rel}` is a protected path; file reads exclude credentials, hidden paths, Git internals, private compiler state and nested projects"
                     )));
@@ -4490,6 +4496,13 @@ impl ToolSession {
                 let content = args["content"].as_str().ok_or_else(|| ToolError::new("bad-args", "content must be a string".into()))?.to_owned();
                 if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));}
                 let path = self.deliverable_path(&rel)?;
+                // The protected-path fence holds with or without a workspace.
+                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+                if self.protected_file(&rel, &path) {
+                    return Err(ToolError::new("protected-path", format!(
+                        "`{rel}` is a protected path; file writes exclude credentials, hidden paths, Git internals, private compiler state and nested projects"
+                    )));
+                }
                 // File ownership: a path recorded for an entity outside this session's
                 // component group is off limits; the group shares its files.
                 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
@@ -12911,6 +12924,31 @@ mod tests {
             assert!(err.message.contains(id), "{}", err.message);
         }
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // write_text_file keeps the protected-path fence when no workspace exists.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    #[test]
+    fn writes_refuse_protected_paths_without_a_workspace() {
+        let base = std::env::temp_dir().join(format!(
+            "jazyk-protected-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        crate::vfs::create_dir_all(&base).unwrap();
+        let mut t = session();
+        t.gen.deliverable = base.clone();
+        for path in [".env", ".git/config", ".jazyk/status.yaml", "keys/server.pem", "a/.ssh/id_rsa"] {
+            let err = t
+                .dispatch("write_text_file", &json!({"path": path, "content": "x"}))
+                .unwrap_err();
+            assert_eq!(err.rule, "protected-path", "{path}: {}", err.message);
+            assert!(!base.join(path).vexists(), "{path}");
+        }
+        t.dispatch("write_text_file", &json!({"path": "src/ok.txt", "content": "fine"}))
+            .unwrap();
+        assert!(base.join("src/ok.txt").vexists());
+        crate::vfs::remove_dir_all(&base).ok();
     }
 
     // list_files walks a directory reached again through a link once, and stops at

@@ -108,7 +108,7 @@ pub fn load_global_acp() -> AcpSettings {
 
 // The keys the [executors] table accepts: the goal kinds that run in a session and the
 // two goal classes. Mirrors docs/compiler/project-settings.md#executors.
-pub const EXECUTOR_KEYS: [&str; 16] = [
+pub const EXECUTOR_KEYS: [&str; 17] = [
     "compile",
     "gc",
     "place-anchors",
@@ -117,6 +117,7 @@ pub const EXECUTOR_KEYS: [&str; 16] = [
     "review-entity",
     "retrace",
     "conform-instance",
+    "derive-criteria",
     "bind",
     "generate",
     "verify",

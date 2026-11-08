@@ -31,29 +31,31 @@ native platform.
 
 ## The deliverable
 
-The deliverable is the project directory itself by default: the generated product lands
-beside `jazyk.toml`, and the default docs glob keeps `docs/` as source. A project may
-point it elsewhere:
+The deliverable is the project directory itself: the generated product lands beside
+`.jazyk/`, and the default docs glob keeps `docs/` as source. The selected document
+set's `source` patterns say which of its files generation may write and which count as
+implementation ([generation settings](../compiler/project-settings.md#generation)):
 
 ```toml
-[gen]
-deliverable = "../project2"
+[[sets]]
+id = "ds_main"
+name = "Main"
+docs = ["docs/**/*.md"]
+source = ["src/**", "tests/**"]
 ```
 
-- `deliverable` resolves relative to the project root. Default `.`. Everything
-  generation produces lands under it.
-- The deliverable directory is excluded from doc input; the docs glob whitelists paths
-  back in ([docs settings](../compiler/project-settings.md#docs)). Generation metadata
-  is not documentation: the ledger stays in the out directory, and an `llm` row's
-  criteria file lives under `<out>/gen/criteria/` when the built-in worker writes it, or
-  under the deliverable when an external worker writes it with its own file tools. The
+- An empty `source` leaves the set without a generation scope.
+- The project root is excluded from doc input; the docs glob whitelists paths back in
+  ([docs settings](../compiler/project-settings.md#docs)). Generation metadata is not
+  documentation: the ledger stays in the out directory, and an `llm` row's criteria
+  file lives under `<out>/gen/criteria/` when the built-in worker writes it, or under
+  the deliverable when an external worker writes it with its own file tools. The
   recorded path resolves against both, and a criteria file under the deliverable is
   never doc input, whatever the glob says.
 
-`deliverable` is the only setting that says where things go. The other two keys of
-[`[gen]`](../compiler/project-settings.md#generation) say nothing about the product
-either: `worker` picks the built-in worker's mode, `code` scopes the
-[unclaimed report](./bind.md#the-unclaimed-report). What the deliverable is (a Rust
+`source` is the only setting that says where things go.
+[`[gen] worker`](../compiler/project-settings.md#generation) picks the built-in
+worker's mode and says nothing about the product either. What the deliverable is (a Rust
 crate, a web app, a book, a schematic) is a fact the documents state, so it reaches the
 generator through the graph and the loaded set like every other fact. The project file
 never says what to build; there are no hints.

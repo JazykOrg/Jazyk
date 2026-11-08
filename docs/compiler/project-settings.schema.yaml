@@ -93,6 +93,7 @@ properties:
       - review-entity
       - retrace
       - conform-instance
+      - derive-criteria
       - bind
       - generate
       - verify
@@ -230,6 +231,77 @@ properties:
     additionalProperties: false
   version:
     const: 1
+  tasks:
+    type: array
+    description: Finite command execution (task-runtime.md). At most 100 tasks with
+      unique ids
+    maxItems: 100
+    items:
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - command
+      properties:
+        id:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{1,60}$
+        name:
+          type: string
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 4000
+        command:
+          type: string
+          description: A shell command
+          maxLength: 16384
+        image:
+          type: string
+          default: python:3.12-slim
+        cwd:
+          type: string
+          description: A project-relative directory, '.' for the project root
+          default: .
+        size:
+          type: string
+          enum:
+          - small
+          - medium
+          - large
+          default: small
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 7200
+          default: 1800
+        env:
+          type: object
+          description: Non-secret environment values
+          maxProperties: 40
+          additionalProperties:
+            type: string
+        products:
+          type: array
+          description: Project-relative globs retaining generated outputs
+          maxItems: 40
+          items:
+            type: string
+        cache:
+          type: array
+          description: Project-relative globs of disposable files restored before
+            execution and saved after command success
+          maxItems: 40
+          items:
+            type: string
+        reports:
+          type: array
+          description: Project-relative globs of JUnit results
+          maxItems: 40
+          items:
+            type: string
+      additionalProperties: false
   sets:
     type: array
     items:
@@ -339,6 +411,7 @@ properties:
             - review-entity
             - retrace
             - conform-instance
+            - derive-criteria
             - bind
             - generate
             - verify

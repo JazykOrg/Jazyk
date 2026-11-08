@@ -243,8 +243,8 @@ derives no `generate` goal.
 The inverse of coverage. Every binding names its files; the deliverable files named
 by no binding are unclaimed: behavior the code carries that no requirement describes.
 
-- The scope is the [`gen.code`](../compiler/project-settings.md#generation) glob when
-  set, otherwise every file under the deliverable minus the standard exclusions.
+- The scope is the set's [`source`](../compiler/project-settings.md#generation)
+  selection minus the files any set claims as documents and the standard exclusions.
 - A build output is never unclaimed: it is made, not written. That is every path in
   the [build](./gen.md#the-build)'s `produces`, and the medium's `artifact` while no
   build is recorded (a built deck a fixture carries).

@@ -133,7 +133,9 @@ different nodes touch different files and git merges them without a conflict.
   The plain form never writes `%~`, so a shortened name never meets a plain one; two
   shortened ids meet only when both their prefixes and their hashes agree.
 - A file holds the node alone, its fields in a fixed order, maps sorted by key, ending
-  in a newline. A redirect file holds `to: <surviving id>`. Nothing in a file changes
+  in a newline. A redirect file holds `to: <surviving id>`, one hop: a merge or a
+  dissolve that redirects an id to a survivor repoints every redirect into that id at
+  the survivor too. Nothing in a file changes
   unless the node changes: the same graph always writes the same bytes.
 - A save writes the files whose bytes changed and deletes the files of nodes that left
   the graph. A file whose name does not decode, or whose content does not parse, makes
@@ -314,8 +316,9 @@ Their semantics:
 - `merge_entities` keeps one entity, absorbs the other, rewires every reference
   (requirement `entities`, `edges`, `transition.subject`, view `members`, `excluded`,
   `collapse`, the `parent` of the absorbed entity's children), unions aliases, mentions,
-  and attributes (the survivor's attribute stands on a name clash, journaled), and writes
-  a redirect from the absorbed id to the survivor. Downstream consumers holding the old id
+  attributes (the survivor's attribute stands on a name clash, journaled), `not_about`,
+  `distinct_from` (minus the pair itself), and `limits` (the higher bump stands on a
+  clash), and writes a redirect from the absorbed id to the survivor. Downstream consumers holding the old id
   follow the redirect. A merge that would make the survivor its own ancestor is rejected.
 - `upsert_view` creates or refreshes a view by `kind` and `title`. `update_view` sets
   `title`, `members` (the whole ordered list), `add_members`, `remove_members`, `query`,
@@ -344,7 +347,9 @@ Their semantics:
   commit, so the edit does not dirty the document it just reconciled. Any other anchor
   in the section whose quote stops locating goes stale the normal way; the safety
   net is ordinary dirty-section work. An `old_text` of empty inserts `new_text` after
-  the section's last sentence, which is how a ratification proposal lands.
+  the section's last sentence, which is how a ratification proposal lands. The edit
+  keeps the document's line endings: in a CRLF document the section locates the same
+  way and the inserted text takes CRLF.
 - `edit_fact` sets one field on one node (`statement`, `edges`, `transition`, `facets`,
   `definition`, `stereotype`, `parent`, an attribute's `type` or `value`, a view's
   `members`). On a default view it clears `default`. Paired with `edit_doc_prose` it
@@ -732,9 +737,9 @@ The entry kinds:
   When the chosen option carries an `edit`, the entry also carries the prose replacement
   and graph mutation, like a dual write.
 
-A mutation that moves an entity's `parent` (`update_entity`, `edit_fact`,
-`group_entities`, `dissolve_entity`, the sweep's dissolve) records the prior parent in
-its journal mutation, so the reparent flip replays from the journal alone
+A mutation that moves an entity's `parent` (`update_entity`, `remove_parent` included,
+`edit_fact`, `group_entities`, `dissolve_entity`, the sweep's dissolve) records the prior
+parent in its journal mutation, so the reparent flip replays from the journal alone
 ([flip detection](./reconciler.md#flip-detection)).
 
 Every kind can carry `resolved_goals` (each with its one-line `justification`, and
@@ -933,6 +938,11 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   exits, so a crashed writer never leaves a stale lock and a waiter never overrides a
   live one (a wait past ten seconds is reported, then continues). One changeset commits
   at a time.
+- A store in an in-memory workspace (the [browser engine](../frontends/wasm.md)) belongs
+  to one thread, so its `.lock` is a marker file that thread owns. A nested acquire on
+  that thread proceeds and leaves the marker to its holder; a marker no holder on the
+  thread owns (a snapshot carried it in) is taken over at once. Releasing removes only
+  the marker the releaser owns.
 - A writer commits against the generation it loaded. Under the lock it re-reads the
   generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
   first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites

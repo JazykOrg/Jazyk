@@ -63,7 +63,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("run by IDEs and agents, not by hand", &[
         ("mcp <toolsets>", "the MCP server: all, compile,generate,verify,runtime,decompile,benchmark,chat,graph"),
         ("acp [install --ide CLIENT]", "the IDE-facing ACP proxy; `install` registers it with an editor"),
-        ("lsp", "language server over stdio (read-only; compile or watch rebuilds)"),
+        ("lsp", "language server over stdio (reads the graph; writes only through its explicit commands)"),
         ("agent", "the embedded ACP agent over stdio (spawned by the bridge)"),
         ("monitor [--json] [--once]", "print ready and blocked goals as the state changes; --once exits at the first"),
     ]),
@@ -563,11 +563,13 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             .to_string(),
         "lsp" => format!(
             "usage: jazyk lsp [--stdio]\n\n\
-             Language server over stdio. Read-only: serves the last committed graph, and\n\
-             a compile or watch rebuild refreshes it. --stdio is accepted and changes\n\
-             nothing: LSP clients append it to name the transport.\n\n\
+             Language server over stdio. Serves the last committed graph, and a rebuild\n\
+             refreshes it. It writes only through its explicit commands (answer a\n\
+             diagnostic, edit a document set, jazyk.compile one set with the LLM\n\
+             options given here). --stdio is accepted and changes nothing: LSP clients\n\
+             append it to name the transport.\n\n\
              {}",
-            COMMON_OUT
+            COMMON_LLM
         ),
         "tasks" | "runs" => format!(
             "usage: jazyk {}\n\n\
@@ -928,7 +930,9 @@ pub fn run() {
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);
             let gs = gen::GenSettings::resolve(&proj);
-            lsp::Lsp::new(proj.root.clone(), if opts.set.is_some() {out} else {proj.root.join(".jazyk")}, gs).run();
+            lsp::Lsp::new(proj.root.clone(), if opts.set.is_some() {out} else {proj.root.join(".jazyk")}, gs)
+                .with_cli_options(opts.clone())
+                .run();
             0
         }
         // Replays: scripted sessions against the harness, no model

@@ -663,6 +663,11 @@ impl Trace {
             verbose: false,
         });
     }
+    // The flag that cancels this trace's run, for a caller that stops it from
+    // another thread.
+    pub fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.cancel.clone()
+    }
     pub fn is_cancelled(&self) -> bool {
         #[cfg(target_arch = "wasm32")]
         if crate::wasm::llm_bridge::cancel_requested() { return true; }

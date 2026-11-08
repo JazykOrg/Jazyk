@@ -26,6 +26,49 @@ pub struct Lsp {
     // Ids for server-initiated requests (window/showDocument), prefixed so they can
     // never collide with the client's own numeric ids.
     next_srv_id: u64,
+    // Where `jazyk.compile` sends a build (lsp.md#commands).
+    compiler: Compiler,
+}
+
+// How `jazyk.compile` runs: over stdio in a thread under the build lease, with the
+// LLM options `jazyk lsp` resolved; inside the GUI server as a GUI job.
+pub enum Compiler {
+    Stdio {
+        opts: crate::cli::Options,
+        running: Option<(std::thread::JoinHandle<()>, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    },
+    // Submits one set's compile (set id, configuration hash) and answers the job.
+    Submit(Box<dyn Fn(String, String) -> Value + Send>),
+}
+
+impl Compiler {
+    // Cancel a running stdio build and wait for it to stop at a boundary.
+    fn finish(&mut self) {
+        if let Compiler::Stdio { running, .. } = self {
+            if let Some((handle, cancel)) = running.take() {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
+// The one set `jazyk.compile` builds: `setId`, or the project's only set. In a project
+// of several sets a call without one is refused (lsp.md#commands).
+pub(crate) fn compile_target(root: &Path, arg: &Value) -> Result<(String, String), String> {
+    let w = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
+    if let Some(id) = arg["setId"].as_str() {
+        return w.select(id).map(|s| (s.id.clone(), w.hash.clone())).map_err(|e| e.1);
+    }
+    match w.sets.len() {
+        0 => Err("this project has no document set yet; add one with `jazyk sets add NAME --docs PATH`".into()),
+        1 => Ok((w.sets[0].id.clone(), w.hash.clone())),
+        n => Err(format!(
+            "choose a document set: this project has {} ({}); pass setId",
+            n,
+            w.sets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
 }
 
 impl Lsp {
@@ -42,7 +85,21 @@ impl Lsp {
             gen,
             overlay: HashMap::new(),
             next_srv_id: 1,
+            compiler: Compiler::Stdio { opts: Default::default(), running: None },
         }
+    }
+
+    // The options `jazyk lsp` was started with: a stdio compile resolves its LLM from
+    // them like any CLI build.
+    pub fn with_cli_options(mut self, opts: crate::cli::Options) -> Lsp {
+        self.compiler = Compiler::Stdio { opts, running: None };
+        self
+    }
+
+    // Inside the GUI server a compile is a GUI job.
+    pub fn with_job_submitter(mut self, submit: Box<dyn Fn(String, String) -> Value + Send>) -> Lsp {
+        self.compiler = Compiler::Submit(submit);
+        self
     }
 
     pub fn run(&mut self) {
@@ -79,6 +136,8 @@ impl Lsp {
                 break;
             }
         }
+        // A build started here stops at a boundary, never cut off mid-commit.
+        self.compiler.finish();
     }
 
     // Dispatch one client message. Transport-agnostic: the GUI serves the same
@@ -1082,6 +1141,37 @@ impl Lsp {
         }
     }
 
+    // `jazyk.compile`: one set, through the frontend's build path (lsp.md#commands).
+    fn on_compile(&mut self, arg: &Value) -> Value {
+        let (id, hash) = match compile_target(&self.root, arg) {
+            Ok(t) => t,
+            Err(e) => return json!({"error": e}),
+        };
+        match &mut self.compiler {
+            Compiler::Submit(submit) => submit(id, hash),
+            Compiler::Stdio { opts, running } => {
+                if running.as_ref().is_some_and(|(h, _)| !h.is_finished()) {
+                    return json!({"error": "a compile started here is still running"});
+                }
+                let p = match crate::project::Project::load_set(&self.root, &id) {
+                    Ok(p) => p,
+                    Err(e) => return json!({"error": e.1}),
+                };
+                let llm = crate::cli::resolve_llm(opts, &p.llm, &crate::project::load_global_llm(), |n| std::env::var(n).ok());
+                let trace = crate::session::Trace::stderr(crate::session::TraceLevel::Normal);
+                let cancel = trace.cancel_flag();
+                let handle = std::thread::spawn(move || {
+                    // The configuration the caller saw is the one built.
+                    if crate::document_sets::Workspace::load(&p.root).is_ok_and(|w| w.hash == hash) {
+                        crate::reconcile::compile(&p, &llm, &p.out, &trace);
+                    }
+                });
+                *running = Some((handle, cancel));
+                json!({"started": [id]})
+            }
+        }
+    }
+
     fn on_execute_command<W: Write>(&mut self, params: &Value, out: &mut W) -> Value {
         let cmd = params.get("command").and_then(|c| c.as_str()).unwrap_or("");
         if cmd=="jazyk.documentSets" {
@@ -1091,20 +1181,7 @@ impl Lsp {
             return crate::document_sets::edit(&self.root,&params["arguments"][0],cmd=="jazyk.previewDocumentSet").unwrap_or_else(|e|json!({"error":e.1}));
         }
         if cmd=="jazyk.compile" {
-            let arg=&params["arguments"][0];
-            let Ok(w)=crate::document_sets::Workspace::load(&self.root) else {return json!({"error":"invalid project configuration"});};
-            let ids=if let Some(id)=arg["setId"].as_str() {match w.select(id) {Ok(s)=>vec![s.id.clone()],Err(e)=>return json!({"error":e.1})}}
-                else {w.summary()["sets"].as_array().unwrap().iter().filter(|s|s["dirty"]==true && s["state"]!="empty").filter_map(|s|s["id"].as_str().map(str::to_string)).collect()};
-            let targets=ids.clone();
-            std::thread::spawn(move || {
-                for id in ids {if let Ok(p)=w.resolve(Some(&id)) {
-                    if crate::document_sets::Workspace::load(&p.root).is_ok_and(|current|current.hash==w.hash) {
-                        let llm=crate::cli::resolve_llm(&Default::default(),&p.llm,&crate::project::load_global_llm(),|n|std::env::var(n).ok());
-                        crate::reconcile::compile(&p,&llm,&p.out,&crate::session::Trace::stderr(crate::session::TraceLevel::Normal));
-                    }
-                }}
-            });
-            return json!({"started":targets});
+            return self.on_compile(&params["arguments"][0]);
         }
         if !self.out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {
             let routed=match crate::webapi::sets::route("/",params.clone()) {Ok(r)=>r,Err(e)=>return json!({"error":e.1})};
@@ -1435,6 +1512,50 @@ mod tests {
         assert_eq!(lsp.uri_to_doc(&uri), Some("docs/main.md".into()));
     }
 
+    // `jazyk.compile` builds one set: the named one, or the only one; in a project of
+    // several sets a call without setId starts nothing. Inside the GUI it is a job
+    // (docs/frontends/lsp.md#commands).
+    #[test]
+    fn the_compile_command_addresses_one_set_through_the_frontends_build_path() {
+        use std::sync::{Arc, Mutex};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let add = |id: &str| {
+            let w = crate::document_sets::Workspace::load(&root).unwrap();
+            crate::document_sets::edit(&root, &json!({"baseHash": w.hash, "set": {"id": id, "name": id, "docs": [format!("{}.md", id)]}}), false).unwrap();
+        };
+        add("ds_one");
+        let submitted: Arc<Mutex<Vec<(String, String)>>> = Default::default();
+        let sink = submitted.clone();
+        let mut lsp = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&crate::project::Project::load(&root)))
+            .with_job_submitter(Box::new(move |id, hash| {
+                sink.lock().unwrap().push((id.clone(), hash));
+                json!({"started": [id], "jobId": 7})
+            }));
+        let call = |lsp: &mut Lsp, args: Value| {
+            let mut out = Vec::new();
+            lsp.on_execute_command(&json!({"command": "jazyk.compile", "arguments": [args]}), &mut out)
+        };
+        let reply = call(&mut lsp, json!({}));
+        assert_eq!(reply["started"], json!(["ds_one"]));
+        assert_eq!(reply["jobId"], 7);
+        add("ds_two");
+        let reply = call(&mut lsp, json!({}));
+        assert!(reply["error"].as_str().unwrap().starts_with("choose a document set"), "{}", reply);
+        let reply = call(&mut lsp, json!({"setId": "ds_two"}));
+        assert_eq!(reply["started"], json!(["ds_two"]));
+        let calls = submitted.lock().unwrap().clone();
+        assert_eq!(calls.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["ds_one", "ds_two"]);
+        assert_eq!(calls[1].1, crate::document_sets::Workspace::load(&root).unwrap().hash);
+        // Over stdio the build runs in a thread the server waits for on exit.
+        let mut stdio = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&crate::project::Project::load(&root)));
+        assert!(call(&mut stdio, json!({})).get("error").is_some());
+        let reply = call(&mut stdio, json!({"setId": "ds_one"}));
+        assert_eq!(reply["started"], json!(["ds_one"]));
+        stdio.compiler.finish();
+        assert!(matches!(&stdio.compiler, Compiler::Stdio { running: None, .. }));
+    }
+
     #[test]
     fn file_urls_round_trip_native_paths_with_unicode_and_delimiters() {
         for name in ["a b.md", "%aé.md", "café.md", "%.md", "%2.md", "a#b.md"] {
@@ -1572,6 +1693,7 @@ mod tests {
             },
             overlay: HashMap::new(),
             next_srv_id: 1,
+            compiler: Compiler::Stdio { opts: Default::default(), running: None },
         };
         let card = lsp.requirement_card("req:shop-1", &r);
 
@@ -1637,6 +1759,7 @@ mod tests {
             },
             overlay: HashMap::new(),
             next_srv_id: 1,
+            compiler: Compiler::Stdio { opts: Default::default(), running: None },
         };
         let card = lsp.requirement_card("req:shop-1", &r);
         assert!(card.contains("– missing"), "{}", card);
@@ -1819,6 +1942,7 @@ mod tests {
             },
             overlay: HashMap::new(),
             next_srv_id: 1,
+            compiler: Compiler::Stdio { opts: Default::default(), running: None },
         }
     }
 

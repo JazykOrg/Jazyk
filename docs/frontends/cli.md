@@ -929,9 +929,11 @@ meant to be run by hand.
 
 ### jazyk lsp
 
-`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. Read-only: it
-serves the last committed graph and its rendered diagrams, and a `compile` or `watch`
-rebuild refreshes it. `--stdio` is accepted and changes nothing: LSP clients append it
+`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. It serves the
+last committed graph and its rendered diagrams, and a rebuild refreshes it. It writes
+only through its explicit [commands](./lsp.md#commands): answering a diagnostic,
+editing a document set, and `jazyk.compile`, which builds one set with the LLM
+settings this command resolved. `--stdio` is accepted and changes nothing: LSP clients append it
 to name the transport (the VS Code client library does), and a server that refused it
 would crash on every start.
 

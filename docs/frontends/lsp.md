@@ -11,14 +11,13 @@ configuration, aggregate reads, management commands, and grouped compilation.
 
 `jazyk lsp` starts the language server over stdio, with Content-Length framed JSON-RPC.
 
-The server is thin and read-only. It reads the [graph store](../compiler/graph.md) and
+The server is thin. It reads the [graph store](../compiler/graph.md) and
 the rendered [diagrams](../compiler/diagrams.md#output-layout) and maps graph nodes to
-editor positions. It shares the deterministic document-link check with the compiler
-and never calls the LLM. The one write
-path is explicit and human-initiated: answering a
-[diagnostic prompt](../compiler/model/diagnostic.md#prompts) through a
-[code action](#capabilities), which applies a suggested edit deterministically or
-hands the reply to an [answer session](./acp.md#answer-sessions).
+editor positions. It shares the deterministic document-link check with the compiler.
+Hovers, diagnostics, and every other request read only and never call the LLM. Its
+writes are explicit, human-initiated [commands](#commands): answering a
+[diagnostic prompt](../compiler/model/diagnostic.md#prompts), editing a document set,
+and starting a compile.
 
 Native document links use standard file URLs. Drive letters, Unicode, spaces and
 URI delimiters round-trip through the URL library. A non-file URI does not name
@@ -50,8 +49,8 @@ installing the client does not take the open IDE's profile lock.
 An installed adapter is setup evidence. A successful LSP initialize exchange and
 document diagnostics are connection evidence.
 
-Editor adapters launch the existing native server. They do not compile documents
-or call a model. Diagnostics, hover, definitions, references, completion and quick
+Editor adapters launch the existing native server. They never compile documents or
+call a model on their own; only the explicit `jazyk.compile` command starts a build. Diagnostics, hover, definitions, references, completion and quick
 fixes use standard LSP. Client support determines diagram images, code lenses,
 and server-driven navigation. Freeform diagnostic answers remain available through
 the CLI and ACP chat.
@@ -180,10 +179,37 @@ the CLI and ACP chat.
   of a concept and lands on its assembled requirements. Links are emitted only when the
   target file exists.
 
+## Commands
+
+The server declares these commands under `executeCommandProvider`. Each runs only
+when a client sends `workspace/executeCommand`, never as a side effect of another
+request.
+
+- `jazyk.openRequirement`: open a requirement's heading in its requirements document
+  (see the code lens under [capabilities](#capabilities)).
+- `jazyk.answerDiagnostic`: answer a [diagnostic prompt](../compiler/model/diagnostic.md#prompts)
+  with an option index or `text` (see the code actions under [capabilities](#capabilities)).
+- `jazyk.documentSets`: the project's [document sets](../compiler/document-sets.md) and
+  their summaries, the reply of `jazyk sets list`.
+- `jazyk.previewDocumentSet`: preview one set's configuration edit (resolved paths,
+  overlaps, affected sets) without writing.
+- `jazyk.saveDocumentSet`: apply that edit to `.jazyk/jazyk.toml`, with the same
+  expected-revision check as the GUI.
+- `jazyk.compile`: start a [build](../compiler/compilation.md#a-build) of one set,
+  named by `setId`; a project with exactly one set may omit it. In a project with
+  several sets a call without `setId` is refused with a message to choose a document
+  set, and nothing starts. The reply names the started set and returns at once:
+  - Inside the [GUI server](./gui.md) (the editor's `/lsp` WebSocket), the build is a
+    GUI [job](./gui.md#jobs), queued, cancellable, and visible like any other.
+  - Over stdio, the server runs it under the build lease with the LLM settings
+    `jazyk lsp` resolved from its flags, the environment, and the configuration. A
+    second call while it runs is refused. On `exit` the server cancels it and waits
+    for it to stop at a boundary, so no build is cut off mid-commit.
+
 ## Rebuilds and refresh
 
-The server does not compile, and no editor integration starts a build; compiles run
-through the [ACP bridge](./acp.md) when the owner triggers them (`jazyk compile`,
+The server compiles only when a person runs the [`jazyk.compile`](#commands) command;
+otherwise builds run when the owner triggers them elsewhere (`jazyk compile`,
 `jazyk watch`, the GUI, or `/compile` in an IDE chat). What the LSP knows about
 pending goals reaches the IDE's chat surface through the
 [proxy](./acp.md#lsp-and-the-proxy), not through the LSP itself. Refresh is

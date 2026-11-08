@@ -76,6 +76,26 @@ fn origin_admitted(req: &Request, gui_origin: &str) -> bool {
     }
 }
 
+// The name a request gives the server must be a loopback name with the bound port:
+// a page that rebinds its own domain to 127.0.0.1 sends that domain as `Host` and is
+// refused before anything reads the project. `port` is None only where no listener
+// is bound (in-process tests); the name is checked either way. A request without
+// `Host` passes (docs/frontends/gui.md#serving).
+pub(crate) fn host_admitted(host: Option<&str>, port: Option<u16>) -> bool {
+    let Some(host) = host else { return true };
+    let Ok(authority) = host.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    let name = authority.host().to_ascii_lowercase();
+    if !matches!(name.as_str(), "127.0.0.1" | "localhost" | "[::1]") {
+        return false;
+    }
+    match port {
+        Some(bound) => authority.port_u16().unwrap_or(80) == bound,
+        None => true,
+    }
+}
+
 // The server serves no page: a path the API does not serve is 404.
 async fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "not found").into_response()
@@ -408,12 +428,29 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
 }
 
 pub fn router(st: SharedState) -> Router {
+    router_on(st, None)
+}
+
+// The router for a listener bound to `port`: the Host check runs first, before the
+// token and the origin (docs/frontends/gui.md#serving).
+pub fn router_on(st: SharedState, port: Option<u16>) -> Router {
     let cors = cors(&st.gui_origin);
     Router::new()
         .route("/api/{*path}", axum::routing::any(gateway))
         .route("/lsp", get(lsp_ws::ws))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(st.clone(), auth))
+        .layer(middleware::from_fn(move |req: Request, next: Next| async move {
+            let host = req
+                .headers()
+                .get(header::HOST)
+                .map(|v| v.to_str().unwrap_or("\u{0}"));
+            if host_admitted(host, port) {
+                next.run(req).await
+            } else {
+                (StatusCode::FORBIDDEN, "host not admitted").into_response()
+            }
+        }))
         .layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static("cross-origin-resource-policy"),
             HeaderValue::from_static("cross-origin"),
@@ -463,7 +500,8 @@ where
 // editor WebSocket stay open as long as a tab lives, so waiting on them would keep
 // ctrl-c hanging until the browser closes. Dropping the server closes everything.
 pub async fn serve(listener: tokio::net::TcpListener, st: SharedState) -> Result<(), String> {
-    let app = router(st.clone());
+    let port = listener.local_addr().ok().map(|a| a.port());
+    let app = router_on(st.clone(), port);
     tokio::select! {
         r = axum::serve(listener, app) => r.map_err(|e| format!("server error: {}", e)),
         _ = tokio::signal::ctrl_c() => Ok(()),
@@ -888,6 +926,39 @@ pub(super) mod tests {
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         let r = send(st.clone(), post(None, None)).await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
+    // A page that rebinds its own domain to 127.0.0.1 names that domain as Host:
+    // refused before the route, token or not; loopback names with the bound port
+    // pass (docs/frontends/gui.md#serving).
+    #[tokio::test]
+    async fn a_request_naming_a_foreign_host_is_refused() {
+        assert!(host_admitted(Some("127.0.0.1:4680"), Some(4680)));
+        assert!(host_admitted(Some("localhost:4680"), Some(4680)));
+        assert!(host_admitted(Some("LOCALHOST:4680"), Some(4680)));
+        assert!(host_admitted(Some("[::1]:4680"), Some(4680)));
+        assert!(host_admitted(None, Some(4680)));
+        assert!(!host_admitted(Some("127.0.0.1:4681"), Some(4680)));
+        assert!(!host_admitted(Some("127.0.0.1"), Some(4680)));
+        assert!(!host_admitted(Some("evil.example:4680"), Some(4680)));
+        assert!(!host_admitted(Some("127.0.0.1.evil.example:4680"), Some(4680)));
+        assert!(!host_admitted(Some("localhost@evil.example"), None));
+        let st = state(None, "https://jazyk.dev");
+        let get = |host: &str| {
+            Request::builder()
+                .uri("/api/ping")
+                .header("host", host)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let app = |st: SharedState| router_on(st, Some(4680));
+        let r = app(st.clone()).oneshot(get("evil.example:4680")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = app(st.clone()).oneshot(get("127.0.0.1:4680")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = app(st.clone()).oneshot(get("localhost:4680")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
         std::fs::remove_dir_all(&st.root).ok();
     }
 

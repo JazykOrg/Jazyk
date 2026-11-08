@@ -57,7 +57,10 @@ impl EditLog {
     fn new(root: &Path) -> EditLog {
         EditLog {
             root: root.to_path_buf(),
-            state: Mutex::new(State { fingerprints: fingerprints(root), ..Default::default() }),
+            state: Mutex::new(State {
+                fingerprints: fingerprints(root),
+                ..Default::default()
+            }),
             changed: Condvar::new(),
             watching: std::sync::atomic::AtomicBool::new(false),
         }
@@ -86,7 +89,11 @@ impl EditLog {
         for (path, removed) in &changed {
             st.seq += 1;
             let seq = st.seq;
-            st.edits.push(Edit { seq, path: path.clone(), removed: *removed });
+            st.edits.push(Edit {
+                seq,
+                path: path.clone(),
+                removed: *removed,
+            });
         }
         st.fingerprints = now;
         drop(st);
@@ -111,7 +118,10 @@ impl EditLog {
     // Block until an edit lands after `after` or the timeout passes; the cursor then.
     pub fn wait(&self, after: u64, timeout: Duration) -> u64 {
         let st = self.state.lock().unwrap();
-        let (st, _) = self.changed.wait_timeout_while(st, timeout, |s| s.seq <= after).unwrap();
+        let (st, _) = self
+            .changed
+            .wait_timeout_while(st, timeout, |s| s.seq <= after)
+            .unwrap();
         st.seq
     }
 }
@@ -120,7 +130,9 @@ impl EditLog {
 // the project file) and git's.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn ignorable(root: &Path, path: &Path) -> bool {
-    let Ok(rel) = path.strip_prefix(root) else { return false };
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
     let rel = rel.to_string_lossy().replace('\\', "/");
     (rel.starts_with(".jazyk/") && rel != crate::document_sets::CONFIG)
         || rel == ".git"
@@ -155,20 +167,26 @@ fn start(log: Arc<EditLog>, key: PathBuf) {
     }
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let watch_root = key.clone();
-    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-        if let Ok(event) = res {
-            if event.paths.is_empty() || !event.paths.iter().all(|p| ignorable(&watch_root, p)) {
-                tx.send(()).ok();
+    let mut watcher =
+        match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                if event.paths.is_empty() || !event.paths.iter().all(|p| ignorable(&watch_root, p))
+                {
+                    tx.send(()).ok();
+                }
             }
-        }
-    }) {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    if watcher.watch(&key, notify::RecursiveMode::Recursive).is_err() {
+        }) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+    if watcher
+        .watch(&key, notify::RecursiveMode::Recursive)
+        .is_err()
+    {
         return;
     }
-    log.watching.store(true, std::sync::atomic::Ordering::SeqCst);
+    log.watching
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     std::thread::spawn(move || {
         let _watcher = watcher;
         while rx.recv().is_ok() {
@@ -203,18 +221,32 @@ mod tests {
         let dir = project();
         let log = EditLog::new(dir.path());
         assert_eq!(log.rescan(), 0);
-        std::fs::write(dir.path().join("docs/a.md"), "# A\n\nThe order ships today.\n").unwrap();
+        std::fs::write(
+            dir.path().join("docs/a.md"),
+            "# A\n\nThe order ships today.\n",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
         std::fs::write(dir.path().join("notes.txt"), "unselected\n").unwrap();
         assert_eq!(log.rescan(), 2);
         assert_eq!(log.rescan(), 0);
         let edits = log.since(0);
         let paths: Vec<_> = edits.iter().map(|e| e.path.as_str()).collect();
-        assert!(paths.contains(&"docs/a.md") && paths.contains(&"src/main.rs"), "{paths:?}");
+        assert!(
+            paths.contains(&"docs/a.md") && paths.contains(&"src/main.rs"),
+            "{paths:?}"
+        );
         let cursor = log.cursor();
         std::fs::remove_file(dir.path().join("src/main.rs")).unwrap();
         log.rescan();
-        assert_eq!(log.since(cursor), vec![Edit { seq: cursor + 1, path: "src/main.rs".into(), removed: true }]);
+        assert_eq!(
+            log.since(cursor),
+            vec![Edit {
+                seq: cursor + 1,
+                path: "src/main.rs".into(),
+                removed: true
+            }]
+        );
         assert_eq!(log.wait(cursor, Duration::from_millis(10)), cursor + 1);
     }
 

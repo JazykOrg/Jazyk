@@ -1,7 +1,7 @@
 // Session updates → trace events. The runner feeds a worker session's update stream
 // through one translator, so the trace, the transcript, and the GUI panels do not
 // care which agent ran the turn. Mirrors docs/frontends/acp.md#worker-sessions and
-// docs/compiler/turns.md#trace-events.
+// docs/compiler/sessions.md#trace-events.
 use crate::session::{Trace, TraceEvent};
 use agent_client_protocol::schema::v1::{SessionUpdate, ToolCallStatus};
 use std::collections::HashMap;
@@ -66,10 +66,15 @@ impl UpdateTranslator {
 
     // Emit one buffer as a `modelText` chunk; `thought` picks the reasoning buffer.
     fn flush_text(&mut self, trace: &Trace, thought: bool) {
-        let buf = if thought { &mut self.thought } else { &mut self.message };
+        let buf = if thought {
+            &mut self.thought
+        } else {
+            &mut self.message
+        };
         let text = std::mem::take(buf);
         if !text.is_empty() {
-            trace.event(TraceEvent::ModelText { summary: false,
+            trace.event(TraceEvent::ModelText {
+                summary: false,
                 label: self.label.clone(),
                 text,
                 reply: !thought,
@@ -81,7 +86,11 @@ impl UpdateTranslator {
     // chunks keep their order and one chunk never mixes reasoning with a reply.
     fn push_text(&mut self, trace: &Trace, thought: bool, t: &str) {
         self.flush_text(trace, !thought);
-        let buf = if thought { &mut self.thought } else { &mut self.message };
+        let buf = if thought {
+            &mut self.thought
+        } else {
+            &mut self.message
+        };
         buf.push_str(t);
         if buf.len() > FLUSH_AT {
             self.flush_text(trace, thought);
@@ -91,9 +100,19 @@ impl UpdateTranslator {
     pub fn on_update(&mut self, update: &SessionUpdate, trace: &Trace) {
         match update {
             SessionUpdate::AgentThoughtChunk(c) => {
-                if c.meta.as_ref().is_some_and(|meta| meta.get("jazyk").is_some_and(|v| v["reasoningSummary"] == true)) {
+                if c.meta.as_ref().is_some_and(|meta| {
+                    meta.get("jazyk")
+                        .is_some_and(|v| v["reasoningSummary"] == true)
+                }) {
                     self.flush_into(trace);
-                    if let Some(text) = content_text(&c.content) { trace.event(TraceEvent::ModelText { label: self.label.clone(), text: text.into(), reply: false, summary: true }); }
+                    if let Some(text) = content_text(&c.content) {
+                        trace.event(TraceEvent::ModelText {
+                            label: self.label.clone(),
+                            text: text.into(),
+                            reply: false,
+                            summary: true,
+                        });
+                    }
                     return;
                 }
                 if let Some(t) = content_text(&c.content) {
@@ -109,7 +128,8 @@ impl UpdateTranslator {
                 self.flush_into(trace);
                 let id: &str = call.tool_call_id.0.as_ref();
                 let args = call.raw_input.clone().unwrap_or(serde_json::Value::Null);
-                self.calls.insert(id.to_string(), (call.title.clone(), args.clone()));
+                self.calls
+                    .insert(id.to_string(), (call.title.clone(), args.clone()));
                 trace.event(TraceEvent::ToolCall {
                     activity: crate::live_preview::activity(&call.title, &args, None),
                     label: self.label.clone(),
@@ -148,7 +168,15 @@ impl UpdateTranslator {
                     .unwrap_or(serde_json::Value::Null);
                 match u.fields.status {
                     Some(ToolCallStatus::Completed) => trace.event(TraceEvent::ToolResult {
-                        activity: crate::live_preview::activity(&name, &self.calls.get(id).map(|(_, args)| args.clone()).unwrap_or_default(), Some(&crate::live_preview::result_value(&out))),
+                        activity: crate::live_preview::activity(
+                            &name,
+                            &self
+                                .calls
+                                .get(id)
+                                .map(|(_, args)| args.clone())
+                                .unwrap_or_default(),
+                            Some(&crate::live_preview::result_value(&out)),
+                        ),
                         label: self.label.clone(),
                         name,
                         summary: crate::session::condense(&out, 160),
@@ -269,7 +297,11 @@ mod tests {
         for (thought, chunk) in [(true, "think"), (false, "reply"), (true, "more")] {
             let content = ContentChunk::new(chunk.to_string().into());
             translator.on_update(
-                &if thought { SessionUpdate::AgentThoughtChunk(content) } else { SessionUpdate::AgentMessageChunk(content) },
+                &if thought {
+                    SessionUpdate::AgentThoughtChunk(content)
+                } else {
+                    SessionUpdate::AgentMessageChunk(content)
+                },
                 &trace,
             );
         }
@@ -285,7 +317,11 @@ mod tests {
             .collect();
         assert_eq!(
             chunks,
-            vec![("think".into(), true), ("reply".into(), false), ("more".into(), true)]
+            vec![
+                ("think".into(), true),
+                ("reply".into(), false),
+                ("more".into(), true)
+            ]
         );
     }
 }

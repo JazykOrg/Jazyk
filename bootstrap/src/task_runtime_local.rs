@@ -392,7 +392,7 @@ pub fn watchdog(dir: &Path) -> Result<(), String> {
         if state["terminated"] == true {
             return Ok(());
         }
-        if crate::sys::now_unix() as u64 >= deadline {
+        if crate::sys::now_unix() >= deadline {
             break;
         }
         std::thread::sleep(Duration::from_secs(1));

@@ -226,17 +226,13 @@ pub fn aggregate(root: &Path, workspace: &Workspace, path: &str) -> Value {
     let mut combined = Value::Null;
     for set in &workspace.sets {
         let context = workspace.resolve(Some(&set.id)).expect("validated set");
-        let response = super::dispatch::request_scoped(
-            root,
-            "GET",
-            path,
-            &Value::Null,
-            &context,
-        );
+        let response = super::dispatch::request_scoped(root, "GET", path, &Value::Null, &context);
         #[cfg(target_arch = "wasm32")]
         let response = {
             use futures::FutureExt;
-            response.now_or_never().expect("aggregate GET routes are deterministic")
+            response
+                .now_or_never()
+                .expect("aggregate GET routes are deterministic")
         };
         let envelope: Value = serde_json::from_str(&response).unwrap();
         if envelope["status"].as_u64().unwrap_or(500) >= 300 {
@@ -254,7 +250,9 @@ pub fn aggregate(root: &Path, workspace: &Workspace, path: &str) -> Value {
         }
         if let Some(roots) = body.get_mut("roots").and_then(Value::as_array_mut) {
             for node in roots {
-                if let Some(scope) = node["scope"].as_str() { node["scope"] = json!(format!("{} · {}",set.name,scope)); }
+                if let Some(scope) = node["scope"].as_str() {
+                    node["scope"] = json!(format!("{} · {}", set.name, scope));
+                }
                 if let Some(name) = node["name"].as_str() {
                     node["name"] = json!(format!("{} · {}", set.name, name));
                 }
@@ -295,8 +293,25 @@ pub fn aggregate(root: &Path, workspace: &Workspace, path: &str) -> Value {
     }
     if path.split('?').next() == Some("/status") && workspace.sets.len() > 1 {
         let summary = workspace.summary();
-        combined["setGenerations"] = json!(summary["sets"].as_array().unwrap().iter().map(|s|(s["id"].as_str().unwrap().to_string(),s["generation"].clone())).collect::<std::collections::BTreeMap<_,_>>());
-        combined["verdict"]["state"] = json!(if summary["sets"].as_array().unwrap().iter().all(|s|s["dirty"]==false && s["verdict"]["state"]=="converged") { "converged" } else { "incomplete" });
+        combined["setGenerations"] = json!(summary["sets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (
+                s["id"].as_str().unwrap().to_string(),
+                s["generation"].clone()
+            ))
+            .collect::<std::collections::BTreeMap<_, _>>());
+        combined["verdict"]["state"] = json!(if summary["sets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["dirty"] == false && s["verdict"]["state"] == "converged")
+        {
+            "converged"
+        } else {
+            "incomplete"
+        });
     }
     combined
 }

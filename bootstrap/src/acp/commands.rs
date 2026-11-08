@@ -177,7 +177,8 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
         .map(|a| a.name)
         .unwrap_or_else(|e| format!("unresolved ({})", e));
     let gs = crate::gen::GenSettings::resolve(proj);
-    let toml = crate::vfs::read_to_string(proj.root.join(crate::document_sets::CONFIG)).unwrap_or_default();
+    let toml = crate::vfs::read_to_string(proj.root.join(crate::document_sets::CONFIG))
+        .unwrap_or_default();
     let states = |key: &str| toml.contains(key);
     let rows: Vec<(&str, String, &str)> = vec![
         (
@@ -299,17 +300,25 @@ pub fn config_set(proj: &Project, args: &str) -> String {
     let old = crate::vfs::read_to_string(&path).unwrap_or_default();
     let (section, k) = key.split_once('.').unwrap_or(("", key));
     let full = crate::mcp::toml_set(&old, section, k, value);
-    match crate::document_sets::atomic_config(&proj.root,&full,&crate::model::hash_hex(&old)) {
+    match crate::document_sets::atomic_config(&proj.root, &full, &crate::model::hash_hex(&old)) {
         Ok(()) => format!("{} = {}\n\n.jazyk/jazyk.toml updated.", key, value),
-        Err((_,e)) => format!("cannot write {}: {}", path.display(), e),
+        Err((_, e)) => format!("cannot write {}: {}", path.display(), e),
     }
 }
 
 // The commands that read or change one document set's graph.
 // Mirrors docs/frontends/acp.md#slash-commands.
 pub const GRAPH_COMMANDS: &[&str] = &[
-    "status", "board", "preview", "explain", "ripple", "questions", "compile", "generate",
-    "verify", "release",
+    "status",
+    "board",
+    "preview",
+    "explain",
+    "ripple",
+    "questions",
+    "compile",
+    "generate",
+    "verify",
+    "release",
 ];
 
 // Why a graph command found no single set: the project has none, or several.
@@ -338,7 +347,8 @@ pub fn graph_scope(proj: &Project, cmd: &str) -> Result<Project, ScopeRefusal> {
         .map_err(|(_, e)| ScopeRefusal::NoSets(e))?;
     match workspace.sets.len() {
         0 => Err(ScopeRefusal::NoSets(
-            "this project has no document set yet; add one with `jazyk sets add NAME --docs PATH`".into(),
+            "this project has no document set yet; add one with `jazyk sets add NAME --docs PATH`"
+                .into(),
         )),
         1 => workspace
             .resolve(None)
@@ -444,8 +454,9 @@ pub fn preview_text(proj: &Project, out: &std::path::Path, target: &str) -> Stri
         .cloned()
         .collect();
     let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
-    let mut pb = crate::session::ProjectBlock::from_goals(&store, &board.goals, &goals, &control.compile)
-        .with_lint(&proj.linting);
+    let mut pb =
+        crate::session::ProjectBlock::from_goals(&store, &board.goals, &goals, &control.compile)
+            .with_lint(&proj.linting);
     pb.batch = batch.id.clone();
     crate::session::session_prompt(&store, &goals, &loaded, &skills, &pb)
 }
@@ -592,7 +603,8 @@ pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
         crate::acp::config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
             std::env::var(n).ok()
         });
-    let toml = crate::vfs::read_to_string(proj.root.join(crate::document_sets::CONFIG)).unwrap_or_default();
+    let toml = crate::vfs::read_to_string(proj.root.join(crate::document_sets::CONFIG))
+        .unwrap_or_default();
     let states_agent = toml.contains("[acp]");
     match &agent {
         Ok(a) if a.name == crate::acp::config::EMBEDDED && !states_agent => {

@@ -1145,7 +1145,12 @@ mod tests {
     // second session opens and a third prompt still reaches the agent afterwards.
     #[test]
     fn an_agent_ignoring_a_cancel_loses_its_session_not_the_host() {
-        if std::process::Command::new("python3").arg("-c").arg("pass").status().is_err() {
+        if std::process::Command::new("python3")
+            .arg("-c")
+            .arg("pass")
+            .status()
+            .is_err()
+        {
             eprintln!("skipping: python3 not available for the fake agent");
             return;
         }

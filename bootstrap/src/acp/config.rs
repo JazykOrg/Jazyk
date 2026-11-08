@@ -102,9 +102,27 @@ fn profile_named(
 // start inside another Claude Code session, so its profile clears `CLAUDECODE`.
 // Mirrors docs/frontends/acp.md#agents.
 pub const BUILTIN_AGENTS: &[(&str, &str, &str, &[&str], &[(&str, &str)])] = &[
-    (EMBEDDED, "Embedded (jazyk's own agent, over your LLM endpoint)", "", &[], &[]),
-    ("claude", "Claude Code", "npx", &["--yes", "@agentclientprotocol/claude-agent-acp@0.99.0"], &[("CLAUDECODE", "")]),
-    ("codex", "Codex", "npx", &["--yes", "@agentclientprotocol/codex-acp@2.4.0"], &[]),
+    (
+        EMBEDDED,
+        "Embedded (jazyk's own agent, over your LLM endpoint)",
+        "",
+        &[],
+        &[],
+    ),
+    (
+        "claude",
+        "Claude Code",
+        "npx",
+        &["--yes", "@agentclientprotocol/claude-agent-acp@0.99.0"],
+        &[("CLAUDECODE", "")],
+    ),
+    (
+        "codex",
+        "Codex",
+        "npx",
+        &["--yes", "@agentclientprotocol/codex-acp@2.4.0"],
+        &[],
+    ),
     ("opencode", "OpenCode", "opencode", &["acp"], &[]),
 ];
 
@@ -117,7 +135,12 @@ pub fn shadow_notes(
     global: &crate::project::AcpSettings,
 ) -> Vec<String> {
     let global_file = crate::sys::env_var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".jazyk/config.toml").display().to_string())
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".jazyk/config.toml")
+                .display()
+                .to_string()
+        })
         .unwrap_or_else(|_| "the global config".to_string());
     let mut out = Vec::new();
     for (name, ..) in BUILTIN_AGENTS.iter().filter(|a| a.0 != EMBEDDED) {
@@ -150,7 +173,10 @@ pub fn builtin_profile(name: &str) -> Option<ResolvedAgent> {
             name: name.to_string(),
             command: command.to_string(),
             args: args.iter().map(|a| a.to_string()).collect(),
-            env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             serve_files: false,
         })
 }
@@ -196,7 +222,9 @@ pub fn choose_transport(http_advertised: bool, pin: Option<&str>) -> McpTranspor
 }
 
 pub fn mcp_transport_pin() -> Option<String> {
-    std::env::var("JAZYK_ACP_MCP").ok().filter(|s| !s.trim().is_empty())
+    std::env::var("JAZYK_ACP_MCP")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
 }
 
 // Idle watchdog for worker sessions: a turn with no update for this long is cancelled.
@@ -218,11 +246,18 @@ mod tests {
     fn shadowed_builtins_name_their_file() {
         let mut project = crate::project::AcpSettings::default();
         let mut global = crate::project::AcpSettings::default();
-        let profile = |cmd: &str| crate::project::AcpAgentProfile { command: cmd.into(), ..Default::default() };
+        let profile = |cmd: &str| crate::project::AcpAgentProfile {
+            command: cmd.into(),
+            ..Default::default()
+        };
         global.agents.insert("codex".into(), profile("npx"));
         global.agents.insert("mine".into(), profile("x"));
         project.agents.insert("claude".into(), profile("npx"));
-        let notes = shadow_notes(&project, Some(std::path::Path::new("/p/jazyk.toml")), &global);
+        let notes = shadow_notes(
+            &project,
+            Some(std::path::Path::new("/p/jazyk.toml")),
+            &global,
+        );
         assert_eq!(notes.len(), 2, "{:?}", notes);
         assert!(notes[0].contains("[acp.agents.claude] in /p/jazyk.toml"));
         assert!(notes[1].contains("[acp.agents.codex]") && notes[1].contains(".jazyk/config.toml"));
@@ -308,12 +343,25 @@ mod tests {
         let none = settings(None, &[]);
         let claude = resolve_acp(Some("claude"), &none, &none, |_| None).unwrap();
         assert_eq!(claude.command, "npx");
-        assert!(claude.args.iter().any(|a| a == "@agentclientprotocol/claude-agent-acp@0.99.0"));
-        assert!(claude.env.contains(&("CLAUDECODE".to_string(), String::new())));
+        assert!(claude
+            .args
+            .iter()
+            .any(|a| a == "@agentclientprotocol/claude-agent-acp@0.99.0"));
+        assert!(claude
+            .env
+            .contains(&("CLAUDECODE".to_string(), String::new())));
         let opencode = resolve_acp(Some("opencode"), &none, &none, |_| None).unwrap();
-        assert_eq!((opencode.command.as_str(), opencode.args.clone()), ("opencode", vec!["acp".to_string()]));
+        assert_eq!(
+            (opencode.command.as_str(), opencode.args.clone()),
+            ("opencode", vec!["acp".to_string()])
+        );
         let own = settings(None, &[("codex", "my-codex")]);
-        assert_eq!(resolve_acp(Some("codex"), &own, &none, |_| None).unwrap().command, "my-codex");
+        assert_eq!(
+            resolve_acp(Some("codex"), &own, &none, |_| None)
+                .unwrap()
+                .command,
+            "my-codex"
+        );
     }
 
     // Executor precedence: the kind's key over the class's key over the [acp] agent,

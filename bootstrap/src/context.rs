@@ -119,7 +119,11 @@ pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
     let listing = if shown.is_empty() {
         "this project has no documents yet".to_string()
     } else if docs.len() > shown.len() {
-        format!("the documents here include {} and {} more", shown.join(", "), docs.len() - shown.len())
+        format!(
+            "the documents here include {} and {} more",
+            shown.join(", "),
+            docs.len() - shown.len()
+        )
     } else {
         format!("the documents here are {}", shown.join(", "))
     };
@@ -291,9 +295,9 @@ impl LoadedSet {
         // and never charges the budget twice. Mirrors docs/compiler/context.md#expansion-handles.
         let parsed = (target.clone(), axis.clone(), start);
         let open = |i: &LoadedItem| {
-            i.handles
-                .iter()
-                .any(|h| h.handle == handle || parse_handle(&h.handle).ok().as_ref() == Some(&parsed))
+            i.handles.iter().any(|h| {
+                h.handle == handle || parse_handle(&h.handle).ok().as_ref() == Some(&parsed)
+            })
         };
         let known = if axis.is_empty() {
             stub_of_node || self.items.iter().any(|i| i.target == target || open(i))
@@ -691,7 +695,13 @@ impl LoadedSet {
                     size: total - consumed,
                 });
             }
-            ("full".into(), self.stub_line(store, id).unwrap_or_default().trim_start_matches("- ").to_string())
+            (
+                "full".into(),
+                self.stub_line(store, id)
+                    .unwrap_or_default()
+                    .trim_start_matches("- ")
+                    .to_string(),
+            )
         } else if let Some(scope) = crate::board::scope_target(id) {
             let n = self.render_scope_root(store, scope, &mut b)?;
             (
@@ -1157,7 +1167,10 @@ impl LoadedSet {
         sec: &str,
         b: &mut Builder,
     ) -> Result<(), String> {
-        let rec = store.docs.get(doc).ok_or_else(|| unknown_target(store, doc))?;
+        let rec = store
+            .docs
+            .get(doc)
+            .ok_or_else(|| unknown_target(store, doc))?;
         let s = rec
             .sections
             .get(sec)
@@ -1324,7 +1337,10 @@ impl LoadedSet {
         if !left.is_empty() {
             s.push_str(&format!(
                 "Not loaded (over the budget; load by id when the work reaches it): {}\n",
-                left.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(", ")
+                left.iter()
+                    .map(|d| d.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     }
@@ -1713,7 +1729,10 @@ mod tests {
             .find(|h| h.contains("requirements"))
             .unwrap();
         set.expand(&s, &h).unwrap();
-        assert!(!set.open_handles().contains(&h), "the expansion closed its handle");
+        assert!(
+            !set.open_handles().contains(&h),
+            "the expansion closed its handle"
+        );
         let used = set.used();
         let err = set.expand(&s, &h).unwrap_err();
         assert!(err.contains("unknown or closed handle"), "{}", err);
@@ -1741,7 +1760,11 @@ mod tests {
         let expansion = set.expand(&s, &h).unwrap();
         let chunk = expansion.split_once('\n').unwrap().1;
         let chunk = chunk.split("\n[h:").next().unwrap();
-        assert_eq!(set.used() - before, chars(chunk), "an expansion charges its characters");
+        assert_eq!(
+            set.used() - before,
+            chars(chunk),
+            "an expansion charges its characters"
+        );
         let (_, _, start) = parse_handle(&h).unwrap();
         let next = set
             .items
@@ -1751,7 +1774,11 @@ mod tests {
             .expect("the body continues");
         let (_, _, resume) = parse_handle(&next.handle).unwrap();
         assert_eq!(resume, start + chars(chunk));
-        assert_eq!(next.size, chars(&raw) - resume, "a handle's size is in characters");
+        assert_eq!(
+            next.size,
+            chars(&raw) - resume,
+            "a handle's size is in characters"
+        );
     }
 
     // `scope:<scope>` loads the scope's parentless entities as stubs, its children

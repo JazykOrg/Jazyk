@@ -374,6 +374,9 @@ mod tests {
         stream
             .event(&json!({"type":"response.incomplete","response":limited}))
             .unwrap();
-        assert_eq!(stream.finish("route").unwrap()["choices"][0]["finish_reason"], "length");
+        assert_eq!(
+            stream.finish("route").unwrap()["choices"][0]["finish_reason"],
+            "length"
+        );
     }
 }

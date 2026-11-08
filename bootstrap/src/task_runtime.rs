@@ -203,7 +203,14 @@ pub fn protected(s: &str) -> bool {
         || s.split('/').any(|p| {
             matches!(
                 p,
-                ".jazyk" | ".git" | ".ssh" | ".aws" | ".env" | "id_rsa" | "id_ed25519" | ".worktrees"
+                ".jazyk"
+                    | ".git"
+                    | ".ssh"
+                    | ".aws"
+                    | ".env"
+                    | "id_rsa"
+                    | "id_ed25519"
+                    | ".worktrees"
             ) || p.ends_with(".env")
                 || p.ends_with(".pem")
                 || p.ends_with(".key")
@@ -281,9 +288,7 @@ pub fn load(root: &Path) -> Result<(String, Vec<Task>), String> {
 pub(crate) fn may_contain_product(products: &[String], dir: &str) -> bool {
     let dir = format!("{dir}/");
     products.iter().any(|pattern| {
-        let prefix = &pattern[..pattern
-            .find(|c: char| matches!(c, '*' | '?' | '[' | '{'))
-            .unwrap_or(pattern.len())];
+        let prefix = &pattern[..pattern.find(['*', '?', '[', '{']).unwrap_or(pattern.len())];
         prefix.starts_with(&dir) || dir.starts_with(prefix)
     })
 }
@@ -403,33 +408,62 @@ thread_local! { static SWEEP_DEFERRED: std::cell::Cell<bool> = const { std::cell
 // alone for the workflow's later actions.
 pub struct DeferSweep(bool);
 impl DeferSweep {
-    pub fn enter() -> Self { Self(SWEEP_DEFERRED.with(|d| d.replace(true))) }
+    pub fn enter() -> Self {
+        Self(SWEEP_DEFERRED.with(|d| d.replace(true)))
+    }
 }
 impl Drop for DeferSweep {
-    fn drop(&mut self) { SWEEP_DEFERRED.with(|d| d.set(self.0)); }
+    fn drop(&mut self) {
+        SWEEP_DEFERRED.with(|d| d.set(self.0));
+    }
 }
-pub fn sweep_deferred() -> bool { SWEEP_DEFERRED.with(|d| d.get()) }
+pub fn sweep_deferred() -> bool {
+    SWEEP_DEFERRED.with(|d| d.get())
+}
 
 // Record what a ledger session's update_tasks did to the tasks it owns: an added
 // task becomes the session's with its definition hash; an owned task the session
 // edits keeps ownership under its new hash; records of tasks no longer listed end.
 // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-pub fn record_owned(out: &Path, before: &[Task], after: &[Task], owner: &str) -> Result<(), String> {
+pub fn record_owned(
+    out: &Path,
+    before: &[Task],
+    after: &[Task],
+    owner: &str,
+) -> Result<(), String> {
     let _lock = crate::gen::Ledger::lock(out);
     let mut ledger = crate::gen::Ledger::load(out);
-    if let Some(why) = &ledger.unreadable { return Err(format!("The ledger did not load: {why}")); }
+    if let Some(why) = &ledger.unreadable {
+        return Err(format!("The ledger did not load: {why}"));
+    }
     let original = ledger.tasks.clone();
-    ledger.tasks.retain(|id, _| after.iter().any(|t| t.id == *id));
+    ledger
+        .tasks
+        .retain(|id, _| after.iter().any(|t| t.id == *id));
     for task in after {
         match before.iter().find(|t| t.id == task.id) {
-            None => { ledger.tasks.insert(task.id.clone(), crate::gen::TaskOwner {
-                created_by: owner.to_owned(), created_at: crate::verify::now_iso(), definition: task.hash() }); }
-            Some(previous) => if let Some(record) = ledger.tasks.get_mut(&task.id) {
-                if record.definition == previous.hash() { record.definition = task.hash(); }
-            },
+            None => {
+                ledger.tasks.insert(
+                    task.id.clone(),
+                    crate::gen::TaskOwner {
+                        created_by: owner.to_owned(),
+                        created_at: crate::verify::now_iso(),
+                        definition: task.hash(),
+                    },
+                );
+            }
+            Some(previous) => {
+                if let Some(record) = ledger.tasks.get_mut(&task.id) {
+                    if record.definition == previous.hash() {
+                        record.definition = task.hash();
+                    }
+                }
+            }
         }
     }
-    if ledger.tasks != original { ledger.save(out)?; }
+    if ledger.tasks != original {
+        ledger.save(out)?;
+    }
     Ok(())
 }
 
@@ -443,7 +477,12 @@ fn ledger_uses(ledger: &crate::gen::Ledger) -> std::collections::BTreeSet<String
         used.extend(row.tests.values().filter_map(|t| id(&t.test.run)));
     }
     used.extend(ledger.build.as_ref().and_then(|b| id(&b.run)));
-    used.extend(ledger.entities.values().flat_map(|e| e.tasks.iter().cloned()));
+    used.extend(
+        ledger
+            .entities
+            .values()
+            .flat_map(|e| e.tasks.iter().cloned()),
+    );
     used
 }
 
@@ -459,42 +498,83 @@ pub fn sweep_unused(root: &Path, own: Option<&Path>) -> Result<Vec<String>, Stri
     for set in &workspace.sets {
         outs.push(workspace.resolve(Some(&set.id)).map_err(|(_, e)| e)?.out);
     }
-    if let Some(own) = own { if !outs.iter().any(|o| o == own) { outs.push(own.to_path_buf()); } }
+    if let Some(own) = own {
+        if !outs.iter().any(|o| o == own) {
+            outs.push(own.to_path_buf());
+        }
+    }
     let mut ledgers = Vec::new();
     for out in &outs {
         let ledger = crate::gen::Ledger::load(out);
         // An unreadable ledger's references are unknown: nothing is provably unused.
-        if ledger.unreadable.is_some() { return Ok(Vec::new()); }
+        if ledger.unreadable.is_some() {
+            return Ok(Vec::new());
+        }
         // A set with a session at work (a goal or entity lease, or another build)
         // may be about to bind the tasks it owns: they all count as used.
         let busy = Some(out.as_path()) != own
-            && (!crate::control::leases(out).is_empty() || crate::control::build_lease(out).is_some());
+            && (!crate::control::leases(out).is_empty()
+                || crate::control::build_lease(out).is_some());
         ledgers.push((out, ledger, busy));
     }
-    if ledgers.iter().all(|(_, l, _)| l.tasks.is_empty()) { return Ok(Vec::new()); }
-    let mut used: std::collections::BTreeSet<String> = ledgers.iter().flat_map(|(_, l, _)| ledger_uses(l)).collect();
-    used.extend(ledgers.iter().filter(|(_, _, busy)| *busy).flat_map(|(_, l, _)| l.tasks.keys().cloned()));
+    if ledgers.iter().all(|(_, l, _)| l.tasks.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let mut used: std::collections::BTreeSet<String> = ledgers
+        .iter()
+        .flat_map(|(_, l, _)| ledger_uses(l))
+        .collect();
+    used.extend(
+        ledgers
+            .iter()
+            .filter(|(_, _, busy)| *busy)
+            .flat_map(|(_, l, _)| l.tasks.keys().cloned()),
+    );
     let (source, tasks) = load(root)?;
-    let owned = |t: &Task| ledgers.iter().any(|(_, l, _)| l.tasks.get(&t.id).is_some_and(|o| o.definition == t.hash()));
-    let removed: Vec<String> = tasks.iter().filter(|t| !used.contains(&t.id) && owned(t)).map(|t| t.id.clone()).collect();
-    if removed.is_empty() { return Ok(removed); }
-    let kept: Vec<Task> = tasks.iter().filter(|t| !removed.contains(&t.id)).cloned().collect();
+    let owned = |t: &Task| {
+        ledgers
+            .iter()
+            .any(|(_, l, _)| l.tasks.get(&t.id).is_some_and(|o| o.definition == t.hash()))
+    };
+    let removed: Vec<String> = tasks
+        .iter()
+        .filter(|t| !used.contains(&t.id) && owned(t))
+        .map(|t| t.id.clone())
+        .collect();
+    if removed.is_empty() {
+        return Ok(removed);
+    }
+    let kept: Vec<Task> = tasks
+        .iter()
+        .filter(|t| !removed.contains(&t.id))
+        .cloned()
+        .collect();
     let next = edit(&source, &kept)?;
     crate::document_sets::atomic_config(root, &next, &crate::model::hash_hex(&source))
         .map_err(|(_, error)| error)?;
     // The removed tasks' records end, so an author who restores one owns it. Only
     // idle sets own a removed task, and no session writes an idle set's ledger.
-    for (out, _, _) in ledgers.iter().filter(|(_, l, busy)| !busy && removed.iter().any(|id| l.tasks.contains_key(id))) {
+    for (out, _, _) in ledgers
+        .iter()
+        .filter(|(_, l, busy)| !busy && removed.iter().any(|id| l.tasks.contains_key(id)))
+    {
         let _lock = crate::gen::Ledger::lock(out);
         let mut fresh = crate::gen::Ledger::load(out);
-        if fresh.unreadable.is_some() { continue; }
+        if fresh.unreadable.is_some() {
+            continue;
+        }
         fresh.tasks.retain(|id, _| !removed.contains(id));
         fresh.save(out)?;
     }
     Ok(removed)
 }
 
-fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Result<Value, String> {
+fn call_impl(
+    root: &Path,
+    name: &str,
+    args: &Value,
+    import_terminal: bool,
+) -> Result<Value, String> {
     if !TOOLS.contains(&name) {
         return Err("Unknown runtime operation.".into());
     }
@@ -526,7 +606,10 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
     request["operation"] = json!(name);
     // Waiting is the engine's choice, never part of the submitted request.
     let wait = name == "run_task" && args["wait"] == true;
-    if let Some(fields) = request.as_object_mut() { fields.remove("wait"); fields.remove("task_ids"); }
+    if let Some(fields) = request.as_object_mut() {
+        fields.remove("wait");
+        fields.remove("task_ids");
+    }
     let mut wait_seconds = 0;
     if name == "run_task" {
         if operation_cancelled() {
@@ -567,7 +650,11 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
         request["files"] = json!(files);
         request["task"] = json!(task);
     }
-    let selection = if name == "task_context" { Some(select_tasks(tasks, &args["task_ids"])?) } else { None };
+    let selection = if name == "task_context" {
+        Some(select_tasks(tasks, &args["task_ids"])?)
+    } else {
+        None
+    };
     let host = dispatch(root, &request).and_then(|value| {
         if name == "run_task" && crate::vfs::is_scoped() {
             save_submission(root, &request, &value)?;
@@ -579,7 +666,9 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
     }
     if let Some((tasks, index)) = selection {
         let mut context = json!({"tasks":tasks,"legacy":legacy_tasks(&source),"revision":digest(source.as_bytes()),"projectRoot":root.to_string_lossy(),"execution":host.unwrap_or_else(|e|json!({"available":false,"reason":e})),"defaults":{"image":image(),"cwd":".","size":"small","timeout_seconds":timeout()}});
-        if let Some(index) = index { context["index"] = index; }
+        if let Some(index) = index {
+            context["index"] = index;
+        }
         return Ok(context);
     }
     host
@@ -587,40 +676,71 @@ fn call_impl(root: &Path, name: &str, args: &Value, import_terminal: bool) -> Re
 
 // Selected definitions in full, the rest by name. No selection keeps the full list.
 fn select_tasks(tasks: Vec<Task>, selection: &Value) -> Result<(Vec<Task>, Option<Value>), String> {
-    if selection.is_null() { return Ok((tasks, None)); }
-    let ids: Vec<&str> = selection.as_array().ok_or("task_ids must be a list of task IDs")?
-        .iter().map(|id| id.as_str().ok_or("task_ids must be a list of task IDs")).collect::<Result<_, _>>()?;
-    if let Some(unknown) = ids.iter().find(|id| !tasks.iter().any(|t| t.id == **id)) {
-        return Err(format!("Unknown task ID '{unknown}' in task_ids. Omit task_ids for the full list."));
+    if selection.is_null() {
+        return Ok((tasks, None));
     }
-    let (selected, rest): (Vec<Task>, Vec<Task>) = tasks.into_iter().partition(|t| ids.contains(&t.id.as_str()));
-    let index = rest.iter().map(|t| json!({"id":t.id,"name":t.name,"description":t.description})).collect();
+    let ids: Vec<&str> = selection
+        .as_array()
+        .ok_or("task_ids must be a list of task IDs")?
+        .iter()
+        .map(|id| id.as_str().ok_or("task_ids must be a list of task IDs"))
+        .collect::<Result<_, _>>()?;
+    if let Some(unknown) = ids.iter().find(|id| !tasks.iter().any(|t| t.id == **id)) {
+        return Err(format!(
+            "Unknown task ID '{unknown}' in task_ids. Omit task_ids for the full list."
+        ));
+    }
+    let (selected, rest): (Vec<Task>, Vec<Task>) = tasks
+        .into_iter()
+        .partition(|t| ids.contains(&t.id.as_str()));
+    let index = rest
+        .iter()
+        .map(|t| json!({"id":t.id,"name":t.name,"description":t.description}))
+        .collect();
     Ok((selected, Some(Value::Array(index))))
 }
 
 // Poll in code so a long run costs no inference per state change. Every early
 // exit is an ordinary status reply: a suspended worker records it as the tool's
 // receipt instead of leaving an uncertain pending call. The run keeps its deadline.
-fn wait_terminal(root: &Path, mut status: Value, limit_seconds: u64, import_terminal: bool) -> Result<Value, String> {
+fn wait_terminal(
+    root: &Path,
+    mut status: Value,
+    limit_seconds: u64,
+    import_terminal: bool,
+) -> Result<Value, String> {
     let id = status["id"].as_str().ok_or("Run ID missing")?.to_owned();
     let deadline = crate::sys::now_unix() + limit_seconds;
     fn cancelled() -> bool {
         #[cfg(not(target_arch = "wasm32"))]
-        { crate::hosted::cancelled() || operation_cancelled() }
+        {
+            crate::hosted::cancelled() || operation_cancelled()
+        }
         #[cfg(target_arch = "wasm32")]
-        { operation_cancelled() }
+        {
+            operation_cancelled()
+        }
     }
     while status["terminated"] != true {
-        if cancelled() { return Ok(cancel_waiting(root, &id, status, import_terminal)); }
+        if cancelled() {
+            return Ok(cancel_waiting(root, &id, status, import_terminal));
+        }
         if crate::session_recovery::suspension_requested() || crate::sys::now_unix() >= deadline {
             break;
         }
-        match call_impl(root, "wait_run", &json!({"run_id":id,"wait_ms":5000}), import_terminal) {
+        match call_impl(
+            root,
+            "wait_run",
+            &json!({"run_id":id,"wait_ms":5000}),
+            import_terminal,
+        ) {
             Ok(next) => status = next,
             // A hosted poll fails when the execution is suspended or cancelled
             // mid-wait. Any failure keeps the submitted run's identity.
             Err(error) => {
-                if cancelled() { return Ok(cancel_waiting(root, &id, status, import_terminal)); }
+                if cancelled() {
+                    return Ok(cancel_waiting(root, &id, status, import_terminal));
+                }
                 status["wait_error"] = json!(error);
                 break;
             }
@@ -632,7 +752,10 @@ fn wait_terminal(root: &Path, mut status: Value, limit_seconds: u64, import_term
 fn cancel_waiting(root: &Path, id: &str, mut status: Value, import_terminal: bool) -> Value {
     match call_impl(root, "cancel_run", &json!({"run_id":id}), import_terminal) {
         Ok(stopping) => stopping,
-        Err(error) => { status["wait_error"] = json!(error); status }
+        Err(error) => {
+            status["wait_error"] = json!(error);
+            status
+        }
     }
 }
 
@@ -647,17 +770,24 @@ struct Submission {
 }
 
 fn submission_key(root: &Path, id: &str) -> Result<String, String> {
-    if !valid_id(id) { return Err("Invalid run ID in submission receipt.".into()); }
+    if !valid_id(id) {
+        return Err("Invalid run ID in submission receipt.".into());
+    }
     Ok(format!("task-submission:{}:{id}", root.display()))
 }
 
 fn save_submission(root: &Path, request: &Value, status: &Value) -> Result<(), String> {
-    if !crate::session_recovery::active() { return Ok(()); }
+    if !crate::session_recovery::active() {
+        return Ok(());
+    }
     let id = status["id"].as_str().ok_or("Run ID missing")?;
     let key = submission_key(root, id)?;
     let receipt = Submission {
         task: serde_json::from_value(request["task"].clone()).map_err(|e| e.to_string())?,
-        input_digest: request["input_digest"].as_str().ok_or("Task input identity missing")?.into(),
+        input_digest: request["input_digest"]
+            .as_str()
+            .ok_or("Task input identity missing")?
+            .into(),
         import: None,
     };
     if let Some(previous) = crate::session_recovery::parent(&key)? {
@@ -671,14 +801,27 @@ fn save_submission(root: &Path, request: &Value, status: &Value) -> Result<(), S
     Ok(())
 }
 
-fn import_scoped_result(root: &Path, id: &str, result: Option<&Value>, terminal_state: Option<&str>) -> Result<Option<Value>, String> {
-    if !crate::session_recovery::active() { return Ok(None); }
+fn import_scoped_result(
+    root: &Path,
+    id: &str,
+    result: Option<&Value>,
+    terminal_state: Option<&str>,
+) -> Result<Option<Value>, String> {
+    if !crate::session_recovery::active() {
+        return Ok(None);
+    }
     let key = submission_key(root, id)?;
-    let Some(value) = crate::session_recovery::parent(&key)? else { return Ok(None) };
+    let Some(value) = crate::session_recovery::parent(&key)? else {
+        return Ok(None);
+    };
     let mut receipt: Submission = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    if let Some(import) = receipt.import { return Ok(Some(import)); }
+    if let Some(import) = receipt.import {
+        return Ok(Some(import));
+    }
     let fetched;
-    let result = if let Some(result) = result { result } else {
+    let result = if let Some(result) = result {
+        result
+    } else {
         fetched = dispatch(root, &json!({"operation":"result","run_id":id}))?;
         &fetched
     };
@@ -697,19 +840,37 @@ fn import_scoped_result(root: &Path, id: &str, result: Option<&Value>, terminal_
     Ok(Some(imported))
 }
 
-fn finish_status(root: &Path, operation: &str, args: &Value, mut status: Value, import_terminal: bool) -> Result<Value, String> {
-    if import_terminal && crate::vfs::is_scoped() && status["terminated"] == true
+fn finish_status(
+    root: &Path,
+    operation: &str,
+    args: &Value,
+    mut status: Value,
+    import_terminal: bool,
+) -> Result<Value, String> {
+    if import_terminal
+        && crate::vfs::is_scoped()
+        && status["terminated"] == true
         && matches!(operation, "run_task" | "inspect_run" | "wait_run")
     {
-        let id = status["id"].as_str().or_else(|| args["run_id"].as_str()).ok_or("Run ID missing")?;
+        let id = status["id"]
+            .as_str()
+            .or_else(|| args["run_id"].as_str())
+            .ok_or("Run ID missing")?;
         if let Some(import) = import_scoped_result(root, id, None, status["state"].as_str())? {
-            let repeats_summary = status.get("result").is_none() || status.get("result") == status.get("summary");
+            let repeats_summary =
+                status.get("result").is_none() || status.get("result") == status.get("summary");
             if !status["result"].is_object() {
-                status["result"] = if status["summary"].is_object() { status["summary"].clone() } else { json!({}) };
+                status["result"] = if status["summary"].is_object() {
+                    status["summary"].clone()
+                } else {
+                    json!({})
+                };
             }
             status["result"]["import_pending"] = json!(false);
             status["result"]["import"] = import;
-            if repeats_summary && status.get("summary").is_some() { status["summary"] = status["result"].clone(); }
+            if repeats_summary && status.get("summary").is_some() {
+                status["summary"] = status["result"].clone();
+            }
         }
     }
     Ok(metadata_response(operation, status))
@@ -746,7 +907,9 @@ fn metadata_response(operation: &str, mut value: Value) -> Value {
 // observations small without changing retained runtime evidence or HTTP views.
 pub(crate) fn worker_response(operation: &str, mut value: Value) -> Value {
     fn status(value: &mut Value) {
-        let Some(fields) = value.as_object_mut() else { return };
+        let Some(fields) = value.as_object_mut() else {
+            return;
+        };
         if let Some(task) = fields.get_mut("task").and_then(Value::as_object_mut) {
             task.retain(|key, _| matches!(key.as_str(), "id" | "name"));
         }
@@ -767,12 +930,17 @@ pub(crate) fn worker_response(operation: &str, mut value: Value) -> Value {
                     status(run);
                 }
                 next
-            } else { None };
+            } else {
+                None
+            };
             if let Some(next) = next {
                 execution.insert("next_cursor".into(), next);
             }
         }
-    } else if matches!(operation, "run_task" | "inspect_run" | "wait_run" | "cancel_run") {
+    } else if matches!(
+        operation,
+        "run_task" | "inspect_run" | "wait_run" | "cancel_run"
+    ) {
         status(&mut value);
     }
     value
@@ -851,7 +1019,8 @@ mod tests {
 
     #[test]
     fn worker_context_pages_history_without_losing_current_tasks_or_cursors() {
-        let tasks = json!([{"id":"test","name":"Tests","command":"mvn test","reports":["reports/*.xml"]}]);
+        let tasks =
+            json!([{"id":"test","name":"Tests","command":"mvn test","reports":["reports/*.xml"]}]);
         let runs: Vec<_> = (0..12).map(|n| json!({"id":format!("run-{n}"),
             "task":{"id":"test","name":"Tests","command":"mvn test"},"state":"succeeded", "summary":null})).collect();
         let original = json!({"tasks":tasks,"legacy":[],"revision":"configuration-revision",
@@ -868,9 +1037,16 @@ mod tests {
         let mut last = original;
         last["execution"]["runs"] = json!([{"id":"last","task":{"id":"test"},"summary":null}]);
         last["execution"]["next_cursor"] = Value::Null;
-        assert_eq!(worker_response("task_context", last)["execution"]["next_cursor"], Value::Null);
-        let unavailable = json!({"tasks":tasks,"execution":{"available":false,"reason":"No runtime attached."}});
-        assert_eq!(worker_response("task_context", unavailable.clone()), unavailable);
+        assert_eq!(
+            worker_response("task_context", last)["execution"]["next_cursor"],
+            Value::Null
+        );
+        let unavailable =
+            json!({"tasks":tasks,"execution":{"available":false,"reason":"No runtime attached."}});
+        assert_eq!(
+            worker_response("task_context", unavailable.clone()),
+            unavailable
+        );
     }
 
     #[test]
@@ -916,10 +1092,16 @@ mod tests {
         other.id = "lint".into();
         other.name = "Lint".into();
         tasks.push(other);
-        assert_eq!(select_tasks(tasks.clone(), &Value::Null).unwrap(), (tasks.clone(), None));
+        assert_eq!(
+            select_tasks(tasks.clone(), &Value::Null).unwrap(),
+            (tasks.clone(), None)
+        );
         let (selected, index) = select_tasks(tasks.clone(), &json!(["lint"])).unwrap();
         assert_eq!(selected, vec![tasks[1].clone()]);
-        assert_eq!(index.unwrap(), json!([{"id":tasks[0].id,"name":tasks[0].name,"description":tasks[0].description}]));
+        assert_eq!(
+            index.unwrap(),
+            json!([{"id":tasks[0].id,"name":tasks[0].name,"description":tasks[0].description}])
+        );
         let (selected, index) = select_tasks(tasks.clone(), &json!([])).unwrap();
         assert!(selected.is_empty());
         assert_eq!(index.unwrap().as_array().unwrap().len(), 2);
@@ -929,63 +1111,122 @@ mod tests {
     }
     #[test]
     fn sweep_removes_only_unused_session_tasks_and_keeps_author_tasks() {
-        let root = std::env::temp_dir().join(format!("jazyk-task-sweep-{}-{}",
-            crate::sys::process_id(), crate::sys::now_millis()));
-        let task = |id: &str, command: &str| format!("[[tasks]]\nid='{id}'\nname='{id}'\ndescription='d'\ncommand='{command}'\n");
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-task-sweep-{}-{}",
+            crate::sys::process_id(),
+            crate::sys::now_millis()
+        ));
+        let task = |id: &str, command: &str| {
+            format!("[[tasks]]\nid='{id}'\nname='{id}'\ndescription='d'\ncommand='{command}'\n")
+        };
         let base = format!("version=1\n# kept comment\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n{}", task("author", "true"));
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), &base).unwrap();
-        let out = crate::document_sets::Workspace::load(&root).unwrap().resolve(Some("ds_main")).unwrap().out;
-        let row = |run: &str| format!("    entity: ent:page\n    test: {{kind: programmatic, label: l, artifact: t.py, name: n, run: '{run}'}}\n    hashes: {{requirement: r, test: t, files: f}}\n");
+        let out = crate::document_sets::Workspace::load(&root)
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap()
+            .out;
+        let row = |run: &str| {
+            format!("    entity: ent:page\n    test: {{kind: programmatic, label: l, artifact: t.py, name: n, run: '{run}'}}\n    hashes: {{requirement: r, test: t, files: f}}\n")
+        };
         crate::vfs::create_dir_all(out.join("gen")).unwrap();
         crate::vfs::write(out.join("gen/ledger.yaml"), format!("entities:\n  page: {{factHash: x, tasks: [util]}}\nrequirements:\n  req:a-1:\n{}  req:a-2:\n{}",
             row("task:suite"), row("task:author"))).unwrap();
         // A ledger session adds four tasks; they become its own with their hashes.
         let before = load(&root).unwrap().1;
-        let session = format!("{base}{}{}{}{}", task("suite", "true"), task("old", "true"), task("util", "true"), task("adopted", "true"));
+        let session = format!(
+            "{base}{}{}{}{}",
+            task("suite", "true"),
+            task("old", "true"),
+            task("util", "true"),
+            task("adopted", "true")
+        );
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), &session).unwrap();
         let after = load(&root).unwrap().1;
         record_owned(&out, &before, &after, "g:bind:req:a-1").unwrap();
         let ledger = crate::gen::Ledger::load(&out);
         assert!(ledger.unreadable.is_none(), "{:?}", ledger.unreadable);
-        assert_eq!(ledger.tasks.keys().cloned().collect::<Vec<_>>(), ["adopted", "old", "suite", "util"]);
-        assert_eq!(ledger.tasks["old"].definition, after.iter().find(|t| t.id == "old").unwrap().hash());
+        assert_eq!(
+            ledger.tasks.keys().cloned().collect::<Vec<_>>(),
+            ["adopted", "old", "suite", "util"]
+        );
+        assert_eq!(
+            ledger.tasks["old"].definition,
+            after.iter().find(|t| t.id == "old").unwrap().hash()
+        );
         // The author edits "adopted": a different definition is the author's.
-        crate::vfs::write(root.join(".jazyk/jazyk.toml"), session.replace("id='adopted'\nname='adopted'\ndescription='d'\ncommand='true'", "id='adopted'\nname='adopted'\ndescription='d'\ncommand='make lint'")).unwrap();
+        crate::vfs::write(
+            root.join(".jazyk/jazyk.toml"),
+            session.replace(
+                "id='adopted'\nname='adopted'\ndescription='d'\ncommand='true'",
+                "id='adopted'\nname='adopted'\ndescription='d'\ncommand='make lint'",
+            ),
+        )
+        .unwrap();
         // A set with a session at work keeps every task it owns.
         crate::control::claim(&out, "req:a-9", "worker-b").unwrap();
-        assert!(sweep_unused(&root, Some(&root.join("other-build"))).unwrap().is_empty());
+        assert!(sweep_unused(&root, Some(&root.join("other-build")))
+            .unwrap()
+            .is_empty());
         crate::control::release_lease(&out, "req:a-9");
         // Only the unused session task goes, and its record ends with it.
         assert_eq!(sweep_unused(&root, None).unwrap(), vec!["old".to_string()]);
         let (text, kept) = load(&root).unwrap();
-        assert_eq!(kept.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["author", "suite", "util", "adopted"]);
+        assert_eq!(
+            kept.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            ["author", "suite", "util", "adopted"]
+        );
         assert!(text.contains("# kept comment"));
         assert!(!crate::gen::Ledger::load(&out).tasks.contains_key("old"));
-        assert!(sweep_unused(&root, None).unwrap().is_empty(), "a second sweep converges");
+        assert!(
+            sweep_unused(&root, None).unwrap().is_empty(),
+            "a second sweep converges"
+        );
         // An author who restores the removed task unchanged owns it.
-        crate::vfs::write(root.join(".jazyk/jazyk.toml"), format!("{text}{}", task("old", "true"))).unwrap();
+        crate::vfs::write(
+            root.join(".jazyk/jazyk.toml"),
+            format!("{text}{}", task("old", "true")),
+        )
+        .unwrap();
         assert!(sweep_unused(&root, None).unwrap().is_empty());
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), &text).unwrap();
         // A build's own --out ledger counts as a use: the ledger is now this one file.
         for f in crate::gen::Ledger::files(&out) {
             crate::vfs::remove_file(f).ok();
         }
-        crate::vfs::write(out.join("gen/ledger.yaml"), format!("tasks:\n  suite: {{createdBy: x, createdAt: x, definition: '{}'}}\n", kept[1].hash())).unwrap();
+        crate::vfs::write(
+            out.join("gen/ledger.yaml"),
+            format!(
+                "tasks:\n  suite: {{createdBy: x, createdAt: x, definition: '{}'}}\n",
+                kept[1].hash()
+            ),
+        )
+        .unwrap();
         let other = root.join("elsewhere");
         crate::vfs::create_dir_all(other.join("gen")).unwrap();
-        crate::vfs::write(other.join("gen/ledger.yaml"), format!("requirements:\n  req:a-1:\n{}", row("task:suite"))).unwrap();
+        crate::vfs::write(
+            other.join("gen/ledger.yaml"),
+            format!("requirements:\n  req:a-1:\n{}", row("task:suite")),
+        )
+        .unwrap();
         assert!(sweep_unused(&root, Some(&other)).unwrap().is_empty());
         // An unreadable ledger proves nothing unused.
         crate::vfs::write(other.join("gen/ledger.yaml"), "tasks: [unclosed").unwrap();
         assert!(sweep_unused(&root, Some(&other)).unwrap().is_empty());
-        assert_eq!(sweep_unused(&root, None).unwrap(), vec!["suite".to_string()]);
+        assert_eq!(
+            sweep_unused(&root, None).unwrap(),
+            vec!["suite".to_string()]
+        );
         crate::vfs::remove_dir_all(root).ok();
     }
     #[test]
     fn task_updates_share_the_config_lock_and_preserve_matcher_edits() {
-        let root = std::env::temp_dir().join(format!("jazyk-task-cas-{}-{}",
-            crate::sys::process_id(), crate::sys::now_millis()));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-task-cas-{}-{}",
+            crate::sys::process_id(),
+            crate::sys::now_millis()
+        ));
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
         let source = format!("version=1\n{CONFIG}");
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), &source).unwrap();
@@ -996,15 +1237,33 @@ mod tests {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let lock = crate::document_sets::ProjectLock::acquire(&root, "config.lock").unwrap();
-            assert!(call(&root, "update_tasks", &args).unwrap_err().contains("another project operation"));
-            assert_eq!(crate::vfs::read_to_string(root.join(".jazyk/jazyk.toml")).unwrap(), source);
+            assert!(call(&root, "update_tasks", &args)
+                .unwrap_err()
+                .contains("another project operation"));
+            assert_eq!(
+                crate::vfs::read_to_string(root.join(".jazyk/jazyk.toml")).unwrap(),
+                source
+            );
             drop(lock);
         }
-        let next = format!("{source}\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n");
-        crate::document_sets::atomic_config(&root, &next, &crate::model::hash_hex(&source)).unwrap();
-        assert!(call(&root, "update_tasks", &args).unwrap_err().contains("settings changed"));
-        assert_eq!(crate::vfs::read_to_string(root.join(".jazyk/jazyk.toml")).unwrap(), next);
-        let saved = call(&root, "update_tasks", &json!({"expected_revision":digest(next.as_bytes()),"tasks":tasks})).unwrap();
+        let next = format!(
+            "{source}\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n"
+        );
+        crate::document_sets::atomic_config(&root, &next, &crate::model::hash_hex(&source))
+            .unwrap();
+        assert!(call(&root, "update_tasks", &args)
+            .unwrap_err()
+            .contains("settings changed"));
+        assert_eq!(
+            crate::vfs::read_to_string(root.join(".jazyk/jazyk.toml")).unwrap(),
+            next
+        );
+        let saved = call(
+            &root,
+            "update_tasks",
+            &json!({"expected_revision":digest(next.as_bytes()),"tasks":tasks}),
+        )
+        .unwrap();
         let (actual, actual_tasks) = load(&root).unwrap();
         assert_eq!(saved["revision"], digest(actual.as_bytes()));
         assert_eq!(actual_tasks, tasks);
@@ -1104,11 +1363,16 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
     } else if operation == "read_run_changes" {
         let version = match args.get("version") {
             None => "changes",
-            Some(value) => value.as_str().filter(|value| matches!(*value, "changes" | "input"))
+            Some(value) => value
+                .as_str()
+                .filter(|value| matches!(*value, "changes" | "input"))
                 .ok_or("version must be changes or input")?,
         };
         if version == "input" && args["path"].as_str().is_none() {
-            return Err("version: input requires path; omit version and path to list retained changes".into());
+            return Err(
+                "version: input requires path; omit version and path to list retained changes"
+                    .into(),
+            );
         }
         if let Some(path) = args["path"].as_str() {
             if !safe_path(path) || protected(path) {
@@ -1131,10 +1395,14 @@ pub fn present(state: &Value, result: &Value, args: &Value) -> Result<Value, Str
             if version == "input" {
                 let encoded = result["input_files"][path].as_str()
                     .ok_or("Retained input file not found; input reads use the frozen run snapshot, not the current workspace")?;
-                let bytes = STANDARD.decode(encoded).map_err(|_| "Invalid retained input encoding")?;
+                let bytes = STANDARD
+                    .decode(encoded)
+                    .map_err(|_| "Invalid retained input encoding")?;
                 let mut value = if args["download"] == "1" {
                     json!({"encoding":"base64","content":encoded})
-                } else { preview(Some(bytes)) };
+                } else {
+                    preview(Some(bytes))
+                };
                 value["path"] = json!(path);
                 value["version"] = json!("input");
                 return Ok(value);
@@ -1368,7 +1636,7 @@ pub fn validate_result(
     }
     if result["log"]
         .as_str()
-        .map_or(true, |s| s.len() > 2 * 1024 * 1024)
+        .is_none_or(|s| s.len() > 2 * 1024 * 1024)
     {
         return Err("Invalid worker log.".into());
     }
@@ -1459,7 +1727,9 @@ pub fn project_root(path: &Path) -> Result<std::path::PathBuf, String> {
 /// remains an out-of-band operation while this call waits.
 pub fn execute_with_key(root: &Path, id: &str, identity: &str) -> Result<(String, Value), String> {
     #[cfg(not(target_arch = "wasm32"))]
-    if crate::vfs::is_scoped() { return execute_recoverable(root, id, identity); }
+    if crate::vfs::is_scoped() {
+        return execute_recoverable(root, id, identity);
+    }
     let _ = identity;
     execute(root, id)
 }
@@ -1477,24 +1747,45 @@ fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String,
         result: Option<Value>,
     }
     fn save(key: &str, pending: &Pending) -> Result<(), String> {
-        recovery::set_parent(key, serde_json::to_value(pending).map_err(|e| e.to_string())?);
+        recovery::set_parent(
+            key,
+            serde_json::to_value(pending).map_err(|e| e.to_string())?,
+        );
         recovery::checkpoint_parent().map_err(|e| format!("checkpoint-failed: {e}"))
     }
-    let key = recovery::task_key(&format!("task:{}:{id}:{identity}",root.display()));
+    let key = recovery::task_key(&format!("task:{}:{id}:{identity}", root.display()));
     let mut pending: Pending = match recovery::parent(&key)? {
-        Some(value) => serde_json::from_value(value).map_err(|e| format!("checkpoint-incompatible: task continuation: {e}"))?,
+        Some(value) => serde_json::from_value(value)
+            .map_err(|e| format!("checkpoint-incompatible: task continuation: {e}"))?,
         None => Pending {
-            version: 1, context: call(root, "task_context", &json!({}))?,
-            operation_key: format!("resume-{}", &digest(format!("{key}:{}:{}",crate::sys::now_millis(),crate::sys::process_id()).as_bytes())[..32]),
-            deadline: crate::sys::now_unix() + 8100, run_id: None, result: None,
+            version: 1,
+            context: call(root, "task_context", &json!({}))?,
+            operation_key: format!(
+                "resume-{}",
+                &digest(
+                    format!(
+                        "{key}:{}:{}",
+                        crate::sys::now_millis(),
+                        crate::sys::process_id()
+                    )
+                    .as_bytes()
+                )[..32]
+            ),
+            deadline: crate::sys::now_unix() + 8100,
+            run_id: None,
+            result: None,
         },
     };
-    if pending.version != 1 { return Err("checkpoint-incompatible: unsupported task continuation".into()); }
+    if pending.version != 1 {
+        return Err("checkpoint-incompatible: unsupported task continuation".into());
+    }
     if let (Some(run_id), Some(result)) = (&pending.run_id, &pending.result) {
         return Ok((run_id.clone(), result.clone()));
     }
     save(&key, &pending)?;
-    if recovery::suspension_requested() { return Err("suspended".into()); }
+    if recovery::suspension_requested() {
+        return Err("suspended".into());
+    }
     if pending.run_id.is_none() {
         let run = call_impl(root, "run_task", &json!({"task_id":id,"expected_revision":pending.context["revision"],"operation_key":pending.operation_key}), false)
             .map_err(|error| format!("execution-uncertain: Task submission needs its saved destination receipt: {error}"))?;
@@ -1507,18 +1798,28 @@ fn execute_recoverable(root: &Path, id: &str, identity: &str) -> Result<(String,
             let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
             return Err(format!("Execution cancelled; run {run_id} is stopping."));
         }
-        if recovery::suspension_requested() { save(&key,&pending)?; return Err("suspended".into()); }
-        let status = call_impl(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}), false)?;
+        if recovery::suspension_requested() {
+            save(&key, &pending)?;
+            return Err("suspended".into());
+        }
+        let status = call_impl(
+            root,
+            "wait_run",
+            &json!({"run_id":run_id,"wait_ms":1000}),
+            false,
+        )?;
         if status["terminated"] == true {
             let result = dispatch(root, &json!({"operation":"result","run_id":run_id}))?;
             apply_execution_result(root, id, &run_id, &pending.context, &status, &result)?;
             pending.result = Some(result.clone());
-            save(&key,&pending)?;
-            return Ok((run_id,result));
+            save(&key, &pending)?;
+            return Ok((run_id, result));
         }
         if crate::sys::now_unix() >= pending.deadline {
             let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
-            return Err(format!("Run {run_id} exceeded the waiting limit and was cancelled."));
+            return Err(format!(
+                "Run {run_id} exceeded the waiting limit and was cancelled."
+            ));
         }
         crate::sys::sleep(std::time::Duration::from_millis(1000));
     }
@@ -1552,7 +1853,12 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
             let _ = call(root, "cancel_run", &json!({"run_id":run_id}));
             return Err(format!("Execution cancelled; run {run_id} is stopping."));
         }
-        let status = call_impl(root, "wait_run", &json!({"run_id":run_id,"wait_ms":1000}), false)?;
+        let status = call_impl(
+            root,
+            "wait_run",
+            &json!({"run_id":run_id,"wait_ms":1000}),
+            false,
+        )?;
         if status["terminated"] == true {
             let result = dispatch(root, &json!({"operation":"result","run_id":run_id}))?;
             apply_execution_result(root, id, &run_id, &context, &status, &result)?;
@@ -1568,15 +1874,26 @@ pub fn execute(root: &Path, id: &str) -> Result<(String, Value), String> {
     }
 }
 
-fn apply_execution_result(root: &Path, task_id: &str, run_id: &str, context: &Value, status: &Value, result: &Value) -> Result<(), String> {
-    if crate::vfs::is_scoped() && import_scoped_result(root, run_id, Some(result), status["state"].as_str())?.is_some() {
+fn apply_execution_result(
+    root: &Path,
+    task_id: &str,
+    run_id: &str,
+    context: &Value,
+    status: &Value,
+    result: &Value,
+) -> Result<(), String> {
+    if crate::vfs::is_scoped()
+        && import_scoped_result(root, run_id, Some(result), status["state"].as_str())?.is_some()
+    {
         return Ok(());
     }
     // Local adapters already import during finalization. Saved continuations
     // from before submission receipts use their original frozen task context.
     if let (Ok(input), Some(definition)) = (
         serde_json::from_value::<BTreeMap<String, String>>(result["input_files"].clone()),
-        context["tasks"].as_array().and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id)),
+        context["tasks"]
+            .as_array()
+            .and_then(|tasks| tasks.iter().find(|task| task["id"] == task_id)),
     ) {
         let task: Task = serde_json::from_value(definition.clone()).map_err(|e| e.to_string())?;
         apply_result(root, &task, &input, result, run_id)?;
@@ -1630,7 +1947,10 @@ pub fn import_evidence(
     let reference = format!("task:{}", task.id);
     for row in ledger.requirements.values_mut() {
         if (row.test.kind == "programmatic" && row.test.run == reference)
-            || row.tests.values().any(|t| t.test.kind == "programmatic" && t.test.run == reference)
+            || row
+                .tests
+                .values()
+                .any(|t| t.test.kind == "programmatic" && t.test.run == reference)
         {
             let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
             crate::verify::rebaseline_files(row, files);
@@ -1702,12 +2022,26 @@ pub fn apply_result(
     });
     let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
     if result["status"] == "succeeded" && result["complete"] == true {
-        for path in result["products"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-            if !safe_path(path) || protected(path) || !matches(&task.products, path)
-                || !crate::document_sets::contained_relative_with_policy(root, path, |path| safe_path(path) && !protected(path))
-                || workspace.sets.iter().any(|set| crate::document_sets::included(&set.docs, path))
+        for path in result["products"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !safe_path(path)
+                || protected(path)
+                || !matches(&task.products, path)
+                || !crate::document_sets::contained_relative_with_policy(root, path, |path| {
+                    safe_path(path) && !protected(path)
+                })
+                || workspace
+                    .sets
+                    .iter()
+                    .any(|set| crate::document_sets::included(&set.docs, path))
             {
-                return Ok(json!({"applied":false,"reason":format!("Product {path} cannot replace Documents, protected paths, or nested projects. Results remain in run history.")}));
+                return Ok(
+                    json!({"applied":false,"reason":format!("Product {path} cannot replace Documents, protected paths, or nested projects. Results remain in run history.")}),
+                );
             }
         }
     }
@@ -1976,31 +2310,82 @@ mod retained_input_tests {
         let args = json!({"operation":"read_run_changes","path":"page.html"});
         let error = present(&Value::Null, &result, &args).unwrap_err();
         assert!(error.contains("frozen input exists") && error.contains("version: input"));
-        let input = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"page.html","version":"input"})).unwrap();
-        assert_eq!(input, json!({"path":"page.html","version":"input","encoding":"utf8","content":"<svg>original ž\r\n</svg>"}));
-        let listed = present(&Value::Null, &result, &json!({"operation":"read_run_changes"})).unwrap();
+        let input = present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"page.html","version":"input"}),
+        )
+        .unwrap();
+        assert_eq!(
+            input,
+            json!({"path":"page.html","version":"input","encoding":"utf8","content":"<svg>original ž\r\n</svg>"})
+        );
+        let listed = present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes"}),
+        )
+        .unwrap();
         assert_eq!(listed["files"].as_array().unwrap().len(), 3);
-        assert!(listed["files"].as_array().unwrap().iter().all(|file| file["path"] != "page.html"));
-        assert_eq!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"changes"})).unwrap(), listed);
+        assert!(listed["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["path"] != "page.html"));
+        assert_eq!(
+            present(
+                &Value::Null,
+                &result,
+                &json!({"operation":"read_run_changes","version":"changes"})
+            )
+            .unwrap(),
+            listed
+        );
     }
 
     #[test]
     fn retained_input_and_changed_versions_keep_their_own_bytes() {
         let result = retained();
-        let changed = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"changed.txt"})).unwrap();
+        let changed = present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"changed.txt"}),
+        )
+        .unwrap();
         assert_eq!(changed["content"], "after");
         assert_eq!(changed["before"]["content"], "before");
         assert_eq!(changed["change"], "modified");
-        let input = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"changed.txt","version":"input"})).unwrap();
+        let input = present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"changed.txt","version":"input"}),
+        )
+        .unwrap();
         assert_eq!(input["content"], "before");
         assert_eq!(input["version"], "input");
         assert!(input.get("change").is_none() && input.get("before").is_none());
-        let deleted = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"deleted.txt"})).unwrap();
+        let deleted = present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"deleted.txt"}),
+        )
+        .unwrap();
         assert_eq!(deleted["encoding"], "absent");
         assert_eq!(deleted["change"], "deleted");
-        let input = present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"deleted.txt","version":"input"})).unwrap();
+        let input = present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"deleted.txt","version":"input"}),
+        )
+        .unwrap();
         assert_eq!(input["content"], "deleted input");
-        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"new.txt","version":"input"})).unwrap_err().contains("Retained input file not found"));
+        assert!(present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"new.txt","version":"input"})
+        )
+        .unwrap_err()
+        .contains("Retained input file not found"));
     }
 
     #[test]
@@ -2008,7 +2393,8 @@ mod retained_input_tests {
         for bytes in [vec![0u8, 255, 128, 13, 10], vec![b'x'; 65537]] {
             let encoded = STANDARD.encode(&bytes);
             let result = json!({"input_files":{"asset.bin":encoded}});
-            let mut args = json!({"operation":"read_run_changes","path":"asset.bin","version":"input"});
+            let mut args =
+                json!({"operation":"read_run_changes","path":"asset.bin","version":"input"});
             let preview = present(&Value::Null, &result, &args).unwrap();
             assert_eq!(preview["encoding"], "binary");
             assert_eq!(preview["size"], bytes.len());
@@ -2017,7 +2403,10 @@ mod retained_input_tests {
             let full = present(&Value::Null, &result, &args).unwrap();
             assert_eq!(full["encoding"], "base64");
             assert_eq!(full["version"], "input");
-            assert_eq!(STANDARD.decode(full["content"].as_str().unwrap()).unwrap(), bytes);
+            assert_eq!(
+                STANDARD.decode(full["content"].as_str().unwrap()).unwrap(),
+                bytes
+            );
         }
     }
 
@@ -2026,13 +2415,45 @@ mod retained_input_tests {
         let result = json!({"input_files":{".env":STANDARD.encode("private"),"src/private.key":STANDARD.encode("private"),"broken.txt":"not base64"}});
         for path in [".env", "../outside.txt", "src/private.key", ".git/config"] {
             let args = json!({"operation":"read_run_changes","path":path,"version":"input"});
-            assert!(present(&Value::Null, &result, &args).unwrap_err().contains("Invalid output path"));
+            assert!(present(&Value::Null, &result, &args)
+                .unwrap_err()
+                .contains("Invalid output path"));
         }
-        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"input"})).unwrap_err().contains("requires path"));
-        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"current"})).unwrap_err().contains("version must be"));
-        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"input","path":"absent.txt"})).unwrap_err().contains("Retained input file not found"));
-        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","version":"input","path":"broken.txt"})).unwrap_err().contains("Invalid retained input encoding"));
-        assert!(present(&Value::Null, &result, &json!({"operation":"read_run_changes","path":"absent.txt"})).unwrap_err().contains("Omit path to list retained changes"));
+        assert!(present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","version":"input"})
+        )
+        .unwrap_err()
+        .contains("requires path"));
+        assert!(present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","version":"current"})
+        )
+        .unwrap_err()
+        .contains("version must be"));
+        assert!(present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","version":"input","path":"absent.txt"})
+        )
+        .unwrap_err()
+        .contains("Retained input file not found"));
+        assert!(present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","version":"input","path":"broken.txt"})
+        )
+        .unwrap_err()
+        .contains("Invalid retained input encoding"));
+        assert!(present(
+            &Value::Null,
+            &result,
+            &json!({"operation":"read_run_changes","path":"absent.txt"})
+        )
+        .unwrap_err()
+        .contains("Omit path to list retained changes"));
     }
 }
 

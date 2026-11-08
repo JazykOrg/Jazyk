@@ -24,7 +24,9 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
     let llm = st.llm();
     let model = if llm.model.is_empty() {
         "none"
-    } else if llm.api_key.is_empty() && !llm.base_url.contains("127.0.0.1") && !llm.base_url.contains("localhost")
+    } else if llm.api_key.is_empty()
+        && !llm.base_url.contains("127.0.0.1")
+        && !llm.base_url.contains("localhost")
     {
         "needs-key"
     } else {
@@ -105,7 +107,11 @@ pub fn record_opened(root: &Path) {
 
 // docs-only | docs-and-product | product-only | empty: what the project holds, so
 // the home screen and the wizard say what to do first.
-pub fn shape(proj: &crate::project::Project, gs: &crate::gen::GenSettings, store: &Store) -> &'static str {
+pub fn shape(
+    proj: &crate::project::Project,
+    gs: &crate::gen::GenSettings,
+    store: &Store,
+) -> &'static str {
     let has_docs = !proj.doc_files().is_empty();
     let ledger = crate::gen::Ledger::load(&store.out);
     let bound = !ledger.entities.is_empty() || !ledger.requirements.is_empty();
@@ -207,19 +213,27 @@ pub async fn verify_matrix(State(st): State<SharedState>, Query(q): Query<Matrix
     let store = super::api::load_store(&st).await;
     let gs = st.gs();
     match q.format.as_deref() {
-        None | Some("json") => Json(crate::webapi::product::matrix_value(&store, &gs)).into_response(),
+        None | Some("json") => {
+            Json(crate::webapi::product::matrix_value(&store, &gs)).into_response()
+        }
         Some(f) => {
             let (rows, _) = crate::webapi::product::matrix_rows(&store, &gs);
             match crate::webapi::product::matrix_export(&rows, f) {
                 Some((body, ctype, name)) => (
                     [
                         (header::CONTENT_TYPE, ctype.to_string()),
-                        (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", name)),
+                        (
+                            header::CONTENT_DISPOSITION,
+                            format!("attachment; filename=\"{}\"", name),
+                        ),
                     ],
                     body,
                 )
                     .into_response(),
-                None => err(StatusCode::BAD_REQUEST, format!("unknown format {}; csv, md, or json", f)),
+                None => err(
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown format {}; csv, md, or json", f),
+                ),
             }
         }
     }

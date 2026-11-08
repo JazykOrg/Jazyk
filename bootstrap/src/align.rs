@@ -141,9 +141,19 @@ fn containment(part: &BTreeSet<String>, whole: &BTreeSet<String>) -> f64 {
 fn print(full: Full, sec: &Section) -> Print {
     if sec.kind == "blob" {
         let identity = format!("blob:{}:{}", full.doc, sec.hash);
-        return Print { full, identity: identity.clone(), body: identity.clone(),
-            parent: None, order: sec.order, slug: String::new(), words: vec![],
-            tokens: vec![], shingles: BTreeSet::from([identity]), normalized: String::new(), raw: String::new() };
+        return Print {
+            full,
+            identity: identity.clone(),
+            body: identity.clone(),
+            parent: None,
+            order: sec.order,
+            slug: String::new(),
+            words: vec![],
+            tokens: vec![],
+            shingles: BTreeSet::from([identity]),
+            normalized: String::new(),
+            raw: String::new(),
+        };
     }
     let body: String = match sec.kind.as_str() {
         "heading" | "root" => sec.raw.lines().skip(1).collect::<Vec<_>>().join("\n"),
@@ -709,9 +719,7 @@ mod tests {
             .collect()
     }
 
-    fn stored(
-        parsed: &crate::reconcile::ParsedDocs,
-    ) -> BTreeMap<String, DocRecord> {
+    fn stored(parsed: &crate::reconcile::ParsedDocs) -> BTreeMap<String, DocRecord> {
         parsed
             .iter()
             .map(|(d, (h, s))| {
@@ -948,10 +956,7 @@ mod tests {
         )]);
         let after = docs(&[(
             "a.md",
-            &format!(
-                "# T\n\n## Orders\n{}\n\n### Cart\n{}\n",
-                BODY_B, BODY_A
-            ),
+            &format!("# T\n\n## Orders\n{}\n\n### Cart\n{}\n", BODY_B, BODY_A),
         )]);
         let g = graph_with(&[("req:1", "a.md", "/t/cart", "Items stay until checkout.")]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
@@ -981,10 +986,7 @@ mod tests {
         )]);
         let after = docs(&[(
             "a.md",
-            &format!(
-                "# T\n\n## Orders\n{}\n\n### Basket\n{}\n",
-                BODY_B, BODY_A
-            ),
+            &format!("# T\n\n## Orders\n{}\n\n### Basket\n{}\n", BODY_B, BODY_A),
         )]);
         let g = graph_with(&[("req:1", "a.md", "/t/cart", "Items stay until checkout.")]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
@@ -995,7 +997,10 @@ mod tests {
         assert_eq!(moved[0].to, vec!["a.md#/t/orders/basket"]);
         assert_eq!(plan.proposals.len(), 1);
         assert_eq!(plan.proposals[0].anchor, "req:1");
-        assert_eq!(plan.proposals[0].candidates[0].section, "a.md#/t/orders/basket");
+        assert_eq!(
+            plan.proposals[0].candidates[0].section,
+            "a.md#/t/orders/basket"
+        );
         assert!(plan.proposals[0].candidates[0].quote_locates);
     }
 
@@ -1120,7 +1125,10 @@ mod tests {
     fn cross_document_quote_search_is_whitespace_insensitive_and_never_fuzzy() {
         let before = docs(&[
             ("a.md", &format!("# A\n\n## Cart\n{}\n", BODY_A)),
-            ("b.md", "# B\n\n## Notes\nShipping rules and delivery windows are listed by region.\n"),
+            (
+                "b.md",
+                "# B\n\n## Notes\nShipping rules and delivery windows are listed by region.\n",
+            ),
         ]);
         let after = docs(&[
             ("a.md", "# A\n\nnothing left here about carts.\n"),

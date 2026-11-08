@@ -41,7 +41,9 @@ fn cover(store: &mut Store) {
     store.status.changes.clear();
     for record in store.docs.values_mut() {
         for (section, body) in &record.sections {
-            if body.kind == "blob" { continue; }
+            if body.kind == "blob" {
+                continue;
+            }
             record.coverage.insert(
                 section.clone(),
                 Coverage {
@@ -139,7 +141,8 @@ fn fixture() -> Snapshot {
         }),
         ..Default::default()
     }
-    .save(&project.out).unwrap();
+    .save(&project.out)
+    .unwrap();
     let gs = GenSettings::resolve(&project);
     for name in ["site", "footer"] {
         mark(&store, &format!("ent:{name}"), None, &manifest(name), &gs).unwrap();
@@ -743,7 +746,9 @@ fn generation_request(
     let project = project();
     let store = Store::load(&project.out);
     let guard = crate::control::begin_internal_build(&project, &project.out, "generate").unwrap();
-    let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
+    let llm = crate::llm::Llm {
+        api: "chat_completions".into(),
+        reasoning_summary: None,
         base_url: "http://127.0.0.1:1/v1".into(),
         model: "asset-release-recovery".into(),
         api_key: String::new(),

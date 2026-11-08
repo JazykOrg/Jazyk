@@ -512,7 +512,10 @@ impl Project {
             return crate::document_sets::files_under(&self.root)
                 .into_iter()
                 .filter(|f| !f.split('/').any(|c| c.starts_with('.')))
-                .filter(|f| sets.iter().any(|docs| crate::document_sets::included(docs, f)))
+                .filter(|f| {
+                    sets.iter()
+                        .any(|docs| crate::document_sets::included(docs, f))
+                })
                 .map(|f| self.root.join(f))
                 .collect();
         }
@@ -763,7 +766,8 @@ pub fn settings_write(
         .ok_or_else(|| (400, "baseHash is required".into()))?;
     // The text mode writes the file as given, the stored API key kept.
     if let Some(given) = body["text"].as_str() {
-        let current = crate::vfs::read_to_string(root.join(crate::document_sets::CONFIG)).unwrap_or_default();
+        let current =
+            crate::vfs::read_to_string(root.join(crate::document_sets::CONFIG)).unwrap_or_default();
         let text = restore_api_key(given, &current).map_err(|e| (400, e))?;
         crate::document_sets::atomic_config(root, &text, base)?;
         return Ok(settings_read(root));
@@ -778,8 +782,12 @@ pub fn settings_write(
 const STORED_KEY: &str = "(stored)";
 
 fn redact_api_key(text: &str) -> String {
-    let Ok(mut document) = text.parse::<toml_edit::DocumentMut>() else { return text.to_string() };
-    let Some(llm) = document.get_mut("llm").and_then(|i| i.as_table_like_mut()) else { return text.to_string() };
+    let Ok(mut document) = text.parse::<toml_edit::DocumentMut>() else {
+        return text.to_string();
+    };
+    let Some(llm) = document.get_mut("llm").and_then(|i| i.as_table_like_mut()) else {
+        return text.to_string();
+    };
     match llm.get_mut("api_key") {
         Some(item) if item.is_value() => {
             let decor = item.as_value().map(|v| v.decor().clone());
@@ -796,15 +804,27 @@ fn redact_api_key(text: &str) -> String {
 // The text mode's write: `"(stored)"` keeps the key the file holds now.
 fn restore_api_key(given: &str, current: &str) -> Result<String, String> {
     let mut document: toml_edit::DocumentMut = given.parse().map_err(|e| format!("{e}"))?;
-    let stored = document.get("llm").and_then(|i| i.get("api_key")).and_then(|v| v.as_str()) == Some(STORED_KEY);
+    let stored = document
+        .get("llm")
+        .and_then(|i| i.get("api_key"))
+        .and_then(|v| v.as_str())
+        == Some(STORED_KEY);
     if !stored {
         return Ok(given.to_string());
     }
     let original = current
         .parse::<toml_edit::DocumentMut>()
         .ok()
-        .and_then(|d| d.get("llm").and_then(|i| i.get("api_key")).and_then(|v| v.as_str()).map(str::to_string));
-    let llm = document.get_mut("llm").and_then(|i| i.as_table_like_mut()).expect("llm holds api_key");
+        .and_then(|d| {
+            d.get("llm")
+                .and_then(|i| i.get("api_key"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    let llm = document
+        .get_mut("llm")
+        .and_then(|i| i.as_table_like_mut())
+        .expect("llm holds api_key");
     match original {
         Some(key) => {
             let item = llm.get_mut("api_key").expect("api_key present");
@@ -1003,8 +1023,16 @@ mod settings_text_tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".jazyk")).unwrap();
         struct Dir(std::path::PathBuf);
-        impl Dir { fn path(&self) -> &Path { &self.0 } }
-        impl Drop for Dir { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        impl Dir {
+            fn path(&self) -> &Path {
+                &self.0
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let dir = Dir(root);
         let file = "version = 1\n\n[llm]\nmodel = \"m\" # the model\napi_key = \"sk-secret\"\n";
         std::fs::write(dir.path().join(".jazyk/jazyk.toml"), file).unwrap();
@@ -1014,12 +1042,32 @@ mod settings_text_tests {
         assert!(text.contains("api_key = \"(stored)\""));
         assert!(text.contains("# the model"));
         let edited = text.replace("\"m\"", "\"other\"");
-        settings_write(dir.path(), &serde_json::json!({"baseHash": read["hash"], "text": edited})).unwrap();
+        settings_write(
+            dir.path(),
+            &serde_json::json!({"baseHash": read["hash"], "text": edited}),
+        )
+        .unwrap();
         let written = std::fs::read_to_string(dir.path().join(".jazyk/jazyk.toml")).unwrap();
         assert!(written.contains("model = \"other\" # the model"));
         assert!(written.contains("api_key = \"sk-secret\""));
-        assert_eq!(settings_write(dir.path(), &serde_json::json!({"baseHash": read["hash"], "text": edited})).unwrap_err().0, 409);
+        assert_eq!(
+            settings_write(
+                dir.path(),
+                &serde_json::json!({"baseHash": read["hash"], "text": edited})
+            )
+            .unwrap_err()
+            .0,
+            409
+        );
         let fresh = settings_read(dir.path());
-        assert_eq!(settings_write(dir.path(), &serde_json::json!({"baseHash": fresh["hash"], "text": "version = [unclosed"})).unwrap_err().0, 400);
+        assert_eq!(
+            settings_write(
+                dir.path(),
+                &serde_json::json!({"baseHash": fresh["hash"], "text": "version = [unclosed"})
+            )
+            .unwrap_err()
+            .0,
+            400
+        );
     }
 }

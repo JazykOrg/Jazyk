@@ -36,7 +36,11 @@ pub(crate) struct Term {
 }
 
 const fn term(name: &'static str, stereotype: Option<&'static str>) -> Term {
-    Term { name, stereotype, parent: None }
+    Term {
+        name,
+        stereotype,
+        parent: None,
+    }
 }
 
 const F1_TERMS: [Term; 5] = [
@@ -52,11 +56,19 @@ const F1_TERMS: [Term; 5] = [
 // comes first in the list and in every sentence that names a child, so it exists when
 // the child is created.
 const fn service(name: &'static str) -> Term {
-    Term { name, stereotype: Some("service"), parent: Some("Platform") }
+    Term {
+        name,
+        stereotype: Some("service"),
+        parent: Some("Platform"),
+    }
 }
 
 const fn store(name: &'static str) -> Term {
-    Term { name, stereotype: None, parent: Some("Data Layer") }
+    Term {
+        name,
+        stereotype: None,
+        parent: Some("Data Layer"),
+    }
 }
 
 const GC_TERMS: [Term; 25] = [
@@ -132,7 +144,11 @@ pub(crate) struct ScriptedRunner {
 
 fn str_list(v: &Value) -> Vec<String> {
     v.as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -204,7 +220,10 @@ fn statement_of(sentence: &str) -> String {
 fn facet_of(sentence: &str) -> (&'static str, &'static str) {
     let l = sentence.to_lowercase();
     if l.contains("should not") || l.contains("must not") {
-        ("failure-mode", "the sentence says what must not happen when something goes wrong")
+        (
+            "failure-mode",
+            "the sentence says what must not happen when something goes wrong",
+        )
     } else if l.contains(" shall ")
         || ["browses", "places", "lists", "submits", "display", "send"]
             .iter()
@@ -313,7 +332,10 @@ impl ScriptedRunner {
         let reply = server.handle("tools/call", &json!({"name": name, "arguments": args}));
         let (value, is_error) = match reply {
             Ok(v) => {
-                let text = v["content"][0]["text"].as_str().unwrap_or_default().to_string();
+                let text = v["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
                 (parsed, v["isError"].as_bool().unwrap_or(false))
             }
@@ -348,14 +370,18 @@ impl ScriptedRunner {
             let key = term.name.to_lowercase();
             let parent = term.parent.map(|p| {
                 ids.get(&p.to_lowercase()).cloned().unwrap_or_else(|| {
-                    panic!("the script creates {} before its parent {} exists", term.name, p)
+                    panic!(
+                        "the script creates {} before its parent {} exists",
+                        term.name, p
+                    )
                 })
             });
             if let Some(id) = ids.get(&key) {
                 out.push((id.clone(), term.name.to_string(), parent));
                 continue;
             }
-            let mut args = json!({"name": term.name, "mention": {"section": section, "quote": sentence}});
+            let mut args =
+                json!({"name": term.name, "mention": {"section": section, "quote": sentence}});
             if let Some(s) = term.stereotype {
                 args["stereotype"] = json!(s);
             }
@@ -367,7 +393,11 @@ impl ScriptedRunner {
             ids.insert(key, id.clone());
             out.push((id, term.name.to_string(), parent));
         }
-        assert!(!out.is_empty(), "the script names no entity in `{}`", sentence);
+        assert!(
+            !out.is_empty(),
+            "the script names no entity in `{}`",
+            sentence
+        );
         out
     }
 
@@ -647,8 +677,11 @@ impl ScriptedRunner {
         // siblings: a heading that enumerates the level, not a passing mention
         // elsewhere (docs/compiler/goals/abstract-entity.md#fan-out-hints).
         let key = |m: &SourceRef| (m.doc.clone(), m.section.clone());
-        let own: BTreeSet<(String, String)> =
-            snapshot.graph.entities[&target].mentions.iter().map(key).collect();
+        let own: BTreeSet<(String, String)> = snapshot.graph.entities[&target]
+            .mentions
+            .iter()
+            .map(key)
+            .collect();
         let mut listed: BTreeMap<(String, String), usize> = BTreeMap::new();
         for (_, e) in &children {
             for m in &e.mentions {
@@ -666,7 +699,12 @@ impl ScriptedRunner {
             groups.entry(title).or_default().push(id.to_string());
         }
         for (title, members) in &groups {
-            assert!(members.len() >= 2, "{} lists one child only: {:?}", title, members);
+            assert!(
+                members.len() >= 2,
+                "{} lists one child only: {:?}",
+                title,
+                members
+            );
             self.call(
                 server,
                 batch,
@@ -697,7 +735,9 @@ impl ScriptedRunner {
             .graph
             .entities
             .keys()
-            .find(|id| crate::derive::level_view_id(snapshot, id).as_deref() == Some(goal.target.as_str()))
+            .find(|id| {
+                crate::derive::level_view_id(snapshot, id).as_deref() == Some(goal.target.as_str())
+            })
             .cloned()
             .unwrap_or_else(|| panic!("{} is not a node's level view", goal.target));
         let moved: Vec<String> = view
@@ -713,7 +753,11 @@ impl ScriptedRunner {
             })
             .cloned()
             .collect();
-        assert!(!moved.is_empty(), "{} shows only the level's children", goal.target);
+        assert!(
+            !moved.is_empty(),
+            "{} shows only the level's children",
+            goal.target
+        );
         let reply = self.call(
             server,
             batch,
@@ -744,7 +788,14 @@ impl ScriptedRunner {
         );
     }
 
-    fn verdict_only(&self, server: &McpServer, batch: &str, goal: &Goal, evidence: Value, why: &str) {
+    fn verdict_only(
+        &self,
+        server: &McpServer,
+        batch: &str,
+        goal: &Goal,
+        evidence: Value,
+        why: &str,
+    ) {
         self.call(
             server,
             batch,
@@ -800,7 +851,12 @@ impl SessionRunner for ScriptedRunner {
             .expect("the serving initializes");
         let gen_before = crate::store::read_generation(&self.out);
         trace.event(crate::runner::session_start(batch));
-        self.call(&server, &batch.id, "begin_goals", json!({"goals": batch.goal_ids()}));
+        self.call(
+            &server,
+            &batch.id,
+            "begin_goals",
+            json!({"goals": batch.goal_ids()}),
+        );
         // The graph as the batch sees it: the same committed state the session's
         // snapshot holds.
         let snapshot = Store::load(&self.out);
@@ -838,7 +894,12 @@ impl SessionRunner for ScriptedRunner {
                 other => panic!("the script has no step for a {} goal: {:?}", other, goal),
             }
         }
-        self.call(&server, &batch.id, "done", json!({"summary": "scripted batch"}));
+        self.call(
+            &server,
+            &batch.id,
+            "done",
+            json!({"summary": "scripted batch"}),
+        );
         let gen_after = crate::store::read_generation(&self.out);
         let (applied, resolved) =
             crate::runner::journal_diff(&self.out, gen_before, gen_after, &batch.goal_ids());
@@ -886,7 +947,10 @@ impl SessionRunner for PanickingRunner {
     }
     fn set_build_token(&self, _token: Option<String>) {}
     fn run_item(&self, batch: &BatchRun, _trace: &Trace) -> SessionReport {
-        panic!("a rebuild of a converged store ran a session: {:?}", batch.goal_ids());
+        panic!(
+            "a rebuild of a converged store ran a session: {:?}",
+            batch.goal_ids()
+        );
     }
     fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
         panic!("a rebuild of a converged store asked the model");
@@ -918,13 +982,12 @@ fn copy_tree(from: &Path, to: &Path) {
 
 // A fresh copy of one example under the temp dir, as a project of its own.
 fn example_copy(example: &str, label: &str) -> (PathBuf, Project) {
-    let dir = std::env::temp_dir().join(format!(
-        "jazyk-e2e-{}-{}",
-        label,
-        crate::sys::process_id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("jazyk-e2e-{}-{}", label, crate::sys::process_id()));
     crate::vfs::remove_dir_all(&dir).ok();
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("example").join(example);
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("example")
+        .join(example);
     copy_tree(&src, &dir);
     let project = Project::load(&dir);
     assert!(project.config_error.is_none(), "{:?}", project.config_error);
@@ -975,15 +1038,28 @@ fn session_entries(out: &Path, to: u64) -> Vec<JournalEntry> {
 
 fn assert_clean_build(report: &super::BuildReport, events: &[TraceEvent]) {
     assert!(report.converged(), "verdict: {}", report.verdict);
-    assert_eq!((report.failed, report.parked, report.errors), (0, 0, 0), "{:?}", report);
+    assert_eq!(
+        (report.failed, report.parked, report.errors),
+        (0, 0, 0),
+        "{:?}",
+        report
+    );
     assert_eq!(report.coverage_pct, 100);
     let failed: Vec<&TraceEvent> = events
         .iter()
         .filter(|e| matches!(e, TraceEvent::SessionFailed { .. }))
         .collect();
     assert!(failed.is_empty(), "{:?}", failed);
-    assert!(goal_events(events, "parked").is_empty(), "{:?}", goal_events(events, "parked"));
-    assert!(goal_events(events, "failed").is_empty(), "{:?}", goal_events(events, "failed"));
+    assert!(
+        goal_events(events, "parked").is_empty(),
+        "{:?}",
+        goal_events(events, "parked")
+    );
+    assert!(
+        goal_events(events, "failed").is_empty(),
+        "{:?}",
+        goal_events(events, "failed")
+    );
 }
 
 // Builds the f1 copy from an empty store to `converged` and returns the runner that
@@ -1018,14 +1094,27 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
 
     // Entities and requirements as the documents state them, every requirement a
     // located quote and no derived or decreed fact anywhere.
-    let names: BTreeSet<String> = store.graph.entities.values().map(|e| e.name.clone()).collect();
+    let names: BTreeSet<String> = store
+        .graph
+        .entities
+        .values()
+        .map(|e| e.name.clone())
+        .collect();
     for n in ["Shop", "Customer", "Order", "Product", "Catalog"] {
         assert!(names.contains(n), "{:?}", names);
     }
     assert_eq!(store.graph.entities.len(), 5, "{:?}", names);
-    assert_eq!(store.graph.requirements.len(), 12, "{:#?}", store.graph.requirements.keys());
+    assert_eq!(
+        store.graph.requirements.len(),
+        12,
+        "{:#?}",
+        store.graph.requirements.keys()
+    );
     for (id, r) in &store.graph.requirements {
-        let src = r.source.as_ref().unwrap_or_else(|| panic!("{} has no quote", id));
+        let src = r
+            .source
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} has no quote", id));
         assert!(r.provenance.is_none(), "{} carries {:?}", id, r.provenance);
         assert!(
             store.quote_locates(&src.doc, &src.section, &src.quote),
@@ -1035,16 +1124,29 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
             src.doc,
             src.section
         );
-        assert!(!r.entities.is_empty() && !r.facets.is_empty(), "{}: {:?}", id, r);
+        assert!(
+            !r.entities.is_empty() && !r.facets.is_empty(),
+            "{}: {:?}",
+            id,
+            r
+        );
     }
     for (id, e) in &store.graph.entities {
-        assert!(e.provenance.is_none() && !e.mentions.is_empty(), "{}: {:?}", id, e);
+        assert!(
+            e.provenance.is_none() && !e.mentions.is_empty(),
+            "{}: {:?}",
+            id,
+            e
+        );
     }
     // Every section with a body is covered.
     for (doc, rec) in &store.docs {
         for (r, sec) in &rec.sections {
             if crate::goals::section_has_body(sec) {
-                let c = rec.coverage.get(r).unwrap_or_else(|| panic!("{}#{} unmarked", doc, r));
+                let c = rec
+                    .coverage
+                    .get(r)
+                    .unwrap_or_else(|| panic!("{}#{} unmarked", doc, r));
                 assert_eq!(c.state, "covered", "{}#{}", doc, r);
             }
         }
@@ -1053,12 +1155,19 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     // every view drawn to .puml and .svg.
     assert!(!store.graph.relationships.is_empty());
     assert!(
-        store.graph.relationships.values().any(|rel| rel.strongest() == "aggregation"),
+        store
+            .graph
+            .relationships
+            .values()
+            .any(|rel| rel.strongest() == "aggregation"),
         "{:?}",
         store.graph.relationships.keys()
     );
     assert!(!store.graph.views.is_empty());
-    assert!(store.graph.views.values().any(|v| v.default), "every view was curated");
+    assert!(
+        store.graph.views.values().any(|v| v.default),
+        "every view was curated"
+    );
     for id in store.graph.views.keys() {
         let rel = id.strip_prefix("view:").unwrap();
         for ext in ["puml", "svg"] {
@@ -1082,19 +1191,44 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
         .filter(|g| matches!(g.state, GoalState::Blocked { .. }))
         .collect();
     assert_eq!(blocked.len(), report.blocked, "{:?}", blocked);
-    let expected_blocked: BTreeSet<String> = store.graph.requirements.keys()
+    let expected_blocked: BTreeSet<String> = store
+        .graph
+        .requirements
+        .keys()
         .map(|id| format!("g:bind:{}", id))
-        .chain(store.graph.entities.keys().map(|id| format!("g:generate:{}", id)))
+        .chain(
+            store
+                .graph
+                .entities
+                .keys()
+                .map(|id| format!("g:generate:{}", id)),
+        )
         .collect();
-    assert_eq!(blocked.iter().map(|g| g.id.clone()).collect::<BTreeSet<_>>(), expected_blocked);
+    assert_eq!(
+        blocked
+            .iter()
+            .map(|g| g.id.clone())
+            .collect::<BTreeSet<_>>(),
+        expected_blocked
+    );
     // Compile work was released by the typed command.
-    assert_eq!(control.released.compile.len(), 2, "{:?}", control.released.compile);
+    assert_eq!(
+        control.released.compile.len(),
+        2,
+        "{:?}",
+        control.released.compile
+    );
 
     // The journal: one session entry per commit, each resolution with its
     // justification; the goals the runner marked are the goals the journal resolved.
     let sessions = session_entries(&out, store.status.generation);
     let done_calls = calls.iter().filter(|c| c.name == "done").count();
-    assert_eq!(sessions.len(), done_calls, "{:?}", sessions.iter().map(|e| e.generation).collect::<Vec<_>>());
+    assert_eq!(
+        sessions.len(),
+        done_calls,
+        "{:?}",
+        sessions.iter().map(|e| e.generation).collect::<Vec<_>>()
+    );
     let marked: BTreeSet<String> = calls
         .iter()
         .filter(|c| c.name == "mark_goal_done")
@@ -1102,9 +1236,17 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
         .collect();
     let mut resolved: BTreeSet<String> = BTreeSet::new();
     for e in &sessions {
-        assert!(!e.resolved_goals.is_empty(), "g{} resolved nothing", e.generation);
+        assert!(
+            !e.resolved_goals.is_empty(),
+            "g{} resolved nothing",
+            e.generation
+        );
         for r in &e.resolved_goals {
-            assert!(!r.justification.trim().is_empty(), "{} without justification", r.goal);
+            assert!(
+                !r.justification.trim().is_empty(),
+                "{} without justification",
+                r.goal
+            );
             resolved.insert(r.goal.clone());
         }
     }
@@ -1118,12 +1260,27 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
         .iter()
         .map(|g| g.split(':').nth(1).unwrap_or("").to_string())
         .collect();
-    for k in ["reconcile-section", "review-entity", "rejudge-pair", "declare-edges"] {
+    for k in [
+        "reconcile-section",
+        "review-entity",
+        "rejudge-pair",
+        "declare-edges",
+    ] {
         assert!(kinds.contains(k), "{:?}", kinds);
     }
-    let count = |kind: &str| marked.iter().filter(|g| g.starts_with(&format!("g:{}:", kind))).count();
+    let count = |kind: &str| {
+        marked
+            .iter()
+            .filter(|g| g.starts_with(&format!("g:{}:", kind)))
+            .count()
+    };
     assert_eq!(count("reconcile-section"), 5, "{:?}", marked);
-    assert_eq!(count("review-entity"), store.graph.entities.len(), "{:?}", marked);
+    assert_eq!(
+        count("review-entity"),
+        store.graph.entities.len(),
+        "{:?}",
+        marked
+    );
     // Every session ran begin_goals, its work, then done, and every done committed.
     let mut by_batch: BTreeMap<String, Vec<&Call>> = BTreeMap::new();
     for c in &calls {
@@ -1131,7 +1288,12 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     }
     assert_eq!(by_batch.len(), report.sessions as usize);
     for (batch, cs) in &by_batch {
-        assert_eq!(cs.first().map(|c| c.name.as_str()), Some("begin_goals"), "{}", batch);
+        assert_eq!(
+            cs.first().map(|c| c.name.as_str()),
+            Some("begin_goals"),
+            "{}",
+            batch
+        );
         let last = cs.last().unwrap();
         assert_eq!(last.name, "done", "{}", batch);
         assert_eq!(last.reply["committed"], true, "{}: {}", batch, last.reply);
@@ -1154,14 +1316,27 @@ fn a_rebuild_of_a_converged_f1_derives_nothing_and_calls_no_model() {
     let journal_before = crate::goals::read_journal_range(&out, 0, before.status.generation).len();
     let started = std::time::Instant::now();
     let (report, events) = build(&project, &PanickingRunner);
-    eprintln!("[e2e rebuild] {} in {:.1}s", report.verdict, started.elapsed().as_secs_f64());
+    eprintln!(
+        "[e2e rebuild] {} in {:.1}s",
+        report.verdict,
+        started.elapsed().as_secs_f64()
+    );
     assert_clean_build(&report, &events);
-    assert_eq!((report.goals, report.sessions, report.applied), (0, 0, 0), "{:?}", report);
+    assert_eq!(
+        (report.goals, report.sessions, report.applied),
+        (0, 0, 0),
+        "{:?}",
+        report
+    );
     assert!(
-        events.iter().any(|e| matches!(e, TraceEvent::Board { goals: 0, .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, TraceEvent::Board { goals: 0, .. })),
         "no empty board event"
     );
-    assert!(!events.iter().any(|e| matches!(e, TraceEvent::BatchStart { .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, TraceEvent::BatchStart { .. })));
     let after = Store::load(&out);
     assert_eq!(after.status.generation, before.status.generation);
     assert_eq!(
@@ -1169,7 +1344,10 @@ fn a_rebuild_of_a_converged_f1_derives_nothing_and_calls_no_model() {
         journal_before
     );
     assert!(after.status.verdict.converged(), "{}", after.status.verdict);
-    assert_eq!(after.graph.requirements.len(), before.graph.requirements.len());
+    assert_eq!(
+        after.graph.requirements.len(),
+        before.graph.requirements.len()
+    );
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
@@ -1221,7 +1399,10 @@ fn editing_one_sentence_of_f1_reconciles_only_its_section_and_keeps_the_other_id
     assert_eq!(opening.0, 2, "{:?}", opening);
     assert_eq!(
         opening.1,
-        vec![("place-anchors".to_string(), 1), ("reconcile-section".to_string(), 1)],
+        vec![
+            ("place-anchors".to_string(), 1),
+            ("reconcile-section".to_string(), 1)
+        ],
         "{:?}",
         opening
     );
@@ -1245,15 +1426,27 @@ fn editing_one_sentence_of_f1_reconciles_only_its_section_and_keeps_the_other_id
     }
     let marks: Vec<String> = runner.calls()[calls_before..]
         .iter()
-        .filter(|c| c.name == "mark_goal_done" && c.args["goal"].as_str().unwrap_or("").starts_with("g:reconcile-section:"))
+        .filter(|c| {
+            c.name == "mark_goal_done"
+                && c.args["goal"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("g:reconcile-section:")
+        })
         .map(|c| c.args["goal"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(marks, vec!["g:reconcile-section:docs/system.md#/shop/customer".to_string()]);
+    assert_eq!(
+        marks,
+        vec!["g:reconcile-section:docs/system.md#/shop/customer".to_string()]
+    );
 
     // Identity: every requirement keeps its id; the untouched ones keep their text,
     // the edited one carries the new sentence under the same id.
     let after = Store::load(&out);
-    assert_eq!(after.graph.requirements.len(), before.graph.requirements.len());
+    assert_eq!(
+        after.graph.requirements.len(),
+        before.graph.requirements.len()
+    );
     for (id, was) in &before.graph.requirements {
         let now = after
             .graph
@@ -1303,9 +1496,19 @@ fn assert_rebuild_is_a_no_op(project: &Project, label: &str) {
     let (report, events) = build(project, &PanickingRunner);
     eprintln!("[e2e {}] rebuild: {}", label, report.verdict);
     assert!(report.converged(), "verdict: {}", report.verdict);
-    assert_eq!((report.goals, report.sessions, report.applied), (0, 0, 0), "{:?}", report);
-    assert!(!events.iter().any(|e| matches!(e, TraceEvent::BatchStart { .. })));
-    assert_eq!(Store::load(&out).status.generation, before.status.generation);
+    assert_eq!(
+        (report.goals, report.sessions, report.applied),
+        (0, 0, 0),
+        "{:?}",
+        report
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, TraceEvent::BatchStart { .. })));
+    assert_eq!(
+        Store::load(&out).status.generation,
+        before.status.generation
+    );
 }
 
 // The GC burst, end to end on bootstrap/example/e2e-gc (its EXPECTED.md): sixteen
@@ -1329,10 +1532,18 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         report.sessions
     );
     for e in &events {
-        if let TraceEvent::BatchStart { label, class, goals, .. } = e {
+        if let TraceEvent::BatchStart {
+            label,
+            class,
+            goals,
+            ..
+        } = e
+        {
             let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
             for g in goals {
-                *kinds.entry(g["kind"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+                *kinds
+                    .entry(g["kind"].as_str().unwrap_or("?").to_string())
+                    .or_default() += 1;
             }
             eprintln!("[e2e gc] batch {} ({}): {:?}", label, class, kinds);
         }
@@ -1349,30 +1560,56 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
     let marked: BTreeMap<String, String> = calls
         .iter()
         .filter(|c| c.name == "mark_goal_done")
-        .filter_map(|c| c.args["goal"].as_str().map(|g| (g.to_string(), c.batch.clone())))
+        .filter_map(|c| {
+            c.args["goal"]
+                .as_str()
+                .map(|g| (g.to_string(), c.batch.clone()))
+        })
         .collect();
     for g in [fan_out, split, dedupe] {
-        assert!(marked.contains_key(g), "{} never resolved: {:?}", g, marked.keys());
+        assert!(
+            marked.contains_key(g),
+            "{} never resolved: {:?}",
+            g,
+            marked.keys()
+        );
     }
     // The trace printed each burst with its count over the limit.
     let bursts: Vec<(&String, &String, u64)> = events
         .iter()
         .filter_map(|e| match e {
-            TraceEvent::GcBurst { goal_kind, target, count, .. } => Some((goal_kind, target, *count)),
+            TraceEvent::GcBurst {
+                goal_kind,
+                target,
+                count,
+                ..
+            } => Some((goal_kind, target, *count)),
             _ => None,
         })
         .collect();
     assert!(
-        bursts.iter().any(|(k, t, n)| k.as_str() == "abstract-entity" && t.as_str() == "ent:platform" && *n == 16),
+        bursts
+            .iter()
+            .any(|(k, t, n)| k.as_str() == "abstract-entity"
+                && t.as_str() == "ent:platform"
+                && *n == 16),
         "{:?}",
         bursts
     );
     assert!(
-        bursts.iter().any(|(k, t, n)| k.as_str() == "split-view" && t.as_str() == "view:class/data-layer" && *n == 21),
+        bursts.iter().any(|(k, t, n)| k.as_str() == "split-view"
+            && t.as_str() == "view:class/data-layer"
+            && *n == 21),
         "{:?}",
         bursts
     );
-    assert!(bursts.iter().all(|(_, t, _)| t.as_str() != "view:component/platform"), "{:?}", bursts);
+    assert!(
+        bursts
+            .iter()
+            .all(|(_, t, _)| t.as_str() != "view:component/platform"),
+        "{:?}",
+        bursts
+    );
 
     // Class and readiness as the board showed them while the build ran: the fan-out
     // goal was gc and mandatory, waited on its cone before its burst and was ready in
@@ -1382,11 +1619,26 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .iter()
         .position(|b| b.batch == marked[fan_out])
         .expect("the fan-out batch's board");
-    let at_run = boards[ran].goals.iter().find(|g| g.id == fan_out).expect("the fan-out goal");
-    assert_eq!((at_run.class.as_str(), at_run.mandatory, &at_run.state), ("gc", true, &GoalState::Open), "{:?}", at_run);
-    assert!(boards[ran].explain[fan_out].contains("ready now"), "{}", boards[ran].explain[fan_out]);
+    let at_run = boards[ran]
+        .goals
+        .iter()
+        .find(|g| g.id == fan_out)
+        .expect("the fan-out goal");
+    assert_eq!(
+        (at_run.class.as_str(), at_run.mandatory, &at_run.state),
+        ("gc", true, &GoalState::Open),
+        "{:?}",
+        at_run
+    );
     assert!(
-        boards[..ran].iter().any(|b| b.explain.get(fan_out).is_some_and(|e| e.contains("waits:"))),
+        boards[ran].explain[fan_out].contains("ready now"),
+        "{}",
+        boards[ran].explain[fan_out]
+    );
+    assert!(
+        boards[..ran]
+            .iter()
+            .any(|b| b.explain.get(fan_out).is_some_and(|e| e.contains("waits:"))),
         "the fan-out goal never waited on its cone"
     );
     assert!(
@@ -1400,12 +1652,18 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .iter()
         .find_map(|b| b.goals.iter().find(|g| g.id == split))
         .expect("the split-view goal");
-    assert_eq!((split_goal.class.as_str(), split_goal.mandatory), ("gc", false));
+    assert_eq!(
+        (split_goal.class.as_str(), split_goal.mandatory),
+        ("gc", false)
+    );
     let dedupe_goal = boards
         .iter()
         .find_map(|b| b.goals.iter().find(|g| g.id == dedupe))
         .expect("the dedupe goal");
-    assert_eq!((dedupe_goal.class.as_str(), dedupe_goal.mandatory), ("gc", false));
+    assert_eq!(
+        (dedupe_goal.class.as_str(), dedupe_goal.mandatory),
+        ("gc", false)
+    );
     assert_eq!(dedupe_goal.change["score"], 0.5, "{}", dedupe_goal.change);
     // The sixteen `X Service` entities share one generic token and the same two
     // documents; its weight keeps every pair of them under the threshold, so the audit
@@ -1430,7 +1688,12 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .filter(|(_, e)| e.parent.as_deref() == Some("ent:platform"))
         .collect();
     let names: BTreeSet<&str> = groupings.iter().map(|(_, e)| e.name.as_str()).collect();
-    assert_eq!(names, BTreeSet::from(["Storefront", "Back Office"]), "{:?}", names);
+    assert_eq!(
+        names,
+        BTreeSet::from(["Storefront", "Back Office"]),
+        "{:?}",
+        names
+    );
     let services: Vec<&String> = store
         .graph
         .entities
@@ -1450,19 +1713,37 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         assert_eq!(members.len(), 8, "{}: {:?}", gid, members);
         match &g.provenance {
             Some(Provenance::Derived { from, .. }) => {
-                assert_eq!(from.iter().cloned().collect::<BTreeSet<_>>(), members, "{}", gid)
+                assert_eq!(
+                    from.iter().cloned().collect::<BTreeSet<_>>(),
+                    members,
+                    "{}",
+                    gid
+                )
             }
             other => panic!("{} carries {:?}", gid, other),
         }
-        assert!(g.mentions.is_empty() && g.definition.is_some(), "{}: {:?}", gid, g);
-        assert!(members.iter().all(|m| services.contains(&m)), "{}: {:?}", gid, members);
+        assert!(
+            g.mentions.is_empty() && g.definition.is_some(),
+            "{}: {:?}",
+            gid,
+            g
+        );
+        assert!(
+            members.iter().all(|m| services.contains(&m)),
+            "{}: {:?}",
+            gid,
+            members
+        );
     }
     // The split: the level view keeps its six stores, excludes the sixteen services
     // with notes naming the sub-view that lists them, and both are under the limit.
     let view = &store.graph.views["view:class/data-layer"];
     assert!(!view.default);
     assert_eq!(view.members.len(), 5, "{:?}", view.members);
-    assert!(view.members.iter().all(|m| store.graph.entities[m].parent.as_deref() == Some("ent:data-layer")));
+    assert!(view
+        .members
+        .iter()
+        .all(|m| store.graph.entities[m].parent.as_deref() == Some("ent:data-layer")));
     assert_eq!(view.excluded.len(), 16, "{:?}", view.excluded);
     let sub_ids: BTreeSet<String> = view
         .excluded
@@ -1471,16 +1752,29 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .collect();
     assert_eq!(sub_ids.len(), 1, "{:?}", sub_ids);
     let sub = &store.graph.views[sub_ids.iter().next().unwrap()];
-    assert_eq!((sub.kind.as_str(), sub.members.len()), ("class", 16), "{:?}", sub);
+    assert_eq!(
+        (sub.kind.as_str(), sub.members.len()),
+        ("class", 16),
+        "{:?}",
+        sub
+    );
     assert!(view.excluded.iter().all(|x| sub.members.contains(&x.id)));
     assert!(
         crate::derive::threshold_crossings(&store).is_empty(),
         "{:?}",
-        crate::derive::threshold_crossings(&store).iter().map(|c| (&c.subject, c.count)).collect::<Vec<_>>()
+        crate::derive::threshold_crossings(&store)
+            .iter()
+            .map(|c| (&c.subject, c.count))
+            .collect::<Vec<_>>()
     );
     assert!(store.graph.views.contains_key("view:component/platform"));
     for v in ["view:component/storefront", "view:component/back-office"] {
-        assert!(store.graph.views.contains_key(v), "{} missing: {:?}", v, store.graph.views.keys());
+        assert!(
+            store.graph.views.contains_key(v),
+            "{} missing: {:?}",
+            v,
+            store.graph.views.keys()
+        );
     }
     assert_diagrams_rendered(&store, &out);
     // The lookalikes, kept apart as scripted, and the verdict remembered: the pair's
@@ -1491,8 +1785,19 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         .status
         .lookalike("ent:audit-log~ent:audit-trail")
         .unwrap_or_else(|| panic!("no lookalikes entry: {:?}", store.status.lookalikes));
-    assert_eq!((remembered.verdict.as_str(), remembered.score), ("separate", 0.5));
-    assert!(!store.status.changes.iter().any(|c| c.kind == crate::goals::CHANGE_LOOKALIKE), "{:?}", store.status.changes);
+    assert_eq!(
+        (remembered.verdict.as_str(), remembered.score),
+        ("separate", 0.5)
+    );
+    assert!(
+        !store
+            .status
+            .changes
+            .iter()
+            .any(|c| c.kind == crate::goals::CHANGE_LOOKALIKE),
+        "{:?}",
+        store.status.changes
+    );
     assert!(crate::goals::pending_lookalikes(&store).is_empty());
     let resolved: BTreeSet<String> = session_entries(&out, store.status.generation)
         .iter()
@@ -1508,13 +1813,27 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
     let board = crate::board::Board::derive(&store, &project, &control);
     for (gid, _) in &groupings {
         let ratify = format!("g:ratify:{}", gid);
-        let g = board.goal(&ratify).unwrap_or_else(|| panic!("{} missing", ratify));
-        assert!(matches!(g.state, GoalState::Blocked { .. }), "{:?}", g.state);
-        assert!(store.graph.diagnostics.values().any(|d| d.rule == "ratification-pending"
-            && d.lifecycle == "open"
-            && d.subjects == vec![gid.to_string()]));
+        let g = board
+            .goal(&ratify)
+            .unwrap_or_else(|| panic!("{} missing", ratify));
+        assert!(
+            matches!(g.state, GoalState::Blocked { .. }),
+            "{:?}",
+            g.state
+        );
+        assert!(store
+            .graph
+            .diagnostics
+            .values()
+            .any(|d| d.rule == "ratification-pending"
+                && d.lifecycle == "open"
+                && d.subjects == vec![gid.to_string()]));
     }
-    assert!(board.open_goals().is_empty(), "{:?}", board.open_goals().iter().map(|g| &g.id).collect::<Vec<_>>());
+    assert!(
+        board.open_goals().is_empty(),
+        "{:?}",
+        board.open_goals().iter().map(|g| &g.id).collect::<Vec<_>>()
+    );
     assert_no_errors(&store, &project);
     assert_rebuild_is_a_no_op(&project, "gc");
     crate::vfs::remove_dir_all(&dir).ok();
@@ -1546,10 +1865,18 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
     let (dir, project) = f1_copy("ratify");
     let runner = ScriptedRunner::new(&project);
     let sentence = "Each Customer holds exactly one account with the Shop.";
-    runner.derive_in("docs/system.md#/shop/customer", sentence, &["Customer", "Shop"]);
+    runner.derive_in(
+        "docs/system.md#/shop/customer",
+        sentence,
+        &["Customer", "Shop"],
+    );
     let started = std::time::Instant::now();
     let (report, events) = build(&project, &runner);
-    eprintln!("[e2e ratify] fresh build: {} in {:.1}s", report.verdict, started.elapsed().as_secs_f64());
+    eprintln!(
+        "[e2e ratify] fresh build: {} in {:.1}s",
+        report.verdict,
+        started.elapsed().as_secs_f64()
+    );
     assert_clean_build(&report, &events);
     let out = project.out.clone();
     let before = Store::load(&out);
@@ -1561,10 +1888,16 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
         .iter()
         .find(|(_, r)| r.source.is_none())
         .expect("the derived requirement");
-    assert!(matches!(r.provenance, Some(Provenance::Derived { .. })), "{:?}", r.provenance);
+    assert!(
+        matches!(r.provenance, Some(Provenance::Derived { .. })),
+        "{:?}",
+        r.provenance
+    );
     assert_eq!(r.statement, sentence);
     assert!(rid.starts_with("req:x-"), "{}", rid);
-    assert!(before.status.has_change(crate::store::CHANGE_PROVENANCE_PENDING, rid));
+    assert!(before
+        .status
+        .has_change(crate::store::CHANGE_PROVENANCE_PENDING, rid));
     let (did, d) = before
         .graph
         .diagnostics
@@ -1573,14 +1906,32 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
         .expect("the proposal");
     assert_eq!(d.lifecycle, "open");
     let prompt = d.prompt.as_ref().expect("a prompt");
-    let edit = prompt.options[0].edit.clone().expect("the edit option first");
-    assert_eq!((edit.doc.as_str(), edit.new_text.as_str()), ("docs/system.md", sentence));
-    assert!(edit.old_text.is_empty(), "a derived fact's sentence is inserted, not a replacement");
-    assert!(prompt.options.iter().any(|o| o.answer.as_deref() == Some("retract")));
+    let edit = prompt.options[0]
+        .edit
+        .clone()
+        .expect("the edit option first");
+    assert_eq!(
+        (edit.doc.as_str(), edit.new_text.as_str()),
+        ("docs/system.md", sentence)
+    );
+    assert!(
+        edit.old_text.is_empty(),
+        "a derived fact's sentence is inserted, not a replacement"
+    );
+    assert!(prompt
+        .options
+        .iter()
+        .any(|o| o.answer.as_deref() == Some("retract")));
     let control = crate::control::Control::load(&project, &out);
     let board = crate::board::Board::derive(&before, &project, &control);
-    let ratify = board.goal(&format!("g:ratify:{}", rid)).expect("the ratify goal");
-    assert!(matches!(ratify.state, GoalState::Blocked { .. }), "{:?}", ratify.state);
+    let ratify = board
+        .goal(&format!("g:ratify:{}", rid))
+        .expect("the ratify goal");
+    assert!(
+        matches!(ratify.state, GoalState::Blocked { .. }),
+        "{:?}",
+        ratify.state
+    );
     let text_before = crate::vfs::read_to_string(dir.join("docs/system.md")).unwrap();
     assert!(!text_before.contains(sentence));
     let journal_before = journal_len(&out);
@@ -1588,10 +1939,19 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
     // The human accepts, as the LSP code action, the GUI, chat, and `jazyk answer` do.
     let reply = crate::answer::answer(&project, &out, did, crate::answer::Reply::Choice(0), None)
         .expect("the answer lands");
-    assert_eq!((reply["status"].as_str(), reply["resolved"].as_bool()), (Some("applied"), Some(true)), "{}", reply);
+    assert_eq!(
+        (reply["status"].as_str(), reply["resolved"].as_bool()),
+        (Some("applied"), Some(true)),
+        "{}",
+        reply
+    );
 
     let after = Store::load(&out);
-    assert_eq!(after.status.generation, before.status.generation + 1, "one changeset");
+    assert_eq!(
+        after.status.generation,
+        before.status.generation + 1,
+        "one changeset"
+    );
     let r = &after.graph.requirements[rid];
     assert!(r.provenance.is_none(), "{:?}", r.provenance);
     let src = r.source.as_ref().expect("a quote");
@@ -1605,8 +1965,13 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
     assert!(text.contains(sentence), "{}", text);
     let d = &after.graph.diagnostics[did];
     assert_ne!(d.lifecycle, "open");
-    assert_eq!(d.answer.as_ref().map(|a| a.status.as_str()), Some("applied"));
-    assert!(!after.status.has_change(crate::store::CHANGE_PROVENANCE_PENDING, rid));
+    assert_eq!(
+        d.answer.as_ref().map(|a| a.status.as_str()),
+        Some("applied")
+    );
+    assert!(!after
+        .status
+        .has_change(crate::store::CHANGE_PROVENANCE_PENDING, rid));
     let entries = crate::goals::read_journal_range(&out, 0, after.status.generation);
     assert_eq!(entries.len(), journal_before + 1);
     assert_eq!(entries.last().unwrap().kind, "ratify");
@@ -1620,7 +1985,12 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
     // the next build derives zero goals and makes no model call.
     // Mirrors docs/compiler/goals/ratify.md#accept.
     assert!(
-        !after.status.changes.iter().any(|c| c.kind == crate::store::CHANGE_ENTITY && c.generation == after.status.generation),
+        !after
+            .status
+            .changes
+            .iter()
+            .any(|c| c.kind == crate::store::CHANGE_ENTITY
+                && c.generation == after.status.generation),
         "{:?}",
         after.status.changes
     );
@@ -1667,8 +2037,15 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
     let doc = crate::vfs::read_to_string(dir.join("docs/catalog.md")).unwrap();
     assert!(doc.contains(new) && !doc.contains(old), "{}", doc);
     let after = Store::load(&out);
-    assert_eq!(after.status.generation, before.status.generation + 1, "one changeset");
-    assert_eq!(after.graph.requirements.len(), before.graph.requirements.len());
+    assert_eq!(
+        after.status.generation,
+        before.status.generation + 1,
+        "one changeset"
+    );
+    assert_eq!(
+        after.graph.requirements.len(),
+        before.graph.requirements.len()
+    );
     let r = &after.graph.requirements[&rid];
     assert_eq!(r.source.as_ref().unwrap().quote, new);
     assert_eq!(r.statement, new);
@@ -1682,7 +2059,11 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
     assert_eq!(entries.len(), journal_before + 1);
     let entry = entries.last().unwrap();
     assert_eq!(entry.kind, "dual-write");
-    assert!(entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"), "{:?}", entry.mutations);
+    assert!(
+        entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"),
+        "{:?}",
+        entry.mutations
+    );
     assert_not_dirty(&project);
     // Not re-dirtied: no `place-anchors` or `reconcile-section` follows the write, and
     // the rewritten sentence is the human's review: Product's mention followed it
@@ -1691,11 +2072,22 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
     // shares two content tokens with it, so the next build derives zero goals.
     // Mirrors docs/compiler/compilation.md#edit-paths.
     assert!(
-        !after.status.changes.iter().any(|c| c.kind == crate::store::CHANGE_ENTITY && c.generation == after.status.generation),
+        !after
+            .status
+            .changes
+            .iter()
+            .any(|c| c.kind == crate::store::CHANGE_ENTITY
+                && c.generation == after.status.generation),
         "{:?}",
         after.status.changes
     );
-    assert!(after.status.has_change(crate::store::CHANGE_REQ_REVISED, &rid), "{:?}", after.status.changes);
+    assert!(
+        after
+            .status
+            .has_change(crate::store::CHANGE_REQ_REVISED, &rid),
+        "{:?}",
+        after.status.changes
+    );
     assert_rebuild_is_a_no_op(&project, "dual");
     crate::vfs::remove_dir_all(&dir).ok();
 }
@@ -1711,7 +2103,11 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     let status = "version: 2\ngeneration: 7\n";
     crate::vfs::create_dir_all(out.join("graph")).unwrap();
     crate::vfs::write(out.join("status.yaml"), status).unwrap();
-    crate::vfs::write(out.join("graph").join("entities.yaml"), "ent:cart:\n  name: Cart\n").unwrap();
+    crate::vfs::write(
+        out.join("graph").join("entities.yaml"),
+        "ent:cart:\n  name: Cart\n",
+    )
+    .unwrap();
 
     // Read-only outside a build: empty, and a writer is refused without touching disk.
     let mut read = Store::load(&out);
@@ -1729,25 +2125,41 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     );
     assert_eq!(report.applied, 0);
     assert!(
-        report.skipped.iter().any(|s| s.starts_with("store-version")),
+        report
+            .skipped
+            .iter()
+            .any(|s| s.starts_with("store-version")),
         "{:?}",
         report.skipped
     );
-    assert_eq!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap(), status);
+    assert_eq!(
+        crate::vfs::read_to_string(out.join("status.yaml")).unwrap(),
+        status
+    );
     assert!(out.join("graph").join("entities.yaml").exists());
     assert!(!out.join("graph").join("entities").exists());
 
     // The build archives and starts over.
     let runner = ScriptedRunner::new(&project);
     let (report, events) = build(&project, &runner);
-    eprintln!("[e2e version] build over a version-2 store: {}", report.verdict);
+    eprintln!(
+        "[e2e version] build over a version-2 store: {}",
+        report.verdict
+    );
     assert_clean_build(&report, &events);
     let bak = out.with_file_name(format!(
         "{}.bak",
         out.file_name().unwrap().to_string_lossy()
     ));
-    assert!(bak.join("graph").join("entities.yaml").exists(), "{} not archived whole", bak.display());
-    assert_eq!(crate::vfs::read_to_string(bak.join("status.yaml")).unwrap(), status);
+    assert!(
+        bak.join("graph").join("entities.yaml").exists(),
+        "{} not archived whole",
+        bak.display()
+    );
+    assert_eq!(
+        crate::vfs::read_to_string(bak.join("status.yaml")).unwrap(),
+        status
+    );
     assert!(!out.join("graph").join("entities.yaml").exists());
     assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
@@ -1755,7 +2167,9 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     assert_eq!(store.status.version, 4);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
-    assert!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap().contains("version: 4"));
+    assert!(crate::vfs::read_to_string(out.join("status.yaml"))
+        .unwrap()
+        .contains("version: 4"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }
@@ -1785,17 +2199,35 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
             _ => None,
         })
         .collect();
-    assert_eq!(failed.len(), crate::limits::GOAL_ATTEMPTS as usize, "{:?}", failed);
-    assert_eq!(failed.iter().map(|(attempt, _)| *attempt).collect::<Vec<_>>(),
-        (1..=crate::limits::GOAL_ATTEMPTS).collect::<Vec<_>>(), "{:?}", failed);
-    assert!(failed.iter().all(|(_, label)| label == &failed[0].1),
-        "each retry is a fresh session on the same batch: {:?}", failed);
+    assert_eq!(
+        failed.len(),
+        crate::limits::GOAL_ATTEMPTS as usize,
+        "{:?}",
+        failed
+    );
+    assert_eq!(
+        failed
+            .iter()
+            .map(|(attempt, _)| *attempt)
+            .collect::<Vec<_>>(),
+        (1..=crate::limits::GOAL_ATTEMPTS).collect::<Vec<_>>(),
+        "{:?}",
+        failed
+    );
+    assert!(
+        failed.iter().all(|(_, label)| label == &failed[0].1),
+        "each retry is a fresh session on the same batch: {:?}",
+        failed
+    );
     let parked: BTreeMap<String, String> = events
         .iter()
         .filter_map(|e| match e {
-            TraceEvent::Goal { goal, event, reason, .. } if event == "parked" => {
-                Some((goal.clone(), reason.clone().unwrap_or_default()))
-            }
+            TraceEvent::Goal {
+                goal,
+                event,
+                reason,
+                ..
+            } if event == "parked" => Some((goal.clone(), reason.clone().unwrap_or_default())),
             _ => None,
         })
         .collect();
@@ -1814,14 +2246,26 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
         })
         .expect("the failed batch");
     assert_eq!(parked.keys().cloned().collect::<BTreeSet<_>>(), batch_goals);
-    assert!(parked.keys().any(|g| g.starts_with("g:review-entity:")), "{:?}", parked);
-    let expected_reason = format!("left open after {} attempts in session {}",
-        crate::limits::GOAL_ATTEMPTS, failed.last().unwrap().1);
+    assert!(
+        parked.keys().any(|g| g.starts_with("g:review-entity:")),
+        "{:?}",
+        parked
+    );
+    let expected_reason = format!(
+        "left open after {} attempts in session {}",
+        crate::limits::GOAL_ATTEMPTS,
+        failed.last().unwrap().1
+    );
     for reason in parked.values() {
         assert_eq!(reason, &expected_reason);
     }
     assert!(!report.converged(), "{}", report.verdict);
-    assert_eq!((report.parked, report.failed), (parked.len(), 0), "{:?}", report);
+    assert_eq!(
+        (report.parked, report.failed),
+        (parked.len(), 0),
+        "{:?}",
+        report
+    );
     let out = project.out.clone();
     let store = Store::load(&out);
     let stored: BTreeMap<String, String> = store
@@ -1831,17 +2275,40 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
         .map(|p| (p.goal.id.clone(), p.reason.clone().unwrap_or_default()))
         .collect();
     assert_eq!(stored, parked);
-    assert!(store.status.parked.iter().all(|p| p.goal.class == "compile" && p.goal.mandatory), "{:?}", store.status.parked);
     assert!(
-        store.graph.diagnostics.values().any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"),
+        store
+            .status
+            .parked
+            .iter()
+            .all(|p| p.goal.class == "compile" && p.goal.mandatory),
         "{:?}",
-        store.graph.diagnostics.values().map(|d| &d.rule).collect::<Vec<_>>()
+        store.status.parked
+    );
+    assert!(
+        store
+            .graph
+            .diagnostics
+            .values()
+            .any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"),
+        "{:?}",
+        store
+            .graph
+            .diagnostics
+            .values()
+            .map(|d| &d.rule)
+            .collect::<Vec<_>>()
     );
     let control = crate::control::Control::load(&project, &out);
     let board = crate::board::Board::derive(&store, &project, &control);
     for id in parked.keys() {
-        let text = board.explain(&store, id).unwrap_or_else(|| panic!("{} not on the board", id));
-        assert!(text.contains(&format!("parked: {}", expected_reason)), "{}", text);
+        let text = board
+            .explain(&store, id)
+            .unwrap_or_else(|| panic!("{} not on the board", id));
+        assert!(
+            text.contains(&format!("parked: {}", expected_reason)),
+            "{}",
+            text
+        );
         assert!(text.contains(", compile, mandatory, parked"), "{}", text);
     }
     assert_eq!(board.counts().parked, parked.len());
@@ -1868,13 +2335,25 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
             _ => None,
         })
         .expect("a batch");
-    assert_eq!(first, parked.keys().cloned().collect::<BTreeSet<_>>(), "the parked goals did not run first");
+    assert_eq!(
+        first,
+        parked.keys().cloned().collect::<BTreeSet<_>>(),
+        "the parked goals did not run first"
+    );
     let resolved: BTreeSet<&String> = goal_events(&events, "resolved").into_iter().collect();
-    assert!(parked.keys().all(|g| resolved.contains(g)), "{:?}", resolved);
+    assert!(
+        parked.keys().all(|g| resolved.contains(g)),
+        "{:?}",
+        resolved
+    );
     let after = Store::load(&out);
     assert!(after.status.parked.is_empty() && after.status.failed.is_empty());
     assert!(after.status.verdict.converged(), "{}", after.status.verdict);
-    assert!(!after.graph.diagnostics.values().any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"));
+    assert!(!after
+        .graph
+        .diagnostics
+        .values()
+        .any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"));
     assert_eq!(after.graph.requirements.len(), 12);
     crate::vfs::remove_dir_all(&dir).ok();
 }

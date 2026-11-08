@@ -71,12 +71,18 @@ fn param(q: &[(String, String)], key: &str) -> Option<String> {
 
 pub fn request(method: &str, path: &str, body: &str) -> String {
     #[cfg(not(target_arch = "wasm32"))]
-    { request_at(&crate::portable::root(), method, path, body) }
+    {
+        request_at(&crate::portable::root(), method, path, body)
+    }
     #[cfg(target_arch = "wasm32")]
     {
         use futures::FutureExt;
         let route = path.split('?').next().unwrap_or(path);
-        if method == "POST" && ["/jobs", "/compile", "/prompt", "/inputs"].iter().any(|suffix| route.ends_with(suffix)) {
+        if method == "POST"
+            && ["/jobs", "/compile", "/prompt", "/inputs"]
+                .iter()
+                .any(|suffix| route.ends_with(suffix))
+        {
             return err(409, "Model execution requires request_async.");
         }
         request_at(&crate::portable::root(), method, path, body)
@@ -89,11 +95,20 @@ pub async fn request_async(method: &str, path: &str, body: &str) -> String {
     request_at_async(&crate::portable::root(), method, path, body).await
 }
 
-pub async fn request_at_async(root: &std::path::Path, method: &str, path: &str, body: &str) -> String {
+pub async fn request_at_async(
+    root: &std::path::Path,
+    method: &str,
+    path: &str,
+    body: &str,
+) -> String {
     #[cfg(not(target_arch = "wasm32"))]
-    { request_at(root, method, path, body) }
+    {
+        request_at(root, method, path, body)
+    }
     #[cfg(target_arch = "wasm32")]
-    { request_at(root, method, path, body).await }
+    {
+        request_at(root, method, path, body).await
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
@@ -113,9 +128,15 @@ pub async fn request_at(root: &std::path::Path, method: &str, path: &str, body: 
             Ok(scope) => Some(scope),
             Err((status, error)) => return err(status, error),
         }
-    } else { None };
-    if let Some(result) = crate::task_runtime::api(root, method, route, &routed.body, &routed.path) {
-        return match result { Ok(value) => ok(value), Err(message) => err(400, message) };
+    } else {
+        None
+    };
+    if let Some(result) = crate::task_runtime::api(root, method, route, &routed.body, &routed.path)
+    {
+        return match result {
+            Ok(value) => ok(value),
+            Err(message) => err(400, message),
+        };
     }
     let workspace = match crate::document_sets::Workspace::load(root) {
         Ok(w) => w,
@@ -125,7 +146,8 @@ pub async fn request_at(root: &std::path::Path, method: &str, path: &str, body: 
                 "/settings" | "/project/files" | "/project/file" | "/project/raw" | "/ping"
             ) && method == "GET"
             {
-                return request_scoped(root, method, path, &routed.body, &Project::load(root)).await;
+                return request_scoped(root, method, path, &routed.body, &Project::load(root))
+                    .await;
             }
             return err(status, error);
         }
@@ -385,7 +407,10 @@ pub(crate) async fn request_scoped(
                 .iter()
                 .map(|f| {
                     let rel = super::status::rel_doc(&p.root, f);
-                    let hash = input_hashes.get(&rel).cloned().unwrap_or_else(|| "unreadable".into());
+                    let hash = input_hashes
+                        .get(&rel)
+                        .cloned()
+                        .unwrap_or_else(|| "unreadable".into());
                     let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
                     json!({
                         "path": rel,
@@ -400,8 +425,15 @@ pub(crate) async fn request_scoped(
             ok(json!({ "docs": docs }))
         }
 
-        ("GET", "/docs/document") => answer(super::binary_documents::read(&project(), &param(&q, "path").unwrap_or_default())),
-        ("PUT", "/docs/document") => answer(super::binary_documents::write(&project(), &param(&q, "path").unwrap_or_default(), body)),
+        ("GET", "/docs/document") => answer(super::binary_documents::read(
+            &project(),
+            &param(&q, "path").unwrap_or_default(),
+        )),
+        ("PUT", "/docs/document") => answer(super::binary_documents::write(
+            &project(),
+            &param(&q, "path").unwrap_or_default(),
+            body,
+        )),
 
         ("GET", "/docs/content") => {
             let rel = param(&q, "path").unwrap_or_default();
@@ -465,7 +497,8 @@ pub(crate) async fn request_scoped(
                 &p.out,
                 &trace,
                 body["sessions"].as_u64().map(|n| n as usize),
-            ).await;
+            )
+            .await;
             ok(json!({
                 "id": 1,
                 "kind": "compile",
@@ -479,7 +512,11 @@ pub(crate) async fn request_scoped(
         ("GET", "/graph") => {
             let p = project();
             let store = Store::load(&out());
-            let locations = crate::diagnostic_locations::locations(&store, &p.root, &crate::gen::GenSettings::resolve(&p));
+            let locations = crate::diagnostic_locations::locations(
+                &store,
+                &p.root,
+                &crate::gen::GenSettings::resolve(&p),
+            );
             ok(json!({
                 "generation": store.status.generation,
                 "entities": store.graph.entities,
@@ -561,7 +598,8 @@ pub(crate) async fn request_scoped(
         ("GET", "/find") => {
             let p = project();
             let g = crate::gen::GenSettings::resolve(&p);
-            let listing = super::projfiles::project_files(&p.root, &g.deliverable, &p.out, &p.docs_glob);
+            let listing =
+                super::projfiles::project_files(&p.root, &g.deliverable, &p.out, &p.docs_glob);
             ok(super::find::find(
                 &Store::load(&out()),
                 &p.root,
@@ -773,36 +811,53 @@ pub(crate) async fn request_scoped(
                 &p.docs_glob,
             ))
         }
-        ("GET", "/project/text") => answer(super::projfiles::project_text(&project().root, &param(&q, "path").unwrap_or_default())),
+        ("GET", "/project/text") => answer(super::projfiles::project_text(
+            &project().root,
+            &param(&q, "path").unwrap_or_default(),
+        )),
         ("PUT", "/project/text") => {
             let p = project();
-            answer(super::projfiles::write_project_text(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
+            answer(super::projfiles::write_project_text(
+                &p.root,
+                &p.out,
+                &param(&q, "path").unwrap_or_default(),
+                body,
+            ))
         }
         ("PUT", "/project/file") => {
             let p = project();
-            answer(super::projfiles::create_project_file(&p.root, &p.out, &param(&q, "path").unwrap_or_default(), body))
+            answer(super::projfiles::create_project_file(
+                &p.root,
+                &p.out,
+                &param(&q, "path").unwrap_or_default(),
+                body,
+            ))
         }
         // Any project file's bytes, text or not, for a preview; base64 in the envelope
         // like a product file's.
         ("GET", "/project/raw") => {
             use base64::Engine as _;
             let rel = param(&q, "path").unwrap_or_default();
-            answer(super::projfiles::project_file(&project().root, &rel).map(|bytes| {
-                json!({
-                    "path": rel,
-                    "size": bytes.len(),
-                    "contentType": super::outfiles::content_type(&rel),
-                    "base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
-                })
-            }))
+            answer(
+                super::projfiles::project_file(&project().root, &rel).map(|bytes| {
+                    json!({
+                        "path": rel,
+                        "size": bytes.len(),
+                        "contentType": super::outfiles::content_type(&rel),
+                        "base64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    })
+                }),
+            )
         }
         ("GET", "/project/file") => {
             let rel = param(&q, "path").unwrap_or_default();
             match super::projfiles::project_file(&project().root, &rel) {
                 Ok(bytes) if param(&q, "binary").as_deref() == Some("true") => {
                     use base64::Engine as _;
-                    ok(json!({"base64":base64::engine::general_purpose::STANDARD.encode(&bytes),
-                        "contentType":super::outfiles::content_type(&rel)}))
+                    ok(
+                        json!({"base64":base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        "contentType":super::outfiles::content_type(&rel)}),
+                    )
                 }
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(text) => ok(Value::String(text)),
@@ -847,7 +902,8 @@ pub(crate) async fn request_scoped(
         // is still running. See docs/frontends/wasm.md#chat.
         ("GET", "/chat/history") => ok(crate::conversation::export_history()),
         ("PUT", "/chat/history") => match crate::conversation::import_history(body) {
-            Ok(value)=>ok(value), Err(message)=>err(409,message),
+            Ok(value) => ok(value),
+            Err(message) => err(409, message),
         },
         ("POST", "/chat/sessions") => ok(crate::conversation::create(body)),
         ("GET", "/chat/sessions") => ok(crate::conversation::list()),
@@ -875,9 +931,12 @@ pub(crate) async fn request_scoped(
             reply(status, v)
         }
         ("POST", p) if p.starts_with("/chat/sessions/") && p.ends_with("/inputs") => {
-            let id=decode(p.trim_start_matches("/chat/sessions/").trim_end_matches("/inputs"));
-            let (status,value)=crate::conversation::prompt(&id,body).await;
-            reply(status,value)
+            let id = decode(
+                p.trim_start_matches("/chat/sessions/")
+                    .trim_end_matches("/inputs"),
+            );
+            let (status, value) = crate::conversation::prompt(&id, body).await;
+            reply(status, value)
         }
         // The page answers a cancel while a turn runs; one that reaches the worker
         // found no turn running, so there is nothing to stop.
@@ -913,12 +972,31 @@ mod tests {
         crate::vfs::write(dir.join("code/util.js"), "// the main loop\n").unwrap();
         // Compiled state under the set's out directory is not a file to find.
         std::fs::create_dir_all(dir.join(".jazyk/ds_main/graph/entity")).unwrap();
-        crate::vfs::write(dir.join(".jazyk/ds_main/graph/entity/ent~main.yaml"), "name: Main\n").unwrap();
-        let reply: serde_json::Value = serde_json::from_str(&super::request_at(&dir, "GET", "/api/find?q=main", "")).unwrap();
+        crate::vfs::write(
+            dir.join(".jazyk/ds_main/graph/entity/ent~main.yaml"),
+            "name: Main\n",
+        )
+        .unwrap();
+        let reply: serde_json::Value =
+            serde_json::from_str(&super::request_at(&dir, "GET", "/api/find?q=main", "")).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        let hits = reply["body"]["hits"].as_array().unwrap_or_else(|| panic!("{reply}"));
-        let found: Vec<(&str, Option<u64>)> = hits.iter().map(|h| (h["path"].as_str().unwrap(), h["line"].as_u64())).collect();
-        assert_eq!(found, vec![("code/main.js", None), ("docs/main.md", None), (".jazyk/jazyk.toml", Some(4)), ("code/util.js", Some(1))], "{reply}");
+        let hits = reply["body"]["hits"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"));
+        let found: Vec<(&str, Option<u64>)> = hits
+            .iter()
+            .map(|h| (h["path"].as_str().unwrap(), h["line"].as_u64()))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("code/main.js", None),
+                ("docs/main.md", None),
+                (".jazyk/jazyk.toml", Some(4)),
+                ("code/util.js", Some(1))
+            ],
+            "{reply}"
+        );
     }
 
     #[test]
@@ -927,7 +1005,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let png = [0x89u8, b'P', b'N', b'G', 0, 1, 2];
         crate::vfs::write(dir.join("logo.png"), png).unwrap();
-        let raw: serde_json::Value = serde_json::from_str(&super::request_at(&dir, "GET", "/api/project/raw?path=logo.png", "")).unwrap();
+        let raw: serde_json::Value = serde_json::from_str(&super::request_at(
+            &dir,
+            "GET",
+            "/api/project/raw?path=logo.png",
+            "",
+        ))
+        .unwrap();
         let text = raw.to_string();
         assert!(text.contains("\"contentType\":\"image/png\""), "{text}");
         assert!(text.contains("\"base64\":\"iVBORwABAg==\""), "{text}");

@@ -1020,10 +1020,27 @@ mod steering_tests {
         let board = run_command(&st, "/board").await.unwrap();
         assert!(!board.contains("choose a document set"), "{}", board);
         add("ds_two", "Billing");
-        for cmd in ["/status", "/board", "/preview", "/generate", "/verify", "/release", "/questions"] {
+        for cmd in [
+            "/status",
+            "/board",
+            "/preview",
+            "/generate",
+            "/verify",
+            "/release",
+            "/questions",
+        ] {
             let reply = run_command(&st, cmd).await.unwrap();
-            assert!(reply.starts_with("choose a document set"), "{}: {}", cmd, reply);
-            assert!(reply.contains("Orders") && reply.contains("Billing"), "{}", reply);
+            assert!(
+                reply.starts_with("choose a document set"),
+                "{}: {}",
+                cmd,
+                reply
+            );
+            assert!(
+                reply.contains("Orders") && reply.contains("Billing"),
+                "{}",
+                reply
+            );
         }
         let compile = run_command(&st, "/compile").await.unwrap();
         assert!(!compile.contains("choose a document set"), "{}", compile);

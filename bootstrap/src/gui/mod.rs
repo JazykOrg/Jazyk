@@ -167,7 +167,9 @@ pub fn connect_url(gui_url: &str, port: u16, token: Option<&str>) -> String {
 }
 
 pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
-    let proj = crate::document_sets::Workspace::load(&proj.root).map(|w|w.files_project()).unwrap_or(proj);
+    let proj = crate::document_sets::Workspace::load(&proj.root)
+        .map(|w| w.files_project())
+        .unwrap_or(proj);
     let out = proj.root.join(".jazyk");
     let gs = GenSettings::resolve(&proj);
     let page = gui_url(
@@ -205,8 +207,14 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
     });
     // --watch is a mode change, recorded where every worker reads it.
     if gopts.watch {
-        if let Ok(w)=crate::document_sets::Workspace::load(&st.root) {
-            for set in w.sets {if let Ok(scope)=st.scoped(Some(&set.id)) {let mut c=scope.control();c.compile="auto".into();c.save(&scope.out);}}
+        if let Ok(w) = crate::document_sets::Workspace::load(&st.root) {
+            for set in w.sets {
+                if let Ok(scope) = st.scoped(Some(&set.id)) {
+                    let mut c = scope.control();
+                    c.compile = "auto".into();
+                    c.save(&scope.out);
+                }
+            }
         }
     }
     jobs::sweep_traces(&st.out);
@@ -296,15 +304,27 @@ mod tests {
     #[test]
     fn the_page_is_the_flag_then_the_env_then_jazyk_dev() {
         assert_eq!(gui_url(None, None), "https://jazyk.dev");
-        assert_eq!(gui_url(None, Some("http://localhost:5173/")), "http://localhost:5173");
-        assert_eq!(gui_url(Some("https://fork.example/app/"), Some("x")), "https://fork.example/app");
+        assert_eq!(
+            gui_url(None, Some("http://localhost:5173/")),
+            "http://localhost:5173"
+        );
+        assert_eq!(
+            gui_url(Some("https://fork.example/app/"), Some("x")),
+            "https://fork.example/app"
+        );
     }
 
     #[test]
     fn the_admitted_origin_is_the_page_url_without_its_path() {
         assert_eq!(origin_of("https://jazyk.dev"), "https://jazyk.dev");
-        assert_eq!(origin_of("https://fork.example/app"), "https://fork.example");
-        assert_eq!(origin_of("http://localhost:5173/x?y#z"), "http://localhost:5173");
+        assert_eq!(
+            origin_of("https://fork.example/app"),
+            "https://fork.example"
+        );
+        assert_eq!(
+            origin_of("http://localhost:5173/x?y#z"),
+            "http://localhost:5173"
+        );
     }
 
     #[test]
@@ -313,6 +333,9 @@ mod tests {
             connect_url("https://jazyk.dev", 4680, Some("abc")),
             "https://jazyk.dev/#/connect?port=4680&token=abc"
         );
-        assert_eq!(connect_url("http://localhost:5173", 4681, None), "http://localhost:5173/#/connect?port=4681");
+        assert_eq!(
+            connect_url("http://localhost:5173", 4681, None),
+            "http://localhost:5173/#/connect?port=4681"
+        );
     }
 }

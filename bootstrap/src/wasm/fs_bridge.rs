@@ -1,7 +1,7 @@
 // The write-through to a folder on disk. The in-memory tree stays the truth the
 // compiler reads; these calls tell the page what changed so it can mirror the
 // change into the folder it opened. When no folder is open they are no-ops.
-// See docs/frontends/wasm.md#a-folder-on-disk.
+// See docs/frontends/wasm.md#filesystem.
 use std::path::Path;
 use wasm_bindgen::prelude::*;
 

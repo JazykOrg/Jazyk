@@ -63,7 +63,10 @@ pub(crate) fn elide(v: &Value) -> Value {
 pub enum JobKind {
     // The whole pipeline for one set: compile, generate, review (docs/frontends/gui.md#jobs).
     Build,
-    Workflow { steps: Vec<crate::workflow::Step>, config_hash: String },
+    Workflow {
+        steps: Vec<crate::workflow::Step>,
+        config_hash: String,
+    },
     Scoped {
         set_id: String,
         config_hash: String,
@@ -131,11 +134,11 @@ impl JobKind {
                 test_paths,
                 force,
             } => {
-                {
-                    let mut value=json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force });
-                    if let Some(paths)=test_paths {value["testPaths"]=json!(paths);}
-                    value
+                let mut value = json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force });
+                if let Some(paths) = test_paths {
+                    value["testPaths"] = json!(paths);
                 }
+                value
             }
             JobKind::Audit => json!({ "kind": "audit" }),
             JobKind::Decompile { scopes } => json!({ "kind": "decompile", "scopes": scopes }),
@@ -223,7 +226,8 @@ impl JobManager {
 
     // Queue a job. A kind already waiting in the queue dedupes to the queued job's id.
     pub fn submit(&self, st: &SharedState, kind: JobKind) -> u64 {
-        self.submit_inner(st, kind, false).expect("explicit submission")
+        self.submit_inner(st, kind, false)
+            .expect("explicit submission")
     }
 
     pub fn submit_auto(&self, st: &SharedState, kind: JobKind) -> Option<u64> {
@@ -273,8 +277,13 @@ impl JobManager {
             return None;
         }
         let resumes_build = match &kind {
-            JobKind::Scoped { kind, .. } => matches!(kind.as_ref(), JobKind::Build | JobKind::Compile),
-            kind => matches!(kind, JobKind::Build | JobKind::Compile | JobKind::CompileSets { .. }),
+            JobKind::Scoped { kind, .. } => {
+                matches!(kind.as_ref(), JobKind::Build | JobKind::Compile)
+            }
+            kind => matches!(
+                kind,
+                JobKind::Build | JobKind::Compile | JobKind::CompileSets { .. }
+            ),
         };
         if !automatic && resumes_build {
             for p in paths {
@@ -351,7 +360,10 @@ impl JobManager {
         for stopped in &ids {
             let job = inner.jobs.get_mut(stopped).unwrap();
             job.cancel.store(true, Ordering::Relaxed);
-            let fence = st.root.join(".jazyk/job-cancellation").join(stopped.to_string());
+            let fence = st
+                .root
+                .join(".jazyk/job-cancellation")
+                .join(stopped.to_string());
             let _ = crate::vfs::create_dir_all(fence.parent().unwrap());
             let _ = crate::vfs::write(&fence, b"cancelled");
             if job.state == "queued" {
@@ -498,9 +510,13 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         };
 
         let (state, result) = match result {
-            result if cancel.load(Ordering::Relaxed) => ("cancelled", Some(match result {
-                Ok(v) => v, Err(e) => json!({"error": e}),
-            })),
+            result if cancel.load(Ordering::Relaxed) => (
+                "cancelled",
+                Some(match result {
+                    Ok(v) => v,
+                    Err(e) => json!({"error": e}),
+                }),
+            ),
             Ok(v) if v["state"] == "failed" => ("failed", Some(v)),
             Ok(v) => ("done", Some(v)),
             Err(e) => ("failed", Some(json!({ "error": e }))),
@@ -527,7 +543,9 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         );
         let st2 = st.clone();
         std::thread::spawn(move || super::events::recompute_pending(&st2));
-        if state == "done" { super::jobs_hook_on_job_finished(&st, &kind); }
+        if state == "done" {
+            super::jobs_hook_on_job_finished(&st, &kind);
+        }
     })
 }
 
@@ -546,7 +564,9 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
                 );
             }
             let result = execute(&scope, kind, trace);
-            if !trace.is_cancelled() { super::jobs_hook_on_job_finished(&scope, kind); }
+            if !trace.is_cancelled() {
+                super::jobs_hook_on_job_finished(&scope, kind);
+            }
             result
         }
         JobKind::CompileSets {
@@ -577,22 +597,33 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         }
         JobKind::Workflow { steps, config_hash } => {
             let workspace = crate::document_sets::Workspace::load(&st.root).map_err(|e| e.1)?;
-            if &workspace.hash != config_hash { return Err("Project settings changed while the workflow was queued. Review and start it again.".into()); }
+            if &workspace.hash != config_hash {
+                return Err("Project settings changed while the workflow was queued. Review and start it again.".into());
+            }
             crate::workflow::run(&st.proj(), &st.llm(), steps, trace)
-        },
+        }
         JobKind::Build => {
             let mut steps = Vec::new();
             trace.line("build", "compile");
-            steps.push(json!({"step": "compile", "result": execute(st, &JobKind::Compile, trace)?}));
+            steps
+                .push(json!({"step": "compile", "result": execute(st, &JobKind::Compile, trace)?}));
             let store = crate::store::Store::load(&st.out);
             if !trace.is_cancelled() && !crate::gen::pending(&store, &st.gs()).is_empty() {
                 trace.line("build", "generate");
-                let gen = JobKind::Gen { entities: vec![], force: false };
+                let gen = JobKind::Gen {
+                    entities: vec![],
+                    force: false,
+                };
                 steps.push(json!({"step": "generate", "result": execute(st, &gen, trace)?}));
             }
             if !trace.is_cancelled() && !crate::gen::Ledger::load(&st.out).requirements.is_empty() {
                 trace.line("build", "review");
-                let verify = JobKind::Verify { targets: vec![], test_kind: None, test_paths: None, force: false };
+                let verify = JobKind::Verify {
+                    targets: vec![],
+                    test_kind: None,
+                    test_paths: None,
+                    force: false,
+                };
                 steps.push(json!({"step": "review", "result": execute(st, &verify, trace)?}));
             }
             Ok(json!({ "steps": steps }))
@@ -615,10 +646,20 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             test_paths,
             force,
         } => {
-            if let Some(paths)=test_paths {
-                return crate::verify::artifacts::run_workspace(&st.root,st.proj().set_id.as_deref(),paths,trace,|project| {
-                    Ok(Box::new(crate::acp::runner::AcpRunner::start(project,&st.llm(),&project.out)?))
-                });
+            if let Some(paths) = test_paths {
+                return crate::verify::artifacts::run_workspace(
+                    &st.root,
+                    st.proj().set_id.as_deref(),
+                    paths,
+                    trace,
+                    |project| {
+                        Ok(Box::new(crate::acp::runner::AcpRunner::start(
+                            project,
+                            &st.llm(),
+                            &project.out,
+                        )?))
+                    },
+                );
             }
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
             let store = crate::store::Store::load(&st.out);
@@ -709,9 +750,17 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
         );
         return (StatusCode::ACCEPTED, Json(json!({"jobId":id}))).into_response();
     }
-    let tasks_only = body["kind"] == "workflow" && crate::workflow::parse(&body["steps"])
-        .is_ok_and(|steps| steps.iter().all(|s| matches!(s, crate::workflow::Step::Task { .. })));
-    if st.proj().set_id.is_none() && body["kind"] != "benchmark" && !tasks_only && !(body["kind"] == "verify" && body.get("testPaths").is_some()) {
+    let tasks_only = body["kind"] == "workflow"
+        && crate::workflow::parse(&body["steps"]).is_ok_and(|steps| {
+            steps
+                .iter()
+                .all(|s| matches!(s, crate::workflow::Step::Task { .. }))
+        });
+    if st.proj().set_id.is_none()
+        && body["kind"] != "benchmark"
+        && !tasks_only
+        && !(body["kind"] == "verify" && body.get("testPaths").is_some())
+    {
         return super::api::err(
             StatusCode::BAD_REQUEST,
             "select a document set for this job",
@@ -770,7 +819,10 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
     let kind = match body["kind"].as_str() {
         Some("workflow") => match crate::workflow::parse(&body["steps"]) {
             Ok(steps) => match crate::document_sets::Workspace::load(&st.root) {
-                Ok(w) => JobKind::Workflow { steps, config_hash: w.hash },
+                Ok(w) => JobKind::Workflow {
+                    steps,
+                    config_hash: w.hash,
+                },
                 Err((_, e)) => return super::api::err(StatusCode::BAD_REQUEST, e),
             },
             Err(e) => return super::api::err(StatusCode::BAD_REQUEST, e),
@@ -789,7 +841,8 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
             targets: str_list(&body["targets"]),
             test_kind: body["testKind"].as_str().map(|s| s.to_string()),
             test_paths: match crate::verify::artifacts::parse_paths(&body) {
-                Ok(paths)=>paths, Err(error)=>return super::api::err(StatusCode::BAD_REQUEST,error),
+                Ok(paths) => paths,
+                Err(error) => return super::api::err(StatusCode::BAD_REQUEST, error),
             },
             force: body["force"].as_bool().unwrap_or(false),
         },
@@ -1111,7 +1164,9 @@ mod tests {
             out: dir.path().join(".jazyk"),
             gs: std::sync::RwLock::new(crate::gen::GenSettings::resolve(&project)),
             proj: std::sync::RwLock::new(project),
-            llm: std::sync::RwLock::new(crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
+            llm: std::sync::RwLock::new(crate::llm::Llm {
+                api: "chat_completions".into(),
+                reasoning_summary: None,
                 base_url: String::new(),
                 model: String::new(),
                 api_key: String::new(),
@@ -1134,13 +1189,19 @@ mod tests {
             "task": {"id":"application-suite","command":"npm test","reports":["reports/junit.xml"]},
             "baseline": {"state":"completed","stdout":format!("{}END OF BASELINE", "test \"quoted\" → passed\n".repeat(700))}
         });
-        let payload = json!({"content":[{"type":"text","text":context.to_string()}],"isError":false});
+        let payload =
+            json!({"content":[{"type":"text","text":context.to_string()}],"isError":false});
         assert!(payload.to_string().len() > 8_000);
         let captured = Arc::new(Mutex::new(Vec::new()));
         let sink = captured.clone();
-        let trace = Trace::to_sink(TraceLevel::Normal, Arc::new(move |event| {
-            sink.lock().unwrap().push(json!(event));
-        }), Default::default()).with_transcript(&state.out, "audit");
+        let trace = Trace::to_sink(
+            TraceLevel::Normal,
+            Arc::new(move |event| {
+                sink.lock().unwrap().push(json!(event));
+            }),
+            Default::default(),
+        )
+        .with_transcript(&state.out, "audit");
         let stem = trace.run().unwrap();
         trace.event(TraceEvent::ToolResult {
             label: "generate application".into(),
@@ -1150,7 +1211,8 @@ mod tests {
             full: crate::session::full_payload(&payload),
         });
 
-        let stored = std::fs::read_to_string(state.out.join("trace").join(format!("{stem}.jsonl"))).unwrap();
+        let stored =
+            std::fs::read_to_string(state.out.join("trace").join(format!("{stem}.jsonl"))).unwrap();
         let event: Value = serde_json::from_str(stored.lines().nth(1).unwrap()).unwrap();
         let full = event["event"]["full"].as_str().unwrap();
         assert_eq!(serde_json::from_str::<Value>(full).unwrap(), payload);
@@ -1158,7 +1220,12 @@ mod tests {
 
         let listed = get_trace(State(state.clone()), UrlPath(stem.clone())).await;
         assert_eq!(listed.status(), StatusCode::OK);
-        let listed: Value = serde_json::from_slice(&axum::body::to_bytes(listed.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let listed: Value = serde_json::from_slice(
+            &axum::body::to_bytes(listed.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let wire = &listed["events"][0]["event"];
         assert_eq!(wire["elided"], true);
         assert!(wire["full"].as_str().unwrap().chars().count() < WIRE_STRING_CAP + 100);
@@ -1166,9 +1233,17 @@ mod tests {
 
         let expanded = get_trace_event(State(state), UrlPath((stem, 1))).await;
         assert_eq!(expanded.status(), StatusCode::OK);
-        let expanded: Value = serde_json::from_slice(&axum::body::to_bytes(expanded.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let expanded: Value = serde_json::from_slice(
+            &axum::body::to_bytes(expanded.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(expanded, event);
-        assert_eq!(serde_json::from_str::<Value>(expanded["event"]["full"].as_str().unwrap()).unwrap(), payload);
+        assert_eq!(
+            serde_json::from_str::<Value>(expanded["event"]["full"].as_str().unwrap()).unwrap(),
+            payload
+        );
     }
 
     fn finished(id: u64, state: &'static str) -> Job {
@@ -1228,7 +1303,10 @@ mod tests {
         // A stale file from an earlier server shares the id but started earlier.
         std::fs::write(
             dir.join("20250101T000000Z-compile-j7.jsonl"),
-            format!("{}\n", json!({"meta": {"id": 7, "kind": {"kind": "compile"}, "startedAt": "0"}})),
+            format!(
+                "{}\n",
+                json!({"meta": {"id": 7, "kind": {"kind": "compile"}, "startedAt": "0"}})
+            ),
         )
         .unwrap();
         let v = job_from_transcript(&dir, 7).unwrap();
@@ -1246,7 +1324,10 @@ mod tests {
         // Without an outcome the job died mid-run.
         std::fs::write(
             dir.join("20260101T000000Z-audit-j8.jsonl"),
-            format!("{}\n", json!({"meta": {"id": 8, "kind": {"kind": "audit"}, "startedAt": "s"}})),
+            format!(
+                "{}\n",
+                json!({"meta": {"id": 8, "kind": {"kind": "audit"}, "startedAt": "s"}})
+            ),
         )
         .unwrap();
         assert_eq!(job_from_transcript(&dir, 8).unwrap()["state"], "failed");

@@ -116,7 +116,9 @@ pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usiz
     for (doc, rec) in &store.docs {
         let mut targets: Vec<String> = Vec::new();
         for sec in rec.sections.values() {
-            if sec.kind == "blob" { continue; }
+            if sec.kind == "blob" {
+                continue;
+            }
             for l in md::doc_links(&sec.raw, doc) {
                 if store.docs.contains_key(&l) && !targets.contains(&l) {
                     targets.push(l);
@@ -732,7 +734,12 @@ fn chain_of(store: &Store, id: &str) -> Vec<String> {
     let mut depth = 0;
     loop {
         out.push(cur.clone());
-        let Some(parent) = store.graph.entities.get(&cur).and_then(|e| e.parent.clone()) else {
+        let Some(parent) = store
+            .graph
+            .entities
+            .get(&cur)
+            .and_then(|e| e.parent.clone())
+        else {
             break;
         };
         cur = parent;
@@ -873,8 +880,7 @@ impl Levels {
         // document (the author's own cut of the subject into flows; the actors are
         // read off the members at render time, never baked into the key).
         // Mirrors docs/compiler/model/view.md#level-views.
-        let mut clusters: Vec<BTreeMap<String, Vec<String>>> =
-            vec![BTreeMap::new(); levels.len()];
+        let mut clusters: Vec<BTreeMap<String, Vec<String>>> = vec![BTreeMap::new(); levels.len()];
         for rid in &ix.document_order {
             let r = &store.graph.requirements[rid];
             let flows = r
@@ -913,7 +919,10 @@ impl Levels {
                         continue;
                     }
                 }
-                clusters[i].entry(doc.clone()).or_default().push(rid.clone());
+                clusters[i]
+                    .entry(doc.clone())
+                    .or_default()
+                    .push(rid.clone());
             }
         }
         let mut flow_views = Vec::new();
@@ -1035,10 +1044,12 @@ pub fn view_levels(store: &Store, ix: &Indices) -> BTreeMap<String, String> {
     let lv = ix.levels(store);
     let held: Vec<&Level> = lv.held.iter().map(|i| &lv.levels[*i]).collect();
     for l in held.iter().filter(|l| l.node.is_some()) {
-        out.entry(level_id(store, ix, l)).or_insert_with(|| l.target.clone());
+        out.entry(level_id(store, ix, l))
+            .or_insert_with(|| l.target.clone());
     }
     for l in held.iter().filter(|l| l.node.is_none()) {
-        out.entry(level_id(store, ix, l)).or_insert_with(|| l.target.clone());
+        out.entry(level_id(store, ix, l))
+            .or_insert_with(|| l.target.clone());
     }
     out
 }
@@ -1171,7 +1182,10 @@ fn level_flow_views<'a>(store: &Store, ix: &'a Indices) -> &'a [(String, Default
 #[cfg(test)]
 fn level_flow_views_scan(store: &Store, ix: &Indices) -> Vec<(String, DefaultView)> {
     let mut out = Vec::new();
-    for l in levels(store, ix).into_iter().filter(|l| level_holds(store, l)) {
+    for l in levels(store, ix)
+        .into_iter()
+        .filter(|l| level_holds(store, l))
+    {
         let members = level_members_of_scan(store, &l, ix);
         for w in flow_view_rules_scan(store, ix, &l, &members) {
             if flow_view_all_groupings(store, &members, &w) {
@@ -1768,6 +1782,7 @@ pub fn record_ledger_stale(store: &mut Store, gs: &crate::gen::GenSettings) {
         }
     }
     if changed {
+        // A refusal is reported on stderr; the next derivation records them again.
         store.write_status("ledger-stale records").ok();
     }
 }
@@ -1805,18 +1820,35 @@ pub(crate) mod tests {
             attributes: attrs.iter().map(|a| attr(a, None, None)).collect(),
             ..Default::default()
         };
-        s.graph.entities.insert("ent:backend".into(), ent("Backend", None, &[]));
-        s.graph.entities.insert("ent:users".into(), ent("User Management", Some("ent:backend"), &[]));
-        s.graph.entities.insert("ent:inventory".into(), ent("Inventory", Some("ent:backend"), &[]));
+        s.graph
+            .entities
+            .insert("ent:backend".into(), ent("Backend", None, &[]));
+        s.graph.entities.insert(
+            "ent:users".into(),
+            ent("User Management", Some("ent:backend"), &[]),
+        );
+        s.graph.entities.insert(
+            "ent:inventory".into(),
+            ent("Inventory", Some("ent:backend"), &[]),
+        );
         s.graph.entities.insert(
             "ent:account".into(),
             ent("User Account", Some("ent:users"), &["id", "role"]),
         );
-        s.graph.entities.insert("ent:product".into(), ent("Product", Some("ent:inventory"), &[]));
-        let ids: Vec<String> = default_view_rules(&s, &Indices::build(&s)).into_iter().map(|v| v.id).collect();
+        s.graph.entities.insert(
+            "ent:product".into(),
+            ent("Product", Some("ent:inventory"), &[]),
+        );
+        let ids: Vec<String> = default_view_rules(&s, &Indices::build(&s))
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
         assert!(ids.contains(&"view:class/users".to_string()), "{:?}", ids);
         assert!(!ids.iter().any(|i| i.ends_with("/inventory")), "{:?}", ids);
-        assert_eq!(level_view_id(&s, "ent:users").as_deref(), Some("view:class/users"));
+        assert_eq!(
+            level_view_id(&s, "ent:users").as_deref(),
+            Some("view:class/users")
+        );
         assert_eq!(level_view_id(&s, "ent:inventory"), None);
     }
 
@@ -1827,7 +1859,10 @@ pub(crate) mod tests {
         let mut s = Store::default();
         let grouping = |name: &str, from: &[&str]| Entity {
             name: name.into(),
-            provenance: Some(Provenance::Derived { from: from.iter().map(|x| x.to_string()).collect(), reasoning: "a level".into() }),
+            provenance: Some(Provenance::Derived {
+                from: from.iter().map(|x| x.to_string()).collect(),
+                reasoning: "a level".into(),
+            }),
             ..Default::default()
         };
         let stated = |name: &str, parent: &str| Entity {
@@ -1836,26 +1871,57 @@ pub(crate) mod tests {
             mentions: vec![src("plot.md", "/plot", name)],
             ..Default::default()
         };
-        s.graph.entities.insert("ent:cast".into(), grouping("Cast", &["ent:ines", "ent:theo"]));
-        s.graph.entities.insert("ent:settings".into(), grouping("Settings", &["ent:shop", "ent:quay"]));
-        s.graph.entities.insert("ent:ines".into(), stated("Ines", "ent:cast"));
-        s.graph.entities.insert("ent:theo".into(), stated("Theo", "ent:cast"));
-        s.graph.entities.insert("ent:shop".into(), stated("Shop", "ent:settings"));
-        s.graph.entities.insert("ent:quay".into(), stated("Quay", "ent:settings"));
-        for (i, (a, b)) in [("ent:ines", "ent:shop"), ("ent:theo", "ent:quay")].iter().enumerate() {
-            s.graph.requirements.insert(format!("req:plot-{}", i + 1), Requirement {
-                statement: format!("step {}", i),
-                entities: vec![a.to_string(), b.to_string()],
-                edges: vec![edge(a, b, "dependency", None)],
-                facets: vec![behavior()],
-                source: Some(src("plot.md", "/plot", "step")),
-                ..Default::default()
-            });
+        s.graph.entities.insert(
+            "ent:cast".into(),
+            grouping("Cast", &["ent:ines", "ent:theo"]),
+        );
+        s.graph.entities.insert(
+            "ent:settings".into(),
+            grouping("Settings", &["ent:shop", "ent:quay"]),
+        );
+        s.graph
+            .entities
+            .insert("ent:ines".into(), stated("Ines", "ent:cast"));
+        s.graph
+            .entities
+            .insert("ent:theo".into(), stated("Theo", "ent:cast"));
+        s.graph
+            .entities
+            .insert("ent:shop".into(), stated("Shop", "ent:settings"));
+        s.graph
+            .entities
+            .insert("ent:quay".into(), stated("Quay", "ent:settings"));
+        for (i, (a, b)) in [("ent:ines", "ent:shop"), ("ent:theo", "ent:quay")]
+            .iter()
+            .enumerate()
+        {
+            s.graph.requirements.insert(
+                format!("req:plot-{}", i + 1),
+                Requirement {
+                    statement: format!("step {}", i),
+                    entities: vec![a.to_string(), b.to_string()],
+                    edges: vec![edge(a, b, "dependency", None)],
+                    facets: vec![behavior()],
+                    source: Some(src("plot.md", "/plot", "step")),
+                    ..Default::default()
+                },
+            );
         }
-        let ids: Vec<String> = default_view_rules(&s, &Indices::build(&s)).into_iter().map(|v| v.id).collect();
+        let ids: Vec<String> = default_view_rules(&s, &Indices::build(&s))
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
         assert!(!ids.contains(&"view:usecase/plot".to_string()), "{:?}", ids);
-        assert!(!ids.contains(&"view:sequence/plot".to_string()), "{:?}", ids);
-        assert!(ids.contains(&"view:usecase/cast-plot".to_string()), "{:?}", ids);
+        assert!(
+            !ids.contains(&"view:sequence/plot".to_string()),
+            "{:?}",
+            ids
+        );
+        assert!(
+            ids.contains(&"view:usecase/cast-plot".to_string()),
+            "{:?}",
+            ids
+        );
     }
 
     fn attr(name: &str, ty: Option<&str>, value: Option<&str>) -> Attribute {
@@ -1875,8 +1941,9 @@ pub(crate) mod tests {
         }
     }
 
-    // The showcase graph of plans/ir-graph.md#every-diagram-from-one-example-graph,
-    // in an in-memory store with the one document its quotes cite.
+    // The showcase graph: one small shop that exercises every emitter
+    // (docs/compiler/diagrams.md#the-emitters), in an in-memory store with the one
+    // document its quotes cite.
     pub(crate) fn showcase_store() -> Store {
         let mut s = Store::default();
         let text = "# Shop\n\nThe shop.\n\n## Checkout\n\ncheckout\n\n## Orders\n\norders\n\n## Examples\n\nexamples\n";
@@ -2546,9 +2613,10 @@ pub(crate) mod tests {
         s.graph
             .entities
             .insert("ent:order".into(), ent("Order", Some("ent:orders"), None));
-        s.graph
-            .entities
-            .insert("ent:invoice".into(), ent("Invoice", Some("ent:orders"), None));
+        s.graph.entities.insert(
+            "ent:invoice".into(),
+            ent("Invoice", Some("ent:orders"), None),
+        );
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
         assert_eq!(
@@ -2726,8 +2794,16 @@ pub(crate) mod tests {
         let mut batch = RecordBatch::new(2);
         recompute(&mut s, "g2", &mut batch);
         let svc = &s.graph.views["view:usecase/order-service-shop"];
-        assert!(svc.members.contains(&"req:shop-13".to_string()), "{:?}", svc.members);
-        assert!(svc.members.contains(&"req:shop-14".to_string()), "{:?}", svc.members);
+        assert!(
+            svc.members.contains(&"req:shop-13".to_string()),
+            "{:?}",
+            svc.members
+        );
+        assert!(
+            svc.members.contains(&"req:shop-14".to_string()),
+            "{:?}",
+            svc.members
+        );
         assert_eq!(svc.title, "Order Service: Shop");
         assert!(!s
             .graph
@@ -2878,10 +2954,9 @@ pub(crate) mod tests {
     // edge, a behavior facet on every other, a transition on every tenth.
     pub(crate) fn synthetic_store(entities: usize, requirements: usize) -> Store {
         const WORDS: [&str; 24] = [
-            "order", "service", "cart", "customer", "stock", "api", "gateway", "ledger",
-            "invoice", "payment", "shipment", "account", "catalog", "price", "report",
-            "audit", "session", "token", "queue", "worker", "cache", "index", "policy",
-            "region",
+            "order", "service", "cart", "customer", "stock", "api", "gateway", "ledger", "invoice",
+            "payment", "shipment", "account", "catalog", "price", "report", "audit", "session",
+            "token", "queue", "worker", "cache", "index", "policy", "region",
         ];
         let docs = 20;
         let statement = |j: usize| {
@@ -2894,9 +2969,16 @@ pub(crate) mod tests {
         };
         let mut s = Store::default();
         for k in 0..docs {
-            let mut text = format!("# D{}\n\nThe document, see [next](d{}.md).\n", k, (k + 1) % docs);
+            let mut text = format!(
+                "# D{}\n\nThe document, see [next](d{}.md).\n",
+                k,
+                (k + 1) % docs
+            );
             for j in 0..10 {
-                text.push_str(&format!("\n## S{}\n\nThe body of section {} in {}.\n", j, j, k));
+                text.push_str(&format!(
+                    "\n## S{}\n\nThe body of section {} in {}.\n",
+                    j, j, k
+                ));
                 // The statements quoted from this section, so every anchor locates.
                 for r in (0..requirements).filter(|r| r % docs == k && (r / docs) % 10 == j) {
                     text.push_str(&statement(r));
@@ -2932,16 +3014,29 @@ pub(crate) mod tests {
             let name = if i % 50 < 2 {
                 format!("{} concept", WORDS[(i / 50) % WORDS.len()])
             } else {
-                format!("{} {}{}", WORDS[i % WORDS.len()], WORDS[(i / WORDS.len()) % WORDS.len()], i)
+                format!(
+                    "{} {}{}",
+                    WORDS[i % WORDS.len()],
+                    WORDS[(i / WORDS.len()) % WORDS.len()],
+                    i
+                )
             };
-            let parent = if i < 64 { None } else { Some(format!("ent:e{}", (i - 64) / 8)) };
+            let parent = if i < 64 {
+                None
+            } else {
+                Some(format!("ent:e{}", (i - 64) / 8))
+            };
             let doc = format!("d{}.md", i % docs);
             let section = format!("/d{}/s{}", i % docs, (i / docs) % 10);
             s.graph.entities.insert(
                 format!("ent:e{}", i),
                 Entity {
                     name: name.clone(),
-                    stereotype: if i % 7 == 0 { Some("service".into()) } else { None },
+                    stereotype: if i % 7 == 0 {
+                        Some("service".into())
+                    } else {
+                        None
+                    },
                     parent,
                     mentions: vec![src(&doc, &section, &name)],
                     ..Default::default()
@@ -2967,7 +3062,11 @@ pub(crate) mod tests {
                 Requirement {
                     statement: statement.clone(),
                     entities: vec![a.clone(), b.clone()],
-                    edges: if a == b { vec![] } else { vec![edge(&a, &b, types[j % 4], None)] },
+                    edges: if a == b {
+                        vec![]
+                    } else {
+                        vec![edge(&a, &b, types[j % 4], None)]
+                    },
                     transition,
                     facets: if j % 2 == 0 { vec![behavior()] } else { vec![] },
                     source: Some(src(&doc, &section, &statement)),
@@ -3000,7 +3099,12 @@ pub(crate) mod tests {
             assert_eq!(lv.members.len(), held.len());
             for i in held {
                 let l = &scanned[i];
-                assert_eq!(lv.members[&l.target], level_members_of_scan(s, l, &ix), "{}", l.target);
+                assert_eq!(
+                    lv.members[&l.target],
+                    level_members_of_scan(s, l, &ix),
+                    "{}",
+                    l.target
+                );
             }
             assert_eq!(lv.flow_views, level_flow_views_scan(s, &ix));
             assert!(!lv.flow_views.is_empty());
@@ -3037,8 +3141,16 @@ pub(crate) mod tests {
                     "{}",
                     id
                 );
-                assert_eq!(level_view_id_with(s, &ix, id), level_view_id(s, id), "{}", id);
-                assert_eq!(level_view_members_with(s, &ix, id), level_view_members(s, id));
+                assert_eq!(
+                    level_view_id_with(s, &ix, id),
+                    level_view_id(s, id),
+                    "{}",
+                    id
+                );
+                assert_eq!(
+                    level_view_members_with(s, &ix, id),
+                    level_view_members(s, id)
+                );
             }
             // The level of every view, as the per-target lookups answer it: the
             // entities by id, then the scope roots.
@@ -3056,7 +3168,10 @@ pub(crate) mod tests {
                 .iter()
                 .map(|t| (t.clone(), level_view_id(s, t)))
                 .collect();
-            let flow_ids: Vec<String> = level_flow_views(s, &ix).iter().map(|(_, w)| w.id.clone()).collect();
+            let flow_ids: Vec<String> = level_flow_views(s, &ix)
+                .iter()
+                .map(|(_, w)| w.id.clone())
+                .collect();
             let distinct: BTreeSet<&String> = flow_ids.iter().collect();
             assert_eq!(distinct.len(), flow_ids.len(), "one level per flow view id");
             let flows = flow_view_levels(s);

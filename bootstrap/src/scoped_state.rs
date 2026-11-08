@@ -4,12 +4,15 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 thread_local! { static STATE: RefCell<Option<BTreeMap<&'static str,u64>>> = const { RefCell::new(None) }; }
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct Scope(Option<BTreeMap<&'static str, u64>>);
+#[cfg(not(target_arch = "wasm32"))]
 impl Scope {
     pub(crate) fn enter() -> Self {
         Self(STATE.with(|s| s.replace(Some(BTreeMap::new()))))
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Scope {
     fn drop(&mut self) {
         STATE.with(|s| s.replace(self.0.take()));

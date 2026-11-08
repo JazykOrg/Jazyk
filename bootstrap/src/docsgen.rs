@@ -293,7 +293,10 @@ fn embed(store: &Store, view_id: &str, view: &View, from: &str) -> String {
     }
     let mut s = image(store, view_id, view, from);
     s.push_str(&caption(store, view_id, view, from));
-    s.push_str(&format!(" · [page]({})", rel(from, &view_page_path(view_id).unwrap_or_default())));
+    s.push_str(&format!(
+        " · [page]({})",
+        rel(from, &view_page_path(view_id).unwrap_or_default())
+    ));
     s.push_str("\n\n");
     s
 }
@@ -608,7 +611,6 @@ fn step_count(store: &Store, view_id: &str) -> usize {
         .unwrap_or(0)
 }
 
-
 // One line per flow cluster: the title, the use-case and sequence pages as links,
 // and the step count. A cluster is one line, never one per kind.
 // Mirrors docs/consumers/docsgen.md#entity-cards.
@@ -625,7 +627,8 @@ fn cluster_lines(store: &Store, view_ids: &[String], from: &str) -> Vec<String> 
         .into_iter()
         .map(|(_, mut ids)| {
             // The use case first, then the sequence, then any other kind.
-            let rank = |v: &String| match v.strip_prefix("view:").and_then(|r| r.split('/').next()) {
+            let rank = |v: &String| match v.strip_prefix("view:").and_then(|r| r.split('/').next())
+            {
                 Some("usecase") => 0,
                 Some("sequence") => 1,
                 _ => 2,
@@ -694,13 +697,21 @@ fn card_text(store: &Store, c: &Card) -> String {
     s.push_str("\n\n");
 
     s.push_str("## In context\n\n");
-    match c.context.as_deref().and_then(|v| store.graph.views.get(v).map(|x| (v, x))) {
+    match c
+        .context
+        .as_deref()
+        .and_then(|v| store.graph.views.get(v).map(|x| (v, x)))
+    {
         Some((vid, v)) => s.push_str(&embed(store, vid, v, from)),
         None => s.push_str("no level view: the level above holds this entity alone\n\n"),
     }
 
     s.push_str("## Inside\n\n");
-    match c.inside.as_deref().and_then(|v| store.graph.views.get(v).map(|x| (v, x))) {
+    match c
+        .inside
+        .as_deref()
+        .and_then(|v| store.graph.views.get(v).map(|x| (v, x)))
+    {
         Some((vid, v)) => {
             s.push_str(&embed(store, vid, v, from));
             if !c.inside_flows.is_empty() {
@@ -828,7 +839,11 @@ fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
         let Some(c) = crate::card::entity_card(store, walk, id) else {
             continue;
         };
-        crate::vfs::write(cards_dir.join(format!("{}.md", slug(id))), card_text(store, &c)).ok();
+        crate::vfs::write(
+            cards_dir.join(format!("{}.md", slug(id))),
+            card_text(store, &c),
+        )
+        .ok();
         written += 1;
     }
     written
@@ -854,9 +869,19 @@ fn github_anchor(title: &str) -> String {
 // resolve from `docsgen/`, two levels under the project root when the out directory
 // sits where the default puts it. Mirrors docs/consumers/docsgen.md#the-requirements-document.
 fn source_prefix(store: &Store) -> Option<&'static str> {
-    if store.out.file_name().and_then(|f|f.to_str()) == Some(".jazyk") { Some("../../") }
-    else if store.out.parent().and_then(|p|p.file_name()).and_then(|f|f.to_str()) == Some(".jazyk") { Some("../../../") }
-    else { None }
+    if store.out.file_name().and_then(|f| f.to_str()) == Some(".jazyk") {
+        Some("../../")
+    } else if store
+        .out
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|f| f.to_str())
+        == Some(".jazyk")
+    {
+        Some("../../../")
+    } else {
+        None
+    }
 }
 
 fn relink_quote(quote: &str, doc: &str, store: &Store) -> String {
@@ -906,11 +931,12 @@ fn heading_anchor(rid: &str) -> String {
 // "[`req:x`](<document>#anchor)": the requirement's block in the document of the
 // first entity it names, the bare id when it names none.
 fn requirement_link(store: &Store, rid: &str, from: &str) -> String {
-    let doc = store
-        .graph
-        .requirements
-        .get(rid)
-        .and_then(|r| r.entities.iter().map(|e| store.resolve_id(e).to_string()).find(|e| store.graph.entities.contains_key(e)));
+    let doc = store.graph.requirements.get(rid).and_then(|r| {
+        r.entities
+            .iter()
+            .map(|e| store.resolve_id(e).to_string())
+            .find(|e| store.graph.entities.contains_key(e))
+    });
     match doc {
         Some(e) => format!(
             "[`{}`]({}#{})",
@@ -927,10 +953,7 @@ fn requirement_link(store: &Store, rid: &str, from: &str) -> String {
 fn belongs_to(store: &Store, view: &View, from: &str) -> String {
     match view.kind.as_str() {
         "state" => match view.members.first() {
-            Some(subject) => format!(
-                "the state machine of {}",
-                card_link(store, subject, from)
-            ),
+            Some(subject) => format!("the state machine of {}", card_link(store, subject, from)),
             None => "a state view with no subject".to_string(),
         },
         "object" => {
@@ -1279,8 +1302,18 @@ fn goal_lines(store: &Store, id: &str, rids: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for p in &store.status.parked {
         if matches(&p.goal) {
-            let why = p.reason.as_deref().map(|r| format!(": {}", r)).unwrap_or_default();
-            out.push(format!("- `{}` ({}) parked{}{}", p.goal.id, p.goal.kind, why, cause(&p.goal)));
+            let why = p
+                .reason
+                .as_deref()
+                .map(|r| format!(": {}", r))
+                .unwrap_or_default();
+            out.push(format!(
+                "- `{}` ({}) parked{}{}",
+                p.goal.id,
+                p.goal.kind,
+                why,
+                cause(&p.goal)
+            ));
         }
     }
     for f in &store.status.failed {
@@ -1448,7 +1481,12 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             // decreed last; an index opens a long section
             // (docs/consumers/docsgen.md#the-requirements-document).
             let group_key = |rid: &String| -> (usize, String, String) {
-                match store.graph.requirements.get(rid).and_then(|r| r.source.as_ref()) {
+                match store
+                    .graph
+                    .requirements
+                    .get(rid)
+                    .and_then(|r| r.source.as_ref())
+                {
                     Some(src) => {
                         let order = store
                             .docs
@@ -1663,7 +1701,10 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     s.push('\n');
                 }
                 // No row, no line (docs/consumers/docsgen.md#the-requirements-document).
-                if let Some(v) = vmap.get(rid.as_str()).filter(|v| v["status"].as_str() != Some("missing")) {
+                if let Some(v) = vmap
+                    .get(rid.as_str())
+                    .filter(|v| v["status"].as_str() != Some("missing"))
+                {
                     let status = v["status"].as_str().unwrap_or("missing");
                     let mut line = format!("Verification: `{}`", status);
                     if let Some(name) = v["name"].as_str() {
@@ -1809,7 +1850,12 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         idx.push_str("# Index\n\n");
         // The walk first: per scope, the level page of the root and its members as
         // cards. Mirrors docs/consumers/docsgen.md#relationships-view.
-        let mut scopes: Vec<String> = store.graph.entities.values().map(|e| e.scope.clone()).collect();
+        let mut scopes: Vec<String> = store
+            .graph
+            .entities
+            .values()
+            .map(|e| e.scope.clone())
+            .collect();
         scopes.sort();
         scopes.dedup();
         for scope in &scopes {
@@ -1842,7 +1888,11 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 "Start here: the top level of `{}`{}, then {}\n\n",
                 scope,
                 page,
-                if members.is_empty() { "nothing yet".to_string() } else { members.join(", ") }
+                if members.is_empty() {
+                    "nothing yet".to_string()
+                } else {
+                    members.join(", ")
+                }
             ));
         }
         for (id, ent) in &store.graph.entities {
@@ -1877,9 +1927,13 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             idx.push_str("\n## Diagrams\n\n");
             // The scope roots' level views first, then the deeper levels: the index
             // opens on the top of each scope. Mirrors docs/consumers/docsgen.md#relationships-view.
-            let mut ordered: Vec<(&String, &View)> =
-                class_views.iter().chain(component_views.iter()).cloned().collect();
-            ordered.sort_by_key(|(vid, _)| (!root_levels.contains_key(vid.as_str()), vid.to_string()));
+            let mut ordered: Vec<(&String, &View)> = class_views
+                .iter()
+                .chain(component_views.iter())
+                .cloned()
+                .collect();
+            ordered
+                .sort_by_key(|(vid, _)| (!root_levels.contains_key(vid.as_str()), vid.to_string()));
             for (vid, v) in ordered {
                 let mut block = embed(store, vid, v, DOCS_DIR);
                 if let Some(scope) = root_levels.get(vid.as_str()) {
@@ -2015,7 +2069,12 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     // Glossary.
     let mut g = String::from("# Glossary\n\n");
     let mut entities: Vec<(&String, &crate::model::Entity)> = store.graph.entities.iter().collect();
-    entities.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()).then(a.0.cmp(b.0)));
+    entities.sort_by(|a, b| {
+        a.1.name
+            .to_lowercase()
+            .cmp(&b.1.name.to_lowercase())
+            .then(a.0.cmp(b.0))
+    });
     for (id, e) in &entities {
         let mut line = format!("- **{}**", e.name);
         if !e.aliases.is_empty() {
@@ -2061,7 +2120,9 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
         }
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
-    let mut f = String::from("# Fragmentation\n\nEntities whose mentions span several documents, most spread first.\n\n");
+    let mut f = String::from(
+        "# Fragmentation\n\nEntities whose mentions span several documents, most spread first.\n\n",
+    );
     if rows.is_empty() {
         f.push_str("No entity is mentioned in more than one document.\n");
     }
@@ -2080,20 +2141,24 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     let anchor_of = |subject: &str| -> Option<(String, String)> {
         let rs = store.resolve_id(subject);
         if let Some(r) = store.graph.requirements.get(rs) {
-            return r.source.as_ref().map(|src| (src.doc.clone(), src.section.clone()));
+            return r
+                .source
+                .as_ref()
+                .map(|src| (src.doc.clone(), src.section.clone()));
         }
-        store
-            .graph
-            .entities
-            .get(rs)
-            .and_then(|e| e.mentions.first().map(|m| (m.doc.clone(), m.section.clone())))
+        store.graph.entities.get(rs).and_then(|e| {
+            e.mentions
+                .first()
+                .map(|m| (m.doc.clone(), m.section.clone()))
+        })
     };
     let mut per: BTreeMap<(String, String), BTreeMap<String, usize>> = BTreeMap::new();
     for d in store.graph.diagnostics.values() {
         if d.lifecycle != "open" {
             continue;
         }
-        let mut anchors: Vec<(String, String)> = d.subjects.iter().filter_map(|s| anchor_of(s)).collect();
+        let mut anchors: Vec<(String, String)> =
+            d.subjects.iter().filter_map(|s| anchor_of(s)).collect();
         anchors.sort();
         anchors.dedup();
         for a in anchors {
@@ -2111,16 +2176,26 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     }
     for (total, (doc, section), rules) in &ranked {
         let parts: Vec<String> = rules.iter().map(|(r, n)| format!("{} ×{}", r, n)).collect();
-        st.push_str(&format!("- {}: {} ({})\n", section_link(doc, section), total, parts.join(", ")));
+        st.push_str(&format!(
+            "- {}: {} ({})\n",
+            section_link(doc, section),
+            total,
+            parts.join(", ")
+        ));
     }
     let mut weak: Vec<String> = Vec::new();
     for (doc, rec) in &store.docs {
         for (sec, cov) in &rec.coverage {
-            if cov.state == "non-normative" && cov.note.as_deref().map(|n| n.trim().len()).unwrap_or(0) < 20 {
+            if cov.state == "non-normative"
+                && cov.note.as_deref().map(|n| n.trim().len()).unwrap_or(0) < 20
+            {
                 weak.push(format!(
                     "- {}: {}",
                     section_link(doc, sec),
-                    cov.note.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or("(no note)")
+                    cov.note
+                        .as_deref()
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or("(no note)")
                 ));
             }
         }
@@ -2160,11 +2235,19 @@ mod tests {
         crate::vfs::create_dir_all(&out).unwrap();
         s.out = out.clone();
         assert_eq!(
-            relink_quote("- [User Management](./subsystems/user.md)", "docs/backend.md", &s),
+            relink_quote(
+                "- [User Management](./subsystems/user.md)",
+                "docs/backend.md",
+                &s
+            ),
             "- [User Management](../../docs/subsystems/user.md)"
         );
         assert_eq!(
-            relink_quote("see [the spec](https://x.org/a.md) and [top](#top)", "docs/backend.md", &s),
+            relink_quote(
+                "see [the spec](https://x.org/a.md) and [top](#top)",
+                "docs/backend.md",
+                &s
+            ),
             "see [the spec](https://x.org/a.md) and [top](../../docs/backend.md#top)"
         );
         assert_eq!(github_anchor("main.ts"), "maints");
@@ -2221,7 +2304,8 @@ mod tests {
 
     #[test]
     fn renders_and_prunes() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let mut s = Store {
             out: out.clone(),
@@ -2302,7 +2386,11 @@ mod tests {
         assert!(!out.join("docsgen/entities/ghost.md").vexists());
         assert!(!out.join("docsgen/diagrams/class/ghost.md").vexists());
         let card = crate::vfs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
-        assert!(card.contains("# Cart\n\n`ent:cart` · holds items\n"), "{}", card);
+        assert!(
+            card.contains("# Cart\n\n`ent:cart` · holds items\n"),
+            "{}",
+            card
+        );
         assert!(card.contains("## Inside\n\na leaf\n"), "{}", card);
         assert!(
             card.contains("- [Requirements document](../cart.md) (2 requirements)"),
@@ -2317,8 +2405,10 @@ mod tests {
     // member pages. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
     #[test]
     fn showcase_page_embeds_images_and_cross_links() {
-        let out =
-            std::env::temp_dir().join(format!("jazyk-docsgen-showcase-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-docsgen-showcase-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
@@ -2347,9 +2437,14 @@ mod tests {
         );
         assert!(page.contains("](../diagrams/state/order.svg)"), "{}", page);
         // Flows are listed under their own heading, never embedded.
-        assert!(!page.contains("](../diagrams/usecase/shop.svg)"), "{}", page);
         assert!(
-            page.contains("## Flows\n") && page.contains("[page](./diagrams/usecase/shop.md) `view:usecase/shop`"),
+            !page.contains("](../diagrams/usecase/shop.svg)"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("## Flows\n")
+                && page.contains("[page](./diagrams/usecase/shop.md) `view:usecase/shop`"),
             "{}",
             page
         );
@@ -2412,7 +2507,8 @@ mod tests {
     // Mirrors docs/consumers/docsgen.md#level-pages.
     #[test]
     fn level_pages_nest_as_the_containment_tree() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
@@ -2446,7 +2542,9 @@ mod tests {
         );
         assert!(page.contains("# Order Service\n"), "{}", page);
         assert!(
-            page.contains("[card](../entities/order-service.md) · [entity page](../order-service.md)"),
+            page.contains(
+                "[card](../entities/order-service.md) · [entity page](../order-service.md)"
+            ),
             "{}",
             page
         );
@@ -2463,7 +2561,9 @@ mod tests {
             page
         );
         assert!(
-            page.contains("## Members\n\n- [checkout API](../entities/checkout-api.md) · «interface»"),
+            page.contains(
+                "## Members\n\n- [checkout API](../entities/checkout-api.md) · «interface»"
+            ),
             "{}",
             page
         );
@@ -2492,7 +2592,11 @@ mod tests {
             "{}",
             shop
         );
-        assert!(!shop.contains("- [Customer](../entities/customer.md)"), "{}", shop);
+        assert!(
+            !shop.contains("- [Customer](../entities/customer.md)"),
+            "{}",
+            shop
+        );
         assert!(
             shop.contains("](../../diagrams/component/shop.svg)"),
             "{}",
@@ -2513,7 +2617,9 @@ mod tests {
             root
         );
         assert!(
-            root.contains("- [Shop](../entities/shop.md) · «system» · [level](./shop.md) (2 children)"),
+            root.contains(
+                "- [Shop](../entities/shop.md) · «system» · [level](./shop.md) (2 children)"
+            ),
             "{}",
             root
         );
@@ -2543,7 +2649,8 @@ mod tests {
     // docs/consumers/docsgen.md#diagram-pages.
     #[test]
     fn cards_and_diagram_pages_walk_the_graph() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
@@ -2593,7 +2700,9 @@ mod tests {
             card
         );
         assert!(
-            card.contains("- dependency → [Inventory Service](./inventory-service.md) · 1 requirement"),
+            card.contains(
+                "- dependency → [Inventory Service](./inventory-service.md) · 1 requirement"
+            ),
             "{}",
             card
         );
@@ -2601,7 +2710,11 @@ mod tests {
         let out_dir = out.join("docsgen");
         let glossary = crate::vfs::read_to_string(out_dir.join("glossary.md")).unwrap();
         assert!(glossary.contains("- **Customer**"), "{}", glossary);
-        assert!(glossary.contains("[card](./entities/customer.md)"), "{}", glossary);
+        assert!(
+            glossary.contains("[card](./entities/customer.md)"),
+            "{}",
+            glossary
+        );
         assert!(out_dir.join("fragmentation.md").vexists());
         let staleness = crate::vfs::read_to_string(out_dir.join("staleness.md")).unwrap();
         assert!(staleness.starts_with("# Staleness"), "{}", staleness);
@@ -2684,7 +2797,9 @@ mod tests {
             page
         );
         assert!(
-            page.contains("- [Inventory Service](../../entities/inventory-service.md) · «service»\n"),
+            page.contains(
+                "- [Inventory Service](../../entities/inventory-service.md) · «service»\n"
+            ),
             "{}",
             page
         );
@@ -2700,7 +2815,9 @@ mod tests {
             page
         );
         assert!(
-            page.contains("- Below: [Order Service](./order-service.md) `view:component/order-service`"),
+            page.contains(
+                "- Below: [Order Service](./order-service.md) `view:component/order-service`"
+            ),
             "{}",
             page
         );
@@ -2739,7 +2856,8 @@ mod tests {
     // Mirrors docs/consumers/docsgen.md#ratification-proposals.
     #[test]
     fn ratification_proposal_renders_as_a_prompt() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-ratify-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-docsgen-ratify-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let mut s = Store {
             out: out.clone(),

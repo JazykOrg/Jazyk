@@ -86,7 +86,6 @@ pub async fn status(State(st): State<SharedState>) -> Json<Value> {
     )
 }
 
-
 pub async fn shutdown(State(st): State<SharedState>) -> Json<Value> {
     st.shutdown.notify_waiters();
     Json(json!({ "ok": true }))
@@ -116,7 +115,10 @@ pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>
             st.events.emit("settings.changed", json!({}));
             Json(v).into_response()
         }
-        Err((code, msg)) => err(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), msg),
+        Err((code, msg)) => err(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            msg,
+        ),
     }
 }
 
@@ -136,36 +138,46 @@ pub async fn answer_question(
     UrlPath(id): UrlPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let session_id=body["sessionId"].as_str().filter(|sid|st.chat.is_running(sid)).map(str::to_owned);
+    let session_id = body["sessionId"]
+        .as_str()
+        .filter(|sid| st.chat.is_running(sid))
+        .map(str::to_owned);
     let out = st.out.clone();
     let project = st.proj();
-    let diagnostic=id.clone();
-    let in_conversation=session_id.is_some();
+    let diagnostic = id.clone();
+    let in_conversation = session_id.is_some();
     let result = tokio::task::spawn_blocking(move || {
         let v = crate::webapi::inbox::answer_value(&project, &out, &diagnostic, &body)?;
         let handling = if v["status"] == "handling" && in_conversation {
-            crate::answer::handling_prompt(&out,&diagnostic).ok()
-        } else { None };
+            crate::answer::handling_prompt(&out, &diagnostic).ok()
+        } else {
+            None
+        };
         if v["status"] == "handling" && handling.is_none() {
             crate::answer::spawn_handler(project, out, diagnostic);
         }
-        Ok::<_, crate::webapi::Refusal>((v,handling))
+        Ok::<_, crate::webapi::Refusal>((v, handling))
     })
     .await
     .expect("answer task panicked");
     match result {
-        Ok((mut v,Some(prompt))) => {
-            let sid=session_id.unwrap();
-            let message_id=format!("answer:{}:{}",id,crate::model::hash_hex(&prompt));
-            let response=super::chat::post_input(State(st.clone()),axum::extract::Path(sid),Json(json!({"messageId":message_id,"text":prompt}))).await;
+        Ok((mut v, Some(prompt))) => {
+            let sid = session_id.unwrap();
+            let message_id = format!("answer:{}:{}", id, crate::model::hash_hex(&prompt));
+            let response = super::chat::post_input(
+                State(st.clone()),
+                axum::extract::Path(sid),
+                Json(json!({"messageId":message_id,"text":prompt})),
+            )
+            .await;
             if response.status().is_success() {
-                v["note"]=json!("recorded; the active conversation handles the answer");
+                v["note"] = json!("recorded; the active conversation handles the answer");
             } else {
-                crate::answer::spawn_handler(st.proj(),st.out.clone(),id);
+                crate::answer::spawn_handler(st.proj(), st.out.clone(), id);
             }
             Json(v).into_response()
         }
-        Ok((v,None)) => Json(v).into_response(),
+        Ok((v, None)) => Json(v).into_response(),
         Err(r) => refused(r),
     }
 }
@@ -178,9 +190,10 @@ pub async fn triage(
     Json(body): Json<Value>,
 ) -> Response {
     let out = st.out.clone();
-    let result = tokio::task::spawn_blocking(move || crate::webapi::inbox::triage_value(&out, &id, &body))
-        .await
-        .expect("triage task panicked");
+    let result =
+        tokio::task::spawn_blocking(move || crate::webapi::inbox::triage_value(&out, &id, &body))
+            .await
+            .expect("triage task panicked");
     match result {
         Ok(v) => Json(v).into_response(),
         Err(r) => refused(r),
@@ -354,7 +367,12 @@ pub async fn find(State(st): State<SharedState>, Query(p): Query<SearchQ>) -> Js
     let glob = st.proj.read().expect("project").docs_glob.clone();
     let v = tokio::task::spawn_blocking(move || {
         let listing = crate::webapi::projfiles::project_files(&root, &deliverable, &out, &glob);
-        crate::webapi::find::find(&store, &root, &crate::webapi::find::file_paths(&listing), &p.q)
+        crate::webapi::find::find(
+            &store,
+            &root,
+            &crate::webapi::find::file_paths(&listing),
+            &p.q,
+        )
     })
     .await
     .expect("project search");
@@ -468,8 +486,6 @@ pub async fn journal(State(st): State<SharedState>, Query(p): Query<JournalQ>) -
     Json(entries)
 }
 
-
-
 // The matched documents with their on-disk hash, the reconciled hash, staleness,
 // open diagnostics by severity, and open goals counted by kind.
 pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
@@ -520,14 +536,16 @@ pub struct DocQ {
 
 pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
     let proj = st.proj();
-    let read = tokio::task::spawn_blocking(move || crate::webapi::docs::doc_content(&proj, &p.path))
-        .await
-        .expect("document read");
+    let read =
+        tokio::task::spawn_blocking(move || crate::webapi::docs::doc_content(&proj, &p.path))
+            .await
+            .expect("document read");
     match read {
         crate::webapi::docs::DocRead::Found(value) => Json(value).into_response(),
         crate::webapi::docs::DocRead::Missing(message) => err(StatusCode::NOT_FOUND, message),
         crate::webapi::docs::DocRead::Invalid(message) => err(
-            StatusCode::from_u16(crate::webapi::docs::invalid_status(&message)).unwrap_or(StatusCode::BAD_REQUEST),
+            StatusCode::from_u16(crate::webapi::docs::invalid_status(&message))
+                .unwrap_or(StatusCode::BAD_REQUEST),
             message,
         ),
     }

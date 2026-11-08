@@ -70,7 +70,11 @@ pub fn parse_paths(paths: &[PathBuf]) -> Result<Vec<Case>, String> {
                 .map_err(|e| format!("{}: bad yaml: {}", f.display(), e))?;
             let case = benchmark::case_from_value(&v);
             if case.steps.is_empty() {
-                return Err(format!("{}: `{}` has no steps; a replay scripts its calls", f.display(), case.name));
+                return Err(format!(
+                    "{}: `{}` has no steps; a replay scripts its calls",
+                    f.display(),
+                    case.name
+                ));
             }
             cases.push(case);
         }
@@ -104,9 +108,18 @@ fn judge(step: &Step, reply: &Result<Value, crate::tools::ToolError>) -> (bool, 
     let want_ok = step.ok.unwrap_or(step.rule.is_none());
     if let Some(r) = &step.rule {
         if !is_err {
-            problems.push(format!("expected rule `{}`, got a reply: {}", r, clip(&text)));
+            problems.push(format!(
+                "expected rule `{}`, got a reply: {}",
+                r,
+                clip(&text)
+            ));
         } else if &rule != r {
-            problems.push(format!("expected rule `{}`, got `{}`: {}", r, rule, clip(&text)));
+            problems.push(format!(
+                "expected rule `{}`, got `{}`: {}",
+                r,
+                rule,
+                clip(&text)
+            ));
         }
     } else if want_ok && is_err {
         problems.push(format!("expected ok, got `{}`: {}", rule, clip(&text)));
@@ -256,15 +269,25 @@ pub fn run_case(case: &Case) -> ReplayReport {
                         "the fixture derives no {}; {} goals derived: {}",
                         id,
                         kind,
-                        if same.is_empty() { "(none)".to_string() } else { same.join(", ") }
+                        if same.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            same.join(", ")
+                        }
                     ));
                     return report;
                 }
             }
         }
     }
-    let benchmark::CaseSession { mut session, .. } =
-        benchmark::case_session_batch(store.clone(), &item, &case.lint, &gs, derived.as_ref(), &extra);
+    let benchmark::CaseSession { mut session, .. } = benchmark::case_session_batch(
+        store.clone(),
+        &item,
+        &case.lint,
+        &gs,
+        derived.as_ref(),
+        &extra,
+    );
     for step in &case.steps {
         let reply = session.dispatch(&step.call, &step.args);
         let (ok, detail) = judge(step, &reply);
@@ -287,16 +310,21 @@ pub fn run_case(case: &Case) -> ReplayReport {
         }
     }
     for (kind, arg) in &case.checks {
-        report
-            .checks
-            .push((kind.clone(), benchmark::eval_check(kind, arg, &store, staged)));
+        report.checks.push((
+            kind.clone(),
+            benchmark::eval_check(kind, arg, &store, staged),
+        ));
     }
     crate::vfs::remove_dir_all(&tmp).ok();
     report
 }
 
 pub fn print_report(r: &ReplayReport) {
-    println!("replay {}: {}", r.name, if r.passed() { "ok" } else { "FAIL" });
+    println!(
+        "replay {}: {}",
+        r.name,
+        if r.passed() { "ok" } else { "FAIL" }
+    );
     if let Some(e) = &r.fixture_error {
         println!("  fixture: {}", e);
     }
@@ -380,7 +408,11 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        let e = if v["event"].is_object() { &v["event"] } else { &v };
+        let e = if v["event"].is_object() {
+            &v["event"]
+        } else {
+            &v
+        };
         if e["label"].as_str() != Some(label) {
             continue;
         }
@@ -389,18 +421,24 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
                 if goals.is_empty() {
                     goals = e["goals"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|g| g.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|g| g.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                 }
             }
             Some("toolCall") => {
                 let raw = e["full"].as_str().or(e["summary"].as_str()).unwrap_or("{}");
-                let args: Value = serde_json::from_str(raw).unwrap_or_else(|_| json!({"_unparsed": raw}));
+                let args: Value =
+                    serde_json::from_str(raw).unwrap_or_else(|_| json!({"_unparsed": raw}));
                 calls.push((e["name"].as_str().unwrap_or("").to_string(), args));
             }
             Some("toolResult") => {
                 let raw = e["full"].as_str().or(e["summary"].as_str()).unwrap_or("");
-                let mut val: Value = serde_json::from_str(raw).unwrap_or(Value::String(raw.to_string()));
+                let mut val: Value =
+                    serde_json::from_str(raw).unwrap_or(Value::String(raw.to_string()));
                 if let Some(s) = val.as_str() {
                     if let Ok(inner) = serde_json::from_str::<Value>(s) {
                         val = inner;
@@ -416,7 +454,12 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
                 let rule = RULE_IN_MESSAGE
                     .captures(msg)
                     .map(|c| c[1].to_string())
-                    .or_else(|| e["rule"].as_str().filter(|r| !r.is_empty()).map(String::from))
+                    .or_else(|| {
+                        e["rule"]
+                            .as_str()
+                            .filter(|r| !r.is_empty())
+                            .map(String::from)
+                    })
                     .unwrap_or_else(|| "?".to_string());
                 results.push(json!({"error": {"rule": rule, "message": msg}}));
             }
@@ -424,7 +467,11 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         }
     }
     if calls.is_empty() {
-        return Err(format!("no tool calls under label `{}` in {}", label, trace.display()));
+        return Err(format!(
+            "no tool calls under label `{}` in {}",
+            label,
+            trace.display()
+        ));
     }
     let goal_id = goals.first().cloned().unwrap_or_else(|| label.to_string());
     let (kind, target) = goal_id
@@ -445,18 +492,29 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
     files.sort();
     for f in files {
         if let Ok(t) = std::fs::read_to_string(&f) {
-            let rel = f.strip_prefix(&root).unwrap_or(&f).to_string_lossy().to_string();
+            let rel = f
+                .strip_prefix(&root)
+                .unwrap_or(&f)
+                .to_string_lossy()
+                .to_string();
             docs.insert(rel, Value::String(t));
         }
     }
     // The graph the session saw: the batch's snapshot when the run left one, else the
     // current graph, trimmed to the nodes the goal and the calls name
     // (docs/benchmark/replays.md#where-replays-come-from).
-    let snap = root.join(".jazyk").join("snapshots").join(label.replace(['/', ':'], "_")).join("graph");
+    let snap = root
+        .join(".jazyk")
+        .join("snapshots")
+        .join(label.replace(['/', ':'], "_"))
+        .join("graph");
     let (graph_dir, seeded_from) = if snap.is_dir() {
         (snap, "the batch's snapshot")
     } else {
-        (root.join(".jazyk").join("graph"), "the project's current graph (no snapshot for this batch)")
+        (
+            root.join(".jazyk").join("graph"),
+            "the project's current graph (no snapshot for this batch)",
+        )
     };
     // One file per node (docs/compiler/graph.md#node-files).
     let read_kind = |kind: &str| crate::store::read_node_values(&graph_dir.join(kind));
@@ -483,7 +541,12 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
             let id = m.as_str();
             if id.starts_with("ent:") {
                 for (rid, r) in &reqs {
-                    if r["entities"].as_array().into_iter().flatten().any(|e| e.as_str() == Some(id)) {
+                    if r["entities"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|e| e.as_str() == Some(id))
+                    {
                         wanted.insert(rid.clone());
                     }
                 }
@@ -522,12 +585,27 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
             }
             let mut o = serde_json::Map::new();
             o.insert("name".into(), e["name"].clone());
-            for k in ["aliases", "definition", "stereotype", "parent", "scope", "provenance"] {
+            for k in [
+                "aliases",
+                "definition",
+                "stereotype",
+                "parent",
+                "scope",
+                "provenance",
+            ] {
                 if !e[k].is_null() && e[k] != json!("") && e[k] != json!([]) {
                     o.insert(k.into(), e[k].clone());
                 }
             }
-            o.insert("mentions".into(), json!(e["mentions"].as_array().into_iter().flatten().map(&sec_ref).collect::<Vec<_>>()));
+            o.insert(
+                "mentions".into(),
+                json!(e["mentions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(&sec_ref)
+                    .collect::<Vec<_>>()),
+            );
             g_ents.insert(id.clone(), Value::Object(o));
         } else if let Some(r) = reqs.get(id) {
             if r["deleted"].as_bool() == Some(true) {
@@ -602,12 +680,18 @@ static RULE_IN_MESSAGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock:
 });
 
 fn collect_md(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         if p.is_dir() {
-            if matches!(name.as_str(), ".jazyk" | ".jazyk.bak" | "node_modules" | "target") || name.starts_with('.') {
+            if matches!(
+                name.as_str(),
+                ".jazyk" | ".jazyk.bak" | "node_modules" | "target"
+            ) || name.starts_with('.')
+            {
                 continue;
             }
             collect_md(&p, out);

@@ -69,7 +69,12 @@ fn locate_tokens(text: &str, needle: &str) -> Option<(usize, usize)> {
 pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
     let before = &text[..byte.min(text.len())];
     let line = before.matches('\n').count();
-    let col = before.rsplit('\n').next().unwrap_or("").encode_utf16().count();
+    let col = before
+        .rsplit('\n')
+        .next()
+        .unwrap_or("")
+        .encode_utf16()
+        .count();
     (line, col)
 }
 
@@ -107,9 +112,12 @@ pub fn project_bytes(path: &std::path::Path, bytes: &[u8]) -> Result<String, Str
         return crate::documents::from_bytes(path, bytes).map(|d| d.text);
     }
     if !supported_format(path) {
-        return Err("opaque whole-file input; load its blob section instead of reading it as prose".into());
+        return Err(
+            "opaque whole-file input; load its blob section instead of reading it as prose".into(),
+        );
     }
-    std::str::from_utf8(bytes).map(str::to_owned)
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
         .map_err(|e| format!("not valid UTF-8: {}", e))
 }
 
@@ -422,7 +430,12 @@ fn link_position(text: &str, byte: usize) -> LinkPosition {
     let before = &text[..byte];
     LinkPosition {
         line: before.bytes().filter(|b| *b == b'\n').count(),
-        character: before.rsplit('\n').next().unwrap_or("").encode_utf16().count(),
+        character: before
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .encode_utf16()
+            .count(),
     }
 }
 
@@ -431,15 +444,23 @@ fn link_position(text: &str, byte: usize) -> LinkPosition {
 pub fn resolve_document_link(from_doc: &str, href: &str) -> Option<String> {
     let path = href.split(['?', '#']).next()?;
     let bytes = path.as_bytes();
-    if bytes.iter().enumerate().any(|(i, b)| *b == b'%' &&
-        !(bytes.get(i + 1).is_some_and(u8::is_ascii_hexdigit) && bytes.get(i + 2).is_some_and(u8::is_ascii_hexdigit))) {
+    if bytes.iter().enumerate().any(|(i, b)| {
+        *b == b'%'
+            && !(bytes.get(i + 1).is_some_and(u8::is_ascii_hexdigit)
+                && bytes.get(i + 2).is_some_and(u8::is_ascii_hexdigit))
+    }) {
         return None;
     }
-    let path = percent_encoding::percent_decode_str(path).decode_utf8().ok()?;
-    if path.is_empty() || path.starts_with('/') || path.contains('\\')
+    let path = percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .ok()?;
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
         || path.chars().any(char::is_control)
         || path.split('/').next()?.contains(':')
-        || !supported_format(std::path::Path::new(path.as_ref())) {
+        || !supported_format(std::path::Path::new(path.as_ref()))
+    {
         return None;
     }
     resolve_rel(from_doc, &path)
@@ -448,19 +469,31 @@ pub fn resolve_document_link(from_doc: &str, href: &str) -> Option<String> {
 // The CommonMark parser excludes images, code and raw HTML and resolves reference
 // link definitions. Offsets cover the occurrence, including reference-link labels.
 pub fn document_links(text: &str, from_doc: &str) -> Vec<DocumentLink> {
-    pulldown_cmark::Parser::new(text).into_offset_iter().filter_map(|(event, bytes)| {
-        let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) = event else { return None };
-        Some(DocumentLink {
-            target: resolve_document_link(from_doc, &dest_url)?,
-            href: dest_url.into_string(),
-            range: LinkRange { start: link_position(text, bytes.start), end: link_position(text, bytes.end) },
+    pulldown_cmark::Parser::new(text)
+        .into_offset_iter()
+        .filter_map(|(event, bytes)| {
+            let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) = event
+            else {
+                return None;
+            };
+            Some(DocumentLink {
+                target: resolve_document_link(from_doc, &dest_url)?,
+                href: dest_url.into_string(),
+                range: LinkRange {
+                    start: link_position(text, bytes.start),
+                    end: link_position(text, bytes.end),
+                },
+            })
         })
-    }).collect()
+        .collect()
 }
 
 // The same document link graph feeds scheduling and missing-target diagnostics.
 pub fn doc_links(text: &str, from_doc: &str) -> Vec<String> {
-    let mut out: Vec<_> = document_links(text, from_doc).into_iter().map(|link| link.target).collect();
+    let mut out: Vec<_> = document_links(text, from_doc)
+        .into_iter()
+        .map(|link| link.target)
+        .collect();
     out.sort();
     out.dedup();
     out
@@ -468,19 +501,30 @@ pub fn doc_links(text: &str, from_doc: &str) -> Vec<String> {
 
 // Current files decide existence, never stale graph records. VFS keeps this check
 // identical for local folders, WASM workspaces and isolated hosted snapshots.
-pub fn missing_document_links(root: &std::path::Path, doc: &str, text: &str) -> Vec<LinkDiagnostic> {
+pub fn missing_document_links(
+    root: &std::path::Path,
+    doc: &str,
+    text: &str,
+) -> Vec<LinkDiagnostic> {
     use crate::vfs::VPathExt;
-    document_links(text, doc).into_iter().filter(|link| !root.join(&link.target).vis_file()).map(|link| {
-        LinkDiagnostic {
+    document_links(text, doc)
+        .into_iter()
+        .filter(|link| !root.join(&link.target).vis_file())
+        .map(|link| LinkDiagnostic {
             rule: "broken-link",
             severity: "warning",
-            message: format!("{}:{}:{} links to {} which does not exist. Create the document or fix the link.",
-                doc, link.range.start.line + 1, link.range.start.character + 1, link.target),
+            message: format!(
+                "{}:{}:{} links to {} which does not exist. Create the document or fix the link.",
+                doc,
+                link.range.start.line + 1,
+                link.range.start.character + 1,
+                link.target
+            ),
             target: link.target,
             href: link.href,
             range: link.range,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 // Resolve a relative link target against the directory of `from_doc` (both '/'-separated,
@@ -529,7 +573,10 @@ mod tests {
         let s = parse_sections(text);
         let mut refs: Vec<&String> = s.keys().collect();
         refs.sort();
-        assert_eq!(refs, vec!["/doc", "/doc/section", "/doc/tabbed", "/doc/two-spaces-in"]);
+        assert_eq!(
+            refs,
+            vec!["/doc", "/doc/section", "/doc/tabbed", "/doc/two-spaces-in"]
+        );
         assert!(s["/doc/tabbed"].raw.contains("# Indented code"));
         assert!(s["/doc/tabbed"].raw.contains("#hashtag is prose"));
     }
@@ -542,11 +589,20 @@ mod tests {
         refs.sort();
         assert_eq!(
             refs,
-            vec!["/doc", "/doc/notes", "/doc/notes-2", "/doc/notes-2/notes", "/doc/section"]
+            vec![
+                "/doc",
+                "/doc/notes",
+                "/doc/notes-2",
+                "/doc/notes-2/notes",
+                "/doc/section"
+            ]
         );
         assert!(s["/doc/notes"].raw.contains("First notes."));
         assert!(s["/doc/notes-2"].raw.contains("Second notes."));
-        assert_eq!(s["/doc/notes-2/notes"].parent.as_deref(), Some("/doc/notes-2"));
+        assert_eq!(
+            s["/doc/notes-2/notes"].parent.as_deref(),
+            Some("/doc/notes-2")
+        );
         assert!(s["/doc/section"].raw.contains("Untitled."));
     }
 
@@ -619,7 +675,11 @@ mod tests {
         // An unclosed fence runs to the end of its section.
         let s = parse_sections("# Top\n```\nopen\n## Next\nbody\n");
         assert_eq!(s["/top/code-block-1"].lines, [1, 5]);
-        assert!(!s.contains_key("/top/next"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(
+            !s.contains_key("/top/next"),
+            "{:?}",
+            s.keys().collect::<Vec<_>>()
+        );
     }
 
     // A heading whose slug is a block reference keeps it; the block takes the next
@@ -665,7 +725,8 @@ mod tests {
         assert!(is_document_target("docs/a.txt"));
         assert!(!is_document_target("ent:a.md"));
         assert!(!supported_format(Path::new("docs/README")));
-        let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();
         let good = dir.join("good.md");
         crate::vfs::write(&good, "# T\nbody\n").unwrap();
@@ -690,30 +751,68 @@ mod tests {
     fn document_links_follow_markdown_syntax_and_preserve_utf16_occurrence_ranges() {
         let text = "# Slides\n😀 See [Intro](slide-intro.md?mode=read#top \"Title\") and [More][more].\n\n[more]: <../More%20Info.MARKDOWN> \"More\"\n\n`[code](inline.md)`\n\n```md\n[fenced](code.md)\n```\n\n![asset](image.md) [site](https://host/a.md) [mail](mailto:a.md) [anchor](#here) [pdf](notes.pdf)\n";
         let links = document_links(text, "slides/main.md");
-        let binary_formats = cfg!(all(feature = "native-documents", not(target_arch = "wasm32")));
-        assert_eq!(links.len(), if binary_formats { 3 } else { 2 }, "{:?}", links);
+        let binary_formats = cfg!(all(
+            feature = "native-documents",
+            not(target_arch = "wasm32")
+        ));
+        assert_eq!(
+            links.len(),
+            if binary_formats { 3 } else { 2 },
+            "{:?}",
+            links
+        );
         if binary_formats {
             assert_eq!(links[2].target, "slides/notes.pdf");
         }
         assert_eq!(links[0].target, "slides/slide-intro.md");
         assert_eq!(links[0].href, "slide-intro.md?mode=read#top");
-        assert_eq!(links[0].range.start, LinkPosition { line: 1, character: 7 });
+        assert_eq!(
+            links[0].range.start,
+            LinkPosition {
+                line: 1,
+                character: 7
+            }
+        );
         assert_eq!(links[1].target, "More Info.MARKDOWN");
         let start = text.find("[More][more]").unwrap();
         assert_eq!(links[1].range.start, link_position(text, start));
-        assert_eq!(links[1].range.end, link_position(text, start + "[More][more]".len()));
+        assert_eq!(
+            links[1].range.end,
+            link_position(text, start + "[More][more]".len())
+        );
     }
 
     #[test]
     fn document_link_resolution_rejects_external_and_escaping_targets() {
-        for href in ["#intro", "?query=notes.md", "//host/a.md", "/root.md", "file:a.md",
-            "https://host/a.md", "../outside.md", "%2e%2e/outside.md", "C:/file.md",
-            "dir\\file.md", "bad%00.md", "bad%0A.md", "bad%FF.md", "bad%xy.md", "%2Foutside.md",
-            "https%3Aother.md", "image.svg"] {
+        for href in [
+            "#intro",
+            "?query=notes.md",
+            "//host/a.md",
+            "/root.md",
+            "file:a.md",
+            "https://host/a.md",
+            "../outside.md",
+            "%2e%2e/outside.md",
+            "C:/file.md",
+            "dir\\file.md",
+            "bad%00.md",
+            "bad%0A.md",
+            "bad%FF.md",
+            "bad%xy.md",
+            "%2Foutside.md",
+            "https%3Aother.md",
+            "image.svg",
+        ] {
             assert!(resolve_document_link("main.md", href).is_none(), "{}", href);
         }
-        assert_eq!(resolve_document_link("slides/main.md", "../notes%20one.md?x=1#top").as_deref(), Some("notes one.md"));
-        assert_eq!(resolve_document_link("slides/main.md", "./sub/../intro.md").as_deref(), Some("slides/intro.md"));
+        assert_eq!(
+            resolve_document_link("slides/main.md", "../notes%20one.md?x=1#top").as_deref(),
+            Some("notes one.md")
+        );
+        assert_eq!(
+            resolve_document_link("slides/main.md", "./sub/../intro.md").as_deref(),
+            Some("slides/intro.md")
+        );
     }
 
     #[test]

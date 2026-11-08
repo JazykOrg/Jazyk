@@ -417,13 +417,20 @@ pub(crate) fn allowed_components(path: &str) -> bool {
 
 pub fn eligible(path: &str) -> bool {
     allowed_components(path)
-        && !path.split('/').any(|c| c == "target" || c == "node_modules" || c.starts_with("jazyk-out"))
+        && !path
+            .split('/')
+            .any(|c| c == "target" || c == "node_modules" || c.starts_with("jazyk-out"))
 }
 
 // Files agents read as instructions. Only a pattern naming one without a wildcard
 // matches it. Mirrors docs/compiler/document-sets.md#project-configuration.
-pub const AGENT_INSTRUCTION_FILES: &[&str] =
-    &["AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "CLAUDE.local.md", "GEMINI.md"];
+pub const AGENT_INSTRUCTION_FILES: &[&str] = &[
+    "AGENTS.md",
+    "AGENTS.override.md",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "GEMINI.md",
+];
 
 pub fn agent_instructions(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -758,7 +765,8 @@ fn resolve_role_edits(
                 let opposite = intent.role.opposite();
                 let opposing = opposite.patterns_mut(set);
                 if opposing.is_empty()
-                    || (!explicit && !known_role_overlap(opposing, &[pattern.clone()], &files))
+                    || (!explicit
+                        && !known_role_overlap(opposing, std::slice::from_ref(&pattern), &files))
                 {
                     continue;
                 }
@@ -884,13 +892,24 @@ impl ProjectLock {
                     .map_err(|e| (500, e.to_string()))?;
                 fs2::FileExt::try_lock_exclusive(&file)
                     .map_err(|_| (409, "another project operation is in progress".into()))?;
-                return Ok(Self { root: root.into(), name: name.into(), _file: Some(file) });
+                return Ok(Self {
+                    root: root.into(),
+                    name: name.into(),
+                    _file: Some(file),
+                });
             }
-            Ok(Self { root: root.into(), name: name.into(), _file: None })
+            Ok(Self {
+                root: root.into(),
+                name: name.into(),
+                _file: None,
+            })
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Ok(Self { root: root.into(), name: name.into() })
+            Ok(Self {
+                root: root.into(),
+                name: name.into(),
+            })
         }
     }
 }
@@ -922,27 +941,57 @@ pub fn edit(root: &Path, body: &Value, preview: bool) -> Result<Value> {
     edit_locked(root, body, preview, false, None)
 }
 
-pub(crate) fn edit_current_set(root: &Path, body: &Value, preview: bool, id: &str) -> Result<Value> {
+pub(crate) fn edit_current_set(
+    root: &Path,
+    body: &Value,
+    preview: bool,
+    id: &str,
+) -> Result<Value> {
     edit_locked(root, body, preview, false, Some(id))
 }
 
-pub(crate) fn edit_current_set_with_lock(root: &Path, body: &Value, preview: bool, id: &str, lock: &ProjectLock) -> Result<Value> {
+pub(crate) fn edit_current_set_with_lock(
+    root: &Path,
+    body: &Value,
+    preview: bool,
+    id: &str,
+    lock: &ProjectLock,
+) -> Result<Value> {
     if lock.root != root || lock.name != "project.lock" {
-        return Err((409, "the matcher edit does not hold this project's lock".into()));
+        return Err((
+            409,
+            "the matcher edit does not hold this project's lock".into(),
+        ));
     }
     edit_locked(root, body, preview, true, Some(id))
 }
 
 /// An internal build already holds project.lock. Only its current lease owner
 /// can reuse it; optimistic replacement still takes config.lock.
-pub(crate) fn edit_in_build(root: &Path, out: &Path, token: &str, body: &Value, preview: bool, id: &str) -> Result<Value> {
+pub(crate) fn edit_in_build(
+    root: &Path,
+    out: &Path,
+    token: &str,
+    body: &Value,
+    preview: bool,
+    id: &str,
+) -> Result<Value> {
     if !crate::control::build_lease(out).is_some_and(|lease| lease.worker == token) {
-        return Err((409, "the document-set edit does not own the running build lease".into()));
+        return Err((
+            409,
+            "the document-set edit does not own the running build lease".into(),
+        ));
     }
     edit_locked(root, body, preview, true, Some(id))
 }
 
-fn edit_locked(root: &Path, body: &Value, preview: bool, owns_project_lock: bool, only_set: Option<&str>) -> Result<Value> {
+fn edit_locked(
+    root: &Path,
+    body: &Value,
+    preview: bool,
+    owns_project_lock: bool,
+    only_set: Option<&str>,
+) -> Result<Value> {
     let before = Workspace::load(root)?;
     if body["baseHash"].as_str() != Some(before.hash.as_str()) {
         return Err((409, "configuration changed; reload before saving".into()));
@@ -1146,7 +1195,10 @@ fn edit_locked(root: &Path, body: &Value, preview: bool, owns_project_lock: bool
         .map(|set| &set.id)
         .collect::<Vec<_>>());
     if let Some(id) = only_set {
-        if value["affectedSetIds"].as_array().is_some_and(|ids| ids.iter().any(|affected| affected.as_str() != Some(id))) {
+        if value["affectedSetIds"]
+            .as_array()
+            .is_some_and(|ids| ids.iter().any(|affected| affected.as_str() != Some(id)))
+        {
             return Err((409, "this matcher repair would change another document set; resolve that assignment through the project settings".into()));
         }
     }
@@ -1168,7 +1220,11 @@ fn edit_locked(root: &Path, body: &Value, preview: bool, owns_project_lock: bool
             "sourceRemoved": files.iter().filter(|f| !included(&set.source, f) && old.is_some_and(|o| included(&o.source, f))).collect::<Vec<_>>()})
     }).collect::<Vec<_>>());
     if !preview {
-        let _build = if owns_project_lock { None } else { Some(ProjectLock::acquire(root, "project.lock")?) };
+        let _build = if owns_project_lock {
+            None
+        } else {
+            Some(ProjectLock::acquire(root, "project.lock")?)
+        };
         if removal.is_some() {
             let set = before.select(&id)?;
             let folder = root.join(".jazyk/removed-sets");
@@ -1206,7 +1262,11 @@ pub(crate) fn contained_relative(root: &Path, relative: &str) -> bool {
 
 // Task products may explicitly include build caches. Canonical ancestry and
 // nested project boundaries stay shared; each caller keeps its path policy.
-pub(crate) fn contained_relative_with_policy(root: &Path, relative: &str, allowed: impl Fn(&str) -> bool) -> bool {
+pub(crate) fn contained_relative_with_policy(
+    root: &Path,
+    relative: &str,
+    allowed: impl Fn(&str) -> bool,
+) -> bool {
     if !allowed(relative) {
         return false;
     }
@@ -1220,18 +1280,26 @@ pub(crate) fn contained_relative_with_policy(root: &Path, relative: &str, allowe
             return false;
         }
         if ancestor.vexists() {
-            let Ok(resolved) = ancestor.vcanonicalize() else { return false };
-            if !resolved.starts_with(&base) { return false; }
+            let Ok(resolved) = ancestor.vcanonicalize() else {
+                return false;
+            };
+            if !resolved.starts_with(&base) {
+                return false;
+            }
             if !checked_destination {
                 let relative = resolved.strip_prefix(&base).expect("contained destination");
                 if !relative.as_os_str().is_empty()
-                    && !allowed(&relative.to_string_lossy().replace('\\', "/")) {
+                    && !allowed(&relative.to_string_lossy().replace('\\', "/"))
+                {
                     return false;
                 }
                 // The deepest existing destination also owns files reached through
                 // a public alias. Its real project boundary survives the alias.
-                if resolved.ancestors().take_while(|p| *p != base.as_path()).any(|ancestor|
-                    ancestor.vis_dir() && ancestor.join(CONFIG).vexists()) {
+                if resolved
+                    .ancestors()
+                    .take_while(|p| *p != base.as_path())
+                    .any(|ancestor| ancestor.vis_dir() && ancestor.join(CONFIG).vexists())
+                {
                     return false;
                 }
                 checked_destination = true;
@@ -1252,14 +1320,29 @@ mod tests {
     #[test]
     fn wildcards_skip_agent_instruction_files() {
         let all = vec!["**/*.md".to_string()];
-        for path in ["AGENTS.md", "docs/CLAUDE.md", "GEMINI.md", "a/AGENTS.override.md", "CLAUDE.local.md"] {
+        for path in [
+            "AGENTS.md",
+            "docs/CLAUDE.md",
+            "GEMINI.md",
+            "a/AGENTS.override.md",
+            "CLAUDE.local.md",
+        ] {
             assert!(!included(&all, path), "{path}");
         }
         assert!(included(&all, "docs/agents.md"));
         assert!(included(&all, "docs/main.md"));
-        assert!(included(&["docs/AGENTS.md".to_string()], "docs/AGENTS.md"), "a literal pattern names it");
-        assert!(!included(&["docs/**".to_string(), "!AGENTS.md".to_string()], "docs/AGENTS.md"));
-        assert!(!included(&["src/**".to_string()], "src/AGENTS.md"), "source wildcards skip it too");
+        assert!(
+            included(&["docs/AGENTS.md".to_string()], "docs/AGENTS.md"),
+            "a literal pattern names it"
+        );
+        assert!(!included(
+            &["docs/**".to_string(), "!AGENTS.md".to_string()],
+            "docs/AGENTS.md"
+        ));
+        assert!(
+            !included(&["src/**".to_string()], "src/AGENTS.md"),
+            "source wildcards skip it too"
+        );
     }
 
     #[test]
@@ -1303,12 +1386,21 @@ mod tests {
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
         (".jazyk/ds_main/status.yaml", true),
-        (".jazyk/ds_main/changes/section-dirty/docs+a.md%23+a.yaml", true),
-        (".jazyk/ds_main/parked/g~reconcile-section~docs+a.md%23+a.yaml", true),
+        (
+            ".jazyk/ds_main/changes/section-dirty/docs+a.md%23+a.yaml",
+            true,
+        ),
+        (
+            ".jazyk/ds_main/parked/g~reconcile-section~docs+a.md%23+a.yaml",
+            true,
+        ),
         (".jazyk/ds_main/failed/g~bind~req~a-1x2c.yaml", true),
         (".jazyk/ds_main/alignment/docs+a.md.yaml", true),
         (".jazyk/ds_main/lookalikes/ent~a%7Eent~b.yaml", true),
-        (".jazyk/ds_main/graph/default-views/view~class+shop.yaml", false),
+        (
+            ".jazyk/ds_main/graph/default-views/view~class+shop.yaml",
+            false,
+        ),
         (".jazyk/ds_main/markers.yaml", false),
         (".jazyk/ds_main/gen/entities/order.yaml", true),
         (".jazyk/ds_main/gen/requirements/req~main-1.yaml", true),
@@ -1545,12 +1637,20 @@ mod tests {
         crate::vfs::create_dir_all(f.0.join(".jazyk")).unwrap();
         crate::vfs::write(f.0.join(CONFIG), "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['**', '!deliverable/**']\nsource = ['deliverable/**']\n").unwrap();
         for path in [
-            ".github/workflows/check.yml", ".github/README.md", ".gitignore",
-            "deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore",
-            "deliverable/.github/.gitignore", "deliverable/.github/README.md",
-            "deliverable/.env", "deliverable/.ssh/config", "deliverable/.aws/config",
-            "deliverable/.git/config", "deliverable/.jazyk/state.yaml",
-            "deliverable/.cache/output", "deliverable/.github/.env",
+            ".github/workflows/check.yml",
+            ".github/README.md",
+            ".gitignore",
+            "deliverable/.github/workflows/deploy.yml",
+            "deliverable/.gitignore",
+            "deliverable/.github/.gitignore",
+            "deliverable/.github/README.md",
+            "deliverable/.env",
+            "deliverable/.ssh/config",
+            "deliverable/.aws/config",
+            "deliverable/.git/config",
+            "deliverable/.jazyk/state.yaml",
+            "deliverable/.cache/output",
+            "deliverable/.github/.env",
         ] {
             let path = f.0.join(path);
             crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1560,7 +1660,11 @@ mod tests {
         let project = workspace.resolve(Some("ds_a")).unwrap();
         let gs = crate::gen::GenSettings::resolve(&project);
         let files = workspace.files();
-        for path in ["deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore", "deliverable/.github/.gitignore"] {
+        for path in [
+            "deliverable/.github/workflows/deploy.yml",
+            "deliverable/.gitignore",
+            "deliverable/.github/.gitignore",
+        ] {
             assert!(eligible(path), "{path}");
             assert!(safe_relative(&f.0, path), "{path}");
             assert!(gs.allows_source(path), "{path}");
@@ -1569,20 +1673,47 @@ mod tests {
         }
         assert!(files.contains(&".github/workflows/check.yml".into()));
         assert!(files.contains(&".gitignore".into()));
-        for path in [".github/README.md", ".github/workflows/check.yml", ".gitignore"] {
-            assert!(!project.doc_files().contains(&f.0.join(path)), "{path}");
-            assert!(!workspace.files_project().doc_files().contains(&f.0.join(path)), "{path}");
-        }
-        assert!(!gs.allows_source(".github/workflows/check.yml"), "scaffolding outside Source stays excluded");
-        assert!(!project.doc_files().contains(&f.0.join("deliverable/.github/README.md")));
-        assert!(crate::webapi::docs::safe_doc_path(&project, "deliverable/.github/README.md").is_none());
         for path in [
-            "deliverable/.env", "deliverable/.ssh/config", "deliverable/.aws/config",
-            "deliverable/.git/config", "deliverable/.jazyk/state.yaml", "deliverable/.cache/output",
-            "deliverable/.github/.env", "deliverable/.github/.ssh/config",
-            "deliverable/.github/../escape", "deliverable/.gitignore/child", "../.github/a.yml",
-            "/deliverable/.github/a.yml", "deliverable//.github/a.yml", "deliverable/.github/a:b.yml",
-            "deliverable/target/.github/a.yml", "deliverable/node_modules/.gitignore",
+            ".github/README.md",
+            ".github/workflows/check.yml",
+            ".gitignore",
+        ] {
+            assert!(!project.doc_files().contains(&f.0.join(path)), "{path}");
+            assert!(
+                !workspace
+                    .files_project()
+                    .doc_files()
+                    .contains(&f.0.join(path)),
+                "{path}"
+            );
+        }
+        assert!(
+            !gs.allows_source(".github/workflows/check.yml"),
+            "scaffolding outside Source stays excluded"
+        );
+        assert!(!project
+            .doc_files()
+            .contains(&f.0.join("deliverable/.github/README.md")));
+        assert!(
+            crate::webapi::docs::safe_doc_path(&project, "deliverable/.github/README.md").is_none()
+        );
+        for path in [
+            "deliverable/.env",
+            "deliverable/.ssh/config",
+            "deliverable/.aws/config",
+            "deliverable/.git/config",
+            "deliverable/.jazyk/state.yaml",
+            "deliverable/.cache/output",
+            "deliverable/.github/.env",
+            "deliverable/.github/.ssh/config",
+            "deliverable/.github/../escape",
+            "deliverable/.gitignore/child",
+            "../.github/a.yml",
+            "/deliverable/.github/a.yml",
+            "deliverable//.github/a.yml",
+            "deliverable/.github/a:b.yml",
+            "deliverable/target/.github/a.yml",
+            "deliverable/node_modules/.gitignore",
         ] {
             assert!(!eligible(path), "{path}");
             assert!(!gs.allows_source(path), "{path}");
@@ -1595,8 +1726,15 @@ mod tests {
         assert!(!gs.allows_source("deliverable/.github/README.md"));
         // A nested project owns even a newly created scaffolding path below it.
         crate::vfs::create_dir_all(f.0.join("deliverable/nested/.jazyk")).unwrap();
-        crate::vfs::write(f.0.join("deliverable/nested/.jazyk/jazyk.toml"), "version = 1\n").unwrap();
-        assert!(!safe_relative(&f.0, "deliverable/nested/.github/workflows/new.yml"));
+        crate::vfs::write(
+            f.0.join("deliverable/nested/.jazyk/jazyk.toml"),
+            "version = 1\n",
+        )
+        .unwrap();
+        assert!(!safe_relative(
+            &f.0,
+            "deliverable/nested/.github/workflows/new.yml"
+        ));
         assert!(!gs.allows_source("deliverable/nested/.github/workflows/new.yml"));
         #[cfg(unix)]
         {
@@ -1604,7 +1742,11 @@ mod tests {
             std::os::unix::fs::symlink(&outside.0, f.0.join("deliverable/.github/escape")).unwrap();
             assert!(!safe_relative(&f.0, "deliverable/.github/escape/new.yml"));
             assert!(!gs.allows_source("deliverable/.github/escape/new.yml"));
-            assert!(!Workspace::load(&f.0).unwrap().files().iter().any(|p| p.contains("/escape/")));
+            assert!(!Workspace::load(&f.0)
+                .unwrap()
+                .files()
+                .iter()
+                .any(|p| p.contains("/escape/")));
         }
     }
 
@@ -1618,14 +1760,28 @@ mod tests {
         crate::vfs::create_dir_all(nested.join(".jazyk")).unwrap();
         crate::vfs::write(nested.join(CONFIG), "version = 1\nsets = []\n").unwrap();
         crate::vfs::write(nested.join("logo.svg"), "NESTED_PROJECT_INPUT").unwrap();
-        std::os::unix::fs::symlink(nested.join("logo.svg"), f.0.join("deliverable/public.svg")).unwrap();
+        std::os::unix::fs::symlink(nested.join("logo.svg"), f.0.join("deliverable/public.svg"))
+            .unwrap();
         std::os::unix::fs::symlink(&nested, f.0.join("deliverable/alias")).unwrap();
         crate::vfs::write(f.0.join("deliverable/.env"), "PRIVATE_INPUT").unwrap();
-        std::os::unix::fs::symlink(f.0.join("deliverable/.env"), f.0.join("deliverable/private.svg")).unwrap();
-        let project = Workspace::load(&f.0).unwrap().resolve(Some("ds_a")).unwrap();
+        std::os::unix::fs::symlink(
+            f.0.join("deliverable/.env"),
+            f.0.join("deliverable/private.svg"),
+        )
+        .unwrap();
+        let project = Workspace::load(&f.0)
+            .unwrap()
+            .resolve(Some("ds_a"))
+            .unwrap();
         let gs = crate::gen::GenSettings::resolve(&project);
-        for path in ["deliverable/nested/logo.svg", "deliverable/nested/new.svg", "deliverable/public.svg",
-            "deliverable/alias/logo.svg", "deliverable/alias/new.svg", "deliverable/private.svg"] {
+        for path in [
+            "deliverable/nested/logo.svg",
+            "deliverable/nested/new.svg",
+            "deliverable/public.svg",
+            "deliverable/alias/logo.svg",
+            "deliverable/alias/new.svg",
+            "deliverable/private.svg",
+        ] {
             assert!(!contained_relative(&f.0, path), "{path}");
             assert!(!safe_relative(&f.0, path), "{path}");
             assert!(!gs.allows_source(path), "{path}");

@@ -116,7 +116,11 @@ mod tests {
     use super::*;
 
     fn temp_out(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-webapi-out-{}-{}", name, crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-webapi-out-{}-{}",
+            name,
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join(".jazyk/docsgen/entities")).unwrap();
         crate::vfs::create_dir_all(dir.join(".jazyk/diagrams/class")).unwrap();
@@ -164,8 +168,14 @@ mod tests {
     fn content_types_follow_the_extension() {
         assert_eq!(content_type("diagrams/class/a.svg"), "image/svg+xml");
         assert_eq!(content_type("diagrams/class/a.PNG"), "image/png");
-        assert_eq!(content_type("docsgen/entities/a.md"), "text/markdown; charset=utf-8");
-        assert_eq!(content_type("diagrams/class/a.puml"), "text/plain; charset=utf-8");
+        assert_eq!(
+            content_type("docsgen/entities/a.md"),
+            "text/markdown; charset=utf-8"
+        );
+        assert_eq!(
+            content_type("diagrams/class/a.puml"),
+            "text/plain; charset=utf-8"
+        );
         assert_eq!(content_type("status.yaml"), "text/plain; charset=utf-8");
         assert_eq!(content_type("graph/blob"), "application/octet-stream");
         assert_eq!(
@@ -191,9 +201,17 @@ mod tests {
         let root = out.vcanonicalize().unwrap();
         let mut all = Vec::new();
         walk(&root, &root, &mut all);
-        assert!(all.iter().all(|(p, _)| !p.contains("/.") && !p.starts_with('.')));
-        assert_eq!(out_file(&out, "docsgen/entities/funds.md").unwrap(), b"# Funds\n");
-        assert_eq!(out_file(&out, "docsgen/entities/missing.md").unwrap_err().0, 404);
+        assert!(all
+            .iter()
+            .all(|(p, _)| !p.contains("/.") && !p.starts_with('.')));
+        assert_eq!(
+            out_file(&out, "docsgen/entities/funds.md").unwrap(),
+            b"# Funds\n"
+        );
+        assert_eq!(
+            out_file(&out, "docsgen/entities/missing.md").unwrap_err().0,
+            404
+        );
         assert_eq!(out_file(&out, "docsgen").unwrap_err().0, 404);
         assert_eq!(out_file(&out, "../secret.md").unwrap_err().0, 400);
         crate::vfs::remove_dir_all(&dir).ok();

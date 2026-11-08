@@ -9,7 +9,16 @@ use crate::store::Store;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-const COLUMNS: [&str; 8] = ["requirement", "entity", "status", "reason", "repair", "test", "lastRun", "evidence"];
+const COLUMNS: [&str; 8] = [
+    "requirement",
+    "entity",
+    "status",
+    "reason",
+    "repair",
+    "test",
+    "lastRun",
+    "evidence",
+];
 
 fn cell(v: &Value) -> String {
     match v {
@@ -29,7 +38,10 @@ fn csv_escape(s: &str) -> String {
 
 // The matrix as a file: (body, content type, file name), or None for an unknown
 // format.
-pub fn matrix_export(rows: &BTreeMap<String, Value>, format: &str) -> Option<(String, &'static str, &'static str)> {
+pub fn matrix_export(
+    rows: &BTreeMap<String, Value>,
+    format: &str,
+) -> Option<(String, &'static str, &'static str)> {
     let field = |row: &Value, col: &str| -> String {
         match col {
             "test" => cell(&row["test"]["label"]),
@@ -49,10 +61,18 @@ pub fn matrix_export(rows: &BTreeMap<String, Value>, format: &str) -> Option<(St
             Some((out, "text/csv; charset=utf-8", "trace-matrix.csv"))
         }
         "md" => {
-            let mut out = format!("| {} |\n|{}|\n", COLUMNS.join(" | "), COLUMNS.iter().map(|_| "---").collect::<Vec<_>>().join("|"));
+            let mut out = format!(
+                "| {} |\n|{}|\n",
+                COLUMNS.join(" | "),
+                COLUMNS.iter().map(|_| "---").collect::<Vec<_>>().join("|")
+            );
             for (rid, row) in rows {
                 let mut cells = vec![rid.clone()];
-                cells.extend(COLUMNS[1..].iter().map(|c| field(row, c).replace('|', "\\|").replace('\n', " ")));
+                cells.extend(
+                    COLUMNS[1..]
+                        .iter()
+                        .map(|c| field(row, c).replace('|', "\\|").replace('\n', " ")),
+                );
                 out.push_str(&format!("| {} |\n", cells.join(" | ")));
             }
             Some((out, "text/markdown; charset=utf-8", "trace-matrix.md"))
@@ -63,7 +83,10 @@ pub fn matrix_export(rows: &BTreeMap<String, Value>, format: &str) -> Option<(St
 
 // The matrix rows the JSON endpoint serves, shared with the export: one row per
 // graph requirement with its derived status, and the counts by status.
-pub fn matrix_rows(store: &Store, gs: &GenSettings) -> (BTreeMap<String, Value>, BTreeMap<String, usize>) {
+pub fn matrix_rows(
+    store: &Store,
+    gs: &GenSettings,
+) -> (BTreeMap<String, Value>, BTreeMap<String, usize>) {
     let statuses = crate::verify::status_map(store, gs);
     let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
     let mut rows: BTreeMap<String, Value> = BTreeMap::new();
@@ -92,7 +115,12 @@ pub fn matrix_value(store: &Store, gs: &GenSettings) -> Value {
 
 // `GET /api/verify/pending`: the rows needing a verifier, filtered, and the counts
 // by reason.
-pub fn verify_pending_value(store: &Store, gs: &GenSettings, filter: Option<&str>, entity: Option<&str>) -> Value {
+pub fn verify_pending_value(
+    store: &Store,
+    gs: &GenSettings,
+    filter: Option<&str>,
+    entity: Option<&str>,
+) -> Value {
     let pending = crate::verify::pending(store, gs, filter, entity);
     json!({ "pending": pending, "counts": crate::verify::pending_counts(store, gs) })
 }
@@ -164,7 +192,11 @@ mod tests {
             "// product\n// req:shop-1 hash:abcd\npub fn hold() {}\n",
         )
         .unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .unwrap();
         crate::vfs::write(gs.deliverable.join("notes/loose.txt"), "no one owns this\n").unwrap();
         let manifest = json!({
             "files": ["src/cart.rs", "tests/cart.rs"],
@@ -185,14 +217,18 @@ mod tests {
     // Mirrors docs/frontends/wasm.md#the-product.
     #[test]
     fn deliverable_and_matrix_read_the_ledger_and_the_files() {
-        let out = std::env::temp_dir().join(format!("jazyk-webapi-product-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-webapi-product-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
 
         let listing = deliverable_value(&out, &gs);
         let files = listing["files"].as_array().unwrap();
         let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
-        assert_eq!(paths, vec!["notes/loose.txt", "src/cart.rs", "tests/cart.rs"]);
+        assert_eq!(
+            paths,
+            vec!["notes/loose.txt", "src/cart.rs", "tests/cart.rs"]
+        );
         let cart = &files[1];
         assert_eq!(cart["owners"]["entities"], json!(["cart"]));
         assert_eq!(cart["owners"]["requirements"], json!(["req:shop-1"]));
@@ -203,7 +239,12 @@ mod tests {
         // locates it against the current text.
         let f = deliverable_file(&out, &gs, "src/cart.rs").unwrap();
         assert!(!f["text"].as_str().unwrap().contains("hash:abcd"));
-        let site = f["sites"].as_array().unwrap().iter().find(|x| x["kind"] == "site").unwrap();
+        let site = f["sites"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["kind"] == "site")
+            .unwrap();
         assert_eq!(site["requirement"], "req:shop-1");
         assert_eq!(site["located"], "exact");
         assert_eq!(site["line"], 2);
@@ -211,8 +252,14 @@ mod tests {
         let t = deliverable_file(&out, &gs, "tests/cart.rs").unwrap();
         assert_eq!(t["sites"][0]["kind"], "test");
         assert_eq!(t["sites"][0]["located"], "exact");
-        assert_eq!(deliverable_file(&out, &gs, "src/missing.rs").unwrap_err().0, 404);
-        assert_eq!(deliverable_file(&out, &gs, "../outside").unwrap_err().0, 400);
+        assert_eq!(
+            deliverable_file(&out, &gs, "src/missing.rs").unwrap_err().0,
+            404
+        );
+        assert_eq!(
+            deliverable_file(&out, &gs, "../outside").unwrap_err().0,
+            400
+        );
 
         let m = matrix_value(&s, &gs);
         let row = &m["rows"]["req:shop-1"];
@@ -220,19 +267,33 @@ mod tests {
         assert_eq!(row["test"]["kind"], "programmatic");
         assert_eq!(row["test"]["label"], "unit");
         let status = row["status"].as_str().unwrap().to_string();
-        assert!(!status.starts_with("stale") && status != "missing", "{}", status);
+        assert!(
+            !status.starts_with("stale") && status != "missing",
+            "{}",
+            status
+        );
         assert_eq!(m["counts"][status.as_str()], 1);
 
         let (rows, _) = matrix_rows(&s, &gs);
         let (csv, ctype, name) = matrix_export(&rows, "csv").unwrap();
         assert!(csv.starts_with("requirement,entity,status"));
         assert!(csv.contains("req:shop-1,ent:cart,"));
-        assert_eq!((ctype, name), ("text/csv; charset=utf-8", "trace-matrix.csv"));
-        assert!(matrix_export(&rows, "md").unwrap().0.contains("| req:shop-1 | ent:cart |"));
+        assert_eq!(
+            (ctype, name),
+            ("text/csv; charset=utf-8", "trace-matrix.csv")
+        );
+        assert!(matrix_export(&rows, "md")
+            .unwrap()
+            .0
+            .contains("| req:shop-1 | ent:cart |"));
         assert!(matrix_export(&rows, "xls").is_none());
 
         // Status is derived: the product file changes, the row goes stale.
-        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product\npub fn hold() { todo!() }\n").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("src/cart.rs"),
+            "// product\npub fn hold() { todo!() }\n",
+        )
+        .unwrap();
         let m = matrix_value(&s, &gs);
         assert_eq!(m["rows"]["req:shop-1"]["status"], "stale-code");
         let f = deliverable_file(&out, &gs, "src/cart.rs").unwrap();

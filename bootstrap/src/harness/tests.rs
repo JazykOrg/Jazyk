@@ -13,7 +13,9 @@ use serde_json::{json, Value};
 use super::*;
 
 fn llm() -> crate::llm::Llm {
-    crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
+    crate::llm::Llm {
+        api: "chat_completions".into(),
+        reasoning_summary: None,
         base_url: "http://127.0.0.1:3625/v1".into(),
         model: "fixture".into(),
         api_key: String::new(),
@@ -265,14 +267,35 @@ fn a_tool_receipt_replayed_with_other_arguments_is_refused() {
         calls += 1;
         Ok("result".into())
     };
-    assert!(matches!(run(&mut host, &mut store, &mut history, &mut dispatch, &mut |_| {}), Stop::Error(_)));
+    assert!(matches!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut dispatch,
+            &mut |_| {}
+        ),
+        Stop::Error(_)
+    ));
     let saved = store.saved.as_mut().unwrap();
     assert_eq!(saved.tool_receipts.len(), 1);
     let receipt = saved.tool_receipts.values_mut().next().unwrap();
-    assert!(receipt.args.is_some(), "a receipt records its argument digest");
+    assert!(
+        receipt.args.is_some(),
+        "a receipt records its argument digest"
+    );
     receipt.args = Some(super::arguments_digest(&json!({"other":"arguments"})));
-    let stop = run(&mut host, &mut store, &mut history, &mut dispatch, &mut |_| {});
-    assert!(matches!(stop, Stop::Error(ref error) if error.starts_with("execution-uncertain:")), "{stop:?}");
+    let stop = run(
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut dispatch,
+        &mut |_| {},
+    );
+    assert!(
+        matches!(stop, Stop::Error(ref error) if error.starts_with("execution-uncertain:")),
+        "{stop:?}"
+    );
     assert_eq!(calls, 1, "a refused replay never executes the call again");
 }
 
@@ -377,7 +400,9 @@ fn explicit_upstream_compaction_replaces_and_checkpoints_history() {
         .as_str()
         .unwrap()
         .contains("It is not a user request in that history"));
-    assert!(!requests[0].body["messages"][0]["content"].as_str().unwrap()
+    assert!(!requests[0].body["messages"][0]["content"]
+        .as_str()
+        .unwrap()
         .contains("spend your entire length budget"));
     assert!(requests[1].body["messages"]
         .as_array()
@@ -394,7 +419,10 @@ fn explicit_upstream_compaction_replaces_and_checkpoints_history() {
 
 #[test]
 fn compaction_summarizes_a_long_answer_after_tools_without_replaying_completed_calls() {
-    let prose = format!("LONG_ASSISTANT_HISTORY {}", "a".repeat(crate::llm::model_input_tokens() * 4));
+    let prose = format!(
+        "LONG_ASSISTANT_HISTORY {}",
+        "a".repeat(crate::llm::model_input_tokens() * 4)
+    );
     let mut history = vec![
         json!({"role":"user","content":"Inspect the project"}),
         json!({"role":"assistant","tool_calls":[{"id":"read","type":"function","function":{"name":"fixture","arguments":"{}"}}]}),
@@ -402,17 +430,39 @@ fn compaction_summarizes_a_long_answer_after_tools_without_replaying_completed_c
         json!({"role":"assistant","content":prose}),
         json!({"role":"user","content":"Continue with the existing identifiers"}),
     ];
-    let mut host = Host::new(vec![response("Compact progress: the read completed."), response("Continuing the task")]);
-    assert_eq!(run(&mut host, &mut Store::default(), &mut history,
-        &mut |_, _| panic!("the completed read must not replay"), &mut |_| {}), Stop::EndTurn);
+    let mut host = Host::new(vec![
+        response("Compact progress: the read completed."),
+        response("Continuing the task"),
+    ]);
+    assert_eq!(
+        run(
+            &mut host,
+            &mut Store::default(),
+            &mut history,
+            &mut |_, _| panic!("the completed read must not replay"),
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
     let requests = host.requests.borrow();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].purpose, ModelPurpose::Compaction);
-    assert!(requests[0].body.to_string().contains("LONG_ASSISTANT_HISTORY"));
+    assert!(requests[0]
+        .body
+        .to_string()
+        .contains("LONG_ASSISTANT_HISTORY"));
     let resumed = requests[1].body["messages"].as_array().unwrap();
-    assert!(!requests[1].body.to_string().contains("LONG_ASSISTANT_HISTORY"));
-    assert!(resumed.iter().any(|message| message["content"] == "Exact completed read receipt"));
-    assert_eq!(resumed.last().unwrap()["content"], "Continue with the existing identifiers");
+    assert!(!requests[1]
+        .body
+        .to_string()
+        .contains("LONG_ASSISTANT_HISTORY"));
+    assert!(resumed
+        .iter()
+        .any(|message| message["content"] == "Exact completed read receipt"));
+    assert_eq!(
+        resumed.last().unwrap()["content"],
+        "Continue with the existing identifiers"
+    );
 }
 
 #[test]
@@ -767,16 +817,29 @@ fn malformed_argument_feedback_names_the_json_error_without_executing_the_call()
     repaired["choices"][0]["message"]["tool_calls"][0]["id"] = json!("corrected");
     let mut host = Host::new(vec![malformed, repaired, response("Finished")]);
     let mut calls = 0;
-    let stop = run(&mut host, &mut Store::default(),
+    let stop = run(
+        &mut host,
+        &mut Store::default(),
         &mut vec![json!({"role":"user","content":"Use the fixture"})],
-        &mut |_, _| { calls += 1; Ok("Executed".into()) }, &mut |_| {});
+        &mut |_, _| {
+            calls += 1;
+            Ok("Executed".into())
+        },
+        &mut |_| {},
+    );
     assert_eq!(stop, Stop::EndTurn);
     assert_eq!(calls, 1, "the malformed call must not execute");
     let requests = host.requests.borrow();
     let feedback = requests[1].body["messages"].to_string();
-    assert!(feedback.contains("invalid escape at line 1 column"), "{feedback}");
+    assert!(
+        feedback.contains("invalid escape at line 1 column"),
+        "{feedback}"
+    );
     assert!(feedback.contains("finish_reason: tool_calls"), "{feedback}");
-    assert!(feedback.contains("does not imply provider output truncation"), "{feedback}");
+    assert!(
+        feedback.contains("does not imply provider output truncation"),
+        "{feedback}"
+    );
 }
 
 #[test]
@@ -884,7 +947,10 @@ fn async_tool_host_awaits_without_moving_the_workspace() {
 
 #[test]
 fn tool_catalog_refreshes_on_owner_thread_between_model_steps() {
-    struct ChangingTools { owner: std::thread::ThreadId, calls: u32 }
+    struct ChangingTools {
+        owner: std::thread::ThreadId,
+        calls: u32,
+    }
     impl ToolHost for ChangingTools {
         fn catalog(&mut self) -> LocalFuture<'_, Result<Option<Vec<GenericTool>>, String>> {
             Box::pin(async move {
@@ -894,7 +960,11 @@ fn tool_catalog_refreshes_on_owner_thread_between_model_steps() {
                 Ok(Some(vec![current]))
             })
         }
-        fn call<'a>(&'a mut self, name: &'a str, _: &'a Value) -> LocalFuture<'a, Result<String, String>> {
+        fn call<'a>(
+            &'a mut self,
+            name: &'a str,
+            _: &'a Value,
+        ) -> LocalFuture<'a, Result<String, String>> {
             Box::pin(async move {
                 assert_eq!(self.owner, std::thread::current().id());
                 assert_eq!(name, if self.calls == 0 { "claim" } else { "write" });
@@ -909,13 +979,30 @@ fn tool_catalog_refreshes_on_owner_thread_between_model_steps() {
     write["choices"][0]["message"]["tool_calls"][0]["id"] = json!("tool-2");
     write["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = json!("write");
     let mut host = Host::new(vec![claim, write, response("finished")]);
-    let mut tools = ChangingTools { owner: std::thread::current().id(), calls: 0 };
+    let mut tools = ChangingTools {
+        owner: std::thread::current().id(),
+        calls: 0,
+    };
     let mut history = vec![json!({"role":"user","content":"Run"})];
-    let stop = run_with_hosts(LoopArgs {
-        llm: &llm(), history: &mut history, tools: &[tool()],
-        dispatch: &mut |_, _| panic!("fallback dispatch used"), emit: &mut |_| {}, cancelled: &|| false,
-        max_rounds: 8, label: "dynamic catalog".into(), conversation: true, inputs: None, input_close: None,
-    }, "", &mut host, &mut tools, &mut Store::default());
+    let stop = run_with_hosts(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &[tool()],
+            dispatch: &mut |_, _| panic!("fallback dispatch used"),
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "dynamic catalog".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut tools,
+        &mut Store::default(),
+    );
     assert_eq!(stop, Stop::EndTurn);
     assert_eq!(tools.calls, 2);
     let requests = host.requests.borrow();
@@ -1358,14 +1445,29 @@ fn ledger_completion_run(
 ) -> Stop {
     let mut tools = vec![tool()];
     tools.extend(["record_generation", "done"].map(|name| GenericTool {
-        name: name.into(), description: name.into(), parameters: json!({"type":"object"}),
+        name: name.into(),
+        description: name.into(),
+        parameters: json!({"type":"object"}),
     }));
     let llm = llm();
-    runtime::run_with_host(LoopArgs {
-        llm: &llm, history, tools: &tools, dispatch, emit: &mut |_| {},
-        cancelled: &|| false, max_rounds: 8, label: "ledger-completion".into(),
-        conversation, inputs: None, input_close: None,
-    }, "", host, store)
+    runtime::run_with_host(
+        LoopArgs {
+            llm: &llm,
+            history,
+            tools: &tools,
+            dispatch,
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "ledger-completion".into(),
+            conversation,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        host,
+        store,
+    )
 }
 
 #[test]
@@ -1374,27 +1476,74 @@ fn oversized_worker_packages_survive_compaction_without_reloading_loops() {
     second["choices"][0]["message"]["tool_calls"][0]["id"] = json!("second");
     let mut third = call();
     third["choices"][0]["message"]["tool_calls"][0]["id"] = json!("third");
-    let mut host = Host::new(vec![call(), response("Older work summary"), second, third, done_response(false)]);
-    let mut store = Store { suspend_on: Some(CheckpointPhase::Compacted), ..Default::default() };
-    let opening = format!("Immutable generation contract {}", "c".repeat(crate::llm::model_input_tokens() * 2));
-    let package = format!("Exact current bindings and factHash {}", "p".repeat(crate::llm::model_input_tokens() * 2));
+    let mut host = Host::new(vec![
+        call(),
+        response("Older work summary"),
+        second,
+        third,
+        done_response(false),
+    ]);
+    let mut store = Store {
+        suspend_on: Some(CheckpointPhase::Compacted),
+        ..Default::default()
+    };
+    let opening = format!(
+        "Immutable generation contract {}",
+        "c".repeat(crate::llm::model_input_tokens() * 2)
+    );
+    let package = format!(
+        "Exact current bindings and factHash {}",
+        "p".repeat(crate::llm::model_input_tokens() * 2)
+    );
     let mut history = vec![json!({"role":"user","content":opening})];
     let mut calls = 0;
     let mut dispatch = |name: &str, _: &Value| {
-        if name == "done" { return Ok("Finished".into()); }
+        if name == "done" {
+            return Ok("Finished".into());
+        }
         calls += 1;
-        Ok(if calls == 1 { package.clone() } else { "Small result".into() })
+        Ok(if calls == 1 {
+            package.clone()
+        } else {
+            "Small result".into()
+        })
     };
-    assert_eq!(ledger_completion_run(false, &mut host, &mut store, &mut history, &mut dispatch), Stop::Suspended);
-    assert!(store.saved.as_ref().unwrap().compacted_size.unwrap() > crate::llm::model_input_tokens() * 4 / 5);
+    assert_eq!(
+        ledger_completion_run(false, &mut host, &mut store, &mut history, &mut dispatch),
+        Stop::Suspended
+    );
+    assert!(
+        store.saved.as_ref().unwrap().compacted_size.unwrap()
+            > crate::llm::model_input_tokens() * 4 / 5
+    );
     store.suspended = false;
     store.suspend_on = None;
-    assert_eq!(ledger_completion_run(false, &mut host, &mut store, &mut history, &mut dispatch), Stop::EndTurn);
+    assert_eq!(
+        ledger_completion_run(false, &mut host, &mut store, &mut history, &mut dispatch),
+        Stop::EndTurn
+    );
     let requests = host.requests.borrow();
-    assert_eq!(requests.iter().filter(|request| request.purpose == ModelPurpose::Compaction).count(), 1);
-    let resumed = requests.iter().filter(|request| request.purpose == ModelPurpose::Inference).nth(1).unwrap();
-    assert!(resumed.body["messages"].as_array().unwrap().iter().any(|message| message["content"] == package));
-    let summary_request = requests.iter().find(|request| request.purpose == ModelPurpose::Compaction).unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.purpose == ModelPurpose::Compaction)
+            .count(),
+        1
+    );
+    let resumed = requests
+        .iter()
+        .filter(|request| request.purpose == ModelPurpose::Inference)
+        .nth(1)
+        .unwrap();
+    assert!(resumed.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["content"] == package));
+    let summary_request = requests
+        .iter()
+        .find(|request| request.purpose == ModelPurpose::Compaction)
+        .unwrap();
     assert!(!summary_request.body.to_string().contains(&package));
     assert!(!summary_request.body.to_string().contains(&opening));
     assert_eq!(calls, 3);
@@ -1402,8 +1551,14 @@ fn oversized_worker_packages_survive_compaction_without_reloading_loops() {
 
 #[test]
 fn compaction_keeps_batched_tool_packages_and_later_human_steering() {
-    let package_a = format!("Exact package A {}", "a".repeat(crate::llm::model_input_tokens()));
-    let package_b = format!("Exact package B {}", "b".repeat(crate::llm::model_input_tokens()));
+    let package_a = format!(
+        "Exact package A {}",
+        "a".repeat(crate::llm::model_input_tokens())
+    );
+    let package_b = format!(
+        "Exact package B {}",
+        "b".repeat(crate::llm::model_input_tokens())
+    );
     let mut history = vec![
         json!({"role":"user","content":format!("Batch contract {}", "c".repeat(crate::llm::model_input_tokens() * 2))}),
         json!({"role":"assistant","content":"Inspect packages","tool_calls":[
@@ -1415,16 +1570,36 @@ fn compaction_keeps_batched_tool_packages_and_later_human_steering() {
         json!({"role":"user","content":"Finish the source before testing"}),
     ];
     let mut host = Host::new(vec![response("Earlier history"), done_response(false)]);
-    assert_eq!(ledger_completion_run(false, &mut host, &mut Store::default(), &mut history,
-        &mut |name, _| { assert_eq!(name, "done"); Ok("Finished".into()) }), Stop::EndTurn);
+    assert_eq!(
+        ledger_completion_run(
+            false,
+            &mut host,
+            &mut Store::default(),
+            &mut history,
+            &mut |name, _| {
+                assert_eq!(name, "done");
+                Ok("Finished".into())
+            }
+        ),
+        Stop::EndTurn
+    );
     let requests = host.requests.borrow();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].purpose, ModelPurpose::Compaction);
     let resumed = requests[1].body["messages"].as_array().unwrap();
-    assert!(resumed.iter().any(|message| message["content"] == package_a));
-    assert!(resumed.iter().any(|message| message["content"] == package_b));
-    assert!(resumed.iter().any(|message| message["tool_calls"].as_array().is_some_and(|calls| calls.len() == 2)));
-    assert_eq!(resumed.last().unwrap()["content"], "Finish the source before testing");
+    assert!(resumed
+        .iter()
+        .any(|message| message["content"] == package_a));
+    assert!(resumed
+        .iter()
+        .any(|message| message["content"] == package_b));
+    assert!(resumed.iter().any(|message| message["tool_calls"]
+        .as_array()
+        .is_some_and(|calls| calls.len() == 2)));
+    assert_eq!(
+        resumed.last().unwrap()["content"],
+        "Finish the source before testing"
+    );
 }
 
 #[test]
@@ -1441,18 +1616,38 @@ fn compaction_keeps_the_active_package_after_a_later_source_write_without_replay
         json!({"role":"tool","tool_call_id":"write","content":"source edit completed"}),
         json!({"role":"user","content":"Preserve the requested layout"}),
     ];
-    let mut host = Host::new(vec![response("Implementation continues; source edit succeeded."), done_response(false)]);
+    let mut host = Host::new(vec![
+        response("Implementation continues; source edit succeeded."),
+        done_response(false),
+    ]);
     let mut calls = 0;
-    assert_eq!(ledger_completion_run(false, &mut host, &mut Store::default(), &mut history,
-        &mut |name, _| { assert_eq!(name, "done", "completed tools must not replay"); calls += 1; Ok("Recorded".into()) }), Stop::EndTurn);
+    assert_eq!(
+        ledger_completion_run(
+            false,
+            &mut host,
+            &mut Store::default(),
+            &mut history,
+            &mut |name, _| {
+                assert_eq!(name, "done", "completed tools must not replay");
+                calls += 1;
+                Ok("Recorded".into())
+            }
+        ),
+        Stop::EndTurn
+    );
     assert_eq!(calls, 1);
     let requests = host.requests.borrow();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].purpose, ModelPurpose::Compaction);
     let resumed = requests[1].body["messages"].as_array().unwrap();
     assert!(resumed.iter().any(|message| message["content"] == package));
-    assert!(resumed.iter().any(|message| message["content"] == "source edit completed"));
-    assert_eq!(resumed.last().unwrap()["content"], "Preserve the requested layout");
+    assert!(resumed
+        .iter()
+        .any(|message| message["content"] == "source edit completed"));
+    assert_eq!(
+        resumed.last().unwrap()["content"],
+        "Preserve the requested layout"
+    );
     assert!(!requests[0].body.to_string().contains("exact-current-hash"));
 }
 
@@ -1462,16 +1657,28 @@ fn ledger_worker_gets_one_chance_to_finish_after_a_plain_turn_end() {
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Generate all five assigned entities"})];
     let mut completed = false;
-    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history, &mut |name, _| {
-        assert_eq!(name, "done");
-        completed = true;
-        Ok("Finished".into())
-    });
+    let stop = ledger_completion_run(
+        false,
+        &mut host,
+        &mut store,
+        &mut history,
+        &mut |name, _| {
+            assert_eq!(name, "done");
+            completed = true;
+            Ok("Finished".into())
+        },
+    );
     assert_eq!(stop, Stop::EndTurn);
     assert!(completed);
     assert_eq!(host.requests.borrow().len(), 2);
     let requests = host.requests.borrow();
-    let reminder = requests[1].body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
+    let reminder = requests[1].body["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["content"]
+        .as_str()
+        .unwrap();
     assert!(reminder.contains("every goal assigned"), "{reminder}");
     assert!(reminder.contains("done.summary"), "{reminder}");
     assert!(store.saved.as_ref().unwrap().ledger_finish_reminded);
@@ -1483,8 +1690,9 @@ fn truncated_reasoning_is_not_reported_as_a_completed_normal_turn() {
     let mut host = Host::new(vec![limited.clone(), limited]);
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Generate"})];
-    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history,
-        &mut |_, _| panic!("no tools requested"));
+    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history, &mut |_, _| {
+        panic!("no tools requested")
+    });
     assert!(matches!(stop, Stop::Error(error) if error.contains("output token limit")));
     assert_eq!(host.requests.borrow().len(), 2);
 }
@@ -1499,9 +1707,13 @@ fn a_responses_reply_cut_at_its_output_limit_reports_the_limit() {
     let mut host = Host::new(vec![limited.clone(), limited]);
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Generate"})];
-    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history,
-        &mut |_, _| panic!("no tools requested"));
-    assert!(matches!(stop, Stop::Error(ref error) if error.contains("output token limit")), "{stop:?}");
+    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history, &mut |_, _| {
+        panic!("no tools requested")
+    });
+    assert!(
+        matches!(stop, Stop::Error(ref error) if error.contains("output token limit")),
+        "{stop:?}"
+    );
 }
 
 #[test]
@@ -1509,20 +1721,50 @@ fn ledger_finish_reminder_is_bounded_and_survives_recovery() {
     let mut host = Host::new(vec![response("Thinking"), response("Cannot continue")]);
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Generate"})];
-    assert_eq!(ledger_completion_run(false, &mut host, &mut store, &mut history,
-        &mut |_, _| panic!("no tool requested")), Stop::EndTurn);
+    assert_eq!(
+        ledger_completion_run(
+            false,
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!("no tool requested")
+        ),
+        Stop::EndTurn
+    );
     assert_eq!(host.requests.borrow().len(), 2);
     let mut resumed = Host::new(vec![]);
-    assert_eq!(ledger_completion_run(false, &mut resumed, &mut store, &mut history,
-        &mut |_, _| panic!("no completed operation may replay")), Stop::EndTurn);
+    assert_eq!(
+        ledger_completion_run(
+            false,
+            &mut resumed,
+            &mut store,
+            &mut history,
+            &mut |_, _| panic!("no completed operation may replay")
+        ),
+        Stop::EndTurn
+    );
     assert!(resumed.requests.borrow().is_empty());
-    assert_eq!(history.iter().filter(|message| message["content"].as_str()
-        .is_some_and(|text| text.contains("This ledger batch is still open"))).count(), 1);
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("This ledger batch is still open")))
+            .count(),
+        1
+    );
 
     let mut chat = Host::new(vec![response("Here is the answer")]);
-    assert_eq!(ledger_completion_run(true, &mut chat, &mut Store::default(),
-        &mut vec![json!({"role":"user","content":"Explain"})],
-        &mut |_, _| panic!("chat does not need done")), Stop::EndTurn);
+    assert_eq!(
+        ledger_completion_run(
+            true,
+            &mut chat,
+            &mut Store::default(),
+            &mut vec![json!({"role":"user","content":"Explain"})],
+            &mut |_, _| panic!("chat does not need done")
+        ),
+        Stop::EndTurn
+    );
     assert_eq!(chat.requests.borrow().len(), 1);
 }
 
@@ -1759,7 +2001,11 @@ fn interrupted_tool_host_preserves_intention_and_stops_without_another_inference
 
 #[test]
 fn mcp_error_results_count_as_tool_failures_even_with_a_successful_transport() {
-    let mut host = Host::new((0..crate::limits::AGENT_TOOL_ERROR_LIMIT).map(|_| call()).collect());
+    let mut host = Host::new(
+        (0..crate::limits::AGENT_TOOL_ERROR_LIMIT)
+            .map(|_| call())
+            .collect(),
+    );
     let mut store = Store::default();
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let mut failed = 0;
@@ -1780,9 +2026,7 @@ fn mcp_error_results_count_as_tool_failures_even_with_a_successful_transport() {
             }
         },
     );
-    assert!(
-        matches!(stop,Stop::Error(ref error) if error.contains("20 consecutive tool errors"))
-    );
+    assert!(matches!(stop,Stop::Error(ref error) if error.contains("20 consecutive tool errors")));
     assert_eq!(failed, 20);
     assert_eq!(store.saved.unwrap().consecutive_tool_errors, 20);
 }
@@ -1821,9 +2065,16 @@ fn interrupted_model_host_leaves_only_the_durable_request_intention() {
 
 #[test]
 fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change() {
-    for phase in [CheckpointPhase::BeforeModel, CheckpointPhase::SavedModel, CheckpointPhase::AfterTool] {
+    for phase in [
+        CheckpointPhase::BeforeModel,
+        CheckpointPhase::SavedModel,
+        CheckpointPhase::AfterTool,
+    ] {
         let mut host = Host::new(vec![call(), response("finished")]);
-        let mut store = Store { fail: Some(phase), ..Default::default() };
+        let mut store = Store {
+            fail: Some(phase),
+            ..Default::default()
+        };
         let mut history = vec![json!({"role":"user","content":"Run"})];
         let mut calls = 0;
         let mut dispatch = |name: &str, _: &Value| {
@@ -1834,14 +2085,31 @@ fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change()
         let mut unused = tool();
         unused.name = "unused".into();
         let wide = [tool(), unused];
-        let mut run = |tools: &[GenericTool], instructions: &str, host: &mut Host, store: &mut Store| {
-            run_with_host(LoopArgs {
-                llm: &llm(), history: &mut history, tools, dispatch: &mut dispatch,
-                emit: &mut |_| {}, cancelled: &|| false, max_rounds: 8,
-                label: "catalog upgrade".into(), conversation: true, inputs: None, input_close: None,
-            }, instructions, host, store)
-        };
-        assert!(matches!(run(&wide, "Original prompt", &mut host, &mut store), Stop::Error(_)));
+        let mut run =
+            |tools: &[GenericTool], instructions: &str, host: &mut Host, store: &mut Store| {
+                run_with_host(
+                    LoopArgs {
+                        llm: &llm(),
+                        history: &mut history,
+                        tools,
+                        dispatch: &mut dispatch,
+                        emit: &mut |_| {},
+                        cancelled: &|| false,
+                        max_rounds: 8,
+                        label: "catalog upgrade".into(),
+                        conversation: true,
+                        inputs: None,
+                        input_close: None,
+                    },
+                    instructions,
+                    host,
+                    store,
+                )
+            };
+        assert!(matches!(
+            run(&wide, "Original prompt", &mut host, &mut store),
+            Stop::Error(_)
+        ));
         let saved = store.saved.as_ref().unwrap();
         let (id, body) = match saved.model_requests.iter().next() {
             Some((id, body)) => (id.clone(), body.clone()),
@@ -1854,15 +2122,28 @@ fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change()
             }
         };
         assert_eq!(body["tools"].as_array().unwrap().len(), 2);
-        assert_eq!(run(&[tool()], "Updated prompt", &mut host, &mut store), Stop::EndTurn, "{phase:?}");
+        assert_eq!(
+            run(&[tool()], "Updated prompt", &mut host, &mut store),
+            Stop::EndTurn,
+            "{phase:?}"
+        );
         drop(run);
         assert_eq!(calls, 1, "{phase:?}: a restored tool must execute once");
         let requests = host.requests.borrow();
-        assert_eq!(requests.len(), 2, "{phase:?}: saved responses do not add model calls");
+        assert_eq!(
+            requests.len(),
+            2,
+            "{phase:?}: saved responses do not add model calls"
+        );
         assert_eq!(requests[0].attempt_id, id);
-        assert_eq!(requests[0].body, body, "{phase:?}: the admitted body is immutable");
+        assert_eq!(
+            requests[0].body, body,
+            "{phase:?}: the admitted body is immutable"
+        );
         assert_eq!(requests[1].body["tools"].as_array().unwrap().len(), 1);
-        assert!(requests[1].body["messages"].to_string().contains("Updated prompt"));
+        assert!(requests[1].body["messages"]
+            .to_string()
+            .contains("Updated prompt"));
         assert_eq!(store.saved.as_ref().unwrap().rounds, 2);
     }
 }
@@ -1871,37 +2152,78 @@ fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change()
 fn last_allowed_model_intention_replays_once_and_stop_still_wins() {
     for phase in [CheckpointPhase::BeforeModel, CheckpointPhase::SavedModel] {
         let mut host = Host::new(vec![response("finished")]);
-        let mut store = Store { fail: Some(phase), ..Default::default() };
+        let mut store = Store {
+            fail: Some(phase),
+            ..Default::default()
+        };
         let mut history = vec![json!({"role":"user","content":"Run"})];
         let mut run = |cancelled: bool, store: &mut Store| {
-            run_with_host(LoopArgs {
-                llm: &llm(), history: &mut history, tools: &[tool()], dispatch: &mut |_, _| panic!(),
-                emit: &mut |_| {}, cancelled: &|| cancelled, max_rounds: 1,
-                label: "last admitted model".into(), conversation: true, inputs: None, input_close: None,
-            }, "", &mut host, store)
+            run_with_host(
+                LoopArgs {
+                    llm: &llm(),
+                    history: &mut history,
+                    tools: &[tool()],
+                    dispatch: &mut |_, _| panic!(),
+                    emit: &mut |_| {},
+                    cancelled: &|| cancelled,
+                    max_rounds: 1,
+                    label: "last admitted model".into(),
+                    conversation: true,
+                    inputs: None,
+                    input_close: None,
+                },
+                "",
+                &mut host,
+                store,
+            )
         };
         assert!(matches!(run(false, &mut store), Stop::Error(_)));
         assert_eq!(store.saved.as_ref().unwrap().rounds, 1);
-        let mut stopped = Store { saved: store.saved.clone(), ..Default::default() };
+        let mut stopped = Store {
+            saved: store.saved.clone(),
+            ..Default::default()
+        };
         assert_eq!(run(true, &mut stopped), Stop::Cancelled);
         assert_eq!(run(false, &mut store), Stop::EndTurn, "{phase:?}");
         drop(run);
-        assert_eq!(host.requests.borrow().len(), 1, "{phase:?}: no extra admission");
+        assert_eq!(
+            host.requests.borrow().len(),
+            1,
+            "{phase:?}: no extra admission"
+        );
         assert_eq!(store.saved.as_ref().unwrap().rounds, 1);
     }
     // A genuinely new inference is still refused when the original cap is spent.
     let mut host = Host::new(vec![call(), response("must not be requested")]);
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let mut tools = 0;
-    assert_eq!(run_with_host(LoopArgs {
-        llm: &llm(), history: &mut history, tools: &[tool()], dispatch: &mut |_, _| { tools += 1; Ok("result".into()) },
-        emit: &mut |_| {}, cancelled: &|| false, max_rounds: 1,
-        label: "spent budget".into(), conversation: true, inputs: None, input_close: None,
-    }, "", &mut host, &mut Store::default()), Stop::MaxRounds);
+    assert_eq!(
+        run_with_host(
+            LoopArgs {
+                llm: &llm(),
+                history: &mut history,
+                tools: &[tool()],
+                dispatch: &mut |_, _| {
+                    tools += 1;
+                    Ok("result".into())
+                },
+                emit: &mut |_| {},
+                cancelled: &|| false,
+                max_rounds: 1,
+                label: "spent budget".into(),
+                conversation: true,
+                inputs: None,
+                input_close: None,
+            },
+            "",
+            &mut host,
+            &mut Store::default()
+        ),
+        Stop::MaxRounds
+    );
     assert_eq!(tools, 1);
     assert_eq!(host.requests.borrow().len(), 1);
 }
-
 
 #[test]
 fn responses_receipt_recovery_keeps_opaque_continuation_and_does_not_repeat_inference() {
@@ -1909,22 +2231,60 @@ fn responses_receipt_recovery_keeps_opaque_continuation_and_does_not_repeat_infe
         {"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"Checking the fixture."}],"encrypted_content":"opaque-state"},
         {"type":"function_call","call_id":"original-call","name":"fixture","arguments":"{}","status":"completed"}],
         "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}});
-    let reply = crate::model_api::completion(&raw,"route-a").unwrap();
+    let reply = crate::model_api::completion(&raw, "route-a").unwrap();
     let mut host = Host::new(vec![reply, response("finished")]);
-    let mut store = Store { fail: Some(CheckpointPhase::SavedModel), ..Default::default() };
+    let mut store = Store {
+        fail: Some(CheckpointPhase::SavedModel),
+        ..Default::default()
+    };
     let mut history = vec![json!({"role":"user","content":"Run"})];
     let mut calls = 0;
     let mut summaries = String::new();
-    let mut dispatch = |_: &str, _: &Value| { calls += 1; Ok("found".into()) };
-    assert!(matches!(run(&mut host,&mut store,&mut history,&mut dispatch,&mut |_|{}),Stop::Error(_)));
-    assert_eq!(run(&mut host,&mut store,&mut history,&mut dispatch,&mut |event| { if let AgentEvent::ReasoningSummary(text)=event { summaries.push_str(&text); } }),Stop::EndTurn);
-    assert_eq!(calls,1);
-    assert_eq!(summaries,"Checking the fixture.");
-    let requests=host.requests.borrow();
-    assert_eq!(requests.len(),2);
-    let wire=crate::model_api::request(&requests[1].body,"responses",Some("concise"),"route-a").unwrap();
-    assert!(wire["input"].as_array().unwrap().iter().any(|item|item["encrypted_content"]=="opaque-state"));
-    assert!(wire["input"].as_array().unwrap().iter().any(|item|item["type"]=="function_call_output" && item["call_id"]=="original-call"));
+    let mut dispatch = |_: &str, _: &Value| {
+        calls += 1;
+        Ok("found".into())
+    };
+    assert!(matches!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut dispatch,
+            &mut |_| {}
+        ),
+        Stop::Error(_)
+    ));
+    assert_eq!(
+        run(
+            &mut host,
+            &mut store,
+            &mut history,
+            &mut dispatch,
+            &mut |event| {
+                if let AgentEvent::ReasoningSummary(text) = event {
+                    summaries.push_str(&text);
+                }
+            }
+        ),
+        Stop::EndTurn
+    );
+    assert_eq!(calls, 1);
+    assert_eq!(summaries, "Checking the fixture.");
+    let requests = host.requests.borrow();
+    assert_eq!(requests.len(), 2);
+    let wire =
+        crate::model_api::request(&requests[1].body, "responses", Some("concise"), "route-a")
+            .unwrap();
+    assert!(wire["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["encrypted_content"] == "opaque-state"));
+    assert!(wire["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["type"] == "function_call_output" && item["call_id"] == "original-call"));
 }
 
 #[test]
@@ -1936,13 +2296,23 @@ fn complex_history_keeps_output_headroom_without_early_compaction() {
         json!({"role":"assistant","content":"Package inspected"}),
         json!({"role":"user","content":"Continue implementing"}),
     ];
-    assert_eq!(run(&mut host, &mut Store::default(), &mut history,
-        &mut |_, _| panic!("unexpected tool"), &mut |_| {}), Stop::EndTurn);
+    assert_eq!(
+        run(
+            &mut host,
+            &mut Store::default(),
+            &mut history,
+            &mut |_, _| panic!("unexpected tool"),
+            &mut |_| {}
+        ),
+        Stop::EndTurn
+    );
     let requests = host.requests.borrow();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].purpose, ModelPurpose::Inference);
     let body = &requests[0].body;
-    let output = body.get("max_tokens").or_else(|| body.get("max_completion_tokens"));
+    let output = body
+        .get("max_tokens")
+        .or_else(|| body.get("max_completion_tokens"));
     assert_eq!(output.and_then(Value::as_u64), Some(65_536));
     assert_eq!(crate::llm::model_input_tokens(), 65_536);
 }
@@ -1953,50 +2323,103 @@ fn protected_stop_keeps_compacted_history_without_reexpanding_old_receipts() {
     old["choices"][0]["message"]["tool_calls"][0]["id"] = json!("obsolete-call");
     let mut latest = call();
     latest["choices"][0]["message"]["tool_calls"][0]["id"] = json!("latest-call");
-    let mut host = Host::new(vec![old, latest, response("Compact progress: continue the delivery.")]);
-    let mut store = Store { suspend_on: Some(CheckpointPhase::Compacted), ..Default::default() };
+    let mut host = Host::new(vec![
+        old,
+        latest,
+        response("Compact progress: continue the delivery."),
+    ]);
+    let mut store = Store {
+        suspend_on: Some(CheckpointPhase::Compacted),
+        ..Default::default()
+    };
     let mut history = vec![json!({"role":"user","content":"Continue the delivery work."})];
     let mut calls = 0;
-    assert_eq!(ledger_completion_run(true, &mut host, &mut store, &mut history,
-        &mut |name, _| {
+    assert_eq!(
+        ledger_completion_run(true, &mut host, &mut store, &mut history, &mut |name, _| {
             assert_eq!(name, "fixture");
             calls += 1;
             Ok(if calls == 1 {
-                format!("OBSOLETE_RECEIPT {}", "o".repeat(crate::llm::model_input_tokens()))
+                format!(
+                    "OBSOLETE_RECEIPT {}",
+                    "o".repeat(crate::llm::model_input_tokens())
+                )
             } else {
-                format!("LATEST_RECEIPT {}", "l".repeat(crate::llm::model_input_tokens() * 4))
+                format!(
+                    "LATEST_RECEIPT {}",
+                    "l".repeat(crate::llm::model_input_tokens() * 4)
+                )
             })
-        }), Stop::Suspended);
+        }),
+        Stop::Suspended
+    );
     assert_eq!(calls, 2);
-    assert_eq!(host.requests.borrow().iter().map(|request| request.purpose).collect::<Vec<_>>(),
-        vec![ModelPurpose::Inference, ModelPurpose::Inference, ModelPurpose::Compaction]);
+    assert_eq!(
+        host.requests
+            .borrow()
+            .iter()
+            .map(|request| request.purpose)
+            .collect::<Vec<_>>(),
+        vec![
+            ModelPurpose::Inference,
+            ModelPurpose::Inference,
+            ModelPurpose::Compaction
+        ]
+    );
     assert!(store.phases.contains(&CheckpointPhase::Compacted));
     let compacted = store.saved.as_ref().unwrap();
     assert!(compacted.compacted_at_round.is_some());
-    assert!(compacted.model_receipts.is_empty() && compacted.model_requests.is_empty(),
-        "An ended transition's requests and receipts leave the checkpoint");
+    assert!(
+        compacted.model_receipts.is_empty() && compacted.model_requests.is_empty(),
+        "An ended transition's requests and receipts leave the checkpoint"
+    );
     let before = history.clone();
     let text = serde_json::to_string(&before).unwrap();
     assert!(!text.contains("obsolete-call") && !text.contains("OBSOLETE_RECEIPT"));
     assert!(text.contains("latest-call") && text.contains("LATEST_RECEIPT"));
-    assert_eq!(runtime::stopped_history(compacted), before,
-        "Protected Stop must retain the exact compacted snapshot");
+    assert_eq!(
+        runtime::stopped_history(compacted),
+        before,
+        "Protected Stop must retain the exact compacted snapshot"
+    );
 
     store.suspended = false;
     store.suspend_on = None;
     let mut cancelled_host = Host::new(vec![]);
     let config = llm();
-    assert_eq!(runtime::run_with_host(LoopArgs {
-        llm: &config, history: &mut history, tools: &[tool()],
-        dispatch: &mut |_, _| panic!("Stop must not replay a completed tool"),
-        emit: &mut |_| {}, cancelled: &|| true, max_rounds: 8,
-        label: "cancel compacted chat".into(), conversation: true,
-        inputs: None, input_close: None,
-    }, "", &mut cancelled_host, &mut store), Stop::Cancelled);
-    assert!(cancelled_host.requests.borrow().is_empty(), "Stop must not infer again");
-    assert_eq!(history, before, "Normal cancellation must not undo compaction");
-    assert_eq!(runtime::stopped_history(store.saved.as_ref().unwrap()), before,
-        "Stopping a normalized Finished checkpoint must be idempotent");
+    assert_eq!(
+        runtime::run_with_host(
+            LoopArgs {
+                llm: &config,
+                history: &mut history,
+                tools: &[tool()],
+                dispatch: &mut |_, _| panic!("Stop must not replay a completed tool"),
+                emit: &mut |_| {},
+                cancelled: &|| true,
+                max_rounds: 8,
+                label: "cancel compacted chat".into(),
+                conversation: true,
+                inputs: None,
+                input_close: None,
+            },
+            "",
+            &mut cancelled_host,
+            &mut store
+        ),
+        Stop::Cancelled
+    );
+    assert!(
+        cancelled_host.requests.borrow().is_empty(),
+        "Stop must not infer again"
+    );
+    assert_eq!(
+        history, before,
+        "Normal cancellation must not undo compaction"
+    );
+    assert_eq!(
+        runtime::stopped_history(store.saved.as_ref().unwrap()),
+        before,
+        "Stopping a normalized Finished checkpoint must be idempotent"
+    );
 }
 
 #[test]
@@ -2009,16 +2432,33 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
                 "output":[{"id":"message-final","type":"message","role":"assistant","status":"completed",
                     "content":[{"type":"output_text","text":answer,"annotations":[]}]}],
                 "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}})
-        } else { response(&answer) };
+        } else {
+            response(&answer)
+        };
         let mut host = Host::new(vec![reply.clone()]);
         let mut store = Store::default();
         let mut history = vec![json!({"role":"user","content":"Finish the requested work."})];
-        assert_eq!(run(&mut host, &mut store, &mut history,
-            &mut |_, _| panic!("A plain answer must not dispatch tools"), &mut |_| {}), Stop::EndTurn);
+        assert_eq!(
+            run(
+                &mut host,
+                &mut store,
+                &mut history,
+                &mut |_, _| panic!("A plain answer must not dispatch tools"),
+                &mut |_| {}
+            ),
+            Stop::EndTurn
+        );
         assert_eq!(host.requests.borrow().len(), 1, "{api}");
-        assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished), "{api}");
+        assert_eq!(
+            store.phases.last(),
+            Some(&CheckpointPhase::Finished),
+            "{api}"
+        );
         let saved = store.saved.as_mut().unwrap();
-        assert!(saved.model_receipts.is_empty(), "{api}: the answered transition left the checkpoint");
+        assert!(
+            saved.model_receipts.is_empty(),
+            "{api}: the answered transition left the checkpoint"
+        );
         // A legacy capsule still carries the answered receipt beside its conversation.
         let legacy = format!("{}:{}:Inference:0", saved.run_id, saved.transition - 1);
         saved.model_receipts.insert(legacy, reply.clone());
@@ -2028,13 +2468,32 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
                 stripped += usize::from(notes.remove("jazyk.runtime").is_some());
             }
         }
-        assert_eq!(stripped, 1, "The fixture must model a legacy response without inferenceId: {api}");
+        assert_eq!(
+            stripped, 1,
+            "The fixture must model a legacy response without inferenceId: {api}"
+        );
         let stopped = runtime::stopped_history(saved);
-        assert_eq!(stopped.iter().filter(|message|
-            message["role"] == "assistant" && message["content"] == answer).count(), 1,
-            "A naturally finished legacy answer must not be appended again: {api}");
-        assert_eq!(stopped.len(), history.len(), "Stop added a legacy message at {api}");
-        assert!(stopped.iter().all(|message| message["role"] != "tool"), "{api}");
-        assert_eq!(runtime::stopped_history(saved), stopped, "Repeated Stop changed legacy history: {api}");
+        assert_eq!(
+            stopped
+                .iter()
+                .filter(|message| message["role"] == "assistant" && message["content"] == answer)
+                .count(),
+            1,
+            "A naturally finished legacy answer must not be appended again: {api}"
+        );
+        assert_eq!(
+            stopped.len(),
+            history.len(),
+            "Stop added a legacy message at {api}"
+        );
+        assert!(
+            stopped.iter().all(|message| message["role"] != "tool"),
+            "{api}"
+        );
+        assert_eq!(
+            runtime::stopped_history(saved),
+            stopped,
+            "Repeated Stop changed legacy history: {api}"
+        );
     }
 }

@@ -8,15 +8,14 @@ use super::config::{self, McpTransport, ResolvedAgent, EMBEDDED};
 use super::host::{AcpHost, McpEntry, McpSpec, SessionHandle};
 use super::http::HttpServing;
 use super::translate::UpdateTranslator;
-use crate::mcp::BridgeFlags;
 use crate::llm::Llm;
+use crate::mcp::BridgeFlags;
 use crate::project::Project;
 use crate::session::{Trace, TraceEvent};
 use crate::tools::WorkScope;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-
 
 // The serving one session gets, before its transport is known: the toolsets and the
 // bridge flags. Rendered as the `jazyk mcp` command line for a stdio entry, or
@@ -38,8 +37,12 @@ impl ServingPlan {
             "--out".to_string(),
             out.to_string_lossy().into_owned(),
         ];
-        if let Some(id)=out.file_name().and_then(|s|s.to_str()).filter(|id|crate::document_sets::valid_id(id)) {
-            args.extend(["--set".into(),id.to_string()]);
+        if let Some(id) = out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|id| crate::document_sets::valid_id(id))
+        {
+            args.extend(["--set".into(), id.to_string()]);
         }
         if self.flags.ephemeral {
             args.push("--ephemeral".to_string());
@@ -204,7 +207,9 @@ impl AcpRunner {
     // Resolve the default agent (config ladder; JAZYK_ACP_AGENT carries the --agent
     // flag). Hosts spawn lazily per profile on the first session.
     pub fn start(project: &Project, llm: &Llm, out: &Path) -> Result<AcpRunner, String> {
-        if crate::vfs::is_scoped() { return Err("hosted workspaces use the in-process runner".into()); }
+        if crate::vfs::is_scoped() {
+            return Err("hosted workspaces use the in-process runner".into());
+        }
         let default_agent = config::resolve_acp(
             None,
             &project.acp,
@@ -255,7 +260,9 @@ impl AcpRunner {
         if !self.llm.api_key.is_empty() {
             v.push(("JAZYK_API_KEY".to_string(), self.llm.api_key.clone()));
         }
-        if let Some(summary) = &self.llm.reasoning_summary { v.push(("JAZYK_REASONING_SUMMARY".into(), summary.clone())); }
+        if let Some(summary) = &self.llm.reasoning_summary {
+            v.push(("JAZYK_REASONING_SUMMARY".into(), summary.clone()));
+        }
         if let Some(t) = self.llm.temperature {
             v.push(("JAZYK_TEMPERATURE".to_string(), t.to_string()));
         }
@@ -297,10 +304,8 @@ impl AcpRunner {
     // One session on a live host: the serving over the transport the host's agent
     // takes, started before the session and stopped after it.
     fn open_on(&self, host: &AcpHost, plan: &ServingPlan) -> Result<Opened, String> {
-        let transport = config::choose_transport(
-            host.info().mcp_http,
-            config::mcp_transport_pin().as_deref(),
-        );
+        let transport =
+            config::choose_transport(host.info().mcp_http, config::mcp_transport_pin().as_deref());
         let (entry, serving) = match transport {
             McpTransport::Stdio => (McpEntry::Stdio(plan.stdio_spec(&self.out)), None),
             McpTransport::Http => {
@@ -471,11 +476,21 @@ impl AcpRunner {
         let report = self.run_attempt(batch, trace, attempt, &failed_report);
         let prior = crate::live_preview::read(&self.out, &label);
         let store = crate::store::Store::load(&self.out);
-        trace.event(TraceEvent::GraphPreview { preview: crate::live_preview::Preview {
-            label: label.clone(), attempt: prior.as_ref().map(|p|p.attempt.clone()).unwrap_or_default(),
-            revision: prior.map_or(1, |p|p.revision + 1), phase: "committed".into(),
-            generation: store.status.generation, graph: Some(crate::live_preview::authored(&store.graph)), reason: None,
-        }.bounded() });
+        trace.event(TraceEvent::GraphPreview {
+            preview: crate::live_preview::Preview {
+                label: label.clone(),
+                attempt: prior
+                    .as_ref()
+                    .map(|p| p.attempt.clone())
+                    .unwrap_or_default(),
+                revision: prior.map_or(1, |p| p.revision + 1),
+                phase: "committed".into(),
+                generation: store.status.generation,
+                graph: Some(crate::live_preview::authored(&store.graph)),
+                reason: None,
+            }
+            .bounded(),
+        });
         // A goal that resolved starts its count over; anything else spent an attempt.
         let mut attempts = self.attempts.lock().unwrap();
         if report.resolved.contains(&first_goal) {
@@ -512,7 +527,9 @@ impl AcpRunner {
         let gen_before = crate::store::read_generation(&self.out);
         let mut plan = self.serving_plan(batch, &agent);
         let mut nonce = [0u8; 16];
-        if let Err(e) = getrandom::fill(&mut nonce) { return failed_report(e.to_string(), 0, 0, 0); }
+        if let Err(e) = getrandom::fill(&mut nonce) {
+            return failed_report(e.to_string(), 0, 0, 0);
+        }
         let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
         let cancel_file = self.out.join("sessions").join(format!("cancel-{name}"));
         plan.flags.cancel_file = Some(cancel_file.clone());
@@ -573,12 +590,16 @@ impl AcpRunner {
             }
         });
         let cancelled = || {
-            if !trace.is_cancelled() { return false; }
-            crate::vfs::create_dir_all(cancel_file.parent().unwrap()).expect("cancellation fence directory");
+            if !trace.is_cancelled() {
+                return false;
+            }
+            crate::vfs::create_dir_all(cancel_file.parent().unwrap())
+                .expect("cancellation fence directory");
             crate::vfs::write(&cancel_file, b"stopped").expect("cancellation fence");
             true
         };
-        let mut outcome = session.prompt_cancellable(&self.prompt_for(batch), on_update.clone(), &cancelled);
+        let mut outcome =
+            session.prompt_cancellable(&self.prompt_for(batch), on_update.clone(), &cancelled);
         // One reminder when the session ended in prose with the batch uncommitted:
         // the generic agent ends its turn on a plain answer by design, so the client
         // owns the "you are mid-batch" reminder. A second prose ending fails the
@@ -645,7 +666,10 @@ impl AcpRunner {
                     .clone()
                     .unwrap_or_else(|| "the agent refused the prompt".to_string()),
             ),
-            "max_turn_requests" => Some(crate::runner::unlanded_reason(&crate::harness::Stop::MaxRounds, rounds)),
+            "max_turn_requests" => Some(crate::runner::unlanded_reason(
+                &crate::harness::Stop::MaxRounds,
+                rounds,
+            )),
             "cancelled" => Some("the session was cancelled".to_string()),
             other => Some(format!("the session stopped: {}", other)),
         };
@@ -660,7 +684,8 @@ impl AcpRunner {
                 tokens,
                 cached,
                 failed: (!trace.is_cancelled() && stop.stop == "refusal")
-                    .then(|| stop_reason.clone()).flatten(),
+                    .then(|| stop_reason.clone())
+                    .flatten(),
                 resolved,
                 stopped: stop_reason,
             };
@@ -711,9 +736,7 @@ impl AcpRunner {
                 &format!("→ ask {} ({} chars)", step, system.len() + user.len()),
             );
         }
-        let session = self
-            .bare_session()
-            .map_err(|e| format!("session: {}", e))?;
+        let session = self.bare_session().map_err(|e| format!("session: {}", e))?;
         let text: Arc<Mutex<String>> = Default::default();
         let sink = text.clone();
         let prompt = format!("{}\n\n{}", system, user);
@@ -741,7 +764,8 @@ impl AcpRunner {
             ));
         }
         if let Some(t) = trace {
-            t.event(crate::session::TraceEvent::ModelText { summary: false,
+            t.event(crate::session::TraceEvent::ModelText {
+                summary: false,
                 label: label.to_string(),
                 text: crate::llm::truncate(&text, 2_000),
                 reply: true,

@@ -647,6 +647,8 @@ pub struct Section {
     pub parent: Option<String>,
     pub raw: String,
     pub hash: String,
+    // Recomputed at load from the raw texts; never written to a docs/ record.
+    #[serde(default)]
     pub lines: [usize; 2],
 }
 
@@ -663,7 +665,9 @@ pub struct Coverage {
 // One file under docs/ in the out dir, mirroring one source document.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DocRecord {
-    #[serde(rename = "contentHash")]
+    // Local: build.yaml carries it, a version 3 record still does.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    #[serde(rename = "contentHash", default, skip_serializing_if = "String::is_empty")]
     pub content_hash: String,
     #[serde(default)]
     pub sections: BTreeMap<String, Section>,

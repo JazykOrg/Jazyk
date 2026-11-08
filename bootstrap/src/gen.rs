@@ -642,42 +642,120 @@ pub fn locate_head(text: &str, head: &str, hint: usize) -> Option<(usize, bool)>
 }
 
 impl Ledger {
+    // The deliverable-wide file. The rows live one per file beside it.
+    // Mirrors docs/consumers/gen.md#the-ledger.
     pub fn path(out: &Path) -> PathBuf {
         out.join("gen").join("ledger.yaml")
+    }
+
+    fn row_dir(out: &Path, kind: &str) -> PathBuf {
+        out.join("gen").join(kind)
+    }
+
+    fn row_path(out: &Path, kind: &str, id: &str) -> PathBuf {
+        Self::row_dir(out, kind).join(format!("{}.yaml", crate::store::node_stem(id).0))
+    }
+
+    fn row_files(out: &Path, kind: &str) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = crate::vfs::read_dir(Self::row_dir(out, kind))
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.extension().and_then(|x| x.to_str()) == Some("yaml")
+                            && !p
+                                .file_name()
+                                .map(|n| n.to_string_lossy().starts_with('.'))
+                                .unwrap_or(true)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        files.sort();
+        files
+    }
+
+    // Every file the ledger reads: what a watcher fingerprints.
+    pub fn files(out: &Path) -> Vec<PathBuf> {
+        let mut v = vec![Self::path(out)];
+        v.extend(Self::row_files(out, "entities"));
+        v.extend(Self::row_files(out, "requirements"));
+        v
     }
 
     // Parsed once per content: the status of every row reloads the ledger to see
     // whether its entity was generated here, and a novel's two hundred rows parsed
     // the same file two hundred times, 28 seconds for one Inbox read in a tab. The
-    // cache is keyed on the path and the text, so any write reads fresh.
+    // cache is keyed on the paths and the texts, so any write reads fresh.
     pub fn load(out: &Path) -> Ledger {
         use std::hash::{Hash, Hasher};
         static CACHE: std::sync::Mutex<Option<(PathBuf, u64, Ledger)>> = std::sync::Mutex::new(None);
         let path = Self::path(out);
-        let Ok(text) = crate::vfs::read_to_string(&path) else {
+        let texts: Vec<(PathBuf, String)> = Self::files(out)
+            .into_iter()
+            .filter_map(|p| crate::vfs::read_to_string(&p).ok().map(|t| (p, t)))
+            .collect();
+        if texts.is_empty() {
             return Ledger::default();
-        };
-        // A file that exists but does not parse reads as empty and read-only; an
-        // empty file is no ledger yet.
-        let parse = |text: &str| -> Ledger {
-            if text.trim().is_empty() {
-                return Ledger::default();
-            }
-            match serde_norway::from_str::<Ledger>(text) {
-                Ok(l) => l,
-                Err(e) => {
-                    let why = format!("{}: {}", path.display(), e);
-                    eprintln!("[jazyk] error: the ledger did not load: {}", why);
-                    Ledger {
-                        unreadable: Some(why),
-                        ..Default::default()
+        }
+        // A file that exists but does not parse makes the whole ledger read as empty
+        // and read-only; an empty file is no ledger yet.
+        let parse = |texts: &[(PathBuf, String)]| -> Ledger {
+            let unreadable = |why: String| {
+                eprintln!("[jazyk] error: the ledger did not load: {}", why);
+                Ledger {
+                    unreadable: Some(why),
+                    ..Default::default()
+                }
+            };
+            let mut ledger = Ledger::default();
+            for (p, text) in texts {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let kind = p
+                    .parent()
+                    .and_then(|d| d.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if *p == path {
+                    match serde_norway::from_str::<Ledger>(text) {
+                        // Read first; a version 3 ledger carries its rows inline.
+                        Ok(l) => ledger = l,
+                        Err(e) => return unreadable(format!("{}: {}", p.display(), e)),
                     }
+                    continue;
+                }
+                let mut v: serde_norway::Value = match serde_norway::from_str(text) {
+                    Ok(v) => v,
+                    Err(e) => return unreadable(format!("{}: {}", p.display(), e)),
+                };
+                let id = match &mut v {
+                    serde_norway::Value::Mapping(m) => m.remove("id").and_then(|i| i.as_str().map(String::from)),
+                    _ => None,
+                };
+                let Some(id) = id else {
+                    return unreadable(format!("{}: a ledger row carries no id", p.display()));
+                };
+                let read = match kind.as_str() {
+                    "entities" => serde_norway::from_value::<EntityGen>(v).map(|r| {
+                        ledger.entities.insert(id, r);
+                    }),
+                    _ => serde_norway::from_value::<ReqRow>(v).map(|r| {
+                        ledger.requirements.insert(id, r);
+                    }),
+                };
+                if let Err(e) = read {
+                    return unreadable(format!("{}: {}", p.display(), e));
                 }
             }
+            ledger
         };
-        if crate::vfs::is_scoped() { return parse(&text); }
+        if crate::vfs::is_scoped() {
+            return parse(&texts);
+        }
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut h);
+        texts.hash(&mut h);
         let key = h.finish();
         if let Ok(guard) = CACHE.lock() {
             if let Some((p, k, l)) = guard.as_ref() {
@@ -686,15 +764,17 @@ impl Ledger {
                 }
             }
         }
-        let ledger: Ledger = parse(&text);
+        let ledger: Ledger = parse(&texts);
         if let Ok(mut guard) = CACHE.lock() {
             *guard = Some((path, key, ledger.clone()));
         }
         ledger
     }
 
-    // Through a sibling temporary file renamed into place; refused while the file on
-    // disk did not parse. Mirrors docs/consumers/gen.md#the-ledger.
+    // One file per row and the deliverable-wide file, each through a sibling temporary
+    // file renamed into place and only when its bytes changed; the files of rows that
+    // left the ledger are deleted. Refused while a file on disk did not parse.
+    // Mirrors docs/consumers/gen.md#the-ledger.
     pub fn save(&self, out: &Path) {
         let path = Self::path(out);
         if let Some(why) = &self.unreadable {
@@ -705,15 +785,52 @@ impl Ledger {
             );
             return;
         }
-        let text = match serde_norway::to_string(self) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("[jazyk] error: cannot serialize {}: {}", path.display(), e);
+        let write = |p: &Path, text: &str| {
+            if crate::vfs::read_to_string(p).ok().as_deref() == Some(text) {
                 return;
             }
+            if let Err(e) = crate::store::write_atomic(p, text.as_bytes()) {
+                eprintln!("[jazyk] error: cannot write {}: {}", p.display(), e);
+            }
         };
-        if let Err(e) = crate::store::write_atomic(&path, text.as_bytes()) {
-            eprintln!("[jazyk] error: cannot write {}: {}", path.display(), e);
+        let row = |id: &str, value: serde_norway::Result<serde_norway::Value>| -> Option<String> {
+            let mut m = serde_norway::Mapping::new();
+            m.insert("id".into(), id.into());
+            if let Ok(serde_norway::Value::Mapping(fields)) = value {
+                m.extend(fields);
+            }
+            serde_norway::to_string(&m).ok()
+        };
+        let mut written: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        for (id, r) in &self.entities {
+            let p = Self::row_path(out, "entities", id);
+            if let Some(t) = row(id, serde_norway::to_value(r)) {
+                write(&p, &t);
+            }
+            written.insert(p);
+        }
+        for (id, r) in &self.requirements {
+            let p = Self::row_path(out, "requirements", id);
+            if let Some(t) = row(id, serde_norway::to_value(r)) {
+                write(&p, &t);
+            }
+            written.insert(p);
+        }
+        let mut wide = serde_norway::to_value(self).unwrap_or(serde_norway::Value::Null);
+        if let serde_norway::Value::Mapping(m) = &mut wide {
+            m.remove("entities");
+            m.remove("requirements");
+        }
+        match serde_norway::to_string(&wide) {
+            Ok(t) => write(&path, &t),
+            Err(e) => eprintln!("[jazyk] error: cannot serialize {}: {}", path.display(), e),
+        }
+        for kind in ["entities", "requirements"] {
+            for p in Self::row_files(out, kind) {
+                if !written.contains(&p) {
+                    crate::vfs::remove_file(&p).ok();
+                }
+            }
         }
     }
 }

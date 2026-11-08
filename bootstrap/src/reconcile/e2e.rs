@@ -1752,10 +1752,10 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
     assert_eq!(store.status.version, crate::store::STORE_VERSION);
-    assert_eq!(store.status.version, 3);
+    assert_eq!(store.status.version, 4);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
-    assert!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap().contains("version: 3"));
+    assert!(crate::vfs::read_to_string(out.join("status.yaml")).unwrap().contains("version: 4"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }

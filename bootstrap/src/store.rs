@@ -574,10 +574,22 @@ impl ProseEdit {
         old_text: &str,
         new_text: &str,
     ) -> Result<ProseEdit, String> {
+        // The parser joins a section's lines with LF; a CRLF document holds the same
+        // section with CRLF, and the edit keeps the document's line endings.
+        let crlf = old_full.contains("\r\n");
+        let eol = |t: &str| {
+            if crlf {
+                t.replace("\r\n", "\n").replace('\n', "\r\n")
+            } else {
+                t.to_string()
+            }
+        };
         let window = section_raw
             .map(str::trim)
             .filter(|raw| !raw.is_empty())
-            .and_then(|raw| old_full.find(raw).map(|b| (b, b + raw.len())));
+            .map(eol)
+            .and_then(|raw| old_full.find(&raw).map(|b| (b, b + raw.len())));
+        let doc_new = eol(new_text);
         let full = if old_text.trim().is_empty() {
             let Some((_, end)) = window else {
                 return Err(format!(
@@ -586,9 +598,10 @@ impl ProseEdit {
                 ));
             };
             format!(
-                "{}\n\n{}{}",
-                old_full[..end].trim_end_matches('\n'),
-                new_text.trim(),
+                "{}{}{}{}",
+                old_full[..end].trim_end_matches(['\r', '\n']),
+                eol("\n\n"),
+                doc_new.trim(),
                 &old_full[end..]
             )
         } else {
@@ -604,7 +617,7 @@ impl ProseEdit {
                     .ok_or_else(stale)?,
                 None => md::locate_bytes(old_full, old_text).ok_or_else(stale)?,
             };
-            format!("{}{}{}", &old_full[..b], new_text, &old_full[e..])
+            format!("{}{}{}", &old_full[..b], doc_new, &old_full[e..])
         };
         Ok(ProseEdit {
             doc: doc.to_string(),
@@ -8602,6 +8615,30 @@ mod tests {
             .expect("a criterion-deleted record");
         assert_eq!(op_at(crit.mutation), "delete_criterion", "{:?}", entry.mutations);
     }
+
+    // A CRLF document locates its sections for a dual write the same way an LF one
+    // does, and the edit keeps CRLF. Mirrors docs/compiler/graph.md#mutations.
+    #[test]
+    fn a_crlf_document_takes_a_dual_write_in_its_section() {
+        let lf = "# T\n\n## Alpha\nThe cart holds items.\nIt is shared.\n\n## Beta\nThe cart holds items.\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let sections = crate::md::parse_sections(&crlf);
+        let beta = sections["/t/beta"].raw.clone();
+        let alpha = sections["/t/alpha"].raw.clone();
+        // A replacement scoped to Beta never lands in Alpha's identical sentence.
+        let edit = ProseEdit::locate("t.md", "/t/beta", Some(&beta), &crlf, "The cart holds items.", "The cart holds goods.")
+            .unwrap();
+        assert_eq!(edit.full, crlf.replace("## Beta\r\nThe cart holds items.", "## Beta\r\nThe cart holds goods."));
+        // An append after a multi-line section lands right after it, in CRLF.
+        let edit = ProseEdit::locate("t.md", "/t/alpha", Some(&alpha), &crlf, "", "A cart expires.\nAfter a day.").unwrap();
+        assert!(
+            edit.full.contains("It is shared.\r\n\r\nA cart expires.\r\nAfter a day.\r\n\r\n## Beta"),
+            "{:?}",
+            edit.full
+        );
+        assert!(!edit.full.replace("\r\n", "").contains('\n'), "{:?}", edit.full);
+    }
+
     // A move alone writes `parent` on the parent left and the one joined and no
     // `fields` record on the child; a move with a definition still reviews the child.
     // Mirrors docs/compiler/goals/review-entity.md#created-when.

@@ -343,7 +343,9 @@ Their semantics:
   commit, so the edit does not dirty the document it just reconciled. Any other anchor
   in the section whose quote stops locating goes stale the normal way; the safety
   net is ordinary dirty-section work. An `old_text` of empty inserts `new_text` after
-  the section's last sentence, which is how a ratification proposal lands.
+  the section's last sentence, which is how a ratification proposal lands. The edit
+  keeps the document's line endings: in a CRLF document the section locates the same
+  way and the inserted text takes CRLF.
 - `edit_fact` sets one field on one node (`statement`, `edges`, `transition`, `facets`,
   `definition`, `stereotype`, `parent`, an attribute's `type` or `value`, a view's
   `members`). On a default view it clears `default`. Paired with `edit_doc_prose` it

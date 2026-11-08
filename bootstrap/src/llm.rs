@@ -114,6 +114,15 @@ pub struct Llm {
 // the cap only stops a runaway payload from filling the transcript.
 const MESSAGE_CAP: usize = 24_000;
 
+// The run an inference identity belongs to: `<run>:<transition>:<purpose>:<ordinal>`.
+fn run_of(request_id: &str) -> &str {
+    let mut parts = request_id.rsplitn(4, ':');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(_), Some(_), Some(_), Some(run)) => run,
+        _ => request_id,
+    }
+}
+
 // The outgoing messages as recorded: same shape, long strings cut.
 fn recorded(messages: &[Value]) -> Value {
     Value::Array(
@@ -197,11 +206,20 @@ impl Llm {
         let started = crate::sys::Instant::now();
         let request_id = request.attempt_id.clone();
         let purpose = format!("{:?}", request.purpose).to_ascii_lowercase();
-        let messages = request.body["messages"].as_array().cloned().unwrap_or_default();
-        self.event(crate::session::TraceEvent::LlmRequest {
-            label: request_id.clone(), step: purpose.clone(), model: self.model.clone(),
-            messages: recorded(&messages), tools: tool_names(request.body["tools"].as_array().map(Vec::as_slice)),
-        });
+        {
+            // The transcript records what changed since the run's previous request.
+            // Mirrors docs/compiler/sessions.md#trace-events.
+            let messages = request.body["messages"].as_array().map(Vec::as_slice).unwrap_or_default();
+            let Value::Array(mut messages) = recorded(messages) else { unreachable!() };
+            let prefix = self.trace.as_ref()
+                .map_or(0, |trace| trace.request_prefix(run_of(&request_id), &messages));
+            messages.drain(..prefix);
+            self.event(crate::session::TraceEvent::LlmRequest {
+                label: request_id.clone(), step: purpose.clone(), model: self.model.clone(), prefix,
+                messages: Value::Array(messages),
+                tools: tool_names(request.body["tools"].as_array().map(Vec::as_slice)),
+            });
+        }
         #[cfg(target_arch = "wasm32")]
         let response = { crate::wasm::llm_bridge::chat_async(&request.body.to_string()).await? };
         #[cfg(not(target_arch = "wasm32"))]

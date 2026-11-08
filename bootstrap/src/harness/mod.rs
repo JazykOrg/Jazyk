@@ -165,6 +165,14 @@ pub struct ToolIntention {
 pub struct ToolReceipt {
     pub result: String,
     pub ok: bool,
+    // The digest of the arguments the call executed with. A replay under the same
+    // identity with other arguments is refused (docs/compiler/agent-runtime.md#checkpoints).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<String>,
+}
+
+pub(crate) fn arguments_digest(args: &serde_json::Value) -> String {
+    crate::model::hash_hex(&args.to_string())
 }
 
 /// Owned data only. Recovery hosts pair this with their MCP and workspace capsules.

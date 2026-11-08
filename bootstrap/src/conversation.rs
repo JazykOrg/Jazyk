@@ -746,7 +746,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             dispatch: &mut dispatch,
             emit: &mut emit,
             cancelled: &cancelled,
-            max_rounds: crate::limits::AGENT_MAX_ROUNDS,
+            max_rounds: crate::limits::agent_max_rounds(),
             label: format!("chat {}", id),
             conversation: true,
             inputs: Some(&mut input_source),

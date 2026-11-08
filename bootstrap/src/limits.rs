@@ -203,6 +203,20 @@ mod tests {
         assert_eq!(SESSION_ROUNDS, 24, "graph batch sizing is independent");
     }
 
+    // GUI chat, the in-process worker, and the embedded ACP agent share one limit
+    // and one override. Mirrors docs/compiler/sessions.md#budgets.
+    #[test]
+    fn every_embedded_agent_runner_honors_the_request_override() {
+        for (name, source) in [
+            ("conversation.rs", include_str!("conversation.rs")),
+            ("inprocess.rs", include_str!("inprocess.rs")),
+            ("acp/agent/mod.rs", include_str!("acp/agent/mod.rs")),
+        ] {
+            assert!(source.contains("max_rounds: crate::limits::agent_max_rounds()"), "{name}");
+            assert!(!source.contains("max_rounds: crate::limits::AGENT_MAX_ROUNDS"), "{name}");
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn a_low_agent_override_stops_at_its_model_admission_limit() {

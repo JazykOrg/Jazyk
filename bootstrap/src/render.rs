@@ -1307,6 +1307,24 @@ fn messages(scene: &Scene) -> Vec<Message> {
         .collect()
 }
 
+// The relationships among a view's members as the rendering draws them: one arrow per
+// shown pair and direction, lifted to the nearest shown ancestor and collapsed as the
+// view (and its over-limit auto-collapse) says. (a, b, type, cardinality, count).
+// Mirrors docs/compiler/tools.md#read-tools.
+pub fn view_relationships(
+    store: &Store,
+    view_id: &str,
+    view: &View,
+) -> Vec<(String, String, String, Option<String>, usize)> {
+    let sc = scene(store, view_id, view);
+    frame(&sc)
+        .st
+        .arrows
+        .into_iter()
+        .map(|a| (a.a, a.b, a.rel_type, a.cardinality, a.count))
+        .collect()
+}
+
 // The messages of a flow view as the emitter draws them: requirement id, initiator,
 // receiver, lifted to the view's level. The card model's steps.
 pub fn view_messages(store: &Store, view_id: &str, view: &View) -> Vec<(String, String, String)> {

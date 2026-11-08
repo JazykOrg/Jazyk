@@ -80,7 +80,8 @@ loaded set as a stub.
   when set, so a review can tell an absent parent from an unknown one.
   The lookup sees the session's own staged entities, same as `search`.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
-  collapse list, the relationships among its members (lifted where a member is
+  collapse list, the relationships among its members as the rendering draws them
+  (`{a, b, type, cardinality?, count?}`, lifted where a member is hidden or
   collapsed), the path of its rendering under `diagrams/`
   ([output layout](./diagrams.md#output-layout)), and `children`: the members that
   hold a [level](./concepts/levels.md#levels) of their own, each with the id of its

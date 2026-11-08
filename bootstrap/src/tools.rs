@@ -5932,12 +5932,29 @@ impl ToolSession {
                 // The drill-down links: computed here from the containment tree and
                 // the level views, never stored. Mirrors docs/compiler/tools.md#read-tools.
                 let children = self.view_children(v);
+                // The relationships among the members, lifted and collapsed as the
+                // rendering draws them. Mirrors docs/compiler/tools.md#read-tools.
+                let relationships: Vec<Value> =
+                    crate::render::view_relationships(&self.snapshot, &id, v)
+                        .into_iter()
+                        .map(|(a, b, ty, cardinality, count)| {
+                            let mut r = json!({"a": a, "b": b, "type": ty});
+                            if let Some(c) = cardinality {
+                                r["cardinality"] = json!(c);
+                            }
+                            if count > 1 {
+                                r["count"] = json!(count);
+                            }
+                            r
+                        })
+                        .collect();
                 let reply = json!({
                     "id": id, "kind": v.kind, "title": v.title, "members": v.members,
                     "excluded": v.excluded.iter().map(|x| json!({"id": x.id, "note": x.note})).collect::<Vec<_>>(),
                     "collapse": v.collapse, "query": v.query, "default": v.default,
                     "rendering": format!("diagrams/{}/{}.svg", v.kind, slug),
                     "children": children,
+                    "relationships": relationships,
                 });
                 self.loaded.load_stub(&self.snapshot, &id);
                 Ok(reply)
@@ -13922,6 +13939,49 @@ mod tests {
             }),
             "{:?}",
             opens
+        );
+    }
+
+    // get_view carries the relationships among its members, a hidden member's lifted
+    // to its nearest shown ancestor. Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn get_view_lists_member_relationships_lifted() {
+        let mut s = Store::default();
+        for (id, name) in [("ent:server", "Server"), ("ent:db", "Database"), ("ent:cache", "Cache")] {
+            s.graph.entities.insert(id.into(), plain(name));
+        }
+        s.graph.entities.insert("ent:model".into(), under("Model", "ent:server"));
+        let rel = |a: &str, b: &str, ty: &str| Relationship {
+            members: vec![a.into(), b.into()],
+            contributions: vec![Contribution {
+                a: a.into(),
+                b: b.into(),
+                r#type: ty.into(),
+                cardinality: Some("1".into()),
+                requirements: vec!["req:x".into()],
+            }],
+        };
+        s.graph.relationships.insert("rel:1".into(), rel("ent:model", "ent:db", "dependency"));
+        s.graph.relationships.insert("rel:2".into(), rel("ent:server", "ent:cache", "association"));
+        s.graph.views.insert(
+            "view:class/backend".into(),
+            View {
+                kind: "class".into(),
+                title: "Backend".into(),
+                members: vec!["ent:server".into(), "ent:db".into(), "ent:cache".into()],
+                ..Default::default()
+            },
+        );
+        let mut t = ToolSession::new(s, WorkScope::serving("mcp-compile"), 64, 24_000);
+        let r = t.dispatch("get_view", &json!({"id": "view:class/backend"})).unwrap();
+        assert_eq!(
+            r["relationships"],
+            json!([
+                {"a": "ent:cache", "b": "ent:server", "type": "association"},
+                {"a": "ent:server", "b": "ent:db", "type": "dependency"},
+            ]),
+            "{}",
+            r["relationships"]
         );
     }
 

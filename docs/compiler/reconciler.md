@@ -440,6 +440,7 @@ tools.
 | [`review-entity`](./goals/review-entity.md) | compile | 2 | M | entity | `entity-changed` |
 | [`retrace`](./goals/retrace.md) | compile | 2 | M | node | `view-member-gone`, `node-deleted` |
 | [`conform-instance`](./goals/conform-instance.md) | compile | 2 | M | instance | `instance-changed` |
+| [`derive-criteria`](./goals/derive-criteria.md) | compile | 3 | M | entity | a requirement with no criterion, or a `requirement-revised` record newer than its criteria, in a set with a nonempty `source` |
 | [`bind`](./goals/bind.md) | compile | 3 | M | requirement | `ledger-stale` (`goal: bind`: no current row) |
 | [`generate`](./goals/generate.md) | compile | 3 | M | entity | `ledger-stale` (`goal: generate`: facts differ from the ledger, `unimplemented` rows) |
 | [`verify`](./goals/verify.md) | compile | 3 | M | ledger row | `ledger-stale` (`goal: verify`: the derived status says action) |

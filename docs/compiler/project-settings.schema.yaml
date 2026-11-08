@@ -109,6 +109,10 @@ properties:
     type: object
     description: Generation workflow settings
     properties:
+      deliverable:
+        type: string
+        description: Accepted and ignored. The deliverable is the project root and
+          the set's source scopes it
       worker:
         type: string
         description: The built-in generation worker. 'agentic' runs each generate
@@ -427,6 +431,10 @@ properties:
           type: object
           description: Generation workflow settings
           properties:
+            deliverable:
+              type: string
+              description: Accepted and ignored. The deliverable is the project root and
+                the set's source scopes it
             worker:
               type: string
               description: The built-in generation worker. 'agentic' runs each generate

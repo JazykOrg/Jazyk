@@ -874,6 +874,50 @@ pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<V
 // proxy does not. Mirrors docs/frontends/acp.md#slash-commands.
 async fn run_command(st: &SharedState, text: &str) -> Option<String> {
     let (cmd, rest) = crate::acp::commands::split(text, true)?;
+    // A graph command works on one document set, never on the project's shared
+    // `.jazyk/`; bare /compile in a project of several sets builds every dirty one.
+    // Mirrors docs/frontends/acp.md#slash-commands.
+    let scoped;
+    let st = if crate::acp::commands::GRAPH_COMMANDS.contains(&cmd) {
+        use crate::acp::commands::{graph_scope, ScopeRefusal};
+        match graph_scope(&st.proj(), cmd) {
+            Ok(p) => {
+                scoped = match st.scoped(p.set_id.as_deref()) {
+                    Ok(s) => s,
+                    Err((_, e)) => return Some(e),
+                };
+                &scoped
+            }
+            Err(ScopeRefusal::Several(_)) if cmd == "compile" => {
+                let (sets, config_hash) = match crate::acp::commands::dirty_sets(&st.root) {
+                    Ok(v) => v,
+                    Err(e) => return Some(e),
+                };
+                if sets.is_empty() {
+                    return Some("no dirty document sets".to_string());
+                }
+                let names: Vec<String> = sets
+                    .iter()
+                    .map(|p| p.set_name.clone().unwrap_or_default())
+                    .collect();
+                let id = st.jobs.submit(
+                    st,
+                    super::jobs::JobKind::CompileSets {
+                        set_ids: sets.into_iter().filter_map(|p| p.set_id).collect(),
+                        config_hash,
+                    },
+                );
+                return Some(format!(
+                    "compile queued for {} (job {}); its turns stream below as the build runs",
+                    names.join(", "),
+                    id
+                ));
+            }
+            Err(refusal) => return Some(refusal.message()),
+        }
+    } else {
+        st
+    };
     let proj = st.proj();
     let llm = st.llm();
     match cmd {
@@ -958,6 +1002,35 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
 #[cfg(test)]
 mod steering_tests {
     use super::*;
+
+    // Chat graph commands address one set: a project's only set implicitly, and in a
+    // project of several sets a refusal naming them, except /compile, which queues
+    // every dirty set. Nothing lands in the shared `.jazyk/`
+    // (docs/frontends/acp.md#slash-commands).
+    #[tokio::test]
+    async fn chat_graph_commands_address_one_document_set() {
+        let st = super::super::server::tests::state(None, "https://chat-sets.test");
+        let add = |id: &str, name: &str| {
+            let w = crate::document_sets::Workspace::load(&st.root).unwrap();
+            crate::document_sets::edit(&st.root, &json!({"baseHash": w.hash, "set": {"id": id, "name": name, "docs": [format!("{}.md", id)]}}), false).unwrap();
+        };
+        add("ds_one", "Orders");
+        let status = run_command(&st, "/status").await.unwrap();
+        assert!(status.starts_with("generation"), "{}", status);
+        let board = run_command(&st, "/board").await.unwrap();
+        assert!(!board.contains("choose a document set"), "{}", board);
+        add("ds_two", "Billing");
+        for cmd in ["/status", "/board", "/preview", "/generate", "/verify", "/release", "/questions"] {
+            let reply = run_command(&st, cmd).await.unwrap();
+            assert!(reply.starts_with("choose a document set"), "{}: {}", cmd, reply);
+            assert!(reply.contains("Orders") && reply.contains("Billing"), "{}", reply);
+        }
+        let compile = run_command(&st, "/compile").await.unwrap();
+        assert!(!compile.contains("choose a document set"), "{}", compile);
+        assert!(!st.root.join(".jazyk/status.yaml").exists());
+        assert!(!st.root.join(".jazyk/graph").exists());
+        std::fs::remove_dir_all(&st.root).ok();
+    }
     #[test]
     fn restore_keeps_input_identity_and_marks_unfinished_turn_interrupted() {
         let root = tempfile::tempdir().unwrap();

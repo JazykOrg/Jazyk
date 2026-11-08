@@ -427,6 +427,7 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     Response::from_parts(parts, axum::body::Body::from(value.to_string()))
 }
 
+#[cfg(test)]
 pub fn router(st: SharedState) -> Router {
     router_on(st, None)
 }

@@ -551,6 +551,14 @@ The catalog is one list, served identically by the IDE proxy and the
 own. What differs is only how the work is started, because the GUI already has a job
 queue and the proxy does not.
 
+The graph commands (`/status`, `/board`, `/preview`, `/explain`, `/ripple`,
+`/questions`, `/compile`, `/generate`, `/verify`, `/release`) address one
+[document set](../compiler/document-sets.md), like the CLI. A project with exactly
+one set uses it. In a project with several sets, `/compile` compiles every dirty set,
+like bare `jazyk compile`, and the other graph commands refuse with a message to
+choose a document set and name the CLI command that takes `--set`. A command never
+runs on the project's shared `.jazyk/` directory.
+
 The list follows the directory. A session outside a project advertises `/help` and
 `/init` and nothing else: no build command has anything to build yet, and offering
 the rest when every one answers "not a jazyk project" reads as breakage.

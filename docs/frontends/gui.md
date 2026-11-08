@@ -587,7 +587,9 @@ The agent chooses the order of source work and checks, as in the CLI and ACP.
 `GET /api/events` streams server-sent events. Every event carries a monotonic sequence
 number; the server keeps a replay ring, so a reconnecting client resumes from its last
 seen event. When the gap exceeds the ring, the server sends `resync` and the client
-refetches its snapshots.
+refetches its snapshots. An event id names the server's start as well as the sequence
+number, so a client reconnecting to a restarted server with an id the new process
+never issued gets `resync` too, never a silent gap.
 
 A dropped stream is shown, not hidden: the app banners the lost connection and falls
 back to polling the status endpoint until the stream heals. Reconnecting refetches

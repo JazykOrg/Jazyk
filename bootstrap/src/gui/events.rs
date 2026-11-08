@@ -27,6 +27,9 @@ pub struct EventHub {
 }
 struct EventInner {
     tx: broadcast::Sender<Arc<Value>>,
+    // This process's start, part of every event id: an id from an earlier server
+    // (the client outlived a restart) never resumes against this ring.
+    boot: u64,
     seq: AtomicU64,
     ring: Mutex<VecDeque<Arc<Value>>>,
 }
@@ -37,6 +40,7 @@ impl EventHub {
         EventHub {
             inner: Arc::new(EventInner {
                 tx,
+                boot: crate::sys::now_millis() as u64,
                 seq: AtomicU64::new(0),
                 ring: Mutex::new(VecDeque::new()),
             }),
@@ -74,6 +78,26 @@ impl EventHub {
         self.inner.tx.subscribe()
     }
 
+    // The SSE id of an event: `<boot>-<seq>`.
+    fn event_id(&self, ev: &Value) -> String {
+        format!("{}-{}", self.inner.boot, ev["seq"].as_u64().unwrap_or(0))
+    }
+
+    // Events after a client's Last-Event-ID, or None when the server cannot account
+    // for the gap: another process issued the id, the id is malformed or ahead of
+    // this server, or the gap exceeds the ring. The client must resync.
+    fn replay_after_id(&self, id: &str) -> Option<Vec<Arc<Value>>> {
+        let (boot, seq) = id.split_once('-')?;
+        if boot.parse::<u64>().ok()? != self.inner.boot {
+            return None;
+        }
+        let last = seq.parse::<u64>().ok()?;
+        if last > self.inner.seq.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.replay_after(last)
+    }
+
     // Events after `last`, or None when the gap exceeds the ring (client must resync).
     fn replay_after(&self, last: u64) -> Option<Vec<Arc<Value>>> {
         let ring = self.inner.ring.lock().unwrap();
@@ -100,9 +124,8 @@ impl EventHub {
     }
 }
 
-fn to_sse(ev: &Value) -> SseEvent {
-    let id = ev["seq"].as_u64().unwrap_or(0);
-    SseEvent::default().id(id.to_string()).data(ev.to_string())
+fn to_sse(hub: &EventHub, ev: &Value) -> SseEvent {
+    SseEvent::default().id(hub.event_id(ev)).data(ev.to_string())
 }
 
 fn resync_event() -> SseEvent {
@@ -117,17 +140,17 @@ pub async fn sse(
     let rx = st.events.subscribe();
     let last_id = headers
         .get("last-event-id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok());
+        .map(|v| v.to_str().unwrap_or_default().to_string());
+    let hub = st.events.clone();
     let mut opening: Vec<SseEvent> = Vec::new();
     if let Some(last) = last_id {
-        match st.events.replay_after(last) {
-            Some(missed) => opening.extend(missed.iter().map(|e| to_sse(e))),
+        match hub.replay_after_id(&last) {
+            Some(missed) => opening.extend(missed.iter().map(|e| to_sse(&hub, e))),
             None => opening.push(resync_event()),
         }
     }
-    let live = tokio_stream::wrappers::BroadcastStream::new(rx).map(|item| match item {
-        Ok(ev) => to_sse(&ev),
+    let live = tokio_stream::wrappers::BroadcastStream::new(rx).map(move |item| match item {
+        Ok(ev) => to_sse(&hub, &ev),
         // The consumer lagged past the channel capacity: tell it to refetch.
         Err(_) => resync_event(),
     });
@@ -395,7 +418,6 @@ pub fn spawn_control_watcher(st: SharedState) {
 // Emits docs.changed; the watch-mode compile trigger hooks in here.
 pub fn spawn_docs_watcher(st: SharedState) {
     std::thread::spawn(move || {
-        use notify::Watcher;
         let fingerprints = || -> std::collections::BTreeMap<String, String> {
             let Ok(w) = crate::document_sets::Workspace::load(&st.root) else {
                 return Default::default();
@@ -417,10 +439,10 @@ pub fn spawn_docs_watcher(st: SharedState) {
             values
         };
         let mut last = fingerprints();
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<std::path::PathBuf>>();
         let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, _>| {
-            if res.is_ok() {
-                let _ = tx.send(());
+            if let Ok(event) = res {
+                let _ = tx.send(event.paths);
             }
         }) {
             Ok(w) => w,
@@ -433,7 +455,8 @@ pub fn spawn_docs_watcher(st: SharedState) {
                 return;
             }
         };
-        if let Err(e) = watcher.watch(&st.root, notify::RecursiveMode::Recursive) {
+        let mut watched = std::collections::BTreeSet::new();
+        if let Err(e) = watch_tree(&mut watcher, &st.root, &mut watched) {
             eprintln!(
                 "[jazyk] warning: cannot watch {}: {}; document changes will not be noticed until a restart",
                 st.root.display(),
@@ -441,9 +464,20 @@ pub fn spawn_docs_watcher(st: SharedState) {
             );
             return;
         }
-        while rx.recv().is_ok() {
+        let relevant = |paths: &[std::path::PathBuf]| paths.iter().any(|p| watched_path(&st.root, p));
+        while let Ok(paths) = rx.recv() {
+            // Build caches and dot-folders never hold a document: their churn (a
+            // `cargo build`, an `npm install`) costs no fingerprint pass.
+            let mut hit = relevant(&paths);
             std::thread::sleep(std::time::Duration::from_millis(300));
-            while rx.try_recv().is_ok() {}
+            while let Ok(more) = rx.try_recv() {
+                hit |= relevant(&more);
+            }
+            // A folder new at the top level gets its own watch.
+            let _ = watch_tree(&mut watcher, &st.root, &mut watched);
+            if !hit {
+                continue;
+            }
             let now = fingerprints();
             if now == last {
                 continue;
@@ -482,4 +516,104 @@ pub fn spawn_docs_watcher(st: SharedState) {
             }
         }
     });
+}
+
+// Whether a changed path can matter to a document set: the configuration, or a
+// file a set may claim (no dot-folder, no `target/`, no `node_modules/`).
+fn watched_path(root: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    rel == crate::document_sets::CONFIG
+        || rel == ".jazyk"
+        || rel.is_empty()
+        || crate::document_sets::eligible(&rel)
+}
+
+// Watch the root itself and `.jazyk/` without descending, and each top-level folder
+// a set may claim recursively, so build caches and dot-folders at the top cost no
+// watch. Already watched folders are skipped; a new top-level folder is added on
+// the next call.
+fn watch_tree(
+    watcher: &mut impl notify::Watcher,
+    root: &Path,
+    watched: &mut std::collections::BTreeSet<std::path::PathBuf>,
+) -> notify::Result<()> {
+    use notify::RecursiveMode;
+    if watched.insert(root.to_path_buf()) {
+        watcher.watch(root, RecursiveMode::NonRecursive)?;
+    }
+    let meta = root.join(".jazyk");
+    if meta.is_dir() && watched.insert(meta.clone()) {
+        let _ = watcher.watch(&meta, RecursiveMode::NonRecursive);
+    }
+    for dir in top_level_watch_dirs(root) {
+        if watched.insert(dir.clone()) {
+            let _ = watcher.watch(&dir, RecursiveMode::Recursive);
+        }
+    }
+    Ok(())
+}
+
+fn top_level_watch_dirs(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<_> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| crate::document_sets::eligible(&e.file_name().to_string_lossy()))
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+    dirs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The docs watcher skips what no set can claim: dot-folders, `target/`, and
+    // `node_modules/` cost neither a watch at the top nor a fingerprint pass.
+    #[test]
+    fn the_docs_watcher_skips_build_caches_and_dot_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for d in ["docs", "src", "target", "node_modules", ".git", ".github", ".jazyk"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let names: Vec<String> = top_level_watch_dirs(root)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![".github", "docs", "src"]);
+        assert!(watched_path(root, &root.join("docs/a.md")));
+        assert!(watched_path(root, &root.join(crate::document_sets::CONFIG)));
+        assert!(!watched_path(root, &root.join("target/debug/x.o")));
+        assert!(!watched_path(root, &root.join("bootstrap/target/debug/x.o")));
+        assert!(!watched_path(root, &root.join("web/node_modules/a/b.js")));
+        assert!(!watched_path(root, &root.join(".git/index")));
+        assert!(!watched_path(root, &root.join(".jazyk/ds_main/graph/x.yaml")));
+    }
+
+    // A Last-Event-ID resumes only against the process that issued it: an id from a
+    // restarted server, a malformed id, or one ahead of this server resyncs
+    // (docs/frontends/gui.md#events).
+    #[test]
+    fn replay_resumes_only_ids_this_server_issued() {
+        let hub = EventHub::new();
+        for _ in 0..3 {
+            hub.emit("x", json!({}));
+        }
+        let ring: Vec<Value> = hub.inner.ring.lock().unwrap().iter().map(|e| (**e).clone()).collect();
+        let first = hub.event_id(&ring[0]);
+        let missed = hub.replay_after_id(&first).unwrap();
+        assert_eq!(missed.len(), 2);
+        assert!(hub.replay_after_id(&hub.event_id(&ring[2])).unwrap().is_empty());
+        let boot = hub.inner.boot;
+        assert!(hub.replay_after_id(&format!("{}-1", boot + 1)).is_none());
+        assert!(hub.replay_after_id(&format!("{}-99", boot)).is_none());
+        assert!(hub.replay_after_id("2").is_none());
+        assert!(hub.replay_after_id("").is_none());
+    }
 }

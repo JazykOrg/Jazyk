@@ -327,9 +327,24 @@ fn identifier(base: &str, prefix: &str) -> String {
     }
 }
 
-// The PlantUML alias of an entity: derived from its id, stable across builds.
+// The PlantUML alias of an entity: derived from its id, stable across builds, and
+// distinct for distinct ids. A plain slug (letters and digits joined by single
+// hyphens, not opening with a digit or spelling a keyword) maps hyphens to
+// underscores, and two plain slugs never meet. Any other id (`a_b`, `a--b`, `class`)
+// keeps its readable form and takes `__` and a hash of the id, a pair a plain slug
+// cannot spell, so `ent:a-b` and `ent:a_b` stay two elements.
+// Mirrors docs/compiler/diagrams.md#the-emitters.
 fn alias_of(id: &str) -> String {
-    identifier(entity_slug(id), "n_")
+    let slug = entity_slug(id);
+    let plain = !slug.is_empty()
+        && slug.split('-').all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
+        && !slug.starts_with(|c: char| c.is_ascii_digit())
+        && !PLANTUML_WORDS.contains(&slug.replace('-', "_").as_str());
+    if plain {
+        slug.replace('-', "_")
+    } else {
+        format!("{}__{}", identifier(slug, "n_"), &crate::model::hash_hex(id)[..8])
+    }
 }
 
 // A state name usable as a PlantUML token, or the alias it needs a declaration for.
@@ -2374,6 +2389,19 @@ mod tests {
         assert_eq!(inert("@0"), "@0");
         assert_eq!(inert("@.5"), "@.5");
         assert_eq!(inert("  !include x"), "  \u{200B}!include x");
+    }
+
+    // Distinct entity ids never share an alias (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn aliases_stay_distinct_for_distinct_ids() {
+        assert_eq!(alias_of("ent:order-item"), "order_item");
+        let ids = ["ent:a-b", "ent:a_b", "ent:a--b", "ent:class", "ent:n-class", "ent:2fa", "ent:n-2fa"];
+        let aliases: BTreeSet<String> = ids.iter().map(|id| alias_of(id)).collect();
+        assert_eq!(aliases.len(), ids.len(), "{aliases:?}");
+        for a in &aliases {
+            assert!(a.chars().all(|c| c.is_alphanumeric() || c == '_'), "{a}");
+            assert!(!a.starts_with(|c: char| c.is_ascii_digit()), "{a}");
+        }
     }
 
     #[test]

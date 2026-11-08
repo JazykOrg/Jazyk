@@ -43,7 +43,8 @@ no LLM, no state, no reads outside the snapshot. Rules shared by every emitter:
 
 - The file opens with `@startuml` and closes with `@enduml`.
 - Display names are entity `name`s. Where PlantUML needs an identifier beside a quoted
-  name, the emitter derives an alias from the entity id, stable across builds.
+  name, the emitter derives an alias from the entity id, stable across builds. Distinct
+  ids never share an alias: `ent:a-b` and `ent:a_b` are two elements.
 - Text from the graph is inert. A line that would open a preprocessor directive (`!`)
   or end the diagram (`@enduml`), a builtin call (`%getenv`), and image markup (`<img`)
   anywhere get a zero-width space after the trigger character, so no renderer reads a

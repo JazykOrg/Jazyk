@@ -1004,5 +1004,7 @@ paths `jazyk compile` takes select the document sets that claim them, and `check
 `jazyk tasks` lists task definitions and runtime availability. `jazyk runs` includes
 the recent run history. `jazyk run <task-id>` submits a finite task and returns its
 durable run ID. `jazyk run-status <run-id>`, `jazyk run-log <run-id>`, and
-`jazyk run-cancel <run-id>` inspect, read, and cancel it. These commands use local
+`jazyk run-cancel <run-id>` inspect, read, and cancel it. They print JSON and follow
+the [help](#help) rules: `--help` prints their usage, and a missing id, an extra
+argument, or an unknown option is a usage error with exit `2`. These commands use local
 Docker without a Cloud account. See [Task execution](../compiler/task-runtime.md).

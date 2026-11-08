@@ -211,6 +211,8 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "acp" => (Some(2), &["--ide"]),
         "benchmark" => (None, &["--project", "--goal", "--force"]),
         "replay" => (None, &[]),
+        "tasks" | "runs" => (Some(0), &[]),
+        "run" | "run-status" | "run-log" | "run-cancel" => (Some(1), &[]),
         _ => return None,
     })
 }
@@ -567,6 +569,23 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              {}",
             COMMON_OUT
         ),
+        "tasks" | "runs" => format!(
+            "usage: jazyk {}\n\n\
+             The project's task definitions and runtime availability{}, as JSON.\n\n\
+             exit: 0 when printed, 1 when the project or runtime cannot answer, 2 on a usage error",
+            cmd,
+            if cmd == "runs" { ", with the recent run history" } else { "" }
+        ),
+        "run" => "usage: jazyk run <task-id>\n\n\
+             Submit one finite task and print its durable run, as JSON.\n\n\
+             exit: 0 when submitted, 1 when refused, 2 on a usage error".to_string(),
+        "run-status" | "run-log" | "run-cancel" => format!(
+            "usage: jazyk {} <run-id>\n\n\
+             {} one task run, as JSON.\n\n\
+             exit: 0 when answered, 1 when refused, 2 on a usage error",
+            cmd,
+            match cmd { "run-status" => "Inspect", "run-log" => "Read the log of", _ => "Cancel" }
+        ),
         "replay" => "usage: jazyk replay [file|dir...]\n       jazyk replay extract <trace.jsonl> <label>\n\n\
              Run replays: cases whose tool calls are scripted, graded against the\n\
              harness without a model. No argument runs docs/benchmark/replays.\n\
@@ -769,7 +788,7 @@ pub fn run() {
         }
     }
 
-    if !["watch","query","init","setup","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
+    if !["watch","query","init","setup","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay","tasks","runs","run","run-status","run-log","run-cancel"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
         let (proj,_,_)=cli::resolve(&[],&opts);
         if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
         if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
@@ -915,6 +934,17 @@ pub fn run() {
         // Replays: scripted sessions against the harness, no model
         // (docs/benchmark/replays.md).
         "replay" => replay::run_cli(&positional),
+        // Project task commands (docs/frontends/cli.md#project-task-commands).
+        "tasks" | "runs" | "run" | "run-status" | "run-log" | "run-cancel" => {
+            if cmd.starts_with("run") && cmd != "runs" && positional.is_empty() {
+                usage_error(&cmd, &format!("`{}` takes {}", cmd, if cmd == "run" { "a task id" } else { "a run id" }));
+            }
+            let args: Vec<String> = std::iter::once(cmd.clone()).chain(positional.iter().cloned()).collect();
+            match crate::task_runtime::cli(&args) {
+                Ok(value) => { println!("{}", serde_json::to_string_pretty(&value).unwrap()); 0 }
+                Err(error) => { eprintln!("jazyk: {}", error); 1 }
+            }
+        }
         "benchmark" => {
             let (_proj, llm, out) = cli::resolve(&[], &opts);
             // `--goal` runs one goal's session from a copy of a real project.

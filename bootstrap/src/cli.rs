@@ -2329,6 +2329,22 @@ pub fn run_query(opts: &Options, query: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    // The task commands go through the launcher like every other command: help,
+    // arity, and unknown options are the launcher's (docs/frontends/cli.md#help).
+    #[test]
+    fn task_commands_have_shapes_and_help() {
+        for (cmd, arity) in [("tasks", 0), ("runs", 0), ("run", 1), ("run-status", 1), ("run-log", 1), ("run-cancel", 1)] {
+            let (n, extra) = crate::launcher::command_shape(cmd).unwrap_or_else(|| panic!("no shape for {}", cmd));
+            assert_eq!(n, Some(arity), "{}", cmd);
+            assert!(extra.is_empty(), "{}", cmd);
+            let usage = crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for {}", cmd));
+            assert!(usage.starts_with(&format!("usage: jazyk {}", cmd)), "{}", usage);
+            assert!(usage.contains("2 on a usage error"), "{}", usage);
+        }
+        let main = include_str!("main.rs");
+        assert!(!main.contains("task_runtime::cli"), "main.rs must not bypass the launcher");
+    }
+
     // `check` and `watch` take no paths, `compile` drops the inert `--dirty`, and a
     // compile path selects exactly the sets claiming it
     // (docs/frontends/cli.md#jazyk-compile, #project-discovery).

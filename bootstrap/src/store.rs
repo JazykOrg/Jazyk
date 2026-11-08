@@ -441,6 +441,9 @@ impl Commit {
 pub struct RecordBatch {
     generation: u64,
     records: Vec<ChangeRecord>,
+    // The highest index this generation already holds outside the batch: a second
+    // batch in one generation numbers after it, so record ids stay unique.
+    offset: usize,
 }
 
 impl RecordBatch {
@@ -448,6 +451,24 @@ impl RecordBatch {
         RecordBatch {
             generation,
             records: Vec::new(),
+            offset: 0,
+        }
+    }
+
+    // A batch that continues numbering after the records of its generation already in
+    // `existing`, for a generation that writes more than one batch.
+    pub fn after(generation: u64, existing: &[ChangeRecord]) -> RecordBatch {
+        let prefix = format!("c{}-", generation);
+        let offset = existing
+            .iter()
+            .filter(|c| c.generation == generation)
+            .filter_map(|c| c.id.strip_prefix(&prefix)?.parse::<usize>().ok())
+            .max()
+            .unwrap_or(0);
+        RecordBatch {
+            generation,
+            records: Vec::new(),
+            offset,
         }
     }
 
@@ -466,7 +487,7 @@ impl RecordBatch {
         {
             return false;
         }
-        let index = self.records.len() + 1;
+        let index = self.offset + self.records.len() + 1;
         self.records.push(
             ChangeRecord::new(self.generation, index, mutation, kind, subject, via)
                 .with_detail(detail),
@@ -6274,9 +6295,11 @@ impl Store {
             let entry = self.journal_entry(&build, &Commit::store("align"), mutations);
             entries.push(entry);
         }
-        // Stale anchors and pending proposals, under the last generation written.
+        // Stale anchors and pending proposals, under the last generation written. That
+        // generation may already hold records (the edit batch above, or an earlier
+        // commit's), so the batch numbers after them.
         let generation = self.status.generation;
-        let mut batch = RecordBatch::new(generation);
+        let mut batch = RecordBatch::after(generation, &self.status.changes);
         for (section, anchor) in &stale_at {
             self.push_stale_anchor(&mut batch, 0, section, anchor);
         }
@@ -10007,6 +10030,47 @@ mod tests {
         );
         let rec = &s.docs["t.md"];
         assert!(rec.coverage.contains_key("/t/bunch/alpha"));
+    }
+
+    // A save that dirties a section writes its edit records and, in the same
+    // generation, the standing alignment block's record: every id stays unique.
+    #[test]
+    fn sync_docs_numbers_one_generation_without_duplicate_record_ids() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        let parse = |docs: &[(&str, &str)]| -> crate::reconcile::ParsedDocs {
+            docs.iter()
+                .map(|(d, t)| (d.to_string(), (hash_hex(t), crate::md::parse_sections(t))))
+                .collect()
+        };
+        let t1 = "# T\n\n## Beta\nbeta body\n";
+        let u1 = "# U\nunder body\n";
+        s.sync_docs(&parse(&[("t.md", t1), ("u.md", u1)]));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The B betas.".into(),
+                source: Some(mention("t.md", "/t/beta", "beta body")),
+                ..Default::default()
+            },
+        );
+        // Beta is edited in place: its anchor becomes a pending proposal.
+        let t2 = "# T\n\n## Beta\nbeta CHANGED body\n";
+        s.sync_docs(&parse(&[("t.md", t2), ("u.md", u1)]));
+        assert!(s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"));
+        // Another document's edit opens no proposal: its section records and the
+        // standing alignment record share one generation.
+        let u2 = "# U\nunder body, revised\n";
+        s.sync_docs(&parse(&[("t.md", t2), ("u.md", u2)]));
+        let generation = s.status.generation;
+        let here: Vec<&ChangeRecord> =
+            s.status.changes.iter().filter(|c| c.generation == generation).collect();
+        assert!(here.iter().any(|c| c.kind == CHANGE_SECTION_DIRTY));
+        assert!(here.iter().any(|c| c.kind == CHANGE_ALIGNMENT_PENDING));
+        let ids: BTreeSet<&str> = s.status.changes.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), s.status.changes.len(), "{:?}", s.status.changes);
     }
 
     #[test]

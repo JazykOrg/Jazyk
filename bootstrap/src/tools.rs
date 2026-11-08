@@ -589,7 +589,7 @@ pub fn catalog() -> Vec<ToolDef> {
         // The generation turn's file and command tools: in-process only, never served
         // over MCP (an external agent brings its own editor). Names and shapes track
         // the Agent Client Protocol's file-system and terminal methods.
-        // Mirrors docs/compiler/turns.md#generation-turns.
+        // Mirrors docs/compiler/sessions.md#generation-sessions.
         ToolDef {
             name: "read_text_file",
             description: "One eligible deliverable file's content, capped at 64 KiB including a long first line. Credentials and private compiler/Git state are excluded. path is relative to the deliverable directory; line (1-based) and limit select lines. hash is the whole file SHA-256, including unread content. truncatedLine identifies a line whose remainder was omitted.",
@@ -4175,7 +4175,7 @@ impl ToolSession {
     }
 
     // The generation turn's file and command tools, sandboxed to the deliverable.
-    // In-process only. Mirrors docs/compiler/turns.md#generation-turns.
+    // In-process only. Mirrors docs/compiler/sessions.md#generation-sessions.
     fn deliverable_path(&self, rel: &str) -> Result<std::path::PathBuf, ToolError> {
         let rel = rel.trim().trim_start_matches("./");
         if rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|c| c == "..") {
@@ -5052,7 +5052,7 @@ impl ToolSession {
     // contract or ran out of rounds. One dishonest `covered` claim must not sink the
     // rest of the turn's work: drop the offending coverage marks (those sections stay
     // unprocessed; the next build resumes them) and try once more. Mirrors
-    // docs/compiler/turns.md#budgets.
+    // docs/compiler/sessions.md#budgets.
     pub fn finish_implicit(&mut self, summary: &str) -> bool {
         if self.staged.is_empty() {
             return false;

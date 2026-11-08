@@ -1876,8 +1876,9 @@ pub(crate) mod tests {
         }
     }
 
-    // The showcase graph of plans/ir-graph.md#every-diagram-from-one-example-graph,
-    // in an in-memory store with the one document its quotes cite.
+    // The showcase graph: one small shop that exercises every emitter
+    // (docs/compiler/diagrams.md#the-emitters), in an in-memory store with the one
+    // document its quotes cite.
     pub(crate) fn showcase_store() -> Store {
         let mut s = Store::default();
         let text = "# Shop\n\nThe shop.\n\n## Checkout\n\ncheckout\n\n## Orders\n\norders\n\n## Examples\n\nexamples\n";

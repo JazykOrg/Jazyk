@@ -1,7 +1,7 @@
 // Session updates → trace events. The runner feeds a worker session's update stream
 // through one translator, so the trace, the transcript, and the GUI panels do not
 // care which agent ran the turn. Mirrors docs/frontends/acp.md#worker-sessions and
-// docs/compiler/turns.md#trace-events.
+// docs/compiler/sessions.md#trace-events.
 use crate::session::{Trace, TraceEvent};
 use agent_client_protocol::schema::v1::{SessionUpdate, ToolCallStatus};
 use std::collections::HashMap;

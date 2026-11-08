@@ -106,7 +106,7 @@ pub struct Llm {
     // Where this client reports what it sends and receives. None keeps the old
     // behavior (notices to stderr, no structured events). A runner attaches its own
     // trace with `with_trace`, so every prompt, reply, and retry reaches the frontend
-    // that started the work (docs/compiler/turns.md#trace-events).
+    // that started the work (docs/compiler/sessions.md#trace-events).
     pub trace: Option<crate::session::Trace>,
 }
 

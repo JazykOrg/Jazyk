@@ -6984,22 +6984,31 @@ impl FileLock {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
-        for _ in 0..100 {
-            match crate::vfs::create_new(&path, &crate::sys::process_id().to_string()) {
-                Ok(()) => {
-                    return FileLock {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        _file: None,
-                        marker: Some(path),
-                    }
-                }
-                Err(_) => crate::sys::sleep(std::time::Duration::from_millis(100)),
-            }
+        // An in-memory tree belongs to one thread, so no other party can hold its
+        // marker and waiting never frees it. A marker this thread holds is a nested
+        // acquire: it proceeds without taking the marker, which stays its holder's. Any
+        // other marker has no live holder (a snapshot carried it in) and is taken over.
+        let nested = SCOPED_LOCKS.with(|held| held.borrow().contains(&path));
+        if nested {
+            return FileLock {
+                #[cfg(not(target_arch = "wasm32"))]
+                _file: None,
+                marker: None,
+            };
         }
-        eprintln!(
-            "[jazyk] warning: stale lock at {}; proceeding",
-            path.display()
-        );
+        if let Err(e) = crate::vfs::write(&path, crate::sys::process_id().to_string()) {
+            eprintln!(
+                "[jazyk] warning: cannot write {}: {}; writing without the lock",
+                path.display(),
+                e
+            );
+            return FileLock {
+                #[cfg(not(target_arch = "wasm32"))]
+                _file: None,
+                marker: None,
+            };
+        }
+        SCOPED_LOCKS.with(|held| held.borrow_mut().insert(path.clone()));
         FileLock {
             #[cfg(not(target_arch = "wasm32"))]
             _file: None,
@@ -7008,10 +7017,21 @@ impl FileLock {
     }
 }
 
+// The markers this thread holds on in-memory trees.
+thread_local! {
+    static SCOPED_LOCKS: std::cell::RefCell<BTreeSet<PathBuf>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
 impl Drop for FileLock {
     fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(f) = &self._file {
+            fs2::FileExt::unlock(f).ok();
+        }
         if let Some(p) = &self.marker {
             crate::vfs::remove_file(p).ok();
+            SCOPED_LOCKS.with(|held| held.borrow_mut().remove(p));
         }
     }
 }
@@ -10216,6 +10236,28 @@ mod tests {
         assert_eq!(read(4).cached_tokens, None);
     }
 
+    // An in-memory store's marker lock: a stale marker is taken over at once, a nested
+    // acquire never removes its holder's marker, and the holder's release does.
+    // Mirrors docs/compiler/graph.md#concurrency.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_scoped_lock_takes_over_a_stale_marker_and_keeps_a_live_one() {
+        let mut files = BTreeMap::new();
+        files.insert(".jazyk/ds/.lock".to_string(), b"999".to_vec());
+        let _scope = crate::vfs::Scope::enter(&files);
+        let out = PathBuf::from("/project/.jazyk/ds");
+        let marker = out.join(".lock");
+        let started = std::time::Instant::now();
+        let outer = FileLock::acquire(&out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "a stale marker is not waited on");
+        assert!(marker.vexists());
+        drop(FileLock::acquire(&out));
+        assert!(marker.vexists(), "a nested release removed the holder's marker");
+        drop(outer);
+        assert!(!marker.vexists());
+        drop(FileLock::acquire(&out));
+        assert!(!marker.vexists());
+    }
 
     // A spend stamp rewrites a committed journal entry: it waits for the store lock
     // a writer holds and lands through the atomic write.

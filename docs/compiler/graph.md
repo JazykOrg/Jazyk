@@ -936,6 +936,11 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   exits, so a crashed writer never leaves a stale lock and a waiter never overrides a
   live one (a wait past ten seconds is reported, then continues). One changeset commits
   at a time.
+- A store in an in-memory workspace (the [browser engine](../frontends/wasm.md)) belongs
+  to one thread, so its `.lock` is a marker file that thread owns. A nested acquire on
+  that thread proceeds and leaves the marker to its holder; a marker no holder on the
+  thread owns (a snapshot carried it in) is taken over at once. Releasing removes only
+  the marker the releaser owns.
 - A writer commits against the generation it loaded. Under the lock it re-reads the
   generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
   first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites

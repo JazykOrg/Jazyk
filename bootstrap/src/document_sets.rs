@@ -657,14 +657,11 @@ fn resolve_role_edits(
             }
         }
         if !docs.is_empty() && !source.is_empty() && known_role_overlap(&docs, &source, &files) {
-            if docs.iter().any(|p| p == "**" || p.starts_with("**/"))
-                && !source.iter().any(|p| p == "**")
-            {
-                intents.push(RoleIntent {
-                    role: FileRole::Source,
-                    patterns: source,
-                });
-            } else if source.iter().any(|p| p == "**") {
+            // Broad documents with a specific source selection assign that
+            // selection to source; broad source `**` is fallback coverage that
+            // the pass below reconciles so documents are preserved.
+            let broad_docs = docs.iter().any(|p| p == "**" || p.starts_with("**/"));
+            if broad_docs || source.iter().any(|p| p == "**") {
                 intents.push(RoleIntent {
                     role: FileRole::Source,
                     patterns: source,

@@ -20,7 +20,7 @@ parse all documents → align section trees → dirty set → edit generation (c
       tier 0  place-anchors        (a document's alignment proposals)
       tier 1  reconcile-section    (link levels, roots first)
       tier 2  rejudge-pair, review-entity, retrace, conform-instance
-      tier 3  bind, generate, verify   (ratify and answer wait on a human)
+      tier 3  derive-criteria, bind, generate, verify   (ratify and answer wait on a human)
     every commit recomputes derived data, writes change records, re-derives the board
     GC bursts fire as cones quiet: declare-edges, dedupe-candidates, curate-view,
       split-view, abstract-entity
@@ -197,8 +197,8 @@ Every check run journals a `checks` entry under its own generation.
   the deliverable contradicting the statement, or whose criterion tests stay red after
   a generation over the current facts ([what the verdict means](../consumers/bind.md#what-the-verdict-means)).
 - Criteria: `criterion-missing` for a requirement with no
-  [criterion](./model/criterion.md), `warning` when the project configures a `[gen]`
-  deliverable (binding waits on it) and `info` otherwise; `criterion-restates` for a
+  [criterion](./model/criterion.md), `warning` when the set has a nonempty `source`
+  (binding waits on it) and `info` otherwise; `criterion-restates` for a
   criterion whose normalized text equals its requirement's statement;
   `criteria-conflict` (`warning`) for two criteria about one entity whose `given` and
   `when` are the same and whose `then` differ: the same situation observed two ways is
@@ -285,6 +285,8 @@ Every check run journals a `checks` entry under its own generation.
   ([flip detection](./reconciler.md#flip-detection)).
 - `incomplete-build`: goals parked because a budget ran out, the park reason in the
   message ([parked and failed](./reconciler.md#parked-and-failed)).
+- `unratified`: a [decompiled](../consumers/decompile.md#ratification) draft no human
+  has edited since the draft landed (`info`). An edit to the document clears it.
 
 The checks also settle stranded diagnostics: every open judged diagnostic whose subjects
 are all missing from the graph is resolved and journaled (`settle-diagnostics`), so a

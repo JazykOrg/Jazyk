@@ -268,6 +268,10 @@ prompt. Graph access stays explicit and subject to existing context budgets.
   pending runnable compile work, including invalidated ledger work allowed by their
   workflow gates. Sets awaiting only a human response are listed as blocked.
   Empty sets appear as `No documents`, not as successfully compiled.
+- A set with an open diagnostic answer in `handling` state
+  ([reply](./goals/answer.md#reply)) needs compile. It remains dirty even when its
+  documents match the graph and no compile goal is ready. The all-dirty compile
+  action includes it so the build can process the answer.
 - The engine refreshes disk and goal state before selecting dirty sets. Browser
   backends refresh their authorized filesystem mirror using the same UI action.
   Clients drain pending saves first. A failed save prevents submission against old

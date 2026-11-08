@@ -1,8 +1,8 @@
 # Plan: upstream reconciliation
 
 Status: proposal for iteration. Nothing here is built. Read with
-[ripple](./ripple.md) (edit paths, causality, termination) and
-[acceptance-criteria](./acceptance-criteria.md) (criteria as the evidence tests
+[edit paths](../docs/compiler/compilation.md#edit-paths) and
+[criteria](../docs/compiler/model/criterion.md) (criteria as the evidence tests
 encode). Every behavior below lands in `docs/` first, then in `bootstrap/`.
 
 ## Start here

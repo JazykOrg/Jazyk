@@ -1233,12 +1233,14 @@ pub fn parent_moves_in(entries: &[JournalEntry]) -> Vec<ParentMove> {
             }
             let has =
                 |v: &serde_json::Value, k: &str| v.as_object().is_some_and(|o| o.contains_key(k));
-            if has(mv, "parent") && has(&mv["prior"], "parent") {
+            // A clear journals `clear_parent: true` and no `parent`: a move to none.
+            let cleared = mv["clear_parent"] == true;
+            if (has(mv, "parent") || cleared) && has(&mv["prior"], "parent") {
                 out.push(ParentMove {
                     generation: entry.generation,
                     child: id.to_string(),
                     from: id_or_none(&mv["prior"]["parent"]),
-                    to: id_or_none(&mv["parent"]),
+                    to: if cleared { None } else { id_or_none(&mv["parent"]) },
                 });
             }
         }
@@ -3806,13 +3808,14 @@ impl Store {
                             prior.insert("stereotype".into(), serde_json::json!(e.stereotype));
                         }
                     }
-                    let mut moved_between: Option<(Option<String>, String)> = None;
-                    if let Some(p) = &parent {
-                        if e.parent.as_deref() != Some(p.as_str()) {
-                            prior.insert("parent".into(), serde_json::json!(e.parent));
-                            moves.push((rid.clone(), e.parent.clone(), Some(p.clone()), m));
-                            moved_between = Some((e.parent.clone(), p.clone()));
-                        }
+                    // `clear_parent` is a move out of the tree: it wins over `parent`,
+                    // as the apply below does.
+                    let target = if clear_parent { None } else { parent.clone() };
+                    let mut moved_between: Option<(Option<String>, Option<String>)> = None;
+                    if (clear_parent || parent.is_some()) && e.parent != target {
+                        prior.insert("parent".into(), serde_json::json!(e.parent));
+                        moves.push((rid.clone(), e.parent.clone(), target.clone(), m));
+                        moved_between = Some((e.parent.clone(), target.clone()));
                     }
                     if !prior.is_empty() {
                         annotations.push((
@@ -3873,15 +3876,15 @@ impl Store {
                     // record on the child. Mirrors
                     // docs/compiler/goals/review-entity.md#created-when.
                     if let Some((from, to)) = &moved_between {
-                        if let Some(f) = from {
-                            dirt.entity(f, m, "parent");
+                        for p in from.iter().chain(to.iter()) {
+                            dirt.entity(p, m, "parent");
                         }
-                        dirt.entity(to, m, "parent");
                     }
-                    let move_only = parent.is_some()
+                    let move_only = (parent.is_some() || clear_parent)
                         && name.is_none()
                         && definition.is_none()
                         && add_aliases.is_empty()
+                        && remove_aliases.is_empty()
                         && add_mention.is_none()
                         && stereotype.is_none()
                         && set_attributes.is_none()
@@ -8477,6 +8480,65 @@ mod tests {
         let v = s.graph.views.values().find(|v| v.title == "Again").unwrap();
         assert_eq!(v.members, vec!["ent:buyer", "ent:cart"]);
         assert_eq!(v.collapse, vec!["ent:buyer", "ent:cart"]);
+    }
+
+    // Clearing a parent is a move: the journal records the prior parent, the parent
+    // left gets its `parent` record, the child no `fields` record, and the reparent
+    // history reads the clear. Mirrors docs/compiler/graph.md#journal.
+    #[test]
+    fn clearing_a_parent_is_journaled_as_a_move() {
+        let mut s = Store {
+            out: own_dir("clear-parent"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nshop\n");
+        s.apply(
+            vec![
+                create("ent:orders", "Orders"),
+                Op::CreateEntity {
+                    id: "ent:parcel".into(),
+                    entity: Entity {
+                        parent: Some("ent:orders".into()),
+                        ..entity("Parcel")
+                    },
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::UpdateEntity {
+                id: "ent:parcel".into(),
+                name: None,
+                definition: None,
+                add_aliases: Vec::new(),
+                remove_aliases: Vec::new(),
+                clear_parent: true,
+                not_about_add: Vec::new(),
+                add_mention: None,
+                stereotype: None,
+                parent: None,
+                set_attributes: None,
+                add_attributes: Vec::new(),
+                provenance: None,
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(s.graph.entities["ent:parcel"].parent, None);
+        let records: Vec<(String, String)> = r
+            .changes
+            .iter()
+            .filter(|c| c.kind == CHANGE_ENTITY)
+            .map(|c| (c.subject.clone(), c.via.clone()))
+            .collect();
+        assert!(records.contains(&("ent:orders".into(), "parent".into())), "{:?}", records);
+        assert!(!records.iter().any(|(s, _)| s == "ent:parcel"), "{:?}", records);
+        let entry = journal_entry(&s, r.generation);
+        let moves = parent_moves_in(std::slice::from_ref(&entry));
+        assert_eq!(moves.len(), 1, "{:?}", entry.mutations);
+        assert_eq!(moves[0].child, "ent:parcel");
+        assert_eq!(moves[0].from.as_deref(), Some("ent:orders"));
+        assert_eq!(moves[0].to, None);
     }
     // A move alone writes `parent` on the parent left and the one joined and no
     // `fields` record on the child; a move with a definition still reviews the child.

@@ -730,9 +730,9 @@ The entry kinds:
   When the chosen option carries an `edit`, the entry also carries the prose replacement
   and graph mutation, like a dual write.
 
-A mutation that moves an entity's `parent` (`update_entity`, `edit_fact`,
-`group_entities`, `dissolve_entity`, the sweep's dissolve) records the prior parent in
-its journal mutation, so the reparent flip replays from the journal alone
+A mutation that moves an entity's `parent` (`update_entity`, `remove_parent` included,
+`edit_fact`, `group_entities`, `dissolve_entity`, the sweep's dissolve) records the prior
+parent in its journal mutation, so the reparent flip replays from the journal alone
 ([flip detection](./reconciler.md#flip-detection)).
 
 Every kind can carry `resolved_goals` (each with its one-line `justification`, and

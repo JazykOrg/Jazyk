@@ -4,16 +4,13 @@ use crate::vfs::VPathExt;
 // commit, no LLM. Renders the diagrams first so every image link resolves, embeds the
 // views relevant to each entity, and cross-links the pages through the views they
 // share. Mirrors docs/consumers/docsgen.md.
-use crate::card::{Card, Crumb, Walk};
-use crate::derive::{entity_slug, instance_types, view_edge_count};
+use crate::card::{level_name, Card, Crumb, Walk};
+use crate::derive::{instance_types, view_edge_count};
 use crate::gen::GenSettings;
+use crate::ids::entity_slug;
 use crate::model::{Diagnostic, Goal, Provenance, StateMachine, View};
 use crate::store::Store;
 use std::collections::{BTreeMap, BTreeSet};
-
-fn slug(id: &str) -> String {
-    id.strip_prefix("ent:").unwrap_or(id).to_string()
-}
 
 // The directories the pages live in, under `<out>`. Every link is a relative path
 // from the page's directory to the target's path under `<out>`, so the out directory
@@ -48,11 +45,11 @@ fn rel(from_dir: &str, to: &str) -> String {
 
 // The paths under `<out>` of the pages about an entity or a view.
 fn doc_path(id: &str) -> String {
-    format!("{}/{}.md", DOCS_DIR, slug(id))
+    format!("{}/{}.md", DOCS_DIR, entity_slug(id))
 }
 
 fn card_path(id: &str) -> String {
-    format!("{}/{}.md", CARDS_DIR, slug(id))
+    format!("{}/{}.md", CARDS_DIR, entity_slug(id))
 }
 
 // `(kind, slug)` of a view id: `view:usecase/checkout` → `("usecase", "checkout")`.
@@ -338,25 +335,6 @@ fn level_targets(store: &Store) -> Vec<String> {
     out
 }
 
-// The name a level page shows for its target: the node's name, or the scope's name.
-fn level_name(store: &Store, target: &str) -> String {
-    match crate::board::scope_target(target) {
-        Some(scope) => {
-            let mut cs = scope.chars();
-            match cs.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + cs.as_str(),
-                None => String::new(),
-            }
-        }
-        None => store
-            .graph
-            .entities
-            .get(target)
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| target.to_string()),
-    }
-}
-
 // The href of a target's level page from a page in `from`: `./levels/<file>` from a
 // requirements document or the index, the sibling `./<file>` from another level page.
 fn level_href(target: &str, from: &str) -> String {
@@ -596,67 +574,26 @@ fn crumb_links(store: &Store, crumbs: &[Crumb], from: &str, link_last: bool) -> 
         .join(" › ")
 }
 
-// The step count of a flow view: its member requirements.
 // A markdown link, its text in the first group.
 static MARKDOWN_LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)").expect("a literal pattern")
 });
 
-fn step_count(store: &Store, view_id: &str) -> usize {
-    store
-        .graph
-        .views
-        .get(view_id)
-        .map(|v| v.members.len())
-        .unwrap_or(0)
-}
-
 // One line per flow cluster: the title, the use-case and sequence pages as links,
-// and the step count. A cluster is one line, never one per kind.
-// Mirrors docs/consumers/docsgen.md#entity-cards.
+// and the step count. Mirrors docs/consumers/docsgen.md#entity-cards.
 fn cluster_lines(store: &Store, view_ids: &[String], from: &str) -> Vec<String> {
-    let mut clusters: Vec<(String, Vec<String>)> = Vec::new();
-    for vid in view_ids {
-        let slug = vid.rsplit('/').next().unwrap_or(vid).to_string();
-        match clusters.iter_mut().find(|(s, _)| *s == slug) {
-            Some((_, ids)) => ids.push(vid.clone()),
-            None => clusters.push((slug, vec![vid.clone()])),
-        }
-    }
-    clusters
+    crate::card::flow_clusters(store, view_ids)
         .into_iter()
-        .map(|(_, mut ids)| {
-            // The use case first, then the sequence, then any other kind.
-            let rank = |v: &String| match v.strip_prefix("view:").and_then(|r| r.split('/').next())
-            {
-                Some("usecase") => 0,
-                Some("sequence") => 1,
-                _ => 2,
-            };
-            ids.sort_by_key(rank);
-            let title = ids
+        .map(|c| {
+            let kinds: Vec<String> = c
+                .views
                 .iter()
-                .find_map(|v| store.graph.views.get(v).map(|x| x.title.clone()))
-                .unwrap_or_default();
-            let kinds: Vec<String> = ids
-                .iter()
-                .map(|v| {
-                    let kind = v
-                        .strip_prefix("view:")
-                        .and_then(|r| r.split('/').next())
-                        .unwrap_or("view");
-                    let label = match kind {
-                        "usecase" => "use case".to_string(),
-                        k => k.replace('-', " "),
-                    };
-                    match view_page_path(v) {
-                        Some(path) => format!("[{}]({})", label, rel(from, &path)),
-                        None => format!("`{}`", v),
-                    }
+                .map(|(v, label)| match view_page_path(v) {
+                    Some(path) => format!("[{}]({})", label, rel(from, &path)),
+                    None => format!("`{}`", v),
                 })
                 .collect();
-            let steps = ids.iter().map(|v| step_count(store, v)).max().unwrap_or(0);
-            format!("{} · {} ({} steps)", title, kinds.join(" · "), steps)
+            format!("{} · {} ({} steps)", c.title, kinds.join(" · "), c.steps)
         })
         .collect()
 }
@@ -820,7 +757,7 @@ fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
         .graph
         .entities
         .keys()
-        .map(|id| format!("{}.md", slug(id)))
+        .map(|id| format!("{}.md", entity_slug(id)))
         .collect();
     if let Ok(rd) = crate::vfs::read_dir(&cards_dir) {
         for e in rd.flatten() {
@@ -840,7 +777,7 @@ fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
             continue;
         };
         crate::vfs::write(
-            cards_dir.join(format!("{}.md", slug(id))),
+            cards_dir.join(format!("{}.md", entity_slug(id))),
             card_text(store, &c),
         )
         .ok();
@@ -1340,7 +1277,12 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
     let dir = store.out.join("docsgen");
     crate::vfs::create_dir_all(&dir).ok();
     // Stale documents for absent entities are removed, so links never mislead.
-    let live: BTreeSet<String> = store.graph.entities.keys().map(|id| slug(id)).collect();
+    let live: BTreeSet<String> = store
+        .graph
+        .entities
+        .keys()
+        .map(|id| entity_slug(id).to_string())
+        .collect();
     if let Ok(rd) = crate::vfs::read_dir(&dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
@@ -1829,7 +1771,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 ));
             }
         }
-        crate::vfs::write(dir.join(format!("{}.md", slug(id))), s).ok();
+        crate::vfs::write(dir.join(format!("{}.md", entity_slug(id))), s).ok();
         written += 1;
     }
 
@@ -1896,7 +1838,12 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             ));
         }
         for (id, ent) in &store.graph.entities {
-            idx.push_str(&format!("- [{}](./{}.md) `{}`\n", ent.name, slug(id), id));
+            idx.push_str(&format!(
+                "- [{}](./{}.md) `{}`\n",
+                ent.name,
+                entity_slug(id),
+                id
+            ));
         }
 
         let class_views: Vec<(&String, &View)> = store

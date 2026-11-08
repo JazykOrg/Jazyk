@@ -2465,7 +2465,7 @@ pub fn recomputed_by_change(store: &Store, target: &str) -> Vec<String> {
                 out.push(rid.clone());
             }
         }
-        let sm = format!("sm:{}", crate::derive::entity_slug(id));
+        let sm = format!("sm:{}", crate::ids::entity_slug(id));
         if store.graph.state_machines.contains_key(&sm) && !out.contains(&sm) {
             out.push(sm);
         }

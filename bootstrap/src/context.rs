@@ -972,7 +972,7 @@ impl LoadedSet {
         if !views.is_empty() {
             b.push(&format!("views: {}", views.join(", ")));
         }
-        let slug = crate::derive::entity_slug(id);
+        let slug = crate::ids::entity_slug(id);
         if let Some(sm) = store.graph.state_machines.get(&format!("sm:{}", slug)) {
             b.push(&format!(
                 "state machine sm:{}: {} states, {} transitions",

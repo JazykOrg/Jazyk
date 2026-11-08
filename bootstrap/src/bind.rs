@@ -282,7 +282,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         .collect();
     let entity_files = ledger
         .entities
-        .get(&crate::gen::slug_of(&entity))
+        .get(crate::ids::entity_slug(&entity))
         .map(|e| e.files.clone())
         .unwrap_or_default();
     // The reason the row owes a bind; a current row begun anyway reads `current`,

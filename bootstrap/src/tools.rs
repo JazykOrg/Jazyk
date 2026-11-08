@@ -3781,7 +3781,7 @@ impl ToolSession {
     // staged work (component when the node or any child carries a structural
     // stereotype, class otherwise). Mirrors docs/compiler/model/view.md#level-views.
     fn level_view_of(&self, id: &str) -> Option<String> {
-        let slug = crate::derive::entity_slug(id);
+        let slug = crate::ids::entity_slug(id);
         for kind in ["component", "class"] {
             let vid = format!("view:{}/{}", kind, slug);
             if self.view_known(&vid).is_some() {
@@ -8109,7 +8109,7 @@ impl ToolSession {
                 let ledger = crate::gen::Ledger::load(&self.snapshot.out);
                 let unattached = ledger
                     .entities
-                    .get(&crate::gen::slug_of(&id))
+                    .get(crate::ids::entity_slug(&id))
                     .and_then(|e| e.unattached.clone());
                 for op in crate::gen::choice_ops(&self.snapshot, &id, &choices, unattached.as_ref())
                 {

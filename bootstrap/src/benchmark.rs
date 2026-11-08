@@ -1314,7 +1314,7 @@ pub fn eval_workflow_check(
     let ledger = crate::gen::Ledger::load(&store.out);
     match kind {
         "generationRecorded" => {
-            let slug = crate::gen::slug_of(target);
+            let slug = crate::ids::entity_slug(target).to_string();
             match ledger.entities.get(&slug) {
                 None => Some("record_generation never landed".into()),
                 Some(e) if e.files.is_empty() => Some("the manifest recorded no files".into()),
@@ -1368,7 +1368,7 @@ pub fn eval_workflow_check(
             }
             // Break the product (never the test), rerun, restore. A test that still
             // passes with the mandated value gone verifies nothing.
-            let slug = crate::gen::slug_of(target);
+            let slug = crate::ids::entity_slug(target).to_string();
             let files = ledger
                 .entities
                 .get(&slug)

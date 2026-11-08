@@ -111,7 +111,7 @@ properties:
     properties:
       deliverable:
         type: string
-        description: Accepted and ignored. The deliverable is the project root and
+        description: Accepted and ignored in an older file; no tool writes it. The deliverable is the project root and
           the set's source scopes it
       worker:
         type: string
@@ -433,7 +433,7 @@ properties:
           properties:
             deliverable:
               type: string
-              description: Accepted and ignored. The deliverable is the project root and
+              description: Accepted and ignored in an older file; no tool writes it. The deliverable is the project root and
                 the set's source scopes it
             worker:
               type: string

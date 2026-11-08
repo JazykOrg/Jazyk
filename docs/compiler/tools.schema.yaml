@@ -1660,8 +1660,6 @@ definitions:
               - internal
               - agent
               - any
-          gen.deliverable:
-            type: string
           gen.worker:
             type: string
             enum:

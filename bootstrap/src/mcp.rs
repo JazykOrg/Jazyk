@@ -2674,7 +2674,7 @@ impl McpServer {
                     } else {
                         tools.push(json!({
                             "name": "update_project_settings",
-                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual|auto), workflow.worker (internal|agent|any), gen.deliverable, gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
+                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual|auto), workflow.worker (internal|agent|any), gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
                             "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}, "baseHash": {"type": "string", "description": "configuration hash from list_document_sets"}}, "required": ["settings", "baseHash"], "additionalProperties": false}
                         }));
                     }
@@ -4011,11 +4011,10 @@ impl McpServer {
     // while a build runs. The agent, executor, and model settings stay out of reach.
     // Mirrors docs/frontends/acp.md#project-tools.
     fn update_project_settings(&self, args: &Value) -> Value {
-        const KEYS: [(&str, &[&str]); 5] = [
+        const KEYS: [(&str, &[&str]); 4] = [
             ("workflow.compile", &["manual", "auto"]),
             ("workflow.generate", &["manual", "auto"]),
             ("workflow.worker", &["internal", "agent", "any"]),
-            ("gen.deliverable", &[]),
             ("gen.worker", &["agentic", "pipeline"]),
         ];
         let supported = || KEYS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ");
@@ -6265,7 +6264,7 @@ mod tests {
         let config = dir.join(crate::document_sets::CONFIG);
         let original = crate::vfs::read_to_string(&config).unwrap();
         let hash = crate::model::hash_hex(&original);
-        for key in ["llm.base_url", "llm.model", "acp.agent", "executors.compile"] {
+        for key in ["llm.base_url", "llm.model", "acp.agent", "executors.compile", "gen.deliverable", "gen.code"] {
             assert_eq!(call(json!({"settings":{key:"x"},"baseHash":hash}))["error"]["rule"], "unsupported-key", "{key}");
         }
         assert_eq!(call(json!({"settings":{"workflow.compile":"sometimes"},"baseHash":hash}))["error"]["rule"], "bad-value");

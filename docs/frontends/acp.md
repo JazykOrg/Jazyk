@@ -450,7 +450,7 @@ Setup and configuration are chat tools too, routed through the same edit delegat
 - `update_project_settings({settings, baseHash})`: edits to `jazyk.toml`, rendered
   as minimal edits, never a whole-file rewrite. `settings` maps a dotted key to a
   string value. The editable keys are `workflow.compile`, `workflow.generate`,
-  `workflow.worker`, `gen.deliverable`, and `gen.worker`, with the values
+  `workflow.worker`, and `gen.worker`, with the values
   [project settings](../compiler/project-settings.md) allows. The agent, executor,
   and model settings are not editable here, so a chat cannot repoint the agent
   command or the model endpoint. Document-set selections use the document-set tools.

@@ -280,7 +280,9 @@ mod memory {
         GENERATION.with(|g| g.get())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) type Tree = (BTreeMap<PathBuf, Vec<u8>>, BTreeSet<PathBuf>);
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn replace(tree: Tree) -> Tree {
         changed();
         (

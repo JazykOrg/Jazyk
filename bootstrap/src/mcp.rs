@@ -126,13 +126,16 @@ pub struct BridgeFlags {
     pub reader: bool,
 }
 
+// The browser backend refuses the benchmark, so it never reads a case's fields.
 #[derive(Default)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct BenchRun {
     open: Option<OpenCase>,
     // One entry per finished case: name, tier, score, calls, par, fail.
     scored: Vec<Value>,
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct OpenCase {
     idx: usize,
     item: WorkItem,
@@ -595,7 +598,7 @@ impl McpServer {
         // A tab has one thread and nothing else that could move the graph while it
         // waits, so the poll answers at once with what it sees now.
         #[cfg(target_arch = "wasm32")]
-        let deadline = Some(crate::sys::Instant::now());
+        let deadline = deadline.map(|_| crate::sys::Instant::now());
         #[cfg(not(target_arch = "wasm32"))]
         let edits = crate::edit_watch::for_root(&self.project.root);
         #[cfg(not(target_arch = "wasm32"))]
@@ -1944,7 +1947,7 @@ impl McpServer {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn begin_case(&self, params: &Value) -> Value {
+    fn begin_case(&self, _params: &Value) -> Value {
         json!({"error": "the browser backend does not serve the benchmark"})
     }
 
@@ -2064,7 +2067,7 @@ impl McpServer {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn finish_case(&self, params: &Value) -> Value {
+    fn finish_case(&self, _params: &Value) -> Value {
         json!({"error": "the browser backend does not serve the benchmark"})
     }
 
@@ -2157,7 +2160,7 @@ impl McpServer {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn benchmark_report(&self, params: &Value) -> Value {
+    fn benchmark_report(&self, _params: &Value) -> Value {
         json!({"error": "the browser backend does not serve the benchmark"})
     }
 

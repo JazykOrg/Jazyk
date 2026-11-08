@@ -10,6 +10,7 @@ use crate::store::Store;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -796,6 +797,7 @@ fn link_suffix(id: &str) -> String {
 // «actor» stereotype, and without an interface each link converts to `-->` (`..>` for the
 // dotted forms) in its stated direction, its label kept.
 // Mirrors docs/compiler/diagrams.md#the-renderer.
+#[cfg(not(target_arch = "wasm32"))]
 fn adapt_component_for_crate(puml: &str) -> String {
     let lines: Vec<&str> = puml.lines().collect();
     let is_component = lines.iter().any(|l| l.trim_start().starts_with("component "));
@@ -830,6 +832,7 @@ fn adapt_component_for_crate(puml: &str) -> String {
     out
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
     let mut plain = String::with_capacity(puml.len());
     let mut links: Vec<(String, String)> = Vec::new();
@@ -860,6 +863,7 @@ fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
     (plain, links)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn xml_attr(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -868,6 +872,7 @@ fn xml_attr(s: &str) -> String {
 }
 
 // The value of an attribute in one opening tag.
+#[cfg(not(target_arch = "wasm32"))]
 fn attr_value(tag: &str, name: &str) -> Option<String> {
     let marker = format!(" {}=\"", name);
     let rest = &tag[tag.find(&marker)? + marker.len()..];
@@ -880,6 +885,7 @@ fn attr_value(tag: &str, name: &str) -> Option<String> {
 // the whole shape is the click target, as the official renderer draws it. An element
 // the crate did not draw under that key keeps no link; nothing else in the document
 // changes.
+#[cfg(not(target_arch = "wasm32"))]
 fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
     if links.is_empty() {
         return svg.to_string();
@@ -923,6 +929,7 @@ fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
 }
 
 // The index just past the `</g>` closing the group opened at `start`, nesting counted.
+#[cfg(not(target_arch = "wasm32"))]
 fn group_end(svg: &str, start: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut i = start;

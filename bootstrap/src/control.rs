@@ -370,6 +370,7 @@ fn same_claim(saved: &Lease, current: &Lease) -> bool {
         && current.claimed_at == saved.claimed_at && current.goals == saved.goals
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn refresh_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let path = lease_file(&saved.out, &saved.lease.task);
     let Some(mut current) = read_lease(&path) else { return Ok(false) };

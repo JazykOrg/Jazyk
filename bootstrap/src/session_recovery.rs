@@ -141,6 +141,7 @@ pub(crate) fn input_delivered(id: &str, input: &Value) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn replay_delta(session: &str, field: &str, text: &str) -> Result<(),String> {
     STATE.with(|s| {
         let mut state = s.borrow_mut();
@@ -176,6 +177,7 @@ pub(crate) fn command_key(base: &str) -> String {
 // A task belongs to the model tool invocation that caused it, not every later
 // invocation in the same compiler command. The run id also separates batches
 // whose providers reuse a tool id. Both ids survive exact checkpoint replay.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn task_key(base: &str) -> String {
     let command = command_key(base);
     STATE.with(|s| {
@@ -207,6 +209,7 @@ pub(crate) fn saved_usage(key: &str) -> Option<(u64, u64, u32)> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn capsule() -> Result<Value, String> {
     STATE.with(|s| {
         let state = s.borrow();
@@ -257,6 +260,7 @@ impl<'a> McpRecovery<'a> {
     pub(crate) fn new(server: &'a McpServer, key: String) -> Result<Self, String> {
         Self::from_frame(Some(server), key)
     }
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn utility(key: String) -> Result<Self, String> {
         Self::from_frame(None, key)
     }

@@ -346,11 +346,20 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
         for (order, b) in found.iter().enumerate() {
             let n = per_kind.entry(b.kind).or_insert(0);
             *n += 1;
-            let reference = if parent == "/" {
+            let base = if parent == "/" {
                 format!("/{}-{}", b.kind, n)
             } else {
                 format!("{}/{}-{}", parent, b.kind, n)
             };
+            // A heading that already holds the reference (`## Diagram 1`) keeps it;
+            // the block takes the next numeric suffix, as a repeated slug does.
+            // Mirrors docs/compiler/parsing.md#references.
+            let mut reference = base.clone();
+            let mut k = 1;
+            while sections.contains_key(&reference) {
+                k += 1;
+                reference = format!("{}-{}", base, k);
+            }
             let raw = lines[b.start..b.end].join("\n");
             block_sections.push((
                 reference,
@@ -601,6 +610,21 @@ mod tests {
         let s = parse_sections("# Top\n```\nopen\n## Next\nbody\n");
         assert_eq!(s["/top/code-block-1"].lines, [1, 5]);
         assert!(!s.contains_key("/top/next"), "{:?}", s.keys().collect::<Vec<_>>());
+    }
+
+    // A heading whose slug is a block reference keeps it; the block takes the next
+    // suffix, so neither section overwrites the other.
+    // Mirrors docs/compiler/parsing.md#references.
+    #[test]
+    fn a_heading_named_like_a_block_keeps_its_reference() {
+        let text = "# Top\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n\n## Diagram 1\nThe heading's own prose.\n";
+        let s = parse_sections(text);
+        let keys: Vec<&String> = s.keys().collect();
+        assert_eq!(s["/top/diagram-1"].kind, "heading", "{:?}", keys);
+        assert!(s["/top/diagram-1"].raw.contains("The heading's own prose."));
+        let block = &s["/top/diagram-1-2"];
+        assert_eq!(block.kind, "diagram");
+        assert!(block.raw.contains("A -> B"));
     }
 
     #[test]

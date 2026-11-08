@@ -530,7 +530,16 @@ fn encoded_case_sensitive_binary_reference_hashes_exact_bytes_and_ignores_unquot
     assert_eq!(asset["path"], "docs/assets/My Logo.PnG");
     assert_eq!(asset["status"], "ready");
     assert_eq!(asset["sha256"], format!("{:x}", Sha256::digest(bytes)));
-    assert_eq!(asset["references"][0]["fact"], "req:site");
+    // The requirement and, by reference, its entity's derived mention.
+    assert!(
+        asset["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["fact"] == "req:site"),
+        "{}",
+        asset
+    );
     files.insert(
         "docs/assets/unrelated.svg".into(),
         SVG_B.as_bytes().to_vec(),

@@ -914,8 +914,10 @@ mod tests {
             state,
             vec![
                 ".jazyk/.gitignore",
+                ".jazyk/ds_main/gen/entities/alpha.yaml",
                 ".jazyk/ds_main/gen/judge.md",
                 ".jazyk/ds_main/gen/ledger.yaml",
+                ".jazyk/ds_main/gen/requirements/req~stable.yaml",
                 ".jazyk/ds_main/graph/criteria/crit~stable.yaml",
                 ".jazyk/ds_main/status.yaml",
             ]

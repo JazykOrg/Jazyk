@@ -16,7 +16,7 @@ must clear), or `failing` (the deliverable contradicts the statement, a finding 
 the author). See [binding](../../consumers/bind.md).
 
 - Class: compile. Mandatory. Readiness tier 3.
-- Unit: one requirement. Goal id `g:bind:req:<doc-stem>-<n>`.
+- Unit: one requirement. Goal id `g:bind:req:<stem>-<hash>`.
 - Skill: none. The contract rides the binding package (below).
 
 ## Created when

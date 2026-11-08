@@ -128,7 +128,7 @@ session will see. The outcome per anchor is a relocation (`anchor`, `from`, `to`
   it restates them when it is reconciled. Otherwise it is the same
   contract as before alignment existed.
 
-Proposals persist in `status.yaml` under `alignment`, one block per target document,
+Proposals persist under `alignment/`, one file per target document,
 each proposal carrying the old location, the old quote, an excerpt of the old section
 around it, and its candidates. The old tree is gone from the store once it is synced, so
 the excerpt is what the session will see. Persisting them keeps the

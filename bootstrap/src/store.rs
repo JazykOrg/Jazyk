@@ -4058,6 +4058,9 @@ impl Store {
                         if let Some(p) = e.parent.as_mut() {
                             rewire(p);
                         }
+                        if let Some(note) = e.distinct_from.remove(&absorb) {
+                            e.distinct_from.entry(keep.clone()).or_insert(note);
+                        }
                         rewire_provenance(&mut e.provenance);
                         for a in e.attributes.iter_mut() {
                             let mut p = Some(a.provenance.clone());
@@ -4114,6 +4117,25 @@ impl Store {
                         for attr in ab.attributes {
                             if !k.attributes.iter().any(|x| x.name == attr.name) {
                                 k.attributes.push(attr);
+                            }
+                        }
+                        for r in ab.not_about {
+                            if !k.not_about.contains(&r) {
+                                k.not_about.push(r);
+                            }
+                        }
+                        k.not_about.sort();
+                        for (id, note) in ab.distinct_from {
+                            k.distinct_from.entry(id).or_insert(note);
+                        }
+                        // The pair itself is one entity now.
+                        k.distinct_from.remove(&keep);
+                        k.distinct_from.remove(&absorb);
+                        // The higher bump stands on a clash.
+                        for (limit, bump) in ab.limits {
+                            let mine = k.limits.entry(limit).or_insert(bump);
+                            if bump.value > mine.value {
+                                *mine = bump;
                             }
                         }
                         if k.definition.as_deref().unwrap_or("").is_empty() {
@@ -8513,6 +8535,60 @@ mod tests {
         let v = s.graph.views.values().find(|v| v.title == "Again").unwrap();
         assert_eq!(v.members, vec!["ent:buyer", "ent:cart"]);
         assert_eq!(v.collapse, vec!["ent:buyer", "ent:cart"]);
+    }
+
+    // A merge carries the absorbed entity's `not_about`, `distinct_from`, and `limits`
+    // (the higher bump on a clash) and drops the pair's own note on each other.
+    // Mirrors docs/compiler/graph.md#mutations.
+    #[test]
+    fn merge_unions_not_about_distinct_from_and_limits() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nbuyer and customer\n");
+        let with = |name: &str, not_about: &[&str], distinct: &[(&str, &str)], limits: &[(&str, u64)]| Entity {
+            not_about: not_about.iter().map(|x| x.to_string()).collect(),
+            distinct_from: distinct.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            limits: limits
+                .iter()
+                .map(|(k, v)| (k.to_string(), LimitBump { value: *v }))
+                .collect(),
+            ..entity(name)
+        };
+        s.apply(
+            vec![
+                create("ent:payment", "Payment"),
+                Op::CreateEntity {
+                    id: "ent:customer".into(),
+                    entity: with("Customer", &["req:a-1"], &[("ent:buyer", "told apart")], &[("requirements-per-entity", 70), ("attributes-per-entity", 40)]),
+                },
+                Op::CreateEntity {
+                    id: "ent:buyer".into(),
+                    entity: with("Buyer", &["req:b-1", "req:a-1"], &[("ent:payment", "the payer, not the payment")], &[("requirements-per-entity", 90), ("children-per-entity", 30)]),
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::MergeEntities {
+                keep: "ent:customer".into(),
+                absorb: "ent:buyer".into(),
+                reason: "same concept".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let k = &s.graph.entities["ent:customer"];
+        assert_eq!(k.not_about, vec!["req:a-1", "req:b-1"]);
+        assert_eq!(
+            k.distinct_from.keys().collect::<Vec<_>>(),
+            vec!["ent:payment"],
+            "the pair's own note goes, the absorbed one's other notes stay"
+        );
+        assert_eq!(k.limits["requirements-per-entity"].value, 90);
+        assert_eq!(k.limits["attributes-per-entity"].value, 40);
+        assert_eq!(k.limits["children-per-entity"].value, 30);
     }
 
     // Redirects stay one hop: absorbing a survivor repoints the redirects into it, and

@@ -316,8 +316,9 @@ Their semantics:
 - `merge_entities` keeps one entity, absorbs the other, rewires every reference
   (requirement `entities`, `edges`, `transition.subject`, view `members`, `excluded`,
   `collapse`, the `parent` of the absorbed entity's children), unions aliases, mentions,
-  and attributes (the survivor's attribute stands on a name clash, journaled), and writes
-  a redirect from the absorbed id to the survivor. Downstream consumers holding the old id
+  attributes (the survivor's attribute stands on a name clash, journaled), `not_about`,
+  `distinct_from` (minus the pair itself), and `limits` (the higher bump stands on a
+  clash), and writes a redirect from the absorbed id to the survivor. Downstream consumers holding the old id
   follow the redirect. A merge that would make the survivor its own ancestor is rejected.
 - `upsert_view` creates or refreshes a view by `kind` and `title`. `update_view` sets
   `title`, `members` (the whole ordered list), `add_members`, `remove_members`, `query`,

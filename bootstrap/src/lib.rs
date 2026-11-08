@@ -23,6 +23,7 @@ pub mod feedback;
 pub mod bind;
 pub mod gen;
 pub mod goals;
+pub mod ids;
 pub mod agents_md;
 pub mod agent_workflows;
 pub mod agent_context;

@@ -53,6 +53,10 @@ directory, jazyk reads the first file of each family that exists:
   is relative to the importing file, or starts with `~/` (native only). Imports
   nest four deep, a file is imported once, and a hosted import never leaves the
   project. A token naming no file stays as written, e.g. `@types/node`.
+- An import stays inside its layer, checked on the real path after links resolve.
+  A project file imports only from the project root; a `~/` path or a path
+  leaving the root stays as written. `~/.jazyk/AGENTS.md` and its imports read
+  only from the home directory. An absolute path is never an import.
 - The total is capped at 32 KiB. A longer text is cut at a line boundary with a
   note naming the cap.
 - The text enters the session after the agent prompt, framed as the project's

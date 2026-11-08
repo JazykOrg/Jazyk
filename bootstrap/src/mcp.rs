@@ -3741,10 +3741,18 @@ impl McpServer {
                 return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
             }
         };
-        // The insertion point: after the located quote, or at the section's end.
+        // The insertion point: after the quote located inside the named section, or at
+        // the section's end. A quote elsewhere in the document is not this section's.
+        let window = Some(sec_raw.trim())
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| old_full.find(raw).map(|b| (b, b + raw.len())));
         let edit = match args["after_quote"].as_str() {
-            Some(q) => match crate::md::locate_bytes(&old_full, q) {
-                Some((_, at)) => ProseEdit {
+            Some(_) if window.is_none() => {
+                return json!({"error": {"rule": "stale-anchor", "message": format!(
+                    "section {}#{} drifted from the document on disk; compile first", doc, section)}})
+            }
+            Some(q) => match window.and_then(|(wb, we)| crate::md::locate_bytes(&old_full[wb..we], q).map(|(_, e)| wb + e)) {
+                Some(at) => ProseEdit {
                     doc: doc.clone(),
                     section: section.clone(),
                     old_text: String::new(),
@@ -3758,7 +3766,8 @@ impl McpServer {
                     old_full,
                 },
                 None => {
-                    return json!({"error": {"rule": "stale-anchor", "message": "after_quote does not locate in the document"}})
+                    return json!({"error": {"rule": "stale-anchor", "message": format!(
+                        "after_quote does not locate in {}#{}; copy a sentence of that section verbatim", doc, section)}})
                 }
             },
             None => match ProseEdit::locate(&doc, &section, Some(&sec_raw), &old_full, "", &text) {
@@ -6144,6 +6153,46 @@ mod tests {
         }
         assert_eq!(crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap(), config);
         assert_eq!(crate::vfs::read_to_string(dir.join("docs/a.md")).unwrap(), "# A\n\nThe tool sorts lines.\n");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // add_requirement's after_quote locates inside the named section: the same sentence
+    // in an earlier section is not the anchor, and a sentence found only elsewhere is
+    // refused. Mirrors docs/frontends/acp.md#dual-write-tools.
+    #[test]
+    fn add_requirement_anchors_after_quote_inside_its_section() {
+        use crate::model::Entity;
+        use crate::store::{Commit, Op};
+        let dir = bare_dir("add-after-quote");
+        let doc = "# Pay\n\n## Terms\n\nAn Order is paid on time.\n\nOnly terms say this.\n\n## Late\n\nAn Order is paid on time.\n\nLate fees apply.\n";
+        crate::vfs::write(dir.join("docs/pay.md"), doc).unwrap();
+        let project = crate::project::Project::load(&dir);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&project.out);
+        s.sync_docs(&parsed);
+        let late = s.docs["docs/pay.md"].sections.keys().find(|k| k.ends_with("late")).cloned().unwrap();
+        // The entity needs a requirement holding it, or the commit's sweep drops it.
+        let terms = s.docs["docs/pay.md"].sections.keys().find(|k| k.ends_with("terms")).cloned().unwrap();
+        s.apply(vec![
+            Op::CreateEntity { id: "ent:order".into(), entity: Entity { name: "Order".into(), ..Default::default() } },
+            Op::CreateRequirement { id: "req:pay-1".into(), requirement: crate::model::Requirement {
+                statement: "An Order is paid on time.".into(), entities: vec!["ent:order".into()],
+                source: Some(crate::model::SourceRef { doc: "docs/pay.md".into(), section: terms, quote: "An Order is paid on time.".into() }),
+                ..Default::default() } },
+        ], &Commit::store("session"));
+        drop(s);
+        let server = chat_server(&dir);
+        let elsewhere = server.add_requirement(&json!({"doc":"docs/pay.md","section":late,"text":"A late Order is flagged.",
+            "statement":"A late Order is flagged.","entities":["ent:order"],"after_quote":"Only terms say this."}));
+        assert_eq!(elsewhere["error"]["rule"], "stale-anchor", "{elsewhere}");
+        assert_eq!(crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap(), doc);
+        let v = server.add_requirement(&json!({"doc":"docs/pay.md","section":late,"text":"A late Order is flagged.",
+            "statement":"A late Order is flagged.","entities":["ent:order"],"after_quote":"An Order is paid on time."}));
+        assert_eq!(v["committed"], true, "{v}");
+        let text = crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        let (terms_at, late_at, added_at) = (text.find("## Terms").unwrap(), text.find("## Late").unwrap(), text.find("A late Order is flagged.").unwrap());
+        assert!(terms_at < late_at && late_at < added_at, "{text}");
+        assert!(text[late_at..].starts_with("## Late\n\nAn Order is paid on time.\n\nA late Order is flagged."), "{text}");
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

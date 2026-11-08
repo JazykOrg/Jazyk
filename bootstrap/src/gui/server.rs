@@ -384,8 +384,12 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     parts.extensions.clear();
     parts.uri = format!("/api{}", routed.path).parse().unwrap();
     parts.headers.remove(header::CONTENT_LENGTH);
+    // A body no qualified reference changed travels as the bytes it came in, not
+    // re-serialized for the inner router to parse again.
     let body = if routed.body.is_null() {
         axum::body::Body::empty()
+    } else if !routed.body_changed {
+        axum::body::Body::from(bytes)
     } else {
         axum::body::Body::from(routed.body.to_string())
     };
@@ -411,6 +415,10 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         Ok(b) => b,
         Err(e) => return api::err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
+    // Nothing to qualify or add: the reply travels as the inner router wrote it.
+    if selector.is_none() && route != "/project" {
+        return Response::from_parts(parts, axum::body::Body::from(bytes));
+    }
     let mut value: Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(_) => return Response::from_parts(parts, axum::body::Body::from(bytes)),

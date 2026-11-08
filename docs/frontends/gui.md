@@ -537,7 +537,9 @@ The agent chooses the order of source work and checks, as in the CLI and ACP.
   memory: `GET /api/jobs` no longer lists it, and `GET /api/jobs/{id}` answers from
   its transcript file, which holds every event already, so the job reads the same
   either way (state, result, and the numbered events, elided like the stream). A
-  job whose transcript was removed is `404`. The transcripts under `GET /api/trace`
+  job whose transcript was removed is `404`. The events in memory are bounded in
+  bytes across every retained job: past the bound the oldest finished job's events
+  leave memory first, and that job answers from its transcript the same way. The transcripts under `GET /api/trace`
   are the record of past runs; the job list is the record of this server's current
   work.
 - In the automatic compile mode a compile that ends `incomplete` (work parked, e.g.

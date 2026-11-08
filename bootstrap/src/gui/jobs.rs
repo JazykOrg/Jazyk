@@ -17,6 +17,10 @@ const TRACE_RETENTION_DAYS: u64 = 30;
 // Finished jobs held in memory, events included; older ones answer from their
 // transcript file (docs/frontends/gui.md#jobs).
 const RETAINED_FINISHED_JOBS: usize = 50;
+// The bytes the in-memory job events may hold across every retained job. Past it the
+// oldest finished job gives up its events (it reads back from its transcript, which
+// holds every event), then the running job its oldest ones, as the count ring does.
+const JOB_EVENT_BYTES: usize = 128 * 1024 * 1024;
 
 // Strings longer than this travel as a preview. The transcript on disk keeps the
 // whole payload; a reader asks for the one event it wants to see in full
@@ -162,13 +166,21 @@ pub struct Job {
     pub cancel: Arc<AtomicBool>,
     // Stem of the persisted transcript under <out>/trace/.
     pub stem: String,
+    // The selection of a selected build, widened by later requests
+    // (docs/frontends/gui.md#selected-builds). Compile and workflow jobs only.
+    pub selection: Option<Arc<crate::selection::Handle>>,
+    pub started: Option<std::time::SystemTime>,
 }
 
 impl Job {
     fn summary(&self) -> Value {
+        let mut kind = self.kind.as_value();
+        if let Some(items) = self.selection.as_ref().and_then(|h| h.items()) {
+            kind["selection"] = json!(items);
+        }
         json!({
             "id": self.id,
-            "kind": self.kind.as_value(),
+            "kind": kind,
             "state": self.state,
             "cancelRequested": self.cancel.load(Ordering::Relaxed),
             "queuedAt": self.queued_at,
@@ -208,6 +220,31 @@ impl Inner {
 pub struct JobManager {
     inner: Mutex<Inner>,
     wake: Condvar,
+    // Locked after `inner`, never before it.
+    event_bytes: Mutex<EventBytes>,
+}
+
+// The serialized size of each in-memory event per job, their total, and the finished
+// jobs whose events left memory for the byte cap.
+#[derive(Default)]
+struct EventBytes {
+    total: usize,
+    sizes: BTreeMap<u64, VecDeque<usize>>,
+    trimmed: std::collections::BTreeSet<u64>,
+}
+
+impl EventBytes {
+    fn drop_front(&mut self, id: u64) {
+        if let Some(n) = self.sizes.get_mut(&id).and_then(VecDeque::pop_front) {
+            self.total -= n;
+        }
+    }
+
+    fn drop_all(&mut self, id: u64) {
+        if let Some(q) = self.sizes.remove(&id) {
+            self.total -= q.iter().sum::<usize>();
+        }
+    }
 }
 
 impl JobManager {
@@ -221,6 +258,7 @@ impl JobManager {
                 stop: false,
             }),
             wake: Condvar::new(),
+            event_bytes: Mutex::new(EventBytes::default()),
         }
     }
 
@@ -271,7 +309,7 @@ impl JobManager {
         } else {
             kind
         };
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap();
         let paths = Self::stop_paths(st, &kind);
         if automatic && paths.iter().any(|p| crate::vfs::exists(p)) {
             return None;
@@ -291,10 +329,25 @@ impl JobManager {
             }
         }
         for qid in &inner.queue {
-            if inner.jobs.get(qid).map(|j| j.kind == kind).unwrap_or(false) {
+            if let Some(j) = inner.jobs.get(qid).filter(|j| j.kind == kind) {
+                // A request for the whole set widens a queued selected build.
+                if let Some(h) = &j.selection {
+                    h.widen(None);
+                }
                 return Some(*qid);
             }
         }
+        let selection = selectable(&kind).then(|| crate::selection::Handle::new(None));
+        Some(self.enqueue(st, inner, kind, selection))
+    }
+
+    fn enqueue(
+        &self,
+        st: &SharedState,
+        mut inner: std::sync::MutexGuard<'_, Inner>,
+        kind: JobKind,
+        selection: Option<Arc<crate::selection::Handle>>,
+    ) -> u64 {
         inner.next_id += 1;
         let id = inner.next_id;
         let job = Job {
@@ -308,6 +361,8 @@ impl JobManager {
             events: VecDeque::new(),
             cancel: Arc::new(AtomicBool::new(false)),
             stem: String::new(),
+            selection,
+            started: None,
         };
         let summary = job.summary();
         inner.jobs.insert(id, job);
@@ -315,7 +370,56 @@ impl JobManager {
         drop(inner);
         st.events.emit("job.queued", json!({ "job": summary }));
         self.wake.notify_all();
-        Some(id)
+        id
+    }
+
+    // Submit a selected build: widen a queued or running job of the same kind when
+    // it can take the items, else queue a new one. Returns the job id and whether an
+    // existing job took the request. Mirrors docs/frontends/gui.md#selected-builds.
+    pub fn submit_selected(
+        &self,
+        st: &SharedState,
+        kind: JobKind,
+        items: Vec<crate::selection::Item>,
+    ) -> (u64, bool) {
+        let kind = match st.proj().set_id {
+            Some(id) => JobKind::Scoped {
+                set_id: id,
+                config_hash: st.proj().config_hash,
+                kind: Box::new(kind),
+            },
+            None => kind,
+        };
+        let inner = self.inner.lock().unwrap();
+        if matches!(&kind, JobKind::Scoped { kind, .. } if matches!(kind.as_ref(), JobKind::Compile))
+        {
+            for p in Self::stop_paths(st, &kind) {
+                let _ = crate::vfs::remove_file(p);
+            }
+        }
+        for qid in &inner.queue {
+            if let Some(j) = inner.jobs.get(qid).filter(|j| j.kind == kind) {
+                if let Some(h) = &j.selection {
+                    h.widen(Some(items.clone()));
+                }
+                return (*qid, true);
+            }
+        }
+        if let Some(j) = inner
+            .running
+            .and_then(|rid| inner.jobs.get(&rid))
+            .filter(|j| j.kind == kind && !j.cancel.load(Ordering::Relaxed))
+        {
+            if let (Some(h), Some(started)) = (&j.selection, j.started) {
+                if !saved_since(&st.proj(), &items, started)
+                    && h.widen(Some(items.clone())) != crate::selection::Widen::Sealed
+                {
+                    return (j.id, true);
+                }
+            }
+        }
+        let handle = crate::selection::Handle::new(Some(items));
+        (self.enqueue(st, inner, kind, Some(handle)), false)
     }
 
     pub fn list(&self) -> Vec<Value> {
@@ -411,13 +515,63 @@ impl JobManager {
     }
 
     fn push_event(&self, id: u64, ev: Value) {
+        self.push_event_within(id, ev, JOB_EVENT_BYTES);
+    }
+
+    fn push_event_within(&self, id: u64, ev: Value, cap: usize) {
+        let size = ev.to_string().len();
         let mut inner = self.inner.lock().unwrap();
-        if let Some(j) = inner.jobs.get_mut(&id) {
-            j.events.push_back(ev);
-            while j.events.len() > JOB_EVENT_RING {
-                j.events.pop_front();
+        let mut bytes = self.event_bytes.lock().unwrap();
+        // Jobs pruned from memory leave the account.
+        let gone: Vec<u64> = bytes
+            .sizes
+            .keys()
+            .filter(|k| !inner.jobs.contains_key(k))
+            .copied()
+            .collect();
+        for k in gone {
+            bytes.drop_all(k);
+        }
+        bytes.trimmed.retain(|k| inner.jobs.contains_key(k));
+        let Some(j) = inner.jobs.get_mut(&id) else {
+            return;
+        };
+        j.events.push_back(ev);
+        bytes.sizes.entry(id).or_default().push_back(size);
+        bytes.total += size;
+        while j.events.len() > JOB_EVENT_RING {
+            j.events.pop_front();
+            bytes.drop_front(id);
+        }
+        while bytes.total > cap {
+            let finished = inner
+                .jobs
+                .values()
+                .find(|j| !matches!(j.state, "queued" | "running") && !j.events.is_empty())
+                .map(|j| j.id);
+            match finished {
+                Some(old) => {
+                    if let Some(j) = inner.jobs.get_mut(&old) {
+                        j.events.clear();
+                    }
+                    bytes.drop_all(old);
+                    bytes.trimmed.insert(old);
+                }
+                None => {
+                    let Some(j) = inner.jobs.get_mut(&id).filter(|j| j.events.len() > 1) else {
+                        break;
+                    };
+                    j.events.pop_front();
+                    bytes.drop_front(id);
+                }
             }
         }
+    }
+
+    // Whether a finished job's events left memory for the byte cap: its transcript
+    // answers for it (docs/frontends/gui.md#jobs).
+    fn events_trimmed(&self, id: u64) -> bool {
+        self.event_bytes.lock().unwrap().trimmed.contains(&id)
     }
 }
 
@@ -425,7 +579,7 @@ impl JobManager {
 // cancelled job to discard its active session and release the store lock.
 pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || loop {
-        let (id, kind, cancel) = {
+        let (id, kind, cancel, selection) = {
             let jm = &st.jobs;
             let mut inner = jm.inner.lock().unwrap();
             loop {
@@ -437,7 +591,13 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
                     let job = inner.jobs.get_mut(&id).unwrap();
                     job.state = "running";
                     job.started_at = Some(crate::verify::now_iso());
-                    break (id, job.kind.clone(), job.cancel.clone());
+                    job.started = Some(std::time::SystemTime::now());
+                    break (
+                        id,
+                        job.kind.clone(),
+                        job.cancel.clone(),
+                        job.selection.clone(),
+                    );
                 }
                 inner = jm.wake.wait(inner).unwrap();
             }
@@ -499,6 +659,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         let fence = st.root.join(".jazyk/job-cancellation").join(id.to_string());
         let _ = crate::vfs::remove_file(&fence);
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(Some(&fence));
+        let _selection = selection.clone().map(crate::selection::enter);
         let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             execute(&st, &kind, &trace)
         })) {
@@ -521,6 +682,9 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             Ok(v) => ("done", Some(v)),
             Err(e) => ("failed", Some(json!({ "error": e }))),
         };
+        if let Some(h) = &selection {
+            h.seal();
+        }
         {
             let mut inner = st.jobs.inner.lock().unwrap();
             inner.running = None;
@@ -712,6 +876,34 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
 }
 
 fn submit_sync(st: &SharedState, body: Value) -> Response {
+    let selection = match crate::selection::parse(&body["selection"]) {
+        Ok(s) => s,
+        Err(e) => return super::api::err(StatusCode::BAD_REQUEST, e),
+    };
+    if let Some(items) = &selection {
+        if body["kind"] != "compile" && body["kind"] != "workflow" {
+            return super::api::err(
+                StatusCode::BAD_REQUEST,
+                "a selection narrows compile and workflow jobs only",
+            );
+        }
+        if st.proj().set_id.is_none() {
+            return super::api::err(
+                StatusCode::BAD_REQUEST,
+                "a selection needs a document set: send setId",
+            );
+        }
+        if let Err(e) = crate::selection::validate(&st.proj(), items) {
+            return super::api::err(StatusCode::BAD_REQUEST, e);
+        }
+        let c = st.control();
+        if c.worker == "agent" {
+            return super::api::err(
+                StatusCode::CONFLICT,
+                "a selected build runs on the internal worker; set worker to any or internal",
+            );
+        }
+    }
     if body["kind"] == "compile" && st.proj().set_id.is_none() {
         let w = match crate::document_sets::Workspace::load(&st.root) {
             Ok(w) => w,
@@ -770,6 +962,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
     // records the release and the agent does the work. Mirrors
     // docs/compiler/control-plane.md#dispatch.
     if let Some(stage) = match body["kind"].as_str() {
+        _ if selection.is_some() => None,
         Some("compile") | Some("build") => Some("compile"),
         Some("gen") => Some("generate"),
         Some("decompile") => Some("decompile"),
@@ -857,8 +1050,48 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
             )
         }
     };
+    if let Some(items) = selection {
+        let (id, steered) = st.jobs.submit_selected(st, kind, items);
+        let mut reply = json!({ "jobId": id });
+        if steered {
+            reply["steered"] = json!(true);
+        }
+        return (StatusCode::ACCEPTED, Json(reply)).into_response();
+    }
     let id = st.jobs.submit(st, kind);
     (StatusCode::ACCEPTED, Json(json!({ "jobId": id }))).into_response()
+}
+
+// The kinds a selection narrows: compile and workflow, in a set.
+fn selectable(kind: &JobKind) -> bool {
+    match kind {
+        JobKind::Scoped { kind, .. } => {
+            matches!(kind.as_ref(), JobKind::Compile | JobKind::Workflow { .. })
+        }
+        _ => false,
+    }
+}
+
+// Whether a selected document was saved after a running build started: the build
+// reads the documents as they were then, so the request needs its own build.
+fn saved_since(
+    proj: &crate::project::Project,
+    items: &[crate::selection::Item],
+    started: std::time::SystemTime,
+) -> bool {
+    proj.doc_files().into_iter().any(|f| {
+        let rel = f
+            .strip_prefix(&proj.root)
+            .unwrap_or(&f)
+            .to_string_lossy()
+            .replace('\\', "/");
+        items
+            .iter()
+            .any(|i| rel == i.path || rel.starts_with(&format!("{}/", i.path)))
+            && std::fs::metadata(&f)
+                .and_then(|m| m.modified())
+                .is_ok_and(|m| m >= started)
+    })
 }
 
 fn str_list(v: &Value) -> Vec<String> {
@@ -876,15 +1109,16 @@ pub async fn list_jobs(State(st): State<SharedState>) -> Json<Value> {
 }
 
 pub async fn get_job(State(st): State<SharedState>, UrlPath(id): UrlPath<u64>) -> Response {
-    if let Some(v) = st.jobs.get(id) {
-        return Json(v).into_response();
-    }
+    let in_memory = match st.jobs.get(id) {
+        Some(v) if !st.jobs.events_trimmed(id) => return Json(v).into_response(),
+        other => other,
+    };
     // Out of memory: the transcript holds the whole job (docs/frontends/gui.md#jobs).
     let dir = st.out.join("trace");
     let from_file = tokio::task::spawn_blocking(move || job_from_transcript(&dir, id))
         .await
         .expect("job transcript read");
-    match from_file {
+    match from_file.or(in_memory) {
         Some(v) => Json(v).into_response(),
         None => super::api::err(StatusCode::NOT_FOUND, format!("no job {}", id)),
     }
@@ -1000,10 +1234,22 @@ pub fn sweep_traces(out: &std::path::Path) {
 // outcome line when the job finished (a missing outcome means it died mid-run).
 // Newest is by the start the metadata line records; the file's mtime only breaks
 // ties, since a copied or restored out directory gives every transcript one mtime.
+// Only the first line of every transcript is read to order them; the newest 200
+// are read whole for their outcome and event count.
 pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
     let dir = st.out.join("trace");
     let list = tokio::task::spawn_blocking(move || {
-        let mut items: Vec<((String, std::time::SystemTime), Value)> = Vec::new();
+        let first_line = |p: &std::path::Path| -> Option<String> {
+            use std::io::BufRead;
+            let mut line = String::new();
+            std::io::BufReader::new(std::fs::File::open(p).ok()?)
+                .read_line(&mut line)
+                .ok()?;
+            let line = line.strip_suffix('\n').unwrap_or(&line);
+            Some(line.strip_suffix('\r').unwrap_or(line).to_string())
+        };
+        let mut candidates: Vec<((String, std::time::SystemTime), std::path::PathBuf, Value)> =
+            Vec::new();
         let Ok(rd) = crate::vfs::read_dir(&dir) else {
             return Vec::new();
         };
@@ -1012,14 +1258,27 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
             if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
                 continue;
             }
-            let Ok(text) = crate::vfs::read_to_string(&p) else {
+            let Some(meta) = first_line(&p).and_then(|l| serde_json::from_str::<Value>(&l).ok())
+            else {
                 continue;
             };
-            let mut lines = text.lines();
-            let Some(meta) = lines
-                .next()
-                .and_then(|l| serde_json::from_str::<Value>(l).ok())
-            else {
+            let mtime = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            let started = meta["meta"]["startedAt"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            candidates.push(((started, mtime), p, meta));
+        }
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut items: Vec<Value> = Vec::new();
+        for (_, p, meta) in candidates {
+            if items.len() == 200 {
+                break;
+            }
+            let Ok(text) = crate::vfs::read_to_string(&p) else {
                 continue;
             };
             let outcome = text
@@ -1036,30 +1295,14 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            let mtime = e
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            let started = meta["meta"]["startedAt"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            items.push((
-                (started, mtime),
-                serde_json::json!({
-                    "stem": stem,
-                    "meta": meta["meta"],
-                    "outcome": outcome.map(|o| o["outcome"].clone()),
-                    "events": events,
-                }),
-            ));
+            items.push(serde_json::json!({
+                "stem": stem,
+                "meta": meta["meta"],
+                "outcome": outcome.map(|o| o["outcome"].clone()),
+                "events": events,
+            }));
         }
-        items.sort_by(|a, b| b.0.cmp(&a.0));
         items
-            .into_iter()
-            .map(|(_, v)| v)
-            .take(200)
-            .collect::<Vec<_>>()
     })
     .await
     .expect("trace list");
@@ -1258,7 +1501,55 @@ mod tests {
             events: VecDeque::from([json!({"n": 1})]),
             cancel: Arc::new(AtomicBool::new(false)),
             stem: String::new(),
+            selection: None,
+            started: None,
         }
+    }
+
+    // Past the byte bound the oldest finished job gives up its events first and is
+    // marked to answer from its transcript; the running job then drops its oldest
+    // events, never its newest. Mirrors docs/frontends/gui.md#jobs.
+    #[test]
+    fn job_events_stay_within_the_byte_bound() {
+        let jobs = JobManager::new();
+        {
+            let mut inner = jobs.inner.lock().unwrap();
+            for id in [1, 2] {
+                let mut j = finished(id, "done");
+                j.events.clear();
+                inner.jobs.insert(id, j);
+            }
+            let mut j = finished(3, "running");
+            j.events.clear();
+            inner.jobs.insert(3, j);
+        }
+        let ev = |n: u64| json!({"n": n, "pad": "x".repeat(90)});
+        let size = ev(1).to_string().len();
+        let cap = size * 4;
+        jobs.push_event_within(1, ev(1), cap);
+        jobs.push_event_within(2, ev(1), cap);
+        jobs.push_event_within(3, ev(1), cap);
+        jobs.push_event_within(3, ev(2), cap);
+        assert!(!jobs.events_trimmed(1) && !jobs.events_trimmed(2));
+        jobs.push_event_within(3, ev(3), cap);
+        assert!(jobs.events_trimmed(1), "the oldest finished job goes first");
+        assert!(!jobs.events_trimmed(2));
+        assert_eq!(jobs.get(1).unwrap()["events"], json!([]));
+        jobs.push_event_within(3, ev(4), cap);
+        jobs.push_event_within(3, ev(5), cap);
+        assert!(jobs.events_trimmed(2));
+        let running = jobs.get(3).unwrap();
+        let ns: Vec<u64> = running["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["n"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ns, vec![2, 3, 4, 5]);
+        assert!(jobs.event_bytes.lock().unwrap().total <= cap);
+        jobs.inner.lock().unwrap().jobs.remove(&1);
+        jobs.push_event_within(3, ev(6), cap);
+        assert!(!jobs.events_trimmed(1), "a pruned job leaves the account");
     }
 
     #[test]

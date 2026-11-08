@@ -85,21 +85,24 @@ fn choose(selection: &mut Option<String>, candidate: Option<String>) -> Result<(
     Ok(())
 }
 
-fn decode_value(value: Value, selection: &mut Option<String>) -> Result<Value> {
+// Unqualify every string in a request body. `changed` turns true when a string named
+// a set, so a caller holding the body's bytes can forward them as they came otherwise.
+fn decode_value(value: Value, selection: &mut Option<String>, changed: &mut bool) -> Result<Value> {
     Ok(match value {
         Value::String(s) => {
             let (set, local) = unqualify(&s);
+            *changed |= set.is_some();
             choose(selection, set)?;
             json!(local)
         }
         Value::Array(a) => Value::Array(
             a.into_iter()
-                .map(|v| decode_value(v, selection))
+                .map(|v| decode_value(v, selection, changed))
                 .collect::<Result<_>>()?,
         ),
         Value::Object(o) => Value::Object(
             o.into_iter()
-                .map(|(k, v)| Ok((k, decode_value(v, selection)?)))
+                .map(|(k, v)| Ok((k, decode_value(v, selection, changed)?)))
                 .collect::<Result<_>>()?,
         ),
         v => v,
@@ -110,6 +113,9 @@ pub struct Route {
     pub path: String,
     pub selector: Option<String>,
     pub body: Value,
+    // Whether `body` differs from the body the request carried (a qualified
+    // reference was unqualified).
+    pub body_changed: bool,
 }
 
 pub fn route(path: &str, body: Value) -> Result<Route> {
@@ -154,7 +160,8 @@ pub fn route(path: &str, body: Value) -> Result<Route> {
         query_out.append_pair(&key, &local);
     }
     let query = query_out.finish();
-    let body = decode_value(body, &mut selector)?;
+    let mut body_changed = false;
+    let body = decode_value(body, &mut selector, &mut body_changed)?;
     // Static route words need no escaping; restore their readable spelling.
     let path = segments.join("/");
     Ok(Route {
@@ -166,6 +173,7 @@ pub fn route(path: &str, body: Value) -> Result<Route> {
         ),
         selector,
         body,
+        body_changed,
     })
 }
 

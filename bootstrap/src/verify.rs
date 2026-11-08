@@ -160,13 +160,12 @@ pub fn status_with(
     // contradicting its neighbors once regenerated sort's entity on every build).
     // Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
     let generated_here = || {
-        let ledger = Ledger::load(&store.out);
         ledger
             .entities
             .get(crate::ids::entity_slug(&row.entity))
             .map(|e| {
                 e.fact_hash == crate::gen::fact_hash(store, &row.entity)
-                    && !crate::gen::implementation_outside_source(gs, &ledger, &e.files)
+                    && !crate::gen::implementation_outside_source(gs, ledger, &e.files)
             })
             .unwrap_or(false)
     };
@@ -1506,16 +1505,21 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         collect_files(&store.out.join("gen").join("criteria"), &mut v, true);
         v
     };
+    // Each scanned file is read once, the first time a requirement asks for it.
+    let mut contents: Vec<Option<Option<String>>> = vec![None; scan.len()];
     for (rid, r) in &store.graph.requirements {
         if ledger.requirements.contains_key(rid) {
             continue;
         }
         let name = crate::gen::test_name(rid, &r.statement);
-        for (path, is_criteria) in &scan {
-            let Ok(content) = crate::vfs::read_to_string(path) else {
+        for (i, (path, is_criteria)) in scan.iter().enumerate() {
+            let Some(content) = contents[i]
+                .get_or_insert_with(|| crate::vfs::read_to_string(path).ok())
+                .as_deref()
+            else {
                 continue;
             };
-            if !artifact_stands_for(&content, rid, &r.statement) {
+            if !artifact_stands_for(content, rid, &r.statement) {
                 continue;
             }
             let owner = r

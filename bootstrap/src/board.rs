@@ -66,6 +66,13 @@ pub fn scope_target(target: &str) -> Option<&str> {
 
 // The top level of a scope: its parentless entities, by id.
 pub fn scope_root(store: &Store, scope: &str) -> Vec<String> {
+    if let Some(ix) = crate::store::ScopeIndex::of(store) {
+        return ix
+            .scope_roots(store)
+            .get(scope)
+            .cloned()
+            .unwrap_or_default();
+    }
     store
         .graph
         .entities
@@ -80,6 +87,9 @@ pub fn scope_root(store: &Store, scope: &str) -> Vec<String> {
 pub fn level_members(store: &Store, target: &str) -> Vec<String> {
     if let Some(scope) = scope_target(target) {
         return scope_root(store, scope);
+    }
+    if let Some(ix) = crate::store::ScopeIndex::of(store) {
+        return ix.children(store).get(target).cloned().unwrap_or_default();
     }
     store
         .graph
@@ -785,12 +795,18 @@ pub struct Board {
     // The pairs the degree cap holds back, by goal id: they derive no goal until a
     // slot frees. Mirrors docs/compiler/reconciler.md#pairs.
     pub waiting: BTreeMap<String, goals::WaitingPair>,
+    // The goals outside the selection of a selected build: never ready, held by
+    // nothing. Mirrors docs/compiler/reconciler.md#selection.
+    pub outside: BTreeSet<String>,
 }
 
 impl Board {
     // Derive the board from a store synced against the documents. Every process
     // computes the same board from the same disk state.
     pub fn derive(store: &Store, proj: &Project, control: &Control) -> Board {
+        // The per-goal scans answer from indices built once for this derivation.
+        // Mirrors docs/compiler/graph.md#derived-data.
+        let _scope = crate::store::ReadScope::enter(store);
         let gen = GenSettings::resolve(proj);
         // The pair plan is computed once: its open goals stand in for the kind's
         // derivation, its waiting pairs ride on the board.
@@ -809,6 +825,12 @@ impl Board {
         let mut parked_reasons = BTreeMap::new();
         let mut reopened = Vec::new();
         let mut dropped_failed = Vec::new();
+        // Goal id to its position, kept as parked and failed goals join the list.
+        let mut at: std::collections::HashMap<String, usize> = goals
+            .iter()
+            .enumerate()
+            .map(|(i, g)| (g.id.clone(), i))
+            .collect();
         for entry in &store.status.parked {
             let p = &entry.goal;
             let mut kept = true;
@@ -821,11 +843,12 @@ impl Board {
                     dropped_parked.push(p.id.clone());
                     continue;
                 }
-                match goals.iter_mut().find(|g| g.id == p.id) {
+                match at.get(&p.id).map(|&i| &mut goals[i]) {
                     Some(g) => g.state = parked_state(p),
                     None if target_exists(store, &p.target) => {
                         let mut g = p.clone();
                         g.state = parked_state(p);
+                        at.insert(g.id.clone(), goals.len());
                         goals.push(g);
                     }
                     None => {
@@ -838,7 +861,7 @@ impl Board {
                 }
                 continue;
             }
-            match goals.iter_mut().find(|g| g.id == p.id) {
+            match at.get(&p.id).map(|&i| &mut goals[i]) {
                 Some(g) => {
                     if g.change == p.change || p.change.is_null() {
                         if matches!(g.state, GoalState::Open) {
@@ -859,6 +882,7 @@ impl Board {
                     {
                         let mut g = p.clone();
                         g.state = parked_state(p);
+                        at.insert(g.id.clone(), goals.len());
                         goals.push(g);
                     } else {
                         kept = false;
@@ -872,7 +896,7 @@ impl Board {
             }
         }
         for f in &store.status.failed {
-            match goals.iter_mut().find(|g| g.id == f.goal.id) {
+            match at.get(&f.goal.id).map(|&i| &mut goals[i]) {
                 Some(g) => {
                     if failure_stands(&f.goal, g) {
                         g.state = GoalState::Failed {
@@ -892,6 +916,7 @@ impl Board {
                         g.state = GoalState::Failed {
                             reason: f.reason.clone(),
                         };
+                        at.insert(g.id.clone(), goals.len());
                         goals.push(g);
                     } else if ledger_kind {
                         dropped_failed.push(f.goal.id.clone());
@@ -983,6 +1008,19 @@ impl Board {
             .map(|c| c.id.clone())
             .collect();
 
+        // A selected build counts only its own goals toward readiness.
+        let outside: BTreeSet<String> = match crate::selection::current() {
+            Some(items) => {
+                let sel = crate::selection::Resolved::new(store, &items);
+                goals
+                    .iter()
+                    .filter(|g| !sel.holds(g))
+                    .map(|g| g.id.clone())
+                    .collect()
+            }
+            None => BTreeSet::new(),
+        };
+
         // Readiness inputs.
         let mut tier_open = [0usize; 4];
         let mut tier1_open_docs = BTreeSet::new();
@@ -996,7 +1034,10 @@ impl Board {
             .filter(|g| g.kind == "place-anchors" && matches!(g.state, GoalState::Failed { .. }))
             .map(|g| g.target.as_str())
             .collect();
-        for g in goals.iter().filter(|g| is_open(g)) {
+        for g in goals
+            .iter()
+            .filter(|g| is_open(g) && !outside.contains(&g.id))
+        {
             if g.kind == "reconcile-section"
                 && target_doc(&g.target).is_some_and(|d| undecided_docs.contains(d.as_str()))
             {
@@ -1032,7 +1073,7 @@ impl Board {
         // the list keeps the goals' order.
         let mut compile_by_key: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for (i, o) in goals.iter().enumerate() {
-            if o.class != "compile" || !is_open(o) {
+            if o.class != "compile" || !is_open(o) || outside.contains(&o.id) {
                 continue;
             }
             match goals::pair_members(&o.target) {
@@ -1114,6 +1155,7 @@ impl Board {
             by_id,
             open_kinds,
             waiting: pairs.waiting,
+            outside,
         };
 
         // Readiness per kind, then the control plane: a release gate and a lease both
@@ -1145,6 +1187,11 @@ impl Board {
             );
         }
         board.gated = gated;
+        for id in &board.outside {
+            board
+                .readiness
+                .insert(id.clone(), Ready::Blocked("outside the selection".into()));
+        }
         let leases = crate::control::task_leases(&store.out);
         if !leases.is_empty() {
             let mut claimed = BTreeMap::new();
@@ -1194,6 +1241,9 @@ impl Board {
         // never reused, since a lease lapses with time, not with a write.
         #[cfg(target_arch = "wasm32")]
         {
+            if crate::selection::current().is_some() {
+                return Self::compute_uncached(proj, out);
+            }
             thread_local! {
                 static LAST: std::cell::RefCell<BTreeMap<String, (u64, Board)>> = const { std::cell::RefCell::new(BTreeMap::new()) };
             }
@@ -1340,6 +1390,14 @@ impl Board {
     // Open or parked goals, both classes.
     pub fn open_goals(&self) -> Vec<&Goal> {
         self.goals.iter().filter(|g| is_open(g)).collect()
+    }
+
+    // The open goals a selected build runs: every open goal without a selection.
+    pub fn selected_open_goals(&self) -> Vec<&Goal> {
+        self.goals
+            .iter()
+            .filter(|g| is_open(g) && !self.outside.contains(&g.id))
+            .collect()
     }
 
     // Mandatory goals still open or parked: what keeps a build from converging.
@@ -1587,7 +1645,7 @@ impl Board {
                 // Parked goals first, pairs before entity reviews, sections in
                 // document order, deepest abstraction first. Development starts
                 // before standalone binding within a locality.
-                ids.sort_by_key(|id| {
+                ids.sort_by_cached_key(|id| {
                     let g = self.goal(id).unwrap();
                     let parked = !matches!(g.state, GoalState::Parked);
                     let (kind, order) = match g.kind.as_str() {
@@ -1724,7 +1782,7 @@ impl Board {
                 b.locality = k.clone();
             }
         }
-        batches.sort_by_key(rank);
+        batches.sort_by_cached_key(rank);
         // Numbering skips the ids live leases hold, so a batch formed while another
         // is being worked never takes the working batch's id (a session once read the
         // board's fresh `b24-1` as its own and reported the two as inconsistent).

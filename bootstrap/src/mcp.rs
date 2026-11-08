@@ -818,19 +818,19 @@ impl McpServer {
             "gatedTasks": gated,
             "verdict": board.verdict.to_string(),
             "openDiagnostics": board.open_diags,
-            "next": if c_act > 0 {
-                "goals lists the board"
+            "next": SERVING.get(if c_act > 0 {
+                "status-next-goals"
             } else if b_act > 0 {
-                "binding_tasks lists the work"
+                "status-next-binding"
             } else if g_act > 0 {
-                "generation_tasks lists the work"
+                "status-next-generation"
             } else if v_act > 0 {
-                "verification_tasks lists the work"
+                "status-next-verification"
             } else if gated > 0 {
-                "work is gated; a release (`jazyk release` or the GUI) opens it, and this poll returns when it lands"
+                "status-next-gated"
             } else {
-                "nothing to do"
-            },
+                "status-next-none"
+            }),
         })
     }
 
@@ -2098,11 +2098,11 @@ impl McpServer {
             "cases": rows,
             "scored": done,
             "total": cases.len(),
-            "next": if done >= cases.len() {
-                "all cases scored; call benchmark_report with an honest model name"
+            "next": SERVING.get(if done >= cases.len() {
+                "benchmark-scored"
             } else {
-                "begin_case {case: <name>} claims that case; with no name, the first pending one"
-            },
+                "benchmark-begin"
+            }),
         })
     }
 
@@ -2173,7 +2173,7 @@ impl McpServer {
         };
         let mut reply = json!({
             "case": {"name": case.name, "tier": case.tier, "task": case.task_type, "target": case.target},
-            "next": "do the work, then finish_case",
+            "next": SERVING.get("benchmark-case"),
         });
         match case.task_type.as_str() {
             "verify-requirement" => {
@@ -2181,7 +2181,7 @@ impl McpServer {
                     return json!({"error": {"rule": "fixture", "message": e}});
                 }
                 let r = &store.graph.requirements[&case.target];
-                reply["instructions"] = json!("Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.");
+                reply["instructions"] = json!(SERVING.get("benchmark-verify"));
                 reply["package"] = json!({
                     "statement": r.statement,
                     "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
@@ -2191,7 +2191,7 @@ impl McpServer {
             _ => {
                 if case.task_type == "generate-entity" {
                     reply["deliverableDir"] = json!(gs.deliverable.to_string_lossy());
-                    reply["note"] = json!("write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open");
+                    reply["note"] = json!(SERVING.get("benchmark-generate"));
                 }
             }
         }
@@ -2335,9 +2335,9 @@ impl McpServer {
         json!({
             "scored": entry,
             "next": if remaining > 0 {
-                format!("{} case(s) pending; begin_case claims the next", remaining)
+                SERVING.fill("benchmark-pending", &[("count", &remaining.to_string())])
             } else {
-                "all cases scored; call benchmark_report with an honest model name".into()
+                SERVING.get("benchmark-scored").to_string()
             },
         })
     }
@@ -3280,7 +3280,7 @@ impl McpServer {
                         .map_err(|e| (-32602, e.1))?;
                         crate::control::release(&self.project, &self.out, Some(stage));
                         return Ok(text_result(
-                            json!({"released":stage,"generation":Store::load(&self.out).status.generation,"next":if stage == "generate" {"generation_tasks, then verification_tasks; binding_tasks is available for explicit inspection"} else {"goals"}}),
+                            json!({"released":stage,"generation":Store::load(&self.out).status.generation,"next":SERVING.get(if stage == "generate" {"released-generate"} else {"released-compile"})}),
                             false,
                         ));
                     }
@@ -3377,9 +3377,9 @@ impl McpServer {
                         let control = crate::control::Control::load(&self.project, &self.out);
                         let tasks = crate::decompile::pending(&self.project, &store, &gs, &control);
                         let reply = if tasks.is_empty() {
-                            json!({"tasks": [], "note": "no unclaimed files; every deliverable file is named by a binding"})
+                            json!({"tasks": [], "note": SERVING.get("decompile-none")})
                         } else {
-                            json!({"tasks": tasks, "next": "begin_decompile on a released scope; gated scopes await `jazyk decompile` or the GUI"})
+                            json!({"tasks": tasks, "next": SERVING.get("decompile-next")})
                         };
                         return Ok(text_result(reply, false));
                     }
@@ -4582,7 +4582,7 @@ impl McpServer {
             Err(e) => return json!({"error": {"rule": "write-failed", "message": e}}),
         };
         json!({"initialized": root.display().to_string(), "created": made,
-               "next": "edit docs/README.md, then compile"})
+               "next": SERVING.get("init-next")})
     }
 
     #[cfg(target_arch = "wasm32")]

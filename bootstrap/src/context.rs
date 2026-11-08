@@ -2,6 +2,7 @@
 // bounded by a budget, with a rendered status the model reads on every round.
 // Owned by a session. Mirrors docs/compiler/context.md.
 use crate::model::split_section_ref;
+use crate::session::BLOCKS;
 use crate::store::Store;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1277,16 +1278,7 @@ impl LoadedSet {
         skill_chars: usize,
         pinned: &BTreeSet<String>,
     ) -> String {
-        let mut s = format!(
-            "## Loaded ({} of {} chars{})\n",
-            fmt_k(self.used()),
-            fmt_k(self.budget),
-            if skill_chars > 0 {
-                format!("; skills {} besides, uncounted", fmt_k(skill_chars))
-            } else {
-                String::new()
-            }
-        );
+        let mut s = self.loaded_header(skill_chars);
         for i in &self.items {
             let handles: String = i
                 .handles
@@ -1304,27 +1296,21 @@ impl LoadedSet {
         if !candidates.is_empty() {
             let c = &candidates[0];
             let last = self.last_referenced.get(c).copied().unwrap_or(0);
-            s.push_str(&format!(
-                "Consider unloading: {} (not referenced in {} rounds, no open goal touches it)\n",
-                c,
-                self.round.saturating_sub(last)
+            s.push_str(&BLOCKS.fill(
+                "loaded-unload",
+                &[
+                    ("target", c),
+                    ("rounds", &self.round.saturating_sub(last).to_string()),
+                ],
             ));
+            s.push('\n');
         }
         s
     }
 
     // The condensed form: the header and the item lines alone.
     pub fn render_condensed(&self, skill_chars: usize) -> String {
-        let mut s = format!(
-            "## Loaded ({} of {} chars{})\n",
-            fmt_k(self.used()),
-            fmt_k(self.budget),
-            if skill_chars > 0 {
-                format!("; skills {} besides, uncounted", fmt_k(skill_chars))
-            } else {
-                String::new()
-            }
-        );
+        let mut s = self.loaded_header(skill_chars);
         for i in &self.items {
             s.push_str(&format!("- {}   {}\n", i.target, i.summary));
         }
@@ -1335,14 +1321,31 @@ impl LoadedSet {
     fn push_deferred(&self, s: &mut String) {
         let left: Vec<&String> = self.deferred.iter().filter(|d| !self.contains(d)).collect();
         if !left.is_empty() {
-            s.push_str(&format!(
-                "Not loaded (over the budget; load by id when the work reaches it): {}\n",
-                left.iter()
-                    .map(|d| d.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            let ids = left
+                .iter()
+                .map(|d| d.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            s.push_str(&BLOCKS.fill("loaded-deferred", &[("ids", &ids)]));
+            s.push('\n');
         }
+    }
+
+    // The status block's first line: what the loaded set uses of its budget.
+    fn loaded_header(&self, skill_chars: usize) -> String {
+        let skills = if skill_chars > 0 {
+            BLOCKS.fill("loaded-skills", &[("chars", &fmt_k(skill_chars))])
+        } else {
+            String::new()
+        };
+        BLOCKS.fill(
+            "loaded-header",
+            &[
+                ("used", &fmt_k(self.used())),
+                ("budget", &fmt_k(self.budget)),
+                ("skills", &skills),
+            ],
+        ) + "\n"
     }
 }
 

@@ -60,3 +60,15 @@ Hints: {hints}
 
 <!-- loaded-items -->
 Loaded items, as load returns them:
+
+<!-- loaded-header -->
+## Loaded ({used} of {budget} chars{skills})
+
+<!-- loaded-skills -->
+; skills {chars} besides, uncounted
+
+<!-- loaded-deferred -->
+Not loaded (over the budget; load by id when the work reaches it): {ids}
+
+<!-- loaded-unload -->
+Consider unloading: {target} (not referenced in {rounds} rounds, no open goal touches it)

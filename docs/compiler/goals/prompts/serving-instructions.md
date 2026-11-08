@@ -76,3 +76,54 @@ every row is gated on the generate release: `jazyk release generate` (or the GUI
 
 <!-- source-mapping -->
 The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then generation_tasks. An empty generation list is not a completed deliverable.
+
+<!-- status-next-goals -->
+goals lists the board
+
+<!-- status-next-binding -->
+binding_tasks lists the work
+
+<!-- status-next-generation -->
+generation_tasks lists the work
+
+<!-- status-next-verification -->
+verification_tasks lists the work
+
+<!-- status-next-gated -->
+work is gated; a release (`jazyk release` or the GUI) opens it, and this poll returns when it lands
+
+<!-- status-next-none -->
+nothing to do
+
+<!-- released-generate -->
+generation_tasks, then verification_tasks; binding_tasks is available for explicit inspection
+
+<!-- released-compile -->
+goals
+
+<!-- decompile-none -->
+no unclaimed files; every deliverable file is named by a binding
+
+<!-- decompile-next -->
+begin_decompile on a released scope; gated scopes await `jazyk decompile` or the GUI
+
+<!-- init-next -->
+edit docs/README.md, then compile
+
+<!-- benchmark-scored -->
+all cases scored; call benchmark_report with an honest model name
+
+<!-- benchmark-begin -->
+begin_case {case: <name>} claims that case; with no name, the first pending one
+
+<!-- benchmark-pending -->
+{count} case(s) pending; begin_case claims the next
+
+<!-- benchmark-case -->
+do the work, then finish_case
+
+<!-- benchmark-verify -->
+Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.
+
+<!-- benchmark-generate -->
+write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open

@@ -324,7 +324,7 @@ mod ledger_failure_tests {
         let project = Project::load(Path::new("/project"));
         let mut store = crate::store::Store::load(&project.out);
         store.graph.entities.insert("ent:greeter".into(), crate::model::Entity { name:"Greeter".into(), ..Default::default() });
-        store.save();
+        store.save_for_test();
         let llm = Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url:"http://127.0.0.1:1/v1".into(), model:"unused".into(), api_key:String::new(), temperature:None, trace:None };
         let runner = InProcessRunner::start(&project,&llm,&project.out).unwrap();
         let batch = BatchRun::single(crate::model::Goal { id:"g:verify:req:greet".into(),kind:"verify".into(),target:"req:greet".into(),..Default::default() });
@@ -363,7 +363,7 @@ mod ledger_failure_tests {
                 requirement: "req:greet".into(), statement: "The greeting says hello.".into(),
                 kind: "positive".into(), ..Default::default()
             });
-            store.save();
+            store.save_for_test();
             let mut ledger = crate::gen::Ledger::load(&project.out);
             ledger.medium = Some(crate::gen::Medium {
                 form: "text".into(), produced: "written".into(), toolchain: String::new(), artifact: String::new()

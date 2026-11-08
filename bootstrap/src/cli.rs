@@ -1126,14 +1126,13 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     // its own with backoff instead of idling until the next edit. Unfinished work is
     // never silent, and watch is the loop that owns resuming it. Mirrors
     // docs/frontends/cli.md#jazyk-watch.
-    let incomplete =
-        |out: &std::path::Path| -> bool { Store::load(out).status.verdict.state == "incomplete" };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut backoff = std::time::Duration::from_secs(30);
     let max_backoff = std::time::Duration::from_secs(300);
     let mut last = fingerprint(&proj);
     watch_build(paths, opts);
     loop {
-        let retry_due = if incomplete(&out) {
+        let retry_due = if watch_incomplete(&watch_stores(&proj.root, &cwd, paths, opts, &out)) {
             eprintln!(
                 "jazyk: build incomplete; retrying parked work in {}s",
                 backoff.as_secs()
@@ -1166,6 +1165,35 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
         }
     }
     0
+}
+
+// The stores whose verdict decides a watch retry: the named set's with `--set`,
+// otherwise each set the watch's builds compile (the sets the paths claim, or every
+// set). Mirrors docs/frontends/cli.md#jazyk-watch.
+fn watch_stores(
+    root: &std::path::Path,
+    cwd: &std::path::Path,
+    paths: &[String],
+    opts: &Options,
+    named: &std::path::Path,
+) -> Vec<PathBuf> {
+    if opts.set.is_some() {
+        return vec![named.to_path_buf()];
+    }
+    let Ok(w) = crate::document_sets::Workspace::load(root) else {
+        return Vec::new();
+    };
+    w.sets
+        .iter()
+        .filter(|set| paths.is_empty() || paths.iter().any(|p| set_claims(&w, set, cwd, p)))
+        .filter_map(|set| w.resolve(Some(&set.id)).ok().map(|p| p.out))
+        .collect()
+}
+
+fn watch_incomplete(stores: &[PathBuf]) -> bool {
+    stores
+        .iter()
+        .any(|out| Store::load(out).status.verdict.state == "incomplete")
 }
 
 // status.yaml and the board: the store version, the last verdict with its counts,
@@ -2520,6 +2548,38 @@ mod tests {
         assert!(err.contains("already carries 9800 tokens"), "{}", err);
         assert!(spend_at(&out, 7, 100, None).unwrap_err().contains("reported by the agent"));
         crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // Without `--set`, a watch retries when any set it compiles ended incomplete; the
+    // shared `.jazyk/` directory holds no set's verdict.
+    #[test]
+    fn watch_retries_follow_the_resolved_sets() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("docs/orders")).unwrap();
+        std::fs::write(root.join("docs/orders/a.md"), "# A").unwrap();
+        std::fs::write(root.join("docs/billing.md"), "# B").unwrap();
+        for (id, docs) in [("ds_orders", "docs/orders/**/*.md"), ("ds_billing", "docs/billing.md")] {
+            let w = crate::document_sets::Workspace::load(root).unwrap();
+            crate::document_sets::edit(root, &serde_json::json!({"baseHash": w.hash, "set": {"id": id, "name": id, "docs": [docs]}}), false).unwrap();
+        }
+        let opts = Options::default();
+        let shared = root.join(".jazyk");
+        let stores = watch_stores(root, root, &[], &opts, &shared);
+        assert_eq!(stores.len(), 2, "{:?}", stores);
+        assert!(!stores.contains(&shared));
+        assert!(!watch_incomplete(&stores));
+        let billing = root.join(".jazyk/ds_billing");
+        assert!(stores.contains(&billing), "{:?}", stores);
+        let mut s = Store::load(&billing);
+        s.status.verdict.state = "incomplete".into();
+        s.write_status("test").unwrap();
+        assert!(watch_incomplete(&stores));
+        let orders_only = watch_stores(root, root, &["docs/orders".to_string()], &opts, &shared);
+        assert_eq!(orders_only, vec![root.join(".jazyk/ds_orders")]);
+        assert!(!watch_incomplete(&orders_only));
+        let named = Options { set: Some("ds_orders".into()), ..Default::default() };
+        assert_eq!(watch_stores(root, root, &[], &named, &billing), vec![billing.clone()]);
     }
 
     // A one-document project in a temp dir: the smallest board with a ready batch.

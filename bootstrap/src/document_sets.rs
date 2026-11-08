@@ -1299,7 +1299,7 @@ mod tests {
         );
     }
 
-    const CHECKOUT_PATHS: [(&str, bool); 44] = [
+    const CHECKOUT_PATHS: [(&str, bool); 45] = [
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
         (".jazyk/ds_main/status.yaml", true),
@@ -1342,6 +1342,7 @@ mod tests {
         (".jazyk/ds_main/workers/w.yaml", false),
         (".jazyk/ds_main/leases/build.yaml", false),
         (".jazyk/ds_main/.lock", false),
+        (".jazyk/ds_main/.committing", false),
         (".jazyk/ds_main/feedback.jsonl", false),
         (".jazyk/ds_main/decompile/drafts.yaml", false),
         (".jazyk/ds_main.bak/status.yaml", false),

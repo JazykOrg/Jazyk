@@ -1927,7 +1927,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
                         store.clear_changes(&ids);
                     }
                     store.status.parked.retain(|p| p.goal.id != goal_id);
-                    store.save_status();
+                    store.write_status("parked goals").ok();
                 }
             }
             let after = crate::board::Board::derive(&store, &proj, &control);

@@ -4738,7 +4738,7 @@ mod tests {
                 requirement: rid.into(), statement: statement.into(), ..Default::default()
             });
         }
-        store.save();
+        store.save_for_test();
         let page = "deliverable/page.html";
         let exclusive = "deliverable/footer.css";
         let artifact = "deliverable/tests/site.py";

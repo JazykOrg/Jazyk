@@ -659,7 +659,7 @@ mod tests {
             .unwrap().resolve(None).unwrap();
         let mut store = crate::store::Store { out: project.out.clone(), ..Default::default() };
         store.sync_docs(&crate::reconcile::parse_all(&project).0);
-        store.save();
+        store.save_for_test();
         let before = current_doc_hashes(&project);
         crate::vfs::write(project.root.join("docs/main.md"), [0xff, 0xfe]).unwrap();
         crate::vfs::write(project.root.join("docs/new.txt"), [0xff]).unwrap();

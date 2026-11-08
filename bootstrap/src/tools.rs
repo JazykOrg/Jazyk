@@ -11934,6 +11934,66 @@ mod tests {
         assert!(v.get("truncated").is_none());
     }
 
+    // docs/compiler/tools.schema.yaml specifies every catalog tool's request: one
+    // definition per tool (camelCase, `Request` suffix optional) with the same
+    // property names and the same required fields.
+    #[test]
+    fn the_tool_schema_matches_the_catalog() {
+        let text = include_str!("../../docs/compiler/tools.schema.yaml");
+        let schema: Value = serde_norway::from_str(text).expect("tools.schema.yaml parses");
+        let defs = schema["definitions"].as_object().expect("definitions");
+        let camel = |name: &str| {
+            let mut out = String::new();
+            let mut up = false;
+            for c in name.chars() {
+                if c == '_' {
+                    up = true;
+                } else if up {
+                    out.extend(c.to_uppercase());
+                    up = false;
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let names = |v: &Value, key: &str| -> BTreeSet<String> {
+            match key {
+                "required" => v["required"].as_array().into_iter().flatten()
+                    .filter_map(|x| x.as_str().map(String::from)).collect(),
+                _ => v["properties"].as_object().into_iter().flatten()
+                    .map(|(k, _)| k.clone()).collect(),
+            }
+        };
+        // report_diagnostic: tools.md and the schema require reasoning, the catalog
+        // and the served prompts leave it optional; an owner decision settles which.
+        let pending: [(&str, &str); 1] = [("report_diagnostic", "reasoning")];
+        let mut drift: Vec<String> = Vec::new();
+        for mut tool in catalog() {
+            // The catalog's done is a worker's; the schema's adds the MCP beginNext.
+            if tool.name == "done" {
+                tool.parameters = done_parameters(true);
+            }
+            let base = camel(tool.name);
+            let Some(def) = defs.get(&format!("{}Request", base)).or_else(|| defs.get(&base)) else {
+                drift.push(format!("{}: no {}Request or {} definition", tool.name, base, base));
+                continue;
+            };
+            for key in ["properties", "required"] {
+                let (want, mut have) = (names(&tool.parameters, key), names(def, key));
+                for (t, field) in pending {
+                    if t == tool.name && key == "required" {
+                        have.remove(field);
+                    }
+                }
+                if want != have {
+                    drift.push(format!("{} {}: catalog {:?}, schema {:?}", tool.name, key, want, have));
+                }
+            }
+        }
+        assert!(drift.is_empty(), "tools.schema.yaml drifted from the catalog:\n{}", drift.join("\n"));
+    }
+
     // The graph --write serving is what tools.md#toolsets names: the read tools, the
     // raw write tools and view tools, the task runtime tools, feedback, and spend.
     #[test]

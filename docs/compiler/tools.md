@@ -959,7 +959,7 @@ GC goals:
   merges, no `delete_view`; a dissolve leaves a redirect, it is not a delete.
 
 Servings (`jazyk mcp <toolsets>`, see [MCP](../frontends/mcp.md#toolsets)); every
-serving carries the read tools, `report_feedback`, `await_changes`
+serving carries the read tools, `report_feedback`, `report_spend`, `await_changes`
 ([the work loop](../frontends/mcp.md#the-work-loop)), and `recent_edits`
 ([watching edits](../frontends/mcp.md#watching-edits)):
 
@@ -977,9 +977,13 @@ serving carries the read tools, `report_feedback`, `await_changes`
 - `jazyk mcp decompile`: the [decompilation tools](#decompilation-tools).
 - `jazyk mcp benchmark`: the [benchmark cases](../benchmark/benchmark.md#agent-run-benchmarks)
   against sandbox stores.
-- `jazyk mcp graph`: the read tools only; `--write` adds the raw write tools and view
-  tools, each call committing as its own changeset with its change records written, so
-  the next build derives the goals the write opened.
+- `jazyk mcp graph`: the read tools only; `--write` adds the raw write tools, the view
+  tools, and the [task runtime tools](#task-runtime-tools), each graph write
+  committing as its own changeset with its change records written, so the next build
+  derives the goals the write opened.
+- `jazyk mcp runtime`: the [task runtime tools](#task-runtime-tools).
+- `jazyk mcp all`: `compile`, `generate`, `verify`, `decompile`, and `chat` in one
+  serving ([MCP](../frontends/mcp.md#toolsets)).
 - `jazyk mcp chat`: the compilation, binding, generation, and verification lifecycles,
   the [chat tools](#chat-tools), `update_diagnostic`, and `answer_diagnostic`. Native
   and hosted chat also expose scoped `release_work` and guarded project file tools.

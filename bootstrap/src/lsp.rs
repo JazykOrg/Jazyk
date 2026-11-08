@@ -1222,8 +1222,20 @@ fn path_to_uri(path: &Path) -> String {
 }
 
 // Whole-word, case-insensitive occurrences of `needle` in `text`, as
-// (line, start_col, len) in 0-based char columns. Editor-position mapping only.
+// (line, start_col, len) in 0-based UTF-16 columns, the LSP's position encoding.
 fn occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    for (line, col, len) in char_occurrences(text, needle) {
+        let Some(chars) = text.lines().nth(line) else { continue };
+        let units = |n: usize| chars.chars().take(n).map(char::len_utf16).sum::<usize>();
+        let start = units(col);
+        out.push((line, start, units(col + len) - start));
+    }
+    out
+}
+
+// The same occurrences in char columns.
+fn char_occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
     let mut out = Vec::new();
     if needle.trim().is_empty() {
         return out;
@@ -1403,6 +1415,9 @@ mod tests {
 
     #[test]
     fn occurrences_report_columns_on_the_original_text() {
+        // Columns are UTF-16 units: an emoji counts two.
+        assert_eq!(super::occurrences("😀 order", "order"), vec![(0, 3, 5)]);
+        assert_eq!(super::occurrences("a\n𝔸 Order 😀x", "order"), vec![(1, 3, 5)]);
         let hits = super::occurrences("İstanbul order Order", "order");
         assert_eq!(hits, vec![(0, 9, 5), (0, 15, 5)]);
         let hits = super::occurrences("orders order", "order");

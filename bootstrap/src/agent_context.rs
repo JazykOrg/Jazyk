@@ -583,8 +583,12 @@ fn files_in(dir: &Path, base: &Path, out: &mut Vec<String>) {
         if out.len() >= 200 {
             return;
         }
+        // A symlinked folder is not descended: a link back into the skill would
+        // list its files again under every path through the loop.
         if e.is_dir() {
-            files_in(&e.path(), base, out);
+            if !crate::vfs::is_symlink(&e.path()) {
+                files_in(&e.path(), base, out);
+            }
         } else if e.file_name() != "SKILL.md" {
             out.push(rel(base, &e.path()));
         }
@@ -1107,6 +1111,9 @@ pub fn check_remote_url(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod symlink_tests;
 
 #[cfg(test)]
 mod tests {

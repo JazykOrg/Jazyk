@@ -94,7 +94,9 @@ Each section carries:
   kinds repeat text their parent already holds.
 - `hash`: a content hash of `raw`, used for [diffing](#section-diffing) and
   [alignment](./alignment.md).
-- `lines`: the line range in the source file, for editor integration.
+- `lines`: the line range in the source file, for editor integration. A stored record
+  omits it; a load recomputes it from the `raw` texts in document order
+  ([storage layout](./graph.md#storage-layout)).
 
 ## References
 

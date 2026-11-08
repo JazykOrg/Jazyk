@@ -345,6 +345,17 @@ mod tests {
     use super::*;
 
     // A small project on disk: one document, one entity, one quoted requirement.
+    // The fixture's one requirement, by its statement: ids are minted from the key.
+    fn shop_req(out: &std::path::Path) -> String {
+        Store::load(out)
+            .graph
+            .requirements
+            .iter()
+            .find(|(_, r)| r.statement == "The shop stores orders.")
+            .map(|(id, _)| id.clone())
+            .expect("the fixture requirement")
+    }
+
     fn fixture(name: &str) -> (Project, std::path::PathBuf) {
         let root =
             std::env::temp_dir().join(format!("jazyk-gui-facts-{}-{}", name, crate::sys::process_id()));
@@ -403,11 +414,12 @@ mod tests {
     #[test]
     fn quoted_statement_edit_proposes_then_commits_the_dual_write() {
         let (proj, out) = fixture("dual");
+        let rid = shop_req(&out);
         let gen_before = crate::store::read_generation(&out);
         let v = edit_fact_core(
             &proj,
             &out,
-            "req:shop-1",
+            &rid,
             &json!({ "field": "statement", "value": "The shop stores every order." }),
         )
         .expect("phase 1 succeeds");
@@ -424,7 +436,7 @@ mod tests {
         let v2 = edit_fact_core(
             &proj,
             &out,
-            "req:shop-1",
+            &rid,
             &json!({
                 "field": "statement", "value": "The shop stores every order.",
                 "proposal": v["proposal"],
@@ -439,7 +451,7 @@ mod tests {
             "the prose moved"
         );
         let store = Store::load(&out);
-        let r = store.graph.requirements.get("req:shop-1").unwrap();
+        let r = store.graph.requirements.get(&rid).unwrap();
         assert_eq!(r.statement, "The shop stores every order.");
         assert_eq!(
             r.source.as_ref().unwrap().quote,
@@ -455,10 +467,11 @@ mod tests {
     #[test]
     fn a_stale_proposal_conflicts_instead_of_committing() {
         let (proj, out) = fixture("stale");
+        let rid = shop_req(&out);
         let v = edit_fact_core(
             &proj,
             &out,
-            "req:shop-1",
+            &rid,
             &json!({ "field": "statement", "value": "The shop stores every order." }),
         )
         .unwrap();
@@ -471,7 +484,7 @@ mod tests {
         let err = edit_fact_core(
             &proj,
             &out,
-            "req:shop-1",
+            &rid,
             &json!({
                 "field": "statement", "value": "The shop stores every order.",
                 "proposal": v["proposal"],
@@ -487,18 +500,19 @@ mod tests {
     #[test]
     fn a_decree_lands_graph_only_and_queues_ratification() {
         let (proj, out) = fixture("decree");
+        let rid = shop_req(&out);
         let doc_before = crate::vfs::read_to_string(proj.root.join("docs/shop.md")).unwrap();
         let v = edit_fact_core(
             &proj,
             &out,
-            "req:shop-1",
+            &rid,
             &json!({ "field": "statement", "value": "The shop archives orders.", "decree": true }),
         )
         .expect("decree succeeds");
         assert_eq!(v["path"], json!("decree"));
         assert!(v["ratification"].is_string(), "a proposal was filed");
         let store = Store::load(&out);
-        let r = store.graph.requirements.get("req:shop-1").unwrap();
+        let r = store.graph.requirements.get(&rid).unwrap();
         assert!(r.source.is_none(), "the quote gave way to the decree");
         assert!(matches!(
             r.provenance,
@@ -516,6 +530,7 @@ mod tests {
     #[test]
     fn a_limit_bump_lands_on_the_entity() {
         let (proj, out) = fixture("bump");
+        let rid = shop_req(&out);
         let v = edit_fact_core(
             &proj,
             &out,

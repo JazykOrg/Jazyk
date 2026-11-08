@@ -459,7 +459,7 @@ Every goal in the batch ends in one of three states, and the session says which.
 - Parking is neither. A goal the session neither resolved nor failed when it finished
   (out of rounds, the implicit finish, a claim the gate refused) stays open, gets one
   fresh session in the same build, and parks when that session leaves it open too.
-  Parked goals persist by id in `status.yaml` with their change payloads, count as open
+  Parked goals persist by id under `parked/` with their change payloads, count as open
   in the verdict (`incomplete`, with an `incomplete-build` diagnostic), and resume first
   in the next build. Unfinished work is never silent.
 
@@ -601,7 +601,7 @@ the spend ([status](../frontends/cli.md#jazyk-status)).
 ## Snapshots
 
 Every batch a session opens leaves a snapshot of the graph as it stood: the node files
-under `<out>/graph/`, `status.yaml`, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
+under `<out>/graph/`, the status, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
 starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
 what makes a session reproducible after the fact: `jazyk replay extract` seeds a
 [replay](../benchmark/replays.md) from it, so the harness answers the recorded calls

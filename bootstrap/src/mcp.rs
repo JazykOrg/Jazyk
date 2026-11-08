@@ -517,7 +517,7 @@ impl McpServer {
         // control file, so a release or mode change wakes the poll.
         let watched = |gs: &crate::gen::GenSettings| -> Vec<std::path::PathBuf> {
             let mut v = self.current_project().doc_files();
-            v.push(crate::gen::Ledger::path(&self.out));
+            v.extend(crate::gen::Ledger::files(&self.out));
             v.push(crate::control::Control::path(&self.out));
             let ledger = crate::gen::Ledger::load(&self.out);
             for row in ledger.requirements.values() {

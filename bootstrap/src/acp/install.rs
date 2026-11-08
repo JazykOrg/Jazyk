@@ -1,4 +1,3 @@
-use crate::vfs::VPathExt;
 // Registering jazyk as an ACP agent in the editors that host one. Every client
 // spawns the agent as a child process over stdio, so a registration is always the
 // same three facts (a name, a command, its arguments) written wherever that client
@@ -205,12 +204,7 @@ pub fn spawn_command() -> String {
         .unwrap_or(name)
 }
 
-fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|p| p.vis_file())
-}
+use crate::setup::which;
 
 pub fn install(ide_id: &str) -> i32 {
     let cmd = spawn_command();

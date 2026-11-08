@@ -602,12 +602,7 @@ fn agent_note(name: &str) -> String {
     }
 }
 
-fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|p| p.vis_file())
-}
+use crate::setup::which;
 
 // How to start a choice: the program and its arguments. None when it cannot be found.
 fn program(id: &str, root: &Path) -> Option<(PathBuf, Vec<String>)> {

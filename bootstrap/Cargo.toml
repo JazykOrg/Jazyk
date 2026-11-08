@@ -81,6 +81,8 @@ futures-util = "0.3"
 # the admitted page origin and the resource policy header on every response.
 tower-http = { version = "0.6", features = ["cors", "set-header"] }
 open = "5"
+# Program lookup on PATH, with PATHEXT on Windows (src/setup.rs which).
+which = "8"
 # The launcher menu (docs/frontends/cli.md#jazyk): raw mode and key events.
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 jsonc-parser = { version = "0.33.1", features = ["serde", "serde_json"] }

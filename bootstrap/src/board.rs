@@ -785,6 +785,9 @@ pub struct Board {
     // The pairs the degree cap holds back, by goal id: they derive no goal until a
     // slot frees. Mirrors docs/compiler/reconciler.md#pairs.
     pub waiting: BTreeMap<String, goals::WaitingPair>,
+    // The goals outside the selection of a selected build: never ready, held by
+    // nothing. Mirrors docs/compiler/reconciler.md#selection.
+    pub outside: BTreeSet<String>,
 }
 
 impl Board {
@@ -983,6 +986,19 @@ impl Board {
             .map(|c| c.id.clone())
             .collect();
 
+        // A selected build counts only its own goals toward readiness.
+        let outside: BTreeSet<String> = match crate::selection::current() {
+            Some(items) => {
+                let sel = crate::selection::Resolved::new(store, &items);
+                goals
+                    .iter()
+                    .filter(|g| !sel.holds(g))
+                    .map(|g| g.id.clone())
+                    .collect()
+            }
+            None => BTreeSet::new(),
+        };
+
         // Readiness inputs.
         let mut tier_open = [0usize; 4];
         let mut tier1_open_docs = BTreeSet::new();
@@ -996,7 +1012,10 @@ impl Board {
             .filter(|g| g.kind == "place-anchors" && matches!(g.state, GoalState::Failed { .. }))
             .map(|g| g.target.as_str())
             .collect();
-        for g in goals.iter().filter(|g| is_open(g)) {
+        for g in goals
+            .iter()
+            .filter(|g| is_open(g) && !outside.contains(&g.id))
+        {
             if g.kind == "reconcile-section"
                 && target_doc(&g.target).is_some_and(|d| undecided_docs.contains(d.as_str()))
             {
@@ -1032,7 +1051,7 @@ impl Board {
         // the list keeps the goals' order.
         let mut compile_by_key: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
         for (i, o) in goals.iter().enumerate() {
-            if o.class != "compile" || !is_open(o) {
+            if o.class != "compile" || !is_open(o) || outside.contains(&o.id) {
                 continue;
             }
             match goals::pair_members(&o.target) {
@@ -1114,6 +1133,7 @@ impl Board {
             by_id,
             open_kinds,
             waiting: pairs.waiting,
+            outside,
         };
 
         // Readiness per kind, then the control plane: a release gate and a lease both
@@ -1145,6 +1165,11 @@ impl Board {
             );
         }
         board.gated = gated;
+        for id in &board.outside {
+            board
+                .readiness
+                .insert(id.clone(), Ready::Blocked("outside the selection".into()));
+        }
         let leases = crate::control::task_leases(&store.out);
         if !leases.is_empty() {
             let mut claimed = BTreeMap::new();
@@ -1194,6 +1219,9 @@ impl Board {
         // never reused, since a lease lapses with time, not with a write.
         #[cfg(target_arch = "wasm32")]
         {
+            if crate::selection::current().is_some() {
+                return Self::compute_uncached(proj, out);
+            }
             thread_local! {
                 static LAST: std::cell::RefCell<BTreeMap<String, (u64, Board)>> = const { std::cell::RefCell::new(BTreeMap::new()) };
             }
@@ -1340,6 +1368,14 @@ impl Board {
     // Open or parked goals, both classes.
     pub fn open_goals(&self) -> Vec<&Goal> {
         self.goals.iter().filter(|g| is_open(g)).collect()
+    }
+
+    // The open goals a selected build runs: every open goal without a selection.
+    pub fn selected_open_goals(&self) -> Vec<&Goal> {
+        self.goals
+            .iter()
+            .filter(|g| is_open(g) && !self.outside.contains(&g.id))
+            .collect()
     }
 
     // Mandatory goals still open or parked: what keeps a build from converging.

@@ -913,7 +913,21 @@ impl Board {
         let mut tier_open = [0usize; 4];
         let mut tier1_open_docs = BTreeSet::new();
         let mut bind_open_by_entity: BTreeMap<String, usize> = BTreeMap::new();
+        // A document whose place-anchors goal failed stays undecided: its sections
+        // wait behind the failure, and an undecided document blocks its own sections
+        // and nothing else, so they hold no later tier or link level.
+        // Mirrors docs/compiler/goals/place-anchors.md#readiness.
+        let undecided_docs: BTreeSet<&str> = goals
+            .iter()
+            .filter(|g| g.kind == "place-anchors" && matches!(g.state, GoalState::Failed { .. }))
+            .map(|g| g.target.as_str())
+            .collect();
         for g in goals.iter().filter(|g| is_open(g)) {
+            if g.kind == "reconcile-section"
+                && target_doc(&g.target).is_some_and(|d| undecided_docs.contains(d.as_str()))
+            {
+                continue;
+            }
             if let Some(t) = goals::tier(&g.kind) {
                 tier_open[t as usize] += 1;
                 if t == 1 {
@@ -3547,6 +3561,35 @@ pub(crate) mod tests {
             created: None,
             updated: None,
         }
+    }
+
+    // A failed place-anchors goal leaves its document undecided: the document's
+    // sections wait, and nothing else does. Mirrors
+    // docs/compiler/goals/place-anchors.md#readiness.
+    #[test]
+    fn a_failed_place_anchors_goal_blocks_its_own_sections_only() {
+        let mut s = settled_store();
+        record(&mut s, 10, store::CHANGE_ALIGNMENT_PENDING, "shop.md", "alignment", json!({"proposals": 1}));
+        record(&mut s, 10, store::CHANGE_SECTION_DIRTY, "shop.md#/shop/orders", "section", json!({"added": 1}));
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        let b = derive(&s);
+        assert!(!b.is_ready("g:review-entity:ent:customer"), "tier 0 and 1 run first");
+        let anchors = Goal {
+            id: "g:place-anchors:shop.md".into(),
+            kind: "place-anchors".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "shop.md".into(),
+            unit: "document".into(),
+            change: json!({"proposals": 1}),
+            ..Default::default()
+        };
+        s.status.failed.push(crate::model::FailedGoal { goal: anchors, reason: "no candidate fits".into() });
+        let b = derive(&s);
+        assert!(matches!(b.goal("g:place-anchors:shop.md").map(|g| &g.state), Some(GoalState::Failed { .. })));
+        assert!(!b.is_ready("g:reconcile-section:shop.md#/shop/orders"), "{:?}", b.readiness.get("g:reconcile-section:shop.md#/shop/orders"));
+        assert!(b.is_ready("g:review-entity:ent:customer"), "{:?}", b.readiness.get("g:review-entity:ent:customer"));
+        assert!(!b.verdict().converged());
     }
 
     // A pending flip ruling holds its pair blocked on a human: the verdict converges

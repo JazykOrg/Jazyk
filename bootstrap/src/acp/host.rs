@@ -866,13 +866,24 @@ fn checked_path(root: &std::path::Path, path: &std::path::Path) -> Result<PathBu
             other => normal.push(other.as_os_str()),
         }
     }
-    if normal.starts_with(root) {
+    let outside = || format!("path {} is outside the project root", path.display());
+    if !normal.starts_with(root) {
+        return Err(outside());
+    }
+    // The lexical check alone lets a symlink inside the tree lead out of it: the
+    // deepest part of the path that exists is resolved, links and all, and must
+    // still sit under the resolved root. A write that creates new components below
+    // it stays where that ancestor really is.
+    let real_root = crate::vfs::canonicalize(root).map_err(|e| format!("project root: {}", e))?;
+    let existing = normal
+        .ancestors()
+        .find(|p| std::fs::symlink_metadata(p).is_ok())
+        .ok_or_else(outside)?;
+    let real = crate::vfs::canonicalize(existing).map_err(|_| outside())?;
+    if real.starts_with(&real_root) {
         Ok(normal)
     } else {
-        Err(format!(
-            "path {} is outside the project root",
-            path.display()
-        ))
+        Err(outside())
     }
 }
 
@@ -911,6 +922,36 @@ mod tests {
     use super::*;
     use crate::vfs::VPathExt;
     use std::io::{Read, Write};
+
+    // `fs/*` paths stay in the project: `..` is refused lexically, and a symlink in
+    // the tree that leads out of it is refused once resolved, for reads, writes of
+    // existing files, and writes that create new files below the link.
+    #[cfg(unix)]
+    #[test]
+    fn fs_paths_through_a_symlink_out_of_the_project_are_refused() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("proj");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        std::fs::write(root.join("docs/a.md"), "# A").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(root.join("docs"), root.join("inner")).unwrap();
+        assert!(checked_path(&root, &root.join("docs/a.md")).is_ok());
+        assert!(checked_path(&root, &root.join("docs/new/b.md")).is_ok());
+        assert!(checked_path(&root, &root.join("inner/a.md")).is_ok());
+        assert!(checked_path(&root, &root.join("../outside/secret.txt")).is_err());
+        assert!(checked_path(&root, &root.join("escape/secret.txt")).is_err());
+        assert!(checked_path(&root, &root.join("escape/new/c.txt")).is_err());
+        assert!(checked_path(&root, &root.join("link.txt")).is_err());
+        let read = ReadTextFileRequest::new("s", root.join("escape/secret.txt"));
+        assert!(read_text_file(&root, &read).is_err());
+        let write = WriteTextFileRequest::new("s", root.join("escape/planted.txt"), "x");
+        assert!(write_text_file(&root, &write).is_err());
+        assert!(!outside.join("planted.txt").exists());
+    }
 
     // A one-shot fake OpenAI endpoint: every POST answers a canned non-streaming
     // completion. Runs until the listener drops.

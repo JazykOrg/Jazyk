@@ -2016,11 +2016,13 @@ impl Store {
     }
 
     // Follow merge redirects to the surviving id. A tombstone (empty target) stays dead.
+    // A chain a store written before compaction still holds is followed to its end;
+    // the hop bound only stops a cycle.
     pub fn resolve_id<'a>(&'a self, id: &'a str) -> &'a str {
         let mut cur = id;
         let mut hops = 0;
         while let Some(next) = self.graph.redirects.get(cur) {
-            if next.is_empty() || hops > 8 {
+            if next.is_empty() || hops >= self.graph.redirects.len() {
                 return cur;
             }
             cur = next;
@@ -2258,10 +2260,23 @@ impl Store {
             e.updated = Some(build.to_string());
         }
         self.graph.entities.remove(id);
-        self.graph
-            .redirects
-            .insert(id.to_string(), parent.clone().unwrap_or_default());
+        self.redirect(id, parent.as_deref().unwrap_or_default());
         (parent, children)
+    }
+
+    // Redirect `from` to the surviving `to`, one hop: every redirect that named `from`
+    // as its survivor now names `to`, so no chain grows across merges. A tombstone
+    // (empty `to`) leaves the redirects into `from` alone; they resolve to the dead id.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    fn redirect(&mut self, from: &str, to: &str) {
+        if !to.is_empty() {
+            for target in self.graph.redirects.values_mut() {
+                if target == from {
+                    *target = to.to_string();
+                }
+            }
+        }
+        self.graph.redirects.insert(from.to_string(), to.to_string());
     }
 
     // Whether a node id names an existing entity or requirement.
@@ -4115,7 +4130,7 @@ impl Store {
                         }
                         k.updated = Some(build.clone());
                     }
-                    self.graph.redirects.insert(absorb.clone(), keep.clone());
+                    self.redirect(&absorb, &keep);
                     dirt.entity(&keep, m, "merge");
                     applied.push(Op::MergeEntities {
                         keep,
@@ -8498,6 +8513,46 @@ mod tests {
         let v = s.graph.views.values().find(|v| v.title == "Again").unwrap();
         assert_eq!(v.members, vec!["ent:buyer", "ent:cart"]);
         assert_eq!(v.collapse, vec!["ent:buyer", "ent:cart"]);
+    }
+
+    // Redirects stay one hop: absorbing a survivor repoints the redirects into it, and
+    // a chain an older store left behind still resolves past eight hops.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    #[test]
+    fn merges_compact_redirect_chains() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nshop\n");
+        s.apply(
+            vec![create("ent:a", "A"), create("ent:b", "B"), create("ent:c", "C")],
+            &session(),
+        );
+        for (keep, absorb) in [("ent:b", "ent:a"), ("ent:c", "ent:b")] {
+            let r = s.apply(
+                vec![Op::MergeEntities {
+                    keep: keep.into(),
+                    absorb: absorb.into(),
+                    reason: "same".into(),
+                }],
+                &session(),
+            );
+            assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        }
+        assert_eq!(s.graph.redirects["ent:a"], "ent:c");
+        assert_eq!(s.graph.redirects["ent:b"], "ent:c");
+        let mut old = Store::default();
+        old.graph.entities.insert("ent:end".into(), entity("End"));
+        for i in 0..12 {
+            let to = if i == 11 { "ent:end".to_string() } else { format!("ent:x{}", i + 1) };
+            old.graph.redirects.insert(format!("ent:x{}", i), to);
+        }
+        assert_eq!(old.resolve_id("ent:x0"), "ent:end");
+        // A cycle stops instead of spinning.
+        old.graph.redirects.insert("ent:p".into(), "ent:q".into());
+        old.graph.redirects.insert("ent:q".into(), "ent:p".into());
+        let _ = old.resolve_id("ent:p");
     }
 
     // Clearing a parent is a move: the journal records the prior parent, the parent

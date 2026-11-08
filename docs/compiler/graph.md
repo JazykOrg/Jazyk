@@ -133,7 +133,9 @@ different nodes touch different files and git merges them without a conflict.
   The plain form never writes `%~`, so a shortened name never meets a plain one; two
   shortened ids meet only when both their prefixes and their hashes agree.
 - A file holds the node alone, its fields in a fixed order, maps sorted by key, ending
-  in a newline. A redirect file holds `to: <surviving id>`. Nothing in a file changes
+  in a newline. A redirect file holds `to: <surviving id>`, one hop: a merge or a
+  dissolve that redirects an id to a survivor repoints every redirect into that id at
+  the survivor too. Nothing in a file changes
   unless the node changes: the same graph always writes the same bytes.
 - A save writes the files whose bytes changed and deletes the files of nodes that left
   the graph. A file whose name does not decode, or whose content does not parse, makes

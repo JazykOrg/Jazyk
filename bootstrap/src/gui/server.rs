@@ -42,7 +42,8 @@ async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Respon
         q.split('&')
             .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
     });
-    let ok = bearer == Some(expect) || query_token.as_deref() == Some(expect);
+    let ok = super::state::token_matches(bearer, expect)
+        || super::state::token_matches(query_token.as_deref(), expect);
     if ok {
         next.run(req).await
     } else {
@@ -53,9 +54,12 @@ async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Respon
 // The allow header stops a page from reading an answer, not from sending a request:
 // a browser sends a cross-origin POST without reading the reply. So a request other
 // than GET, HEAD, or OPTIONS must name an admitted origin, or come from the same
-// site or no browser at all. Token or not (docs/frontends/gui.md#serving).
+// site or no browser at all. The `/lsp` upgrade is a GET, but a browser opens a
+// WebSocket to any origin without CORS, so it passes the same check. Token or not
+// (docs/frontends/gui.md#serving).
 fn origin_admitted(req: &Request, gui_origin: &str) -> bool {
-    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+    let upgrade = req.uri().path() == "/lsp";
+    if !upgrade && matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return true;
     }
     let text = |name: &str| {
@@ -69,6 +73,26 @@ fn origin_admitted(req: &Request, gui_origin: &str) -> bool {
     }
     match text("sec-fetch-site") {
         Some(site) => site == "same-origin" || site == "none",
+        None => true,
+    }
+}
+
+// The name a request gives the server must be a loopback name with the bound port:
+// a page that rebinds its own domain to 127.0.0.1 sends that domain as `Host` and is
+// refused before anything reads the project. `port` is None only where no listener
+// is bound (in-process tests); the name is checked either way. A request without
+// `Host` passes (docs/frontends/gui.md#serving).
+pub(crate) fn host_admitted(host: Option<&str>, port: Option<u16>) -> bool {
+    let Some(host) = host else { return true };
+    let Ok(authority) = host.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    let name = authority.host().to_ascii_lowercase();
+    if !matches!(name.as_str(), "127.0.0.1" | "localhost" | "[::1]") {
+        return false;
+    }
+    match port {
+        Some(bound) => authority.port_u16().unwrap_or(80) == bound,
         None => true,
     }
 }
@@ -118,7 +142,13 @@ fn cors(gui_origin: &str) -> CorsLayer {
         .max_age(std::time::Duration::from_secs(600))
 }
 
+// The API routes, built once per process: a request only binds its scoped state.
 fn api_router(st: SharedState) -> Router {
+    static ROUTES: std::sync::OnceLock<Router<SharedState>> = std::sync::OnceLock::new();
+    ROUTES.get_or_init(api_routes).clone().with_state(st)
+}
+
+fn api_routes() -> Router<SharedState> {
     let api = Router::new()
         .route("/ping", get(api::ping))
         .route("/project", get(api::project))
@@ -215,7 +245,7 @@ fn api_router(st: SharedState) -> Router {
         .route("/release", post(api::release))
         .route("/events", get(events::sse))
         .route("/shutdown", post(api::shutdown));
-    Router::new().nest("/api", api).with_state(st)
+    Router::new().nest("/api", api)
 }
 
 // Resolve the context once per request. The existing native handlers retain their
@@ -404,13 +434,31 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     Response::from_parts(parts, axum::body::Body::from(value.to_string()))
 }
 
+#[cfg(test)]
 pub fn router(st: SharedState) -> Router {
+    router_on(st, None)
+}
+
+// The router for a listener bound to `port`: the Host check runs first, before the
+// token and the origin (docs/frontends/gui.md#serving).
+pub fn router_on(st: SharedState, port: Option<u16>) -> Router {
     let cors = cors(&st.gui_origin);
     Router::new()
         .route("/api/{*path}", axum::routing::any(gateway))
         .route("/lsp", get(lsp_ws::ws))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(st.clone(), auth))
+        .layer(middleware::from_fn(move |req: Request, next: Next| async move {
+            let host = req
+                .headers()
+                .get(header::HOST)
+                .map(|v| v.to_str().unwrap_or("\u{0}"));
+            if host_admitted(host, port) {
+                next.run(req).await
+            } else {
+                (StatusCode::FORBIDDEN, "host not admitted").into_response()
+            }
+        }))
         .layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static("cross-origin-resource-policy"),
             HeaderValue::from_static("cross-origin"),
@@ -460,7 +508,8 @@ where
 // editor WebSocket stay open as long as a tab lives, so waiting on them would keep
 // ctrl-c hanging until the browser closes. Dropping the server closes everything.
 pub async fn serve(listener: tokio::net::TcpListener, st: SharedState) -> Result<(), String> {
-    let app = router(st.clone());
+    let port = listener.local_addr().ok().map(|a| a.port());
+    let app = router_on(st.clone(), port);
     tokio::select! {
         r = axum::serve(listener, app) => r.map_err(|e| format!("server error: {}", e)),
         _ = tokio::signal::ctrl_c() => Ok(()),
@@ -814,6 +863,8 @@ pub(super) mod tests {
             hdr(&r, "content-type"),
             Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
         );
+        assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"));
+        assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"));
         let body = axum::body::to_bytes(r.into_body(), usize::MAX)
             .await
             .unwrap();
@@ -833,6 +884,33 @@ pub(super) mod tests {
         )
         .await;
         assert_eq!(r.status(), StatusCode::OK);
+        // Every file served as its bytes is sandboxed and typed exactly: an SVG with
+        // a script opened in a tab runs nothing with the API's origin
+        // (docs/frontends/gui.md#serving).
+        std::fs::write(st.root.join("dist/pic.svg"), "<svg><script>alert(1)</script></svg>").unwrap();
+        for path in [
+            "/api/project/raw?path=dist/pic.svg&token=secret",
+            "/api/project/file?path=dist/pic.svg&token=secret",
+            "/api/deliverable/raw?path=dist/pic.svg&token=secret",
+        ] {
+            let r = send(st.clone(), get_from(path, "https://raw.test")).await;
+            assert_eq!(r.status(), StatusCode::OK, "{}", path);
+            assert_eq!(hdr(&r, "content-type"), Some("image/svg+xml"), "{}", path);
+            assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"), "{}", path);
+            assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"), "{}", path);
+        }
+        let set = crate::document_sets::Workspace::load(&st.root).unwrap().sets[0].id.clone();
+        let diagrams = st.root.join(".jazyk").join(&set).join("diagrams");
+        std::fs::create_dir_all(&diagrams).unwrap();
+        std::fs::write(diagrams.join("v.svg"), "<svg/>").unwrap();
+        let r = send(
+            st.clone(),
+            get_from("/api/out/file?path=diagrams/v.svg&token=secret", "https://raw.test"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"));
+        assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"));
         std::fs::remove_dir_all(&st.root).ok();
     }
     // A page on another site can send a POST it never reads; the origin check
@@ -885,6 +963,68 @@ pub(super) mod tests {
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         let r = send(st.clone(), post(None, None)).await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
+    // A page that rebinds its own domain to 127.0.0.1 names that domain as Host:
+    // refused before the route, token or not; loopback names with the bound port
+    // pass (docs/frontends/gui.md#serving).
+    #[tokio::test]
+    async fn a_request_naming_a_foreign_host_is_refused() {
+        assert!(host_admitted(Some("127.0.0.1:4680"), Some(4680)));
+        assert!(host_admitted(Some("localhost:4680"), Some(4680)));
+        assert!(host_admitted(Some("LOCALHOST:4680"), Some(4680)));
+        assert!(host_admitted(Some("[::1]:4680"), Some(4680)));
+        assert!(host_admitted(None, Some(4680)));
+        assert!(!host_admitted(Some("127.0.0.1:4681"), Some(4680)));
+        assert!(!host_admitted(Some("127.0.0.1"), Some(4680)));
+        assert!(!host_admitted(Some("evil.example:4680"), Some(4680)));
+        assert!(!host_admitted(Some("127.0.0.1.evil.example:4680"), Some(4680)));
+        assert!(!host_admitted(Some("localhost@evil.example"), None));
+        let st = state(None, "https://jazyk.dev");
+        let get = |host: &str| {
+            Request::builder()
+                .uri("/api/ping")
+                .header("host", host)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let app = |st: SharedState| router_on(st, Some(4680));
+        let r = app(st.clone()).oneshot(get("evil.example:4680")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let r = app(st.clone()).oneshot(get("127.0.0.1:4680")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = app(st.clone()).oneshot(get("localhost:4680")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
+    // A browser opens a WebSocket to any origin without CORS: the `/lsp` upgrade
+    // needs an admitted origin, or no browser at all, with or without a token
+    // (docs/frontends/gui.md#serving).
+    #[tokio::test]
+    async fn the_lsp_upgrade_from_a_foreign_origin_is_refused_even_without_a_token() {
+        let upgrade = |origin: Option<&str>| {
+            let mut b = Request::builder().uri("/lsp");
+            if let Some(o) = origin {
+                b = b.header("origin", o);
+            }
+            b.body(Body::empty()).unwrap()
+        };
+        for token in [None, Some("secret")] {
+            let st = state(token, "https://jazyk.dev");
+            let r = send(st.clone(), upgrade(Some("https://evil.example"))).await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN);
+            let r = send(st.clone(), upgrade(Some("null"))).await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        }
+        // The page and a local tool reach the route (a plain GET is no upgrade, so
+        // the WebSocket extractor refuses it past the origin check).
+        let st = state(None, "https://jazyk.dev");
+        for origin in [Some("https://jazyk.dev"), None] {
+            let r = send(st.clone(), upgrade(origin)).await;
+            assert_ne!(r.status(), StatusCode::FORBIDDEN, "{:?}", origin);
+        }
         std::fs::remove_dir_all(&st.root).ok();
     }
 

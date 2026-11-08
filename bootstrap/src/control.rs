@@ -67,8 +67,27 @@ impl Control {
         c
     }
 
+    // Write the file whole. A file on disk that does not parse is a human's text, not
+    // state: it moves aside to `control.yaml.bad` first, never overwritten.
+    // Mirrors docs/compiler/control-plane.md#modes-and-releases.
     pub fn save(&self, out: &Path) {
         crate::vfs::create_dir_all(out).ok();
+        let path = Self::path(out);
+        if let Ok(old) = crate::vfs::read_to_string(&path) {
+            if serde_norway::from_str::<Control>(&old).is_err() {
+                let bad = out.join("control.yaml.bad");
+                crate::vfs::remove_file(&bad).ok();
+                if crate::vfs::rename(&path, &bad).is_err() {
+                    eprintln!("[jazyk] warning: {} does not parse and cannot be moved aside; not writing it", path.display());
+                    return;
+                }
+                eprintln!(
+                    "[jazyk] warning: {} did not parse; moved it to {} and wrote a fresh one",
+                    path.display(),
+                    bad.display()
+                );
+            }
+        }
         if let Ok(text) = serde_norway::to_string(self) {
             let tmp = Self::path(out).with_extension("yaml.tmp");
             if crate::vfs::write(&tmp, text).is_ok() {
@@ -356,9 +375,62 @@ fn refresh_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let Some(mut current) = read_lease(&path) else { return Ok(false) };
     if !same_claim(&saved.lease, &current) { return Ok(false); }
     current.expires_at = now() + LEASE_TTL_SECS;
-    crate::vfs::write(path, serde_norway::to_string(&current).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    write_lease_whole(&path, &serde_norway::to_string(&current).map_err(|e| e.to_string())?)?;
     Ok(true)
+}
+
+fn nonce() -> String {
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        return format!("{}-{}", crate::sys::process_id(), now());
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// Replace a lease file whole: a temporary file beside it, then a rename, so a reader
+// never sees half a lease. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+fn write_lease_whole(path: &Path, text: &str) -> Result<(), String> {
+    let tmp = path.with_extension(format!("{}.tmp", nonce()));
+    crate::vfs::write(&tmp, text).map_err(|e| e.to_string())?;
+    crate::vfs::rename(&tmp, path).map_err(|e| {
+        crate::vfs::remove_file(&tmp).ok();
+        e.to_string()
+    })
+}
+
+// Remove a lease file only if it still holds the text the caller read: the file
+// moves aside under a name of its own first, and a file that changed meanwhile (a
+// claimant's fresh lease) goes back. Ok(true) when the observed lease is gone.
+// Mirrors docs/compiler/control-plane.md#workers-and-leases.
+fn take_aside(path: &Path, observed: &str) -> bool {
+    let aside = path.with_extension(format!("{}.stale", nonce()));
+    if crate::vfs::rename(path, &aside).is_err() {
+        return false;
+    }
+    let moved = crate::vfs::read_to_string(&aside).unwrap_or_default();
+    if moved != observed {
+        // Someone else's lease: put it back unless a newer one took the slot.
+        crate::vfs::create_new(path, &moved).ok();
+        crate::vfs::remove_file(&aside).ok();
+        return false;
+    }
+    crate::vfs::remove_file(&aside).ok();
+    true
+}
+
+// A lease file whose text does not parse: a claim mid-write on a host without atomic
+// rename, or damage. It counts as held until it is older than the lease lifetime.
+fn unreadable_lease_lapsed(path: &Path) -> bool {
+    let Ok(meta) = crate::vfs::entry_metadata(path) else {
+        return true;
+    };
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now().saturating_sub(modified) > LEASE_TTL_SECS
 }
 
 // Claim a task. Create-new semantics decide the winner; an expired lease is
@@ -375,13 +447,21 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
     let claim_id = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
     crate::vfs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
-    if let Some(l) = read_lease(&path) {
-        // Re-entrant for the same worker: a retry after its own failed attempt
-        // refreshes the claim instead of waiting out its own lease.
-        if l.expires_at > now() && l.worker != worker {
-            return Err(l.worker);
+    if let Ok(text) = crate::vfs::read_to_string(&path) {
+        match serde_norway::from_str::<Lease>(&text) {
+            // Re-entrant for the same worker: a retry after its own failed attempt
+            // refreshes the claim instead of waiting out its own lease.
+            Ok(l) if l.expires_at > now() && l.worker != worker => return Err(l.worker),
+            Err(_) if !unreadable_lease_lapsed(&path) => return Err("another worker".into()),
+            _ => {}
         }
-        crate::vfs::remove_file(&path).ok();
+        // Take over only the lease that was read: a claimant that won the slot
+        // meanwhile keeps it.
+        if !take_aside(&path, &text) {
+            return Err(read_lease(&path)
+                .map(|l| l.worker)
+                .unwrap_or_else(|| "another worker".into()));
+        }
     }
     let lease = Lease {
         task: task.to_string(),
@@ -409,7 +489,7 @@ pub fn refresh_lease(out: &Path, task: &str) {
     if let Some(mut l) = read_lease(&path) {
         l.expires_at = now() + LEASE_TTL_SECS;
         if let Ok(text) = serde_norway::to_string(&l) {
-            crate::vfs::write(&path, text).ok();
+            write_lease_whole(&path, &text).ok();
         }
     }
 }
@@ -437,12 +517,22 @@ pub fn leases(out: &Path) -> BTreeMap<String, Lease> {
         return m;
     };
     for e in entries.flatten() {
-        let Some(l) = read_lease(&e.path()) else {
-            crate::vfs::remove_file(e.path()).ok();
+        let path = e.path();
+        // Temporary and moved-aside files are a writer's, never leases.
+        if path.extension().is_none_or(|x| x != "yaml") {
+            continue;
+        }
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(l) = serde_norway::from_str::<Lease>(&text) else {
+            if unreadable_lease_lapsed(&path) {
+                take_aside(&path, &text);
+            }
             continue;
         };
         if l.expires_at <= now() {
-            crate::vfs::remove_file(e.path()).ok();
+            take_aside(&path, &text);
             continue;
         }
         m.insert(l.task.clone(), l);
@@ -471,6 +561,12 @@ impl BuildGuard {
 
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
     if let Some(error) = &proj.config_error { return Err(error.clone()); }
+    // The project's file view spans every set and owns no graph: a build on it
+    // would write the shared `.jazyk/`. Graph operations address one set
+    // (docs/frontends/cli.md).
+    if proj.set_id.is_none() && proj.set_docs.is_some() {
+        return Err("choose a document set: a build works on one set, never on the project's shared .jazyk/".into());
+    }
     let project_lock = if proj.set_id.is_some() {
         Some(crate::document_sets::ProjectLock::acquire(&proj.root, "project.lock").map_err(|e| e.1)?)
     } else { None };
@@ -588,6 +684,18 @@ mod tests {
             "A release must not approve an unreadable file's retained content");
     }
 
+    // The project's file view (every set, no graph) never takes a build: it would
+    // write the shared `.jazyk/` (docs/frontends/cli.md).
+    #[test]
+    fn a_build_on_the_set_less_file_view_is_refused() {
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let project = Project { set_docs: Some(vec![vec!["a.md".into()], vec!["b.md".into()]]), ..Project::default() };
+        let out = Path::new("/project/.jazyk");
+        let error = begin_internal_build(&project, out, "compile").err().unwrap();
+        assert!(error.starts_with("choose a document set"), "{}", error);
+        assert!(build_lease(out).is_none());
+    }
+
     #[test]
     fn replacement_build_has_a_new_token_and_cannot_be_renewed_by_its_predecessor() {
         let _fs = crate::vfs::Scope::enter(&Default::default());
@@ -648,6 +756,67 @@ mod tests {
         release_lease(out, "batch");
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), foreign,
             "Active cancellation must use its recorded receipt, not the current same-worker claim");
+    }
+
+    // A takeover moves aside only the lease it read: a fresh lease another claimant
+    // wrote meanwhile goes back, and the late claimant loses. An unparseable lease
+    // counts as held until it is older than the lease lifetime, and a refresh leaves
+    // no temporary file behind. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+    #[test]
+    fn lease_takeover_moves_aside_only_the_lease_it_read() {
+        let out = tmp();
+        crate::vfs::create_dir_all(leases_dir(&out)).unwrap();
+        let path = lease_file(&out, "batch");
+        let lease = |worker: &str, expires_at: u64| Lease {
+            task: "batch".into(),
+            worker: worker.into(),
+            claim_id: format!("{}-id", worker),
+            claimed_at: 1,
+            expires_at,
+            goals: Vec::new(),
+        };
+        let expired = serde_norway::to_string(&lease("dead", 1)).unwrap();
+        let fresh = serde_norway::to_string(&lease("w1", now() + LEASE_TTL_SECS)).unwrap();
+        // The slot holds w1's fresh lease, but a late claimant read the expired one.
+        crate::vfs::write(&path, &fresh).unwrap();
+        assert!(!take_aside(&path, &expired));
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), fresh, "the fresh lease goes back");
+        assert_eq!(claim(&out, "batch", "w2"), Err("w1".to_string()));
+        // The expired lease itself is taken over.
+        crate::vfs::write(&path, &expired).unwrap();
+        assert!(claim(&out, "batch", "w2").is_ok());
+        assert_eq!(read_lease(&path).map(|l| l.worker), Some("w2".into()));
+        refresh_lease(&out, "batch");
+        let names: Vec<String> = crate::vfs::read_dir(leases_dir(&out))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 1, "{:?}", names);
+        // A lease that does not parse and was written just now is held, not swept.
+        crate::vfs::write(&path, "task: [half").unwrap();
+        assert!(leases(&out).is_empty());
+        assert!(crate::vfs::exists(&path), "a fresh unparseable lease stays");
+        assert_eq!(claim(&out, "batch", "w3"), Err("another worker".to_string()));
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A control.yaml that does not parse reads as the project defaults and is never
+    // overwritten: the next write moves it aside to control.yaml.bad.
+    // Mirrors docs/compiler/control-plane.md#modes-and-releases.
+    #[test]
+    fn an_unparseable_control_file_moves_aside_before_a_write() {
+        let out = tmp();
+        let broken = "compile: [auto\n";
+        crate::vfs::write(Control::path(&out), broken).unwrap();
+        let proj = Project { workflow: Default::default(), ..Default::default() };
+        let mut c = Control::load(&proj, &out);
+        assert_eq!(c.compile, proj.workflow.compile);
+        c.compile = "auto".into();
+        c.save(&out);
+        assert_eq!(crate::vfs::read_to_string(out.join("control.yaml.bad")).unwrap(), broken);
+        assert_eq!(Control::load(&proj, &out).compile, "auto");
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]

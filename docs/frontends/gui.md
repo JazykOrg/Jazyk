@@ -27,6 +27,12 @@ independently. The client checks compatibility before adopting a connection.
 ## Serving
 
 - The server binds `127.0.0.1` only. It is never exposed beyond the local machine.
+- Every request must name the server by a loopback host: its `Host` header is
+  `127.0.0.1`, `localhost`, or `[::1]` with the bound port. Any other `Host` is
+  refused with `403`, token or not. A request without `Host` (an HTTP/1.0 tool)
+  passes. A page on another site that points its own
+  domain name at `127.0.0.1` (DNS rebinding) sends its own name as `Host`, so it
+  never reads the API. The page at jazyk.dev names `127.0.0.1:<port>` and passes.
 - Without `--port`, the server tries ports `4680` through `4711`, inclusive, in
   ascending order. It takes the first available port and prints the actual URL.
   Only an address-in-use error advances to the next port. Other bind errors stop
@@ -59,12 +65,21 @@ independently. The client checks compatibility before adopting a connection.
   transport, never the project.
 - The allow header stops a page from reading an answer, not from sending a request:
   a browser sends a cross-origin `POST` without reading the reply. So every request
-  other than `GET`, `HEAD`, or `OPTIONS` passes an origin check too. A request whose
+  other than `GET`, `HEAD`, or `OPTIONS` passes an origin check too, and so does the
+  `/lsp` WebSocket upgrade, since a browser opens a WebSocket to any origin without
+  CORS and the language server can compile and write settings. A request whose
   `Origin` header names an origin the server does not admit is refused with `403`.
   A request without `Origin` whose `Sec-Fetch-Site` is neither `same-origin` nor
   `none` is refused the same way. A request carrying neither header (a local tool,
   `curl`) passes. The check holds with or without a token, so `--no-token` keeps
-  `POST /api/shutdown` and the write routes out of reach of another site's page.
+  `POST /api/shutdown`, the write routes, and the language server out of reach of
+  another site's page.
+- A file served as its bytes (`GET /api/deliverable/raw`, `GET /api/out/file`,
+  `GET /api/project/file`, `GET /api/project/raw`) carries
+  `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`. A file
+  opened directly in a tab (an SVG with a script, an HTML page) then runs no script
+  with the API's origin, and the browser never guesses a type the server did not
+  name.
 - The editor's WebSocket (`/lsp`) feeds one language server thread per connection
   through a bounded queue of 1024 frames. A frame arriving at a full queue is
   dropped, and the server logs the drop once per connection; the editor's next full
@@ -572,7 +587,9 @@ The agent chooses the order of source work and checks, as in the CLI and ACP.
 `GET /api/events` streams server-sent events. Every event carries a monotonic sequence
 number; the server keeps a replay ring, so a reconnecting client resumes from its last
 seen event. When the gap exceeds the ring, the server sends `resync` and the client
-refetches its snapshots.
+refetches its snapshots. An event id names the server's start as well as the sequence
+number, so a client reconnecting to a restarted server with an id the new process
+never issued gets `resync` too, never a silent gap.
 
 A dropped stream is shown, not hidden: the app banners the lost connection and falls
 back to polling the status endpoint until the stream heals. Reconnecting refetches

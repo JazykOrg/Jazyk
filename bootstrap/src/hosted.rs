@@ -862,7 +862,7 @@ mod tests {
                     "hashes":{"requirement":"","test":"","files":""}
                 }}
             })).unwrap();
-            ledger.save(&project.out);
+            ledger.save(&project.out).unwrap();
             w.files = fs.snapshot();
         }
         let before = w.snapshot();
@@ -1421,7 +1421,7 @@ mod tests {
             }
             ledger.entities.get_mut("cart").unwrap().fact_hash = crate::gen::fact_hash(&store, "ent:cart");
             let unrelated = serde_json::to_value(&ledger.requirements["req:unrelated"]).unwrap();
-            ledger.save(&out);
+            ledger.save(&out).unwrap();
             let requests = submissions.clone();
             let runtime: crate::hosted::RuntimeTransport = Arc::new(move |request| {
                 let run_id = request["run_id"].as_str().unwrap_or_default();

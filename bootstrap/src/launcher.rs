@@ -42,8 +42,8 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
     ("actions on the project", &[
-        ("check [path...]", "compile, exit non-zero on error diagnostics (CI)"),
-        ("watch [path...]", "recompile on change, one line per goal"),
+        ("check", "compile, exit non-zero on error diagnostics (CI)"),
+        ("watch", "recompile on change, one line per goal"),
         ("gen [entity...]", "resolve the bind and generate goals into the deliverable (--force)"),
         ("test [target...]", "resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)"),
         ("decompile [path...]", "draft docs describing what unclaimed code does"),
@@ -63,7 +63,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("run by IDEs and agents, not by hand", &[
         ("mcp <toolsets>", "the MCP server: all, compile,generate,verify,runtime,decompile,benchmark,chat,graph"),
         ("acp [install --ide CLIENT]", "the IDE-facing ACP proxy; `install` registers it with an editor"),
-        ("lsp", "language server over stdio (read-only; compile or watch rebuilds)"),
+        ("lsp", "language server over stdio (reads the graph; writes only through its explicit commands)"),
         ("agent", "the embedded ACP agent over stdio (spawned by the bridge)"),
         ("monitor [--json] [--once]", "print ready and blocked goals as the state changes; --once exits at the first"),
     ]),
@@ -171,9 +171,10 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "init" => (Some(0), &["--mcp", "--acp"]),
         "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
-        "compile" => (None, &["--sessions", "--dirty"]),
+        "compile" => (None, &["--sessions"]),
         "sets" => (Some(2), &["--docs", "--source", "--roots", "--name", "--json"]),
-        "check" | "watch" | "decompile" => (None, &[]),
+        "check" | "watch" => (Some(0), &[]),
+        "decompile" => (None, &[]),
         "status" => (Some(0), &["--json", "--costs"]),
         "preview" | "explain" => (Some(1), &[]),
         "ripple" => (Some(1), &["--back"]),
@@ -210,12 +211,14 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "acp" => (Some(2), &["--ide"]),
         "benchmark" => (None, &["--project", "--goal", "--force"]),
         "replay" => (None, &[]),
+        "tasks" | "runs" => (Some(0), &[]),
+        "run" | "run-status" | "run-log" | "run-cancel" => (Some(1), &[]),
         _ => return None,
     })
 }
 
 const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --llm-api API  --reasoning-summary MODE  --out DIR";
-const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/.jazyk/)";
+const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/.jazyk/<set-id>/; requires --set)";
 
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
@@ -265,13 +268,14 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...] [--dirty] [--set ID] [--sessions N]\n\n\
-             Run one build. The reconciler derives the goal board from the documents\n\
+            "usage: jazyk compile [path...] [--set ID] [--sessions N]\n\n\
+             Run one build per document set: the set --set names, else every set\n\
+             claiming one of the paths (a path no set claims is a usage error), else\n\
+             every dirty set. The reconciler derives the goal board from the documents\n\
              and the graph; sessions resolve ready goals batch by batch until the\n\
              board converges. Prints the board summary first, a `gc burst:` line as\n\
              each burst starts, goal lines as goals resolve or fail, and the verdict\n\
-             with its counts last. Explicit paths skip project discovery and run ad\n\
-             hoc on those files.\n\n\
+             with its counts last.\n\n\
              options:\n  \
              --sessions N    run at most N sessions, then stop with an honest incomplete\n  \
              \x20               (0 derives the board and parks every goal without an LLM call)\n  \
@@ -282,7 +286,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "check" => format!(
-            "usage: jazyk check [path...]\n\n\
+            "usage: jazyk check [--set ID]\n\n\
              Compile, then exit non-zero if the build ends incomplete or open\n\
              diagnostics of severity error remain. The CI gate.\n\n\
              options:\n  \
@@ -293,7 +297,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "watch" => format!(
-            "usage: jazyk watch [path...]\n\n\
+            "usage: jazyk watch [--set ID]\n\n\
              Recompile on file change. Event bursts debounce, and a fingerprint over the\n\
              matched documents decides whether a build runs. An incomplete build retries\n\
              on its own with backoff until a file change resets it. Per build: the board\n\
@@ -559,11 +563,30 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             .to_string(),
         "lsp" => format!(
             "usage: jazyk lsp [--stdio]\n\n\
-             Language server over stdio. Read-only: serves the last committed graph, and\n\
-             a compile or watch rebuild refreshes it. --stdio is accepted and changes\n\
-             nothing: LSP clients append it to name the transport.\n\n\
+             Language server over stdio. Serves the last committed graph, and a rebuild\n\
+             refreshes it. It writes only through its explicit commands (answer a\n\
+             diagnostic, edit a document set, jazyk.compile one set with the LLM\n\
+             options given here). --stdio is accepted and changes nothing: LSP clients\n\
+             append it to name the transport.\n\n\
              {}",
-            COMMON_OUT
+            COMMON_LLM
+        ),
+        "tasks" | "runs" => format!(
+            "usage: jazyk {}\n\n\
+             The project's task definitions and runtime availability{}, as JSON.\n\n\
+             exit: 0 when printed, 1 when the project or runtime cannot answer, 2 on a usage error",
+            cmd,
+            if cmd == "runs" { ", with the recent run history" } else { "" }
+        ),
+        "run" => "usage: jazyk run <task-id>\n\n\
+             Submit one finite task and print its durable run, as JSON.\n\n\
+             exit: 0 when submitted, 1 when refused, 2 on a usage error".to_string(),
+        "run-status" | "run-log" | "run-cancel" => format!(
+            "usage: jazyk {} <run-id>\n\n\
+             {} one task run, as JSON.\n\n\
+             exit: 0 when answered, 1 when refused, 2 on a usage error",
+            cmd,
+            match cmd { "run-status" => "Inspect", "run-log" => "Read the log of", _ => "Cancel" }
         ),
         "replay" => "usage: jazyk replay [file|dir...]\n       jazyk replay extract <trace.jsonl> <label>\n\n\
              Run replays: cases whose tool calls are scripted, graded against the\n\
@@ -670,7 +693,6 @@ pub fn run() {
             "--help" | "-h" => want_help = true,
             "help" if cmd.is_empty() => want_help = true,
             "--back" => opts.back = true,
-            "--dirty" => opts.dirty = true,
             "--ephemeral" => opts.ephemeral = true,
             "--packaged" => opts.packaged = true,
             "--serve-files" => opts.serve_files = true,
@@ -768,7 +790,7 @@ pub fn run() {
         }
     }
 
-    if !["watch","query","init","setup","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
+    if !["watch","query","init","setup","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay","tasks","runs","run","run-status","run-log","run-cancel"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
         let (proj,_,_)=cli::resolve(&[],&opts);
         if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
         if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
@@ -908,12 +930,25 @@ pub fn run() {
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);
             let gs = gen::GenSettings::resolve(&proj);
-            lsp::Lsp::new(proj.root.clone(), if opts.set.is_some() {out} else {proj.root.join(".jazyk")}, gs).run();
+            lsp::Lsp::new(proj.root.clone(), if opts.set.is_some() {out} else {proj.root.join(".jazyk")}, gs)
+                .with_cli_options(opts.clone())
+                .run();
             0
         }
         // Replays: scripted sessions against the harness, no model
         // (docs/benchmark/replays.md).
         "replay" => replay::run_cli(&positional),
+        // Project task commands (docs/frontends/cli.md#project-task-commands).
+        "tasks" | "runs" | "run" | "run-status" | "run-log" | "run-cancel" => {
+            if cmd.starts_with("run") && cmd != "runs" && positional.is_empty() {
+                usage_error(&cmd, &format!("`{}` takes {}", cmd, if cmd == "run" { "a task id" } else { "a run id" }));
+            }
+            let args: Vec<String> = std::iter::once(cmd.clone()).chain(positional.iter().cloned()).collect();
+            match crate::task_runtime::cli(&args) {
+                Ok(value) => { println!("{}", serde_json::to_string_pretty(&value).unwrap()); 0 }
+                Err(error) => { eprintln!("jazyk: {}", error); 1 }
+            }
+        }
         "benchmark" => {
             let (_proj, llm, out) = cli::resolve(&[], &opts);
             // `--goal` runs one goal's session from a copy of a real project.

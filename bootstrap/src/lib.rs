@@ -87,8 +87,6 @@ pub mod setup;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod parallel;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod viewer;

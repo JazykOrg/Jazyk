@@ -1526,6 +1526,7 @@ pub fn seed_verification(
         run: format!("jazyk test {}", rid),
         cwd: ".".into(),
     };
+    let _lock = crate::gen::Ledger::lock(&store.out);
     let mut ledger = crate::gen::Ledger::load(&store.out);
     ledger.requirements.insert(
         rid.clone(),
@@ -1546,8 +1547,7 @@ pub fn seed_verification(
             evidence: None,
         },
     );
-    ledger.save(&store.out);
-    Ok(())
+    ledger.save(&store.out)
 }
 
 // One case as a turn on the generic loop: the same GDK runtime the embedded agent runs,
@@ -2835,7 +2835,7 @@ mod tests {
                 exit_code: None,
                 evidence: None,
             });
-            ledger.save(&s.out);
+            ledger.save(&s.out).unwrap();
         };
         let check = |k: &str| eval_workflow_check(k, &serde_json::json!({"requirement": "req:b-1", "statuses": ["unimplemented", "failing"]}), &s, &gs, "req:b-1");
         // No row yet: both fail.

@@ -277,7 +277,6 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
 }
 thread_local! { static SUPERVISOR: std::cell::RefCell<Option<(std::path::PathBuf,Instant)>> = const { std::cell::RefCell::new(None) }; }
 fn docker(args: &[&str]) -> Result<String, String> {
-    use std::io::Read;
     let cleanup = matches!(args.first(), Some(&"stop" | &"rm" | &"inspect"))
         || args.starts_with(&["volume", "rm"]);
     let mut command = Command::new(engine_name());
@@ -296,16 +295,8 @@ fn docker(args: &[&str]) -> Result<String, String> {
         .map_err(|e| format!("{} is unavailable: {e}", engine_name()))?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let out = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = stdout.take(65536).read_to_end(&mut b);
-        b
-    });
-    let err = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = stderr.take(65536).read_to_end(&mut b);
-        b
-    });
+    let out = std::thread::spawn(move || read_capped(stdout, 65536));
+    let err = std::thread::spawn(move || read_capped(stderr, 65536));
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
@@ -348,6 +339,24 @@ fn docker(args: &[&str]) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&stdout).trim().into())
 }
+// The first `cap` bytes of a stream, read to its end: the engine keeps writing past
+// the cap into a pipe that is still drained, so a long answer never fails the
+// command with a broken pipe or blocks it on a full one.
+fn read_capped(mut pipe: impl std::io::Read, cap: usize) -> Vec<u8> {
+    let mut kept = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let room = cap.saturating_sub(kept.len());
+                kept.extend_from_slice(&chunk[..n.min(room)]);
+            }
+        }
+    }
+    kept
+}
+
 fn helper(dir: &Path) -> Result<(), String> {
     if docker(&["image", "inspect", &helper_image()]).is_ok() {
         return Ok(());
@@ -611,6 +620,30 @@ pub fn supervise(dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A child writing past the cap keeps its pipe drained: it finishes with its own
+    // status instead of dying on a broken pipe, and the reader keeps the head.
+    #[cfg(unix)]
+    #[test]
+    fn a_long_engine_answer_is_drained_past_the_cap() {
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("head -c 1000000 /dev/zero || exit 3; echo done 1>&2")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = read_capped(child.stdout.take().unwrap(), 65536);
+        let status = child.wait().unwrap();
+        assert!(status.success());
+        assert_eq!(out.len(), 65536);
+        assert!(out.iter().all(|b| *b == 0));
+        let mut err = String::new();
+        std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut err).unwrap();
+        assert_eq!(err.trim(), "done");
+    }
+
     #[test]
     fn existing_run_control_survives_invalid_task_settings() {
         let root = std::env::temp_dir().join(format!(

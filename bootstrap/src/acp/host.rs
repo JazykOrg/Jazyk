@@ -6,7 +6,7 @@ use super::config::ResolvedAgent;
 use super::policy::{self, PermissionPolicy};
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, HttpHeader,
-    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, PromptRequest,
+    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
     ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest, RequestPermissionResponse,
     SessionNotification, SessionUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
@@ -96,6 +96,9 @@ pub struct PromptOutcome {
     // The idle watchdog fired and cancelled the turn.
     pub idled: bool,
 }
+
+// How long a cancelled turn may take to stop before its session is closed.
+const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 enum Cmd {
     Steer {
@@ -411,9 +414,20 @@ impl SessionHandle {
                 self.cancel();
                 stopping = Some(std::time::Instant::now());
             }
-            if stopping.is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(2)) {
-                let _ = self.cmd_tx.unbounded_send(Cmd::Shutdown);
-                return Err("acp host stopped after cancellation".into());
+            // An agent that ignores the cancel loses this session, not the host: other
+            // sessions (the GUI's other chats) share the host and keep running. The
+            // close queues behind the stuck turn, which the idle watchdog ends.
+            if stopping.is_some_and(|at| at.elapsed() >= CANCEL_GRACE) {
+                let (reply, _) = std::sync::mpsc::channel();
+                let _ = self.cmd_tx.unbounded_send(Cmd::Close {
+                    session: self.id.clone(),
+                    reply,
+                });
+                return Err(format!(
+                    "agent `{}` did not stop within {}s of the cancel; its session was closed",
+                    self.agent,
+                    CANCEL_GRACE.as_secs()
+                ));
             }
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                 Ok(reply) => return reply,
@@ -866,13 +880,24 @@ fn checked_path(root: &std::path::Path, path: &std::path::Path) -> Result<PathBu
             other => normal.push(other.as_os_str()),
         }
     }
-    if normal.starts_with(root) {
+    let outside = || format!("path {} is outside the project root", path.display());
+    if !normal.starts_with(root) {
+        return Err(outside());
+    }
+    // The lexical check alone lets a symlink inside the tree lead out of it: the
+    // deepest part of the path that exists is resolved, links and all, and must
+    // still sit under the resolved root. A write that creates new components below
+    // it stays where that ancestor really is.
+    let real_root = crate::vfs::canonicalize(root).map_err(|e| format!("project root: {}", e))?;
+    let existing = normal
+        .ancestors()
+        .find(|p| std::fs::symlink_metadata(p).is_ok())
+        .ok_or_else(outside)?;
+    let real = crate::vfs::canonicalize(existing).map_err(|_| outside())?;
+    if real.starts_with(&real_root) {
         Ok(normal)
     } else {
-        Err(format!(
-            "path {} is outside the project root",
-            path.display()
-        ))
+        Err(outside())
     }
 }
 
@@ -902,15 +927,41 @@ fn write_text_file(root: &std::path::Path, req: &WriteTextFileRequest) -> Result
     crate::vfs::write(&path, &req.content).map_err(|e| format!("write {}: {}", path.display(), e))
 }
 
-// Suppress unused warnings for items later phases wire up.
-#[allow(dead_code)]
-fn _unused(_: &PromptRequest, _: &ContentBlock) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::vfs::VPathExt;
     use std::io::{Read, Write};
+
+    // `fs/*` paths stay in the project: `..` is refused lexically, and a symlink in
+    // the tree that leads out of it is refused once resolved, for reads, writes of
+    // existing files, and writes that create new files below the link.
+    #[cfg(unix)]
+    #[test]
+    fn fs_paths_through_a_symlink_out_of_the_project_are_refused() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("proj");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        std::fs::write(root.join("docs/a.md"), "# A").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(root.join("docs"), root.join("inner")).unwrap();
+        assert!(checked_path(&root, &root.join("docs/a.md")).is_ok());
+        assert!(checked_path(&root, &root.join("docs/new/b.md")).is_ok());
+        assert!(checked_path(&root, &root.join("inner/a.md")).is_ok());
+        assert!(checked_path(&root, &root.join("../outside/secret.txt")).is_err());
+        assert!(checked_path(&root, &root.join("escape/secret.txt")).is_err());
+        assert!(checked_path(&root, &root.join("escape/new/c.txt")).is_err());
+        assert!(checked_path(&root, &root.join("link.txt")).is_err());
+        let read = ReadTextFileRequest::new("s", root.join("escape/secret.txt"));
+        assert!(read_text_file(&root, &read).is_err());
+        let write = WriteTextFileRequest::new("s", root.join("escape/planted.txt"), "x");
+        assert!(write_text_file(&root, &write).is_err());
+        assert!(!outside.join("planted.txt").exists());
+    }
 
     // A one-shot fake OpenAI endpoint: every POST answers a canned non-streaming
     // completion. Runs until the listener drops.
@@ -1088,6 +1139,73 @@ mod tests {
             "promptRequired"
         );
         session.close();
+    }
+
+    // An agent that ignores a cancel loses that session, never the shared host: a
+    // second session opens and a third prompt still reaches the agent afterwards.
+    #[test]
+    fn an_agent_ignoring_a_cancel_loses_its_session_not_the_host() {
+        if std::process::Command::new("python3").arg("-c").arg("pass").status().is_err() {
+            eprintln!("skipping: python3 not available for the fake agent");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("agent.py");
+        // Answers initialize, session/new, and session/close; never ends a prompt
+        // turn and ignores session/cancel.
+        std::fs::write(
+            &script,
+            r#"
+import json, sys
+n = 0
+for line in sys.stdin:
+    m = json.loads(line)
+    method = m.get("method")
+    if "id" not in m or method is None:
+        continue
+    if method == "initialize":
+        r = {"protocolVersion": m["params"]["protocolVersion"], "agentCapabilities": {}, "authMethods": []}
+    elif method == "session/new":
+        n += 1
+        r = {"sessionId": "s%d" % n}
+    elif method == "session/prompt":
+        sys.stderr.write("prompt %s\n" % m["params"]["sessionId"])
+        sys.stderr.flush()
+        continue
+    else:
+        r = {}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": m["id"], "result": r}) + "\n")
+    sys.stdout.flush()
+"#,
+        )
+        .unwrap();
+        let host = AcpHost::start(
+            ResolvedAgent {
+                name: "stubborn".into(),
+                command: "python3".into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                env: vec![],
+                serve_files: false,
+            },
+            dir.path().into(),
+            vec![],
+        )
+        .unwrap();
+        let first = host
+            .new_chat_session(dir.path(), vec![], PermissionPolicy::Auto)
+            .unwrap();
+        let started = std::time::Instant::now();
+        let err = first
+            .prompt_cancellable("hang", Arc::new(|_| {}), &|| true)
+            .unwrap_err();
+        assert!(err.contains("did not stop"), "{}", err);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        // The host is still up: another session opens on it.
+        let second = host
+            .new_chat_session(dir.path(), vec![], PermissionPolicy::Auto)
+            .expect("the shared host survives one session's cancel timeout");
+        assert_ne!(second.id(), first.id());
+        assert!(host.ended.lock().unwrap().is_none());
     }
 
     // The Phase 1 milestone in miniature: spawn the real debug binary as the embedded

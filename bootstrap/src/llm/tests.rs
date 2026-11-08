@@ -44,7 +44,7 @@ fn stop_releases_a_native_gdk_request_before_the_provider_replies() {
     let provider = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut request = [0; 8192];
-        stream.read(&mut request).unwrap();
+        let _received = stream.read(&mut request).unwrap();
         flag.store(true, Ordering::SeqCst);
         wait.recv().unwrap();
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"late"}}]}"#;

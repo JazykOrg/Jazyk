@@ -376,7 +376,7 @@ mod tests {
             "test":{"kind":"programmatic","label":"orders","artifact":"tests/order.rs","name":"orders","run":"cargo test"},
             "tests":{"crit:old":{"test":{"kind":"programmatic","label":"criterion","artifact":"tests/criterion.rs","name":"criterion","run":"cargo test"},"criterion_hash":"h"}},"hashes":{"requirement":"h","test":"h","files":"h"}
         }}})).unwrap();
-        ledger.save(&s.out);
+        ledger.save(&s.out).unwrap();
         let mut gs = crate::gen::GenSettings::from_out(&s.out);
         gs.deliverable = root.join("product");
         let all = locations(&s, root, &gs);

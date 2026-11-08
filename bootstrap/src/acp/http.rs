@@ -179,7 +179,7 @@ async fn post_mcp(State(st): State<Arc<Shared>>, headers: HeaderMap, body: Strin
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|v| v.trim().to_string());
-    if presented.as_deref() != Some(st.token.as_str()) {
+    if !crate::gui::state::token_matches(presented.as_deref(), &st.token) {
         let st2 = st.clone();
         let _ = tokio::task::spawn_blocking(move || {
             if let Ok(s) = st2.server.lock() {

@@ -109,8 +109,22 @@ async fn session(st: SharedState, socket: WebSocket) {
     });
 
     let (root, out_dir, gs) = (st.proj().root.clone(), st.out.clone(), st.gs().clone());
+    let jobs_st = st.clone();
     let session = tokio::task::spawn_blocking(move || {
-        let mut lsp = crate::lsp::Lsp::new(root, out_dir, gs);
+        // The editor's compile command is a GUI job: queued, cancellable, and visible
+        // with every other job (docs/frontends/lsp.md#commands).
+        let mut lsp = crate::lsp::Lsp::new(root, out_dir, gs).with_job_submitter(Box::new(
+            move |set_id, config_hash| {
+                let id = jobs_st.jobs.submit(
+                    &jobs_st,
+                    super::jobs::JobKind::CompileSets {
+                        set_ids: vec![set_id.clone()],
+                        config_hash,
+                    },
+                );
+                serde_json::json!({"started": [set_id], "jobId": id})
+            },
+        ));
         let mut sink = FrameSink {
             buf: Vec::new(),
             tx: out_tx,

@@ -1739,6 +1739,7 @@ dependencies = [
  "goose-provider-types",
  "js-sys",
  "jsonc-parser",
+ "libc",
  "maybe-async",
  "mustache",
  "notify",
@@ -1753,11 +1754,11 @@ dependencies = [
  "resvg",
  "rmcp",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "serde_norway",
  "sha2",
  "siphasher",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -1771,7 +1772,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "web-sys",
+ "which",
  "zip 8.6.0",
 ]
 
@@ -3026,17 +3027,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-wasm-bindgen"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4163,6 +4153,15 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
+
+[[package]]
+name = "which"
+version = "8.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bae2f2b2b816647a1cab1acc91f5bd20812d53cb344382635ec2181940c8034f"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "winapi"

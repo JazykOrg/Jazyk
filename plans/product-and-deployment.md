@@ -9,8 +9,7 @@ code does.
 Read with [generation](../docs/consumers/gen.md), [binding](../docs/consumers/bind.md),
 [the control plane](../docs/compiler/control-plane.md), the GUI's
 [Product lens](../docs/frontends/gui.md#product), and
-[the demo](../docs/frontends/wasm.md#the-demo). Related proposals:
-`plans/workspaces-and-mappings.md` (several deliverable roots) and
+[the demo](../docs/frontends/wasm.md#the-demo). Related proposal:
 `plans/upstream-reconciliation.md` (edits to the product flowing back into prose).
 
 ## The owner's ask

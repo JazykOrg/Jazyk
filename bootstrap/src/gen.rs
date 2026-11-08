@@ -422,6 +422,7 @@ pub(crate) fn check_build_products(out: &Path, gs: &GenSettings, b: &Build) -> R
 // Record what the build did, for the next task package. Best effort: a ledger that
 // cannot be written does not fail a verification run.
 pub fn record_build_run(out: &Path, ok: bool, error: &str) {
+    let _lock = Ledger::lock(out);
     let mut ledger = Ledger::load(out);
     if let Some(b) = ledger.build.as_mut() {
         b.last_run = Some(BuildRun {
@@ -429,7 +430,7 @@ pub fn record_build_run(out: &Path, ok: bool, error: &str) {
             ok,
             error: crate::llm::truncate(error.trim(), 1500),
         });
-        ledger.save(out);
+        let _ = ledger.save(out);
     }
 }
 
@@ -775,22 +776,20 @@ impl Ledger {
     // file renamed into place and only when its bytes changed; the files of rows that
     // left the ledger are deleted. Refused while a file on disk did not parse.
     // Mirrors docs/consumers/gen.md#the-ledger.
-    pub fn save(&self, out: &Path) {
+    pub fn save(&self, out: &Path) -> Result<(), String> {
         let path = Self::path(out);
         if let Some(why) = &self.unreadable {
-            eprintln!(
-                "[jazyk] error: refusing to write {}: the ledger did not load: {}",
-                path.display(),
-                why
-            );
-            return;
+            let e = format!("refusing to write {}: the ledger did not load: {}", path.display(), why);
+            eprintln!("[jazyk] error: {}", e);
+            return Err(e);
         }
+        let errors: std::cell::RefCell<Vec<String>> = Default::default();
         let write = |p: &Path, text: &str| {
             if crate::vfs::read_to_string(p).ok().as_deref() == Some(text) {
                 return;
             }
             if let Err(e) = crate::store::write_atomic(p, text.as_bytes()) {
-                eprintln!("[jazyk] error: cannot write {}: {}", p.display(), e);
+                errors.borrow_mut().push(format!("cannot write {}: {}", p.display(), e));
             }
         };
         let row = |id: &str, value: serde_norway::Result<serde_norway::Value>| -> Option<String> {
@@ -823,7 +822,7 @@ impl Ledger {
         }
         match serde_norway::to_string(&wide) {
             Ok(t) => write(&path, &t),
-            Err(e) => eprintln!("[jazyk] error: cannot serialize {}: {}", path.display(), e),
+            Err(e) => errors.borrow_mut().push(format!("cannot serialize {}: {}", path.display(), e)),
         }
         for kind in ["entities", "requirements"] {
             for p in Self::row_files(out, kind) {
@@ -831,6 +830,97 @@ impl Ledger {
                     crate::vfs::remove_file(&p).ok();
                 }
             }
+        }
+        let errors = errors.into_inner();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let e = errors.join("; ");
+            eprintln!("[jazyk] error: the ledger did not save: {}", e);
+            Err(format!("the ledger did not save: {}", e))
+        }
+    }
+
+    // The ledger's writer lock, `<out>/.ledger.lock`: every load, modify, and save
+    // runs under it, so two processes never lose each other's rows. Reentrant on one
+    // thread; an in-memory tree belongs to one thread and takes no file lock. Never
+    // held while a test command runs. Mirrors docs/consumers/gen.md#the-ledger.
+    pub fn lock(out: &Path) -> LedgerLock {
+        let path = out.join(".ledger.lock");
+        let nested = LEDGER_LOCKS.with(|held| {
+            let mut held = held.borrow_mut();
+            let n = held.entry(path.clone()).or_insert(0);
+            *n += 1;
+            *n > 1
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        if !nested && !crate::vfs::is_scoped() {
+            crate::vfs::create_dir_all(out).ok();
+            let opened = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path);
+            match opened {
+                Ok(file) => {
+                    let started = std::time::Instant::now();
+                    let mut warned = false;
+                    while fs2::FileExt::try_lock_exclusive(&file).is_err() {
+                        if !warned && started.elapsed() >= std::time::Duration::from_secs(10) {
+                            eprintln!("[jazyk] waiting for the ledger writer holding {}", path.display());
+                            warned = true;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    return LedgerLock { path, file: Some(file) };
+                }
+                Err(e) => eprintln!("[jazyk] warning: cannot open {}: {}; writing the ledger without the lock", path.display(), e),
+            }
+        }
+        let _ = nested;
+        LedgerLock {
+            path,
+            #[cfg(not(target_arch = "wasm32"))]
+            file: None,
+        }
+    }
+
+    // Load, change, and save under the ledger lock. The change's error, or a failed
+    // save, is the result; nothing is reported as recorded that did not land.
+    pub fn update<R>(out: &Path, change: impl FnOnce(&mut Ledger) -> Result<R, String>) -> Result<R, String> {
+        let _lock = Self::lock(out);
+        let mut ledger = Self::load(out);
+        let r = change(&mut ledger)?;
+        ledger.save(out)?;
+        Ok(r)
+    }
+}
+
+pub struct LedgerLock {
+    path: PathBuf,
+    #[cfg(not(target_arch = "wasm32"))]
+    file: Option<std::fs::File>,
+}
+
+thread_local! {
+    static LEDGER_LOCKS: std::cell::RefCell<BTreeMap<PathBuf, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+impl Drop for LedgerLock {
+    fn drop(&mut self) {
+        LEDGER_LOCKS.with(|held| {
+            let mut held = held.borrow_mut();
+            if let Some(n) = held.get_mut(&self.path) {
+                *n -= 1;
+                if *n == 0 {
+                    held.remove(&self.path);
+                }
+            }
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(f) = &self.file {
+            fs2::FileExt::unlock(f).ok();
         }
     }
 }
@@ -2189,6 +2279,7 @@ pub fn mark(
     }
     // Ownership and realization, both before any side effect.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    let _lock = Ledger::lock(&store.out);
     let pre = Ledger::load(&store.out);
     let record_sequence = pre.entities.get(&slug).map(|row| row.record_sequence).unwrap_or(0)
         .checked_add(1).ok_or("The entity generation record sequence is exhausted; no record was changed.")?;
@@ -2292,6 +2383,20 @@ pub fn mark(
             ));
         }
     }
+    // Under a built medium the build is the only thing that makes an artifact exist,
+    // so a manifest without one is rejected, not quietly accepted
+    // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+    // Every rejection runs before the strip below rewrites files: a rejected record
+    // leaves the markers in place for the retry.
+    let manifest_build = manifest["build"]["run"].as_str().is_some_and(|r| !r.trim().is_empty());
+    if pre.build.is_none() && !manifest_build {
+        if let Some(m) = pre.medium.as_ref().filter(|m| m.is_built()) {
+            return Err(format!(
+                "this deliverable is {} and no build is recorded: return `build` with the command that produces `{}`, its `cwd`, and `produces` listing `{}`",
+                m.form, m.artifact, m.artifact
+            ));
+        }
+    }
     // Strip marker lines from the manifest files and collect the sites they anchor.
     // The marker is a wire format: the worker localizes while writing, the harness
     // records and cleans. Runs before hashing so every hash sees the stripped bytes.
@@ -2373,17 +2478,8 @@ pub fn mark(
                     last_run: None,
                 });
             }
-            // Under a built medium the build is the only thing that makes an artifact
-            // exist, so a manifest without one is rejected, not quietly accepted
-            // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-            None => {
-                if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
-                    return Err(format!(
-                        "this deliverable is {} and no build is recorded: return `build` with the command that produces `{}`, its `cwd`, and `produces` listing `{}`",
-                        m.form, m.artifact, m.artifact
-                    ));
-                }
-            }
+            // A built medium without a build was rejected before the strip.
+            None => {}
         }
     }
     for path in &support {
@@ -2544,7 +2640,7 @@ pub fn mark(
     if let Some(e) = ledger.entities.get_mut(&slug) {
         e.unattached = Some(unattached.clone());
     }
-    ledger.save(&store.out);
+    ledger.save(&store.out)?;
     let mut reply = json!({
         "marked": id, "files": files.len(), "tests": seeded,
         "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio, "markerless": unattached.markerless},
@@ -3081,7 +3177,7 @@ mod tests {
             produces: vec!["product.txt".into()], last_run: None };
         let mut ledger = Ledger::load(out);
         ledger.build = Some(build.clone());
-        ledger.save(out);
+        ledger.save(out).unwrap();
         assert!(check_build_products(out, &gs, &build).unwrap_err().contains("did not produce product.txt"));
         assert!(!Ledger::load(out).build.unwrap().last_run.unwrap().ok);
         crate::vfs::write(gs.deliverable.join("product.txt"), "ready").unwrap();
@@ -3126,7 +3222,7 @@ mod tests {
         let path = Ledger::path(&out);
         let mut l = Ledger::default();
         l.support.push("package.json".to_string());
-        l.save(&out);
+        l.save(&out).unwrap();
         assert!(Ledger::load(&out).support.contains(&"package.json".to_string()));
         let broken = "support: [unterminated\n";
         crate::vfs::write(&path, broken).unwrap();
@@ -3134,7 +3230,7 @@ mod tests {
         assert!(bad.unreadable.as_deref().is_some_and(|w| w.contains("ledger.yaml")));
         assert!(bad.support.is_empty());
         bad.support.push("other".to_string());
-        bad.save(&out);
+        assert!(bad.save(&out).is_err(), "an unreadable ledger refuses to save");
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), broken);
         let leftover: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -3219,7 +3315,7 @@ mod tests {
         let timestamp = "2026-10-30T12:00:00Z";
         let mut ledger = Ledger::load(out);
         ledger.entities.get_mut("cart").unwrap().recorded_at = Some(timestamp.into());
-        ledger.save(out);
+        ledger.save(out).unwrap();
         assert_eq!(ledger.entities["cart"].record_sequence, 1);
 
         struct SameSecondRunner(StubRunner);
@@ -3232,7 +3328,7 @@ mod tests {
                 // records deterministically share a second without sleeping.
                 let mut ledger = Ledger::load(&self.0.store.out);
                 ledger.entities.get_mut("cart").unwrap().recorded_at = Some("2026-10-30T12:00:00Z".into());
-                ledger.save(&self.0.store.out);
+                ledger.save(&self.0.store.out).unwrap();
                 report
             }
             fn ask(&self, system: &str, user: &str, label: &str, stage: &str) -> Result<String, String> {
@@ -3284,7 +3380,7 @@ mod tests {
         mark(&store, "ent:cart", None, &manifest, &gs).unwrap();
         let mut ledger = Ledger::load(out);
         ledger.entities.get_mut("cart").unwrap().record_sequence = u64::MAX;
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let before = crate::vfs::read(Ledger::path(out)).unwrap();
         let source = "// req:shop-1 hash:abcdef12\nfn cart() {}\n";
         crate::vfs::write(&file, source).unwrap();
@@ -3308,7 +3404,7 @@ mod tests {
         assert!(result.failed.is_none());
         let mut ledger = Ledger::load(out);
         ledger.entities.get_mut("cart").unwrap().recorded_at = Some("before-partial".into());
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let result = gen_session(&store, &writer, &gs, "ent:cart", &["ent:cart".into(), "ent:other".into()], &trace);
         assert!(result.results[0].1.is_ok());
         assert_eq!(result.results[1].1.as_ref().unwrap_err(), "the model call failed: connection closed");
@@ -3346,7 +3442,7 @@ mod tests {
         mark(&store,"ent:cart",None,&json!({"files":["cart.rs"],"tests":[]}),&gs).unwrap();
         let mut ledger = Ledger::load(out);
         ledger.medium=Some(Medium { form:"Rust source".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new() });
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let runner = Broken(std::cell::Cell::new(0));
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
             std::sync::Arc::new(|_|{}),Default::default());
@@ -3378,7 +3474,7 @@ mod tests {
                         ledger.support.push("index.html".into());
                         ledger.build = Some(Build { run:"printf built > build-was-run.txt".into(),
                             cwd:".".into(), produces:vec!["build-was-run.txt".into()], last_run:None });
-                        ledger.save(&self.writer.store.out);
+                        ledger.save(&self.writer.store.out).unwrap();
                         crate::runner::SessionReport { applied:0,rounds:24,tokens:20,cached:0,
                             failed:None,resolved:vec![],stopped:self.stopped.clone() }
                     }
@@ -3403,7 +3499,7 @@ mod tests {
             }
             let mut ledger = Ledger::load(&out);
             ledger.medium = Some(Medium { form:"Rust source".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new() });
-            ledger.save(&out);
+            ledger.save(&out).unwrap();
             let runner = Partial { writer:StubRunner { record:true,failed:None,stopped:None,
                 store:store.clone(),gs:gs.clone() }, calls:std::cell::Cell::new(0), stopped:stopped.clone() };
             let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet, std::sync::Arc::new(|_|{}), Default::default());
@@ -3445,7 +3541,7 @@ mod tests {
         mark(&store,"ent:cart",None,&json!({"files":["cart.rs"],"tests":[]}),&gs).unwrap();
         let mut ledger = Ledger::load(out);
         ledger.medium=Some(Medium {form:"Rust".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new()});
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let runner = StubRunner { record:false,failed:None,stopped:Some("the session ran out of rounds after 24".into()),store:store.clone(),gs:gs.clone() };
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
         let result = run_selected(&store,&runner,&gs,&[],true,&trace,false).unwrap();
@@ -3473,7 +3569,7 @@ mod tests {
         ledger.entities.get_mut("cart").unwrap().recorded_at = Some("before-command".into());
         ledger.medium = Some(Medium { form: "Rust source".into(), produced: "written".into(),
             toolchain: "rustc".into(), artifact: String::new() });
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
             std::sync::Arc::new(|_| {}), Default::default());
         let paused = StubRunner { failed: None, record: false, stopped: Some("checkpoint-failed: test storage outage".into()),
@@ -3613,7 +3709,7 @@ mod tests {
         let row=ledger.requirements.get_mut("req:shop-1").unwrap();
         row.verdict="pass".into();row.last_run=Some("previous".into());
         for test in row.tests.values_mut(){test.verdict="pass".into();test.last_run=Some("previous".into());}
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         for declaration in manifest["tests"].as_array_mut().unwrap(){declaration["run"]=json!("task:shared-suite");}
         mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
         let ledger=Ledger::load(&out);let row=&ledger.requirements["req:shop-1"];
@@ -3734,7 +3830,7 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
         let(store,gs)=fixture(&out);
         Ledger { medium:Some(Medium {form:"Rust crate".into(),produced:"written".into(),
-            toolchain:"cargo".into(),artifact:String::new()}),..Default::default() }.save(&out);
+            toolchain:"cargo".into(),artifact:String::new()}),..Default::default() }.save(&out).unwrap();
         assert!(Ledger::load(&out).entities.is_empty());
         let runner=StubRunner {record:true,failed:None,stopped:None,store:store.clone(),gs:gs.clone()};
         let trace=crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
@@ -3983,7 +4079,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
         crate::vfs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
@@ -4140,7 +4236,7 @@ mod tests {
             toolchain: "sh".into(),
             artifact: "hello.sh".into(),
         });
-        ledger.save(out);
+        ledger.save(out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         crate::vfs::write(gs.deliverable.join("hello.sh"), "printf 'hello\\n'\n").unwrap();
         crate::vfs::write(gs.deliverable.join("tests/hello.sh"), "# checks_hello\nsh hello.sh\n").unwrap();
@@ -4157,6 +4253,39 @@ mod tests {
         assert_eq!(crate::verify::status_of(&store, "req:shop-1", row, &gs).0, "stale-code");
     }
 
+    // Two writers at once never lose each other's change: every load, modify, and save
+    // runs under the ledger lock (docs/consumers/gen.md#the-ledger).
+    #[test]
+    fn concurrent_ledger_updates_keep_both_changes() {
+        let out = std::env::temp_dir().join(format!("jazyk-ledger-lock-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        Ledger::default().save(&out).unwrap();
+        let writers: Vec<_> = ["a.css", "b.css", "c.css"]
+            .into_iter()
+            .map(|path| {
+                let out = out.clone();
+                std::thread::spawn(move || {
+                    Ledger::update(&out, |ledger| {
+                        std::thread::sleep(std::time::Duration::from_millis(150));
+                        ledger.support.push(path.to_string());
+                        Ok(())
+                    })
+                    .unwrap();
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let mut support = Ledger::load(&out).support;
+        support.sort();
+        assert_eq!(support, vec!["a.css", "b.css", "c.css"]);
+        // Nested on one thread, the lock is reentrant.
+        let _outer = Ledger::lock(&out);
+        Ledger::update(&out, |_| Ok(())).unwrap();
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
     #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", crate::sys::process_id()));
@@ -4169,7 +4298,7 @@ mod tests {
             toolchain: "python3 with python-pptx".into(),
             artifact: "jazyk.pptx".into(),
         });
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         assert!(build_outputs(&ledger).contains("jazyk.pptx"));
         // The decision reaches the task package.
         let task = task_package(&s, "ent:cart", &gs).unwrap();
@@ -4177,10 +4306,13 @@ mod tests {
         assert_eq!(task["medium"]["artifact"], "jazyk.pptx");
 
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
-        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        // A marked file: the rejection must leave its markers for the retry.
+        let marked = "// req:shop-1 hash:abcd1234\nfn hold() {}\n";
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), marked).ok();
         let no_build = serde_json::json!({"files": ["src/cart.rs"], "tests": []});
         let err = mark(&s, "ent:cart", None, &no_build, &gs).unwrap_err();
         assert!(err.contains("no build is recorded"), "{}", err);
+        assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap(), marked);
 
         // A build that forgets the artifact still produces it: the decision fills it in.
         mark(
@@ -4329,7 +4461,7 @@ mod tests {
         }))
         .unwrap();
         ledger.requirements.insert("req:gone-1".into(), gone);
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").ok();
         let manifest = serde_json::json!({
@@ -4619,7 +4751,7 @@ mod tests {
             form: "Static HTML page".into(), produced: "written".into(),
             toolchain: "HTML".into(), artifact: page.into(),
         });
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         let footer_test = json!({"requirement":"req:footer","criterion":"crit:footer","kind":"programmatic",
             "artifact":artifact,"name":"checks_footer","run":"task:site","files":[page]});
         let mut footer_manifest = json!({"files":[page,exclusive],"tests":[footer_test]});
@@ -4633,7 +4765,7 @@ mod tests {
             test.verdict = "pass".into();
             test.evidence = footer.evidence.clone();
         }
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         let prior_row = serde_json::to_value(&ledger.requirements["req:footer"]).unwrap();
         assert_eq!(crate::verify::status_of(&store, "req:footer", &ledger.requirements["req:footer"], &gs).0, "verified");
         assert!(shared_with(&store, "ent:top-menu").is_empty());
@@ -5206,12 +5338,15 @@ pub(crate) async fn run_selected(
     // Medium selection is a command step. An empty ledger on resume does not
     // start this decision again after a later group has already begun.
     if !command.data.medium_decided {
-        let mut ledger = Ledger::load(&store.out);
-        if ledger.medium.is_none() {
+        // The decision is a model call, made outside the ledger lock; it lands on a
+        // fresh load unless another writer decided first.
+        if Ledger::load(&store.out).medium.is_none() {
             let medium = decide_medium(store, runner, &gs.deliverable).await?;
             trace.line("gen medium", &medium.line());
-            ledger.medium = Some(medium);
-            ledger.save(&store.out);
+            Ledger::update(&store.out, |ledger| {
+                ledger.medium.get_or_insert(medium);
+                Ok(())
+            })?;
         }
         command.data.medium_decided = true;
         command.save().await?;

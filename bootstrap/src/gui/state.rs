@@ -113,17 +113,33 @@ impl AppState {
     }
 }
 
-// A random hex token from the OS entropy source. No rand crate: this is the one place
-// the binary needs randomness.
-pub fn mint_token() -> String {
+// A random hex token from the OS entropy source. Without entropy there is no token
+// worth trusting, so the server does not start (no time-derived fallback).
+pub fn mint_token() -> Result<String, String> {
     let mut buf = [0u8; 16];
-    if getrandom::fill(&mut buf).is_err() {
-        // Fallback: time-derived, still unguessable enough for a localhost session.
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        buf[..16].copy_from_slice(&t.to_le_bytes());
+    getrandom::fill(&mut buf).map_err(|e| format!("cannot mint a session token: {}", e))?;
+    Ok(buf.iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+// Whether a presented token is the expected one, in time that does not depend on
+// where they differ.
+pub fn token_matches(presented: Option<&str>, expected: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    presented.is_some_and(|p| bool::from(p.as_bytes().ct_eq(expected.as_bytes())))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tokens_are_random_hex_and_compare_exactly() {
+        let a = super::mint_token().unwrap();
+        let b = super::mint_token().unwrap();
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+        assert!(super::token_matches(Some(&a), &a));
+        assert!(!super::token_matches(Some(&b), &a));
+        assert!(!super::token_matches(Some(&a[..31]), &a));
+        assert!(!super::token_matches(None, &a));
     }
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
 }

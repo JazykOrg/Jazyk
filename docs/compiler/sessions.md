@@ -242,10 +242,12 @@ The write slice per kind is on the kind's page and in the catalog: entity, requi
 and coverage tools for `reconcile-section`; judgment tools for `rejudge-pair` and
 `review-entity`; view tools for the view kinds; the [binding](./tools.md#binding-tools),
 [generation](./tools.md#generation-tools), and
-[verification](./tools.md#verification-tools) tools for the ledger kinds. A `bind`,
-`generate`, or `verify` batch adds the
-[file and command tools](./goals/generate.md#file-and-command-tools) when the
-executor's profile sets `serve_files` ([generation sessions](#generation-sessions)). A
+[verification](./tools.md#verification-tools) tools for the ledger kinds. When the
+executor's profile sets `serve_files` ([generation sessions](#generation-sessions)), a
+`bind` or `generate` batch adds the
+[file tools](./goals/generate.md#file-and-command-tools) `read_text_file`,
+`write_text_file`, and `list_files`, and a `verify` batch adds only the read-only
+`read_text_file` and `list_files` ([verify tools](./goals/verify.md#tools)). A
 tool outside the batch's toolset is not served, so the model cannot call it.
 
 A batch resolves to exactly one executor: the scheduler never groups goals whose kinds
@@ -262,7 +264,9 @@ session spend its budget on it:
 - The second identical call answers as usual, with a `repeat` field on the result saying
   the answer is unchanged and to act on it.
 - The third is refused with a `repeated-call` error naming the tool and the way forward:
-  act on the answer already given, or finish with `done`.
+  act on the answer already given, or finish with `done`. Before refusing, a read
+  without side effects answers again and any other call checks whether a mutation was
+  staged or committed since its last answer: a moved state is no repeat.
 - A repeat whose answer differs from the previous one is no repeat: the state moved
   between them (a file rewritten, a refusal repaired), so it carries no `repeat` field
   and the count starts again. A `record_binding` that was refused for a missing test
@@ -273,7 +277,9 @@ Identity is the tool name plus its arguments verbatim, counted per open batch. A
 serving with no open batch counts per ledger claim (from `begin_binding` or
 `begin_generation` to its record) and across its calls outside a claim. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
-see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
+see more of a loaded node is `expand` on its handles. Its identity is the node the
+target resolves to, so an alias and its id are one call, and a refused `load` (the target
+never loaded) does not count. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its
 render is fresh. `done`, `mark_goal_done`, `mark_goal_failed`, `record_generation`,
 and `record_binding` are exempt. Repairing files after a rejected record legitimately
@@ -341,7 +347,7 @@ served more than the graph tools and finish through the ledger:
 - The file tools are sandboxed to the deliverable directory: paths are relative to
   it, and a path that escapes it is rejected. The
   [task tools](./tools.md#task-runtime-tools) run saved commands in finite containers,
-  with project-relative paths and fixed timeouts. `run_command` is not advertised.
+  with project-relative paths and fixed timeouts.
 - The names and shapes follow the Agent Client Protocol's client-provided tools (its
   file-system and terminal methods), served through the injected MCP serving like every
   other jazyk tool ([MCP into sessions](../frontends/mcp.md#mcp-into-acp-sessions)).

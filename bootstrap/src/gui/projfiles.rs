@@ -2,10 +2,9 @@
 // Mirrors docs/frontends/gui.md#api (the project files).
 use super::api::refused;
 use super::state::SharedState;
-use crate::webapi::outfiles::content_type;
 use crate::webapi::projfiles::{create_project_file, project_file, project_files, project_text, write_project_text};
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde::Deserialize;
 
@@ -34,12 +33,7 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
         .await
         .expect("project file read");
     match result {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, content_type(&p.path)), (header::CACHE_CONTROL, "no-cache")],
-            bytes,
-        )
-            .into_response(),
+        Ok(bytes) => super::outfiles::file_bytes(&p.path, bytes),
         Err(r) => refused(r),
     }
 }

@@ -441,6 +441,7 @@ tools.
 | [`review-entity`](./goals/review-entity.md) | compile | 2 | M | entity | `entity-changed` |
 | [`retrace`](./goals/retrace.md) | compile | 2 | M | node | `view-member-gone`, `node-deleted` |
 | [`conform-instance`](./goals/conform-instance.md) | compile | 2 | M | instance | `instance-changed` |
+| [`derive-criteria`](./goals/derive-criteria.md) | compile | 3 | M | entity | a requirement with no criterion, or a `requirement-revised` record newer than its criteria, in a set with a nonempty `source` |
 | [`bind`](./goals/bind.md) | compile | 3 | M | requirement | `ledger-stale` (`goal: bind`: no current row) |
 | [`generate`](./goals/generate.md) | compile | 3 | M | entity | `ledger-stale` (`goal: generate`: facts differ from the ledger, `unimplemented` rows) |
 | [`verify`](./goals/verify.md) | compile | 3 | M | ledger row | `ledger-stale` (`goal: verify`: the derived status says action) |
@@ -734,9 +735,11 @@ failed goal survives a re-derivation that would otherwise drop it.
 
 The park `reason` says which road ran out, in the words the trace uses: the retry
 (`left open after 4 attempts in session b12-3`), the build cap or the `--sessions`
-limit, the dead-endpoint breaker with the last error, a cancelled build, a reopen cycle
+limit, the dead-endpoint breaker with the last error, a reopen cycle
 (`reopened-after-resolve: ...`), or a flip (`cross-class flip: ...`,
-`reparent flip: ...`). An entry written without one reads with no reason. The reason
+`reparent flip: ...`). A cancelled build keeps the entries it parked before the stop
+and parks nothing for the stop itself. An entry written without one reads with no
+reason. The reason
 rides wherever a parked goal is shown: the `incomplete-build` diagnostic's message,
 `jazyk explain` (a `parked:` line), the whole-build report of `jazyk ripple`, the
 board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status`.
@@ -774,12 +777,15 @@ board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status
   change is a count over a limit, growth alone is not a new subject: the failure stands
   until the count has grown by a fifth over the count at failure (or a human bumps or
   retries), since a novel lead's goal once re-fired on every chapter's new statements
-  and failed three times, at up to fifty calls each, with the same honest reason.
+  and failed three times, at up to fifty calls each, with the same honest reason. The
+  [fan-out](#fan-out) variant's count is its child count: its coupling candidates move
+  with every requirement on the level and reopen nothing on their own.
 - Resolving a parked or failed goal clears its entry with its record. A parked
   ledger goal (`bind`, `generate`, `verify`) the ledger no longer derives drops too:
   the ledger judges what landed, so a verify goal parked mid-run whose row reads
   verified since has nothing to resume (the slides example carried two such goals
-  across every run).
+  across every run). A failed ledger goal the ledger no longer derives drops the same
+  way: the failure was about a row or record that now reads current.
 
 ## Flip detection
 

@@ -191,18 +191,12 @@ removed by hand: the line names where. Exit `0` when the command did what it ask
 
 `jazyk init [--mcp LIST] [--acp LIST] [--agent NAME]` initializes the current directory as a project root:
 
-- Writes a minimal `jazyk.toml` naming a starter layout: the docs glob
-  (`docs/**/*.md`), the root document (`docs/README.md`), and the
-  [deliverable directory](../compiler/project-settings.md#generation)
-  (`deliverable`). When one already exists there, it warns and leaves the file
-  unchanged. When discovery resolved to a parent project before the file was written,
-  the note says so: the nearest `jazyk.toml` wins, so the new file takes over from here
-  down.
-- Scaffolds the layout the file names: creates `docs/` and `deliverable/`, and
-  seeds `docs/README.md` with a TODO placeholder so the first compile has input.
-  Existing directories and files stay untouched. When `jazyk.toml` already
-  existed, the scaffold step is skipped: the layout is that project's own
-  business.
+- Writes an empty project file, `.jazyk/jazyk.toml` with `version = 1` and no
+  [document set](../compiler/document-sets.md), and the generated `.jazyk/.gitignore`.
+  When the file already exists there, it warns and leaves it unchanged. When discovery
+  resolved to a parent project before the file was written, the note says so: the
+  nearest `jazyk.toml` wins, so the new file takes over from here down. It creates no
+  starter documents; adding a document set chooses what compiles.
 - Writes the [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd),
   creating the file when it is missing, and the `@AGENTS.md` import into an existing
   `CLAUDE.md` or `GEMINI.md`.
@@ -237,7 +231,10 @@ when something was set up, `1` when nothing was written, `2` on a usage error.
 
 ### jazyk compile
 
-`jazyk compile [path...]` runs one [build](../compiler/compilation.md#a-build). The
+`jazyk compile [path...]` runs one [build](../compiler/compilation.md#a-build) per
+selected [document set](../compiler/document-sets.md#cli-and-lsp): the set `--set`
+names, else every set claiming one of the paths, else every dirty set. A path no set
+claims is a usage error. The
 [reconciler](../compiler/reconciler.md) derives the goal board from the documents, the
 graph, the ledger, and the [change records](../compiler/graph.md#change-records); the
 scheduler [batches](../compiler/reconciler.md#batching) ready goals; and
@@ -817,8 +814,8 @@ and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 3. `bi
 release. `verify` is not release-gated (verification writes nothing into the
 deliverable). It runs `generate` goals without an exhaustive binding phase first:
 each entity's source and tests develop together in one bounded session. The coding
-agent chooses their order and reuses existing bindings. Implementation is written into the configured
-[deliverable directory](../compiler/project-settings.md#generation) and recorded as a
+agent chooses their order and reuses existing bindings. Implementation is written into the
+[deliverable](../compiler/project-settings.md#generation), within the set's `source`, and recorded as a
 manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
 every entity that has at least one requirement, leaf entities first, grouped by
 component where containment gives one, skipping entities whose facts are unchanged
@@ -926,9 +923,11 @@ meant to be run by hand.
 
 ### jazyk lsp
 
-`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. Read-only: it
-serves the last committed graph and its rendered diagrams, and a `compile` or `watch`
-rebuild refreshes it. `--stdio` is accepted and changes nothing: LSP clients append it
+`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. It serves the
+last committed graph and its rendered diagrams, and a rebuild refreshes it. It writes
+only through its explicit [commands](./lsp.md#commands): answering a diagnostic,
+editing a document set, and `jazyk.compile`, which builds one set with the LLM
+settings this command resolved. `--stdio` is accepted and changes nothing: LSP clients append it
 to name the transport (the VS Code client library does), and a server that refused it
 would crash on every start.
 
@@ -960,7 +959,8 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `--llm-base-url URL`: the LLM endpoint (used by the embedded agent).
 - `--model M`: the model to use (used by the embedded agent).
 - `--api-key K`: sent as a bearer token (used by the embedded agent).
-- `--out DIR`: the out directory (default `.jazyk/`).
+- `--out DIR`: the out directory (default `.jazyk/<set-id>/`). It requires `--set` and
+  never names project metadata or another set's store.
 
 ## Help
 
@@ -992,14 +992,16 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 The CLI walks up from the working directory to the nearest `jazyk.toml` and treats that
 directory as the project root. A [redirect](../compiler/project-settings.md#redirect)
 found above the working directory is a boundary, not a capture: discovery stops there
-and the command runs ad hoc at the working directory. Explicit `[path...]` arguments
-skip discovery and run ad hoc on those files. The out directory defaults to
-`<root>/.jazyk/`.
+and the command runs ad hoc at the working directory. Paths never skip discovery: the
+paths `jazyk compile` takes select the document sets that claim them, and `check` and
+`watch` take no paths. Each set's state lives in `<root>/.jazyk/<set-id>/`.
 
 ## Project task commands
 
 `jazyk tasks` lists task definitions and runtime availability. `jazyk runs` includes
 the recent run history. `jazyk run <task-id>` submits a finite task and returns its
 durable run ID. `jazyk run-status <run-id>`, `jazyk run-log <run-id>`, and
-`jazyk run-cancel <run-id>` inspect, read, and cancel it. These commands use local
+`jazyk run-cancel <run-id>` inspect, read, and cancel it. They print JSON and follow
+the [help](#help) rules: `--help` prints their usage, and a missing id, an extra
+argument, or an unknown option is a usage error with exit `2`. These commands use local
 Docker without a Cloud account. See [Task execution](../compiler/task-runtime.md).

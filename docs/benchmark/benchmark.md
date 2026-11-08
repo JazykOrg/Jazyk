@@ -96,7 +96,7 @@ A tier with no graded case prints `-` for its score and verdict instead of
 claiming a result it never measured.
 
 Before grading, one tiny completion probes the endpoint: a dead or misrouted
-endpoint fails one probe, not every case under both codecs.
+endpoint fails one probe, not every case.
 
 Runtime fixtures use the sandbox project root as their deliverable, matching document
 sets. The worker and report importer resolve the same artifact paths and source
@@ -110,7 +110,9 @@ what the model actually saw and said, not from the score line.
 
 The grade is a scale, not a boolean: a model that finds four of five planted
 requirements is worth knowing about, and a pass/fail verdict would erase the
-difference. Per codec, the benchmark reports:
+difference. Each run grades one runtime, its report keyed by codec name: `native` for
+an endpoint run, `agent` for an [agent run](#agent-run-benchmarks). Older entries also
+carry a `text` codec, kept as history. Per codec, the benchmark reports:
 
 - per-case scores: checks passed over checks total (0 to 1), with the first failing
   check named. An aborted session scores 0 with the abort reason.
@@ -122,8 +124,9 @@ difference. Per codec, the benchmark reports:
     [`reconcile-section`](../compiler/goals/reconcile-section.md) sessions), or
     `review` (can also be trusted with judgment kinds; the graded ones are
     [`review-entity`](../compiler/goals/review-entity.md),
-    [`rejudge-pair`](../compiler/goals/rejudge-pair.md), and
-    [`dedupe-candidates`](../compiler/goals/dedupe-candidates.md)). A tier is held
+    [`rejudge-pair`](../compiler/goals/rejudge-pair.md),
+    [`dedupe-candidates`](../compiler/goals/dedupe-candidates.md), and
+    [`derive-criteria`](../compiler/goals/derive-criteria.md)). A tier is held
     when every one of its cases scores 1. The `structure` tier (the GC kinds that
     restructure the graph) reports a score and holds no verdict yet: its cases are
     young, and a verdict off them waits for measured runs.
@@ -140,10 +143,9 @@ difference. Per codec, the benchmark reports:
   model is routed with open eyes, and the token numbers say what a build will cost.
 - throughput: a blended token rate (tokens/s), completion tokens over wall time
   across all rounds.
-- A codec where no session ever produced a completion (e.g. the endpoint rejects
-  every call) is reported as `unmeasured`, not `not capable`. Nothing was graded, so
-  the codec gets no verdict and no results entry. When both codecs are unmeasured the
-  run writes no results and exits non-zero.
+- A run where no session ever produced a completion (e.g. the endpoint rejects every
+  call) is reported as `unmeasured`, not `not capable`. Nothing was graded, so the run
+  gets no verdict and no results entry, writes no results, and exits non-zero.
 - Completed worker rounds and received judge replies establish that a case was
   measured. Token accounting is not proof of receipt: an ACP child can return a
   judgment without updating the parent's token counter. An unparseable judgment

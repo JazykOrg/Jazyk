@@ -18,9 +18,14 @@ description: |-
   - docs/<mirrored doc path>.yaml is one docRecord per source document
   - journal/g<generation>.yaml is one journalEntry per generation
   - status.yaml is one status object
+  - changes/<kind>/<subject file id>.yaml is one changeRecord
+  - parked/<goal file id>.yaml is one goal, with an optional reason
+  - failed/<goal file id>.yaml is one failedGoal
+  - alignment/<doc file id>.yaml is one docAlignment
+  - lookalikes/<pair file id>.yaml is one lookalikeVerdict
   - build.yaml is one buildState object (local, never committed)
   Goals are derived from these files and never stored; goal ids appear only in
-  journal entries and the parked and failed lists of status.yaml.
+  journal entries and the parked/ and failed/ records.
 definitions:
   severity:
     description: Diagnostic severity. 'none' is a recorded judgment that is not surfaced
@@ -473,6 +478,11 @@ definitions:
         oneOf:
           - $ref: '#/definitions/derivedProvenance'
           - $ref: '#/definitions/decreeProvenance'
+      stale:
+        type: boolean
+        description: >-
+          Set by the store when the owning requirement's statement changed after this
+          derived criterion was written. Cleared by the next update
       confidence:
         type: number
         minimum: 0
@@ -568,7 +578,7 @@ definitions:
     additionalProperties: false
   relationship:
     description: >-
-      One entry in graph/relationships.yaml. One node per unordered entity pair,
+      One node file under graph/relationships/. One node per unordered entity pair,
       derived from requirement edges on commit
     type: object
     required:
@@ -593,7 +603,7 @@ definitions:
     required:
       - from
       - to
-      - requirement
+      - requirements
     properties:
       from:
         type: string
@@ -603,13 +613,17 @@ definitions:
         type: string
       guard:
         type: string
-      requirement:
-        type: string
-        description: The requirement whose transition this is
+      requirements:
+        type: array
+        minItems: 1
+        description: The contributing requirement ids, ordered
+        items:
+          type: string
+          pattern: '^req:'
     additionalProperties: false
   stateMachine:
     description: >-
-      One entry in graph/state-machines.yaml. One per entity that any transition
+      One node file under graph/state-machines/. One per entity that any transition
       names as subject, derived on commit
     type: object
     required:
@@ -863,6 +877,9 @@ definitions:
       - requirement-created
       - requirement-revised
       - requirement-deleted
+      - criterion-created
+      - criterion-revised
+      - criterion-deleted
       - entity-changed
       - entity-deleted
       - node-deleted
@@ -876,6 +893,7 @@ definitions:
       - lookalike
       - query-match
       - flow-unplaced
+      - reparent-flip
   changeRecord:
     description: >-
       One file under changes/<kind>/, named by its subject, holding kind, subject, via,
@@ -988,7 +1006,7 @@ definitions:
         additionalProperties: false
   goal:
     description: >-
-      A derived goal, persisted whole in the status.yaml parked and failed lists so a
+      A derived goal, persisted whole in the parked/ and failed/ records so a
       re-derivation keeps it
     type: object
     required:
@@ -1023,6 +1041,10 @@ definitions:
         type: array
         items:
           type: string
+      reason:
+        type: string
+        description: >-
+          On a parked record only: which road ran out, in the words the trace uses
     additionalProperties: false
   failedGoal:
     description: A goal a session marked failed, whole, with the reason
@@ -1107,7 +1129,18 @@ definitions:
       tokens:
         type: integer
         minimum: 0
-        description: Tokens the session spent
+        description: >-
+          Tokens the session spent. Absent when an external agent drove the session and
+          reported nothing
+      cachedTokens:
+        type: integer
+        minimum: 0
+        description: The input tokens among tokens the endpoint served from its prompt cache
+      tokensSource:
+        type: string
+        enum:
+          - agent
+        description: agent when an external agent reported its own bill. Absent when the harness measured it
   costLine:
     description: Sessions and tokens for one slice of the accounting
     type: object
@@ -1201,6 +1234,29 @@ definitions:
         type: array
         items:
           type: string
+  lookalikeVerdict:
+    description: >-
+      One lookalikes/<pair file id>.yaml record: an entity pair a session kept apart,
+      with the score at judgment. Keeps the pair off the board while its score holds
+    type: object
+    required:
+      - pair
+      - verdict
+      - score
+      - generation
+    properties:
+      pair:
+        type: string
+      verdict:
+        type: string
+        enum:
+          - separate
+      score:
+        type: number
+      generation:
+        type: integer
+        minimum: 0
+    additionalProperties: false
   buildState:
     description: >-
       The build.yaml file, local: the generation and what the last run left behind

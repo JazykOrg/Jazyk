@@ -755,7 +755,6 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         &context, &mut model, &mut mcp_tools, &mut recovery,
     ).await;
     drop(recovery);
-    drop(mcp_tools);
 
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {

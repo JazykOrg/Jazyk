@@ -69,16 +69,19 @@ loaded set as a stub.
   truncated, the caller can refine the query to find an unlisted title. A bare empty
   list reads as "ask again", and models loop on it; the inventory and next step
   let the caller proceed.
-- `read_section({ref})`: one section's raw body and its child titles. A bare document
-  name (`orders.md`, or `orders.md#`) reads the document's root section, the way a
-  reader opens a file to see what it is about.
+- `read_section({ref, line?})`: one section's raw body and its child titles. A bare
+  document name (`orders.md`, or `orders.md#`) reads the document's root section, the
+  way a reader opens a file to see what it is about. The body is capped at 400 lines and
+  16 KiB from `line` (default `1`); when more remains the reply carries `truncated:
+  true`, `totalLines`, and `nextLine`. A single longer line returns a UTF-8-safe prefix.
 - `get_entity({id})`: one entity with its definition, stereotype, parent, children,
   attributes, mentions, requirements, relationships, and its derived state machine
   when one exists; `parent`, `stereotype`, `attributes`, and `children` appear only
   when set, so a review can tell an absent parent from an unknown one.
   The lookup sees the session's own staged entities, same as `search`.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
-  collapse list, the relationships among its members (lifted where a member is
+  collapse list, the relationships among its members as the rendering draws them
+  (`{a, b, type, cardinality?, count?}`, lifted where a member is hidden or
   collapsed), the path of its rendering under `diagrams/`
   ([output layout](./diagrams.md#output-layout)), and `children`: the members that
   hold a [level](./concepts/levels.md#levels) of their own, each with the id of its
@@ -86,9 +89,10 @@ loaded set as a stub.
   ([drill-down](./diagrams.md#drill-down)). `children` is computed from the
   containment tree and the [level views](./diagrams.md#level-views) at call time,
   never stored on the view.
-- `diagnostics({lifecycle?, rule?, subject?})`: the diagnostics, `open` by default
-  (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
-  further). Each entry carries id, rule, severity, lifecycle, triage, subjects,
+- `diagnostics({lifecycle?, rule?, subject?, offset?})`: the diagnostics, `open` by
+  default (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
+  further). One reply lists at most 50 entries from `offset` (default `0`); `count` is
+  the number that match, and a cut listing carries `truncated: true` and `nextOffset`. Each entry carries id, rule, severity, lifecycle, triage, subjects,
   message, whether it carries an unanswered prompt, and `owner: harness` on the
   build's own bookkeeping rules (`incomplete-build`, `ratification-pending`,
   `criterion-missing`, `unstable-*`), which no session resolves
@@ -106,6 +110,9 @@ Write tools stage [mutations](./graph.md#mutations) into the open changeset. Eve
 staged mutation passes the [validation gates](./graph.md#validation-gates) when staged;
 a mutating reply previews the goals the mutation will open
 ([bubbling](./reconciler.md#bubbling)) and re-renders the condensed status block.
+A write call is all or nothing: a refused call stages nothing and leaves no trace in
+what later calls see as staged (a `group_entities` that hits the mutation budget
+midway stages neither the grouping nor any reparent).
 
 - `upsert_entity({name, definition?, aliases?, scope?, stereotype?, parent?, attributes?, mention?, provenance?, note?})`
   → `{id, created}`. Keys on `name` plus `scope`, and `parent` joins the key when
@@ -928,11 +935,10 @@ Compile goals:
   `update_requirement`, `report_diagnostic` (`nonconformant-instance`,
   `duplicate-entity`, `ambiguity`), `resolve_diagnostic`.
 - [`bind`](./goals/bind.md): the `generate` serving below.
-- [`generate`](./goals/generate.md): the `generate` serving below, plus the file and
-  command tools when the profile sets `serve_files`.
+- [`generate`](./goals/generate.md): the `generate` serving below, plus the file
+  tools when the profile sets `serve_files`.
 - [`verify`](./goals/verify.md): the `verify` serving below, plus the read-only file
-  tools (`read_text_file`, `list_files`, `run_command`) when the profile sets
-  `serve_files`.
+  tools (`read_text_file`, `list_files`) when the profile sets `serve_files`.
 - [`ratify`](./goals/ratify.md), [`answer`](./goals/answer.md): no session, no
   toolset. The human path runs through the [chat tools](#chat-tools), the LSP, and the
   GUI.
@@ -953,7 +959,7 @@ GC goals:
   merges, no `delete_view`; a dissolve leaves a redirect, it is not a delete.
 
 Servings (`jazyk mcp <toolsets>`, see [MCP](../frontends/mcp.md#toolsets)); every
-serving carries the read tools, `report_feedback`, `await_changes`
+serving carries the read tools, `report_feedback`, `report_spend`, `await_changes`
 ([the work loop](../frontends/mcp.md#the-work-loop)), and `recent_edits`
 ([watching edits](../frontends/mcp.md#watching-edits)):
 
@@ -971,9 +977,13 @@ serving carries the read tools, `report_feedback`, `await_changes`
 - `jazyk mcp decompile`: the [decompilation tools](#decompilation-tools).
 - `jazyk mcp benchmark`: the [benchmark cases](../benchmark/benchmark.md#agent-run-benchmarks)
   against sandbox stores.
-- `jazyk mcp graph`: the read tools only; `--write` adds the raw write tools and view
-  tools, each call committing as its own changeset with its change records written, so
-  the next build derives the goals the write opened.
+- `jazyk mcp graph`: the read tools only; `--write` adds the raw write tools, the view
+  tools, and the [task runtime tools](#task-runtime-tools), each graph write
+  committing as its own changeset with its change records written, so the next build
+  derives the goals the write opened.
+- `jazyk mcp runtime`: the [task runtime tools](#task-runtime-tools).
+- `jazyk mcp all`: `compile`, `generate`, `verify`, `decompile`, and `chat` in one
+  serving ([MCP](../frontends/mcp.md#toolsets)).
 - `jazyk mcp chat`: the compilation, binding, generation, and verification lifecycles,
   the [chat tools](#chat-tools), `update_diagnostic`, and `answer_diagnostic`. Native
   and hosted chat also expose scoped `release_work` and guarded project file tools.

@@ -2111,7 +2111,7 @@ impl McpServer {
                 *self.client.lock().unwrap() = Some(name.into());
             }
             return Ok(
-                json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
+                json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
                 "instructions":self.initialize_instructions(w.exists)?}),
             );
@@ -2379,12 +2379,11 @@ impl McpServer {
                         }
                     }
                 }
-                // The serving is version-lenient line JSON; echoing the client's
-                // requested protocol version keeps strict clients (rmcp) from
-                // treating the reply as a downgrade.
-                let requested = params["protocolVersion"].as_str().unwrap_or("2024-11-05");
+                // Echoing a supported requested version keeps strict clients (rmcp)
+                // from treating the reply as a downgrade; an unknown one gets the
+                // latest the serving speaks (docs/frontends/mcp.md#mcp-into-acp-sessions).
                 Ok(json!({
-                    "protocolVersion": requested,
+                    "protocolVersion": negotiate_protocol(&params["protocolVersion"]),
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": self.initialize_instructions(self.initialized())?
@@ -3989,6 +3988,19 @@ fn compile_interruption(value: &Value) -> Option<String> {
         }
         Value::Array(values) => values.iter().find_map(compile_interruption),
         _ => None,
+    }
+}
+
+// The MCP protocol versions the serving speaks, oldest first.
+const PROTOCOL_VERSIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+// The requested version when supported, the latest supported otherwise, and the
+// oldest for a client that names none. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+fn negotiate_protocol(requested: &Value) -> &'static str {
+    match requested.as_str() {
+        None => PROTOCOL_VERSIONS[0],
+        Some(v) => PROTOCOL_VERSIONS.iter().find(|p| **p == v).copied()
+            .unwrap_or(PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.len() - 1]),
     }
 }
 
@@ -5954,6 +5966,22 @@ mod tests {
         assert!(context["inputSchema"]["properties"]["setId"].is_null(), "{context}");
         assert_eq!(context["inputSchema"]["additionalProperties"], false);
         assert!(tool("search")["inputSchema"]["properties"]["setId"].is_object());
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // initialize echoes a supported requested version and answers its latest supported
+    // version for anything else, on the project serving and a set-scoped one alike.
+    #[test]
+    fn initialize_negotiates_the_protocol_version() {
+        let dir = bare_dir("protocol-version");
+        for serving in [workspace_chat(&dir, BridgeFlags::default()), chat_server(&dir)] {
+            let version = |requested: Value| serving.handle("initialize", &json!({"protocolVersion": requested})).unwrap()["protocolVersion"].clone();
+            assert_eq!(version(json!("2025-03-26")), "2025-03-26");
+            assert_eq!(version(json!("2024-11-05")), "2024-11-05");
+            assert_eq!(version(json!("2099-01-01")), "2025-11-25");
+            assert_eq!(version(json!("not a version")), "2025-11-25");
+            assert_eq!(version(Value::Null), "2024-11-05");
+        }
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

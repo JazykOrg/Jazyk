@@ -150,6 +150,11 @@ this spawning path and are not for standalone servings:
   process ([doc edit delegation](./acp.md#doc-edit-delegation)). Absent, or with
   nothing listening, writes land on disk directly.
 
+The `initialize` reply answers the client's requested `protocolVersion` when the
+serving supports it (`2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`), and its
+latest supported version otherwise, so a client never reads support for a version the
+serving does not speak. A request without a version gets `2024-11-05`.
+
 The `initialize` reply carries server instructions describing the work loop for the
 toolsets served, so an agent that reads nothing else still knows the entry point, the
 order of calls, and that a tool error names its own repair. They also say that the
@@ -270,8 +275,8 @@ agent spawns nothing:
   transcript. Nothing else on the machine can call the serving, because nothing else
   holds the token.
 - It speaks JSON-RPC 2.0 over `POST` to the one endpoint, the MCP streamable HTTP
-  transport (protocol version `2025-03-26`; the `initialize` reply echoes the
-  client's requested version, as the stdio serving does). A request answers `200`
+  transport (protocol version `2025-03-26`; the `initialize` reply negotiates the
+  version as the stdio serving does). A request answers `200`
   with `application/json` carrying the one response object; a notification answers
   `202` with no body; a batch array answers an array. `GET` and `DELETE` on the
   endpoint answer `405`: the serving opens no server-initiated stream and issues no

@@ -471,6 +471,12 @@ impl BuildGuard {
 
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
     if let Some(error) = &proj.config_error { return Err(error.clone()); }
+    // The project's file view spans every set and owns no graph: a build on it
+    // would write the shared `.jazyk/`. Graph operations address one set
+    // (docs/frontends/cli.md).
+    if proj.set_id.is_none() && proj.set_docs.is_some() {
+        return Err("choose a document set: a build works on one set, never on the project's shared .jazyk/".into());
+    }
     let project_lock = if proj.set_id.is_some() {
         Some(crate::document_sets::ProjectLock::acquire(&proj.root, "project.lock").map_err(|e| e.1)?)
     } else { None };
@@ -586,6 +592,18 @@ mod tests {
         assert_ne!(Control::load(&project, &project.out).released.compile["docs/main.md"],
             store.docs["docs/main.md"].content_hash,
             "A release must not approve an unreadable file's retained content");
+    }
+
+    // The project's file view (every set, no graph) never takes a build: it would
+    // write the shared `.jazyk/` (docs/frontends/cli.md).
+    #[test]
+    fn a_build_on_the_set_less_file_view_is_refused() {
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let project = Project { set_docs: Some(vec![vec!["a.md".into()], vec!["b.md".into()]]), ..Project::default() };
+        let out = Path::new("/project/.jazyk");
+        let error = begin_internal_build(&project, out, "compile").err().unwrap();
+        assert!(error.starts_with("choose a document set"), "{}", error);
+        assert!(build_lease(out).is_none());
     }
 
     #[test]

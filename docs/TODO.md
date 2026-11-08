@@ -210,10 +210,6 @@ Every model-executed kind's contract was read against its gate: each duty the hi
 concrete is now a verdict the evidence names, checked against the staged work
 ([goal tools](./compiler/tools.md#goal-tools)). Left open:
 
-- `conform-instance` documents that an `update_requirement` on a requirement not
-  naming the instance is refused; the code does not refuse it, since a `review-entity`
-  goal on the type in the same batch legitimately updates the type's statements. The
-  gate needs the owning goal of each staged op before it can hold.
 - `curate-view` asks for the same decision on the twin view (the use-case and sequence
   views sharing a title); nothing checks it, because a default twin derives its members
   and the rule for when a curated twin must mirror is not stated.

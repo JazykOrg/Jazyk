@@ -1,0 +1,3159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jazyk.org/schemas/tools.json",
+  "title": "Jazyk Tool Payloads",
+  "description": "Input and output shapes for the tool registry. Each tool has one request payload definition and, where the reply carries structure, one response definition. Shared node shapes are referenced from graph.json. Every call is validated by the graph store's gates when staged; a rejection is a toolError",
+  "definitions": {
+    "listJazykSkillsRequest": {
+      "description": "List built-in workflow skills without selecting a document set",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "jazykWorkflowSkill": {
+      "type": "object",
+      "required": [
+        "name",
+        "description",
+        "requiredCapabilities",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "requiredCapabilities": {
+          "type": "string",
+          "description": "Capabilities needed to perform the workflow, not granted by reading it"
+        },
+        "source": {
+          "type": "string",
+          "description": "Reviewable embedded Markdown source path"
+        },
+        "body": {
+          "type": "string",
+          "description": "Exact embedded Markdown, present in a read reply"
+        }
+      },
+      "additionalProperties": false
+    },
+    "listJazykSkillsResponse": {
+      "type": "object",
+      "required": [
+        "skills",
+        "note"
+      ],
+      "properties": {
+        "skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/jazykWorkflowSkill"
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "readJazykSkillRequest": {
+      "description": "Read one named built-in workflow skill without graph or set state",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "readJazykSkillResponse": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/jazykWorkflowSkill"
+        },
+        {
+          "required": [
+            "body"
+          ]
+        }
+      ]
+    },
+    "toolError": {
+      "description": "A rejected call. Names the violated rule and how to repair the call",
+      "type": "object",
+      "required": [
+        "rule",
+        "message"
+      ],
+      "properties": {
+        "rule": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "expansionHandle": {
+      "description": "A stable token naming an omitted frontier, accepted by the expand tool. h:<target> for a stub in full, h:<target>:<axis> for one axis",
+      "type": "string",
+      "pattern": "^h:"
+    },
+    "batchId": {
+      "description": "A goal batch id, b<generation>-<n>: the generation the board derives from and the batch's index within it. Derived with the board; an id from an earlier generation names nothing",
+      "type": "string",
+      "pattern": "^b[0-9]+-[0-9]+$"
+    },
+    "handle": {
+      "description": "One expansion handle as a reply renders it",
+      "type": "object",
+      "required": [
+        "handle"
+      ],
+      "properties": {
+        "handle": {
+          "$ref": "#/definitions/expansionHandle"
+        },
+        "description": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Approximate size of the omitted frontier in characters"
+        }
+      },
+      "additionalProperties": false
+    },
+    "loadRequest": {
+      "description": "Request payload of load. Loads a node and its neighborhood into the loaded set",
+      "type": "object",
+      "required": [
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "A node id, a section reference, or a view id"
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Hop count along the axes. The target in full, neighbors as stubs at depth 1"
+        }
+      },
+      "additionalProperties": false
+    },
+    "expandRequest": {
+      "description": "Request payload of expand. Loads the frontier behind a handle",
+      "type": "object",
+      "required": [
+        "handle"
+      ],
+      "properties": {
+        "handle": {
+          "$ref": "#/definitions/expansionHandle"
+        }
+      },
+      "additionalProperties": false
+    },
+    "unloadRequest": {
+      "description": "Request payload of unload. Drops one item from the loaded set",
+      "type": "object",
+      "required": [
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "graphStatusRequest": {
+      "description": "Request payload of graph_status. No arguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "loadedResponse": {
+      "description": "Response of load and expand: the rendered items the call brought, the re-rendered status block, and the handles for what the budget cut off",
+      "type": "object",
+      "required": [
+        "items",
+        "status"
+      ],
+      "properties": {
+        "items": {
+          "type": "string",
+          "description": "The rendered items, compact markdown with node ids inline"
+        },
+        "status": {
+          "type": "string",
+          "description": "The status block, the loaded set with its budget line"
+        },
+        "handles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/handle"
+          }
+        },
+        "skill": {
+          "type": "string",
+          "description": "A skill auto-loaded by this call, rendered once"
+        }
+      },
+      "additionalProperties": false
+    },
+    "statusResponse": {
+      "description": "Response of unload and graph_status, and the condensed block on every mutating reply",
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "searchRequest": {
+      "description": "Request payload of search. Deterministic lookup over names and aliases. One of query or queries; queries answers several names in one call, one result per query",
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "entity",
+            "view"
+          ],
+          "default": "entity",
+          "description": "Views are matched on title"
+        }
+      },
+      "additionalProperties": false
+    },
+    "searchResponse": {
+      "description": "Response of search. A miss carries the graph's entities by id and name and a next line saying to create the entity instead of searching again",
+      "type": "object",
+      "required": [
+        "hits"
+      ],
+      "properties": {
+        "hits": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "definition": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "entityCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entities": {
+          "description": "Up to 25 entities by id and name, on a miss",
+          "type": "array",
+          "maxItems": 25,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "readSectionRequest": {
+      "description": "Request payload of read_section",
+      "type": "object",
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "A section reference, /ref or doc.md#/ref"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "The first body line returned; the body is capped at 400 lines and 16 KiB"
+        }
+      },
+      "additionalProperties": false
+    },
+    "getEntityRequest": {
+      "description": "Request payload of get_entity",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "getViewRequest": {
+      "description": "Request payload of get_view",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "getViewResponse": {
+      "description": "Response of get_view. children is computed from the containment tree and the level views at call time, never stored on the view",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "members"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "graph.json#/definitions/viewKind"
+        },
+        "title": {
+          "type": "string"
+        },
+        "members": {
+          "description": "Ordered node ids",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/exclusion"
+          }
+        },
+        "query": {
+          "$ref": "graph.json#/definitions/viewQuery"
+        },
+        "collapse": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default": {
+          "type": "boolean",
+          "description": "Present on a default view the store recomputes every commit"
+        },
+        "relationships": {
+          "description": "The relationships among the members, lifted where a member is collapsed",
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/relationship"
+          }
+        },
+        "rendering": {
+          "type": "string",
+          "description": "Path of the rendering under the out directory, diagrams/<kind>/<slug>.svg"
+        },
+        "children": {
+          "description": "The members that hold a level of their own, each with the id of its level view. The drill-down links the rendering carries",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "member",
+              "view"
+            ],
+            "properties": {
+              "member": {
+                "type": "string",
+                "description": "Entity id, among members"
+              },
+              "view": {
+                "type": "string",
+                "description": "The id of the member's structural level view"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "diagnosticsRequest": {
+      "description": "Request payload of diagnostics. Open diagnostics by default",
+      "type": "object",
+      "properties": {
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "open",
+            "resolved",
+            "all"
+          ],
+          "default": "open"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string",
+          "description": "A node id or section reference"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "The first entry listed; one reply lists at most 50"
+        }
+      },
+      "additionalProperties": false
+    },
+    "diagnosticsResponse": {
+      "description": "Response of diagnostics",
+      "type": "object",
+      "required": [
+        "diagnostics"
+      ],
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "rule",
+              "severity",
+              "lifecycle",
+              "subjects",
+              "message"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string"
+              },
+              "severity": {
+                "$ref": "graph.json#/definitions/severity"
+              },
+              "lifecycle": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "resolved"
+                ]
+              },
+              "triage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "subjects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "message": {
+                "type": "string"
+              },
+              "prompted": {
+                "type": "boolean",
+                "description": "Whether the diagnostic carries an unanswered prompt"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mention": {
+      "description": "Where an entity is mentioned. 'section' is a section reference",
+      "type": "object",
+      "required": [
+        "section",
+        "quote"
+      ],
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "attributeInput": {
+      "description": "One attribute as a write tool carries it. Without its own provenance the attribute takes the quote of the call that carries it",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "graph.json#/definitions/provenance"
+        }
+      },
+      "additionalProperties": false
+    },
+    "upsertResponse": {
+      "description": "Response of upsert_entity, upsert_requirement, and upsert_view",
+      "type": "object",
+      "required": [
+        "id",
+        "created"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "created": {
+          "type": "boolean"
+        },
+        "updated": {
+          "type": "boolean",
+          "description": "True when the natural key matched an existing node and refreshed it"
+        },
+        "opens": {
+          "description": "The goals this mutation will open at commit (bubbling)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "description": "The condensed status block"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mutationResponse": {
+      "description": "Response of every other staging write tool",
+      "type": "object",
+      "properties": {
+        "staged": {
+          "type": "boolean"
+        },
+        "opens": {
+          "description": "The goals this mutation will open at commit (bubbling)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "description": "The condensed status block"
+        }
+      },
+      "additionalProperties": false
+    },
+    "upsertEntity": {
+      "description": "Request payload of upsert_entity. Keys on name plus scope, and parent when given; a match updates instead of duplicating. Exactly one of mention or provenance",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "mention"
+          ]
+        },
+        {
+          "required": [
+            "provenance"
+          ]
+        }
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "definition": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope": {
+          "type": "string",
+          "default": "public"
+        },
+        "stereotype": {
+          "type": "string",
+          "description": "Free-form judged label. Nothing enumerates the allowed values"
+        },
+        "parent": {
+          "type": "string",
+          "description": "Entity id of the containing entity. Must keep the tree acyclic"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/attributeInput"
+          }
+        },
+        "mention": {
+          "$ref": "#/definitions/mention"
+        },
+        "provenance": {
+          "description": "Derived provenance for an entity the documents do not state",
+          "$ref": "graph.json#/definitions/derivedProvenance"
+        },
+        "note": {
+          "type": "string",
+          "description": "Required when the name looks like syntax rather than a concept, or to keep a name variant of an existing entity distinct"
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateEntity": {
+      "description": "Request payload of update_entity. A rename keeps the id; attributes upsert by name",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "definition": {
+          "type": "string"
+        },
+        "add_aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remove_aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Wordings the documents turn out not to use"
+        },
+        "remove_parent": {
+          "type": "boolean",
+          "description": "Take the entity out of the containment tree"
+        },
+        "stereotype": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/attributeInput"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "deleteEntity": {
+      "description": "Request payload of delete_entity. Rejected while any requirement references the entity or any entity names it as parent",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mergeEntities": {
+      "description": "Request payload of merge_entities. The store rewires every reference and leaves a redirect from the absorbed id to the survivor",
+      "type": "object",
+      "required": [
+        "keep",
+        "absorb",
+        "reason"
+      ],
+      "properties": {
+        "keep": {
+          "type": "string",
+          "description": "Entity id that survives"
+        },
+        "absorb": {
+          "type": "string",
+          "description": "Entity id that is absorbed"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "groupEntities": {
+      "description": "Request payload of group_entities. Stages one derived entity from members and reparents every member under it, as one changeset. Gates: at least two members, every member resolves, all members share one current parent, name passes the near-duplicate gate as upsert_entity does, definition and reasoning non-empty",
+      "type": "object",
+      "required": [
+        "name",
+        "definition",
+        "members",
+        "reasoning"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "definition": {
+          "type": "string",
+          "description": "One sentence stating the grouping's responsibility"
+        },
+        "members": {
+          "description": "Entity ids. All members share one current parent; a grouping never crosses levels",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "stereotype": {
+          "type": "string",
+          "description": "From the existing vocabulary, or absent. There is no grouping stereotype"
+        },
+        "reasoning": {
+          "type": "string",
+          "description": "Becomes the reasoning of the grouping's derived provenance, whose from is exactly members"
+        }
+      },
+      "additionalProperties": false
+    },
+    "groupEntitiesResponse": {
+      "description": "Response of group_entities",
+      "type": "object",
+      "required": [
+        "id",
+        "moved"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The new grouping's id"
+        },
+        "moved": {
+          "description": "The member ids reparented under it",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "opens": {
+          "description": "The goals this mutation will open at commit (bubbling)",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "description": "The condensed status block"
+        }
+      },
+      "additionalProperties": false
+    },
+    "dissolveEntity": {
+      "description": "Request payload of dissolve_entity. Reparents a derived grouping's children to its parent and tombstones it with a redirect to its parent. Refused on an entity a document states (stated-entity)",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "A grouping with derived provenance and no mentions"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "upsertRequirement": {
+      "description": "Request payload of upsert_requirement. The store mints the id; a supplied id is ignored. Exactly one of section plus quote or a derived provenance. The natural key (section plus punctuation-insensitive statement) makes the call idempotent; a match resolves at stage time and returns the existing id with updated true",
+      "type": "object",
+      "required": [
+        "statement",
+        "entities"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "section",
+            "quote"
+          ]
+        },
+        {
+          "required": [
+            "provenance"
+          ]
+        }
+      ],
+      "properties": {
+        "statement": {
+          "type": "string",
+          "description": "The obligation, free-form. One statement, one obligation"
+        },
+        "entities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "description": "Entity id"
+          }
+        },
+        "section": {
+          "type": "string",
+          "description": "Section reference the statement comes from"
+        },
+        "quote": {
+          "type": "string",
+          "description": "Verbatim text from the section"
+        },
+        "provenance": {
+          "description": "Derived provenance for a requirement with no sentence behind it yet",
+          "$ref": "graph.json#/definitions/derivedProvenance"
+        },
+        "edges": {
+          "description": "The relationships this statement causes, directional, among its entities",
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/requirementEdge"
+          }
+        },
+        "transition": {
+          "$ref": "graph.json#/definitions/transition"
+        },
+        "facets": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/facet"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateRequirement": {
+      "description": "Request payload of update_requirement. A field given replaces the stored one whole. section plus quote re-anchor the provenance; the quote must locate verbatim in the section",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/requirementEdge"
+          }
+        },
+        "transition": {
+          "oneOf": [
+            {
+              "$ref": "graph.json#/definitions/transition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "facets": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/facet"
+          }
+        },
+        "section": {
+          "type": "string",
+          "description": "Section reference the revised statement comes from"
+        },
+        "quote": {
+          "type": "string",
+          "description": "Verbatim text from the section"
+        }
+      },
+      "additionalProperties": false
+    },
+    "deleteRequirement": {
+      "description": "Request payload of delete_requirement",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "criterionKind": {
+      "type": "string",
+      "enum": [
+        "positive",
+        "negative",
+        "boundary",
+        "quality"
+      ]
+    },
+    "upsertCriterion": {
+      "description": "Request payload of upsert_criterion. Exactly one of section plus quote (a stated criterion) or provenance.derived (from names the requirement). The same statement on the same requirement updates in place",
+      "type": "object",
+      "required": [
+        "requirement",
+        "statement",
+        "kind"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/criterionKind"
+        },
+        "measure": {
+          "type": "string",
+          "description": "The measure of a quality criterion"
+        },
+        "given": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "then": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "section": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "provenance": {
+          "description": "A criterion the documents do not state",
+          "$ref": "graph.json#/definitions/derivedProvenance"
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateCriterion": {
+      "description": "Request payload of update_criterion. A field given replaces the stored one; the id and the owning requirement stay",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/criterionKind"
+        },
+        "measure": {
+          "type": "string"
+        },
+        "given": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "then": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "deleteCriterion": {
+      "description": "Request payload of delete_criterion, for a criterion the documents no longer support",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "placeAnchor": {
+      "description": "Request payload of place_anchor. Moves one proposed anchor to a section; a place-anchors session only",
+      "type": "object",
+      "required": [
+        "id",
+        "section",
+        "reevaluate"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "A requirement or entity id named by the batch's proposals"
+        },
+        "section": {
+          "type": "string",
+          "description": "Target section reference, /ref or doc.md#/ref"
+        },
+        "quote": {
+          "type": "string",
+          "description": "Replacement quote; must locate in the target section"
+        },
+        "reevaluate": {
+          "type": "boolean",
+          "description": "List the anchor as a stale anchor on the target section's reconcile-section goal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "orphanAnchor": {
+      "description": "Request payload of orphan_anchor. Leaves one proposed anchor homeless",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "diagnosticRule": {
+      "description": "The judged rules a session or chat may file. The harness files the rest",
+      "type": "string",
+      "enum": [
+        "contradiction",
+        "duplicate-entity",
+        "duplicate-requirement",
+        "missing-link",
+        "ambiguity",
+        "lint",
+        "decision",
+        "nonconformant-instance"
+      ]
+    },
+    "reportDiagnostic": {
+      "description": "Request payload of report_diagnostic. Keys on rule plus subjects. A decision carries a prompt",
+      "type": "object",
+      "required": [
+        "rule",
+        "severity",
+        "subjects",
+        "message",
+        "reasoning"
+      ],
+      "properties": {
+        "rule": {
+          "$ref": "#/definitions/diagnosticRule"
+        },
+        "severity": {
+          "$ref": "graph.json#/definitions/severity"
+        },
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "description": "Node id or section reference"
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "prompt": {
+          "$ref": "graph.json#/definitions/diagnosticPrompt"
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateDiagnostic": {
+      "description": "Request payload of update_diagnostic. Replaces the prompt; null removes it",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "prompt": {
+          "oneOf": [
+            {
+              "$ref": "graph.json#/definitions/diagnosticPrompt"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolveDiagnostic": {
+      "description": "Request payload of resolve_diagnostic",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "setCoverage": {
+      "description": "Request payload of set_coverage",
+      "type": "object",
+      "required": [
+        "section",
+        "state"
+      ],
+      "properties": {
+        "section": {
+          "type": "string",
+          "description": "Section reference"
+        },
+        "state": {
+          "$ref": "graph.json#/definitions/coverageState"
+        },
+        "note": {
+          "type": "string",
+          "description": "Required when state is non-normative"
+        }
+      },
+      "additionalProperties": false
+    },
+    "upsertView": {
+      "description": "Request payload of upsert_view. Keys on kind plus title. reasoning becomes the view's derived provenance, from the members",
+      "type": "object",
+      "required": [
+        "kind",
+        "title",
+        "reasoning"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "graph.json#/definitions/viewKind"
+        },
+        "title": {
+          "type": "string"
+        },
+        "members": {
+          "description": "Ordered node ids. Entities for structural kinds, requirements for flow kinds",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "query": {
+          "$ref": "graph.json#/definitions/viewQuery"
+        },
+        "collapse": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/exclusion"
+          }
+        },
+        "reasoning": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateView": {
+      "description": "Request payload of update_view. members replaces the whole ordered list; add_members and remove_members edit it. On a default view any field given clears its boolean default field; the view is curated from then on",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "add_members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remove_members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "query": {
+          "oneOf": [
+            {
+              "$ref": "graph.json#/definitions/viewQuery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collapse": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "$ref": "graph.json#/definitions/exclusion"
+        },
+        "reasoning": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "deleteView": {
+      "description": "Request payload of delete_view. Rejected on a default view",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "markGoalDone": {
+      "description": "Request payload of mark_goal_done. Validated against the goal kind's gate when staged and again at commit; a false claim is rejected with the gate named",
+      "type": "object",
+      "required": [
+        "goal",
+        "justification"
+      ],
+      "properties": {
+        "goal": {
+          "$ref": "graph.json#/definitions/goalId"
+        },
+        "justification": {
+          "type": "string",
+          "description": "One or two sentences of why the goal is complete"
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Kind-specific evidence the gate reads, e.g. a verdict per neighbor for rejudge-pair"
+        }
+      },
+      "additionalProperties": false
+    },
+    "settlePairs": {
+      "description": "Request payload of settle_pairs. One entry per rejudge-pair goal of the batch; each runs the gates of the single calls it stands for, and a refused entry leaves nothing staged while the others land",
+      "type": "object",
+      "required": [
+        "verdicts"
+      ],
+      "properties": {
+        "verdicts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "goal",
+              "verdict",
+              "justification"
+            ],
+            "properties": {
+              "goal": {
+                "$ref": "graph.json#/definitions/goalId"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "consistent",
+                  "duplicate",
+                  "contradiction",
+                  "resolved"
+                ]
+              },
+              "justification": {
+                "type": "string",
+                "description": "One or two sentences of why the verdict holds"
+              },
+              "severity": {
+                "$ref": "graph.json#/definitions/severity",
+                "description": "Required for contradiction (error or warning); info for duplicate"
+              },
+              "message": {
+                "type": "string",
+                "description": "Required for contradiction; optional for duplicate"
+              },
+              "reasoning": {
+                "type": "string"
+              },
+              "prompt": {
+                "$ref": "graph.json#/definitions/diagnosticPrompt"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "settlePairsResponse": {
+      "description": "One result per entry, in order, plus the goals still open in the batch",
+      "type": "object",
+      "required": [
+        "results",
+        "settled",
+        "open"
+      ],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "goal"
+            ],
+            "properties": {
+              "goal": {
+                "$ref": "graph.json#/definitions/goalId"
+              },
+              "verdict": {
+                "type": "string"
+              },
+              "diagnostic": {
+                "type": "string",
+                "description": "The diagnostic id the entry staged"
+              },
+              "resolved": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The diagnostic ids the entry resolved"
+              },
+              "error": {
+                "$ref": "#/definitions/toolError"
+              }
+            }
+          }
+        },
+        "settled": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/goalId"
+          }
+        },
+        "open": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/goalId"
+          }
+        }
+      }
+    },
+    "markGoalFailed": {
+      "description": "Request payload of mark_goal_failed. Always accepted",
+      "type": "object",
+      "required": [
+        "goal",
+        "reason"
+      ],
+      "properties": {
+        "goal": {
+          "$ref": "graph.json#/definitions/goalId"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "loadSkill": {
+      "description": "Request payload of load_skill. Brings one skill into the session, under the per-session cap",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "extraction",
+            "judgment",
+            "flow-views",
+            "structural-views",
+            "abstraction",
+            "conformance"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "done": {
+      "description": "Request payload of done. Ends the session, runs the batch gates, and requests commit",
+      "type": "object",
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "goals": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Final claims, validated like mark_goal_done",
+          "items": {
+            "type": "object",
+            "required": [
+              "goal",
+              "justification"
+            ],
+            "properties": {
+              "goal": {
+                "type": "string"
+              },
+              "justification": {
+                "type": "string"
+              },
+              "evidence": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "beginNext": {
+          "type": "boolean",
+          "default": false,
+          "description": "Over MCP, claim the next ready batch in the same call"
+        }
+      },
+      "additionalProperties": false
+    },
+    "doneResponse": {
+      "description": "Response of done",
+      "type": "object",
+      "required": [
+        "committed"
+      ],
+      "properties": {
+        "committed": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The generation the commit produced"
+        },
+        "next": {
+          "type": "string",
+          "description": "The next ready batch, named"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "The next batch's assembled prompt, when beginNext claimed it"
+        },
+        "package": {
+          "type": "string",
+          "description": "The next batch's initially loaded set, when beginNext claimed it"
+        },
+        "verdict": {
+          "description": "The build verdict, when the commit left no open goal and the tail ran",
+          "$ref": "graph.json#/definitions/verdict"
+        },
+        "generationReady": {
+          "description": "Entities whose generate goals became ready",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "goalState": {
+      "description": "The state of a goal on the board",
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "blocked",
+            "parked",
+            "failed"
+          ]
+        },
+        "on": {
+          "type": "string",
+          "description": "What a blocked goal waits on"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why a failed goal failed"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goal": {
+      "description": "One goal as the board renders it. Derived, never stored",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "class",
+        "mandatory",
+        "target",
+        "unit",
+        "change",
+        "state",
+        "readiness"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "graph.json#/definitions/goalId"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "class": {
+          "type": "string",
+          "enum": [
+            "compile",
+            "gc"
+          ]
+        },
+        "mandatory": {
+          "type": "boolean"
+        },
+        "target": {
+          "type": "string",
+          "description": "A node id, a section reference, a document path, or a pair a~b"
+        },
+        "unit": {
+          "type": "string",
+          "description": "What one target is, e.g. document, section, pair, entity, view, requirement, ledger row"
+        },
+        "change": {
+          "type": "object",
+          "description": "The change record the goal derives from; its identity across re-derivations"
+        },
+        "cause": {
+          "$ref": "graph.json#/definitions/goalCause"
+        },
+        "state": {
+          "$ref": "#/definitions/goalState"
+        },
+        "readiness": {
+          "type": "string",
+          "description": "ready, or the blocking reason as a sentence"
+        },
+        "hints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gated": {
+          "type": "boolean",
+          "description": "Held behind a release under a manual mode"
+        },
+        "claimedBy": {
+          "type": "string",
+          "description": "The worker holding the goal's batch lease, when one does"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goalsResponse": {
+      "description": "Response of goals. The board, with the ready goals grouped into the batches the scheduler would form; the verdict instead when no goal is open",
+      "type": "object",
+      "properties": {
+        "goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/goal"
+          }
+        },
+        "batches": {
+          "description": "The ready goals grouped into the batches the scheduler would form, each under its id",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "batch",
+              "goals"
+            ],
+            "properties": {
+              "batch": {
+                "$ref": "#/definitions/batchId"
+              },
+              "goals": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "graph.json#/definitions/goalId"
+                }
+              },
+              "executor": {
+                "type": "string",
+                "description": "The batch's resolved executor"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "verdict": {
+          "$ref": "graph.json#/definitions/verdict"
+        }
+      },
+      "additionalProperties": false
+    },
+    "beginGoals": {
+      "description": "Request payload of begin_goals. Claims the named batch, or the named goals as one batch, or with neither the next ready batch. batch and goals are exclusive",
+      "type": "object",
+      "not": {
+        "required": [
+          "batch",
+          "goals"
+        ]
+      },
+      "properties": {
+        "batch": {
+          "description": "A batch id from the goals reply. One the current board does not hold is refused",
+          "$ref": "#/definitions/batchId"
+        },
+        "goals": {
+          "description": "Goals claimed as one batch; they must share a locality and their kinds' executors must agree",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "graph.json#/definitions/goalId"
+          }
+        },
+        "full": {
+          "type": "boolean",
+          "default": false,
+          "description": "Repeat the agent contract and every active skill even if already delivered"
+        }
+      },
+      "additionalProperties": false
+    },
+    "beginGoalsResponse": {
+      "description": "Response of begin_goals",
+      "type": "object",
+      "required": [
+        "batch",
+        "goals",
+        "instructions",
+        "package"
+      ],
+      "properties": {
+        "batch": {
+          "description": "The batch id, the target of the worker protocol line",
+          "$ref": "#/definitions/batchId"
+        },
+        "goals": {
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/goalId"
+          }
+        },
+        "instructions": {
+          "type": "string",
+          "description": "The assembled session prompt"
+        },
+        "package": {
+          "type": "string",
+          "description": "The initially loaded set, rendered as the status block and its items"
+        },
+        "tools": {
+          "description": "The batch's toolset, the union of its goal kinds' slices",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "abandonGoals": {
+      "description": "Request payload of abandon_goals. Drops the staged changeset; the goals return to open",
+      "type": "object",
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "awaitChanges": {
+      "description": "Request payload of await_changes, a long poll",
+      "type": "object",
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300,
+          "description": "Capped at 3600 seconds; 0 waits for the cap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recentEdits": {
+      "description": "Request payload of recent_edits",
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The cursor of a previous reply; absent lists every edit since the serving started"
+        },
+        "setId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recentEditsResponse": {
+      "description": "Response of recent_edits",
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "watching": {
+          "type": "boolean",
+          "description": "False when the platform offers no file events"
+        },
+        "graphStale": {
+          "type": "boolean"
+        },
+        "edits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "removed": {
+                "type": "boolean"
+              },
+              "sets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "setId": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "docs",
+                        "source"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "goals": {
+                "type": "array",
+                "description": "Open compile goals derived on a document",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "owner": {
+                "type": "string",
+                "description": "The entity whose generation manifest lists a source file"
+              }
+            },
+            "required": [
+              "path",
+              "removed",
+              "sets"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "cursor",
+        "watching",
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "awaitChangesResponse": {
+      "description": "Response of await_changes",
+      "type": "object",
+      "properties": {
+        "changedDocs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "graphStale": {
+          "type": "boolean",
+          "description": "Documents changed but not yet reconciled"
+        },
+        "board": {
+          "type": "object",
+          "description": "Board counts",
+          "properties": {
+            "open": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blocked": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "parked": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "compile": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gc": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "openDiagnostics": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "generationPending": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verificationPending": {
+          "type": "object",
+          "description": "Rows needing action, grouped by reason",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "modes": {
+          "type": "object",
+          "description": "The workflow modes with their gated counts",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviseRequirement": {
+      "description": "Request payload of revise_requirement (chat). Replaces the quote in the prose and updates the requirement in one changeset",
+      "type": "object",
+      "required": [
+        "id",
+        "new_text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "new_text": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "addRequirement": {
+      "description": "Request payload of add_requirement (chat). Inserts text into the section and creates the requirement sourced from it",
+      "type": "object",
+      "required": [
+        "doc",
+        "section",
+        "text",
+        "statement",
+        "entities"
+      ],
+      "properties": {
+        "doc": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        },
+        "after_quote": {
+          "type": "string",
+          "description": "Insert after this located sentence; at the section's end when absent"
+        },
+        "text": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "retractRequirement": {
+      "description": "Request payload of retract_requirement (chat). Removes the sentence and deletes the requirement",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "editFact": {
+      "description": "Request payload of edit_fact (chat). A dual write when the fact is quoted and note carries the accepted sentence; a decree otherwise",
+      "type": "object",
+      "required": [
+        "id",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string",
+          "description": "statement, edges, transition, facets, definition, stereotype, parent, attributes.<name>.type, attributes.<name>.value, or members"
+        },
+        "value": {
+          "description": "The new value, shaped as the field is"
+        },
+        "note": {
+          "type": "string",
+          "description": "The accepted sentence rewrite, or the decree's note"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retractDecree": {
+      "description": "Request payload of retract_decree (chat). Undoes one decree",
+      "type": "object",
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "releaseWork": {
+      "description": "Request payload of release_work (writable native or hosted chat). Approves explicitly requested work without changing manual workflow modes",
+      "type": "object",
+      "required": [
+        "stage"
+      ],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "compile",
+            "generate"
+          ]
+        },
+        "setId": {
+          "type": "string",
+          "description": "Document set id, required when the project has multiple sets"
+        }
+      },
+      "additionalProperties": false
+    },
+    "bumpLimit": {
+      "description": "Request payload of bump_limit (chat). Sets one node's own threshold above the built-in limit, with decree provenance in the journal",
+      "type": "object",
+      "required": [
+        "id",
+        "limit",
+        "value"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "An entity or view id"
+        },
+        "limit": {
+          "$ref": "graph.json#/definitions/limitName"
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "answerDiagnostic": {
+      "description": "Request payload of answer_diagnostic (chat). Records a human answer the agent relays",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "option": {
+          "description": "Option index chosen",
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "description": "Freeform reply",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "initProject": {
+      "description": "Request payload of init_project (chat)",
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateProjectSettings": {
+      "description": "Request payload of update_project_settings (chat). Edits to jazyk.toml, each key rendered as a minimal edit under the project lock",
+      "type": "object",
+      "required": [
+        "settings",
+        "baseHash"
+      ],
+      "properties": {
+        "settings": {
+          "type": "object",
+          "description": "Dotted key to string value",
+          "properties": {
+            "workflow.compile": {
+              "type": "string",
+              "description": "auto needs a human (GUI, /config, or the project file) and is refused here",
+              "enum": [
+                "manual"
+              ]
+            },
+            "workflow.generate": {
+              "type": "string",
+              "description": "auto needs a human (GUI, /config, or the project file) and is refused here",
+              "enum": [
+                "manual"
+              ]
+            },
+            "workflow.worker": {
+              "type": "string",
+              "enum": [
+                "internal",
+                "agent",
+                "any"
+              ]
+            },
+            "gen.worker": {
+              "type": "string",
+              "enum": [
+                "agentic",
+                "pipeline"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "baseHash": {
+          "type": "string",
+          "description": "The configuration hash from list_document_sets"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reportFeedback": {
+      "description": "Request payload of report_feedback. Feedback about jazyk's own prompts, skills, and tools, never about the project's documents",
+      "type": "object",
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ambiguous",
+            "wrong",
+            "confusing",
+            "missing",
+            "other"
+          ],
+          "description": "An unrecognized value is recorded as other"
+        },
+        "subject": {
+          "type": "string",
+          "description": "What the feedback is about, e.g. a tool name, an argument, an instruction, a skill"
+        },
+        "message": {
+          "type": "string",
+          "description": "What was unclear and what would have helped"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reportSpend": {
+      "description": "Request payload of report_spend. What the caller's own run billed for the open batch; a second call replaces the first. Refused outside an open batch",
+      "type": "object",
+      "required": [
+        "tokens"
+      ],
+      "properties": {
+        "tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Input plus output tokens billed across every round of the batch"
+        },
+        "cached": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The input tokens among them served from the prompt cache"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reportFeedbackResponse": {
+      "description": "Response of report_feedback",
+      "type": "object",
+      "properties": {
+        "recorded": {
+          "type": "boolean",
+          "description": "False when the session's feedback cap is already spent"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "feedbackEntry": {
+      "description": "One line of the feedback log at <out>/feedback.jsonl. The payload plus the references identifying the caller",
+      "type": "object",
+      "required": [
+        "at",
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "session",
+            "mcp"
+          ],
+          "description": "The harness the call came through"
+        },
+        "batch": {
+          "description": "The goal ids of the open batch. Absent when no batch is open",
+          "type": "array",
+          "items": {
+            "$ref": "graph.json#/definitions/goalId"
+          }
+        },
+        "serving": {
+          "type": "string",
+          "description": "The MCP serving mode, for an MCP call"
+        },
+        "model": {
+          "type": "string"
+        },
+        "codec": {
+          "type": "string",
+          "enum": [
+            "native",
+            "text"
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Store generation when the call was made"
+        },
+        "run": {
+          "type": "string",
+          "description": "Transcript name under <out>/trace, when the call came from a traced run"
+        },
+        "client": {
+          "type": "string",
+          "description": "MCP client name reported at initialize"
+        }
+      },
+      "additionalProperties": false
+    },
+    "testRow": {
+      "description": "One test a manifest or binding declares",
+      "type": "object",
+      "required": [
+        "kind",
+        "label",
+        "artifact",
+        "name",
+        "run"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string",
+          "description": "Requirement id. Implied by the row in record_binding"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "programmatic",
+            "llm"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "string",
+          "description": "Deliverable-relative path of the test file, or the criteria file for an llm row"
+        },
+        "name": {
+          "type": "string"
+        },
+        "run": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "buildSpec": {
+      "description": "The one command that produces the deliverable's artifact when its medium must be built",
+      "type": "object",
+      "required": [
+        "run",
+        "produces"
+      ],
+      "properties": {
+        "run": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "produces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "generationTasksRequest": {
+      "description": "Request payload of generation_tasks",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "generationTasksResponse": {
+      "description": "Response of generation_tasks",
+      "type": "object",
+      "required": [
+        "entities"
+      ],
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "entity",
+              "reason"
+            ],
+            "properties": {
+              "entity": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "changed": {
+                "description": "Requirement ids added, removed, or reworded since the last generation",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "beginGeneration": {
+      "description": "Request payload of begin_generation",
+      "type": "object",
+      "required": [
+        "entity"
+      ],
+      "properties": {
+        "entity": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recordMedium": {
+      "description": "Request payload of record_medium. What the deliverable is made of when no session has decided it yet; refused once an entity is generated",
+      "type": "object",
+      "required": [
+        "form",
+        "produced"
+      ],
+      "properties": {
+        "form": {
+          "type": "string"
+        },
+        "produced": {
+          "type": "string",
+          "enum": [
+            "written",
+            "built"
+          ]
+        },
+        "toolchain": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "string",
+          "description": "What the build produces, when built"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recordGeneration": {
+      "description": "Request payload of record_generation. The manifest binds the written files to the graph",
+      "type": "object",
+      "required": [
+        "entity",
+        "factHash",
+        "manifest"
+      ],
+      "properties": {
+        "entity": {
+          "type": "string"
+        },
+        "factHash": {
+          "type": "string",
+          "description": "From the begin_generation package"
+        },
+        "manifest": {
+          "type": "object",
+          "required": [
+            "files",
+            "tests"
+          ],
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/testRow"
+              }
+            },
+            "build": {
+              "$ref": "#/definitions/buildSpec"
+            }
+          },
+          "additionalProperties": false
+        },
+        "choices": {
+          "description": "What the worker had to invent, each recorded as an invented-choice diagnostic graded by scope",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "choice",
+              "scope",
+              "reasoning"
+            ],
+            "properties": {
+              "choice": {
+                "type": "string",
+                "description": "The choice in one sentence"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "product",
+                  "behavior",
+                  "detail"
+                ],
+                "description": "product is an error, behavior a warning, detail a suppressible info"
+              },
+              "reasoning": {
+                "type": "string"
+              },
+              "requirements": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bindingTasksRequest": {
+      "description": "Request payload of binding_tasks",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "bindingTasksResponse": {
+      "description": "Response of binding_tasks",
+      "type": "object",
+      "required": [
+        "rows"
+      ],
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "requirement",
+              "reason"
+            ],
+            "properties": {
+              "requirement": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "unbound",
+                  "requirement-changed",
+                  "artifact-gone"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "beginBinding": {
+      "description": "Request payload of begin_binding",
+      "type": "object",
+      "required": [
+        "requirement"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recordBinding": {
+      "description": "Request payload of record_binding. An empty files list is the honest record of an unimplemented requirement",
+      "type": "object",
+      "required": [
+        "requirement",
+        "files"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/testRow"
+          }
+        },
+        "test": {
+          "$ref": "#/definitions/testRow"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "verificationTasks": {
+      "description": "Request payload of verification_tasks",
+      "type": "object",
+      "properties": {
+        "filter": {
+          "type": "string",
+          "description": "A reason to narrow to"
+        },
+        "entity": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "verificationTasksResponse": {
+      "description": "Response of verification_tasks",
+      "type": "object",
+      "required": [
+        "rows"
+      ],
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "requirement",
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "requirement": {
+                "type": "string"
+              },
+              "entity": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "not-generated",
+                  "artifact-gone",
+                  "never-run",
+                  "requirement-changed",
+                  "test-changed",
+                  "code-changed",
+                  "failed",
+                  "missing"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "beginVerification": {
+      "description": "Request payload of begin_verification",
+      "type": "object",
+      "required": [
+        "requirement"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runTests": {
+      "description": "Request payload of run_tests. Every non-verified programmatic row when requirements is absent",
+      "type": "object",
+      "properties": {
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Rerun every programmatic row, verified ones included"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recordVerdict": {
+      "description": "Request payload of record_verdict",
+      "type": "object",
+      "required": [
+        "requirement",
+        "verdict"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "factHash": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "criteria": {
+          "description": "One entry per bound LLM criterion test, required when several are bound",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "criterion",
+              "verdict",
+              "factHash"
+            ],
+            "properties": {
+              "criterion": {
+                "type": "string"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "factHash": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "readTextFile": {
+      "description": "Request payload of read_text_file. path is relative to the deliverable; limit defaults to 400 lines and the content is capped at 64 KiB",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "description": "The first line, 1-based"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "writeTextFile": {
+      "description": "Request payload of write_text_file. old_text requires expectedHash and cannot combine with append",
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "append": {
+          "type": "boolean"
+        },
+        "old_text": {
+          "type": "string",
+          "description": "Literal text matching exactly once, replaced by content"
+        },
+        "expectedHash": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "listFiles": {
+      "description": "Request payload of list_files. At most 500 files, breadth first in name order",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "A subdirectory to list"
+        }
+      },
+      "additionalProperties": false
+    },
+    "taskContext": {
+      "description": "Request payload of task_context",
+      "type": "object",
+      "properties": {
+        "before": {
+          "type": "string",
+          "description": "The next_cursor of a previous reply, for older runs"
+        },
+        "task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Full definitions for these tasks only"
+        }
+      },
+      "additionalProperties": false
+    },
+    "updateTasks": {
+      "description": "Request payload of update_tasks. Replaces the flat task list at the expected revision",
+      "type": "object",
+      "required": [
+        "expected_revision",
+        "tasks"
+      ],
+      "properties": {
+        "expected_revision": {
+          "type": "string"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "One project task (task-runtime.md)"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "runTask": {
+      "description": "Request payload of run_task. Runs one saved task in a fresh isolated environment",
+      "type": "object",
+      "required": [
+        "task_id",
+        "expected_revision",
+        "operation_key"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "type": "string"
+        },
+        "operation_key": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "integer"
+        },
+        "wait": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inspectRun": {
+      "description": "Request payload of inspect_run",
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cancelRun": {
+      "description": "Request payload of cancel_run. Idempotent",
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "waitRun": {
+      "description": "Request payload of wait_run. Repeating does not extend the deadline",
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "wait_ms": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "readRunLog": {
+      "description": "Request payload of read_run_log. Offsets and limits count Unicode characters",
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "default": 16000,
+          "maximum": 64000
+        }
+      },
+      "additionalProperties": false
+    },
+    "searchRunLog": {
+      "description": "Request payload of search_run_log. Literal text, matching lines with 1-based line numbers",
+      "type": "object",
+      "required": [
+        "run_id",
+        "query"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "default": 0,
+          "description": "Log lines to skip"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 100,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "readRunChanges": {
+      "description": "Request payload of read_run_changes. version input requires path",
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "version": {
+          "type": "string",
+          "enum": [
+            "changes",
+            "input"
+          ],
+          "default": "changes"
+        }
+      },
+      "additionalProperties": false
+    },
+    "beginDecompile": {
+      "description": "Request payload of begin_decompile",
+      "type": "object",
+      "required": [
+        "scope"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "submitDraft": {
+      "description": "Request payload of submit_draft. Validates the draft and writes it into the docs tree",
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Docs-relative path under the docs glob"
+        },
+        "content": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "description": "The scope from decompile_tasks whose release the draft consumes"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

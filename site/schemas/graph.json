@@ -1,0 +1,1785 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jazyk.org/schemas/graph.json",
+  "title": "Jazyk Graph Store",
+  "description": "Definitions for the graph store files in the out directory:\n- graph/entities/<file id>.yaml is one entity\n- graph/requirements/<file id>.yaml is one requirement\n- graph/criteria/<file id>.yaml is one criterion\n- graph/views/<file id>.yaml is one curated view\n- graph/default-views/<file id>.yaml is one default view (derived, local, rewritten on every commit)\n- graph/diagnostics/<file id>.yaml is one diagnostic\n- graph/redirects/<file id>.yaml is one object, `to` the surviving id\n- graph/relationships/<file id>.yaml is one relationship (derived, local, rewritten on every commit)\n- graph/state-machines/<file id>.yaml is one stateMachine (derived, local, rewritten on every commit)\nEvery node file starts with the node's `id`. Generation markers (`created`,\n`updated`) and the mentions an entity gains from requirements are not written.\nA file id is the node id, `:` written as `~` and `/` as `+`, every byte outside\nlowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.\nA file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the\nload then reads the full id from the file's `id`.\n- docs/<mirrored doc path>.yaml is one docRecord per source document\n- journal/g<generation>.yaml is one journalEntry per generation\n- status.yaml is one status object\n- changes/<kind>/<subject file id>.yaml is one changeRecord\n- parked/<goal file id>.yaml is one goal, with an optional reason\n- failed/<goal file id>.yaml is one failedGoal\n- alignment/<doc file id>.yaml is one docAlignment\n- lookalikes/<pair file id>.yaml is one lookalikeVerdict\n- build.yaml is one buildState object (local, never committed)\n- markers.yaml maps each node id to [created, updated] (local, never committed)\n- causes.yaml maps each change record's kind and subject to its id, generation, and\n  mutation (local, never committed)\nGoals are derived from these files and never stored; goal ids appear only in\njournal entries and the parked/ and failed/ records.",
+  "definitions": {
+    "severity": {
+      "description": "Diagnostic severity. 'none' is a recorded judgment that is not surfaced",
+      "type": "string",
+      "enum": [
+        "error",
+        "warning",
+        "info",
+        "none"
+      ]
+    },
+    "relationshipType": {
+      "description": "Relationship type, the UML set. Strength for collapsed and lifted arrows runs in this order, strongest first; instantiation is never promoted",
+      "type": "string",
+      "enum": [
+        "generalization",
+        "realization",
+        "composition",
+        "aggregation",
+        "association",
+        "dependency",
+        "instantiation"
+      ]
+    },
+    "cardinality": {
+      "description": "Multiplicity on the b side of an edge: `*`, a count (1, 4), or a range (0..1, 1..*, 2..3)",
+      "type": "string",
+      "pattern": "^(\\*|[0-9]+|[0-9]+\\.\\.([0-9]+|\\*))$"
+    },
+    "facetName": {
+      "description": "The judged facet of a requirement",
+      "type": "string",
+      "enum": [
+        "behavior",
+        "constraint",
+        "failure-mode",
+        "quality"
+      ]
+    },
+    "viewKind": {
+      "description": "A renderable view kind from the catalog",
+      "type": "string",
+      "enum": [
+        "class",
+        "object",
+        "package",
+        "component",
+        "composite",
+        "deployment",
+        "use-case",
+        "activity",
+        "state",
+        "sequence",
+        "communication",
+        "timing",
+        "overview"
+      ]
+    },
+    "limitName": {
+      "description": "A limit from the built-in registry",
+      "type": "string",
+      "enum": [
+        "requirements-per-entity",
+        "children-per-entity",
+        "members-per-structural-view",
+        "edges-per-view",
+        "members-per-flow-view",
+        "participants-per-sequence-view",
+        "instances-per-object-view",
+        "states-per-state-machine"
+      ]
+    },
+    "goalId": {
+      "description": "A derived goal id, g:<kind>:<target>",
+      "type": "string",
+      "pattern": "^g:[a-z-]+:.+$"
+    },
+    "coverageState": {
+      "description": "Coverage state of a reconciled section",
+      "type": "string",
+      "enum": [
+        "covered",
+        "non-normative"
+      ]
+    },
+    "sourceRef": {
+      "description": "A located quote. 'doc' is the document path, 'section' the internal reference, 'quote' the verbatim text located by whitespace-insensitive string search",
+      "type": "object",
+      "required": [
+        "doc",
+        "section",
+        "quote"
+      ],
+      "properties": {
+        "doc": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        }
+      }
+    },
+    "quoteProvenance": {
+      "description": "The fact was extracted from prose",
+      "type": "object",
+      "required": [
+        "quote"
+      ],
+      "properties": {
+        "quote": {
+          "$ref": "#/definitions/sourceRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "derivedProvenance": {
+      "description": "The fact was synthesized from upstream nodes. Invented until ratified: a ratification proposal stands while this provenance does",
+      "type": "object",
+      "required": [
+        "derived"
+      ],
+      "properties": {
+        "derived": {
+          "type": "object",
+          "required": [
+            "from",
+            "reasoning"
+          ],
+          "properties": {
+            "from": {
+              "description": "Upstream node ids, at least one, all live",
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "reasoning": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "decreeProvenance": {
+      "description": "The fact was written by a human directly on the graph. Outranks derivation, not the documents: a ratification proposal stands until the decree reaches prose or is retracted",
+      "type": "object",
+      "required": [
+        "decree"
+      ],
+      "properties": {
+        "decree": {
+          "type": "object",
+          "required": [
+            "author",
+            "at"
+          ],
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string",
+              "description": "Timestamp of the decree"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "description": "Exactly one of the three provenance kinds",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/quoteProvenance"
+        },
+        {
+          "$ref": "#/definitions/derivedProvenance"
+        },
+        {
+          "$ref": "#/definitions/decreeProvenance"
+        }
+      ]
+    },
+    "limits": {
+      "description": "Per-node bumps of the built-in limits, keyed by limit name. Written by bump_limit with decree provenance recorded in the journal. Entity nodes carry requirements-per-entity, children-per-entity, states-per-state-machine; view nodes carry the view limits",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/definitions/limitName"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "attribute": {
+      "description": "One named attribute of an entity. A type where prose states structure, a value where the entity is an instance. Behavior is never an attribute",
+      "type": "object",
+      "required": [
+        "name",
+        "provenance"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/definitions/provenance"
+        }
+      },
+      "additionalProperties": false
+    },
+    "requirementEdge": {
+      "description": "One relationship a requirement causes. Directional, a acts on b",
+      "type": "object",
+      "required": [
+        "a",
+        "b"
+      ],
+      "properties": {
+        "a": {
+          "type": "string",
+          "description": "Entity id, among the requirement's entities"
+        },
+        "b": {
+          "type": "string",
+          "description": "Entity id, among the requirement's entities, distinct from a"
+        },
+        "type": {
+          "description": "Relationship type. An edge without one contributes dependency",
+          "allOf": [
+            {
+              "$ref": "#/definitions/relationshipType"
+            }
+          ],
+          "default": "dependency"
+        },
+        "cardinality": {
+          "$ref": "#/definitions/cardinality"
+        }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "description": "The state change a requirement describes. The source of the subject's derived state machine",
+      "type": "object",
+      "required": [
+        "subject",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "subject": {
+          "type": "string",
+          "description": "Entity id, among the requirement's entities"
+        },
+        "from": {
+          "type": "string",
+          "description": "State name"
+        },
+        "to": {
+          "type": "string",
+          "description": "State name"
+        },
+        "trigger": {
+          "type": "string",
+          "description": "The event that fires the transition"
+        },
+        "guard": {
+          "type": "string",
+          "description": "The condition under which it fires"
+        }
+      },
+      "additionalProperties": false
+    },
+    "facet": {
+      "description": "One judged facet of a requirement, recorded with reasoning",
+      "type": "object",
+      "required": [
+        "facet",
+        "reasoning"
+      ],
+      "properties": {
+        "facet": {
+          "$ref": "#/definitions/facetName"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "measure": {
+          "type": "string",
+          "description": "The measurable bound. Stated only on a quality facet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity": {
+      "description": "One node file under graph/entities/",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The node id, the first field of its node file. The load checks it against the file name"
+        },
+        "name": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "distinct_from": {
+          "description": "The lookalikes a note told this entity apart from at creation, id to note; the lookalike index never pairs the two again",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "not_about": {
+          "description": "Requirement ids a review judged to name this entity as a word match only; the review hint stops offering them until their statement changes",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "definition": {
+          "description": "The single living definition, refined across builds",
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "description": "Visibility scope, part of the entity's natural key",
+          "default": "public"
+        },
+        "stereotype": {
+          "type": "string",
+          "description": "A free-form judged label. Nothing enumerates the allowed values"
+        },
+        "parent": {
+          "type": "string",
+          "description": "The containing entity. One tree, unlimited depth, acyclic. Part of the natural key when the caller supplies it"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/attribute"
+          }
+        },
+        "mentions": {
+          "description": "The sections that talk about this entity, each a located quote",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/sourceRef"
+          }
+        },
+        "provenance": {
+          "description": "Present on entities with no mention behind them (derived or decreed structure). An entity has at least one mention or a provenance",
+          "$ref": "#/definitions/provenance"
+        },
+        "limits": {
+          "$ref": "#/definitions/limits"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        },
+        "updated": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        }
+      }
+    },
+    "requirement": {
+      "description": "One node file under graph/requirements/. Carries exactly one of source (the quote form) or provenance (derived or decree)",
+      "type": "object",
+      "required": [
+        "statement",
+        "entities"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "source"
+          ],
+          "not": {
+            "required": [
+              "provenance"
+            ]
+          }
+        },
+        {
+          "required": [
+            "provenance"
+          ],
+          "not": {
+            "required": [
+              "source"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The node id, the first field of its node file. The load checks it against the file name"
+        },
+        "statement": {
+          "type": "string",
+          "description": "One atomic obligation, free-form"
+        },
+        "entities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "description": "Entity id"
+          }
+        },
+        "edges": {
+          "description": "The relationships this one statement causes, plural",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/requirementEdge"
+          }
+        },
+        "transition": {
+          "$ref": "#/definitions/transition"
+        },
+        "facets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/facet"
+          }
+        },
+        "source": {
+          "description": "The quote form of provenance on a requirement",
+          "$ref": "#/definitions/sourceRef"
+        },
+        "provenance": {
+          "description": "Derived or decree provenance. Never the quote form on a requirement",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/derivedProvenance"
+            },
+            {
+              "$ref": "#/definitions/decreeProvenance"
+            }
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        },
+        "updated": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        }
+      }
+    },
+    "viewQuery": {
+      "description": "Membership by rule instead of list. Recomputed on every commit",
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string",
+          "description": "Entity id. Members are its descendants"
+        },
+        "stereotype": {
+          "type": "string"
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many containment levels below the root to include"
+        }
+      },
+      "additionalProperties": false
+    },
+    "exclusion": {
+      "description": "A node kept out of a view on purpose",
+      "type": "object",
+      "required": [
+        "id",
+        "note"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "criterion": {
+      "description": "One node file under graph/criteria/: the observable evidence one requirement is met. Carries exactly one of source (the quote form) or provenance (derived or decree)",
+      "type": "object",
+      "required": [
+        "requirement",
+        "statement",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The node id, the first field of its node file. The load checks it against the file name"
+        },
+        "requirement": {
+          "type": "string",
+          "pattern": "^req:"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "given": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        },
+        "then": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "positive",
+            "negative",
+            "boundary",
+            "quality"
+          ]
+        },
+        "measure": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "description": "The quote form of provenance on a criterion",
+          "$ref": "#/definitions/sourceRef"
+        },
+        "provenance": {
+          "description": "Derived or decree provenance. Never the quote form on a criterion",
+          "oneOf": [
+            {
+              "$ref": "#/definitions/derivedProvenance"
+            },
+            {
+              "$ref": "#/definitions/decreeProvenance"
+            }
+          ]
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Set by the store when the owning requirement's statement changed after this derived criterion was written. Cleared by the next update"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string"
+        },
+        "updated": {
+          "type": "string"
+        }
+      }
+    },
+    "view": {
+      "description": "One node file under graph/views/ (a default view under graph/default-views/). The stored half of a diagram: what it includes, never how it looks",
+      "type": "object",
+      "required": [
+        "kind",
+        "title",
+        "provenance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The node id, the first field of its node file. The load checks it against the file name"
+        },
+        "kind": {
+          "$ref": "#/definitions/viewKind"
+        },
+        "title": {
+          "type": "string",
+          "description": "Part of the natural key with kind"
+        },
+        "members": {
+          "description": "Ordered node ids. Entities for structural views, requirements for flow views, mixed where a kind wants both. Order is the flow order",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/exclusion"
+          }
+        },
+        "query": {
+          "$ref": "#/definitions/viewQuery"
+        },
+        "collapse": {
+          "description": "Entity ids shown as one node despite their children",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provenance": {
+          "$ref": "#/definitions/provenance"
+        },
+        "default": {
+          "type": "boolean",
+          "const": true,
+          "description": "Set by the store on the default views it recomputes every commit. Absent on curated views. Any mutation that names the view clears it (update_view with any field, edit_fact, a decree, a limit bump). The deriving rule rides in provenance.derived.reasoning"
+        },
+        "limits": {
+          "$ref": "#/definitions/limits"
+        },
+        "created": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        },
+        "updated": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        }
+      }
+    },
+    "contribution": {
+      "description": "One direction-and-type group of a relationship, with the requirements behind it",
+      "type": "object",
+      "required": [
+        "a",
+        "b",
+        "type",
+        "requirements"
+      ],
+      "properties": {
+        "a": {
+          "type": "string",
+          "description": "Entity id, the acting side"
+        },
+        "b": {
+          "type": "string",
+          "description": "Entity id, the acted-on side"
+        },
+        "type": {
+          "$ref": "#/definitions/relationshipType"
+        },
+        "cardinality": {
+          "description": "Present when the contributing edges that state one agree",
+          "$ref": "#/definitions/cardinality"
+        },
+        "requirements": {
+          "description": "The requirements whose edges contribute to this group",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "relationship": {
+      "description": "One node file under graph/relationships/. One node per unordered entity pair, derived from requirement edges on commit",
+      "type": "object",
+      "required": [
+        "members",
+        "contributions"
+      ],
+      "properties": {
+        "members": {
+          "description": "The two entities, sorted by id",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "contributions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/contribution"
+          }
+        }
+      }
+    },
+    "stateTransition": {
+      "description": "One transition of a derived state machine",
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "requirements"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "guard": {
+          "type": "string"
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The contributing requirement ids, ordered",
+          "items": {
+            "type": "string",
+            "pattern": "^req:"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "stateMachine": {
+      "description": "One node file under graph/state-machines/. One per entity that any transition names as subject, derived on commit",
+      "type": "object",
+      "required": [
+        "subject",
+        "states",
+        "transitions"
+      ],
+      "properties": {
+        "subject": {
+          "type": "string",
+          "description": "Entity id"
+        },
+        "states": {
+          "description": "The union of the names the transitions use, each at its first occurrence in document order",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "initial": {
+          "type": "string",
+          "description": "The one state no transition reaches. Absent when there are none or several"
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/stateTransition"
+          }
+        }
+      }
+    },
+    "diagnostic": {
+      "description": "One node file under graph/diagnostics/. Sticky, reconciled across builds",
+      "type": "object",
+      "required": [
+        "rule",
+        "severity",
+        "subjects",
+        "message"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The node id, the first field of its node file. The load checks it against the file name"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/severity"
+        },
+        "subjects": {
+          "description": "Node ids or full section references (doc.md#/ref) this diagnostic is about",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "reasoning": {
+          "description": "Why this severity or disposition was chosen",
+          "type": "string"
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "open",
+            "resolved"
+          ],
+          "default": "open"
+        },
+        "triage": {
+          "description": "Human-set state. Survives rebuilds",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "acknowledged",
+            "suppressed",
+            "wontfix",
+            null
+          ]
+        },
+        "prompt": {
+          "$ref": "#/definitions/diagnosticPrompt"
+        },
+        "answer": {
+          "description": "Human response to the prompt. Set by frontends, never the compiler",
+          "type": "object",
+          "required": [
+            "text",
+            "status"
+          ],
+          "properties": {
+            "choice": {
+              "description": "Option index answered, null for a freeform reply",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "text": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "applied",
+                "handling",
+                "handled",
+                "failed"
+              ]
+            },
+            "error": {
+              "description": "Why a failed answer could not be acted on",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "created": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        },
+        "updated": {
+          "type": "string",
+          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+        }
+      }
+    },
+    "diagnosticPrompt": {
+      "description": "A question or proposal attached to a diagnostic",
+      "type": "object",
+      "required": [
+        "question"
+      ],
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": [
+              "label"
+            ],
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "edit": {
+                "description": "A suggested edit; applying it is deterministic",
+                "type": "object",
+                "required": [
+                  "doc",
+                  "section",
+                  "old_text",
+                  "new_text"
+                ],
+                "properties": {
+                  "doc": {
+                    "type": "string"
+                  },
+                  "section": {
+                    "type": "string"
+                  },
+                  "old_text": {
+                    "type": "string",
+                    "description": "Empty when the edit inserts a sentence, as a ratification proposal does"
+                  },
+                  "new_text": {
+                    "type": "string"
+                  },
+                  "facts": {
+                    "description": "The fact changes the rewrite implies for the requirements it touches, applied in the same changeset as the prose",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "field",
+                        "value"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "A requirement quoted from the edit's section"
+                        },
+                        "field": {
+                          "type": "string",
+                          "enum": [
+                            "statement",
+                            "entities",
+                            "edges",
+                            "transition",
+                            "facets"
+                          ]
+                        },
+                        "value": {
+                          "description": "The field's new content, in the shape update_requirement takes"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "answer": {
+                "description": "A prefilled reply, handled by the model over ACP",
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "freeform": {
+          "description": "Whether a typed reply is accepted",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "section": {
+      "description": "One entry in a docRecord's sections map, keyed by internal reference",
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "preamble",
+            "root",
+            "heading",
+            "code-block",
+            "diagram",
+            "blob"
+          ]
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position among siblings"
+        },
+        "parent": {
+          "type": "string",
+          "description": "Internal reference of the parent. Absent on the preamble, the root (the first heading), and a later top-level heading"
+        },
+        "raw": {
+          "type": "string",
+          "description": "Verbatim source text"
+        },
+        "hash": {
+          "type": "string",
+          "description": "Content hash of raw, used for section diffing"
+        },
+        "lines": {
+          "description": "Start and end line in the source file. Recomputed at load from the raw texts in document order, never written to a docs/ record",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "coverage": {
+      "description": "One entry in a docRecord's coverage map, keyed by internal reference. A section with no entry is unprocessed",
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/definitions/coverageState"
+        },
+        "note": {
+          "type": "string",
+          "description": "Required when state is non-normative"
+        },
+        "claimedBy": {
+          "type": "string",
+          "description": "The journal entry of the changeset that set the state"
+        }
+      }
+    },
+    "docRecord": {
+      "description": "One file under docs/, mirroring one source document",
+      "type": "object",
+      "properties": {
+        "sections": {
+          "type": "object",
+          "description": "Map of internal reference to section",
+          "additionalProperties": {
+            "$ref": "#/definitions/section"
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "description": "Map of internal reference to coverage",
+          "additionalProperties": {
+            "$ref": "#/definitions/coverage"
+          }
+        }
+      }
+    },
+    "changeKind": {
+      "description": "The typed dirtiness a commit caused",
+      "type": "string",
+      "enum": [
+        "section-dirty",
+        "section-removed",
+        "anchor-stale",
+        "alignment-pending",
+        "requirement-created",
+        "requirement-revised",
+        "requirement-deleted",
+        "criterion-created",
+        "criterion-revised",
+        "criterion-deleted",
+        "entity-changed",
+        "entity-deleted",
+        "node-deleted",
+        "instance-changed",
+        "ledger-stale",
+        "prompt-unanswered",
+        "provenance-pending",
+        "threshold-crossed",
+        "view-member-gone",
+        "edges-missing",
+        "lookalike",
+        "query-match",
+        "flow-unplaced",
+        "reparent-flip"
+      ]
+    },
+    "changeRecord": {
+      "description": "One file under changes/<kind>/, named by its subject, holding kind, subject, via, and detail; id, generation, and mutation are local in causes.yaml. Written at commit, read by goal derivation as a goal's change, cleared when the goal resolves",
+      "type": "object",
+      "required": [
+        "kind",
+        "subject"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "c<generation>-<hash>, the generation that wrote it and the id hash of its kind and subject. A version 3 record keeps its c<generation>-<index> id",
+          "pattern": "^c[0-9]+-[0-9a-z]+$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mutation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index in the journal entry, 0 for store-level causes"
+        },
+        "kind": {
+          "$ref": "#/definitions/changeKind"
+        },
+        "subject": {
+          "type": "string",
+          "description": "A node id or a full section reference doc.md#/ref"
+        },
+        "via": {
+          "type": "string",
+          "description": "The edge or computation that carried dirtiness to the subject"
+        },
+        "detail": {
+          "type": "object",
+          "description": "Kind-specific evidence. The goal's change"
+        }
+      }
+    },
+    "goalCause": {
+      "description": "The committed change that spawned a goal",
+      "type": "object",
+      "required": [
+        "generation",
+        "mutation",
+        "via"
+      ],
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mutation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "via": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goalResolution": {
+      "description": "A goal a changeset resolved, with the one-line justification",
+      "type": "object",
+      "required": [
+        "goal",
+        "justification"
+      ],
+      "properties": {
+        "goal": {
+          "$ref": "#/definitions/goalId"
+        },
+        "justification": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Kind-specific evidence the gate checked"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goalOpening": {
+      "description": "A goal a changeset opened, with its cause",
+      "type": "object",
+      "required": [
+        "goal",
+        "cause"
+      ],
+      "properties": {
+        "goal": {
+          "$ref": "#/definitions/goalId"
+        },
+        "cause": {
+          "$ref": "#/definitions/goalCause"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goalState": {
+      "description": "Where a goal stands",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "open",
+            "parked"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "blocked"
+          ],
+          "properties": {
+            "blocked": {
+              "type": "object",
+              "required": [
+                "on"
+              ],
+              "properties": {
+                "on": {
+                  "type": "string",
+                  "description": "What the goal waits on"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "failed"
+          ],
+          "properties": {
+            "failed": {
+              "type": "object",
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "goal": {
+      "description": "A derived goal, persisted whole in the parked/ and failed/ records so a re-derivation keeps it",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "target"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/goalId"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "class": {
+          "type": "string",
+          "enum": [
+            "compile",
+            "gc"
+          ]
+        },
+        "mandatory": {
+          "type": "boolean"
+        },
+        "target": {
+          "type": "string",
+          "description": "A node id, a section reference, a document path, or a pair"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "change": {
+          "type": "object",
+          "description": "The goal's change, kind-specific"
+        },
+        "cause": {
+          "$ref": "#/definitions/goalCause"
+        },
+        "state": {
+          "$ref": "#/definitions/goalState"
+        },
+        "hints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "description": "On a parked record only: which road ran out, in the words the trace uses"
+        }
+      },
+      "additionalProperties": false
+    },
+    "failedGoal": {
+      "description": "A goal a session marked failed, whole, with the reason",
+      "type": "object",
+      "required": [
+        "goal",
+        "reason"
+      ],
+      "properties": {
+        "goal": {
+          "$ref": "#/definitions/goal"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "journalKind": {
+      "description": "What kind of changeset the entry records",
+      "type": "string",
+      "enum": [
+        "session",
+        "edit",
+        "align",
+        "gc",
+        "settle-diagnostics",
+        "checks",
+        "decree",
+        "dual-write",
+        "ratify",
+        "triage",
+        "answer"
+      ]
+    },
+    "journalEntry": {
+      "description": "One file under journal/, one per generation",
+      "type": "object",
+      "required": [
+        "build",
+        "kind"
+      ],
+      "properties": {
+        "build": {
+          "type": "string",
+          "description": "Generation marker (g<N>) of the generation this entry committed"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The generation this entry committed"
+        },
+        "kind": {
+          "$ref": "#/definitions/journalKind"
+        },
+        "batch": {
+          "description": "The goals the session was given. Session entries only",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/goalId"
+          }
+        },
+        "author": {
+          "type": "string",
+          "description": "The human behind a decree, dual-write, ratify, triage, or answer entry"
+        },
+        "note": {
+          "type": "string",
+          "description": "The human's note on a decree, dual-write, ratify, or answer entry"
+        },
+        "dirtied": {
+          "description": "Full section references a human save dirtied or removed. Edit entries only",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mutations": {
+          "description": "The applied mutations in order, each an operation name with its arguments. Change records point at them by index, counting from 1. A decree written over a quoted fact records the prior value and source on the mutation, which retract_decree restores",
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "resolved_goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/goalResolution"
+          }
+        },
+        "opened_goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/goalOpening"
+          }
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Message rounds the session used"
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tokens the session spent. Absent when an external agent drove the session and reported nothing"
+        },
+        "cachedTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The input tokens among tokens the endpoint served from its prompt cache"
+        },
+        "tokensSource": {
+          "type": "string",
+          "enum": [
+            "agent"
+          ],
+          "description": "agent when an external agent reported its own bill. Absent when the harness measured it"
+        }
+      }
+    },
+    "costLine": {
+      "description": "Sessions and tokens for one slice of the accounting",
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "costs": {
+      "description": "Cost accounting for the last build, aggregated by goal kind and class",
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_kind": {
+          "type": "object",
+          "description": "Map of goal kind to its line",
+          "additionalProperties": {
+            "$ref": "#/definitions/costLine"
+          }
+        },
+        "by_class": {
+          "type": "object",
+          "properties": {
+            "compile": {
+              "$ref": "#/definitions/costLine"
+            },
+            "gc": {
+              "$ref": "#/definitions/costLine"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "verdict": {
+      "description": "The convergence verdict of the last build with its counts",
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "converged",
+            "incomplete"
+          ]
+        },
+        "open": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Open mandatory goals"
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Failed mandatory goals"
+        },
+        "blocked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Goals blocked on a human"
+        },
+        "optional": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Open optional goals, standing advice"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "description": "The status.yaml file, committed. The rest of the status is one file per record under changes/, parked/, failed/, alignment/, and lookalikes/",
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "description": "The store version. A version 3 store loads and is written in this layout by its next save. An out directory whose status.yaml lacks it or carries another one is archived whole and the store starts empty",
+          "type": "integer",
+          "const": 4
+        },
+        "reevaluate": {
+          "description": "Anchors a place-anchors session placed with reevaluate, listed as stale anchors until addressed",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "roots": {
+          "description": "The documents matching the project roots, stamped by the build after the section trees sync. Orders documents by link level on commits outside a build",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "lookalikeVerdict": {
+      "description": "One lookalikes/<pair file id>.yaml record: an entity pair a session kept apart, with the score at judgment. Keeps the pair off the board while its score holds",
+      "type": "object",
+      "required": [
+        "pair",
+        "verdict",
+        "score",
+        "generation"
+      ],
+      "properties": {
+        "pair": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "separate"
+          ]
+        },
+        "score": {
+          "type": "number"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "buildState": {
+      "description": "The build.yaml file, local: the generation and what the last run left behind",
+      "type": "object",
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bumped on every commit. A load takes the larger of this and the highest generation status.yaml names"
+        },
+        "verdict": {
+          "$ref": "#/definitions/verdict"
+        },
+        "costs": {
+          "$ref": "#/definitions/costs"
+        },
+        "spent": {
+          "type": "object",
+          "description": "Budgets spent in the last build",
+          "properties": {
+            "sessions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rounds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "diagnostics": {
+          "type": "object",
+          "description": "Open diagnostic counts by severity, suppressed excluded",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "docs": {
+          "type": "object",
+          "description": "Document path to the content hash of the source file at last reconcile. A document without an entry takes part in alignment as changed",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sectionOp": {
+      "description": "One computed section change",
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "edited",
+            "moved",
+            "split",
+            "merged",
+            "deleted",
+            "added"
+          ]
+        },
+        "from": {
+          "description": "Old full references",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "to": {
+          "description": "New full references",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "similarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "anchorCandidate": {
+      "description": "One candidate section for a proposed anchor",
+      "type": "object",
+      "required": [
+        "section",
+        "similarity",
+        "quoteLocates"
+      ],
+      "properties": {
+        "section": {
+          "type": "string",
+          "description": "Full reference, doc.md#/ref"
+        },
+        "similarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "quoteLocates": {
+          "type": "boolean"
+        },
+        "nearest": {
+          "type": "string",
+          "description": "The best matching window when the quote does not locate"
+        },
+        "excerpt": {
+          "type": "string"
+        }
+      }
+    },
+    "anchorProposal": {
+      "description": "One anchor alignment could not place with certainty",
+      "type": "object",
+      "required": [
+        "anchor",
+        "from",
+        "quote",
+        "candidates"
+      ],
+      "properties": {
+        "anchor": {
+          "type": "string",
+          "description": "Requirement or entity id"
+        },
+        "from": {
+          "type": "string",
+          "description": "Old full reference"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "excerpt": {
+          "type": "string",
+          "description": "The old section around the quote"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/anchorCandidate"
+          }
+        }
+      }
+    },
+    "docAlignment": {
+      "description": "The pending proposals of one target document",
+      "type": "object",
+      "required": [
+        "doc",
+        "proposals"
+      ],
+      "properties": {
+        "doc": {
+          "type": "string"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/sectionOp"
+          }
+        },
+        "proposals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/anchorProposal"
+          }
+        }
+      }
+    }
+  }
+}

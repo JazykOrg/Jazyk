@@ -29,8 +29,9 @@ same way, with the differences listed there.
   with status 404.
 - DNS is at Porkbun, the registrar: an ALIAS on the apex and a CNAME on `www`, both to the
   distribution's domain, plus the certificate's validation CNAME, which must stay.
-- Deploying is `site/deploy.sh`: sync everything but HTML with a week of cache, the HTML
-  files with no cache, then invalidate the distribution. The GitHub Actions workflow
+- Deploying is `site/deploy.sh`: sync everything but HTML and schemas with a week of
+  cache, the HTML files and the [schemas](#schemas) with no cache, then invalidate the
+  distribution. The GitHub Actions workflow
   runs the same script on every push to `master` that touches `site/`, assuming an IAM
   role through OpenID Connect; no long-lived key is stored in GitHub.
 
@@ -94,3 +95,25 @@ The site shows `npx -y jazyk` and `npm install -g jazyk`. It links each supporte
 platform archive through GitHub latest-release URLs, with checksums and all
 releases beside them. [Distribution](frontends/distribution.md) defines the
 platforms and the manual release workflow.
+
+## Schemas
+
+Every JSON Schema in `docs/` is served at the URL its `$id` names, so an editor or a
+validator that follows the `$id` reads the current schema:
+
+- `https://jazyk.org/schemas/graph.json`: [`graph.schema.yaml`](compiler/graph.schema.yaml),
+  the graph store's files.
+- `https://jazyk.org/schemas/tools.json`: [`tools.schema.yaml`](compiler/tools.schema.yaml),
+  the tool requests.
+- `https://jazyk.org/schemas/project-settings.json`:
+  [`project-settings.schema.yaml`](compiler/project-settings.schema.yaml), `jazyk.toml`.
+- `https://jazyk.org/schemas/case.json`: [`case.schema.yaml`](benchmark/case.schema.yaml),
+  the benchmark cases.
+
+The YAML file in `docs/` is the source. `site/schemas/<name>.json` is its JSON form, the
+same document with the same key order, two-space indented, ending in a newline. It is
+committed beside the site and never edited by hand. An engine test converts every
+`docs/**/*.schema.yaml` that names a `https://jazyk.org/schemas/` `$id` and fails when
+a JSON file is missing, differs, or has no source. `JAZYK_WRITE_SCHEMAS=1` makes the
+same test write the files. A schema change and its publication land in one commit, and
+the push publishes it.

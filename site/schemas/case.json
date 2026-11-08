@@ -1,0 +1,1085 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jazyk.org/schemas/case.json",
+  "title": "Jazyk Benchmark Case",
+  "description": "One benchmark case: a sandbox fixture, one goal to run in one session, and deterministic assertions over the staged mutations and the resulting state. Embedded as a fenced yaml block in a case file under cases/",
+  "type": "object",
+  "required": [
+    "name",
+    "description",
+    "goal",
+    "given",
+    "assert"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "goals": {
+      "description": "Replays only: the batch's other goals, held in the same session. See replays.md",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "target"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "steps": {
+      "description": "Replays only: the scripted tool calls the session runs without a model, in order, each with the reply the harness must give. See replays.md",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "call"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "call": {
+            "description": "A tool name from the goal's toolset",
+            "type": "string"
+          },
+          "args": {
+            "description": "The call's arguments",
+            "type": "object"
+          },
+          "expect": {
+            "description": "The reply the harness must give; ok true when omitted",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "rule": {
+                "description": "The error rule the reply must carry",
+                "type": "string"
+              },
+              "contains": {
+                "description": "A pattern the reply must match, case-insensitive",
+                "type": "string"
+              },
+              "absent": {
+                "description": "A pattern the reply must not match",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "name": {
+      "description": "Unique case name, usually the case file stem",
+      "type": "string"
+    },
+    "description": {
+      "description": "One sentence stating the skill the case grades",
+      "type": "string"
+    },
+    "tier": {
+      "description": "The tier the case gates. Tier scores and workflow verdicts derive from these",
+      "type": "string",
+      "enum": [
+        "extraction",
+        "review",
+        "structure",
+        "generation",
+        "verification"
+      ],
+      "default": "extraction"
+    },
+    "par": {
+      "description": "The effort a competent model needs; efficiency compares against it",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rounds": {
+          "description": "Rounds a competent model needs. Defaults per tier when omitted",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "goal": {
+      "description": "The goal the harness runs",
+      "type": "object",
+      "required": [
+        "kind",
+        "target"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "The goal kind of the session. The first four build the goal from the target; the rest derive it from the seeded fixture (cases.md#derived-goals)",
+          "type": "string",
+          "enum": [
+            "reconcile-section",
+            "review-entity",
+            "generate",
+            "verify",
+            "rejudge-pair",
+            "declare-edges",
+            "derive-criteria",
+            "bind",
+            "dedupe-candidates",
+            "curate-view",
+            "split-view",
+            "abstract-entity"
+          ]
+        },
+        "target": {
+          "description": "The goal's target. A document path for reconcile-section (the session holds every section of that document as one batch), an entity id for review-entity and generate, a requirement id for verify, declare-edges, and bind, an entity id for derive-criteria, a requirement pair `req:a~req:b` for rejudge-pair, an entity pair `ent:a~ent:b` for dedupe-candidates, a view id for curate-view and split-view, an entity id or `scope:<scope>` for abstract-entity",
+          "type": "string"
+        }
+      }
+    },
+    "given": {
+      "description": "The fixture the sandbox store is seeded from",
+      "type": "object",
+      "required": [
+        "docs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "docs": {
+          "description": "Map of document path to markdown text",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "graph": {
+          "description": "Graph nodes pre-seeded before the session runs",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "entities": {
+              "description": "Map of entity id to entity fields: name, aliases, definition, mentions (section reference and quote), plus stereotype, parent, scope, and provenance where the case needs them",
+              "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              }
+            },
+            "requirements": {
+              "description": "Map of requirement id to requirement fields. A requirement carries statement, entities, and source, plus edges, transition, and facets where the case needs them",
+              "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              }
+            },
+            "views": {
+              "description": "Map of view id to view fields: kind, title, members, query, collapse, excluded, provenance. A seeded view is curated",
+              "type": "object",
+              "additionalProperties": {
+                "type": "object"
+              }
+            },
+            "criteria": {
+              "description": "Map of criterion id to criterion fields: requirement, statement, kind, and a source (section reference and quote) or a provenance",
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "requirement",
+                  "statement",
+                  "kind"
+                ]
+              }
+            },
+            "coverage": {
+              "description": "Map of section reference to a pre-set coverage state",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "covered",
+                  "non-normative"
+                ]
+              }
+            }
+          }
+        },
+        "deliverable": {
+          "description": "Map of deliverable-relative path to content, written under the sandbox's deliverable directory. Verification cases: the implementing files the judged row names. Bind cases: the deliverable as the session finds it",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "lint": {
+          "description": "Project lint rules the session runs under",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "assert": {
+      "description": "Deterministic checks. All must pass for the case to pass",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/check"
+      }
+    }
+  },
+  "definitions": {
+    "check": {
+      "description": "One check. Exactly one check kind per object",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "entityExists": {
+          "$ref": "#/definitions/entityExists"
+        },
+        "entityAbsent": {
+          "$ref": "#/definitions/entityAbsent"
+        },
+        "entityCount": {
+          "$ref": "#/definitions/entityCount"
+        },
+        "entityNameCount": {
+          "$ref": "#/definitions/entityNameCount"
+        },
+        "nodeExists": {
+          "$ref": "#/definitions/nodeExists"
+        },
+        "requirementExists": {
+          "$ref": "#/definitions/requirementExists"
+        },
+        "requirementCount": {
+          "$ref": "#/definitions/requirementCount"
+        },
+        "criteriaCount": {
+          "$ref": "#/definitions/criteriaCount"
+        },
+        "attributeExists": {
+          "$ref": "#/definitions/attributeExists"
+        },
+        "criteriaMatching": {
+          "$ref": "#/definitions/criteriaMatching"
+        },
+        "relationshipExists": {
+          "$ref": "#/definitions/relationshipExists"
+        },
+        "facetCount": {
+          "$ref": "#/definitions/facetCount"
+        },
+        "transitionSubject": {
+          "$ref": "#/definitions/transitionSubject"
+        },
+        "edgeDeclared": {
+          "$ref": "#/definitions/edgeDeclared"
+        },
+        "edgeAbsent": {
+          "$ref": "#/definitions/edgeAbsent"
+        },
+        "mutationCount": {
+          "$ref": "#/definitions/mutationCount"
+        },
+        "diagnosticExists": {
+          "$ref": "#/definitions/diagnosticExists"
+        },
+        "diagnosticAbsent": {
+          "$ref": "#/definitions/diagnosticAbsent"
+        },
+        "coverageSet": {
+          "$ref": "#/definitions/coverageSet"
+        },
+        "childCount": {
+          "$ref": "#/definitions/childCount"
+        },
+        "parentIs": {
+          "$ref": "#/definitions/parentIs"
+        },
+        "groupingOf": {
+          "$ref": "#/definitions/groupingOf"
+        },
+        "viewExists": {
+          "$ref": "#/definitions/viewExists"
+        },
+        "viewMember": {
+          "$ref": "#/definitions/viewMember"
+        },
+        "viewExcludes": {
+          "$ref": "#/definitions/viewExcludes"
+        },
+        "viewMemberOrder": {
+          "$ref": "#/definitions/viewMemberOrder"
+        },
+        "viewWithinLimit": {
+          "$ref": "#/definitions/viewWithinLimit"
+        },
+        "membersAccounted": {
+          "$ref": "#/definitions/membersAccounted"
+        },
+        "generationRecorded": {
+          "$ref": "#/definitions/generationRecorded"
+        },
+        "rowPerRequirement": {
+          "$ref": "#/definitions/rowPerRequirement"
+        },
+        "testsPass": {
+          "$ref": "#/definitions/testsPass"
+        },
+        "testFalsifiable": {
+          "$ref": "#/definitions/testFalsifiable"
+        },
+        "verdictIs": {
+          "$ref": "#/definitions/verdictIs"
+        },
+        "statusIn": {
+          "$ref": "#/definitions/statusIn"
+        },
+        "testsFail": {
+          "$ref": "#/definitions/testsFail"
+        },
+        "fileMatches": {
+          "$ref": "#/definitions/fileMatches"
+        },
+        "fileCount": {
+          "$ref": "#/definitions/fileCount"
+        }
+      }
+    },
+    "entityExists": {
+      "description": "An entity with this exact name or alias exists in the resulting graph",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "entityAbsent": {
+      "description": "No entity name in the resulting graph matches this regular expression",
+      "type": "object",
+      "required": [
+        "namePattern"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "namePattern": {
+          "description": "Regular expression tested against every entity name",
+          "type": "string"
+        }
+      }
+    },
+    "entityCount": {
+      "description": "The number of entities in the resulting graph is within bounds",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "requirementExists": {
+      "description": "A requirement exists whose statement matches the pattern, referencing the entity when one is named",
+      "type": "object",
+      "required": [
+        "statementPattern"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "statementPattern": {
+          "description": "Regular expression tested against the requirement's statement",
+          "type": "string"
+        },
+        "entity": {
+          "description": "An entity the requirement must reference, by id or exact name",
+          "type": "string"
+        }
+      }
+    },
+    "criteriaMatching": {
+      "description": "The number of criteria whose own statement matches the pattern, optionally of one requirement, is within bounds",
+      "type": "object",
+      "required": [
+        "pattern"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "description": "A regular expression matched against each criterion's statement",
+          "type": "string"
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "attributeExists": {
+      "description": "The entity carries an attribute whose name matches this pattern, case-insensitive; attribute wording is the model's",
+      "type": "object",
+      "required": [
+        "entity",
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "type": "string"
+        },
+        "name": {
+          "description": "A regular expression matched against the attribute names",
+          "type": "string"
+        }
+      }
+    },
+    "criteriaCount": {
+      "description": "The number of criteria in the resulting graph is within bounds, optionally counting only the criteria of one requirement (by id, or by a statement pattern)",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "description": "Count only the criteria of this requirement id",
+          "type": "string"
+        },
+        "statementPattern": {
+          "description": "Count only the criteria of requirements whose statement matches",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "requirementCount": {
+      "description": "The number of requirements in the resulting graph is within bounds, optionally counting only requirements referencing one entity",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "description": "Count only requirements referencing this entity, by id or exact name",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "relationshipExists": {
+      "description": "A derived relationship exists between the two entities, optionally of this type or of any one of the listed types",
+      "type": "object",
+      "required": [
+        "a",
+        "b"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "a": {
+          "description": "One member entity, by id or exact name",
+          "type": "string"
+        },
+        "b": {
+          "description": "The other member entity, by id or exact name",
+          "type": "string"
+        },
+        "type": {
+          "description": "The relationship type the derived edge must carry",
+          "type": "string"
+        },
+        "types": {
+          "description": "Relationship types of which the derived edge must carry one",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "facetCount": {
+      "description": "The number of requirements carrying the facet, of those whose statement matches the pattern when one is given, is within bounds",
+      "type": "object",
+      "required": [
+        "facet"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "facet": {
+          "type": "string",
+          "enum": [
+            "behavior",
+            "constraint",
+            "failure-mode",
+            "quality"
+          ]
+        },
+        "statementPattern": {
+          "description": "Regular expression tested against the requirement's statement",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "transitionSubject": {
+      "description": "The number of requirements whose transition names the entity as its subject is within bounds; min is 1 when omitted",
+      "type": "object",
+      "required": [
+        "entity"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "description": "The subject entity, by id or exact name",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "mutationCount": {
+      "description": "The number of mutations staged by the session is within bounds",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "diagnosticExists": {
+      "description": "An open diagnostic with this rule exists. With a subject, its subjects must include it; with subjects, every listed id",
+      "type": "object",
+      "required": [
+        "rule"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "type": "string"
+        },
+        "subject": {
+          "description": "A node id the diagnostic must list in its subjects",
+          "type": "string"
+        },
+        "subjects": {
+          "description": "Node ids the diagnostic must all list in its subjects",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "diagnosticAbsent": {
+      "description": "No open diagnostic with this rule exists in the resulting graph",
+      "type": "object",
+      "required": [
+        "rule"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "type": "string"
+        }
+      }
+    },
+    "coverageSet": {
+      "description": "The section's coverage state equals state after the session",
+      "type": "object",
+      "required": [
+        "section",
+        "state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "section": {
+          "description": "Full section reference, document path plus internal reference",
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "unprocessed",
+            "covered",
+            "non-normative"
+          ]
+        }
+      }
+    },
+    "entityNameCount": {
+      "description": "The number of entities whose name matches the pattern is within bounds. max 1 on a stated name says no twin of it was minted",
+      "type": "object",
+      "required": [
+        "namePattern"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "namePattern": {
+          "description": "Regular expression tested against every entity name",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "nodeExists": {
+      "description": "An entity, requirement, or view with this id exists, not tombstoned or redirected",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "edgeDeclared": {
+      "description": "The requirement's edges carry an edge from a to b (direction counts), optionally of this type",
+      "type": "object",
+      "required": [
+        "requirement",
+        "a",
+        "b"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "a": {
+          "description": "The edge's a end, by id or exact name",
+          "type": "string"
+        },
+        "b": {
+          "description": "The edge's b end, by id or exact name",
+          "type": "string"
+        },
+        "type": {
+          "description": "The relationship type the edge must carry",
+          "type": "string"
+        }
+      }
+    },
+    "edgeAbsent": {
+      "description": "The requirement's edges carry no edge between a and b in either direction",
+      "type": "object",
+      "required": [
+        "requirement",
+        "a",
+        "b"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "a": {
+          "type": "string"
+        },
+        "b": {
+          "type": "string"
+        }
+      }
+    },
+    "childCount": {
+      "description": "The number of direct children of the entity, or of parentless entities for scope:<scope>, is within bounds",
+      "type": "object",
+      "required": [
+        "parent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "parent": {
+          "description": "An entity by id or exact name, or scope:<scope> for a top level",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "parentIs": {
+      "description": "The entity's parent resolves to the named entity",
+      "type": "object",
+      "required": [
+        "entity",
+        "parent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        }
+      }
+    },
+    "groupingOf": {
+      "description": "An entity with derived provenance exists whose from names exactly the listed members and whose direct children are exactly them, optionally with a name matching the pattern",
+      "type": "object",
+      "required": [
+        "members"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "members": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        },
+        "namePattern": {
+          "type": "string"
+        }
+      }
+    },
+    "viewExists": {
+      "description": "A view of the kind whose title matches the pattern exists, leaving out the view under excluding",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "titlePattern": {
+          "type": "string"
+        },
+        "excluding": {
+          "description": "A view id the check leaves out, the original a split left behind",
+          "type": "string"
+        }
+      }
+    },
+    "viewMember": {
+      "description": "The id is in the view's members and not in its excluded",
+      "type": "object",
+      "required": [
+        "view",
+        "member"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "view": {
+          "type": "string"
+        },
+        "member": {
+          "type": "string"
+        }
+      }
+    },
+    "viewExcludes": {
+      "description": "The view's excluded lists the id with a note that is not a placeholder",
+      "type": "object",
+      "required": [
+        "view",
+        "member"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "view": {
+          "type": "string"
+        },
+        "member": {
+          "type": "string"
+        }
+      }
+    },
+    "viewMemberOrder": {
+      "description": "Both are members of the view and before precedes after",
+      "type": "object",
+      "required": [
+        "view",
+        "before",
+        "after"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "view": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "after": {
+          "type": "string"
+        }
+      }
+    },
+    "viewWithinLimit": {
+      "description": "The view's count for the named limit is at or under its soft threshold, recomputed the way the commit counts it",
+      "type": "object",
+      "required": [
+        "view",
+        "limit"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "view": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "A view limit of the registry (graph.md#limits)",
+          "type": "string"
+        }
+      }
+    },
+    "membersAccounted": {
+      "description": "Every listed id is still in the view's members, or in its excluded with a note, or hidden under an entity the view collapses, or a member of another view",
+      "type": "object",
+      "required": [
+        "view",
+        "members"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "view": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "generationRecorded": {
+      "description": "The target entity's ledger entry landed: files recorded, every file exists, the factHash is current",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "rowPerRequirement": {
+      "description": "Every requirement of the target entity has a ledger row",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "testsPass": {
+      "description": "Every recorded programmatic test row passes as recorded",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "testFalsifiable": {
+      "description": "The requirement's recorded command passes as recorded and fails after the harness replaces the mandated string in the product files",
+      "type": "object",
+      "required": [
+        "requirement",
+        "replace"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "description": "The requirement whose test is broken and rerun",
+          "type": "string"
+        },
+        "replace": {
+          "description": "The mandated exact string the harness replaces to break the product",
+          "type": "string"
+        }
+      }
+    },
+    "verdictIs": {
+      "description": "The requirement's ledger row carries this verdict",
+      "type": "object",
+      "required": [
+        "requirement",
+        "verdict"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        }
+      }
+    },
+    "statusIn": {
+      "description": "The requirement's ledger row exists and its derived status is one of the listed",
+      "type": "object",
+      "required": [
+        "requirement",
+        "statuses"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "statuses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "unimplemented",
+              "partial",
+              "failing",
+              "unverified"
+            ]
+          }
+        }
+      }
+    },
+    "testsFail": {
+      "description": "The requirement's ledger row records a programmatic test, and every one it records exits non-zero when rerun as recorded",
+      "type": "object",
+      "required": [
+        "requirement"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requirement": {
+          "type": "string"
+        }
+      }
+    },
+    "fileMatches": {
+      "description": "The number of matches of the pattern in the deliverable file at path is within bounds; a missing file fails the check",
+      "type": "object",
+      "required": [
+        "path",
+        "pattern"
+      ],
+      "minProperties": 3,
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "A deliverable-relative file path",
+          "type": "string"
+        },
+        "pattern": {
+          "description": "Regular expression counted over the file's text",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "fileCount": {
+      "description": "The number of files under the deliverable whose deliverable-relative path matches pathPattern, and not excludePattern when given, is within bounds",
+      "type": "object",
+      "required": [
+        "pathPattern"
+      ],
+      "minProperties": 2,
+      "additionalProperties": false,
+      "properties": {
+        "pathPattern": {
+          "description": "Regular expression tested against each file's deliverable-relative path",
+          "type": "string"
+        },
+        "excludePattern": {
+          "description": "Regular expression whose matches are left out of the count",
+          "type": "string"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

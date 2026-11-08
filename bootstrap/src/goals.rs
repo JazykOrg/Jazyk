@@ -479,20 +479,6 @@ fn is_derived(store: &Store, id: &str) -> bool {
         .unwrap_or(false)
 }
 
-// The per-target work item the current serving claims for a goal of this kind, or
-// None for a kind the serving has no task for yet.
-pub fn legacy_task(kind: &str) -> Option<&'static str> {
-    match kind {
-        "place-anchors" => Some("align-doc"),
-        "reconcile-section" => Some("reconcile-doc"),
-        "rejudge-pair" => Some("review-requirement"),
-        "review-entity" => Some("review-entity"),
-        "bind" => Some("bind-requirement"),
-        "generate" => Some("generate-entity"),
-        _ => None,
-    }
-}
-
 pub fn goal_id(kind: &str, target: &str) -> String {
     format!("g:{}:{}", kind, target)
 }

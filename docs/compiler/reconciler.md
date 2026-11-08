@@ -258,7 +258,15 @@ computed deterministically:
   words are the function words (articles, prepositions, pronouns, auxiliaries,
   quantifiers such as `their`, `has`, `once`, `every`, `within`), and a token under
   three letters drops unless it is a number, since a five-document handbook once
-  derived 113 pair goals on shared tokens like `s`, `at`, and `their`,
+  derived 113 pair goals on shared tokens like `s`, `at`, and `their`. One tokenizer
+  and one stemmer serve every token comparison. The tokens are the words of the
+  statement's [normalized form](./graph.md#mutations). The stem drops one suffix
+  (`ing`, `ed`, `s`) from a word that keeps three letters, then a trailing `e` from a
+  stem longer than three letters, so "files" and "filed" both land on `fil`. The goal
+  hints' token lists (the shared tokens of a `rejudge-pair` change, the cohesion
+  groups of `abstract-entity`) and the lookalike name tokens of
+  [`dedupe-candidates`](./goals/dedupe-candidates.md#the-lookalike-score) stop at the suffix stage,
+  because their stems ride in change records and remembered lookalike scores,
 - neighbors sharing at least two content tokens qualify, and so do neighbors sharing
   at least two entities and one content token: a restatement built from the same
   entities can share every noun and few other words, because the shared names leave

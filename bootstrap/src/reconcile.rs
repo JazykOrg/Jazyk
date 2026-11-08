@@ -825,9 +825,11 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     }
     // Near-identical statements on one entity: review debt made deterministic.
     {
+        // The natural key's normalization (docs/compiler/compilation.md#checks): a
+        // decimal or a signed number stays one token, so `1.5` and `2.5` differ.
         let toks = |s: &str| -> BTreeSet<String> {
-            s.to_lowercase()
-                .split(|c: char| !c.is_alphanumeric())
+            crate::store::normalize_statement(s)
+                .split(' ')
                 .filter(|t| t.len() > 2)
                 .map(String::from)
                 .collect()
@@ -1401,7 +1403,7 @@ pub fn levels(store: &Store) -> Vec<(String, Vec<String>)> {
 fn level_slug(target: &str) -> String {
     match crate::board::scope_target(target) {
         Some(scope) => md::slug(scope),
-        None => crate::derive::entity_slug(target).to_string(),
+        None => crate::ids::entity_slug(target).to_string(),
     }
 }
 
@@ -4310,6 +4312,44 @@ mod tests {
             .filter(|d| d.rule == "broken-link")
             .all(|d| d.lifecycle == "resolved"));
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn one_stemmer_in_two_stages() {
+        use crate::store::{content_stem, suffix_stem};
+        // Mirrors docs/compiler/reconciler.md#pairs.
+        for (word, suffix, content) in [
+            ("files", "file", "fil"),
+            ("filed", "fil", "fil"),
+            ("sorting", "sort", "sort"),
+            ("reverses", "reverse", "revers"),
+            ("price", "price", "pric"),
+            ("use", "use", "use"),
+            ("is", "is", "is"),
+        ] {
+            assert_eq!(suffix_stem(word), suffix, "{}", word);
+            assert_eq!(content_stem(word), content, "{}", word);
+        }
+    }
+
+    #[test]
+    fn duplicate_requirement_keeps_decimals_apart() {
+        // Split on the decimal point, `1.5` and `2.5` left only words two statements
+        // share; the natural key's normalization keeps each number one word
+        // (docs/compiler/compilation.md#checks).
+        let mut s = Store::default();
+        for (id, n, doc) in [("req:p-1", "1.5", "a.md"), ("req:p-2", "2.5", "b.md")] {
+            let statement = format!("The basket shall weigh {} kilograms at most.", n);
+            s.graph
+                .requirements
+                .insert(id.into(), req(&statement, "ent:one", doc, "/a", &statement));
+        }
+        let f = checks(&s, &Project::default());
+        assert!(
+            rules_for(&f, "duplicate-requirement").is_empty(),
+            "{:?}",
+            rules_for(&f, "duplicate-requirement")
+        );
     }
 
     #[test]

@@ -552,7 +552,7 @@ async fn drive(
             if ledger_worker && !state.ledger_finish_reminded {
                 state.ledger_finish_reminded = true;
                 state.conversation.push(Message::user().with_text(LEDGER_CONTINUATION));
-                state.transition += 1;
+                advance(state);
                 if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
                     return Stop::Error(error);
                 }
@@ -662,7 +662,7 @@ async fn drive(
                         .map(|bytes| bytes.len() / 4).unwrap_or(0));
                     record_usage(args, state, summary.usage);
                     state.compacted_at_round = Some(state.rounds);
-                    state.transition += 1;
+                    advance(state);
                     if let Err(error) =
                         checkpoint(recovery, state, CheckpointPhase::Compacted, None).await
                     {
@@ -714,7 +714,7 @@ async fn drive(
             accept_inputs(state, &mut pending_inputs)
         };
         state.model_deltas.clear();
-        state.transition += 1;
+        advance(state);
         if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
             return Stop::Error(error);
         }
@@ -725,6 +725,18 @@ async fn drive(
             return Stop::Cancelled;
         }
     }
+}
+
+// Open the next transition. The ended transition's requests and responses are in
+// the conversation, and inference identities carry the transition, so no later
+// request reuses them: the checkpoint keeps only the current transition's
+// (docs/compiler/agent-runtime.md#checkpoints).
+fn advance(state: &mut HarnessState) {
+    state.transition += 1;
+    let current = format!("{}:{}:", state.run_id, state.transition);
+    state.model_requests.retain(|id, _| id.starts_with(&current));
+    state.model_receipts.retain(|id, _| id.starts_with(&current));
+    state.model_deltas.retain(|id, _| id.starts_with(&current));
 }
 
 async fn drive_future<F, T>(
@@ -900,7 +912,11 @@ async fn handle_action(
                 json!({"kind":"provider","requestId":id,"purpose":purpose,"round":state.rounds,"ms":started.elapsed().as_millis() as u64}),
             ));
             if purpose == ModelPurpose::Inference {
-                state.model_output_limited = value["choices"][0]["finish_reason"] == "length";
+                // A host may return the Responses envelope itself; its output limit
+                // reads from the status, not a chat finish reason.
+                state.model_output_limited = value["choices"][0]["finish_reason"] == "length"
+                    || (value["object"] == "response"
+                        && crate::model_api::responses_output_limited(&value));
             }
             let _ = reply.send(Ok((id, value)));
         }
@@ -912,6 +928,11 @@ async fn handle_action(
         } => {
             let started = crate::sys::Instant::now();
             if let Some(receipt) = state.tool_receipts.get(&id) {
+                if receipt.args.as_ref().is_some_and(|digest| *digest != super::arguments_digest(&parameters)) {
+                    return Err(Stop::Error(format!(
+                        "execution-uncertain: Tool call '{id}' replays with arguments that differ from its recorded receipt; reconcile it before resuming"
+                    )));
+                }
                 let _ = reply.send(if receipt.ok {
                     Ok(receipt.result.clone())
                 } else {
@@ -987,14 +1008,17 @@ async fn handle_action(
             } else if ok {
                 state.consecutive_tool_errors = 0;
             }
+            let digest = Some(super::arguments_digest(&parameters));
             let receipt = match &result {
                 Ok(result) => ToolReceipt {
                     result: result.clone(),
                     ok,
+                    args: digest,
                 },
                 Err(error) => ToolReceipt {
                     result: error.clone(),
                     ok: false,
+                    args: digest,
                 },
             };
             state.tool_receipts.insert(id.clone(), receipt.clone());

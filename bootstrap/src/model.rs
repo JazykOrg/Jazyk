@@ -881,19 +881,25 @@ pub struct ChangeRecord {
 }
 
 impl ChangeRecord {
-    // `index` numbers the record within its generation (the id is `c<generation>-<index>`);
+    // `index` orders the record within its generation (the id is `c<generation>-<hash>`);
     // `mutation` is the 1-based index of the journal mutation that caused it, 0 for a
     // store-level cause.
     pub fn new(
         generation: u64,
-        index: usize,
+        _index: usize,
         mutation: usize,
         kind: &str,
         subject: &str,
         via: &str,
     ) -> ChangeRecord {
         ChangeRecord {
-            id: format!("c{}-{}", generation, index),
+            // No counter: two branches never give one id to two records.
+            // Mirrors docs/compiler/graph.md#change-records.
+            id: format!(
+                "c{}-{}",
+                generation,
+                crate::ids::hash(&format!("{}\n{}", kind, subject))
+            ),
             generation,
             mutation,
             kind: kind.to_string(),
@@ -1788,14 +1794,14 @@ mod tests {
             "section",
         ));
         assert_eq!(s.changes.len(), 2);
-        assert_eq!(s.changes[0].id, "c4-2");
+        assert_eq!(s.changes[0].id, format!("c4-{}", crate::ids::hash("entity-changed\nent:a")));
         assert_eq!(
             s.changed_subjects(&["entity-changed"]),
             vec!["ent:a".to_string()]
         );
         assert_eq!(
             s.change_ids(&["entity-changed"], "ent:a"),
-            vec!["c4-2".to_string()]
+            vec![format!("c4-{}", crate::ids::hash("entity-changed\nent:a"))]
         );
         s.clear_changes(&["entity-changed"], "ent:a");
         assert!(!s.has_change("entity-changed", "ent:a"));

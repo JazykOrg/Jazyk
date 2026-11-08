@@ -1982,35 +1982,59 @@ impl Store {
 
     // ---- id minting ----
 
-    pub fn mint_entity_id(&self, name: &str, taken: &BTreeSet<String>) -> String {
-        let base = format!("ent:{}", md::slug(name));
-        let mut id = base.clone();
-        let mut n = 1;
-        while self.graph.entities.contains_key(&id)
-            || self.graph.redirects.contains_key(&id)
-            || taken.contains(&id)
-        {
-            n += 1;
-            id = format!("{}-{}", base, n);
-        }
-        id
+    // Ids carry no counter: a slug of the natural key and, where the kind needs one or
+    // the plain id is taken, a short hash of the key, so two branches never mint one id
+    // for two nodes. Mirrors docs/compiler/model.md#identifiers.
+    fn id_taken(&self, id: &str, taken: &BTreeSet<String>) -> bool {
+        self.graph.entities.contains_key(id)
+            || self.graph.requirements.contains_key(id)
+            || self.graph.criteria.contains_key(id)
+            || self.graph.views.contains_key(id)
+            || self.graph.diagnostics.contains_key(id)
+            || self.graph.redirects.contains_key(id)
+            || taken.contains(id)
     }
 
-    // `req:<doc-stem>-<n>`; `doc` is the source document path, or `x` for a derived or
-    // decreed requirement (docs/compiler/model.md#identifiers).
-    pub fn mint_req_id(&self, doc: &str, taken: &BTreeSet<String>) -> String {
-        let stem = doc.rsplit('/').next().unwrap_or(doc);
-        let stem = md::slug(stem.strip_suffix(".md").unwrap_or(stem));
-        let prefix = format!("req:{}-", stem);
-        let mut max = 0usize;
-        for id in self.graph.requirements.keys().chain(taken.iter()) {
-            if let Some(rest) = id.strip_prefix(&prefix) {
-                if let Ok(n) = rest.parse::<usize>() {
-                    max = max.max(n);
-                }
+    pub fn mint_entity_id(&self, name: &str, taken: &BTreeSet<String>) -> String {
+        let plain = format!("ent:{}", crate::ids::slug(name));
+        crate::ids::plain_or_unique(&plain, name, |id| self.id_taken(id, taken))
+    }
+
+    // The stem of a requirement id: the id slug of its document's file stem and the
+    // last segment of its section reference (dropped for a root or preamble section),
+    // `x` without a document. Mirrors docs/compiler/model.md#identifiers.
+    pub fn req_id_stem(source: Option<&crate::model::SourceRef>) -> String {
+        let Some(src) = source else {
+            return "x".to_string();
+        };
+        let file = src.doc.rsplit('/').next().unwrap_or(&src.doc);
+        let file = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file);
+        let segments: Vec<&str> = src.section.split('/').filter(|s| !s.is_empty()).collect();
+        let text = if segments.len() >= 2 {
+            format!("{} {}", file, segments[segments.len() - 1])
+        } else {
+            file.to_string()
+        };
+        crate::ids::slug(&text)
+    }
+
+    // `req:<stem>-<hash>`, the hash of the document, section, and statement, or of the
+    // sorted `from` ids and the statement for a derived or decreed requirement.
+    pub fn mint_req_id(&self, r: &Requirement, taken: &BTreeSet<String>) -> String {
+        let statement = normalize_statement(&r.statement);
+        let key = match &r.source {
+            Some(src) => format!("{}#{}\n{}", src.doc, src.section, statement),
+            None => {
+                let mut from: Vec<String> = match &r.provenance {
+                    Some(Provenance::Derived { from, .. }) => from.clone(),
+                    _ => Vec::new(),
+                };
+                from.sort();
+                format!("x\n{}\n{}", from.join(","), statement)
             }
-        }
-        format!("{}{}", prefix, max + 1)
+        };
+        let base = format!("req:{}", Self::req_id_stem(r.source.as_ref()));
+        crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // The id stem of a requirement: its source document, or `x` without a quote.
@@ -2018,21 +2042,27 @@ impl Store {
         r.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
     }
 
-    // `crit:<doc-stem>-<n>`, the document its quote sits in, or `x` for a derived or
-    // decreed criterion (docs/compiler/model/criterion.md#identity).
-    pub fn mint_crit_id(&self, doc: &str, taken: &BTreeSet<String>) -> String {
-        let stem = doc.rsplit('/').next().unwrap_or(doc);
-        let stem = md::slug(stem.strip_suffix(".md").unwrap_or(stem));
-        let prefix = format!("crit:{}-", stem);
-        let mut max = 0usize;
-        for id in self.graph.criteria.keys().chain(taken.iter()) {
-            if let Some(rest) = id.strip_prefix(&prefix) {
-                if let Ok(n) = rest.parse::<usize>() {
-                    max = max.max(n);
-                }
-            }
-        }
-        format!("{}{}", prefix, max + 1)
+    // `crit:<stem>-<hash>`: the stem of its requirement (else of its own quote, else
+    // `x`), the hash of the requirement id and the statement.
+    // Mirrors docs/compiler/model/criterion.md#identity.
+    // `req_source` is the source of a requirement staged beside the criterion, not yet
+    // in the graph.
+    pub fn mint_crit_id(
+        &self,
+        c: &Criterion,
+        req_source: Option<&crate::model::SourceRef>,
+        taken: &BTreeSet<String>,
+    ) -> String {
+        let source = self
+            .graph
+            .requirements
+            .get(&c.requirement)
+            .and_then(|r| r.source.as_ref())
+            .or(req_source)
+            .or(c.source.as_ref());
+        let key = format!("{}\n{}", c.requirement, normalize_statement(&c.statement));
+        let base = format!("crit:{}", Self::req_id_stem(source));
+        crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // The id stem of a criterion: its quote's document, else its requirement's, so a
@@ -2060,27 +2090,18 @@ impl Store {
     }
 
     pub fn mint_view_id(&self, kind: &str, title: &str, taken: &BTreeSet<String>) -> String {
-        let base = format!("view:{}/{}", view_kind_slug(kind), md::slug(title));
-        let mut id = base.clone();
-        let mut n = 1;
-        while self.graph.views.contains_key(&id) || taken.contains(&id) {
-            n += 1;
-            id = format!("{}-{}", base, n);
-        }
-        id
+        let plain = format!("view:{}/{}", view_kind_slug(kind), crate::ids::slug(title));
+        let key = format!("{}\n{}", kind, title);
+        crate::ids::plain_or_unique(&plain, &key, |id| self.id_taken(id, taken))
     }
 
-    pub fn mint_diag_id(&self, rule: &str, taken: &BTreeSet<String>) -> String {
-        let prefix = format!("diag:{}-", md::slug(rule));
-        let mut max = 0usize;
-        for id in self.graph.diagnostics.keys().chain(taken.iter()) {
-            if let Some(rest) = id.strip_prefix(&prefix) {
-                if let Ok(n) = rest.parse::<usize>() {
-                    max = max.max(n);
-                }
-            }
-        }
-        format!("{}{}", prefix, max + 1)
+    // `diag:<rule>-<hash>`, the hash of the rule and the sorted subjects.
+    pub fn mint_diag_id(&self, rule: &str, subjects: &[String], taken: &BTreeSet<String>) -> String {
+        let mut sorted: Vec<&str> = subjects.iter().map(String::as_str).collect();
+        sorted.sort();
+        let key = format!("{}\n{}", rule, sorted.join("\n"));
+        let base = format!("diag:{}", crate::ids::slug(rule));
+        crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // ---- lookups ----
@@ -4267,7 +4288,7 @@ impl Store {
                     if !final_id.starts_with("req:")
                         || self.graph.requirements.contains_key(&final_id)
                     {
-                        final_id = self.mint_req_id(Self::req_stem(&requirement), &BTreeSet::new());
+                        final_id = self.mint_req_id(&requirement, &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
@@ -4611,13 +4632,18 @@ impl Store {
                     criterion.updated = Some(build.clone());
                     // The store mints the id from the quote's document stem; a staged
                     // id under another stem (a provisional one) is re-minted.
-                    let stem = self.crit_stem(&criterion);
-                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(&stem).strip_suffix(".md").unwrap_or(stem.rsplit('/').next().unwrap_or(&stem)));
+                    let source = self
+                        .graph
+                        .requirements
+                        .get(&criterion.requirement)
+                        .and_then(|r| r.source.as_ref())
+                        .or(criterion.source.as_ref());
+                    let base = format!("crit:{}-", Self::req_id_stem(source));
                     let mut final_id = id.clone();
-                    if !final_id.starts_with(&format!("crit:{}-", stem_slug))
+                    if !final_id.starts_with(&base)
                         || self.graph.criteria.contains_key(&final_id)
                     {
-                        final_id = self.mint_crit_id(&stem, &BTreeSet::new());
+                        final_id = self.mint_crit_id(&criterion, None, &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
@@ -5389,7 +5415,7 @@ impl Store {
                             let mut final_id = id.clone();
                             if final_id.is_empty() || self.graph.diagnostics.contains_key(&final_id)
                             {
-                                final_id = self.mint_diag_id(&diagnostic.rule, &BTreeSet::new());
+                                final_id = self.mint_diag_id(&diagnostic.rule, &diagnostic.subjects, &BTreeSet::new());
                             }
                             if diagnostic.prompt.is_some() && diagnostic.answer.is_none() {
                                 dirt.prompt(&final_id, m, "report_diagnostic");
@@ -5685,7 +5711,7 @@ impl Store {
                 self.ratification_proposal(&id, &sentence, &prov, None, &entities, None);
             diagnostic.created = Some(build.clone());
             diagnostic.updated = Some(build.clone());
-            let did = self.mint_diag_id("ratification-pending", &BTreeSet::new());
+            let did = self.mint_diag_id("ratification-pending", &diagnostic.subjects, &BTreeSet::new());
             dirt.prompt(&did, m, "ratification");
             applied.push(Op::ReportDiagnostic {
                 id: did.clone(),
@@ -6762,7 +6788,7 @@ impl Store {
                     }
                 }
                 None => {
-                    let id = self.mint_diag_id(&rule, &BTreeSet::new());
+                    let id = self.mint_diag_id(&rule, &subjects, &BTreeSet::new());
                     if prompt.is_some() {
                         batch.push(
                             mutations.len() + 1,
@@ -7580,10 +7606,26 @@ mod tests {
         let r = s.apply(ops, &wi().commit(3, Some(100)));
         assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
         let ids: Vec<&String> = s.graph.criteria.keys().collect();
-        assert_eq!(ids, vec!["crit:t-1", "crit:t-2"], "{:?}", ids);
+        assert_eq!(ids.len(), 2, "{:?}", ids);
+        assert!(ids.iter().all(|id| id.starts_with("crit:t-")), "{:?}", ids);
+        // The quoted criterion and the derived one, by provenance, not by mint order.
+        let quoted_id = s
+            .graph
+            .criteria
+            .iter()
+            .find(|(_, c)| c.provenance.is_none())
+            .map(|(id, _)| id.clone())
+            .unwrap();
+        let derived_id = s
+            .graph
+            .criteria
+            .iter()
+            .find(|(_, c)| c.provenance.is_some())
+            .map(|(id, _)| id.clone())
+            .unwrap();
         assert_eq!(s.criteria_of("req:t-1").len(), 2);
-        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-2"));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, &quoted_id));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, &derived_id));
         // The requirement's statement changes: the derived criterion is revised, the
         // quoted one keeps its own quote.
         s.apply(
@@ -7599,8 +7641,8 @@ mod tests {
             }],
             &wi().commit(4, Some(100)),
         );
-        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-2"));
-        assert!(!s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_REVISED, &derived_id));
+        assert!(!s.status.has_change(CHANGE_CRIT_REVISED, &quoted_id));
         // The requirement goes: its criteria go with it.
         s.apply(
             vec![Op::DeleteRequirement {
@@ -7610,8 +7652,8 @@ mod tests {
             &wi().commit(5, Some(100)),
         );
         assert!(s.graph.criteria.is_empty());
-        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-2"));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, &quoted_id));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, &derived_id));
     }
 
     // A fixture entity the sweep keeps. The sweep runs behind every commit and deletes
@@ -9422,7 +9464,7 @@ mod tests {
                     diagnostic: Diagnostic {
                         rule: "ratification-pending".into(),
                         severity: "info".into(),
-                        subjects: vec!["req:x-1".into()],
+                        subjects: vec!["prov:new".into()],
                         message: "the docs should say so".into(),
                         reasoning: None,
                         lifecycle: "open".into(),
@@ -9439,13 +9481,24 @@ mod tests {
         assert_eq!(r.applied, 5, "{:?}", r.skipped);
         assert!(r.skipped[0].contains("no provenance"));
         // The commit filed the decreed fact's proposal, statement verbatim; the
-        // staged diagnostic on req:x-1 already stood, so no second one landed there.
+        // staged diagnostic on the derived one already stood, so no second one landed there.
+        let id_of = |s: &Store, statement: &str| {
+            s.graph
+                .requirements
+                .iter()
+                .find(|(_, r)| r.statement == statement)
+                .map(|(id, _)| id.clone())
+                .expect("the requirement landed")
+        };
+        let x1 = id_of(&s, "The cart is split by category.");
+        let x2 = id_of(&s, "The cart never exceeds ten categories.");
+        assert!(x1.starts_with("req:x-") && x2.starts_with("req:x-") && x1 != x2);
         let proposal_id = s
             .graph
             .diagnostics
             .iter()
             .find(|(_, d)| {
-                d.rule == "ratification-pending" && d.subjects == vec!["req:x-2".to_string()]
+                d.rule == "ratification-pending" && d.subjects == vec![x2.clone()]
             })
             .map(|(id, _)| id.clone())
             .expect("the commit files the proposal for the decreed fact");
@@ -9458,14 +9511,14 @@ mod tests {
                 .diagnostics
                 .values()
                 .filter(|d| d.rule == "ratification-pending"
-                    && d.subjects == vec!["req:x-1".to_string()])
+                    && d.subjects == vec![x1.clone()])
                 .count(),
             1
         );
-        assert!(s.graph.requirements.contains_key("req:x-1"));
-        assert!(s.graph.requirements.contains_key("req:x-2"));
-        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
-        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-2"));
+        assert!(s.graph.requirements.contains_key(&x1));
+        assert!(s.graph.requirements.contains_key(&x2));
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, &x1));
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, &x2));
         // The same derived statement from the same sources folds, never duplicates.
         s.apply(
             vec![Op::CreateRequirement {
@@ -9488,15 +9541,15 @@ mod tests {
         s.clear_changes(&setup);
         let r = s.apply(
             vec![Op::RatifyProvenance {
-                id: "req:x-1".into(),
+                id: x1.clone(),
                 source: mention("t.md", "/t", "The cart is split by category."),
             }],
             &Commit::store("ratify"),
         );
         assert_eq!(r.applied, 2, "{:?}", r.skipped);
-        let q = &s.graph.requirements["req:x-1"];
+        let q = &s.graph.requirements[&x1];
         assert!(q.source.is_some() && q.provenance.is_none());
-        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
+        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, &x1));
         // An accepted proposal is a human edit: the mention the landed sentence adds
         // opens no review of the Cart. Mirrors docs/compiler/goals/ratify.md#accept.
         assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"), "{:?}", s.status.changes);
@@ -9504,7 +9557,7 @@ mod tests {
             .graph
             .diagnostics
             .values()
-            .filter(|d| d.subjects.contains(&"req:x-1".to_string()))
+            .filter(|d| d.subjects.contains(&x1))
             .all(|d| d.lifecycle == "resolved"));
         assert_eq!(s.graph.diagnostics[&proposal_id].lifecycle, "open");
         assert!(s.graph.entities["ent:cart"]
@@ -9515,19 +9568,19 @@ mod tests {
         let r = s.apply(
             vec![
                 Op::RetractDecree {
-                    id: "req:x-2".into(),
+                    id: x2.clone(),
                     reason: "withdrawn".into(),
                 },
                 Op::RetractDecree {
-                    id: "req:x-1".into(),
+                    id: x1.clone(),
                     reason: "withdrawn".into(),
                 },
             ],
             &Commit::store("decree"),
         );
         assert_eq!(r.applied, 2, "{:?}", r.skipped);
-        assert!(!s.graph.requirements.contains_key("req:x-2"));
-        assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:x-2"));
+        assert!(!s.graph.requirements.contains_key(&x2));
+        assert!(s.status.has_change(CHANGE_REQ_DELETED, &x2));
         assert!(r.skipped[0].contains("not a decree"));
         assert!(s
             .graph

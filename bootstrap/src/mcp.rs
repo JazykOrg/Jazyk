@@ -57,6 +57,12 @@ pub struct McpServer {
     // The guard and feedback cap across per-call sessions outside a batch, keyed by
     // the ledger claim they ran under. Mirrors docs/compiler/sessions.md#repeated-calls.
     call_memory: std::sync::Mutex<(Option<String>, crate::tools::CallMemory)>,
+    // Whether the transport carries server-to-client notifications (the stdio loop
+    // does), and the tool names the client last listed: the baseline a
+    // `notifications/tools/list_changed` compares against.
+    // Mirrors docs/frontends/mcp.md#the-work-loop.
+    notifies: std::sync::atomic::AtomicBool,
+    listed: std::sync::Mutex<Option<Vec<String>>>,
 }
 
 #[derive(Default)]
@@ -363,6 +369,8 @@ impl McpServer {
                 }
             });
         McpServer {
+            notifies: Default::default(),
+            listed: Default::default(),
             children: Default::default(),
             config_revision: std::sync::Mutex::new(project.config_hash.clone()),
             mutation_limit: crate::limits::SESSION_MUTATIONS,
@@ -952,6 +960,7 @@ impl McpServer {
     // cancellation or the end of input reaches a call that is still running.
     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     pub fn serve<R: BufRead + Send + 'static, W: Write>(&self, mut input: R, mut out: W) {
+        self.notifies.store(true, std::sync::atomic::Ordering::SeqCst);
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let interrupts = self.interrupts.clone();
         std::thread::spawn(move || loop {
@@ -977,8 +986,9 @@ impl McpServer {
             if line.trim().is_empty() {
                 continue;
             }
-            let resp = match serde_json::from_str::<Value>(&line) {
-                Ok(message) => self.dispatch_message(&message),
+            let message = serde_json::from_str::<Value>(&line);
+            let resp = match &message {
+                Ok(message) => self.dispatch_message(message),
                 Err(e) => Some(json!({"jsonrpc": "2.0", "id": null,
                     "error": {"code": -32700, "message": format!("parse error: {}", e)}})),
             };
@@ -986,7 +996,54 @@ impl McpServer {
                 writeln!(out, "{}", resp).ok();
                 out.flush().ok();
             }
+            if let Some(note) = message.ok().and_then(|m| self.tools_list_changed(&m)) {
+                writeln!(out, "{}", note).ok();
+                out.flush().ok();
+            }
         }
+    }
+
+    // What initialize advertises: `listChanged` only where the transport can deliver
+    // the notification. Mirrors docs/frontends/mcp.md#the-work-loop.
+    fn capabilities(&self) -> Value {
+        if self.notifies.load(std::sync::atomic::Ordering::SeqCst) {
+            json!({"tools": {"listChanged": true}})
+        } else {
+            json!({"tools": {}})
+        }
+    }
+
+    // The tool names `tools/list` would answer now.
+    fn listed_names(&self) -> Option<Vec<String>> {
+        let list = self.handle("tools/list", &json!({})).ok()?;
+        Some(
+            list["tools"]
+                .as_array()?
+                .iter()
+                .filter_map(|t| t["name"].as_str().map(String::from))
+                .collect(),
+        )
+    }
+
+    // After one message: a client's `tools/list` sets the baseline; any other message
+    // that moved the list since then answers the notification, and the new names
+    // become the baseline. Mirrors docs/frontends/mcp.md#the-work-loop.
+    fn tools_list_changed(&self, message: &Value) -> Option<Value> {
+        fn lists(m: &Value) -> bool {
+            match m {
+                Value::Array(items) => items.iter().any(lists),
+                m => m["method"] == "tools/list" && !m["id"].is_null(),
+            }
+        }
+        let listing = lists(message);
+        if !listing && self.listed.lock().unwrap().is_none() {
+            return None;
+        }
+        let now = self.listed_names()?;
+        let mut listed = self.listed.lock().unwrap();
+        let moved = !listing && listed.as_ref() != Some(&now);
+        *listed = Some(now);
+        moved.then(|| json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}))
     }
 
     // One parsed message, whatever the transport: a request answers its response, a
@@ -2215,7 +2272,7 @@ impl McpServer {
                     *self.client.lock().unwrap() = Some(name.into());
                 }
                 return Ok(json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
-                    "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                    "capabilities":self.capabilities(),"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
                     "instructions":self.initialize_instructions(self.initialized())?}));
             }
             Err(_) => return self.handle_local(method, params),
@@ -2228,7 +2285,7 @@ impl McpServer {
             }
             return Ok(
                 json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
-                "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                "capabilities":self.capabilities(),"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
                 "instructions":self.initialize_instructions(w.exists)?}),
             );
         }
@@ -2506,7 +2563,7 @@ impl McpServer {
                 // latest the serving speaks (docs/frontends/mcp.md#mcp-into-acp-sessions).
                 Ok(json!({
                     "protocolVersion": negotiate_protocol(&params["protocolVersion"]),
-                    "capabilities": {"tools": {}},
+                    "capabilities": self.capabilities(),
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": self.initialize_instructions(self.initialized())?
                 }))
@@ -4843,6 +4900,51 @@ mod tests {
         assert!(crate::store::read_generation(&out) > generation);
         drop(restored);
         crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    // A stdio serving advertises listChanged and announces each move of the list the
+    // client already listed: begin_goals narrows it, abandon_goals restores it, and a
+    // message that moves nothing announces nothing. A serving outside the stdio loop
+    // advertises nothing it cannot deliver. Mirrors docs/frontends/mcp.md#the-work-loop.
+    #[test]
+    fn stdio_announces_tool_list_changes_after_the_first_listing() {
+        let dir = bare_dir("list-changed");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap();
+        let out = project.out.clone();
+        let mut control = crate::control::Control::load(&project, &out);
+        control.compile = "auto".into();
+        control.save(&out);
+        let make = || McpServer::with_bridge(project.clone(), out.clone(), vec!["compile".into()], true, BridgeFlags { ephemeral: true, ..Default::default() });
+        let direct = make().handle("initialize", &json!({})).unwrap();
+        assert_eq!(direct["capabilities"]["tools"], json!({}), "{direct}");
+        let request = |id: u64, method: &str, params: Value| json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string() + "\n";
+        let input = [
+            request(1, "initialize", json!({})),
+            request(2, "ping", json!({})),
+            request(3, "tools/list", json!({})),
+            request(4, "ping", json!({})),
+            request(5, "tools/call", json!({"name":"begin_goals","arguments":{}})),
+            request(6, "ping", json!({})),
+            request(7, "tools/call", json!({"name":"abandon_goals","arguments":{}})),
+        ]
+        .concat();
+        let mut written: Vec<u8> = Vec::new();
+        make().serve(std::io::Cursor::new(input.into_bytes()), &mut written);
+        let lines: Vec<Value> = String::from_utf8(written).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let shape: Vec<String> = lines
+            .iter()
+            .map(|l| l["id"].as_u64().map(|id| id.to_string()).unwrap_or_else(|| l["method"].as_str().unwrap_or("?").to_string()))
+            .collect();
+        assert_eq!(
+            shape,
+            ["1", "2", "3", "4", "5", "notifications/tools/list_changed", "6", "7", "notifications/tools/list_changed"],
+            "{lines:?}"
+        );
+        assert_eq!(lines[0]["result"]["capabilities"]["tools"]["listChanged"], true, "{}", lines[0]);
+        assert_ne!(lines[4]["result"]["isError"], true, "{}", lines[4]);
+        assert_eq!(lines[5], json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"}));
+        crate::vfs::remove_dir_all(dir).ok();
     }
 
     #[test]

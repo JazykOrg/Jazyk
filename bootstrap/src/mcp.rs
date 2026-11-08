@@ -2415,7 +2415,7 @@ impl McpServer {
                 // catalog's own `done` (the goal tools) yields to the lifecycle entry:
                 // a client that forwards the list as is (Claude Code) is refused by
                 // its API when a name repeats.
-                if self.modes.iter().any(|m| m == "compile" || m == "chat") {
+                if !self.bridge.reader && self.modes.iter().any(|m| m == "compile" || m == "chat") {
                     tools.retain(|t| !LIFECYCLE.contains(&t["name"].as_str().unwrap_or_default()));
                     tools.push(json!({
                         "name": "goals",
@@ -2495,7 +2495,7 @@ impl McpServer {
                         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "scope": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": false}
                     }));
                 }
-                if self.modes.iter().any(|m| m == "chat") {
+                if !self.bridge.reader && self.modes.iter().any(|m| m == "chat") {
                     tools.push(json!({
                         "name": "revise_requirement",
                         "description": "Change one requirement: the new prose replaces the old verbatim quote in its source document, and the graph node updates in the same atomic commit. Optional statement carries the new statement (defaults to keeping the old one).",
@@ -2639,6 +2639,15 @@ impl McpServer {
     }
 
     fn tool_call(&self, name: &str, params: &Value, _label: &str) -> Result<Value, (i64, String)> {
+        // A reader serving answers reads alone, whatever its mode lists elsewhere: the
+        // chat tools, the lifecycles, and every write are not served there
+        // (docs/frontends/wasm.md#chat).
+        if self.bridge.reader
+            && !crate::tools::READ_TOOLS.contains(&name)
+            && !matches!(name, "await_changes" | "recent_edits")
+        {
+            return Err((-32602, format!("unknown or disabled tool `{}`", name)));
+        }
         {
             {
                 let name = name.to_string();
@@ -6107,6 +6116,34 @@ mod tests {
         assert!(edited.contains("[workflow]\ncompile = \"auto\""), "{edited}");
         assert_eq!(ok["hash"], crate::model::hash_hex(&edited));
         crate::document_sets::Workspace::load(&dir).unwrap();
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A reader serving lists and serves reads alone even in chat mode: no dual write,
+    // project tool, decree tool, or lifecycle reaches it. Mirrors docs/frontends/wasm.md#chat.
+    #[test]
+    fn a_reader_chat_serving_offers_and_serves_no_writes() {
+        let dir = bare_dir("reader-chat");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe tool sorts lines.\n").unwrap();
+        let reader = workspace_chat(&dir, BridgeFlags { ephemeral: true, reader: true, ..Default::default() });
+        let names = tool_names(&reader);
+        let writes = ["revise_requirement", "add_requirement", "retract_requirement", "edit_fact", "retract_decree",
+            "bump_limit", "answer_diagnostic", "update_diagnostic", "update_project_settings", "init_project",
+            "begin_goals", "done", "goals", "abandon_goals", "release_work", "write_document"];
+        for name in writes {
+            assert!(!names.iter().any(|n| n == name), "{name} listed: {names:?}");
+        }
+        let config = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
+        for (name, args) in [
+            ("update_project_settings", json!({"settings":{"workflow.compile":"auto"},"baseHash":crate::model::hash_hex(&config),"setId":"ds_main"})),
+            ("add_requirement", json!({"doc":"docs/a.md","section":"/a","text":"It must not land.","statement":"x","entities":[],"setId":"ds_main"})),
+            ("begin_goals", json!({"setId":"ds_main"})),
+        ] {
+            let refused = reader.handle("tools/call", &json!({"name":name,"arguments":args}));
+            assert!(refused.is_err() || refused.as_ref().unwrap()["isError"] == true, "{name}: {refused:?}");
+        }
+        assert_eq!(crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap(), config);
+        assert_eq!(crate::vfs::read_to_string(dir.join("docs/a.md")).unwrap(), "# A\n\nThe tool sorts lines.\n");
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

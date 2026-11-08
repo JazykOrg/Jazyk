@@ -65,14 +65,22 @@ mod imp {
         use std::io::Read;
         use std::process::{Command, Stdio};
         use std::sync::{Arc, Mutex};
-        let mut child = Command::new("sh")
+        let mut command = Command::new("sh");
+        command
             .arg("-c")
             .arg(script)
             .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        // Its own process group, so the timeout reaches what the script started
+        // (a test runner's workers, a `sleep` in a pipeline), not only the shell.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = command.spawn()?;
         // A drain keeps reading until the writer closes the pipe; the buffer holds the
         // tail, shared so a killed command still yields what it printed.
         fn drain<R: Read + Send + 'static>(mut pipe: R) -> Arc<Mutex<Vec<u8>>> {
@@ -110,7 +118,7 @@ mod imp {
         let (success, code, timed_out) = match status {
             Some(st) => (st.success(), st.code().unwrap_or(-1), false),
             None => {
-                child.kill().ok();
+                kill_group(&mut child);
                 child.wait().ok();
                 (false, 124, true)
             }
@@ -147,6 +155,22 @@ mod imp {
             stderr,
             timed_out,
         })
+    }
+
+    // Kill a child spawned as its own process group leader, and every process in the
+    // group. Elsewhere the child alone.
+    fn kill_group(child: &mut std::process::Child) {
+        #[cfg(unix)]
+        {
+            if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+                // SAFETY: kill(2) with a negative pid signals the group; it touches
+                // no memory of this process.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+        child.kill().ok();
     }
 
     pub fn process_id() -> u32 {
@@ -295,6 +319,25 @@ mod tests {
         assert_eq!(out.code, 124);
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "started");
         assert!(String::from_utf8_lossy(&out.stderr).contains("killed after 0s"));
+    }
+
+    // The timeout kills the whole process group: a background child of the script
+    // that would outlive the shell is gone too, and holds no pipe open.
+    #[cfg(unix)]
+    #[test]
+    fn a_timed_out_command_takes_its_children_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("survived");
+        let script = format!(
+            "(sleep 2; touch '{}') & echo $! > pid; sleep 30",
+            marker.display()
+        );
+        let started = std::time::Instant::now();
+        let out = run_shell_within(&script, dir.path(), Duration::from_millis(300)).unwrap();
+        assert!(out.timed_out);
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        std::thread::sleep(Duration::from_secs(3));
+        assert!(!marker.exists(), "a child of the script outlived the timeout");
     }
 
     #[test]

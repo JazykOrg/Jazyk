@@ -98,6 +98,10 @@ resvg = "0.48"
 [target.'cfg(windows)'.dependencies]
 uds_windows = "=1.2.1"
 
+# A command timeout kills the command's whole process group (src/sys.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # The browser backend. `getrandom/js` is what lets the shared token minting build.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.128"

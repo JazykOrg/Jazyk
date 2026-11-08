@@ -1732,6 +1732,7 @@ dependencies = [
  "goose-provider-types",
  "js-sys",
  "jsonc-parser",
+ "libc",
  "maybe-async",
  "mustache",
  "notify",

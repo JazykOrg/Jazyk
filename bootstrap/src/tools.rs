@@ -3210,11 +3210,28 @@ impl ToolSession {
         if gs.kind == "review-entity" {
             if let Some(list) = evidence["unreferenced"].as_array() {
                 let target = self.snapshot.resolve_id(&gs.target).to_string();
-                let word_matches: Vec<String> = list
+                // A repeated claim stages only the word matches no earlier claim staged.
+                let staged_already: BTreeSet<String> = self
+                    .staged
+                    .iter()
+                    .filter_map(|o| match o {
+                        Op::UpdateEntity { id, not_about_add, .. } if *id == target => {
+                            Some(not_about_add.clone())
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                let mut word_matches: Vec<String> = Vec::new();
+                for id in list
                     .iter()
                     .filter(|e| e["verdict"].as_str() == Some("word-match"))
                     .map(|e| Self::evidence_id(e, "id"))
-                    .collect();
+                {
+                    if !staged_already.contains(&id) && !word_matches.contains(&id) {
+                        word_matches.push(id);
+                    }
+                }
                 if !word_matches.is_empty() {
                     self.review_staged_note = Some(format!(
                         "the word-match verdicts stage one update on {} (its not_about list); done counts it as applied",
@@ -10458,6 +10475,14 @@ mod tests {
             "{:?}",
             t.staged.len()
         );
+        // A repeated claim stages no second update.
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:review-entity:ent:customer", "justification": "Reviewed.",
+                    "evidence": {"definition": "current", "unreferenced": [{"id": "req:a", "verdict": "word-match", "reason": "the Customer is the object here"}]}}),
+        )
+        .unwrap();
+        assert_eq!(t.staged.len(), 1, "{:?}", t.staged.len());
     }
 
     fn open_diag(rule: &str, subjects: &[&str]) -> Diagnostic {

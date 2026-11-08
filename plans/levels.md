@@ -88,7 +88,7 @@ machinery stands:
   form cone by cone, each new level's views derive after. Bottom-up convergence
   needs no new scheduler.
 - Default views derive per scope and per containment root, flows cluster by actor
-  ([defaults](../docs/compiler/model/view.md#defaults)).
+  ([defaults](../docs/compiler/model/view.md#default-views)).
 - `abstract-entity` exists as the GC goal that creates an abstraction when an
   entity crosses its caps ([abstract-entity](../docs/compiler/goals/abstract-entity.md)).
 

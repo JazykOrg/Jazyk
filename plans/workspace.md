@@ -2,7 +2,7 @@
 
 Status: shipped as the layout; the lenses are gone. Written 2026-09-30. The
 shipped layout stays the default until the owner picks. The docs-first rule applies:
-[gui.md#workspace-experimental](../docs/frontends/gui.md#workspace-experimental) states
+[gui.md#workspace](../docs/frontends/gui.md#workspace) states
 what the switch turns on before the code does.
 
 ## The owner's ask

@@ -119,14 +119,16 @@ pub fn is_command(word: &str, in_project: bool) -> bool {
     available(in_project).any(|c| c.name == name)
 }
 
-// The command word and the rest of the line, for a prompt that starts with one.
+// The command word and the rest of the line, for a prompt that starts with one. The
+// slash is part of the command: a prompt whose first word merely names one
+// ("release the pending work") is conversation for the agent.
 pub fn split(text: &str, in_project: bool) -> Option<(&'static str, &str)> {
     let text = text.trim();
     let (word, rest) = match text.split_once(char::is_whitespace) {
         Some((w, r)) => (w, r.trim()),
         None => (text, ""),
     };
-    let name = word.trim_start_matches('/');
+    let name = word.strip_prefix('/')?;
     available(in_project)
         .find(|c| c.name == name)
         .map(|c| (c.name, rest))
@@ -670,6 +672,9 @@ mod tests {
             "no build command outside a project"
         );
         assert_eq!(split("just talking", true), None);
+        assert_eq!(split("status", true), None, "a command needs its slash");
+        assert_eq!(split("release the pending work", true), None);
+        assert_eq!(split("//status", true), None);
         assert!(is_command("/help", false));
 
         // Every command reaches the person who typed it: help names them all.

@@ -671,6 +671,7 @@ fn imported_task_observation(
 }
 
 fn record(store: &Store, gs: &GenSettings, bound: &Bound, result: &Observed) -> Result<(), String> {
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     let row = ledger
         .requirements
@@ -708,8 +709,7 @@ fn record(store: &Store, gs: &GenSettings, bound: &Bound, result: &Observed) -> 
         row.last_run = now;
         row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
     }
-    ledger.save(&store.out);
-    Ok(())
+    ledger.save(&store.out)
 }
 
 /// One durable job validates all affected sets, then runs them sequentially.
@@ -904,7 +904,7 @@ mod tests {
         row.verdict = "none".into();
         let sibling = serde_json::to_value(&row.tests["crit:second"]).unwrap();
         let selected = path(&gs, &row.tests["crit:first"].test.artifact);
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         let judge = Judge(Cell::new(0));
         let result = run(
             &project,
@@ -934,7 +934,7 @@ mod tests {
         ledger.build = Some(
             serde_json::from_value(json!({"run":"must-not-run","cwd":".","produces":[]})).unwrap(),
         );
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         let judge = Judge(Cell::new(0));
         let selected = path(&gs, "tests/crit-first.md");
         let error = run(
@@ -961,7 +961,7 @@ mod tests {
         }
         row.test = row.tests["crit:first"].test.clone();
         let selected = path(&gs, &row.test.artifact);
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         let error = plan(&project, &store, &gs, &[selected]).err().unwrap();
         assert!(
             error.contains("also covers tests outside the selection"),
@@ -1017,7 +1017,7 @@ mod tests {
             row.hashes.test = row.tests["crit:first"].test_hash.clone();
             row.hashes.files = crate::gen::hash_implementing(&store.out, &gs, &row.files);
             row.verdict = "none".into();
-            ledger.save(&store.out);
+            ledger.save(&store.out).unwrap();
             store.save();
             projects.push(project);
         }
@@ -1035,7 +1035,7 @@ mod tests {
                 test.test.run = "task:suite".into();
             }
             row.test = row.tests["crit:first"].test.clone();
-            ledger.save(&project.out);
+            ledger.save(&project.out).unwrap();
         }
         let before = serde_json::to_value(Ledger::load(&projects[1].out)).unwrap();
         let calls = Cell::new(0);
@@ -1068,7 +1068,7 @@ mod tests {
         first.build = Some(
             serde_json::from_value(json!({"run":"task:suite","cwd":".","produces":[]})).unwrap(),
         );
-        first.save(&projects[0].out);
+        first.save(&projects[0].out).unwrap();
         let mut second = Ledger::load(&projects[1].out);
         let row = second.requirements.get_mut("req:shop-1").unwrap();
         for test in row.tests.values_mut() {
@@ -1076,7 +1076,7 @@ mod tests {
             test.test.run = "task:suite".into();
         }
         row.test = row.tests["crit:first"].test.clone();
-        second.save(&projects[1].out);
+        second.save(&projects[1].out).unwrap();
         let error = run_workspace(
             std::path::Path::new("/project"),
             Some("ds_one"),
@@ -1212,7 +1212,7 @@ mod tests {
                     .into_owned()
             })
             .collect::<Vec<_>>();
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         let result = run(
             &project,
             &store,
@@ -1294,7 +1294,7 @@ mod tests {
                 .values()
                 .map(|test| path(&gs, &test.test.artifact))
                 .collect::<Vec<_>>();
-            ledger.save(&store.out);
+            ledger.save(&store.out).unwrap();
             let signature = json!({"paths":paths,"settings":gs});
             let key = crate::gen::progress::command_key("verify-artifacts", &store.out, &signature);
             let mut progress = {
@@ -1357,7 +1357,7 @@ mod tests {
                     test.criterion_hash = hash_hex(&store.graph.criteria["crit:first"].statement);
                     let artifact = artifact_path(&store.out, &gs, &test.test);
                     crate::vfs::write(artifact,format!("---\nrequirement: req:shop-1\ncriterion: crit:first\nhash: {}\n---\nInspect source. PASS if satisfied. FAIL otherwise.\n",test.criterion_hash)).unwrap();
-                    ledger.save(&store.out);
+                    ledger.save(&store.out).unwrap();
                 }
                 "requirement" => {
                     store
@@ -1373,7 +1373,7 @@ mod tests {
                         .unwrap()
                         .hashes
                         .requirement = hash_hex(&store.graph.requirements["req:shop-1"].statement);
-                    ledger.save(&store.out);
+                    ledger.save(&store.out).unwrap();
                 }
                 "context" => {
                     store.graph.entities.get_mut("ent:cart").unwrap().name =
@@ -1440,7 +1440,7 @@ mod tests {
                 test.test.run = "task:suite".into();
             }
             row.test = row.tests["crit:first"].test.clone();
-            ledger.save(&project.out);
+            ledger.save(&project.out).unwrap();
             crate::task_runtime::import_evidence(
                 &store,
                 &gs,

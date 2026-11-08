@@ -212,7 +212,7 @@ pub fn submit(
     if content.is_empty() {
         return Err("content is empty; a draft states what the code does".into());
     }
-    let h1s = content.lines().filter(|l| l.starts_with("# ")).count();
+    let h1s = h1_count(content);
     if h1s != 1 {
         return Err(format!(
             "a draft is one document with exactly one H1 heading (`# Title`); this one has {}",
@@ -268,6 +268,24 @@ pub fn submit(
         "written": path,
         "note": "the draft is compiler input now: compile extracts its statements, binding self-checks them against the code, and the document carries an unratified diagnostic until a human edit moves its hash",
     }))
+}
+
+// H1 headings outside fenced code: a `# comment` in a shell example is code, not a
+// title.
+fn h1_count(content: &str) -> usize {
+    let mut fence: Option<&str> = None;
+    let mut count = 0;
+    for line in content.lines() {
+        let t = line.trim_start();
+        let marker = if t.starts_with("```") { Some("```") } else if t.starts_with("~~~") { Some("~~~") } else { None };
+        match (fence, marker) {
+            (None, Some(m)) => fence = Some(m),
+            (Some(open), Some(m)) if open == m => fence = None,
+            (None, None) if line.starts_with("# ") => count += 1,
+            _ => {}
+        }
+    }
+    count
 }
 
 // The built-in draft worker: one scope per LLM reply, the file-reply protocol the
@@ -334,6 +352,9 @@ pub async fn run_all(
                 Some(trace),
             ).await {
                 Ok(r) => r,
+                // A suspension or checkpoint failure stops the job; it is not a
+                // rejected draft to retry or a failed scope to count.
+                Err(e) if crate::session_recovery::is_interruption(&e) => return Err(e),
                 Err(e) => {
                     last_err = e;
                     continue;
@@ -459,6 +480,40 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("exactly one H1") && err.contains("2"), "{}", err);
         assert!(submit(&proj, &store.out, "docs/x.md", "## X\n\nBody.", None).is_err());
+    }
+
+    // A `#` line inside fenced code is code, not a second H1.
+    #[test]
+    fn fenced_hash_lines_are_not_headings() {
+        let (proj, store, _gs) = tmp();
+        let draft = "# X\n\nInstall it:\n\n```sh\n# fetch the sources\nmake\n```\n\n~~~\n# also code\n~~~\n";
+        submit(&proj, &store.out, "docs/x.md", draft, None).unwrap();
+        assert_eq!(h1_count("```\n# a\n```\n# B\n"), 1);
+    }
+
+    // A suspension ends the run with its reason; it is not a failed scope to retry.
+    #[test]
+    fn an_interruption_stops_the_draft_run() {
+        use crate::runner::{BatchRun, SessionReport, SessionRunner};
+        struct Suspended(std::cell::Cell<u32>);
+        impl SessionRunner for Suspended {
+            fn agent_name(&self) -> String { "suspended-fixture".into() }
+            fn set_build_token(&self, _: Option<String>) {}
+            fn run_item(&self, _: &BatchRun, _: &crate::session::Trace) -> SessionReport { unreachable!() }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> { unreachable!() }
+            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String, String> {
+                self.0.set(self.0.get() + 1);
+                Err("suspended".into())
+            }
+        }
+        let (proj, store, gs) = tmp();
+        crate::vfs::create_dir_all(proj.root.join("src")).unwrap();
+        crate::vfs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
+        crate::control::release_decompile(&proj, &store.out, &["src".into()]);
+        let runner = Suspended(std::cell::Cell::new(0));
+        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet, std::sync::Arc::new(|_| {}), Default::default());
+        assert_eq!(run_all(&proj, &store, &runner, &gs, &[], &trace).unwrap_err(), "suspended");
+        assert_eq!(runner.0.get(), 1);
     }
 
     // A draft never overwrites a document a person wrote or edited; it replaces only

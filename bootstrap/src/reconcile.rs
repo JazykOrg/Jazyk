@@ -3739,7 +3739,7 @@ mod tests {
         ledger.requirements.insert("req:gw-1".into(), row(()));
         ledger.requirements.insert("req:gw-2".into(), row(()));
         crate::vfs::create_dir_all(&proj.out).unwrap();
-        ledger.save(&proj.out);
+        ledger.save(&proj.out).unwrap();
 
         let f = drift_checks(&store, &proj);
         assert_eq!(

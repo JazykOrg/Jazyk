@@ -99,7 +99,7 @@ This scratch space is a live document to outline the work for this documentation
 Validation of the landing, in order. Every run uses a capable model routed through
 LocalRouter; the default local model fails judgment-heavy goals.
 
-- [x] `cargo test` green (611 on 2026-10-09), including the unit tests for goal
+- [x] `cargo test` green (1046 on 2026-11-07), including the unit tests for goal
   derivation and identity across re-derivations, cone readiness, escalation,
   per-direction relationship recompute, state machine derivation and its checks,
   default views, lifting (a multi-type pair collapsing under it), the render emitters

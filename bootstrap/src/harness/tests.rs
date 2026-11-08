@@ -1843,8 +1843,16 @@ fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change()
         };
         assert!(matches!(run(&wide, "Original prompt", &mut host, &mut store), Stop::Error(_)));
         let saved = store.saved.as_ref().unwrap();
-        let (id, body) = saved.model_requests.iter().next().unwrap();
-        let (id, body) = (id.clone(), body.clone());
+        let (id, body) = match saved.model_requests.iter().next() {
+            Some((id, body)) => (id.clone(), body.clone()),
+            None => {
+                // Past the transition its request answered, the request left the
+                // checkpoint; the replay below must still not repeat it.
+                assert_eq!(phase, CheckpointPhase::AfterTool);
+                let first = &host.requests.borrow()[0];
+                (first.attempt_id.clone(), first.body.clone())
+            }
+        };
         assert_eq!(body["tools"].as_array().unwrap().len(), 2);
         assert_eq!(run(&[tool()], "Updated prompt", &mut host, &mut store), Stop::EndTurn, "{phase:?}");
         drop(run);
@@ -1965,7 +1973,8 @@ fn protected_stop_keeps_compacted_history_without_reexpanding_old_receipts() {
     assert!(store.phases.contains(&CheckpointPhase::Compacted));
     let compacted = store.saved.as_ref().unwrap();
     assert!(compacted.compacted_at_round.is_some());
-    assert_eq!(compacted.model_receipts.len(), 3, "Compaction must leave old receipts available to exercise the boundary");
+    assert!(compacted.model_receipts.is_empty() && compacted.model_requests.is_empty(),
+        "An ended transition's requests and receipts leave the checkpoint");
     let before = history.clone();
     let text = serde_json::to_string(&before).unwrap();
     assert!(!text.contains("obsolete-call") && !text.contains("OBSOLETE_RECEIPT"));
@@ -2001,7 +2010,7 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
                     "content":[{"type":"output_text","text":answer,"annotations":[]}]}],
                 "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}})
         } else { response(&answer) };
-        let mut host = Host::new(vec![reply]);
+        let mut host = Host::new(vec![reply.clone()]);
         let mut store = Store::default();
         let mut history = vec![json!({"role":"user","content":"Finish the requested work."})];
         assert_eq!(run(&mut host, &mut store, &mut history,
@@ -2009,7 +2018,10 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
         assert_eq!(host.requests.borrow().len(), 1, "{api}");
         assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished), "{api}");
         let saved = store.saved.as_mut().unwrap();
-        assert_eq!(saved.model_receipts.len(), 1, "{api}");
+        assert!(saved.model_receipts.is_empty(), "{api}: the answered transition left the checkpoint");
+        // A legacy capsule still carries the answered receipt beside its conversation.
+        let legacy = format!("{}:{}:Inference:0", saved.run_id, saved.transition - 1);
+        saved.model_receipts.insert(legacy, reply.clone());
         let mut stripped = 0;
         for message in saved.conversation.messages_mut() {
             if let Some(notes) = message.metadata.operations.as_mut() {

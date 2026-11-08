@@ -552,7 +552,7 @@ async fn drive(
             if ledger_worker && !state.ledger_finish_reminded {
                 state.ledger_finish_reminded = true;
                 state.conversation.push(Message::user().with_text(LEDGER_CONTINUATION));
-                state.transition += 1;
+                advance(state);
                 if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
                     return Stop::Error(error);
                 }
@@ -662,7 +662,7 @@ async fn drive(
                         .map(|bytes| bytes.len() / 4).unwrap_or(0));
                     record_usage(args, state, summary.usage);
                     state.compacted_at_round = Some(state.rounds);
-                    state.transition += 1;
+                    advance(state);
                     if let Err(error) =
                         checkpoint(recovery, state, CheckpointPhase::Compacted, None).await
                     {
@@ -714,7 +714,7 @@ async fn drive(
             accept_inputs(state, &mut pending_inputs)
         };
         state.model_deltas.clear();
-        state.transition += 1;
+        advance(state);
         if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
             return Stop::Error(error);
         }
@@ -725,6 +725,18 @@ async fn drive(
             return Stop::Cancelled;
         }
     }
+}
+
+// Open the next transition. The ended transition's requests and responses are in
+// the conversation, and inference identities carry the transition, so no later
+// request reuses them: the checkpoint keeps only the current transition's
+// (docs/compiler/agent-runtime.md#checkpoints).
+fn advance(state: &mut HarnessState) {
+    state.transition += 1;
+    let current = format!("{}:{}:", state.run_id, state.transition);
+    state.model_requests.retain(|id, _| id.starts_with(&current));
+    state.model_receipts.retain(|id, _| id.starts_with(&current));
+    state.model_deltas.retain(|id, _| id.starts_with(&current));
 }
 
 async fn drive_future<F, T>(

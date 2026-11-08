@@ -12,6 +12,10 @@ use std::path::Path;
 // More graph effects than this are cut, with the count of the rest.
 const GRAPH_CAP: usize = 40;
 
+// Bookkeeping, not facts: the generation markers and the mentions an entity takes
+// from its requirements. A node whose only change is one of these is left out.
+const QUIET_FIELDS: [&str; 3] = ["created", "updated", "mentions"];
+
 // The product word for a path: prose documents, the configuration, and anything
 // else as a source or test file by its name.
 pub fn file_kind(path: &str) -> &'static str {
@@ -121,9 +125,12 @@ fn diff_map<T: serde::Serialize>(
                 keys.dedup();
                 let changes: Vec<Value> = keys
                     .into_iter()
-                    .filter(|k| bo.get(*k) != ao.get(*k))
+                    .filter(|k| !QUIET_FIELDS.contains(&k.as_str()) && bo.get(*k) != ao.get(*k))
                     .map(|k| json!({"field": k, "before": bo.get(k).cloned().unwrap_or(Value::Null), "after": ao.get(k).cloned().unwrap_or(Value::Null)}))
                     .collect();
+                if changes.is_empty() {
+                    continue;
+                }
                 out.push(json!({"op": "updated", "kind": kind, "id": id, "title": title_of(kind, &av), "changes": changes}));
             }
         }

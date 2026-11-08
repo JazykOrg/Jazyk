@@ -137,5 +137,19 @@ One contract, rendered at two fidelities.
 - jazyk.dev: change bar against the last build or the opened text, click-to-peek
   with Revert, gutter legend; chat effect cards (file diff, requirement bubble,
   field changes, link chips) with click-through.
-- Not in the PoC: Proposal A's new LSP methods, the proxy decoration of external
-  agents' calls, the lane merge of coverage into the requirement lane.
+- The IDE proxy decorates every tool call update it forwards, so an external
+  agent's call to a jazyk tool reaches the IDE with the same diff content.
+- Not in the PoC: Proposal A's new LSP methods, the lane merge of coverage into
+  the requirement lane, the status color changes, a "show change" on the external
+  change flash.
+
+## Known gaps in the PoC
+
+- Graph effects diff the whole graph before and after the commit. Fine for small
+  graphs; the real version should diff only the ids the commit report touched.
+- The ACP `diff` blocks carry the changed hunk, not the whole file. Clients show it
+  correctly as a diff, but line numbers inside the block start at 1; `locations`
+  carries the real line.
+- A deletion on the document's last line shares its gutter row with the change
+  above it, so the red wedge does not show there (the peek still lists it).
+- The "opened" baseline is per page load; a save does not move it.

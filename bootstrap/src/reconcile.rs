@@ -1141,8 +1141,10 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             format!("{} is a decompiled draft nobody has ratified; review it by editing it, even a one-line change clears this", doc),
         ));
     }
-    // Goals parked when a budget ran out.
-    for p in &store.status.parked {
+    // Goals parked when a budget ran out. A pair parked by flip detection waits on
+    // its unstable-derivation ruling, which is its finding already.
+    // Mirrors docs/compiler/compilation.md#checks.
+    for p in store.status.parked.iter().filter(|p| crate::board::flip_subject(&p.goal).is_none()) {
         let why = p
             .reason
             .as_deref()
@@ -2075,11 +2077,11 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
     if !board.lapsed.is_empty() {
         store.clear_changes(&board.lapsed);
     }
-    if !board.reopened.is_empty() || !board.dropped_parked.is_empty() {
+    if !board.reopened.is_empty() || !board.dropped_parked.is_empty() || !board.dropped_failed.is_empty() {
         store
             .status
             .failed
-            .retain(|f| !board.reopened.contains(&f.goal.id));
+            .retain(|f| !board.reopened.contains(&f.goal.id) && !board.dropped_failed.contains(&f.goal.id));
         store
             .status
             .parked
@@ -2463,15 +2465,15 @@ pub(crate) async fn run_sessions(
             }
             derived_ids.extend(board.open_goals().iter().map(|g| g.id.clone()));
             let cap = cap_for(derived_ids.len());
-            // The batches the serving can run: none of their goals parked this build.
+            // Goals parked this build take no batch; their neighbors still run.
+            board.withhold(&parked_ids, store, proj);
             let runnable = |b: &crate::board::Batch| {
-                !b.goals.iter().any(|id| parked_ids.contains(id))
-                    && (!crate::workflow::graph_only()
-                        || b.goals.iter().all(|id| {
-                            board.goals.iter().find(|g| &g.id == id).is_some_and(|g| {
-                                !crate::board::LEDGER_KINDS.contains(&g.kind.as_str())
-                            })
-                        }))
+                !crate::workflow::graph_only()
+                    || b.goals.iter().all(|id| {
+                        board.goals.iter().find(|g| &g.id == id).is_some_and(|g| {
+                            !crate::board::LEDGER_KINDS.contains(&g.kind.as_str())
+                        })
+                    })
             };
             let compile_batches: Vec<crate::board::Batch> = board
                 .batches
@@ -2922,7 +2924,21 @@ pub fn finalize(
     costs: &Costs,
     trace: &Trace,
 ) -> BuildReport {
+    // Parked goals persist whole, deduplicated by id; a cancelled build keeps the
+    // ones it parked before the stop. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    let keep_parked = |s: &mut Store, parked: Vec<ParkedGoal>| {
+        for g in parked {
+            match s.status.parked.iter_mut().find(|p| p.goal.id == g.goal.id) {
+                Some(p) => *p = g,
+                None => s.status.parked.push(g),
+            }
+        }
+    };
     if trace.is_cancelled() {
+        keep_parked(s, parked);
+        s.status
+            .parked
+            .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.goal.id));
         let control = Control::load(proj, &s.out);
         s.status.verdict = Board::derive(s, proj, &control).verdict();
         s.status.verdict.state = "incomplete".into();
@@ -2943,14 +2959,9 @@ pub fn finalize(
     if !settled.is_empty() {
         trace.line("build", &format!("settle: {}", settled.join("; ")));
     }
-    // Parked goals persist whole, deduplicated by id; flip detection adds its pairs.
+    // Flip detection adds its pairs to the build's parks.
     let (flips, flipped) = flip_detection(s);
-    for g in parked.into_iter().chain(flipped) {
-        match s.status.parked.iter_mut().find(|p| p.goal.id == g.goal.id) {
-            Some(p) => *p = g,
-            None => s.status.parked.push(g),
-        }
-    }
+    keep_parked(s, parked.into_iter().chain(flipped).collect());
     s.status
         .parked
         .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.goal.id));
@@ -3049,11 +3060,10 @@ pub fn finalize(
     let control = Control::load(proj, &proj.out);
     let board = Board::derive(s, proj, &control);
     absorb_derivation(s, &board);
-    let mut verdict = board.verdict();
-    if verdict.converged() && !flip_pending(s) {
-        verdict.state = "converged".into();
-    }
-    s.status.verdict = verdict;
+    // A pending flip ruling holds its pair `blocked` on a human, so it rides in the
+    // blocked count and never keeps the build from converging.
+    // Mirrors docs/compiler/compilation.md#convergence.
+    s.status.verdict = board.verdict();
     for (k, line) in &costs.by_kind {
         let c = s.status.costs.by_kind.entry(k.clone()).or_default();
         c.sessions += line.sessions;
@@ -3136,14 +3146,6 @@ pub fn finalize(
         suspend_reason: None,
         retired_tasks: Vec::new(),
     }
-}
-
-// An unstable-derivation ruling still owed keeps the pair parked.
-fn flip_pending(s: &Store) -> bool {
-    s.graph
-        .diagnostics
-        .values()
-        .any(|d| d.lifecycle == "open" && d.rule == "unstable-derivation" && d.answer.is_none())
 }
 
 // ---- ripple: the causality DAG over the journal ----
@@ -3825,6 +3827,29 @@ mod tests {
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].1, ["ent:cart-2"]);
         assert!(hits[0].3.contains("ent:cart"), "{}", hits[0].3);
+    }
+
+    // `incomplete-build` names the goals a budget parked; a pair parked by flip
+    // detection carries its unstable-derivation finding instead.
+    // Mirrors docs/compiler/compilation.md#checks.
+    #[test]
+    fn incomplete_build_skips_flip_parked_goals() {
+        let mut s = Store::default();
+        let goal = |id: &str, via: &str| Goal {
+            id: id.into(),
+            kind: "review-entity".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: id.trim_start_matches("g:review-entity:").into(),
+            cause: Some(Cause { generation: 4, mutation: 0, via: via.into() }),
+            ..Default::default()
+        };
+        s.status.parked.push(ParkedGoal::new(goal("g:review-entity:ent:cart", "entities"), "the build cap of 64 sessions ran out"));
+        s.status.parked.push(ParkedGoal::new(goal("g:review-entity:ent:order", "flip-detection"), "cross-class flip: `order`"));
+        let f = checks(&s, &Project::default());
+        let hits = rules_for(&f, "incomplete-build");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:cart"]);
     }
 
     // A decompiled draft nobody has edited since the machine wrote it is unratified;
@@ -6033,6 +6058,39 @@ mod tests {
         assert_eq!(run.sessions, 4);
         assert_eq!(run.parked.len(), 1);
         assert!(run.parked[0].reason.as_deref().unwrap().contains("after 4 attempts"));
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A stopped build keeps the goals it parked before the stop.
+    // Mirrors docs/compiler/compilation.md#a-build.
+    #[test]
+    fn a_cancelled_build_keeps_the_goals_it_parked() {
+        use std::sync::Arc;
+        let out = std::env::temp_dir().join(format!("jazyk-cancel-parks-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let text = "# Main\n\nThe system accepts an order.\n";
+        let parsed: ParsedDocs = [("docs/main.md".into(), (hash_hex(text), crate::md::parse_sections(text)))].into();
+        let mut store = Store { out: out.clone(), ..Default::default() };
+        store.sync_docs(&parsed);
+        let project = crate::board::tests::project_for(&store);
+        let cancel: Arc<std::sync::atomic::AtomicBool> = Default::default();
+        let trace = Trace::to_sink(crate::session::TraceLevel::Normal, Arc::new(|_: &TraceEvent| {}), cancel.clone());
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let goal = Goal {
+            id: "g:reconcile-section:docs/main.md#/main".into(),
+            kind: "reconcile-section".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "docs/main.md#/main".into(),
+            ..Default::default()
+        };
+        let parked = vec![ParkedGoal::new(goal.clone(), "left open after 4 attempts in session b1-1")];
+        let report = finalize(&mut store, &project, parked, &Costs::default(), &trace);
+        assert!(report.verdict.starts_with("incomplete"), "{}", report.verdict);
+        assert!(store.status.parked.iter().any(|p| p.goal.id == goal.id), "{:?}", store.status.parked);
+        let reloaded = Store::load(&out);
+        assert!(reloaded.status.parked.iter().any(|p| p.goal.id == goal.id), "the entry is on disk");
         crate::vfs::remove_dir_all(&out).ok();
     }
 

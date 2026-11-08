@@ -73,6 +73,248 @@ impl Violation {
     }
 }
 
+// What one goal's gate reads: the store, the session's staged work, the generation
+// settings the ledger gates need, the goal itself, and the batch it rides in (the
+// other goals own some of the staged work). Mirrors docs/compiler/tools.md#goal-tools.
+pub struct GateContext<'a> {
+    pub store: &'a Store,
+    pub staged: &'a [Op],
+    pub gen: &'a GenSettings,
+    pub goal: &'a crate::tools::GoalScope,
+    pub batch: &'a [crate::tools::GoalScope],
+}
+
+impl GateContext<'_> {
+    // Whether another goal of the batch owns work on this node: its target is the
+    // node, or a pair holding it.
+    fn owned_elsewhere(&self, node: &str) -> bool {
+        let node = self.store.resolve_id(node);
+        self.batch.iter().filter(|g| g.goal != self.goal.goal).any(|g| {
+            let hit = |t: &str| self.store.resolve_id(t) == node;
+            match pair_members(&g.target) {
+                Some((a, b)) => hit(a) || hit(b),
+                None => hit(&g.target),
+            }
+        })
+    }
+}
+
+// ---- the per-goal gate helpers, over the store plus the staged work ----
+
+// Proposals a place-anchors goal leaves undecided: neither placed nor orphaned.
+pub fn undecided_proposals(staged: &[Op], proposals: &[String]) -> Vec<String> {
+    proposals
+        .iter()
+        .filter(|a| {
+            !staged.iter().any(|o| {
+                matches!(o, Op::PlaceAnchor { id, .. } | Op::OrphanAnchor { id, .. } if id == *a)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+// Stale anchors are a contract. Each must be re-anchored (its quote locates
+// again), re-recorded under its natural key, revised, or deleted. An anchor
+// flagged for re-evaluation owes a decision even though its quote locates.
+pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<String> {
+    let mut untouched: Vec<String> = Vec::new();
+    for a in anchors {
+        let Some(r) = store.graph.requirements.get(a) else {
+            continue;
+        };
+        let Some(src) = r.source.as_ref() else {
+            continue;
+        };
+        if store.quote_locates(&src.doc, &src.section, &src.quote) && !store.status.reevaluate.contains(a) {
+            continue;
+        }
+        let addressed = staged.iter().any(|o| match o {
+            Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
+            // A staged create that resolved to the anchor carries its id; the
+            // statement-equality fallback covers pre-resolution stages.
+            Op::CreateRequirement { id, requirement } => {
+                id == a
+                    || (requirement.anchored_at(&src.doc, &src.section)
+                        && store::normalize_statement(&requirement.statement)
+                            == store::normalize_statement(&r.statement))
+            }
+            _ => false,
+        });
+        if !addressed {
+            untouched.push(a.clone());
+        }
+    }
+    untouched
+}
+
+// Sections of a reconcile goal with no coverage mark, recorded or staged.
+pub fn unmarked_sections(store: &Store, staged: &[Op], doc: &str, sections: &[String]) -> Vec<String> {
+    sections
+        .iter()
+        .filter(|sec| {
+            let recorded = store
+                .docs
+                .get(doc)
+                .map(|d| d.coverage.contains_key(*sec))
+                .unwrap_or(false);
+            let staged = staged.iter().any(|o| {
+                matches!(o, Op::SetCoverage { doc: d, section, .. } if d == doc && section == *sec)
+            });
+            !recorded && !staged
+        })
+        .cloned()
+        .collect()
+}
+
+// A `covered` claim is honest only when a requirement is sourced from that
+// section, staged or recorded.
+pub fn dishonest_covered(store: &Store, staged: &[Op]) -> Option<Violation> {
+    for op in staged {
+        let Op::SetCoverage { doc, section, state, .. } = op else {
+            continue;
+        };
+        if state != "covered" {
+            continue;
+        }
+        if crate::input::is_blob(store, doc, section) {
+            if let Some(v) = ReconcileSection.gates(store, staged).into_iter().next() {
+                return Some(v);
+            }
+            continue;
+        }
+        // A test-case or examples section is covered by the criterion sourced
+        // from it (docs/compiler/goals/reconcile-section.md#gate).
+        let crit_at = |s: &Option<SourceRef>| s.as_ref().is_some_and(|s| s.doc == *doc && s.section == *section);
+        let has_req = store.graph.requirements.values().any(|r| r.anchored_at(doc, section))
+            || store.graph.criteria.values().any(|c| crit_at(&c.source))
+            || staged.iter().any(|o| match o {
+                Op::CreateRequirement { requirement, .. } => requirement.anchored_at(doc, section),
+                Op::CreateCriterion { criterion, .. } => crit_at(&criterion.source),
+                _ => false,
+            });
+        if !has_req {
+            return Some(Violation::new(
+                "uncovered-claim",
+                format!(
+                    "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (state the obligation, keep the quote verbatim), or mark the section non-normative with a note",
+                    doc, section
+                ),
+            ));
+        }
+    }
+    None
+}
+
+// A ledger kind's gate reads the landed ledger, never the changeset: the claim is
+// validated against the row or record the goal page names, and the refusal carries
+// the repair. Mirrors docs/compiler/goals/bind.md#gate, generate.md#gate, verify.md#gate.
+fn ledger_violation(cx: &GateContext, result: Result<(), String>) -> Option<Violation> {
+    result.err().map(|message| {
+        Violation::new(&format!("{}-gate", cx.goal.kind), format!("{}: {}", cx.goal.goal, message))
+    })
+}
+
+// The graph after the staged work, as far as references go: nodes created, updated,
+// deleted, and merged. The retrace gate reads what the target points at here.
+fn references_after(store: &Store, staged: &[Op]) -> Store {
+    let mut after = store.clone();
+    let g = &mut after.graph;
+    for op in staged {
+        match op {
+            Op::CreateEntity { id, entity } => {
+                g.entities.insert(id.clone(), entity.clone());
+            }
+            Op::UpdateEntity { id, parent, clear_parent, set_attributes, add_attributes, provenance, .. } => {
+                if let Some(e) = g.entities.get_mut(id) {
+                    if let Some(p) = parent {
+                        e.parent = Some(p.clone());
+                    }
+                    if *clear_parent {
+                        e.parent = None;
+                    }
+                    if let Some(a) = set_attributes {
+                        e.attributes = a.clone();
+                    }
+                    for a in add_attributes {
+                        e.attributes.retain(|x| !x.name.eq_ignore_ascii_case(&a.name));
+                        e.attributes.push(a.clone());
+                    }
+                    if let Some(p) = provenance {
+                        e.provenance = Some(p.clone());
+                    }
+                }
+            }
+            Op::DeleteEntity { id, .. } | Op::DissolveEntity { id, .. } => {
+                g.entities.remove(id);
+            }
+            Op::MergeEntities { keep, absorb, .. } => {
+                g.entities.remove(absorb);
+                g.redirects.insert(absorb.clone(), keep.clone());
+            }
+            Op::CreateRequirement { id, requirement } => {
+                g.requirements.insert(id.clone(), requirement.clone());
+            }
+            Op::UpdateRequirement { id, entities, edges, transition, provenance, .. } => {
+                if let Some(r) = g.requirements.get_mut(id) {
+                    if let Some(x) = entities {
+                        r.entities = x.clone();
+                    }
+                    if let Some(x) = edges {
+                        r.edges = x.clone();
+                    }
+                    if let Some(x) = transition {
+                        r.transition = Some(x.clone());
+                    }
+                    if let Some(x) = provenance {
+                        r.provenance = Some(x.clone());
+                    }
+                }
+            }
+            Op::DeleteRequirement { id, .. } => {
+                g.requirements.remove(id);
+            }
+            Op::RetractDecree { id, .. } => {
+                g.entities.remove(id);
+                g.requirements.remove(id);
+                g.views.remove(id);
+            }
+            Op::CreateView { id, view } => {
+                g.views.insert(id.clone(), view.clone());
+            }
+            Op::UpdateView { id, members, add_members, remove_members, collapse, exclude, .. } => {
+                if let Some(v) = g.views.get_mut(id) {
+                    if let Some(ms) = members {
+                        v.members = ms.clone();
+                    }
+                    for x in add_members {
+                        if !v.members.contains(x) {
+                            v.members.push(x.clone());
+                        }
+                    }
+                    v.members.retain(|x| !remove_members.contains(x));
+                    v.collapse.retain(|x| !remove_members.contains(x));
+                    v.excluded.retain(|x| !remove_members.contains(&x.id));
+                    if let Some(c) = collapse {
+                        v.collapse = c.clone();
+                    }
+                    for x in exclude {
+                        v.members.retain(|y| y != &x.id);
+                        if !v.excluded.iter().any(|y| y.id == x.id) {
+                            v.excluded.push(x.clone());
+                        }
+                    }
+                }
+            }
+            Op::DeleteView { id, .. } => {
+                g.views.remove(id);
+            }
+            _ => {}
+        }
+    }
+    after
+}
+
 pub trait GoalKind: Sync + Send {
     fn kind(&self) -> &'static str;
     fn class(&self) -> Class;
@@ -89,6 +331,12 @@ pub trait GoalKind: Sync + Send {
     fn toolset(&self) -> &'static [&'static str];
     // The batch gate over the store plus what the session staged.
     fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation>;
+    // One goal's own gate: what its target, its change, and the rest of its batch
+    // decide, checked at `mark_goal_done` and again at `done` after the batch gate.
+    // Mirrors docs/compiler/tools.md#goal-tools.
+    fn goal_gate(&self, _cx: &GateContext) -> Option<Violation> {
+        None
+    }
     // The contract paragraph. Empty for the blocked-on-human kinds.
     fn prompt(&self) -> &'static str;
 }
@@ -229,20 +477,6 @@ fn is_derived(store: &Store, id: &str) -> bool {
                 .map(|r| r.source.is_none() && pending(&r.provenance))
         })
         .unwrap_or(false)
-}
-
-// The per-target work item the current serving claims for a goal of this kind, or
-// None for a kind the serving has no task for yet.
-pub fn legacy_task(kind: &str) -> Option<&'static str> {
-    match kind {
-        "place-anchors" => Some("align-doc"),
-        "reconcile-section" => Some("reconcile-doc"),
-        "rejudge-pair" => Some("review-requirement"),
-        "review-entity" => Some("review-entity"),
-        "bind" => Some("bind-requirement"),
-        "generate" => Some("generate-entity"),
-        _ => None,
-    }
 }
 
 pub fn goal_id(kind: &str, target: &str) -> String {
@@ -609,6 +843,21 @@ impl GoalKind for PlaceAnchors {
             }
         }
         out
+    }
+    // Every proposal of the goal is placed or orphaned.
+    // Mirrors docs/compiler/goals/place-anchors.md#gate.
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        let undecided = undecided_proposals(cx.staged, &cx.goal.proposals);
+        (!undecided.is_empty()).then(|| {
+            Violation::new(
+                "undecided-proposal",
+                format!(
+                    "{}: proposals left undecided: {}; place_anchor or orphan_anchor each",
+                    cx.goal.goal,
+                    undecided.join(", ")
+                ),
+            )
+        })
     }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/place-anchors.md")
@@ -1534,6 +1783,35 @@ impl GoalKind for ReconcileSection {
             }
         }
         out
+    }
+    // The goal's stale anchors are addressed, its sections carry a coverage mark, and
+    // every covered claim is honest. Mirrors docs/compiler/goals/reconcile-section.md#gate.
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        let untouched = untouched_stale(cx.store, cx.staged, &cx.goal.stale_anchors);
+        if !untouched.is_empty() {
+            return Some(Violation::new(
+                "stale-anchor",
+                format!(
+                    "{}: stale anchors left untouched: {}; re-record, revise, or delete each",
+                    cx.goal.goal,
+                    untouched.join(", ")
+                ),
+            ));
+        }
+        if let Some(doc) = &cx.goal.doc {
+            let unmarked = unmarked_sections(cx.store, cx.staged, doc, &cx.goal.sections);
+            if !unmarked.is_empty() {
+                return Some(Violation::new(
+                    "unmarked-section",
+                    format!(
+                        "{}: section(s) without a coverage mark: {}; set_coverage covered (a requirement must be sourced from it) or non-normative with a note",
+                        cx.goal.goal,
+                        unmarked.join(", ")
+                    ),
+                ));
+            }
+        }
+        dishonest_covered(cx.store, cx.staged)
     }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/reconcile-section.md")
@@ -2618,6 +2896,25 @@ impl GoalKind for Retrace {
         }
         out
     }
+    // Nothing on the target points at a dead or missing node over the store plus the
+    // staged work; a target deleted in this session passes.
+    // Mirrors docs/compiler/goals/retrace.md#gate.
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        let after = references_after(cx.store, cx.staged);
+        let target = after.resolve_id(&cx.goal.target).to_string();
+        let dangling = dangling_references(&after, &target);
+        (!dangling.is_empty()).then(|| {
+            Violation::new(
+                "dangling-reference",
+                format!(
+                    "{}: {} still points at a dead node: {}; repair, re-derive, or drop each reference (never re-create the dead node), or delete the target",
+                    cx.goal.goal,
+                    target,
+                    dangling.join(", ")
+                ),
+            )
+        })
+    }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/retrace.md")
     }
@@ -2786,49 +3083,78 @@ impl GoalKind for ConformInstance {
             "resolve_diagnostic",
         ]
     }
-    fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation> {
-        // The type is never edited from this goal.
-        let types: BTreeSet<String> = crate::derive::instance_types(store).into_values().collect();
-        let mut out = Vec::new();
-        for op in staged {
-            if let Op::UpdateEntity {
-                id,
-                name,
-                definition,
-                add_aliases,
-                remove_aliases,
-                add_mention,
-                stereotype,
-                parent,
-                clear_parent,
-                set_attributes,
-                add_attributes,
-                provenance,
-                ..
-            } = op
-            {
-                // A not_about-only update is a review annotation, not a type edit
-                // (docs/compiler/goals/conform-instance.md#gate).
-                let annotation_only = name.is_none()
-                    && definition.is_none()
-                    && add_aliases.is_empty()
-                    && remove_aliases.is_empty()
-                    && add_mention.is_none()
-                    && stereotype.is_none()
-                    && parent.is_none()
-                    && !clear_parent
-                    && set_attributes.is_none()
-                    && add_attributes.is_empty()
-                    && provenance.is_none();
-                if types.contains(id) && !annotation_only {
-                    out.push(Violation::new(
-                        "type-edited",
-                        format!("{} is a type; conform the instance, never the type", id),
-                    ));
+    // The type rule needs the goal and its batch: it lives in goal_gate.
+    fn gates(&self, _store: &Store, _staged: &[Op]) -> Vec<Violation> {
+        Vec::new()
+    }
+    // The type is never edited from this goal: an update on the instance's type, or on
+    // a requirement not naming the instance, is refused unless another goal of the
+    // batch owns it (a review of the type, a sibling instance's goal). A not_about-only
+    // update is a review annotation and passes.
+    // Mirrors docs/compiler/goals/conform-instance.md#gate.
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        let instance = cx.store.resolve_id(&cx.goal.target).to_string();
+        let ty = cx.goal.change["type"]
+            .as_str()
+            .map(String::from)
+            .or_else(|| crate::derive::instance_types(cx.store).get(&instance).cloned());
+        for op in cx.staged {
+            match op {
+                Op::UpdateEntity {
+                    id,
+                    name,
+                    definition,
+                    add_aliases,
+                    remove_aliases,
+                    add_mention,
+                    stereotype,
+                    parent,
+                    clear_parent,
+                    set_attributes,
+                    add_attributes,
+                    provenance,
+                    ..
+                } => {
+                    let annotation_only = name.is_none()
+                        && definition.is_none()
+                        && add_aliases.is_empty()
+                        && remove_aliases.is_empty()
+                        && add_mention.is_none()
+                        && stereotype.is_none()
+                        && parent.is_none()
+                        && !clear_parent
+                        && set_attributes.is_none()
+                        && add_attributes.is_empty()
+                        && provenance.is_none();
+                    let on_type = ty.as_deref().is_some_and(|t| cx.store.resolve_id(id) == cx.store.resolve_id(t));
+                    if on_type && !annotation_only && !cx.owned_elsewhere(id) {
+                        return Some(Violation::new(
+                            "type-edited",
+                            format!("{}: {} is the type; conform the instance, never the type", cx.goal.goal, id),
+                        ));
+                    }
                 }
+                Op::UpdateRequirement { id, entities, .. } => {
+                    let names_instance = |list: &[String]| list.iter().any(|e| cx.store.resolve_id(e) == instance);
+                    let stored = cx.store.graph.requirements.get(cx.store.resolve_id(id));
+                    let named = stored.is_some_and(|r| names_instance(&r.entities))
+                        || entities.as_deref().is_some_and(names_instance);
+                    let owned = cx.owned_elsewhere(id)
+                        || stored.is_some_and(|r| r.entities.iter().any(|e| cx.owned_elsewhere(e)));
+                    if !named && !owned {
+                        return Some(Violation::new(
+                            "type-edited",
+                            format!(
+                                "{}: {} does not name {}; conform the instance through its own requirements, never the type's",
+                                cx.goal.goal, id, instance
+                            ),
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
-        out
+        None
     }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/conform-instance.md")
@@ -3176,6 +3502,9 @@ impl GoalKind for Bind {
     fn gates(&self, _store: &Store, _staged: &[Op]) -> Vec<Violation> {
         Vec::new()
     }
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        ledger_violation(cx, crate::bind::gate(cx.store, cx.gen, &cx.goal.target))
+    }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/bind.md")
     }
@@ -3287,6 +3616,9 @@ impl GoalKind for Generate {
     fn gates(&self, _store: &Store, _staged: &[Op]) -> Vec<Violation> {
         Vec::new()
     }
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        ledger_violation(cx, crate::gen::gate(cx.store, cx.gen, &cx.goal.target, true).map(|_| ()))
+    }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/generate.md")
     }
@@ -3385,6 +3717,9 @@ impl GoalKind for Verify {
     }
     fn gates(&self, _store: &Store, _staged: &[Op]) -> Vec<Violation> {
         Vec::new()
+    }
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        ledger_violation(cx, crate::verify::gate(cx.store, cx.gen, &cx.goal.target))
     }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/verify.md")
@@ -4740,6 +5075,11 @@ impl GoalKind for SplitView {
         }
         out
     }
+    // The target view itself comes under its soft value.
+    // Mirrors docs/compiler/goals/split-view.md#gate.
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        split_view_goal_gate(cx.store, cx.staged, &cx.goal.target)
+    }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/split-view.md")
     }
@@ -5933,6 +6273,13 @@ impl GoalKind for AbstractEntity {
         }
         out
     }
+    // The fan-out variant's own level faces its count even when the changeset left it
+    // alone, and the caps variant's target faces its requirement count against the
+    // soft value. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate and #gate.
+    fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
+        fan_out_goal_gate(cx.store, cx.staged, &cx.goal.target)
+            .or_else(|| caps_goal_gate(cx.store, cx.staged, &cx.goal.target))
+    }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/abstract-entity.md")
     }
@@ -5942,6 +6289,80 @@ impl GoalKind for AbstractEntity {
 pub(crate) mod tests {
     use super::*;
     use crate::vfs::VPathExt;
+
+    fn op(v: Value) -> Op {
+        serde_json::from_value(v).expect("an op")
+    }
+
+    fn scope(kind: &str, target: &str, change: Value) -> crate::tools::GoalScope {
+        crate::tools::GoalScope::from_goal(&Goal {
+            id: goal_id(kind, target),
+            kind: kind.into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: target.into(),
+            change,
+            ..Default::default()
+        })
+    }
+
+    fn goal_gate_of(store: &Store, staged: &[Op], goal: &crate::tools::GoalScope, batch: &[crate::tools::GoalScope]) -> Option<Violation> {
+        let gen = GenSettings::resolve(&crate::project::Project::default());
+        let cx = GateContext { store, staged, gen: &gen, goal, batch };
+        kind(&goal.kind).unwrap().goal_gate(&cx)
+    }
+
+    // The retrace gate: nothing on the target points at a dead node over the store
+    // plus the staged work, and a target deleted in the session passes.
+    // Mirrors docs/compiler/goals/retrace.md#gate.
+    #[test]
+    fn retrace_refuses_a_dangling_reference_until_it_is_repaired() {
+        let mut s = Store::default();
+        s.graph.requirements.insert("req:holds-1".into(), Requirement { statement: "Holds land.".into(), ..Default::default() });
+        s.graph.views.insert("view:usecase/holds".into(), View {
+            kind: "usecase".into(),
+            title: "Holds".into(),
+            members: vec!["req:holds-1".into(), "req:orders-6".into()],
+            ..Default::default()
+        });
+        let g = scope("retrace", "view:usecase/holds", json!({"deleted": ["req:orders-6"]}));
+        let batch = vec![g.clone()];
+        let v = goal_gate_of(&s, &[], &g, &batch).expect("the dead member dangles");
+        assert_eq!(v.rule, "dangling-reference");
+        assert!(v.message.contains("req:orders-6"), "{}", v.message);
+        let repaired = [op(json!({"op": "update_view", "id": "view:usecase/holds", "remove_members": ["req:orders-6"]}))];
+        assert_eq!(goal_gate_of(&s, &repaired, &g, &batch), None);
+        let deleted = [op(json!({"op": "delete_view", "id": "view:usecase/holds", "reason": "nothing left to show"}))];
+        assert_eq!(goal_gate_of(&s, &deleted, &g, &batch), None);
+    }
+
+    // The conform-instance type rule keys on the goal's own type and yields to the
+    // batch goal that owns the edit. Mirrors docs/compiler/goals/conform-instance.md#gate.
+    #[test]
+    fn conform_instance_refuses_type_edits_its_batch_does_not_own() {
+        let mut s = Store::default();
+        for id in ["ent:ana", "ent:customer", "ent:order"] {
+            s.graph.entities.insert(id.into(), Entity { name: id.into(), ..Default::default() });
+        }
+        s.graph.requirements.insert("req:customer-1".into(), Requirement { statement: "A customer has a tier.".into(), entities: vec!["ent:customer".into()], ..Default::default() });
+        s.graph.requirements.insert("req:ana-1".into(), Requirement { statement: "Ana is gold tier.".into(), entities: vec!["ent:ana".into()], ..Default::default() });
+        let g = scope("conform-instance", "ent:ana", json!({"type": "ent:customer"}));
+        let alone = vec![g.clone()];
+        let type_edit = [op(json!({"op": "update_entity", "id": "ent:customer", "definition": "A buyer."}))];
+        let type_statement = [op(json!({"op": "update_requirement", "id": "req:customer-1", "statement": "A customer has a tier and a region."}))];
+        let own_statement = [op(json!({"op": "update_requirement", "id": "req:ana-1", "statement": "Ana is gold tier in the EU."}))];
+        let annotation = [op(json!({"op": "update_entity", "id": "ent:customer", "not_about_add": ["req:ana-1"]}))];
+        let other_entity = [op(json!({"op": "update_entity", "id": "ent:order", "definition": "A purchase."}))];
+        assert_eq!(goal_gate_of(&s, &type_edit, &g, &alone).map(|v| v.rule), Some("type-edited".into()));
+        assert_eq!(goal_gate_of(&s, &type_statement, &g, &alone).map(|v| v.rule), Some("type-edited".into()));
+        assert_eq!(goal_gate_of(&s, &own_statement, &g, &alone), None);
+        assert_eq!(goal_gate_of(&s, &annotation, &g, &alone), None);
+        assert_eq!(goal_gate_of(&s, &other_entity, &g, &alone), None, "another entity is not this goal's type");
+        // A review of the type in the same batch owns the type's edits.
+        let mixed = vec![g.clone(), scope("review-entity", "ent:customer", json!({}))];
+        assert_eq!(goal_gate_of(&s, &type_edit, &g, &mixed), None);
+        assert_eq!(goal_gate_of(&s, &type_statement, &g, &mixed), None);
+    }
 
     #[test]
     fn registry_covers_seventeen_kinds_with_pages_and_prompts() {

@@ -1806,53 +1806,11 @@ impl ToolSession {
     // ---- the per-goal gates ----
 
     fn undecided_proposals(&self, proposals: &[String]) -> Vec<String> {
-        proposals
-            .iter()
-            .filter(|a| {
-                !self.staged.iter().any(|o| {
-                    matches!(o, Op::PlaceAnchor { id, .. } | Op::OrphanAnchor { id, .. } if id == *a)
-                })
-            })
-            .cloned()
-            .collect()
+        crate::goals::undecided_proposals(&self.staged, proposals)
     }
 
-    // Stale anchors are a contract. Each must be re-anchored (its quote locates
-    // again), re-recorded under its natural key, revised, or deleted. An anchor
-    // flagged for re-evaluation owes a decision even though its quote locates.
     fn untouched_stale(&self, anchors: &[String]) -> Vec<String> {
-        let mut untouched: Vec<String> = Vec::new();
-        for a in anchors {
-            let Some(r) = self.snapshot.graph.requirements.get(a) else {
-                continue;
-            };
-            let Some(src) = r.source.as_ref() else {
-                continue;
-            };
-            if self
-                .snapshot
-                .quote_locates(&src.doc, &src.section, &src.quote)
-                && !self.snapshot.status.reevaluate.contains(a)
-            {
-                continue;
-            }
-            let addressed = self.staged.iter().any(|o| match o {
-                Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
-                // A staged create that resolved to the anchor carries its id; the
-                // statement-equality fallback covers pre-resolution stages.
-                Op::CreateRequirement { id, requirement } => {
-                    id == a
-                        || (requirement.anchored_at(&src.doc, &src.section)
-                            && crate::store::normalize_statement(&requirement.statement)
-                                == crate::store::normalize_statement(&r.statement))
-                }
-                _ => false,
-            });
-            if !addressed {
-                untouched.push(a.clone());
-            }
-        }
-        untouched
+        crate::goals::untouched_stale(&self.snapshot, &self.staged, anchors)
     }
 
     // A name that starts with an article is a proper name when a document writes it
@@ -2111,76 +2069,13 @@ impl ToolSession {
     }
 
     fn unmarked_sections(&self, doc: &str, sections: &[String]) -> Vec<String> {
-        sections
-            .iter()
-            .filter(|sec| {
-                let recorded = self
-                    .snapshot
-                    .docs
-                    .get(doc)
-                    .map(|d| d.coverage.contains_key(*sec))
-                    .unwrap_or(false);
-                let staged = self.staged.iter().any(|o| {
-                    matches!(o, Op::SetCoverage { doc: d, section, .. } if d == doc && section == *sec)
-                });
-                !recorded && !staged
-            })
-            .cloned()
-            .collect()
+        crate::goals::unmarked_sections(&self.snapshot, &self.staged, doc, sections)
     }
 
     // A `covered` claim is honest only when a requirement is sourced from that
     // section, staged or recorded.
     fn dishonest_covered(&self) -> Option<ToolError> {
-        for op in &self.staged {
-            if let Op::SetCoverage {
-                doc,
-                section,
-                state,
-                ..
-            } = op
-            {
-                if state != "covered" {
-                    continue;
-                }
-                if crate::input::is_blob(&self.snapshot, doc, section) {
-                    if let Some(v) = crate::goals::kind("reconcile-section").expect("registered kind")
-                        .gates(&self.snapshot, &self.staged).into_iter().next() {
-                        return Some(ToolError::new(&v.rule, v.message));
-                    }
-                    continue;
-                }
-                // A test-case or examples section is covered by the criterion sourced
-                // from it (docs/compiler/goals/reconcile-section.md#gate).
-                let crit_at = |s: &Option<SourceRef>| {
-                    s.as_ref().is_some_and(|s| s.doc == *doc && s.section == *section)
-                };
-                let has_req = self
-                    .snapshot
-                    .graph
-                    .requirements
-                    .values()
-                    .any(|r| r.anchored_at(doc, section))
-                    || self.snapshot.graph.criteria.values().any(|c| crit_at(&c.source))
-                    || self.staged.iter().any(|o| match o {
-                        Op::CreateRequirement { requirement, .. } => {
-                            requirement.anchored_at(doc, section)
-                        }
-                        Op::CreateCriterion { criterion, .. } => crit_at(&criterion.source),
-                        _ => false,
-                    });
-                if !has_req {
-                    return Some(ToolError::new(
-                        "uncovered-claim",
-                        format!(
-                            "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (state the obligation, keep the quote verbatim), or mark the section non-normative with a note",
-                            doc, section
-                        ),
-                    ));
-                }
-            }
-        }
-        None
+        crate::goals::dishonest_covered(&self.snapshot, &self.staged).map(|v| ToolError::new(&v.rule, v.message))
     }
 
     // One goal's gate over the store plus the staged work: the kind's batch gate and
@@ -2188,94 +2083,23 @@ impl ToolSession {
     // this and done re-validates every resolution.
     // Mirrors docs/compiler/tools.md#goal-tools.
     fn goal_gate(&self, gs: &GoalScope) -> Result<(), ToolError> {
-        if let Some(k) = crate::goals::kind(&gs.kind) {
-            if let Some(v) = k.gates(&self.snapshot, &self.staged).into_iter().next() {
-                return Err(ToolError::new(&v.rule, v.message));
-            }
-        }
-        // The ledger kinds' gates read the landed ledger, never the changeset: a
-        // claim on a bind, generate, or verify goal is validated against the row
-        // or record the goal page names, and the refusal carries the repair.
-        // Mirrors docs/compiler/goals/bind.md#gate, generate.md#gate, verify.md#gate.
-        let ledger = match gs.kind.as_str() {
-            "bind" => crate::bind::gate(&self.snapshot, &self.gen, &gs.target),
-            "generate" => {
-                crate::gen::gate(&self.snapshot, &self.gen, &gs.target, true).map(|_| ())
-            }
-            "verify" => crate::verify::gate(&self.snapshot, &self.gen, &gs.target),
-            _ => Ok(()),
+        let Some(k) = crate::goals::kind(&gs.kind) else {
+            return Ok(());
         };
-        if let Err(message) = ledger {
-            return Err(ToolError::new(
-                &format!("{}-gate", gs.kind),
-                format!("{}: {}", gs.goal, message),
-            ));
+        if let Some(v) = k.gates(&self.snapshot, &self.staged).into_iter().next() {
+            return Err(ToolError::new(&v.rule, v.message));
         }
-        // The fan-out variant's own level faces its count even when the changeset left
-        // it alone, and the caps variant's target faces its requirement count against
-        // the soft value. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate
-        // and #gate.
-        if gs.kind == "split-view" {
-            if let Some(v) =
-                crate::goals::split_view_goal_gate(&self.snapshot, &self.staged, &gs.target)
-            {
-                return Err(ToolError::new(&v.rule, v.message));
-            }
+        let cx = crate::goals::GateContext {
+            store: &self.snapshot,
+            staged: &self.staged,
+            gen: &self.gen,
+            goal: gs,
+            batch: &self.scope.goals,
+        };
+        match k.goal_gate(&cx) {
+            Some(v) => Err(ToolError::new(&v.rule, v.message)),
+            None => Ok(()),
         }
-        if gs.kind == "abstract-entity" {
-            if let Some(v) =
-                crate::goals::fan_out_goal_gate(&self.snapshot, &self.staged, &gs.target)
-            {
-                return Err(ToolError::new(&v.rule, v.message));
-            }
-            if let Some(v) = crate::goals::caps_goal_gate(&self.snapshot, &self.staged, &gs.target)
-            {
-                return Err(ToolError::new(&v.rule, v.message));
-            }
-        }
-        if gs.kind == "place-anchors" {
-            let undecided = self.undecided_proposals(&gs.proposals);
-            if !undecided.is_empty() {
-                return Err(ToolError::new(
-                    "undecided-proposal",
-                    format!(
-                        "{}: proposals left undecided: {}; place_anchor or orphan_anchor each",
-                        gs.goal,
-                        undecided.join(", ")
-                    ),
-                ));
-            }
-        }
-        if gs.kind == "reconcile-section" {
-            let untouched = self.untouched_stale(&gs.stale_anchors);
-            if !untouched.is_empty() {
-                return Err(ToolError::new(
-                    "stale-anchor",
-                    format!(
-                        "{}: stale anchors left untouched: {}; re-record, revise, or delete each",
-                        gs.goal,
-                        untouched.join(", ")
-                    ),
-                ));
-            }
-            if let Some(doc) = &gs.doc {
-                let unmarked = self.unmarked_sections(doc, &gs.sections);
-                if !unmarked.is_empty() {
-                    return Err(ToolError::new(
-                        "unmarked-section",
-                        format!(
-                            "{}: section(s) without a coverage mark: {}; set_coverage covered (a requirement must be sourced from it) or non-normative with a note",
-                            gs.goal,
-                            unmarked.join(", ")
-                        ),
-                    ));
-                }
-            }
-            if let Some(e) = self.dishonest_covered() {
-                return Err(e);
-            }
-        }
-        Ok(())
     }
 
     // A sentence boundary is [.!?] followed by the end of the text, or by whitespace

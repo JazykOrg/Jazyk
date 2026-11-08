@@ -113,8 +113,8 @@ never reuses a load.
 
 A project that carries its product carries it into the tab: the
 [deliverable](../consumers/gen.md#the-deliverable) folder, the
-[ledger](../consumers/gen.md#the-ledger) under `.jazyk/gen/`, the criteria files,
-and the generated pages under `.jazyk/docsgen/` are files in the tree like any
+[ledger](../consumers/gen.md#the-ledger) under `.jazyk/<set-id>/gen/`, the criteria
+files, and the generated pages under `.jazyk/<set-id>/docsgen/` are files in the tree like any
 other. Every read of the product is served from them, through the same
 `crate::webapi` functions the server answers with, so the [Product](./gui.md#product)
 lens shows in a tab what it shows on a machine:

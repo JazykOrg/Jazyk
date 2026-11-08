@@ -195,7 +195,7 @@ free.
 
 ## Outputs
 
-Everything lives in the out directory (default `.jazyk/`). See
+Everything lives in the set's out directory (`.jazyk/<set-id>/`). See
 [storage layout](./graph.md#storage-layout).
 
 - `graph/`: the semantic graph, the primary output, one file per node

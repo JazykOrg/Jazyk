@@ -1512,22 +1512,44 @@ definitions:
     additionalProperties: false
   updateProjectSettings:
     description: >-
-      Request payload of update_project_settings (chat). Typed edits to jazyk.toml,
-      keyed like the settings file; each key given is rendered as a minimal edit
+      Request payload of update_project_settings (chat). Edits to jazyk.toml, each key
+      rendered as a minimal edit under the project lock
     type: object
+    required:
+      - settings
+      - baseHash
     properties:
-      workflow:
+      settings:
         type: object
-      docs:
-        type: object
-      acp:
-        type: object
-      executors:
-        type: object
-      gen:
-        type: object
-      roots:
-        type: object
+        description: Dotted key to string value
+        properties:
+          workflow.compile:
+            type: string
+            enum:
+              - manual
+              - auto
+          workflow.generate:
+            type: string
+            enum:
+              - manual
+              - auto
+          workflow.worker:
+            type: string
+            enum:
+              - internal
+              - agent
+              - any
+          gen.deliverable:
+            type: string
+          gen.worker:
+            type: string
+            enum:
+              - agentic
+              - pipeline
+        additionalProperties: false
+      baseHash:
+        type: string
+        description: The configuration hash from list_document_sets
     additionalProperties: false
   reportFeedback:
     description: >-
@@ -1913,4 +1935,7 @@ definitions:
         description: Docs-relative path under the docs glob
       content:
         type: string
+      scope:
+        type: string
+        description: The scope from decompile_tasks whose release the draft consumes
     additionalProperties: false

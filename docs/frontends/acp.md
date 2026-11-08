@@ -447,10 +447,17 @@ Setup and configuration are chat tools too, routed through the same edit delegat
   the tool at all, because the answer could only ever be a refusal. The serving's
   instructions state which case it is in, so the agent knows whether it is talking
   about a project or about an empty directory without calling anything.
-- `update_project_settings`: typed edits to `jazyk.toml` (workflow modes, docs glob,
-  lint rules, the `[acp]` profile, the `[executors]` overrides), rendered as minimal
-  edits, never a whole-file rewrite. An uninitialized directory has no settings to
-  edit, so this tool is offered only in a project.
+- `update_project_settings({settings, baseHash})`: edits to `jazyk.toml`, rendered
+  as minimal edits, never a whole-file rewrite. `settings` maps a dotted key to a
+  string value. The editable keys are `workflow.compile`, `workflow.generate`,
+  `workflow.worker`, `gen.deliverable`, and `gen.worker`, with the values
+  [project settings](../compiler/project-settings.md) allows. The agent, executor,
+  and model settings are not editable here, so a chat cannot repoint the agent
+  command or the model endpoint. Document-set selections use the document-set tools.
+  `baseHash` is the configuration hash `list_document_sets` returns. A stale hash is
+  refused, and so is any edit while a build runs or another project operation holds
+  the project lock. The reply carries the new hash. An uninitialized directory has
+  no settings to edit, so this tool is offered only in a project.
 
 ### Questions in chat
 
@@ -619,7 +626,9 @@ user is looking: the IDE's unsaved buffer, not just the disk. The injected MCP s
 is told to delegate edits (`--edit-sink`); each edit travels to the proxy, which
 issues the file write upstream and attaches the diff to a tool call update. When the
 IDE lacks file system support, or nothing listens on the sink, the serving writes the
-disk directly. The graph commit is the same either way.
+disk directly. The graph commit is the same either way. An edit the IDE refuses, or
+does not answer in time, fails the tool call: the serving never writes the disk behind
+an IDE that may still apply or has declined the edit, and a dual write commits nothing.
 
 The edit transport uses local Unix-domain sockets on macOS and Linux, and the
 `uds_windows` crate on Windows. Windows requires Windows 10 version 1803 or newer.

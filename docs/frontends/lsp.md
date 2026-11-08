@@ -95,9 +95,9 @@ the CLI and ACP chat.
 
   Sits in: Public › Checkout › **Funds**
 
-  ![view:class/checkout](file:///home/ana/shop/.jazyk/diagrams/class/checkout.svg)
+  ![view:class/checkout](file:///home/ana/shop/.jazyk/ds_main/diagrams/class/checkout.svg)
 
-  Inside: [view:class/funds](file:///home/ana/shop/.jazyk/docsgen/diagrams/class/funds.md) (3 children)
+  Inside: [view:class/funds](file:///home/ana/shop/.jazyk/ds_main/docsgen/diagrams/class/funds.md) (3 children)
 
   [card](file:///.../docsgen/entities/funds.md) · [requirements (0)](file:///.../docsgen/funds.md) · [level: Checkout](file:///.../docsgen/levels/checkout.md)
   ```

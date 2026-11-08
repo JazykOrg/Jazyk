@@ -242,10 +242,12 @@ The write slice per kind is on the kind's page and in the catalog: entity, requi
 and coverage tools for `reconcile-section`; judgment tools for `rejudge-pair` and
 `review-entity`; view tools for the view kinds; the [binding](./tools.md#binding-tools),
 [generation](./tools.md#generation-tools), and
-[verification](./tools.md#verification-tools) tools for the ledger kinds. A `bind`,
-`generate`, or `verify` batch adds the
-[file and command tools](./goals/generate.md#file-and-command-tools) when the
-executor's profile sets `serve_files` ([generation sessions](#generation-sessions)). A
+[verification](./tools.md#verification-tools) tools for the ledger kinds. When the
+executor's profile sets `serve_files` ([generation sessions](#generation-sessions)), a
+`bind` or `generate` batch adds the
+[file tools](./goals/generate.md#file-and-command-tools) `read_text_file`,
+`write_text_file`, and `list_files`, and a `verify` batch adds only the read-only
+`read_text_file` and `list_files` ([verify tools](./goals/verify.md#tools)). A
 tool outside the batch's toolset is not served, so the model cannot call it.
 
 A batch resolves to exactly one executor: the scheduler never groups goals whose kinds
@@ -269,7 +271,9 @@ session spend its budget on it:
   name, re-sent after the test file was fixed, once landed marked "unchanged". A
   `load` is the exception: it repeats by target, below.
 
-Identity is the tool name plus its arguments verbatim, counted per open batch. A `load`
+Identity is the tool name plus its arguments verbatim, counted per open batch. An MCP
+serving with no open batch counts per ledger claim (from `begin_binding` or
+`begin_generation` to its record) and across its calls outside a claim. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
 see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its
@@ -459,7 +463,7 @@ Every goal in the batch ends in one of three states, and the session says which.
 - Parking is neither. A goal the session neither resolved nor failed when it finished
   (out of rounds, the implicit finish, a claim the gate refused) stays open, gets one
   fresh session in the same build, and parks when that session leaves it open too.
-  Parked goals persist by id in `status.yaml` with their change payloads, count as open
+  Parked goals persist by id under `parked/` with their change payloads, count as open
   in the verdict (`incomplete`, with an `incomplete-build` diagnostic), and resume first
   in the next build. Unfinished work is never silent.
 
@@ -601,7 +605,7 @@ the spend ([status](../frontends/cli.md#jazyk-status)).
 ## Snapshots
 
 Every batch a session opens leaves a snapshot of the graph as it stood: the node files
-under `<out>/graph/`, `status.yaml`, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
+under `<out>/graph/`, the status, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
 starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
 what makes a session reproducible after the fact: `jazyk replay extract` seeds a
 [replay](../benchmark/replays.md) from it, so the harness answers the recorded calls
@@ -683,8 +687,11 @@ The event kinds:
   named it.
 - `llmRequest`, `llmResponse`, `llmRetry`: one model call, recorded by the
   [embedded agent's](../frontends/acp.md#the-embedded-agent) endpoint client. The
-  request carries the whole outgoing message list (the prompt and the conversation so
-  far) plus the tool names offered; the response carries the raw assistant message, the
+  request carries the outgoing messages after `prefix`, the count of leading messages
+  it repeats unchanged from the previous request of the same run, plus the tool names
+  offered. The first request of a run carries the whole list (the prompt and the
+  conversation so far), so a reader rebuilds every request from the run's earlier
+  ones. The response carries the raw assistant message, the
   elapsed milliseconds, and the completion tokens; a retry carries the attempt, the
   error, and how long the admitted host waits before trying again. Capability errors
   stop the session without switching tool formats. A session

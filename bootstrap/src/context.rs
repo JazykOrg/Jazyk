@@ -51,6 +51,11 @@ pub fn parse_handle(handle: &str) -> Result<(String, String, usize), String> {
     Ok((parts.join(":"), axis, start))
 }
 
+// The budget's unit: characters, never bytes. Mirrors docs/compiler/context.md#policy.
+pub(crate) fn chars(s: &str) -> usize {
+    s.chars().count()
+}
+
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 pub struct Handle {
     pub handle: String,
@@ -257,7 +262,7 @@ impl LoadedSet {
         let Some(line) = self.stub_line(store, &id) else {
             return;
         };
-        let chars = line.len();
+        let chars = chars(&line);
         self.items.push(LoadedItem {
             target: id.clone(),
             what: "stub".into(),
@@ -281,11 +286,20 @@ impl LoadedSet {
             && (store.graph.entities.contains_key(&target)
                 || store.graph.requirements.contains_key(&target)
                 || store.graph.views.contains_key(&target));
-        let known = stub_of_node
-            || self
-                .items
+        // An axis handle is open only while its item still carries it: an expansion
+        // replaces its handle with the continuation, so a consumed handle is closed
+        // and never charges the budget twice. Mirrors docs/compiler/context.md#expansion-handles.
+        let parsed = (target.clone(), axis.clone(), start);
+        let open = |i: &LoadedItem| {
+            i.handles
                 .iter()
-                .any(|i| i.target == target || i.handles.iter().any(|h| h.handle == handle));
+                .any(|h| h.handle == handle || parse_handle(&h.handle).ok().as_ref() == Some(&parsed))
+        };
+        let known = if axis.is_empty() {
+            stub_of_node || self.items.iter().any(|i| i.target == target || open(i))
+        } else {
+            self.items.iter().any(open)
+        };
         if !known {
             let open = self.open_handles();
             return Err(format!(
@@ -324,33 +338,34 @@ impl LoadedSet {
                 .skip(start)
                 .take(remaining.saturating_sub(200))
                 .collect();
-            let consumed = start + chunk.chars().count();
+            let total = chars(&raw);
+            let consumed = (start + chars(&chunk)).min(total);
             let mut out = format!("## Expansion of {} (body)\n{}", target, chunk);
             let mut handles = Vec::new();
-            if consumed < raw.chars().count() {
+            if consumed < total {
                 handles.push(Handle {
                     handle: format!("h:{}:body:{}", target, consumed),
-                    description: format!("{} more chars", raw.chars().count() - consumed),
-                    size: raw.len() - consumed,
+                    description: format!("{} more chars", total - consumed),
+                    size: total - consumed,
                 });
                 out.push_str(&format!("\n[h:{}:body:{}]", target, consumed));
             }
-            self.absorb_expansion(&target, chunk.len(), &axis, handles);
+            self.absorb_expansion(&target, chars(&chunk), &axis, handles);
             return Ok(out);
         }
         let items = self.axis_items(store, &target, &axis)?;
         let mut out = format!("## Expansion of {} ({})\n", target, axis);
-        let mut used = out.len();
+        let mut used = chars(&out);
         let mut cut: Option<(usize, usize)> = None;
         for (i, line) in items.iter().enumerate().skip(start) {
-            if used + line.len() + 1 > remaining {
-                let size: usize = items[i..].iter().map(|s| s.len() + 1).sum();
+            if used + chars(line) + 1 > remaining {
+                let size: usize = items[i..].iter().map(|s| chars(s) + 1).sum();
                 cut = Some((i, size));
                 break;
             }
             out.push_str(line);
             out.push('\n');
-            used += line.len() + 1;
+            used += chars(line) + 1;
         }
         let mut handles = Vec::new();
         if let Some((i, size)) = cut {
@@ -362,7 +377,7 @@ impl LoadedSet {
                 size,
             });
         }
-        self.absorb_expansion(&target, out.len(), &axis, handles);
+        self.absorb_expansion(&target, chars(&out), &axis, handles);
         Ok(out)
     }
 
@@ -650,7 +665,7 @@ impl LoadedSet {
         None
     }
 
-    // Render one target in full under a byte budget, with the handles for what was cut.
+    // Render one target in full under a character budget, with the handles for what was cut.
     fn render_full(
         &mut self,
         store: &Store,
@@ -660,25 +675,20 @@ impl LoadedSet {
         let mut b = Builder::new(budget);
         let (what, summary) = if let Some(raw) = alignment_text(store, id) {
             b.push(&format!("## {}", id));
-            let room = b.budget.saturating_sub(b.text.len() + 150);
-            let consumed = if raw.len() <= room {
-                raw.chars().count()
-            } else {
-                // Emit the raw prefix, not a display truncation marker, so body
-                // expansion resumes at the exact character boundary.
-                raw.char_indices()
-                    .take_while(|(byte, _)| *byte < room)
-                    .count()
-            };
+            let room = b.budget.saturating_sub(b.used + 150);
+            // Emit the raw prefix, not a display truncation marker, so body
+            // expansion resumes at the exact character boundary.
+            let total = chars(&raw);
+            let consumed = total.min(room);
             let prefix: String = raw.chars().take(consumed).collect();
             b.push(&prefix);
-            if consumed < raw.chars().count() {
+            if consumed < total {
                 let handle = format!("h:{}:body:{}", id, consumed);
                 b.push(&format!("[remaining alignment evidence: {}]", handle));
                 b.handles.push(Handle {
                     handle,
                     description: "remaining alignment evidence".into(),
-                    size: raw.len().saturating_sub(prefix.len()),
+                    size: total - consumed,
                 });
             }
             ("full".into(), self.stub_line(store, id).unwrap_or_default().trim_start_matches("- ").to_string())
@@ -760,7 +770,7 @@ impl LoadedSet {
             return Err(unknown_target(store, id));
         };
         let pack = b.finish();
-        let chars = pack.pack.len();
+        let chars = chars(&pack.pack);
         Ok((
             pack.pack,
             LoadedItem {
@@ -1197,7 +1207,7 @@ impl LoadedSet {
             b.handles.push(Handle {
                 handle: format!("h:{}:body:0", target),
                 description: "full section body".to_string(),
-                size: body.len(),
+                size: chars(&body),
             });
         }
         let reqs: Vec<String> = store
@@ -1488,6 +1498,8 @@ pub struct ContextPack {
 struct Builder {
     budget: usize,
     text: String,
+    // The characters in `text`, kept beside it so a fit check never recounts.
+    used: usize,
     handles: Vec<Handle>,
 }
 
@@ -1496,11 +1508,12 @@ impl Builder {
         Builder {
             budget: budget.max(400),
             text: String::new(),
+            used: 0,
             handles: Vec::new(),
         }
     }
     fn fits(&self, s: &str) -> bool {
-        self.text.len() + s.len() <= self.budget
+        self.used + chars(s) <= self.budget
     }
     fn push(&mut self, s: &str) -> bool {
         if !self.fits(s) {
@@ -1508,6 +1521,7 @@ impl Builder {
         }
         self.text.push_str(s);
         self.text.push('\n');
+        self.used += chars(s) + 1;
         true
     }
     // Push a list of items under one axis; on overflow, emit a handle for the rest.
@@ -1525,14 +1539,15 @@ impl Builder {
         for (i, item) in items.iter().enumerate() {
             if !self.push(item) {
                 let remaining = items.len() - i;
-                let size: usize = items[i..].iter().map(|s| s.len() + 1).sum();
+                let size: usize = items[i..].iter().map(|s| chars(s) + 1).sum();
                 let handle = if i == 0 {
                     format!("h:{}:{}", target, axis)
                 } else {
                     format!("h:{}:{}:{}", target, axis, i)
                 };
-                self.text
-                    .push_str(&format!("({} {} [{}])\n", remaining, what, handle));
+                let note = format!("({} {} [{}])\n", remaining, what, handle);
+                self.used += chars(&note);
+                self.text.push_str(&note);
                 self.handles.push(Handle {
                     handle,
                     description: format!("{} more {}", remaining, what),
@@ -1683,6 +1698,60 @@ mod tests {
         assert!(set.open_handles().is_empty(), "handles close with the item");
         let err = set.expand(&s, &h).unwrap_err();
         assert!(err.contains("unknown or closed handle"), "{}", err);
+    }
+
+    // A consumed axis handle is closed: expanding it again errors and charges
+    // nothing. Mirrors docs/compiler/context.md#expansion-handles.
+    #[test]
+    fn a_consumed_handle_is_closed_and_never_charges_twice() {
+        let s = fixture();
+        let mut set = LoadedSet::new(520);
+        set.load(&s, "ent:shopping-cart", 1).unwrap();
+        let h = set
+            .open_handles()
+            .into_iter()
+            .find(|h| h.contains("requirements"))
+            .unwrap();
+        set.expand(&s, &h).unwrap();
+        assert!(!set.open_handles().contains(&h), "the expansion closed its handle");
+        let used = set.used();
+        let err = set.expand(&s, &h).unwrap_err();
+        assert!(err.contains("unknown or closed handle"), "{}", err);
+        assert_eq!(set.used(), used, "a refused expansion charges nothing");
+    }
+
+    // The budget counts characters, never bytes, for loads and body expansions alike.
+    // Mirrors docs/compiler/context.md#policy.
+    #[test]
+    fn the_budget_counts_characters_not_bytes() {
+        let mut s = fixture();
+        let body = "\u{fc}".repeat(3000);
+        let text = format!("# Shop\nintro\n\n## Cart\n{}\n", body);
+        s.docs.get_mut("shop.md").unwrap().sections = crate::md::parse_sections(&text);
+        let raw = s.docs["shop.md"].sections["/shop/cart"].raw.clone();
+        let mut set = LoadedSet::new(1200);
+        let loaded = set.load(&s, "shop.md#/shop/cart", 1).unwrap();
+        assert_eq!(set.used(), chars(&loaded), "a load charges its characters");
+        let h = set
+            .open_handles()
+            .into_iter()
+            .find(|h| h.contains(":body:"))
+            .expect("a long body leaves a body handle");
+        let before = set.used();
+        let expansion = set.expand(&s, &h).unwrap();
+        let chunk = expansion.split_once('\n').unwrap().1;
+        let chunk = chunk.split("\n[h:").next().unwrap();
+        assert_eq!(set.used() - before, chars(chunk), "an expansion charges its characters");
+        let (_, _, start) = parse_handle(&h).unwrap();
+        let next = set
+            .items
+            .iter()
+            .flat_map(|i| &i.handles)
+            .find(|x| x.handle.contains(":body:"))
+            .expect("the body continues");
+        let (_, _, resume) = parse_handle(&next.handle).unwrap();
+        assert_eq!(resume, start + chars(chunk));
+        assert_eq!(next.size, chars(&raw) - resume, "a handle's size is in characters");
     }
 
     // `scope:<scope>` loads the scope's parentless entities as stubs, its children

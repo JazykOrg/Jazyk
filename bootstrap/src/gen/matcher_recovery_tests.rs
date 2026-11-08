@@ -35,7 +35,7 @@ fn forced_generation_resumes_after_matcher_repair_without_replaying_a_completed_
         store.save();
         let mut ledger = Ledger::load(&project.out);
         ledger.medium = Some(Medium { form:"text".into(), produced:"written".into(), toolchain:String::new(), artifact:String::new() });
-        ledger.save(&project.out);
+        ledger.save(&project.out).unwrap();
         let mut control = crate::control::Control::load(&project,&project.out);
         control.generate = "auto".into(); control.save(&project.out);
         (fs.snapshot(),facts,criteria)

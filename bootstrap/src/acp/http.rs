@@ -224,17 +224,7 @@ pub fn dispatch(server: &Mutex<McpServer>, req: &Value) -> Option<Value> {
         Ok(s) => s,
         Err(p) => p.into_inner(),
     };
-    match req {
-        Value::Array(items) => {
-            let replies: Vec<Value> = items.iter().filter_map(|r| s.dispatch(r)).collect();
-            if replies.is_empty() {
-                None
-            } else {
-                Some(Value::Array(replies))
-            }
-        }
-        other => s.dispatch(other),
-    }
+    s.dispatch_message(req)
 }
 
 #[cfg(test)]

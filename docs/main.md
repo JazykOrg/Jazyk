@@ -47,10 +47,11 @@ Imagine a requirements doc and UML diagrams as a programming language.
 ## How it works
 
 The compiler maintains a persistent [semantic graph](./compiler/model.md) reconciled
-against the documentation. Three authored kinds live in the
+against the documentation. Four authored kinds live in the
 [graph store](./compiler/graph.md): entities, requirements (free-form
 [statements](./compiler/concepts/statements.md), each with a verbatim quote as its
-provenance), and [views](./compiler/model/view.md) (what one diagram includes).
+provenance), [criteria](./compiler/model/criterion.md) (the observable evidence one
+requirement is met), and [views](./compiler/model/view.md) (what one diagram includes).
 Relationships, state machines, and default views derive from them on every commit. The
 graph is edited in place across builds, never regenerated. Every fact carries
 [provenance](./compiler/model.md#provenance): a verbatim quote, a derivation from

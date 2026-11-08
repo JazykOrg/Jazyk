@@ -139,7 +139,7 @@ fn fixture() -> Snapshot {
         }),
         ..Default::default()
     }
-    .save(&project.out);
+    .save(&project.out).unwrap();
     let gs = GenSettings::resolve(&project);
     for name in ["site", "footer"] {
         mark(&store, &format!("ent:{name}"), None, &manifest(name), &gs).unwrap();
@@ -421,7 +421,7 @@ fn adopted_bindings_without_entity_baseline_open_one_referenced_input_goal() {
         let project = project();
         let mut ledger = Ledger::load(&project.out);
         ledger.entities.remove("site");
-        ledger.save(&project.out);
+        ledger.save(&project.out).unwrap();
         fs.snapshot()
     };
     assert!(
@@ -530,7 +530,16 @@ fn encoded_case_sensitive_binary_reference_hashes_exact_bytes_and_ignores_unquot
     assert_eq!(asset["path"], "docs/assets/My Logo.PnG");
     assert_eq!(asset["status"], "ready");
     assert_eq!(asset["sha256"], format!("{:x}", Sha256::digest(bytes)));
-    assert_eq!(asset["references"][0]["fact"], "req:site");
+    // The requirement and, by reference, its entity's derived mention.
+    assert!(
+        asset["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["fact"] == "req:site"),
+        "{}",
+        asset
+    );
     files.insert(
         "docs/assets/unrelated.svg".into(),
         SVG_B.as_bytes().to_vec(),
@@ -551,7 +560,7 @@ fn declared_build_output_is_not_an_input_but_undeclared_cache_files_are_blocked(
             produces: vec!["target/product.svg".into()],
             last_run: None,
         });
-        ledger.save(&project.out);
+        ledger.save(&project.out).unwrap();
         fs.snapshot()
     };
     let mut generated = reanchor(
@@ -800,6 +809,24 @@ fn previous_release_capsule(
         }
     }
     old_wire(&mut capsule, current_hash, &base);
+    // A previous release recorded no argument digest on its tool receipts.
+    fn strip_digests(value: &mut Value) {
+        match value {
+            Value::Object(object) => {
+                if let Some(Value::Object(receipts)) = object.get_mut("tool_receipts") {
+                    for receipt in receipts.values_mut() {
+                        if let Some(receipt) = receipt.as_object_mut() {
+                            receipt.remove("args");
+                        }
+                    }
+                }
+                object.values_mut().for_each(strip_digests);
+            }
+            Value::Array(values) => values.iter_mut().for_each(strip_digests),
+            _ => {}
+        }
+    }
+    strip_digests(&mut capsule);
     // Parent keys were derived from the signature, so recompute exactly the old
     // key while preserving every captured sequence, frame and request receipt.
     let parents = capsule["parent"].as_object_mut().unwrap();
@@ -819,7 +846,7 @@ fn previous_release_capsule(
     let row = ledger.entities.get_mut("site").unwrap();
     row.fact_hash = base;
     row.record_sequence = 0;
-    ledger.save(&project.out);
+    ledger.save(&project.out).unwrap();
     (capsule, fs.snapshot())
 }
 
@@ -842,7 +869,7 @@ fn pre_input_release_capsules_resume_saved_calls_and_refresh_committed_placehold
             let mut ledger = Ledger::load(&project().out);
             ledger.entities.get_mut("site").unwrap().recorded_at =
                 Some("2000-01-01T00:00:00Z".into());
-            ledger.save(&project().out);
+            ledger.save(&project().out).unwrap();
             fs.snapshot()
         };
         let requests = Arc::new(Mutex::new(Vec::<Value>::new()));

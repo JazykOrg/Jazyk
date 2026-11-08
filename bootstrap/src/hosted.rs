@@ -862,7 +862,7 @@ mod tests {
                     "hashes":{"requirement":"","test":"","files":""}
                 }}
             })).unwrap();
-            ledger.save(&project.out);
+            ledger.save(&project.out).unwrap();
             w.files = fs.snapshot();
         }
         let before = w.snapshot();
@@ -914,8 +914,10 @@ mod tests {
             state,
             vec![
                 ".jazyk/.gitignore",
+                ".jazyk/ds_main/gen/entities/alpha.yaml",
                 ".jazyk/ds_main/gen/judge.md",
                 ".jazyk/ds_main/gen/ledger.yaml",
+                ".jazyk/ds_main/gen/requirements/req~stable.yaml",
                 ".jazyk/ds_main/graph/criteria/crit~stable.yaml",
                 ".jazyk/ds_main/status.yaml",
             ]
@@ -1272,9 +1274,11 @@ mod tests {
                 && message["content"].as_str().is_some_and(|text| text.contains("Create the recovery document."))),
                 "Stopped chat lost the accepted human request at {phase}: {}", requests[0]);
             {
-                let inference = capsule["frames"][0]["harness"]["model_receipts"].as_object().unwrap()
-                    .keys().find(|key| key.contains(":Inference:")).unwrap();
-                let call_id = format!("{}:write-1", &crate::model::hash_hex(inference)[..16]);
+                // The proposal is the run's first inference. Its receipt may already
+                // have left the capsule with its transition; its identity has not.
+                let inference = format!("{}:0:Inference:0",
+                    capsule["frames"][0]["harness"]["run_id"].as_str().unwrap());
+                let call_id = format!("{}:write-1", &crate::model::hash_hex(&inference)[..16]);
                 assert!(messages.iter().any(|message| message["role"] == "assistant"
                     && message["tool_calls"].as_array().is_some_and(|calls| calls.iter().any(|call| call["id"] == call_id))),
                     "Stopped chat lost its assistant tool request at {phase}: {messages:?}");
@@ -1417,7 +1421,7 @@ mod tests {
             }
             ledger.entities.get_mut("cart").unwrap().fact_hash = crate::gen::fact_hash(&store, "ent:cart");
             let unrelated = serde_json::to_value(&ledger.requirements["req:unrelated"]).unwrap();
-            ledger.save(&out);
+            ledger.save(&out).unwrap();
             let requests = submissions.clone();
             let runtime: crate::hosted::RuntimeTransport = Arc::new(move |request| {
                 let run_id = request["run_id"].as_str().unwrap_or_default();

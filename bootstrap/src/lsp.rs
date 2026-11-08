@@ -1667,7 +1667,7 @@ mod tests {
                 evidence: None,
             },
         );
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
 
         let r = requirement();
         let mut store = Store {

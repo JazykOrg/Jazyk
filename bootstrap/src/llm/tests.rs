@@ -44,7 +44,7 @@ fn stop_releases_a_native_gdk_request_before_the_provider_replies() {
     let provider = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut request = [0; 8192];
-        stream.read(&mut request).unwrap();
+        let _received = stream.read(&mut request).unwrap();
         flag.store(true, Ordering::SeqCst);
         wait.recv().unwrap();
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"late"}}]}"#;
@@ -61,4 +61,24 @@ fn stop_releases_a_native_gdk_request_before_the_provider_replies() {
     assert!(started.elapsed() < Duration::from_secs(2));
     release.send(()).unwrap();
     provider.join().unwrap();
+}
+
+// A run's requests record only the messages past what the previous request repeated,
+// so a reader rebuilds each request from the run's earlier ones.
+// Mirrors docs/compiler/sessions.md#trace-events.
+#[test]
+fn a_request_records_only_what_changed_since_the_runs_previous_request() {
+    assert_eq!(run_of("chat 7:3:Inference:0"), "chat 7");
+    assert_eq!(run_of("b1:with:colons:12:Compaction:1"), "b1:with:colons");
+    assert_eq!(run_of("one-shot"), "one-shot");
+    let trace = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
+    let a = json!({"role":"system","content":"contract"});
+    let b = json!({"role":"user","content":"task"});
+    let c = json!({"role":"assistant","content":"done"});
+    assert_eq!(trace.request_prefix("r", &[a.clone(), b.clone()]), 0);
+    assert_eq!(trace.request_prefix("r", &[a.clone(), b.clone(), c.clone()]), 2);
+    assert_eq!(trace.request_prefix("other", &[a.clone(), b.clone()]), 0, "runs are separate");
+    assert_eq!(trace.request_prefix("r", &[a.clone(), c.clone()]), 1, "a rewritten history repeats only its common start");
+    let clone = trace.clone();
+    assert_eq!(clone.request_prefix("r", &[a, c]), 2, "clones share the record");
 }

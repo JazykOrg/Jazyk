@@ -415,6 +415,7 @@ pub fn sweep_deferred() -> bool { SWEEP_DEFERRED.with(|d| d.get()) }
 // edits keeps ownership under its new hash; records of tasks no longer listed end.
 // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
 pub fn record_owned(out: &Path, before: &[Task], after: &[Task], owner: &str) -> Result<(), String> {
+    let _lock = crate::gen::Ledger::lock(out);
     let mut ledger = crate::gen::Ledger::load(out);
     if let Some(why) = &ledger.unreadable { return Err(format!("The ledger did not load: {why}")); }
     let original = ledger.tasks.clone();
@@ -428,7 +429,7 @@ pub fn record_owned(out: &Path, before: &[Task], after: &[Task], owner: &str) ->
             },
         }
     }
-    if ledger.tasks != original { ledger.save(out); }
+    if ledger.tasks != original { ledger.save(out)?; }
     Ok(())
 }
 
@@ -484,10 +485,11 @@ pub fn sweep_unused(root: &Path, own: Option<&Path>) -> Result<Vec<String>, Stri
     // The removed tasks' records end, so an author who restores one owns it. Only
     // idle sets own a removed task, and no session writes an idle set's ledger.
     for (out, _, _) in ledgers.iter().filter(|(_, l, busy)| !busy && removed.iter().any(|id| l.tasks.contains_key(id))) {
+        let _lock = crate::gen::Ledger::lock(out);
         let mut fresh = crate::gen::Ledger::load(out);
         if fresh.unreadable.is_some() { continue; }
         fresh.tasks.retain(|id, _| !removed.contains(id));
-        fresh.save(out);
+        fresh.save(out)?;
     }
     Ok(removed)
 }
@@ -965,7 +967,10 @@ mod tests {
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), format!("{text}{}", task("old", "true"))).unwrap();
         assert!(sweep_unused(&root, None).unwrap().is_empty());
         crate::vfs::write(root.join(".jazyk/jazyk.toml"), &text).unwrap();
-        // A build's own --out ledger counts as a use.
+        // A build's own --out ledger counts as a use: the ledger is now this one file.
+        for f in crate::gen::Ledger::files(&out) {
+            crate::vfs::remove_file(f).ok();
+        }
         crate::vfs::write(out.join("gen/ledger.yaml"), format!("tasks:\n  suite: {{createdBy: x, createdAt: x, definition: '{}'}}\n", kept[1].hash())).unwrap();
         let other = root.join("elsewhere");
         crate::vfs::create_dir_all(other.join("gen")).unwrap();
@@ -1619,6 +1624,7 @@ pub fn import_evidence(
     result: &Value,
     run_id: &str,
 ) -> usize {
+    let _lock = crate::gen::Ledger::lock(&store.out);
     let mut ledger = crate::gen::Ledger::load(&store.out);
     let mut count = 0;
     let reference = format!("task:{}", task.id);
@@ -1660,8 +1666,9 @@ pub fn import_evidence(
             row.hashes.files = crate::gen::hash_implementing(&store.out, gs, &row.files);
         }
     }
-    if count > 0 {
-        ledger.save(&store.out);
+    // A count that did not land is no imported evidence.
+    if count > 0 && ledger.save(&store.out).is_err() {
+        return 0;
     }
     count
 }

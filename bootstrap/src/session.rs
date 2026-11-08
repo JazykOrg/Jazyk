@@ -178,14 +178,16 @@ pub enum TraceEvent {
         section: String,
         tool: String,
     },
-    // One model call. The request carries the whole outgoing message list, the
-    // response the raw assistant message; both are recorded in full in the
-    // transcript and elided on the wire (docs/compiler/sessions.md#trace-events).
+    // One model call. The request carries the outgoing messages after the `prefix`
+    // it repeats from the run's previous request, the response the raw assistant
+    // message; both are recorded in full in the transcript and elided on the wire
+    // (docs/compiler/sessions.md#trace-events).
     #[serde(rename = "llmRequest")]
     LlmRequest {
         label: String,
         step: String,
         model: String,
+        prefix: usize,
         messages: Value,
         tools: Vec<String>,
     },
@@ -388,14 +390,15 @@ fn render_stderr(ev: &TraceEvent) {
         TraceEvent::LlmRequest {
             label,
             step,
+            prefix,
             messages,
             ..
         } => {
             eprintln!(
-                "[{} {}] → llm ({} messages, {} chars)",
+                "[{} {}] → llm ({} messages, {} new chars)",
                 label,
                 step,
-                messages.as_array().map(|a| a.len()).unwrap_or(0),
+                prefix + messages.as_array().map(|a| a.len()).unwrap_or(0),
                 messages.to_string().len()
             )
         }
@@ -488,6 +491,9 @@ pub struct Trace {
     // closed attempt is dropped. Shared across clones so every runner sees one
     // ledger of attempts. Mirrors docs/compiler/sessions.md#trace-events.
     attempts: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, bool>>>,
+    // Per model run, the digests of the messages its latest request carried, so the
+    // next request records only what changed. Shared across clones.
+    requests: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Vec<String>>>>,
 }
 
 impl Trace {
@@ -499,6 +505,7 @@ impl Trace {
             transcript: None,
             run: None,
             attempts: Default::default(),
+            requests: Default::default(),
         }
     }
     pub fn to_sink(
@@ -513,6 +520,7 @@ impl Trace {
             transcript: None,
             run: None,
             attempts: Default::default(),
+            requests: Default::default(),
         }
     }
     // The attempt ledger behind the terminal-event invariant: an attempt opens on
@@ -542,6 +550,23 @@ impl Trace {
             }
             None => true,
         }
+    }
+    // How many leading messages repeat the run's previous request; remembers this
+    // request for the next. Mirrors docs/compiler/sessions.md#trace-events.
+    pub fn request_prefix(&self, run: &str, messages: &[Value]) -> usize {
+        let digests: Vec<String> = messages
+            .iter()
+            .map(|m| crate::model::hash_hex(&m.to_string()))
+            .collect();
+        let mut requests = self.requests.lock().unwrap_or_else(|p| p.into_inner());
+        let previous = requests.get(run).map(Vec::as_slice).unwrap_or_default();
+        let prefix = previous
+            .iter()
+            .zip(&digests)
+            .take_while(|(a, b)| a == b)
+            .count();
+        requests.insert(run.to_string(), digests);
+        prefix
     }
     // The transcript name of the run this trace belongs to. A GUI job names its own
     // (it writes the file itself); a CLI build names the one with_transcript opened.
@@ -827,7 +852,7 @@ impl SkillState {
             self.rendered.push(SkillEntry {
                 name: name.to_string(),
                 active: true,
-                chars: skill_payload(name).map(|p| p.len()).unwrap_or(0),
+                chars: skill_payload(name).map(crate::context::chars).unwrap_or(0),
             });
         }
     }
@@ -859,7 +884,7 @@ impl SkillState {
         self.rendered.push(SkillEntry {
             name: name.to_string(),
             active: true,
-            chars: payload.len(),
+            chars: crate::context::chars(payload),
         });
         Ok(SkillLoad::Rendered(payload))
     }
@@ -959,18 +984,21 @@ pub struct ProjectBlock {
 }
 
 impl ProjectBlock {
+    // Derives every goal kind once. A caller holding a derived board passes its goals
+    // to `from_goals` instead of deriving the board a second time.
     pub fn compute(store: &Store, batch: &[Goal], mode: &str) -> ProjectBlock {
         let gs = crate::gen::GenSettings::from_out(&store.out);
-        let mut total = 0usize;
-        let mut blocked = 0usize;
-        for k in goals::REGISTRY.iter() {
-            let derived = k.derive_goals(store, &gs).len();
-            if goals::blocked_on_human(k.kind()) {
-                blocked += derived;
-            } else {
-                total += derived;
-            }
-        }
+        let derived: Vec<Goal> = goals::REGISTRY
+            .iter()
+            .flat_map(|k| k.derive_goals(store, &gs))
+            .collect();
+        ProjectBlock::from_goals(store, &derived, batch, mode)
+    }
+
+    // The block counted from goals already derived (a board's).
+    pub fn from_goals(store: &Store, derived: &[Goal], batch: &[Goal], mode: &str) -> ProjectBlock {
+        let blocked = derived.iter().filter(|g| goals::blocked_on_human(&g.kind)).count();
+        let total = derived.len() - blocked;
         let here = batch.len();
         ProjectBlock {
             generation: store.status.generation,
@@ -1618,6 +1646,33 @@ mod tests {
             with
         );
         assert!(preview_with(&s, &[], &lint).contains("- lint: [1] warning: An em dash"));
+    }
+
+    // A board's goals give the same counts as a fresh derivation.
+    #[test]
+    fn project_block_counts_from_a_board_without_deriving_again() {
+        let s = fixture();
+        let gs = crate::gen::GenSettings::from_out(&s.out);
+        let derived: Vec<Goal> = goals::REGISTRY.iter().flat_map(|k| k.derive_goals(&s, &gs)).collect();
+        assert!(!derived.is_empty(), "the fixture opens goals");
+        let batch = &derived[..1];
+        let fresh = ProjectBlock::compute(&s, batch, "auto");
+        let counted = ProjectBlock::from_goals(&s, &derived, batch, "auto");
+        assert_eq!(fresh.render(), counted.render());
+        assert_eq!(counted.elsewhere + counted.here + counted.blocked, derived.len());
+    }
+
+    // Goal kinds pin their skills into a fresh session before anything else renders,
+    // so the cap can never drop a pinned skill while every skill fits under it.
+    // Mirrors docs/compiler/sessions.md#skills.
+    #[test]
+    fn every_pinned_skill_fits_under_the_session_cap() {
+        assert!(SKILLS.len() <= crate::limits::SKILLS_PER_SESSION);
+        let mut all = SkillState::new();
+        for (name, _) in SKILLS {
+            all.pin(name);
+        }
+        assert!(SKILLS.iter().all(|(name, _)| all.is_active(name)));
     }
 
     #[test]

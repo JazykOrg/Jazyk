@@ -368,7 +368,7 @@ mod ledger_failure_tests {
             ledger.medium = Some(crate::gen::Medium {
                 form: "text".into(), produced: "written".into(), toolchain: String::new(), artifact: String::new()
             });
-            ledger.save(&project.out);
+            ledger.save(&project.out).unwrap();
             let mut control = crate::control::Control::load(&project, &project.out);
             control.generate = "auto".into();
             control.save(&project.out);
@@ -440,7 +440,8 @@ mod ledger_failure_tests {
                 assert_eq!(requests.lock().unwrap().len(), 25);
                 let (capsule, protected) = checkpoint.lock().unwrap().clone().unwrap();
                 assert_eq!(capsule["harness"]["rounds"], 25);
-                assert_eq!(capsule["harness"]["model_requests"].as_object().unwrap().len(), 25);
+                assert_eq!(capsule["harness"]["model_requests"].as_object().unwrap().len(), 1,
+                    "the capsule keeps only the current transition's request");
                 let id = requests.lock().unwrap()[24]["_jazyk"]["requestId"].as_str().unwrap().to_string();
                 let recorded = &capsule["harness"]["model_requests"][&id];
                 let mut admitted = requests.lock().unwrap()[24].clone();

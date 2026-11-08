@@ -1491,6 +1491,16 @@ pub fn harness_owned_rule(rule: &str) -> bool {
         || rule.starts_with("unstable-")
 }
 
+// What the repeated-call guard and the feedback cap remember, carried between the
+// per-call sessions of a serving with no open batch
+// (docs/compiler/sessions.md#repeated-calls).
+#[derive(Default, Clone)]
+pub struct CallMemory {
+    repeats: std::collections::BTreeMap<String, u32>,
+    last_answers: std::collections::BTreeMap<String, String>,
+    feedback_count: usize,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ToolSession {
     pub snapshot: Store,
@@ -1595,6 +1605,21 @@ impl ToolSession {
             last_condensed: Default::default(),
             implicit_done: false,
             lint: Default::default(),
+        }
+    }
+
+    // Continue the guard and the feedback cap of earlier calls in the same unit.
+    pub fn adopt_memory(&mut self, memory: CallMemory) {
+        self.repeats = memory.repeats;
+        self.last_answers = memory.last_answers;
+        self.feedback_count = memory.feedback_count;
+    }
+
+    pub fn memory(&self) -> CallMemory {
+        CallMemory {
+            repeats: self.repeats.clone(),
+            last_answers: self.last_answers.clone(),
+            feedback_count: self.feedback_count,
         }
     }
 
@@ -1941,21 +1966,22 @@ impl ToolSession {
         }
         // The id follows the requirement's document, so a requirement's criteria read
         // as one family whatever section each quotes (criterion.md#identity).
-        let req_doc = self
+        let req_source: Option<SourceRef> = self
             .snapshot
             .graph
             .requirements
             .get(&rid)
-            .and_then(|r| r.source.as_ref().map(|s| s.doc.clone()))
+            .and_then(|r| r.source.clone())
             .or_else(|| {
                 self.staged.iter().find_map(|o| match o {
                     Op::CreateRequirement { id, requirement } if *id == rid => {
-                        requirement.source.as_ref().map(|s| s.doc.clone())
+                        requirement.source.clone()
                     }
                     _ => None,
                 })
             });
-        let (source, provenance, stem_doc) = if has_source {
+        let req_doc = req_source.as_ref().map(|s| s.doc.clone());
+        let (source, provenance, _stem_doc) = if has_source {
             let section = Self::str_arg(args, "section")?;
             let quote = Self::str_arg(args, "quote")?;
             let (doc, sec) = self.resolve_section(&section)?;
@@ -2053,7 +2079,7 @@ impl ToolSession {
                 _ => None,
             })
             .collect();
-        let id = self.snapshot.mint_crit_id(&stem_doc, &taken);
+        let id = self.snapshot.mint_crit_id(&criterion, req_source.as_ref(), &taken);
         self.stage(Op::CreateCriterion {
             id: id.clone(),
             criterion,
@@ -7023,7 +7049,7 @@ impl ToolSession {
                 // A new statement: the store mints the id; a supplied id is ignored.
                 let mut taken = self.taken_ids.clone();
                 taken.extend(self.staged_reqs.iter().cloned());
-                let id = self.snapshot.mint_req_id(&doc, &taken);
+                let id = self.snapshot.mint_req_id(&requirement, &taken);
                 self.staged_reqs.insert(id.clone());
                 self.taken_ids.insert(id.clone());
                 self.stage(Op::CreateRequirement {
@@ -7412,7 +7438,7 @@ impl ToolSession {
                     Some(i) => (i, false),
                     None => {
                         let taken: BTreeSet<String> = self.staged_diags.keys().cloned().collect();
-                        (self.snapshot.mint_diag_id(&rule, &taken), true)
+                        (self.snapshot.mint_diag_id(&rule, &subjects, &taken), true)
                     }
                 };
                 let diagnostic = Diagnostic {
@@ -7620,6 +7646,7 @@ impl ToolSession {
                         "a built deliverable names the artifact its build produces".into(),
                     ));
                 }
+                let _lock = crate::gen::Ledger::lock(&self.snapshot.out);
                 let mut ledger = crate::gen::Ledger::load(&self.snapshot.out);
                 if ledger.medium.is_some() && !ledger.entities.is_empty() {
                     return Err(ToolError::new(
@@ -7638,7 +7665,9 @@ impl ToolSession {
                 };
                 let line = medium.line();
                 ledger.medium = Some(medium);
-                ledger.save(&self.snapshot.out);
+                ledger
+                    .save(&self.snapshot.out)
+                    .map_err(|e| ToolError::new("ledger-write", e))?;
                 Ok(json!({"recorded": true, "medium": line}))
             }
             "record_generation" => {
@@ -8128,7 +8157,7 @@ impl ToolSession {
         }
         let mut taken = self.taken_ids.clone();
         taken.extend(self.staged_reqs.iter().cloned());
-        let id = self.snapshot.mint_req_id("x", &taken);
+        let id = self.snapshot.mint_req_id(&requirement, &taken);
         self.staged_reqs.insert(id.clone());
         self.taken_ids.insert(id.clone());
         self.stage(Op::CreateRequirement {
@@ -9492,14 +9521,15 @@ mod tests {
                 &derived("The Cart is split by category."),
             )
             .unwrap();
-        assert_eq!(v["id"], "req:x-1");
+        let x1 = v["id"].as_str().unwrap().to_string();
+        assert!(x1.starts_with("req:x-"), "{}", v);
         let again = t
             .dispatch(
                 "upsert_requirement",
                 &derived("The Cart is split by category"),
             )
             .unwrap();
-        assert_eq!(again["id"], "req:x-1");
+        assert_eq!(again["id"], x1.as_str());
         assert_eq!(again["updated"], true);
     }
 
@@ -10124,7 +10154,8 @@ mod tests {
                         "kind": "positive", "section": "/shop", "quote": "intro text"}),
             )
             .unwrap();
-        assert_eq!(v["id"], "crit:shop-1", "{}", v);
+        let c1 = v["id"].as_str().unwrap().to_string();
+        assert!(c1.starts_with("crit:shop-"), "{}", v);
         assert_eq!(v["created"], true);
         let again = t
             .dispatch(
@@ -10133,7 +10164,7 @@ mod tests {
                         "kind": "positive", "section": "/shop", "quote": "intro text"}),
             )
             .unwrap();
-        assert_eq!(again["id"], "crit:shop-1", "{}", again);
+        assert_eq!(again["id"], c1.as_str(), "{}", again);
         assert_eq!(again["updated"], true);
         let err = t
             .dispatch(
@@ -10158,7 +10189,8 @@ mod tests {
                         "provenance": {"derived": {"from": [rid], "reasoning": "the lower edge of holding items"}}}),
             )
             .unwrap();
-        assert_eq!(derived["id"], "crit:shop-2", "{}", derived);
+        let c2 = derived["id"].as_str().unwrap();
+        assert!(c2.starts_with("crit:shop-") && c2 != c1, "{}", derived);
         assert!(t
             .dispatch("upsert_criterion", &json!({"requirement": "req:nope-1", "statement": "x y z", "kind": "positive", "section": "/shop", "quote": "intro text"}))
             .is_err());
@@ -11751,7 +11783,8 @@ mod tests {
         assert_eq!(results[0]["verdict"], "consistent");
         assert!(results[0]["error"].is_null(), "{}", results[0]);
         assert_eq!(results[1]["verdict"], "contradiction");
-        assert_eq!(results[1]["diagnostic"], "diag:contradiction-1", "{}", results[1]);
+        let d1 = results[1]["diagnostic"].as_str().unwrap().to_string();
+        assert!(d1.starts_with("diag:contradiction-"), "{}", results[1]);
         assert_eq!(results[2]["error"]["rule"], "no-pair-diagnostic", "{}", results[2]);
         assert_eq!(
             v["settled"],
@@ -11771,7 +11804,7 @@ mod tests {
         );
         assert_eq!(
             by_goal["g:rejudge-pair:req:a~req:c"].evidence["carried_by"],
-            "diag:contradiction-1"
+            d1.as_str()
         );
         assert!(by_goal["g:rejudge-pair:req:a~req:c"]
             .justification
@@ -11913,7 +11946,8 @@ mod tests {
             )
             .unwrap();
         let r = v["results"].as_array().unwrap();
-        assert_eq!(r[0]["diagnostic"], "diag:duplicate-requirement-1", "{}", r[0]);
+        let dup = r[0]["diagnostic"].as_str().unwrap().to_string();
+        assert!(dup.starts_with("diag:duplicate-requirement-"), "{}", r[0]);
         assert_eq!(r[1]["resolved"], json!(["diag:contradiction-7"]), "{}", r[1]);
         assert_eq!(r[2]["error"]["rule"], "wrong-kind", "{}", r[2]);
         assert_eq!(r[3]["error"]["rule"], "unknown-goal", "{}", r[3]);
@@ -11953,7 +11987,7 @@ mod tests {
         ]});
         let v = t.dispatch(PAIR_SETTLE_TOOL, &again).unwrap();
         assert!(v["results"][0]["repeat"].is_string(), "{}", v);
-        assert_eq!(v["results"][0]["diagnostic"], "diag:duplicate-requirement-1");
+        assert_eq!(v["results"][0]["diagnostic"], dup.as_str());
         let v = t.dispatch(PAIR_SETTLE_TOOL, &again).unwrap();
         assert_eq!(v["results"][0]["error"]["rule"], "repeated-call", "{}", v);
         assert!(v["settled"].as_array().unwrap().is_empty());
@@ -12945,7 +12979,7 @@ mod tests {
                 record_sequence: 0,
             },
         );
-        ledger.save(&s.out);
+        ledger.save(&s.out).unwrap();
         let session_for = |target: &str| {
             let goals = vec![Goal {
                 id: format!("g:generate:{}", target),

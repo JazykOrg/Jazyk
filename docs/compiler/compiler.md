@@ -195,7 +195,7 @@ free.
 
 ## Outputs
 
-Everything lives in the out directory (default `.jazyk/`). See
+Everything lives in the set's out directory (`.jazyk/<set-id>/`). See
 [storage layout](./graph.md#storage-layout).
 
 - `graph/`: the semantic graph, the primary output, one file per node
@@ -216,14 +216,16 @@ Everything lives in the out directory (default `.jazyk/`). See
 - `journal/`: one entry per generation, the audit trail of every change and the ground
   truth behind `jazyk ripple`.
 - `trace/` and `sessions/`: session transcripts and the ACP session store.
-- `status.yaml`: the store `version`, the change records, parked and failed goals, and
-  the alignment and re-evaluation blocks.
-- `build.yaml`: the generation, the verdict with its counts, and costs per goal kind
-  and class. Local.
+- The status: `status.yaml` (the store `version`, the stamped roots, the re-evaluation
+  list) and one file per record under `changes/`, `parked/`, `failed/`, `alignment/`,
+  and `lookalikes/`.
+- `build.yaml`: the generation, the verdict with its counts, costs per goal kind and
+  class, and the document content hashes. Local. `markers.yaml`: the generation
+  markers of every node. Local.
 - `control.yaml`, `workers/`, `leases/`: the control plane. `feedback.jsonl`: what
   sessions reported through `report_feedback`. `.lock`: the store lock.
 
-A repository commits `status.yaml`, the non-derived node files, `docs/`, and `gen/`,
+A repository commits the status, the non-derived node files, `docs/`, and `gen/`,
 and ignores the rest
 ([committed and local state](./graph.md#committed-and-local-state)).
 

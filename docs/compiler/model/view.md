@@ -263,7 +263,8 @@ Recompute rules keep curation and derivation from fighting:
 
 - A default view is keyed by its id. On every commit, for each rule instance: the id
   absent creates the view with `default: true`; the id present with `default: true`
-  rewrites `title` and `members` from the rule; the id present without `default` is left
+  rewrites `title`, `members`, `query`, and `provenance` from the rule (exclusions
+  stay out of `members`); the id present without `default` is left
   alone.
 - A default whose rule stops holding (a node below two children, a cluster below two
   members, a machine gone, a type without instances) is removed at the same commit. A

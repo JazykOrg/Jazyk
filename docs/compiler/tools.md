@@ -517,9 +517,10 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 
 - `init_project({dir?})`: scaffold `jazyk.toml` and the starter layout. Offered only
   where no `jazyk.toml` exists.
-- `update_project_settings({...})`: typed edits to `jazyk.toml` (workflow modes, the
-  docs glob, lint rules, the `[acp]` profile, the `[executors]` overrides), rendered as
-  minimal edits ([project settings](./project-settings.md)).
+- `update_project_settings({settings, baseHash})`: edits to the `workflow` and `gen`
+  keys of `jazyk.toml`, rendered as minimal edits under the project lock and a
+  configuration hash ([project settings](./project-settings.md)). The agent, executor,
+  and model settings are not editable.
 
 ## Feedback tool
 
@@ -551,7 +552,8 @@ MCP call, the model, the codec, the store generation, the run's transcript name,
 MCP client name when one is known. The log is append-only and is never read back by the
 compiler. The [GUI](../frontends/gui.md#feedback) renders its history.
 
-A session records at most 5 feedback entries (an MCP serving, 5 per open batch). Beyond
+A session records at most 5 feedback entries (an MCP serving, 5 per open batch, per
+ledger claim, and across its calls outside both). Beyond
 that the call is acknowledged without a record, so a confused model cannot flood the
 log.
 
@@ -635,7 +637,7 @@ serving ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
 too. Any agent that speaks MCP can be the generation worker; `jazyk gen` is one such
 worker in-process (the [`generate`](./goals/generate.md) goal; its session runs in
 the `generate` serving, see [toolsets](./sessions.md#toolsets)). These tools read the graph and the
-[ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they never mutate the
+[ledger](../consumers/gen.md#the-ledger) (`gen/`); they never mutate the
 graph. An agent may edit deliverable files with its own tools. When the profile sets
 [`serve_files`](./project-settings.md#acp), the serving adds `read_text_file`,
 `write_text_file`, and `list_files`, sandboxed to the deliverable
@@ -760,10 +762,10 @@ stays outside the goal board: released scopes are its worklist.
 - `begin_decompile({scope})`: the package for one draft: the inventory slice, the test
   files with their assertions, the lint rules, and the
   [drafting contract](../consumers/decompile.md#draft-goals).
-- `submit_draft({path, content})`: validate the draft (lint rules, extractable
+- `submit_draft({path, content, scope?})`: validate the draft (lint rules, extractable
   statements, evidence anchors) and write it into the docs tree. Records the draft hash
-  for [ratification](../consumers/decompile.md#ratification) and consumes the scope's
-  release.
+  for [ratification](../consumers/decompile.md#ratification) and consumes the release
+  of `scope` when given.
 
 ## Verification tools
 

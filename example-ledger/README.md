@@ -2,9 +2,9 @@
 
 The levels chain's fixture: a bookkeeping backend described in four short documents,
 written to cross the children limit twice (twelve concepts at the root, then eleven
-under Checkout). See `plans/levels.md` for the chain and `plans/walk.md` for the
-pages. The documents are the input; `.jazyk/` (gitignored) is the built state
-after the chain: the tree four levels deep, every fan-out under nine, the cards,
+under Checkout). See [levels](../docs/compiler/concepts/levels.md) for the chain.
+The documents are the input; `.jazyk/` (gitignored) is the built state after the
+chain: the tree four levels deep, every fan-out under nine, the cards,
 the diagram pages, and the diagrams.
 
 Where to look, from this directory:

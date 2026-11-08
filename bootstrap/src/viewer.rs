@@ -325,13 +325,6 @@ struct InlineSvg {
 }
 
 struct SvgRules {
-    pi: regex::Regex,
-    doctype: regex::Regex,
-    script: regex::Regex,
-    script_empty: regex::Regex,
-    foreign: regex::Regex,
-    on_attr: regex::Regex,
-    js_href: regex::Regex,
     size_attr: regex::Regex,
     width_attr: regex::Regex,
     view_box: regex::Regex,
@@ -344,14 +337,6 @@ fn svg_rules() -> &'static SvgRules {
     use regex::Regex;
     static RULES: std::sync::OnceLock<SvgRules> = std::sync::OnceLock::new();
     RULES.get_or_init(|| SvgRules {
-        pi: Regex::new(r"(?s)<\?.*?\?>").unwrap(),
-        doctype: Regex::new(r"(?is)<!DOCTYPE[^>]*>").unwrap(),
-        script: Regex::new(r"(?is)<script\b[^>]*>.*?</script\s*>").unwrap(),
-        script_empty: Regex::new(r"(?is)<script\b[^>]*/>").unwrap(),
-        foreign: Regex::new(r"(?is)<foreignObject\b[^>]*>.*?</foreignObject\s*>").unwrap(),
-        on_attr: Regex::new(r#"(?i)\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#).unwrap(),
-        js_href: Regex::new(r#"(?i)\s+(?:xlink:)?href\s*=\s*("\s*javascript:[^"]*"|'\s*javascript:[^']*')"#)
-            .unwrap(),
         size_attr: Regex::new(r#"\s+(?:width|height)\s*=\s*"[^"]*""#).unwrap(),
         width_attr: Regex::new(r#"\swidth\s*=\s*"\s*([0-9.]+)\s*(?:px)?\s*""#).unwrap(),
         view_box: Regex::new(r#"\sviewBox\s*=\s*"\s*[0-9.-]+[\s,]+[0-9.-]+[\s,]+([0-9.]+)"#).unwrap(),
@@ -362,8 +347,7 @@ fn svg_rules() -> &'static SvgRules {
 }
 
 // Sanitizes one rendering for the page and rewrites its links to this file's
-// anchors: `script` and `foreignObject` elements, `on*` attributes, `javascript:`
-// links, the XML declaration and processing instructions stripped; the root's hard
+// anchors: sanitized by `sanitize_svg` (an allowlist over a parse); the root's hard
 // `width` and `height` dropped (the attributes and the same declarations in its
 // `style`) with the `viewBox` kept; `../../docsgen/entities/<slug>.md` becomes
 // `#n-ent:<slug>`, a collapsed node's `../<kind>/<slug>.svg` becomes
@@ -372,14 +356,7 @@ fn svg_rules() -> &'static SvgRules {
 fn inline_svg(raw: &str) -> Option<InlineSvg> {
     let r = svg_rules();
     let start = raw.find("<svg")?;
-    let mut s = raw[start..].to_string();
-    s = r.pi.replace_all(&s, "").into_owned();
-    s = r.doctype.replace_all(&s, "").into_owned();
-    s = r.script.replace_all(&s, "").into_owned();
-    s = r.script_empty.replace_all(&s, "").into_owned();
-    s = r.foreign.replace_all(&s, "").into_owned();
-    s = r.on_attr.replace_all(&s, "").into_owned();
-    s = r.js_href.replace_all(&s, "").into_owned();
+    let mut s = sanitize_svg(&raw[start..])?;
     // The root tag alone loses its size; a nested element keeps its own.
     let end = s.find('>')?;
     let tag = s[..=end].to_string();
@@ -415,6 +392,154 @@ fn inline_svg(raw: &str) -> Option<InlineSvg> {
         .replace_all(&s, "$1=\"#n-view:$2/$3\"")
         .into_owned();
     Some(InlineSvg { markup: s, width })
+}
+
+// The elements a rendering may keep: static drawing, text, structure, paint
+// servers, and filters. Anything else (`script`, `foreignObject`, `style`, `image`,
+// `iframe`, the animation elements that can rewrite an attribute) is dropped with its
+// whole subtree.
+const SVG_ELEMENTS: &[&str] = &[
+    "svg", "g", "defs", "a", "title", "desc", "symbol", "use", "switch",
+    "rect", "circle", "ellipse", "line", "polyline", "polygon", "path",
+    "text", "tspan", "textPath", "marker", "clipPath", "mask", "pattern",
+    "linearGradient", "radialGradient", "stop", "filter", "feBlend", "feColorMatrix",
+    "feComposite", "feDropShadow", "feFlood", "feGaussianBlur", "feMerge", "feMergeNode",
+    "feMorphology", "feOffset",
+];
+
+// The attributes a kept element may carry: geometry, presentation, text layout,
+// identity, and `data-*`. Event handlers and every other name are dropped.
+const SVG_ATTRIBUTES: &[&str] = &[
+    "xmlns", "xmlns:xlink", "version", "id", "class", "style", "viewBox",
+    "preserveAspectRatio", "contentStyleType", "zoomAndPan", "width", "height",
+    "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "dx", "dy",
+    "d", "points", "transform", "pathLength", "fill", "fill-opacity", "fill-rule",
+    "stroke", "stroke-width", "stroke-opacity", "stroke-dasharray", "stroke-dashoffset",
+    "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "opacity", "color",
+    "visibility", "display", "clip-path", "clip-rule", "mask", "filter", "marker-start",
+    "marker-mid", "marker-end", "font-family", "font-size", "font-style", "font-weight",
+    "font-variant", "text-anchor", "text-decoration", "dominant-baseline",
+    "alignment-baseline", "baseline-shift", "letter-spacing", "word-spacing",
+    "textLength", "lengthAdjust", "writing-mode", "xml:space", "offset", "stop-color",
+    "stop-opacity", "gradientUnits", "gradientTransform", "spreadMethod", "fx", "fy",
+    "fr", "patternUnits", "patternContentUnits", "patternTransform", "clipPathUnits",
+    "maskUnits", "maskContentUnits", "markerWidth", "markerHeight", "markerUnits",
+    "refX", "refY", "orient", "filterUnits", "primitiveUnits", "in", "in2", "result",
+    "stdDeviation", "mode", "operator", "k1", "k2", "k3", "k4", "values", "type",
+    "flood-color", "flood-opacity", "radius", "codeLine", "target",
+    "href", "xlink:href", "xlink:title", "xlink:type", "xlink:actuate", "xlink:show",
+];
+
+// A link stays only when it names a place in this page or a relative file: a
+// fragment or a scheme-less path, judged on the decoded value so an entity-encoded
+// `javascript:` is caught like a plain one.
+fn safe_link(value: &str) -> bool {
+    let v: String = value.chars().filter(|c| !c.is_whitespace() && !c.is_control()).collect();
+    let head = v.split(['/', '?', '#']).next().unwrap_or("");
+    !head.contains(':')
+}
+
+// A style declaration list stays when it loads nothing: no `url(`, `@import`,
+// `expression(`, or `javascript:`.
+fn safe_style(value: &str) -> bool {
+    let v: String = value.chars().filter(|c| !c.is_whitespace() && *c != '\\').collect::<String>().to_ascii_lowercase();
+    !["url(", "@import", "expression(", "javascript:"].iter().any(|bad| v.contains(bad))
+}
+
+// A paint or filter reference (`fill="url(#g)"`) stays when every `url(` points into
+// this document.
+fn fragment_urls_only(value: &str) -> bool {
+    let v: String = value.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    v.match_indices("url(").all(|(i, _)| v[i + 4..].trim_start_matches(['"', '\'']).starts_with('#'))
+}
+
+// An allowlist sanitizer over a real XML parse (quick-xml): only listed elements and
+// attributes survive, link and style values are judged decoded, and the output is
+// re-serialized with every value escaped, so markup that a pattern match would miss
+// (`<svg/onload=..>`, an encoded `javascript:`, an animation rewriting `href`) never
+// reaches the page. Comments, processing instructions, and the doctype drop. None
+// when the text does not parse. Mirrors docs/frontends/viewer.md#what-it-shows.
+fn sanitize_svg(raw: &str) -> Option<String> {
+    use quick_xml::escape::escape;
+    use quick_xml::events::{BytesStart, Event};
+    let mut reader = quick_xml::Reader::from_str(raw);
+    let mut out = String::with_capacity(raw.len());
+    // Kept elements open on the stack; `dropped` counts the open elements of a
+    // dropped subtree.
+    let mut dropped = 0usize;
+    let open = |e: &BytesStart, out: &mut String| -> bool {
+        let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+        if !SVG_ELEMENTS.contains(&name.as_str()) {
+            return false;
+        }
+        out.push('<');
+        out.push_str(&name);
+        for attr in e.attributes().flatten() {
+            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            let listed = SVG_ATTRIBUTES.contains(&key.as_str())
+                || (key.starts_with("data-") && key[5..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+            if !listed {
+                continue;
+            }
+            let Ok(value) = attr.unescape_value() else { continue };
+            if (key == "href" || key.ends_with(":href")) && !safe_link(&value) {
+                continue;
+            }
+            if key == "style" && !safe_style(&value) {
+                continue;
+            }
+            if !fragment_urls_only(&value) {
+                continue;
+            }
+            out.push(' ');
+            out.push_str(&key);
+            out.push_str("=\"");
+            out.push_str(&escape(value.as_ref()));
+            out.push('"');
+        }
+        true
+    };
+    loop {
+        match reader.read_event().ok()? {
+            Event::Start(e) => {
+                if dropped > 0 || !open(&e, &mut out) {
+                    dropped += 1;
+                } else {
+                    out.push('>');
+                }
+            }
+            Event::Empty(e) => {
+                if dropped == 0 && open(&e, &mut out) {
+                    out.push_str("/>");
+                }
+            }
+            Event::End(e) => {
+                if dropped > 0 {
+                    dropped -= 1;
+                } else {
+                    out.push_str("</");
+                    out.push_str(&String::from_utf8_lossy(e.name().as_ref()));
+                    out.push('>');
+                }
+            }
+            Event::Text(t) if dropped == 0 => out.push_str(&escape(t.decode().ok()?.as_ref())),
+            Event::CData(t) if dropped == 0 => out.push_str(&escape(String::from_utf8_lossy(&t).as_ref())),
+            Event::GeneralRef(r) if dropped == 0 => {
+                let name = String::from_utf8_lossy(&r).into_owned();
+                let numeric = name.strip_prefix('#').is_some_and(|n| {
+                    n.strip_prefix('x').map_or(n.chars().all(|c| c.is_ascii_digit()), |h| h.chars().all(|c| c.is_ascii_hexdigit()))
+                });
+                if numeric || matches!(name.as_str(), "amp" | "lt" | "gt" | "quot" | "apos") {
+                    out.push('&');
+                    out.push_str(&name);
+                    out.push(';');
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    out.starts_with("<svg").then_some(out)
 }
 
 // The `.svg` of a view under the out directory, when it exists: `(kind, slug)` and
@@ -1694,6 +1819,57 @@ mod tests {
     // rendering: the view card embeds it inline, sanitized, its drill-down anchor
     // rewritten to the card; the entity card lists its sections as anchors; the level
     // section carries the breadcrumb and the members.
+    // The sanitizer is an allowlist over a parse: the bypasses a pattern match
+    // misses never reach the page (docs/frontends/viewer.md#what-it-shows).
+    #[test]
+    fn svg_sanitizer_drops_what_patterns_miss() {
+        let clean = |body: &str| {
+            sanitize_svg(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">{body}</svg>"))
+        };
+        let cases = [
+            "<svg/onload=alert(1)>",
+            "<g/onclick=\"alert(1)\"><rect/></g>",
+            "<a href=\"&#106;avascript:alert(1)\"><text>x</text></a>",
+            "<a xlink:href=\" java&#x09;script:alert(1)\"><text>x</text></a>",
+            "<a href=\"data:text/html,alert(1)\"><text>x</text></a>",
+            "<a><set attributeName=\"href\" to=\"javascript:alert(1)\"/><text>x</text></a>",
+            "<animate attributeName=\"href\" values=\"javascript:alert(1)\"/>",
+            "<SCRIPT>alert(1)</SCRIPT>",
+            "<script xlink:href=\"evil.js\"/>",
+            "<style>@import 'evil.css';</style>",
+            "<image href=\"http://evil.invalid/x.png\"/>",
+            "<iframe src=\"javascript:alert(1)\"/>",
+            "<rect style=\"background:url(javascript:alert(1))\"/>",
+            "<rect fill=\"url(http://evil.invalid/p#x)\"/>",
+            "<foreignObject><div xmlns=\"http://www.w3.org/1999/xhtml\">alert(1)</div></foreignObject>",
+            "<!-- <script>alert(1)</script> -->",
+            "<text>&lt;script&gt;alert(1)&lt;/script&gt;</text>",
+        ];
+        for case in cases {
+            // Markup that does not parse as XML drops the whole rendering.
+            let out = clean(case).unwrap_or_default().to_ascii_lowercase();
+            assert!(!out.contains("javascript") && !out.contains("<script") && !out.contains("onload")
+                && !out.contains("onclick") && !out.contains("data:") && !out.contains("evil")
+                && !out.contains("<set") && !out.contains("<animate") && !out.contains("<style")
+                && !out.contains("<image") && !out.contains("<iframe") && !out.contains("<foreignobject")
+                && !out.contains("<div"), "{case} => {out}");
+        }
+        // The drawing itself survives byte for byte where it is plain.
+        let kept = clean("<g class=\"entity\" data-qualified-name=\"a\"><rect width=\"80\" fill=\"url(#grad)\"/><text x=\"1\">A &amp; B</text><a href=\"#n-ent:a\" xlink:href=\"../class/x.svg\"><path d=\"M0 0\"/></a></g>").unwrap();
+        assert!(kept.contains("<g class=\"entity\" data-qualified-name=\"a\"><rect width=\"80\" fill=\"url(#grad)\"/><text x=\"1\">A &amp; B</text><a href=\"#n-ent:a\" xlink:href=\"../class/x.svg\"><path d=\"M0 0\"/></a></g>"), "{kept}");
+        assert!(sanitize_svg("<svg><g></svg>").is_none());
+        // A real rendering keeps every element it draws.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let svg = crate::render::render_svg("@startuml\nclass A {\n  x : int\n}\nclass B\nA --> B : uses\n@enduml\n").unwrap();
+            let raw = &svg[svg.find("<svg").unwrap()..];
+            let out = sanitize_svg(raw).unwrap();
+            for tag in ["<text", "<rect", "<path", "<g"] {
+                assert_eq!(raw.matches(tag).count(), out.matches(tag).count(), "{tag}: {out}");
+            }
+        }
+    }
+
     #[test]
     fn walk_runs_inside_the_file_with_the_rendering_inline() {
         let out = std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", crate::sys::process_id()));

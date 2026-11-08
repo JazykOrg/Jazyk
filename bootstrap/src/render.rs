@@ -50,7 +50,7 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
     let plain = adapt_component_for_crate(&plain);
     match std::panic::catch_unwind(|| {
-        if crate::vfs::is_scoped() { hosted_svg(&plain) } else { plantuml_little::convert(&plain) }
+        if crate::vfs::is_scoped() { hosted_svg(&plain) } else { pure_svg(&plain) }
     }) {
         Ok(Ok(svg)) => Ok(anchor_entities(&svg, &links)),
         Ok(Err(e)) => Err(RenderError(e.to_string())),
@@ -65,14 +65,21 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     }
 }
 
-// The dependency's convenience converter runs a filesystem preprocessor. Hosted
-// diagrams use its public pure parser/layout/render stages instead. Inline image
-// markup is refused before any layout can invoke the dependency's image loader.
+// The dependency's convenience converter runs a filesystem preprocessor. Every
+// in-process conversion uses its public pure parser/layout/render stages instead: the
+// emitters write no preprocessor syntax, and graph text is inert (see `inert`). Hosted
+// diagrams also refuse inline image markup and directive lines before any layout can
+// invoke the dependency's image loader.
 #[cfg(not(target_arch = "wasm32"))]
 fn hosted_svg(source: &str) -> plantuml_little::Result<String> {
     if source.to_ascii_lowercase().contains("<img") || source.lines().any(|line| line.trim_start().starts_with('!')) {
         return Err(plantuml_little::Error::Render("hosted diagrams do not load external images or preprocessor directives".into()));
     }
+    pure_svg(source)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn pure_svg(source: &str) -> plantuml_little::Result<String> {
     struct Sprites;
     impl Drop for Sprites { fn drop(&mut self) { plantuml_little::render::svg_richtext::clear_sprites(); } }
     plantuml_little::render::svg_richtext::clear_sprites();
@@ -98,10 +105,22 @@ pub fn render_png(_svg: &str) -> Result<Vec<u8>, RenderError> {
     ))
 }
 
+// The native binary runs under the command timeout (limits::command_timeout), the
+// way every external command does: stdin written and both streams drained on their own
+// threads, so a child that never reads or floods its output cannot stall the build, and
+// a child past the deadline is killed and reported as a renderer error.
+// Mirrors docs/compiler/diagrams.md#the-renderer.
 #[cfg(not(target_arch = "wasm32"))]
 fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
-    use std::io::Write;
+    native_svg_within(bin, puml, crate::limits::command_timeout())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_svg_within(bin: &str, puml: &str, timeout: std::time::Duration) -> Result<String, RenderError> {
+    use std::io::{Read, Write};
     use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
     let fail = |e: &dyn fmt::Display| RenderError(format!("{}: {}", bin, e));
     let mut child = Command::new(bin)
         .args(["-tsvg", "-pipe"])
@@ -110,25 +129,60 @@ fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| fail(&e))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // A child that dies without reading (or before the write finishes) breaks the
-        // pipe; its exit status below is the story, so the write tolerates that one.
-        if let Err(e) = stdin.write_all(puml.as_bytes()) {
-            if e.kind() != std::io::ErrorKind::BrokenPipe {
-                return Err(fail(&e));
-            }
+    // A child that dies without reading (or before the write finishes) breaks the
+    // pipe; its exit status below is the story, so the write tolerates that one.
+    let input = child.stdin.take().map(|mut stdin| {
+        let bytes = puml.as_bytes().to_vec();
+        std::thread::spawn(move || match stdin.write_all(&bytes) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+            _ => Ok(()),
+        })
+    });
+    fn collect<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        if let Some(mut pipe) = pipe {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = pipe.read_to_end(&mut buf);
+                let _ = tx.send(buf);
+            });
         }
+        rx
     }
-    let out = child.wait_with_output().map_err(|e| fail(&e))?;
-    if !out.status.success() {
+    let stdout = collect(child.stdout.take());
+    let stderr = collect(child.stderr.take());
+    let started = Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait().map_err(|e| fail(&e))? {
+            break st;
+        }
+        if started.elapsed() >= timeout {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(RenderError(format!(
+                "{} killed after {}s (JAZYK_COMMAND_TIMEOUT)",
+                bin,
+                timeout.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // A grandchild holding a pipe open past the exit costs its output, never the build.
+    let take = |rx: mpsc::Receiver<Vec<u8>>| rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+    let out = take(stdout);
+    let err = take(stderr);
+    if let Some(Ok(Err(e))) = input.map(|h| h.join()) {
+        return Err(fail(&e));
+    }
+    if !status.success() {
         return Err(RenderError(format!(
             "{} exited with {}: {}",
             bin,
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
+            status,
+            String::from_utf8_lossy(&err).trim()
         )));
     }
-    String::from_utf8(out.stdout).map_err(|e| fail(&e))
+    String::from_utf8(out).map_err(|e| fail(&e))
 }
 
 // The system fonts, loaded once per process: text measures as a viewer would draw it.
@@ -273,9 +327,24 @@ fn identifier(base: &str, prefix: &str) -> String {
     }
 }
 
-// The PlantUML alias of an entity: derived from its id, stable across builds.
+// The PlantUML alias of an entity: derived from its id, stable across builds, and
+// distinct for distinct ids. A plain slug (letters and digits joined by single
+// hyphens, not opening with a digit or spelling a keyword) maps hyphens to
+// underscores, and two plain slugs never meet. Any other id (`a_b`, `a--b`, `class`)
+// keeps its readable form and takes `__` and a hash of the id, a pair a plain slug
+// cannot spell, so `ent:a-b` and `ent:a_b` stay two elements.
+// Mirrors docs/compiler/diagrams.md#the-emitters.
 fn alias_of(id: &str) -> String {
-    identifier(entity_slug(id), "n_")
+    let slug = entity_slug(id);
+    let plain = !slug.is_empty()
+        && slug.split('-').all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
+        && !slug.starts_with(|c: char| c.is_ascii_digit())
+        && !PLANTUML_WORDS.contains(&slug.replace('-', "_").as_str());
+    if plain {
+        slug.replace('-', "_")
+    } else {
+        format!("{}__{}", identifier(slug, "n_"), &crate::model::hash_hex(id)[..8])
+    }
 }
 
 // A state name usable as a PlantUML token, or the alias it needs a declaration for.
@@ -293,15 +362,50 @@ fn state_token(name: &str) -> (Option<String>, String) {
     }
 }
 
+// Graph text is inert. A line that would open a preprocessor directive (`!include`),
+// end the diagram (`@enduml`), or call a builtin (`%getenv`), and inline image markup
+// (`<img:...>`) anywhere, gets a zero-width space after the trigger character, so no
+// renderer reads a file or the environment on a fragment's behalf. The emitters write
+// none of these themselves; a timing view's `@0` time lines keep their digit.
+// Mirrors docs/compiler/diagrams.md#the-emitters.
+const INERT: char = '\u{200B}';
+
+fn inert(line: &str) -> String {
+    let body = line.trim_start();
+    let indent = &line[..line.len() - body.len()];
+    let mut out = String::with_capacity(line.len() + 3);
+    out.push_str(indent);
+    let mut head = body.chars();
+    let directive = match (head.next(), head.next()) {
+        (Some('!'), _) => true,
+        (Some('@'), next) => !next.is_some_and(|n| n.is_ascii_digit() || n == '.'),
+        _ => false,
+    };
+    if directive {
+        out.push(INERT);
+    }
+    let lower = body.to_ascii_lowercase();
+    let bytes = body.as_bytes();
+    for (i, c) in body.char_indices() {
+        out.push(c);
+        if c == '<' && lower[i + 1..].starts_with("img") {
+            out.push(INERT);
+        }
+        if c == '%' && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphabetic() || *b == b'$') {
+            out.push(INERT);
+        }
+    }
+    out
+}
+
 fn document(title: Option<String>, body: Vec<String>) -> String {
     let mut s = String::from("@startuml\n");
     if let Some(t) = title {
-        s.push_str("title ");
-        s.push_str(&t);
+        s.push_str(&inert(&format!("title {}", t)));
         s.push('\n');
     }
     for line in body {
-        s.push_str(&line);
+        s.push_str(&inert(&line));
         s.push('\n');
     }
     s.push_str("@enduml\n");
@@ -527,6 +631,13 @@ fn structure(store: &Store, members: &[String], collapse: &BTreeSet<String>) -> 
             // A cardinality belongs to the pair the sentence counted: a lifted arrow
             // speaks for a hidden pair and drops it.
             // Mirrors docs/compiler/diagrams.md#lifting-and-collapse.
+            // A lone association folded onto the sorted key keeps its own direction,
+            // so the cardinality stays at its `b` end.
+            let (a, b) = if cs.len() == 1 && cs[0].a == b && cs[0].b == a {
+                (b, a)
+            } else {
+                (a, b)
+            };
             let cardinality = if cs.len() == 1 && cs[0].a == a && cs[0].b == b {
                 cs[0].cardinality.clone()
             } else {
@@ -2241,6 +2352,58 @@ mod tests {
         assert!(!puml.contains("title "));
     }
 
+    // Graph text never reaches a renderer as a preprocessor directive, a builtin, or
+    // image markup (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn graph_text_cannot_inject_preprocessor_directives() {
+        let mut s = showcase();
+        let attr = |name: &str, ty: Option<&str>| Attribute {
+            name: name.into(),
+            r#type: ty.map(String::from),
+            value: None,
+            provenance: Provenance::Decree { author: "owner".into(), at: "g1".into(), note: None },
+        };
+        let cart = s.graph.entities.get_mut("ent:shopping-cart").unwrap();
+        cart.attributes.push(attr("!include /etc/hosts", None));
+        cart.attributes.push(attr("@enduml", None));
+        cart.attributes.push(attr("home", Some("%getenv(\"HOME\")")));
+        cart.attributes.push(attr("<img:/etc/hosts>", None));
+        // A line that opens with a non-ASCII letter once panicked the crate's
+        // preprocessor; the pure stages draw it.
+        cart.attributes.push(attr("číslo", None));
+        cart.name = "!includeurl http://example.invalid/x".into();
+        let puml = emit_kind(&s, "class", &["ent:customer", "ent:shopping-cart"]);
+        let body: Vec<&str> = puml.lines().skip(1).collect();
+        assert_eq!(body.last(), Some(&"@enduml"), "{}", puml);
+        for line in &body[..body.len() - 1] {
+            let t = line.trim_start();
+            assert!(!t.starts_with('!') && !t.starts_with('@'), "{}", puml);
+        }
+        assert!(!puml.to_ascii_lowercase().contains("<img"), "{}", puml);
+        assert!(!puml.contains("%getenv"), "{}", puml);
+        assert!(puml.contains("include /etc/hosts"), "{}", puml);
+        // The in-process renderer draws it, and the hosted path accepts it too.
+        render_svg(&puml).unwrap();
+        assert!(hosted_svg(&strip_element_links(&puml).0).is_ok(), "{}", puml);
+        // A timing view's time lines keep their `@`.
+        assert_eq!(inert("@0"), "@0");
+        assert_eq!(inert("@.5"), "@.5");
+        assert_eq!(inert("  !include x"), "  \u{200B}!include x");
+    }
+
+    // Distinct entity ids never share an alias (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn aliases_stay_distinct_for_distinct_ids() {
+        assert_eq!(alias_of("ent:order-item"), "order_item");
+        let ids = ["ent:a-b", "ent:a_b", "ent:a--b", "ent:class", "ent:n-class", "ent:2fa", "ent:n-2fa"];
+        let aliases: BTreeSet<String> = ids.iter().map(|id| alias_of(id)).collect();
+        assert_eq!(aliases.len(), ids.len(), "{aliases:?}");
+        for a in &aliases {
+            assert!(a.chars().all(|c| c.is_alphanumeric() || c == '_'), "{a}");
+            assert!(!a.starts_with(|c: char| c.is_ascii_digit()), "{a}");
+        }
+    }
+
     #[test]
     fn object_emitter_names_types_and_values() {
         let s = showcase();
@@ -2635,6 +2798,36 @@ mod tests {
                 ..Default::default()
             },
         );
+    }
+
+    // An association whose ids sort reversed keeps its cardinality at its `b` end
+    // (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn reversed_association_keeps_its_cardinality() {
+        let mut s = tree_store();
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "B holds many A".into(),
+                entities: vec!["ent:b".into(), "ent:a".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:b".into(),
+                    b: "ent:a".into(),
+                    rel_type: Some("association".into()),
+                    cardinality: Some("0..*".into()),
+                }],
+                source: Some(SourceRef { doc: "t.md".into(), section: "/t".into(), quote: "q".into() }),
+                ..Default::default()
+            },
+        );
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        let members = vec!["ent:a".to_string(), "ent:b".to_string()];
+        let st = structure(&s, &members, &BTreeSet::new());
+        assert_eq!(st.arrows.len(), 1);
+        let arrow = &st.arrows[0];
+        assert_eq!((arrow.a.as_str(), arrow.b.as_str()), ("ent:b", "ent:a"));
+        assert_eq!(arrow.cardinality.as_deref(), Some("0..*"));
     }
 
     #[test]
@@ -3112,6 +3305,25 @@ mod tests {
         let err = native_svg("/usr/bin/false", puml).unwrap_err();
         assert!(err.0.contains("exited with"), "{}", err);
         assert!(native_svg(dir.join("missing").to_str().unwrap(), puml).is_err());
+        let _ = crate::vfs::remove_dir_all(&dir);
+    }
+
+    // A native binary that hangs is killed at the deadline and reads as a renderer
+    // error (docs/compiler/diagrams.md#the-renderer).
+    #[cfg(unix)]
+    #[test]
+    fn native_binary_past_the_deadline_is_killed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp("native-hang");
+        let stub = dir.join("plantuml");
+        crate::vfs::write(&stub, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Larger than a pipe buffer: a child that never reads stdin cannot stall the write.
+        let puml = format!("@startuml\n{}@enduml\n", "class A\n".repeat(40_000));
+        let started = std::time::Instant::now();
+        let err = native_svg_within(stub.to_str().unwrap(), &puml, std::time::Duration::from_secs(1)).unwrap_err();
+        assert!(err.0.contains("killed after"), "{}", err);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
         let _ = crate::vfs::remove_dir_all(&dir);
     }
 

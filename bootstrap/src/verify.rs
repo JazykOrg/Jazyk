@@ -52,6 +52,14 @@ pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, led
     }
     for cid in store.criteria_of(rid) {
         let Some(test)=row.tests.get(&cid) else{return ("unverified".into(),"criterion-unbound".into())};
+        // A criterion test renamed or deleted by hand judges nothing, like the
+        // headline's: bind work, never a verdict read from an empty run.
+        if test.test.kind == "programmatic" {
+            let path = artifact_path(&store.out, gs, &test.test);
+            if !path.vexists() || !artifact_names(&path, &test.test.name) {
+                return ("missing".into(), "artifact-gone".into());
+            }
+        }
         if store.graph.criteria.get(&cid).is_some_and(|c|hash_hex(&c.statement)!=test.criterion_hash) {return ("stale-requirement".into(),"criterion-changed".into());}
         if test.test.kind == "llm" && crate::gen::validate_criteria_file(store, store.resolve_id(rid), Some(&cid), &artifact_path(&store.out, gs, &test.test)).is_err() {return ("missing".into(), "artifact-gone".into());}
         if hash_file(&artifact_path(&store.out,gs,&test.test))!=test.test_hash {return ("stale-test".into(),"criterion-test-changed".into());}
@@ -403,30 +411,28 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
 // never flips the verdict.
 // Mirrors docs/compiler/goals/verify.md#the-one-shot-form.
 fn parse_verdict(reply: &str) -> Option<bool> {
-    let first = reply
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .to_uppercase();
-    let strip = |s: &str| {
-        s.trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
-            .to_string()
+    // Whole words only: `password`, `bypass`, and `failover` are not verdicts.
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_uppercase())
+            .collect()
     };
-    let head = strip(&first);
-    let head = head.strip_prefix("VERDICT").map(strip).unwrap_or(head);
-    if head.starts_with("PASS") {
-        return Some(true);
+    let verdict = |w: &str| match w {
+        "PASS" => Some(true),
+        "FAIL" => Some(false),
+        _ => None,
+    };
+    let first = reply.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let head = words(first);
+    let lead = match head.first().map(String::as_str) {
+        Some("VERDICT") => head.get(1),
+        _ => head.first(),
+    };
+    if let Some(v) = lead.and_then(|w| verdict(w)) {
+        return Some(v);
     }
-    if head.starts_with("FAIL") {
-        return Some(false);
-    }
-    let up = reply.to_uppercase();
-    match (up.rfind("PASS"), up.rfind("FAIL")) {
-        (Some(p), Some(f)) => Some(p > f),
-        (Some(_), None) => Some(true),
-        (None, Some(_)) => Some(false),
-        (None, None) => None,
-    }
+    words(reply).iter().rev().find_map(|w| verdict(w))
 }
 
 // Record a verdict. Rebaselines the test and files hashes, never the requirement hash;
@@ -729,6 +735,19 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
         }
         if crate::vfs::is_scoped() {
             lines.push(json!({"requirement":rid,"criterion":cid,"verdict":"none","note":"Legacy command requires a native runner.","pendingCi":true}));
+            continue;
+        }
+        // Grep before running, as for the headline: a filter that matches no test
+        // exits 0 and would read as a pass.
+        let artifact = artifact_path(&store.out, gs, &t.test);
+        if !artifact_names(&artifact, &t.test.name) {
+            let reason = format!("test `{}` not found in {}; artifact-gone, nothing executed", t.test.name, artifact.display());
+            t.verdict = "none".into();
+            t.exit_code = None;
+            t.last_run = Some(now_iso());
+            t.evidence = Some(crate::llm::truncate(&reason, 400).to_string());
+            t.test_hash = hash_file(&artifact);
+            lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": reason}));
             continue;
         }
         match run_test_ref(gs, &t.test) {
@@ -1507,6 +1526,26 @@ mod tests {
         assert_eq!(parse_verdict("no verdict words here"), None);
         assert_eq!(parse_verdict(""), None);
     }
+    // Verdict words match whole words only, so a reply mentioning a password, a
+    // bypass, or a failover is not read as a verdict.
+    #[test]
+    fn verdict_parse_matches_whole_words_only() {
+        assert_eq!(parse_verdict("Password field is shown."), None);
+        assert_eq!(parse_verdict("The bypass route is absent."), None);
+        assert_eq!(parse_verdict("Failover is configured."), None);
+        assert_eq!(
+            parse_verdict("PASSWORD reset works, but the lockout is missing.\nFAIL"),
+            Some(false)
+        );
+        assert_eq!(
+            parse_verdict("The failover check holds and the bypass is closed. PASS"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_verdict("FAIL\nThe password policy is absent, a bypass remains."),
+            Some(false)
+        );
+    }
 
     use super::*;
     use crate::gen::{mark as gen_mark, test_name, GenSettings};
@@ -2098,6 +2137,42 @@ mod tests {
             assert_ne!(test.evidence.as_deref(), Some("earlier pass"));
             assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "unverified");
         }
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A criterion test renamed or deleted by hand never reads verified: the runner
+    // greps for the name first, and derivation reads the row `missing`
+    // (docs/consumers/gen.md#status-is-derived-never-stored).
+    #[test]
+    fn renamed_criterion_test_reads_artifact_gone() {
+        let out = std::env::temp_dir().join(format!("jazyk-criterion-renamed-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        let (mut store, gs) = fixture(&out);
+        store.graph.criteria.insert("c:check".into(), Criterion {
+            requirement: "req:shop-1".into(), statement: "Check items".into(),
+            ..Default::default()
+        });
+        let mut ledger = Ledger::load(&out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        row.verdict = "pass".into();
+        let mut test = row.test.clone();
+        test.name = "criterion_case_renamed_away".into();
+        test.run = "exit 0".into();
+        test.label = "criterion".into();
+        row.tests.insert("c:check".into(), crate::gen::CritTest {
+            test, criterion_hash: hash_hex("Check items"),
+            test_hash: row.hashes.test.clone(), verdict: "pass".into(),
+            last_run: None, exit_code: Some(0), evidence: Some("earlier pass".into()),
+        });
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "artifact-gone".into()));
+        ledger.save(&out);
+        let reply = run_criterion_tests(&store, "req:shop-1", &gs);
+        let line = reply.iter().find(|l| l["criterion"] == "c:check").unwrap();
+        assert_eq!(line["verdict"], "none", "{reply:?}");
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.tests["c:check"].verdict, "none");
+        assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "artifact-gone".into()));
         crate::vfs::remove_dir_all(&out).ok();
     }
 

@@ -190,12 +190,13 @@ The fragment files:
 - [`gates.md`](./goals/prompts/gates.md): the one-line gate per goal kind.
 - [`session-blocks.md`](./goals/prompts/session-blocks.md): the prompt's framing (the
   elided contract line, the skill and task headers, the `## Project` lines, the goal
-  block labels).
+  block labels, the `## Loaded` header and its deferred and unload lines).
 - [`agent-context.md`](./goals/prompts/agent-context.md): the framing around what a
-  conversation picks up ([agent context](../frontends/agent-context.md)).
+  conversation picks up and the warnings about what it skipped
+  ([agent context](../frontends/agent-context.md)).
 - [`serving-instructions.md`](./goals/prompts/serving-instructions.md): an MCP
-  serving's initialize instructions and the longer `next` guidance in its replies
-  ([MCP](../frontends/mcp.md)).
+  serving's initialize instructions and the `next` guidance and notes in its replies,
+  the benchmark case replies included ([MCP](../frontends/mcp.md)).
 - [`generation-steps.md`](./goals/prompts/generation-steps.md): the built-in
   generation worker's medium decision, its product, tests, and manifest steps, their
   corrective retries, and the criteria file for an `llm` test

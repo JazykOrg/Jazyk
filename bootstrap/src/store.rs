@@ -774,17 +774,24 @@ pub(crate) const CONTENT_STOP: [&str; 113] = [
 // (and at least half of them). Mirrors docs/compiler/reconciler.md#pairs.
 const BOILERPLATE_MIN: usize = 4;
 
-// The pair scorer's stem: the suffix goes, then a trailing "e", so "files" and
+// The one stemmer, in two stages. The suffix stage drops one of "ing", "ed", "s"
+// from a word long enough to keep three letters: the vocabulary of the goal hints and
+// the lookalike name tokens, whose stems ride in change records and remembered
+// lookalike scores. Mirrors docs/compiler/reconciler.md#pairs.
+pub(crate) fn suffix_stem(t: &str) -> String {
+    for suffix in ["ing", "ed", "s"] {
+        if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
+            return t[..t.len() - suffix.len()].to_string();
+        }
+    }
+    t.to_string()
+}
+
+// The pair scorer's stem: the suffix stage, then a trailing "e", so "files" and
 // "filed" both land on "fil" and "reverses" meets "reversed": the one stem per word
 // the pairing rules count on.
 pub(crate) fn content_stem(t: &str) -> String {
-    let mut s = t.to_string();
-    for suffix in ["ing", "ed", "s"] {
-        if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
-            s = t[..t.len() - suffix.len()].to_string();
-            break;
-        }
-    }
+    let mut s = suffix_stem(t);
     if s.len() > 3 && s.ends_with('e') {
         s.pop();
     }
@@ -3109,7 +3116,22 @@ impl Store {
     // entities' own name tokens, reduced to crude stems so "reverses" meets "reverse"
     // and "sorting" meets "sort". Feeds requirement_neighbors.
     fn content_tokens(&self, statement: &str, entities: &[String]) -> BTreeSet<String> {
-        let stem = content_stem;
+        self.content_token_words(statement, entities, content_stem)
+            .into_iter()
+            .map(|(stemmed, _)| stemmed)
+            .collect()
+    }
+
+    // The one content tokenizer: the statement's normalized words that are content
+    // tokens, each stemmed by `stem` and paired with the word as written, minus the
+    // given entities' own name tokens under the same stem. The scorer stems with
+    // `content_stem`, the hints with `suffix_stem`.
+    pub(crate) fn content_token_words(
+        &self,
+        statement: &str,
+        entities: &[String],
+        stem: fn(&str) -> String,
+    ) -> Vec<(String, String)> {
         let mut name_toks: BTreeSet<String> = BTreeSet::new();
         for e in entities {
             if let Some(ent) = self.graph.entities.get(self.resolve_id(e)) {
@@ -3123,9 +3145,8 @@ impl Store {
         normalize_statement(statement)
             .split(' ')
             .filter(|t| is_content_token(t))
-            .map(stem)
-            .filter(|t| is_content_token(t))
-            .filter(|t| !name_toks.contains(t))
+            .map(|t| (stem(t), t.to_string()))
+            .filter(|(stemmed, _)| is_content_token(stemmed) && !name_toks.contains(stemmed))
             .collect()
     }
 

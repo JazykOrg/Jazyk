@@ -1437,10 +1437,6 @@ fn dedup_keep_order(files: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-pub fn slug_of(id: &str) -> String {
-    id.strip_prefix("ent:").unwrap_or(id).to_string()
-}
-
 pub fn req_slug(id: &str) -> String {
     id.strip_prefix("req:").unwrap_or(id).to_string()
 }
@@ -1825,7 +1821,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         if rids.is_empty() {
             continue;
         }
-        let slug = slug_of(id);
+        let slug = crate::ids::entity_slug(id).to_string();
         let referenced_assets = assets::referenced_assets_in(&scan, store, id, rids);
         let hash = assets::fingerprint(&fact_hash_base(store, id, rids), &referenced_assets);
         let incomplete: Vec<&String> = rids
@@ -1919,7 +1915,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
         &reqs_of_sorted(store, &id),
     ))?;
     let ledger = Ledger::load(&store.out);
-    let Some(e) = ledger.entities.get(&slug_of(&id)) else {
+    let Some(e) = ledger.entities.get(crate::ids::entity_slug(&id)) else {
         return Err(format!(
             "no ledger entry for `{}`: record_generation has not landed; the gate is record_generation with the package's factHash, then run_tests",
             id
@@ -2030,7 +2026,7 @@ pub fn skip_reason(store: &Store, gs: &GenSettings, id: &str) -> String {
         );
     }
     let ledger = Ledger::load(&store.out);
-    if ledger.entities.contains_key(&slug_of(id)) {
+    if ledger.entities.contains_key(crate::ids::entity_slug(id)) {
         "unchanged".to_string()
     } else {
         "no ledger entry and all adopted rows are current: there is nothing to generate (`--force` generates it anyway)".to_string()
@@ -2097,7 +2093,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
     }
     let ledger = Ledger::load(&store.out);
     let e = &store.graph.entities[id];
-    let slug = slug_of(id);
+    let slug = crate::ids::entity_slug(id).to_string();
     let rids = reqs_of_sorted(store, id);
     let referenced_assets = assets::referenced_assets(store, id, &rids);
     let (_, changed) = change_diff(&ledger, &slug, &rids);
@@ -2331,7 +2327,7 @@ pub fn mark(
     if current_hash != base_hash && fact_hash_seen.is_some_and(|seen| seen != current_hash) {
         return Err("The facts or referenced input bytes moved since begin_generation. Reload the package, use the current exact inputs and record its current factHash.".into());
     }
-    let slug = slug_of(id);
+    let slug = crate::ids::entity_slug(id).to_string();
     // Every path the manifest names is confined before any side effect: a path that
     // escapes the deliverable is rejected naming it, and file lists are sets
     // (docs/consumers/gen.md#file-ownership-and-conventions).
@@ -7048,7 +7044,7 @@ async fn gen_session(
                 .map(|id| {
                     ledger
                         .entities
-                        .get(&slug_of(id))
+                        .get(crate::ids::entity_slug(id))
                         .and_then(|row| row.recorded_at.clone())
                 })
                 .collect(),
@@ -7057,7 +7053,7 @@ async fn gen_session(
                     .map(|id| {
                         ledger
                             .entities
-                            .get(&slug_of(id))
+                            .get(crate::ids::entity_slug(id))
                             .map(|row| row.record_sequence)
                     })
                     .collect(),
@@ -7098,7 +7094,10 @@ async fn gen_session(
             .zip(&saved.data.before)
             .enumerate()
             .map(|(index, (id, _))| {
-                let result = if !saved.data.recorded(index, after.entities.get(&slug_of(id))) {
+                let result = if !saved
+                    .data
+                    .recorded(index, after.entities.get(crate::ids::entity_slug(id)))
+                {
                     Err(report
                         .failed
                         .clone()
@@ -7135,7 +7134,7 @@ async fn gen_session(
                     let base = fact_hash_base(store, id, &rids);
                     after
                         .entities
-                        .get(&slug_of(id))
+                        .get(crate::ids::entity_slug(id))
                         .is_some_and(|row| row.fact_hash == base)
                         && assets::referenced_assets(store, id, &rids)
                             .iter()
@@ -7161,7 +7160,7 @@ async fn gen_session(
                     .map(|id| {
                         after
                             .entities
-                            .get(&slug_of(id))
+                            .get(crate::ids::entity_slug(id))
                             .and_then(|row| row.recorded_at.clone())
                     })
                     .collect();
@@ -7170,7 +7169,7 @@ async fn gen_session(
                         .map(|id| {
                             after
                                 .entities
-                                .get(&slug_of(id))
+                                .get(crate::ids::entity_slug(id))
                                 .map(|row| row.record_sequence)
                         })
                         .collect(),
@@ -8214,7 +8213,7 @@ async fn gen_one_inner(
     let choices = parse_choices(store, &manifest)?;
     let unattached = Ledger::load(&store.out)
         .entities
-        .get(&slug_of(id))
+        .get(crate::ids::entity_slug(id))
         .and_then(|e| e.unattached.clone());
     let mut ws = Store::load(&store.out);
     let ops = choice_ops(&ws, id, &choices, unattached.as_ref());

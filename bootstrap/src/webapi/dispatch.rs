@@ -794,7 +794,7 @@ pub(crate) async fn request_scoped(
             )
         }
         ("GET", "/settings") => ok(crate::project::settings_read(root)),
-        // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
+        // The setup wizard's write (docs/frontends/gui.md#api, `PUT /api/settings`): the
         // file lands in the tree, and the page mirrors it the way any change goes.
         ("PUT", "/settings") => match crate::project::settings_write(root, body) {
             Ok(v) => ok(v),

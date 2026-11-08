@@ -3,7 +3,8 @@ use crate::vfs::VPathExt;
 // the view, producing PlantUML text; lifting and collapse over the containment tree;
 // over-limit auto-collapse; the render seam; the files under <out>/diagrams/.
 // Mirrors docs/compiler/diagrams.md.
-use crate::derive::{entity_slug, instance_types, normalize_state, query_matches};
+use crate::derive::{instance_types, normalize_state, query_matches};
+use crate::ids::entity_slug;
 use crate::limits;
 use crate::model::*;
 use crate::store::Store;
@@ -815,7 +816,7 @@ fn title_line(view: &View, note: Option<&str>) -> Option<String> {
 pub fn card_link(id: &str) -> String {
     format!(
         "[[../../docsgen/entities/{}.md]]",
-        crate::derive::entity_slug(id)
+        crate::ids::entity_slug(id)
     )
 }
 

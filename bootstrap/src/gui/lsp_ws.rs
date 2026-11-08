@@ -2,7 +2,7 @@
 // session with its own open-document overlay; the wire is one JSON-RPC message per
 // text frame, no Content-Length framing (what monaco-languageclient speaks).
 // A store.generation event republishes diagnostics on every session, the same refresh
-// the stdio server runs. Mirrors docs/frontends/gui.md#editor.
+// the stdio server runs. Mirrors docs/frontends/gui.md#serving and docs/frontends/lsp.md.
 use super::state::SharedState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;

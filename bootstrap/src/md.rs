@@ -743,6 +743,91 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
+    // Every `docs/<file>.md#<anchor>` a source comment cites names a heading (GitHub
+    // slug) or an `<a id>` in that file, and none cites a pointer the moved editor
+    // specification left in gui.md: those comments cite the engine doc or the
+    // jazyk-cloud page itself (docs/frontends/gui.md#editor-specification).
+    #[test]
+    fn source_comments_cite_existing_doc_anchors() {
+        use std::collections::{BTreeMap, BTreeSet};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let cite =
+            regex::Regex::new(r"(?:^|[^\w/-])(docs/[\w/.-]+?\.md)#([A-Za-z0-9_-]+)").unwrap();
+        let id = regex::Regex::new(r#"<a id="([^"]+)""#).unwrap();
+        let github = |t: &str| -> String {
+            t.trim()
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == ' ')
+                .map(|c| if c == ' ' { '-' } else { c })
+                .collect()
+        };
+        let mut cache: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+        let mut anchors = |doc: &str| -> Option<(BTreeSet<String>, BTreeSet<String>)> {
+            if let Some(v) = cache.get(doc) {
+                return Some(v.clone());
+            }
+            let text = std::fs::read_to_string(root.join(doc)).ok()?;
+            let (mut all, mut moved) = (BTreeSet::new(), BTreeSet::new());
+            let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+            let mut in_moved = false;
+            for line in text.lines() {
+                if let Some(h) = line.strip_prefix('#') {
+                    let h = h.trim_start_matches('#');
+                    let base = github(h);
+                    in_moved = base == "editor-specification";
+                    let n = seen.entry(base.clone()).or_insert(0);
+                    all.insert(if *n == 0 {
+                        base.clone()
+                    } else {
+                        format!("{}-{}", base, n)
+                    });
+                    *n += 1;
+                }
+                for c in id.captures_iter(line) {
+                    all.insert(c[1].to_string());
+                    if in_moved {
+                        moved.insert(c[1].to_string());
+                    }
+                }
+            }
+            cache.insert(doc.to_string(), (all.clone(), moved.clone()));
+            Some((all, moved))
+        };
+        let mut bad = Vec::new();
+        let mut stack = vec![root.join("bootstrap/src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (n, line) in text.lines().enumerate() {
+                    for c in cite.captures_iter(line) {
+                        let (doc, anchor) = (&c[1], &c[2]);
+                        let at = c.get(1).unwrap().start();
+                        if line[..at].ends_with("jazyk-cloud ") {
+                            continue;
+                        }
+                        let ok = match anchors(doc) {
+                            Some((all, moved)) => all.contains(anchor) && !moved.contains(anchor),
+                            None => false,
+                        };
+                        if !ok {
+                            bad.push(format!("{}:{}: {}#{}", path.display(), n + 1, doc, anchor));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "stale doc citations:\n{}", bad.join("\n"));
+    }
+
     #[test]
     fn extracts_doc_links() {
         let text = "see [a](./sub/a.md) and [b](../b.md#anchor) and [x](http://x.md)";

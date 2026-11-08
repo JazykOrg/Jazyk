@@ -221,7 +221,7 @@ midway stages neither the grouping nor any reparent).
   delete. An anchor whose section is gone has nothing to stay on: the
   [sweep](./graph.md#the-sweep) behind the commit deletes a requirement anchor
   (`requirement-deleted`, journaled) and prunes a mention anchor. Same `id` rule.
-- `report_diagnostic({rule, severity, subjects, message, reasoning, prompt?})`. `rule`
+- `report_diagnostic({rule, severity, subjects, message, reasoning?, prompt?})`. `rule`
   is one of the judged rules: `contradiction`, `duplicate-entity`,
   `duplicate-requirement`, `missing-link`, `ambiguity`, `lint` for violations of the
   project's own [lint rules](./project-settings.md#linting), `decision` for a choice
@@ -229,7 +229,8 @@ midway stages neither the grouping nor any reparent).
   or links its type's statements rule out. Free-form rule names are rejected, so
   findings stay comparable across builds ([rules catalog](./model/diagnostic.md#rules-catalog)).
   Keys on rule plus subjects (`invented-choice` adds the choice sentence to the key):
-  re-reporting the same finding updates it. `prompt`
+  re-reporting the same finding updates it. `reasoning` (why this severity) is optional.
+  `prompt`
   attaches a question with suggested resolutions
   ([prompts](./model/diagnostic.md#prompts)); a `decision` requires one. Its gates: at
   most 4 options, each with a `label` and exactly one of `edit` or `answer`, an

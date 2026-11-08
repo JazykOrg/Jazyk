@@ -11,6 +11,7 @@ build step. Specified in [`../docs/site.md`](../docs/site.md).
 | `index.html` | `/`, the one page: the pitch and the sort example's snippets |
 | `example/*.svg` | the diagrams on the page |
 | `favicon.svg` | `/favicon.svg` |
+| `schemas/*.json` | `/schemas/<name>.json`, the JSON Schemas generated from `docs/**/*.schema.yaml` ([`docs/site.md#schemas`](../docs/site.md#schemas)); regenerate with `JAZYK_WRITE_SCHEMAS=1 cargo test --lib site_schemas` in `bootstrap/` |
 | `404.html` | served with status 404 for any path that has no object |
 | `deploy.sh` | the publishing pipeline, not uploaded |
 

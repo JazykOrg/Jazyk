@@ -228,7 +228,7 @@ fn view_arrows(store: &Store, shown: &BTreeSet<String>) -> Vec<Value> {
 }
 
 // The direct children of every shown entity that are not shown yet, by parent:
-// what one more level of detail draws. Mirrors docs/frontends/gui.md#explore.
+// what one more level of detail draws. Mirrors docs/frontends/gui.md#api (`?detail=N`).
 fn next_level(store: &Store, shown: &BTreeSet<String>) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = store
         .graph
@@ -397,7 +397,7 @@ fn ordered_children(store: &Store, target: &str, ids: &[String]) -> Vec<String> 
 // The containment tree the `parent` field makes: one root per scope (the scope root,
 // addressed `scope:<scope>`), each node with its child count, its structural level
 // view, the flow views derived for its level, and its grouping mark. Computed at read
-// time from the shards, never stored. Mirrors docs/frontends/gui.md#graph.
+// time from the shards, never stored. Mirrors docs/frontends/gui.md#api (`GET /api/tree`).
 pub fn tree_value(store: &Store) -> Value {
     // The flow views by the level they derive for.
     let mut flows: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -516,7 +516,7 @@ mod tests {
     // arrows to the wider set: the dependency that lifted onto the inventory service
     // at the level's own detail now lands on the stock api itself. The expansion
     // stops where the tree ends, whatever detail was asked for.
-    // Mirrors docs/frontends/gui.md#explore.
+    // Mirrors docs/frontends/gui.md#api (`?detail=N`).
     #[test]
     fn view_value_detail_expands_every_grouping_one_level_and_relifts() {
         let s = store();

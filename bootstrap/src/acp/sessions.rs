@@ -206,7 +206,7 @@ fn summarize(text: &str) -> String {
 }
 
 // Forget one conversation: its file goes, so no listing brings it back. Mirrors
-// docs/frontends/gui.md#chat.
+// docs/frontends/acp.md#session-store; the editor's close is jazyk-cloud docs/editor/editor.md#chat.
 pub fn remove(out: &Path, id: &str) -> bool {
     crate::vfs::remove_file(path_for(out, id)).is_ok()
 }
@@ -302,7 +302,7 @@ mod tests {
     }
 
     // A conversation the GUI closes is gone from the store, so a restart does not
-    // list it again (docs/frontends/gui.md#chat).
+    // list it again (docs/frontends/acp.md#session-store).
     #[test]
     fn a_removed_conversation_is_not_listed() {
         let out = std::env::temp_dir().join(format!("jazyk-sess-rm-{}", crate::sys::process_id()));

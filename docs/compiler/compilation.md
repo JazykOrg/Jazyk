@@ -215,7 +215,9 @@ Every check run journals a `checks` entry under its own generation.
 - `unstable-extraction`: a natural key deleted and recreated across recent builds
   ([flip detection](./reconciler.md#flip-detection)).
 - `duplicate-requirement`, the mechanical part: near-identical statements on one
-  entity, both quote-anchored. The same sentence extracted twice in one section is a
+  entity, both quote-anchored. Near-identical means the words of three or more
+  characters of the two [normalized statements](./graph.md#mutations) overlap by at
+  least 80% of their union, so `1.5` and `2.5` stay distinct words. The same sentence extracted twice in one section is a
   warning (keep one); the same fact restated across documents is an info (both kept).
   Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment, and a
   pair a session already judged is left to it: when an open `contradiction` or

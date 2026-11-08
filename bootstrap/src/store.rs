@@ -1895,9 +1895,11 @@ impl Store {
         if store.status.version == UPGRADABLE_VERSION && store.load_errors.is_empty() {
             let _flock = FileLock::acquire(out);
             store.save();
+            let _ledger_lock = crate::gen::Ledger::lock(out);
             let ledger = crate::gen::Ledger::load(out);
             if ledger.unreadable.is_none() {
-                ledger.save(out);
+                // A failed split is reported by save; the inline ledger still loads.
+                let _ = ledger.save(out);
             }
             store.status.version = STORE_VERSION;
             eprintln!(
@@ -8297,7 +8299,7 @@ mod tests {
         assert!(ledger.entities.contains_key("order"));
         let before = serde_json::to_value((&s.graph, &s.status.changes, &s.status.lookalikes)).unwrap();
         s.save();
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         let status = std::fs::read_to_string(out.join("status.yaml")).unwrap();
         assert!(status.contains("version: 4") && !status.contains("changes") && !status.contains("lookalikes"), "{status}");
         assert!(out.join("changes/entity-changed/ent~order.yaml").vexists());

@@ -575,6 +575,17 @@ mod memory {
 
 pub use imp::*;
 
+// Whether a path is itself a symbolic link, never followed. A tree walk skips linked
+// directories, so a link to an ancestor cannot recurse. The in-memory tree has none.
+pub fn is_symlink(p: &Path) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !is_scoped() {
+        return std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    }
+    let _ = p;
+    false
+}
+
 // The in-memory tree's change count (the browser engine's files): a value computed
 // from the tree stays valid while this holds still.
 pub fn memory_generation() -> u64 {

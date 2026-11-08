@@ -4627,7 +4627,7 @@ mod tests {
         ledger.medium = Some(crate::gen::Medium {
             form:"text".into(),produced:"written".into(),toolchain:String::new(),artifact:String::new()
         });
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         let mut control = crate::control::Control::load(&project, &out);
         control.generate = "auto".into();
         control.save(&out);
@@ -5449,7 +5449,7 @@ mod tests {
                 record_sequence: 0,
             },
         );
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         let serving = |only: &str| {
             McpServer::with_bridge(
                 project.clone(),

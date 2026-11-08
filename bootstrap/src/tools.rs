@@ -4276,7 +4276,7 @@ impl ToolSession {
             scope: Self::opt_str(v, "scope"),
             parent,
             stereotype: Self::opt_str(v, "stereotype"),
-            depth: v["depth"].as_u64().map(|d| d as u32),
+            depth: v["depth"].as_u64().map(|d| u32::try_from(d).unwrap_or(u32::MAX)),
         };
         if q.scope.is_none() && q.parent.is_none() && q.stereotype.is_none() {
             return Ok(None);
@@ -5800,7 +5800,8 @@ impl ToolSession {
         match name {
             "load" => {
                 let target = Self::str_arg(args, "target")?;
-                let depth = args["depth"].as_u64().unwrap_or(1).max(1) as u32;
+                // A depth past u32 saturates instead of wrapping to a shallow load.
+                let depth = u32::try_from(args["depth"].as_u64().unwrap_or(1).max(1)).unwrap_or(u32::MAX);
                 let id = self.canon_entity_id(&target).unwrap_or(target);
                 self.refuse_past_high_water("load", Some(&id))?;
                 let text = self
@@ -12460,6 +12461,24 @@ mod tests {
         t.mutation_limit = 64;
         let v = t.dispatch("upsert_entity", &up).unwrap();
         assert_eq!(v["id"], "ent:sprocket", "{}", v);
+    }
+
+    // A depth past u32 saturates: it loads deep, never wraps to a shallow load.
+    #[test]
+    fn a_huge_load_depth_saturates_instead_of_wrapping() {
+        let mut t = session();
+        t.snapshot.graph.entities.insert("ent:order".into(), plain("Order"));
+        t.snapshot.graph.requirements.insert(
+            "req:a".into(),
+            quoted_req("A Customer places an Order.", &["ent:customer", "ent:order"], "Customer"),
+        );
+        t.dispatch("load", &json!({"target": "ent:customer", "depth": 4294967296u64}))
+            .unwrap();
+        assert!(
+            t.loaded.items.iter().any(|i| i.target == "ent:order" && i.what.starts_with("full")),
+            "{:?}",
+            t.loaded.items.iter().map(|i| (&i.target, &i.what)).collect::<Vec<_>>()
+        );
     }
 
     #[test]

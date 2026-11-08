@@ -1169,8 +1169,7 @@
         "rule",
         "severity",
         "subjects",
-        "message",
-        "reasoning"
+        "message"
       ],
       "properties": {
         "rule": {

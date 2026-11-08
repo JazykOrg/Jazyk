@@ -543,14 +543,14 @@ impl Lsp {
         self.out
             .join("docsgen")
             .join("entities")
-            .join(format!("{}.md", crate::derive::entity_slug(id)))
+            .join(format!("{}.md", crate::ids::entity_slug(id)))
     }
 
     // An entity's requirements document: `docsgen/<slug>.md`.
     fn requirements_doc_path(&self, id: &str) -> PathBuf {
         self.out
             .join("docsgen")
-            .join(format!("{}.md", crate::derive::entity_slug(id)))
+            .join(format!("{}.md", crate::ids::entity_slug(id)))
     }
 
     // A view's diagram page: `docsgen/diagrams/<kind>/<slug>.md`.

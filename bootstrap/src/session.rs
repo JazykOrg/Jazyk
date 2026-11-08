@@ -1483,7 +1483,7 @@ pub fn preview_with(store: &Store, batch: &[Goal], lint: &crate::project::Lintin
 pub fn open_batch_prompt(store: &Store, batch: &[Goal], lint: &crate::project::Linting) -> String {
     let (loaded, skills) = initial_loaded(store, batch);
     let pb = ProjectBlock::compute(store, batch, "auto").with_lint(lint);
-    session_prompt_elided(
+    let prompt = session_prompt_elided(
         store,
         batch,
         &loaded,
@@ -1492,7 +1492,20 @@ pub fn open_batch_prompt(store: &Store, batch: &[Goal], lint: &crate::project::L
         true,
         &BTreeSet::new(),
         Protocol::OpenBatch,
-    )
+    );
+    with_opening_contract(prompt, batch)
+}
+
+// A batch holding a generate goal opens with the one generation contract after the
+// assembled prompt, whichever session form runs it (an owned worker, a benchmark
+// case, a snippet, a replay); its begin_generation replies then omit it.
+// Mirrors docs/compiler/goals/generate.md#what-the-model-sees.
+pub fn with_opening_contract(mut prompt: String, batch: &[Goal]) -> String {
+    if batch.iter().any(|goal| goal.kind == "generate") {
+        prompt.push_str("\n\n");
+        prompt.push_str(&crate::gen::contract());
+    }
+    prompt
 }
 
 // One line naming a requirement's provenance, whichever kind it carries.

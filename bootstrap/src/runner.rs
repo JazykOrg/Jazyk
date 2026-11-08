@@ -131,12 +131,8 @@ pub(crate) fn batch_prompt(
     let mut pb = crate::session::ProjectBlock::compute(&store, &batch.goals, &control.compile)
         .with_lint(&project.linting);
     pb.batch = batch.id.clone();
-    let mut prompt = crate::session::session_prompt(&store, &batch.goals, &loaded, &skills, &pb);
-    if batch.goals.iter().any(|goal| goal.kind == "generate") {
-        prompt.push_str("\n\n");
-        prompt.push_str(&crate::gen::contract());
-    }
-    prompt
+    let prompt = crate::session::session_prompt(&store, &batch.goals, &loaded, &skills, &pb);
+    crate::session::with_opening_contract(prompt, &batch.goals)
 }
 
 // What the journal says one session landed between two generations: the mutations

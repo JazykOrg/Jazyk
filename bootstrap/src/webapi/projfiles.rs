@@ -1,8 +1,8 @@
 // The project directory as a tree: every file under the folder of `jazyk.toml`,
 // dot-folders and the out directory included, for the navigator's project tree; and
 // any one of them read as bytes. Read only. Target-neutral: every read goes through
-// crate::vfs. Mirrors docs/frontends/gui.md#api (the project files) and
-// docs/frontends/gui.md#workspace.
+// crate::vfs. Mirrors docs/frontends/gui.md#api (`GET /api/project/files`); the
+// navigator is jazyk-cloud docs/editor/editor.md#workspace.
 use super::Refusal;
 use crate::vfs::VPathExt;
 use serde_json::{json, Value};

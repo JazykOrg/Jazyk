@@ -36,7 +36,7 @@ pub fn workers_snapshot(proj: &Project, out: &Path, gs: &GenSettings, c: &Contro
 
 // The workflow modes as the wire reports them. `mode` keeps the legacy select values
 // (`queue` = manual, `watch` = auto) beside the control-plane names. Mirrors
-// docs/frontends/gui.md#workflow-modes and docs/frontends/wasm.md#workflow-modes-in-a-tab.
+// docs/compiler/control-plane.md#modes-and-releases and docs/frontends/wasm.md#workflow-modes-in-a-tab.
 pub fn watch_value(c: &Control) -> Value {
     json!({
         "mode": if c.compile == "auto" { "watch" } else { "queue" },

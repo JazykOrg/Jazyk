@@ -22,7 +22,7 @@ pub fn board_value(proj: &Project, out: &Path) -> Value {
 
 // The next session's prompt exactly as the model receives it, plus the batch's
 // toolset and the executor it resolves to. With ?goal=, the batch that goal would
-// join. Mirrors docs/frontends/gui.md#preview and docs/compiler/sessions.md#preview.
+// join. Mirrors docs/frontends/gui.md#api (`GET /api/preview`) and docs/compiler/sessions.md#preview.
 pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
     let mut store = crate::store::Store::load(out);
     let (parsed, _) = crate::reconcile::parse_all(proj);
@@ -46,7 +46,7 @@ pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
     }
     // In compile: manual the pane opens before the release: a gated goal forms no
     // batch yet, so the batch a release would form is derived as if released and
-    // marked `gated` (docs/frontends/gui.md#preview).
+    // marked `gated` (docs/frontends/gui.md#api, `GET /api/preview`).
     let mut gated = false;
     let released_board;
     let (board, batch) = match find_batch(&board, target) {
@@ -232,7 +232,7 @@ mod tests {
     // In compile: manual, before any release, the goals a document opens are gated
     // and form no batch; the preview still shows the batch the release would form,
     // marked gated, so the compile click has a prompt to show
-    // (docs/frontends/gui.md#preview).
+    // (docs/frontends/gui.md#api, `GET /api/preview`).
     #[test]
     fn preview_value_shows_the_gated_batch_before_a_release() {
         let (proj, out) = temp_project("gated");

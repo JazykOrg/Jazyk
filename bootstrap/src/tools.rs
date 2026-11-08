@@ -3060,6 +3060,117 @@ impl ToolSession {
         Ok(())
     }
 
+    // The evidence checks of one claim, read-only over the store plus the staged work:
+    // mark_goal_done runs them before anything stages, and done runs them again over
+    // the final changeset. Mirrors docs/compiler/tools.md#goal-tools.
+    fn claim_evidence(&self, gs: &GoalScope, goal: &str, evidence: &Value) -> Result<(), ToolError> {
+        if gs.kind == "review-entity" {
+            self.review_evidence(goal, &gs.target, evidence)?;
+            // One lint entry per declared rule, filed backed by a lint finding on the
+            // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
+            self.lint_evidence(goal, &gs.target, evidence)?;
+        }
+        self.kind_evidence(gs, goal, evidence)?;
+        if gs.kind == "derive-criteria" {
+            self.criteria_evidence(goal, evidence)?;
+        }
+        Ok(())
+    }
+
+    // The criteria a requirement carries once the staged work applies.
+    fn criteria_after(&self, rid: &str) -> usize {
+        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
+        let rid = r(rid);
+        let deleted = |id: &str| {
+            self.staged.iter().any(|o| matches!(o, Op::DeleteCriterion { id: d, .. } if d == id))
+        };
+        let committed = self
+            .snapshot
+            .criteria_of(&rid)
+            .into_iter()
+            .filter(|id| !deleted(id))
+            .count();
+        let staged = self
+            .staged
+            .iter()
+            .filter(|o| matches!(o, Op::CreateCriterion { id, criterion } if r(&criterion.requirement) == rid && !deleted(id)))
+            .count();
+        committed + staged
+    }
+
+    // derive-criteria: one entry per requirement, complete backed by a criterion,
+    // open-question backed by an invented-choice prompt, both read after the staged
+    // work applies (docs/compiler/goals/derive-criteria.md#gate).
+    fn criteria_evidence(&self, goal: &str, evidence: &Value) -> Result<(), ToolError> {
+        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
+        {
+            let Some(list) = evidence["requirements"].as_array() else {
+                return Err(ToolError::new(
+                    "bad-evidence",
+                    format!(
+                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed; received {}",
+                        goal,
+                        match &evidence {
+                            Value::Null => "no evidence".to_string(),
+                            Value::String(_) => "a string that is not JSON".to_string(),
+                            Value::Array(_) => "a bare array (wrap it: {requirements: [...]})".to_string(),
+                            Value::Object(m) => format!("an object with keys {}", m.keys().cloned().collect::<Vec<_>>().join(", ")),
+                            other => other.to_string(),
+                        }
+                    ),
+                ));
+            };
+            for e in list {
+                let rid = e["id"].as_str().unwrap_or("").to_string();
+                let has_criterion = self.criteria_after(&rid) > 0;
+                match e["verdict"].as_str() {
+                    Some("complete") | Some("stated-only") => {
+                        if !has_criterion {
+                            return Err(ToolError::new(
+                                "criterion-missing",
+                                format!(
+                                    "{} claims {} {}, but no criterion is recorded or staged on it; upsert_criterion, or verdict open-question with an invented-choice prompt",
+                                    goal, rid, e["verdict"].as_str().unwrap_or("")
+                                ),
+                            ));
+                        }
+                    }
+                    Some("open-question") => {
+                        // Any open question naming the requirement backs the verdict:
+                        // a standing contradiction with its prompt is the question
+                        // (docs/compiler/goals/derive-criteria.md#gate).
+                        let asks = crate::goals::asks_for_answer;
+                        let names = |d: &Diagnostic| {
+                            asks(&d.rule, &d.prompt) && d.subjects.iter().any(|s| r(s) == r(&rid))
+                        };
+                        let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. } if names(diagnostic)))
+                            || self.open_diagnostics().iter().any(|(_, d)| names(d));
+                        if !prompted {
+                            return Err(ToolError::new(
+                                "unbacked-question",
+                                format!(
+                                    "{} claims {} open-question, but no open diagnostic with a prompt names it; report_diagnostic rule invented-choice with a prompt carrying the options, unless a standing contradiction, decision, or ambiguity already asks",
+                                    goal, rid
+                                ),
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(ToolError::new(
+                            "bad-verdict",
+                            format!(
+                                "verdict `{}` for {}: complete, stated-only, or open-question",
+                                other.unwrap_or("?"),
+                                rid
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn mark_goal_done(&mut self, args: &Value) -> Result<Value, ToolError> {
         let goal = Self::str_arg(args, "goal")?;
         let Some(gs) = self.scope.goal(&goal).cloned() else {
@@ -3095,13 +3206,7 @@ impl ToolSession {
         // Mirrors docs/compiler/goals/review-entity.md#gate.
         // Every check reads before anything stages, so a refused claim leaves the
         // changeset as it was.
-        if gs.kind == "review-entity" {
-            self.review_evidence(&goal, &gs.target, &evidence)?;
-            // One lint entry per declared rule, filed backed by a lint finding on the
-            // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
-            self.lint_evidence(&goal, &gs.target, &evidence)?;
-        }
-        self.kind_evidence(&gs, &goal, &evidence)?;
+        self.claim_evidence(&gs, &goal, &evidence)?;
         if gs.kind == "review-entity" {
             if let Some(list) = evidence["unreferenced"].as_array() {
                 let target = self.snapshot.resolve_id(&gs.target).to_string();
@@ -3130,73 +3235,6 @@ impl ToolSession {
                         add_attributes: Vec::new(),
                         provenance: None,
                     })?;
-                }
-            }
-        }
-        // derive-criteria: one entry per requirement, complete backed by a criterion,
-        // open-question backed by an invented-choice prompt
-        // (docs/compiler/goals/derive-criteria.md#gate).
-        if gs.kind == "derive-criteria" {
-            let Some(list) = evidence["requirements"].as_array() else {
-                return Err(ToolError::new(
-                    "bad-evidence",
-                    format!(
-                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed; received {}",
-                        goal,
-                        match &evidence {
-                            Value::Null => "no evidence".to_string(),
-                            Value::String(_) => "a string that is not JSON".to_string(),
-                            Value::Array(_) => "a bare array (wrap it: {requirements: [...]})".to_string(),
-                            Value::Object(m) => format!("an object with keys {}", m.keys().cloned().collect::<Vec<_>>().join(", ")),
-                            other => other.to_string(),
-                        }
-                    ),
-                ));
-            };
-            for e in list {
-                let rid = e["id"].as_str().unwrap_or("").to_string();
-                let has_criterion = !self.snapshot.criteria_of(&rid).is_empty()
-                    || self.staged.iter().any(|o| matches!(o, Op::CreateCriterion { criterion, .. } if criterion.requirement == rid));
-                match e["verdict"].as_str() {
-                    Some("complete") | Some("stated-only") => {
-                        if !has_criterion {
-                            return Err(ToolError::new(
-                                "criterion-missing",
-                                format!(
-                                    "{} claims {} {}, but no criterion is recorded or staged on it; upsert_criterion, or verdict open-question with an invented-choice prompt",
-                                    goal, rid, e["verdict"].as_str().unwrap_or("")
-                                ),
-                            ));
-                        }
-                    }
-                    Some("open-question") => {
-                        // Any open question naming the requirement backs the verdict:
-                        // a standing contradiction with its prompt is the question
-                        // (docs/compiler/goals/derive-criteria.md#gate).
-                        let asks = crate::goals::asks_for_answer;
-                        let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
-                            if asks(&diagnostic.rule, &diagnostic.prompt) && diagnostic.subjects.iter().any(|s| s == &rid)))
-                            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && asks(&d.rule, &d.prompt) && d.subjects.iter().any(|s| s == &rid));
-                        if !prompted {
-                            return Err(ToolError::new(
-                                "unbacked-question",
-                                format!(
-                                    "{} claims {} open-question, but no open diagnostic with a prompt names it; report_diagnostic rule invented-choice with a prompt carrying the options, unless a standing contradiction, decision, or ambiguity already asks",
-                                    goal, rid
-                                ),
-                            ));
-                        }
-                    }
-                    other => {
-                        return Err(ToolError::new(
-                            "bad-verdict",
-                            format!(
-                                "verdict `{}` for {}: complete, stated-only, or open-question",
-                                other.unwrap_or("?"),
-                                rid
-                            ),
-                        ));
-                    }
                 }
             }
         }
@@ -8077,11 +8115,14 @@ impl ToolSession {
                 if let Some(e) = self.dishonest_covered() {
                     return Err(e);
                 }
-                // Every resolution's gate still holds over the final changeset.
+                // Every resolution's gate and evidence still hold over the final
+                // changeset: work staged after a claim cannot undo what backs it.
                 let scopes: Vec<GoalScope> = self.scope.goals.clone();
                 for gs in &scopes {
-                    if matches!(self.outcomes.get(&gs.goal), Some(GoalOutcome::Done { .. })) {
+                    if let Some(GoalOutcome::Done { evidence, .. }) = self.outcomes.get(&gs.goal) {
+                        let evidence = evidence.clone();
                         self.goal_gate(gs)?;
+                        self.claim_evidence(gs, &gs.goal, &evidence)?;
                     }
                 }
                 // The union of the batch's kinds' gates over the whole changeset.
@@ -10814,6 +10855,47 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "criteria-unjudged", "{}", err.message);
         assert!(err.message.contains("req:b"), "{}", err.message);
+    }
+
+    // A claim reads the store after the staged work, at the mark and again at done:
+    // a criterion deleted in the session backs no verdict.
+    // Mirrors docs/compiler/sessions.md#resolving-failing-parking.
+    #[test]
+    fn derive_criteria_evidence_reads_the_staged_work_at_mark_and_done() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:sort".into(), plain("Sort"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "The utility sorts.".into(),
+                entities: vec!["ent:sort".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.criteria.insert(
+            "crit:a-1".into(),
+            crate::model::Criterion {
+                requirement: "req:a".into(),
+                statement: "Three lines come out ordered.".into(),
+                kind: "positive".into(),
+                ..Default::default()
+            },
+        );
+        let goals = one_goal("derive-criteria", "ent:sort", json!({"none": ["req:a"], "revised": []}));
+        let claim = json!({"goal": "g:derive-criteria:ent:sort", "justification": "Criteria written.",
+                "evidence": {"requirements": [{"id": "req:a", "criteria": ["crit:a-1"], "verdict": "stated-only"}]}});
+        let delete = json!({"id": "crit:a-1", "reason": "wrong"});
+        // A delete staged before the claim.
+        let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        t.dispatch("delete_criterion", &delete).unwrap();
+        let err = t.dispatch("mark_goal_done", &claim).unwrap_err();
+        assert_eq!(err.rule, "criterion-missing", "{}", err.message);
+        // A delete staged after the claim is caught at done.
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        t.dispatch("mark_goal_done", &claim).unwrap();
+        t.dispatch("delete_criterion", &delete).unwrap();
+        let err = t.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        assert_eq!(err.rule, "criterion-missing", "{}", err.message);
     }
 
     // Mirrors docs/compiler/tools.md#write-tools: remove_parent takes an entity out of

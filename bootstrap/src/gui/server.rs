@@ -611,10 +611,14 @@ pub(super) mod tests {
     }
 
     pub(crate) fn state(token: Option<&str>, gui_origin: &str) -> SharedState {
+        // One root per call: tests sharing an origin run in parallel and each removes
+        // its own root when done.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "jazyk-gui-server-test-{}-{}",
+            "jazyk-gui-server-test-{}-{}-{}",
             crate::sys::process_id(),
-            gui_origin.replace(|c: char| !c.is_alphanumeric(), "_")
+            gui_origin.replace(|c: char| !c.is_alphanumeric(), "_"),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).unwrap();
         let proj = crate::project::Project::load(&root);

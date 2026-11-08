@@ -16,10 +16,12 @@ Thumbs.db
 # Rust
 /bootstrap/target/
 
-# Each .jazyk/.gitignore excludes state while keeping configuration tracked.
-**/.jazyk/*
-!**/.jazyk/jazyk.toml
-!**/.jazyk/.gitignore
+# Compiled set state stays out of this repository, including the `ds_*/` state the
+# generated `.jazyk/.gitignore` files keep. A nested ignore file outranks this one,
+# so the whole directory is excluded and git never reads them. The configuration
+# (`.jazyk/jazyk.toml`, `.jazyk/.gitignore`) is tracked and stays tracked; a new
+# project adds its configuration with `git add -f`.
+**/.jazyk/
 .jazyk.*
 project2/
 .loop-logs/
@@ -36,3 +38,6 @@ project2/
 # Release artifacts.
 /dist/
 __pycache__/
+
+# Node dependencies (root tooling, the VS Code extension).
+node_modules/

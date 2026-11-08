@@ -1385,6 +1385,28 @@ impl Board {
 
     // ---- batching ----
 
+    // Hold back goals a build parked mid-run: they stay open on the board (the build
+    // writes `parked` at its close) but take no batch, and the batches re-form
+    // without them so their locality neighbors still run.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    pub fn withhold(&mut self, ids: &BTreeSet<String>, store: &Store, proj: &Project) {
+        let held: Vec<String> = ids
+            .iter()
+            .filter(|id| self.batches.iter().any(|b| b.goals.contains(id)))
+            .cloned()
+            .collect();
+        if held.is_empty() {
+            return;
+        }
+        for id in held {
+            self.readiness.insert(
+                id,
+                Ready::Blocked("parked in this build; the next build resumes it first".into()),
+            );
+        }
+        self.batches = self.form_batches(store, proj);
+    }
+
     fn form_batches(&self, store: &Store, proj: &Project) -> Vec<Batch> {
         let ready: Vec<&Goal> = self.ready_goals();
         let executor = |g: &Goal| proj.executors.resolve(&g.kind, &g.class).map(String::from);
@@ -3630,6 +3652,24 @@ pub(crate) mod tests {
         assert!(!b.is_ready("g:reconcile-section:shop.md#/shop/orders"), "{:?}", b.readiness.get("g:reconcile-section:shop.md#/shop/orders"));
         assert!(b.is_ready("g:review-entity:ent:customer"), "{:?}", b.readiness.get("g:review-entity:ent:customer"));
         assert!(!b.verdict().converged());
+    }
+
+    // A goal parked mid-build takes no batch, and its batch neighbors still run.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    #[test]
+    fn withholding_a_parked_goal_keeps_its_batch_neighbors() {
+        let mut s = settled_store();
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:order", "entities", json!({"requirement": "req:shop-2"}));
+        let mut b = derive(&s);
+        let (a, o) = ("g:review-entity:ent:customer".to_string(), "g:review-entity:ent:order".to_string());
+        assert!(b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == a), "{:?}", b.batches);
+        assert!(b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == o), "{:?}", b.batches);
+        b.withhold(&BTreeSet::from([a.clone()]), &s, &project_for(&s));
+        let batched: Vec<&String> = b.batches.iter().flat_map(|bt| &bt.goals).collect();
+        assert!(!batched.contains(&&a), "{:?}", b.batches);
+        assert!(batched.contains(&&o), "{:?}", b.batches);
+        assert!(!b.is_ready(&a));
     }
 
     // A pending flip ruling holds its pair blocked on a human: the verdict converges

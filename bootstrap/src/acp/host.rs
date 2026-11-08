@@ -97,6 +97,9 @@ pub struct PromptOutcome {
     pub idled: bool,
 }
 
+// How long a cancelled turn may take to stop before its session is closed.
+const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 enum Cmd {
     Steer {
         request: super::steering::SteeringRequest,
@@ -411,9 +414,20 @@ impl SessionHandle {
                 self.cancel();
                 stopping = Some(std::time::Instant::now());
             }
-            if stopping.is_some_and(|at| at.elapsed() >= std::time::Duration::from_secs(2)) {
-                let _ = self.cmd_tx.unbounded_send(Cmd::Shutdown);
-                return Err("acp host stopped after cancellation".into());
+            // An agent that ignores the cancel loses this session, not the host: other
+            // sessions (the GUI's other chats) share the host and keep running. The
+            // close queues behind the stuck turn, which the idle watchdog ends.
+            if stopping.is_some_and(|at| at.elapsed() >= CANCEL_GRACE) {
+                let (reply, _) = std::sync::mpsc::channel();
+                let _ = self.cmd_tx.unbounded_send(Cmd::Close {
+                    session: self.id.clone(),
+                    reply,
+                });
+                return Err(format!(
+                    "agent `{}` did not stop within {}s of the cancel; its session was closed",
+                    self.agent,
+                    CANCEL_GRACE.as_secs()
+                ));
             }
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                 Ok(reply) => return reply,
@@ -1129,6 +1143,73 @@ mod tests {
             "promptRequired"
         );
         session.close();
+    }
+
+    // An agent that ignores a cancel loses that session, never the shared host: a
+    // second session opens and a third prompt still reaches the agent afterwards.
+    #[test]
+    fn an_agent_ignoring_a_cancel_loses_its_session_not_the_host() {
+        if std::process::Command::new("python3").arg("-c").arg("pass").status().is_err() {
+            eprintln!("skipping: python3 not available for the fake agent");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("agent.py");
+        // Answers initialize, session/new, and session/close; never ends a prompt
+        // turn and ignores session/cancel.
+        std::fs::write(
+            &script,
+            r#"
+import json, sys
+n = 0
+for line in sys.stdin:
+    m = json.loads(line)
+    method = m.get("method")
+    if "id" not in m or method is None:
+        continue
+    if method == "initialize":
+        r = {"protocolVersion": m["params"]["protocolVersion"], "agentCapabilities": {}, "authMethods": []}
+    elif method == "session/new":
+        n += 1
+        r = {"sessionId": "s%d" % n}
+    elif method == "session/prompt":
+        sys.stderr.write("prompt %s\n" % m["params"]["sessionId"])
+        sys.stderr.flush()
+        continue
+    else:
+        r = {}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": m["id"], "result": r}) + "\n")
+    sys.stdout.flush()
+"#,
+        )
+        .unwrap();
+        let host = AcpHost::start(
+            ResolvedAgent {
+                name: "stubborn".into(),
+                command: "python3".into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                env: vec![],
+                serve_files: false,
+            },
+            dir.path().into(),
+            vec![],
+        )
+        .unwrap();
+        let first = host
+            .new_chat_session(dir.path(), vec![], PermissionPolicy::Auto)
+            .unwrap();
+        let started = std::time::Instant::now();
+        let err = first
+            .prompt_cancellable("hang", Arc::new(|_| {}), &|| true)
+            .unwrap_err();
+        assert!(err.contains("did not stop"), "{}", err);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        // The host is still up: another session opens on it.
+        let second = host
+            .new_chat_session(dir.path(), vec![], PermissionPolicy::Auto)
+            .expect("the shared host survives one session's cancel timeout");
+        assert_ne!(second.id(), first.id());
+        assert!(host.ended.lock().unwrap().is_none());
     }
 
     // The Phase 1 milestone in miniature: spawn the real debug binary as the embedded

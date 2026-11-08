@@ -526,6 +526,12 @@ pub async fn post_prompt(
             {
                 let mut s = sess2.lock().unwrap();
                 s.pending.clear();
+                // A turn that failed in the host (a cancel the agent ignored closes
+                // its session) leaves no session to reuse: the next prompt reopens
+                // one with the conversation as context.
+                if outcome.is_err() {
+                    s.handle = None;
+                }
             }
             update_input(
                 &st2,

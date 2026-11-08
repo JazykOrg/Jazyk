@@ -1752,6 +1752,7 @@ dependencies = [
  "serde_norway",
  "sha2",
  "siphasher",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-stream",

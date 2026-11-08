@@ -42,7 +42,8 @@ async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Respon
         q.split('&')
             .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
     });
-    let ok = bearer == Some(expect) || query_token.as_deref() == Some(expect);
+    let ok = super::state::token_matches(bearer, expect)
+        || super::state::token_matches(query_token.as_deref(), expect);
     if ok {
         next.run(req).await
     } else {

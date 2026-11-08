@@ -323,8 +323,9 @@ Their semantics:
   field `default: true`, and any mutation that names the view clears it: `update_view`
   with any field, `edit_fact`, a decree, `bump_limit`, or an `upsert_view` that lands
   on the default's `kind` and `title`. From then on the recompute leaves the view
-  alone. On a still-default view the recompute rewrites only `title` and `members`;
-  its `excluded`, `collapse`, and `limits` survive it. `delete_view` requires a
+  alone. On a still-default view the recompute rewrites `title`, `members` (its
+  exclusions kept out), `query`, and `provenance`; its `excluded`, `collapse`, and
+  `limits` survive it. `delete_view` requires a
   `reason`; on a default view it is refused, because the next commit would derive the
   view again. See [default views](./model/view.md#default-views).
 - `place_anchor` rewrites one anchor's `doc` and `section` (and `quote` when given)
@@ -378,7 +379,8 @@ atomically:
 - [change records](#change-records) are written for the dirtiness the commit caused,
   and the records of resolved goals are cleared,
 - the [journal entry](#journal) is written with its resolved and opened goals,
-- the generation counter in `status.yaml` is bumped,
+- the generation counter in `build.yaml` is bumped
+  ([committed and local state](#committed-and-local-state)),
 - the renderer rewrites `diagrams/` ([rendering](./diagrams.md#rendering)).
 
 Docsgen is not part of a commit: the requirements documents regenerate in the build tail
@@ -554,8 +556,8 @@ from the facts because it is a function of them.
   view. A default view is stored as a node file under `graph/views/`
   under its stable id with the boolean field `default: true` and provenance
   `{derived: {from: [...], reasoning: "default view: <rule>"}}`. On every commit the
-  store creates the views whose rule holds, rewrites `title` and `members` on the ones
-  still marked `default` (their `excluded`, `collapse`, and `limits` survive), removes
+  store creates the views whose rule holds, rewrites `title`, `members`, `query`, and
+  `provenance` on the ones still marked `default` (their `excluded`, `collapse`, and `limits` survive), removes
   the ones whose rule stopped holding, and leaves a view without `default` alone. A
   view with a `query` recomputes its members from the query whether or not it is
   default. See [default views](./model/view.md#default-views).

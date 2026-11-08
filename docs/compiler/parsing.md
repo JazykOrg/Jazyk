@@ -113,7 +113,9 @@ Each section carries:
   the [reconciler's scheduling](./reconciler.md#scheduling) as the document link graph.
 - Document links use the CommonMark parser, including reference links and optional
   titles. Images, code spans, code blocks, and raw HTML are not document links.
-  Only relative `.md` and `.markdown` targets are checked, case-insensitively.
+  Only relative targets in a format a [handler](#format-handlers) claims are checked
+  (`.md`, `.markdown`, `.txt`, and DOCX and PDF where the native readers are built),
+  matching the extension case-insensitively.
   External URLs, anchor-only links, assets, absolute paths, and paths escaping the
   project are ignored. Strip the query and fragment before decoding URL escapes.
   Invalid UTF-8, control characters, backslashes, and URI schemes are rejected.

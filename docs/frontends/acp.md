@@ -626,7 +626,9 @@ user is looking: the IDE's unsaved buffer, not just the disk. The injected MCP s
 is told to delegate edits (`--edit-sink`); each edit travels to the proxy, which
 issues the file write upstream and attaches the diff to a tool call update. When the
 IDE lacks file system support, or nothing listens on the sink, the serving writes the
-disk directly. The graph commit is the same either way.
+disk directly. The graph commit is the same either way. An edit the IDE refuses, or
+does not answer in time, fails the tool call: the serving never writes the disk behind
+an IDE that may still apply or has declined the edit, and a dual write commits nothing.
 
 The edit transport uses local Unix-domain sockets on macOS and Linux, and the
 `uds_windows` crate on Windows. Windows requires Windows 10 version 1803 or newer.

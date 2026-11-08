@@ -2180,9 +2180,12 @@ impl McpServer {
                 if base != hash.as_deref() || (base.is_none() && old.is_some()) {
                     return Ok(text_result(json!({"error":{"rule":"stale-document","message":"document changed; read_document before retrying","diskHash":hash}}), true));
                 }
-                sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text)
-                    .map_err(|m| (-32603, m))?;
-                return Ok(result_value(json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true})));
+                match sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text) {
+                    Ok(()) => return Ok(result_value(json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true}))),
+                    // Nothing listening: the direct write below, as for any serving.
+                    Err(SinkError::Unavailable(_)) => {}
+                    Err(SinkError::Failed(m)) => return Ok(text_result(json!({"error":{"rule":"editor-refused","message":format!("the editor did not apply the edit: {m}")}}), true)),
+                }
             }
             return match crate::webapi::docs::doc_write(&project, path, text, base) {
                 crate::webapi::docs::DocWrite::Written(v) => Ok(result_value(v)),
@@ -3306,10 +3309,14 @@ impl McpServer {
             return Err("DOCX and PDF cannot be changed by a text edit; use the format editor".into());
         }
         if let Some(sink) = &self.bridge.edit_sink {
-            if sink_write(sink, &path, old_text, new_text, full).is_ok() {
-                return Ok(());
+            match sink_write(sink, &path, old_text, new_text, full) {
+                Ok(()) => return Ok(()),
+                // Nothing listening, or an IDE that cannot take edits: write directly.
+                Err(SinkError::Unavailable(_)) => {}
+                // A refusal or an unanswered edit is the call's failure; writing the
+                // disk behind the IDE could race or override its answer.
+                Err(SinkError::Failed(e)) => return Err(format!("the editor did not apply the edit to {}: {}", rel, e)),
             }
-            // Nothing listening: fall through to the direct write.
         }
         crate::vfs::write(&path, full).map_err(|e| format!("write {}: {}", path.display(), e))
     }
@@ -3987,6 +3994,15 @@ pub fn try_toml_set(text: &str, section: &str, key: &str, value: &str) -> Result
     Ok(document.to_string())
 }
 
+// Why a delegated edit did not land: the sink cannot take edits at all (nothing
+// listens, or the IDE lacks the capability), or it was asked and failed.
+// Mirrors docs/frontends/acp.md#doc-edit-delegation.
+#[derive(Debug)]
+enum SinkError {
+    Unavailable(String),
+    Failed(String),
+}
+
 // One edit over the delegation socket: a JSON line out, an acknowledgement line back.
 // Mirrors docs/frontends/acp.md#doc-edit-delegation.
 #[cfg(not(target_arch = "wasm32"))]
@@ -3996,42 +4012,40 @@ fn sink_write(
     old_text: &str,
     new_text: &str,
     full: &str,
-) -> Result<(), String> {
+) -> Result<(), SinkError> {
     if crate::vfs::is_scoped() {
-        return Err("hosted workspaces do not connect to editor sockets".into());
+        return Err(SinkError::Unavailable("hosted workspaces do not connect to editor sockets".into()));
     }
     use std::io::{BufRead, BufReader, Write};
-    let mut stream = crate::local_socket::UnixStream::connect(sink).map_err(|e| e.to_string())?;
+    let mut stream = crate::local_socket::UnixStream::connect(sink)
+        .map_err(|e| SinkError::Unavailable(e.to_string()))?;
+    let failed = |e: std::io::Error| SinkError::Failed(e.to_string());
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .map_err(|e| e.to_string())?;
+        .map_err(failed)?;
     let line = json!({"path": path.display().to_string(), "oldText": old_text, "newText": new_text, "content": full});
-    writeln!(stream, "{}", line).map_err(|e| e.to_string())?;
+    writeln!(stream, "{}", line).map_err(failed)?;
     let mut reply = String::new();
-    BufReader::new(stream)
-        .read_line(&mut reply)
-        .map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(reply.trim()).map_err(|e| e.to_string())?;
+    BufReader::new(stream).read_line(&mut reply).map_err(failed)?;
+    let v: Value = serde_json::from_str(reply.trim())
+        .map_err(|_| SinkError::Failed("the editor sink sent no acknowledgement".into()))?;
     if v["ok"].as_bool().unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(v["error"]
-            .as_str()
-            .unwrap_or("sink refused the edit")
-            .to_string())
+        return Ok(());
     }
+    let message = v["error"].as_str().unwrap_or("sink refused the edit").to_string();
+    Err(if v["unavailable"] == true { SinkError::Unavailable(message) } else { SinkError::Failed(message) })
 }
 
 // A tab has no unix socket, so there is no editor to hand the edit to.
 #[cfg(target_arch = "wasm32")]
 fn sink_write(
-    sink: &str,
-    path: &std::path::Path,
-    old_text: &str,
-    new_text: &str,
-    full: &str,
-) -> Result<(), String> {
-    Err("the browser backend has no editor sink".to_string())
+    _sink: &str,
+    _path: &std::path::Path,
+    _old_text: &str,
+    _new_text: &str,
+    _full: &str,
+) -> Result<(), SinkError> {
+    Err(SinkError::Unavailable("the browser backend has no editor sink".to_string()))
 }
 
 // The reply pretty-printed, one field per line, so the agent's user reads the tool
@@ -6193,6 +6207,44 @@ mod tests {
         let (terms_at, late_at, added_at) = (text.find("## Terms").unwrap(), text.find("## Late").unwrap(), text.find("A late Order is flagged.").unwrap());
         assert!(terms_at < late_at && late_at < added_at, "{text}");
         assert!(text[late_at..].starts_with("## Late\n\nAn Order is paid on time.\n\nA late Order is flagged."), "{text}");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A delegated edit falls back to the disk only when the sink cannot take edits;
+    // a refusal or a missing acknowledgement fails the write and leaves the disk alone.
+    // Mirrors docs/frontends/acp.md#doc-edit-delegation.
+    #[cfg(unix)]
+    #[test]
+    fn delegated_edits_fall_back_only_when_the_editor_is_unavailable() {
+        use std::io::{BufRead, BufReader, Write};
+        let dir = bare_dir("sink-outcomes");
+        let doc = dir.join("docs/a.md");
+        crate::vfs::write(&doc, "# A\n").unwrap();
+        let serve = |reply: &'static str| -> String {
+            let path = format!("/tmp/jz-sink-{}-{}.sock", crate::sys::process_id(), reply.len());
+            let _ = std::fs::remove_file(&path);
+            let listener = crate::local_socket::UnixListener::bind(&path).unwrap();
+            std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let mut w = &stream;
+                if !reply.is_empty() { writeln!(w, "{}", reply).unwrap(); }
+            });
+            path
+        };
+        let with_sink = |sink: String| McpServer::with_bridge(crate::project::Project::load(&dir), dir.join(".jazyk/ds_main"),
+            vec!["chat".into()], false, BridgeFlags { edit_sink: Some(sink), ..Default::default() });
+        let refused = with_sink(serve(r#"{"ok":false,"error":"the user declined"}"#)).write_edit("docs/a.md", "# A\n", "# B\n", "# B\n");
+        assert!(refused.unwrap_err().contains("the user declined"));
+        let unanswered = with_sink(serve("")).write_edit("docs/a.md", "# A\n", "# B\n", "# B\n");
+        assert!(unanswered.is_err());
+        assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# A\n", "a failed delegation wrote the disk");
+        with_sink(serve(r#"{"ok":false,"unavailable":true,"error":"the client has no fs.writeTextFile capability"}"#))
+            .write_edit("docs/a.md", "# A\n", "# B\n", "# B\n").unwrap();
+        assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# B\n");
+        with_sink("/tmp/jz-sink-nobody-listens.sock".into()).write_edit("docs/a.md", "# B\n", "# C\n", "# C\n").unwrap();
+        assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# C\n");
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

@@ -804,11 +804,10 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
                    "status": "in_progress", "rawInput": args}),
         ),
         AgentEvent::ToolCallEnd { id, result, ok } => {
-            append(
-                &chat_id,
-                json!({"sessionUpdate": "tool_call_update", "toolCallId": id,
-                       "status": if ok { "completed" } else { "failed" }, "rawOutput": result}),
-            );
+            let mut update = json!({"sessionUpdate": "tool_call_update", "toolCallId": id,
+                   "status": if ok { "completed" } else { "failed" }, "rawOutput": result});
+            crate::effects::decorate(&mut update);
+            append(&chat_id, update);
             // A dual write committed: the graph views refresh on it, mid-turn.
             let now = generations();
             for (set_id, value) in &now {

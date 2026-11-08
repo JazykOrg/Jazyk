@@ -246,6 +246,13 @@ async fn restore(st: &SharedState) {
 }
 
 fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, mut update: Value) {
+    // An external agent's jazyk tool reply carries effects too; decorate it the way
+    // the embedded agent does. Mirrors docs/frontends/acp.md#edit-effects.
+    if update["sessionUpdate"] == "tool_call_update"
+        && update["_meta"]["jazyk"]["effects"].is_null()
+    {
+        crate::effects::decorate(&mut update);
+    }
     // Serialize transcript writes with the in-memory cursor. Admissions use the
     // same session lock and a checked, flushed write before HTTP acceptance.
     let (id, n, elided) = {

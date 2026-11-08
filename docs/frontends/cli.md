@@ -191,18 +191,12 @@ removed by hand: the line names where. Exit `0` when the command did what it ask
 
 `jazyk init [--mcp LIST] [--acp LIST] [--agent NAME]` initializes the current directory as a project root:
 
-- Writes a minimal `jazyk.toml` naming a starter layout: the docs glob
-  (`docs/**/*.md`), the root document (`docs/README.md`), and the
-  [deliverable directory](../compiler/project-settings.md#generation)
-  (`deliverable`). When one already exists there, it warns and leaves the file
-  unchanged. When discovery resolved to a parent project before the file was written,
-  the note says so: the nearest `jazyk.toml` wins, so the new file takes over from here
-  down.
-- Scaffolds the layout the file names: creates `docs/` and `deliverable/`, and
-  seeds `docs/README.md` with a TODO placeholder so the first compile has input.
-  Existing directories and files stay untouched. When `jazyk.toml` already
-  existed, the scaffold step is skipped: the layout is that project's own
-  business.
+- Writes an empty project file, `.jazyk/jazyk.toml` with `version = 1` and no
+  [document set](../compiler/document-sets.md), and the generated `.jazyk/.gitignore`.
+  When the file already exists there, it warns and leaves it unchanged. When discovery
+  resolved to a parent project before the file was written, the note says so: the
+  nearest `jazyk.toml` wins, so the new file takes over from here down. It creates no
+  starter documents; adding a document set chooses what compiles.
 - Writes the [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd),
   creating the file when it is missing, and the `@AGENTS.md` import into an existing
   `CLAUDE.md` or `GEMINI.md`.
@@ -817,8 +811,8 @@ and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 3. `bi
 release. `verify` is not release-gated (verification writes nothing into the
 deliverable). It runs `generate` goals without an exhaustive binding phase first:
 each entity's source and tests develop together in one bounded session. The coding
-agent chooses their order and reuses existing bindings. Implementation is written into the configured
-[deliverable directory](../compiler/project-settings.md#generation) and recorded as a
+agent chooses their order and reuses existing bindings. Implementation is written into the
+[deliverable](../compiler/project-settings.md#generation), within the set's `source`, and recorded as a
 manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
 every entity that has at least one requirement, leaf entities first, grouped by
 component where containment gives one, skipping entities whose facts are unchanged
@@ -960,7 +954,8 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `--llm-base-url URL`: the LLM endpoint (used by the embedded agent).
 - `--model M`: the model to use (used by the embedded agent).
 - `--api-key K`: sent as a bearer token (used by the embedded agent).
-- `--out DIR`: the out directory (default `.jazyk/`).
+- `--out DIR`: the out directory (default `.jazyk/<set-id>/`). It requires `--set` and
+  never names project metadata or another set's store.
 
 ## Help
 
@@ -994,7 +989,7 @@ directory as the project root. A [redirect](../compiler/project-settings.md#redi
 found above the working directory is a boundary, not a capture: discovery stops there
 and the command runs ad hoc at the working directory. Explicit `[path...]` arguments
 skip discovery and run ad hoc on those files. The out directory defaults to
-`<root>/.jazyk/`.
+`<root>/.jazyk/<set-id>/` for the selected set.
 
 ## Project task commands
 

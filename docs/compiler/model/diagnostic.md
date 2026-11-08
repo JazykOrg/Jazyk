@@ -250,7 +250,7 @@ answer:
 | `review-entity`, [`dedupe-candidates`](../goals/dedupe-candidates.md) sessions | `duplicate-entity` | warning | two entities that look like one concept |
 | `rejudge-pair`, `review-entity` sessions, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
 | checks | `failing-binding` | warning | a bound requirement whose implementing files exist and whose tests fail: the deliverable contradicts the statement |
-| checks | `criterion-missing` | warning or info | a requirement with no criterion: warning when the project configures a `[gen]` deliverable, info otherwise |
+| checks | `criterion-missing` | warning or info | a requirement with no criterion: warning when the set has a nonempty `source`, info otherwise |
 | checks, `upsert_criterion` gate | `criterion-restates` | warning | a criterion whose normalized text equals its requirement's statement |
 | checks | `criteria-conflict` | warning | two criteria about one entity with the same `given` and `when` and different `then`: one situation observed two ways |
 | `review-entity` sessions | `missing-link` | warning | a concept the documents rely on but never define; a dead file link is `broken-link`'s finding, never this rule's |

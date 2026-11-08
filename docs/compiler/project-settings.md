@@ -1,9 +1,5 @@
 # Project settings
 
-A document set with an open diagnostic answer in `handling` state needs compile.
-It remains dirty even when its documents match the graph and no compile goal is
-ready. All-dirty compilation includes it so the build can process the answer.
-
 A project is a folder with `.jazyk/jazyk.toml`. Paths resolve from that folder,
 not from `.jazyk`. The CLI discovers the nearest config while walking upward.
 The schema is [`project-settings.schema.yaml`](./project-settings.schema.yaml).
@@ -214,8 +210,8 @@ reconcile-section = "embedded"   # one compile goal kind
 ```
 
 - A key is a goal kind that runs in a session (`place-anchors`, `reconcile-section`,
-  `rejudge-pair`, `review-entity`, `retrace`, `conform-instance`, `bind`, `generate`,
-  `verify`, `declare-edges`, `dedupe-candidates`, `curate-view`, `split-view`,
+  `rejudge-pair`, `review-entity`, `retrace`, `conform-instance`, `derive-criteria`,
+  `bind`, `generate`, `verify`, `declare-edges`, `dedupe-candidates`, `curate-view`, `split-view`,
   `abstract-entity`; see [goal derivation](./reconciler.md#goal-derivation)) or a goal class
   (`compile`, `gc`). Any other key is a settings error naming the accepted keys.
 - A value is a profile name: `embedded`, or a `[acp.agents.<name>]` profile. A value
@@ -260,30 +256,40 @@ roots = ["docs/main.md"]
 Settings for the [generation workflow](../consumers/gen.md). All optional.
 
 ```toml
-source = ["project2/**"]
+[[sets]]
+id = "ds_main"
+name = "Main"
+docs = ["docs/**/*.md"]
+source = ["src/**", "tests/**"]
+
+[gen]
 worker = "agentic"
-code = ["src/**", "tests/**"]
 ```
 
-- `deliverable`: the directory the end product is generated into, resolved relative to
-  the project root. Default `.`, the project root itself, so the generated product
-  lands beside `jazyk.toml` and the workflow runs without configuration. The directory
-  is excluded from doc input except where the docs glob whitelists it (see
-  [glob](#glob)); the default glob keeps `docs/` as source. Generation metadata (the
-  ledger, criteria files) always stays in the out directory; only the product lands
-  here.
+- The deliverable is the project root. The generated product lands beside
+  `.jazyk/`, and generation metadata (the ledger, criteria files) always stays in the
+  set's out directory. The project root is excluded from doc input except where the
+  docs glob whitelists it (see [glob](#glob)); the default glob keeps `docs/` as
+  source.
+
+- A set's `source` is the generation scope. An empty `source` disables
+  `derive-criteria`, bind, generate, and verify work for the set
+  ([project configuration](./document-sets.md#project-configuration)). The `source`
+  patterns scope which files count as
+  implementation for generation file tools, the
+  [unclaimed report](../consumers/bind.md#the-unclaimed-report), and
+  [decompilation](../consumers/decompile.md). Files any set claims as documents never
+  count, and the standard exclusions apply (the out directory, hidden directories
+  except the [allowed project scaffolding](./document-sets.md#matching-and-file-roles),
+  `target`, and `node_modules`).
+
+- `deliverable`: accepted and ignored. An older file may still carry it, and
+  `update_project_settings` still writes it, but generation always uses the project
+  root and the set's `source`.
 
 - `worker`: the built-in generation worker. `agentic` (default) runs each
   [`generate`](./goals/generate.md) goal as a session with file and command tools;
   `pipeline` keeps the fixed file-reply sequence, for models too weak to drive tools.
-
-- `code`: a glob list (matched like [a set's `docs`](#glob), relative to the
-  deliverable) scoping which deliverable files count as implementation for the
-  [unclaimed report](../consumers/bind.md#the-unclaimed-report) and for
-  [decompilation](../consumers/decompile.md). Default: every file under the
-  deliverable minus the standard exclusions (the out directory, hidden directories
-  except the [allowed project scaffolding](./document-sets.md#matching-and-file-roles),
-  `target`, `node_modules`, and the docs the glob claims as source).
 
 The project file never says what the deliverable is. The medium is a fact the documents
 state, reaching workers through the graph; see

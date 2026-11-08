@@ -275,8 +275,6 @@ Extraction tier:
   the three ordered paragraphs and the content grouped inside each one.
 - [properties](./cases/properties.md): a sentence listing several properties of one
   subject is one statement with attributes.
-- [criteria-density](./cases/criteria-density.md): one criterion on a plain fact, the
-  negative only on a conditional.
 - [narrative-behavior](./cases/narrative-behavior.md): a narrated scene carries
   `behavior`, a standing character fact `constraint`.
 - [machine-subject](./cases/machine-subject.md): a character's stance changes are
@@ -298,6 +296,10 @@ Review tier:
 - [dedupe-candidates](./cases/dedupe-candidates.md): lookalike pair judgment,
   holding `dedupe-candidates` (one concept under two names, merged) and
   `dedupe-candidates-separate` (a shared word and nothing else, kept apart).
+- [criteria-density](./cases/criteria-density.md): one criterion on a plain fact, the
+  negative only on a conditional.
+- [criteria-observation](./cases/criteria-observation.md): criteria on a software
+  requirement observe the running product, never a contract or a specification.
 
 Structure tier:
 

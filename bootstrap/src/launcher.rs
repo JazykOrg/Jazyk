@@ -215,7 +215,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
 }
 
 const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --llm-api API  --reasoning-summary MODE  --out DIR";
-const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/.jazyk/)";
+const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/.jazyk/<set-id>/; requires --set)";
 
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {

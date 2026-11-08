@@ -8,6 +8,5 @@ warnings = ["An em dash appears in prose. This documentation uses commas, period
 [[sets]]
 id = "ds_main"
 name = "Main"
-docs = ["docs/**/*.md", "!docs/benchmark/cases/**", "!docs/compiler/goals/prompts/**", "!docs/compiler/skills/**"]
+docs = ["docs/**/*.md", "!docs/benchmark/cases/**", "!docs/benchmark/replays/**", "!docs/compiler/goals/prompts/**", "!docs/compiler/skills/**"]
 roots = ["docs/main.md"]
-source = ["project2/**"]

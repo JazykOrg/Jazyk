@@ -12,6 +12,5 @@ Portable compiler, workspace, delivery, verification, and ACP/LSP contracts rema
 in Jazyk. The private service depends on the compiler library. Jazyk does not
 depend on the private service to build or run locally.
 
-The [portable delivery proposal](../delivery/README.md) stays in this repository.
 This relocation does not change Jazyk's current visibility or remove earlier plans
 from its Git history.

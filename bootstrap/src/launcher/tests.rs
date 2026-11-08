@@ -103,3 +103,19 @@ fn every_shaped_option_is_a_known_option() {
         assert!(top.contains(option), "the top-level help omits {option}");
     }
 }
+
+#[test]
+fn the_top_level_help_lists_every_command() {
+    let usage = top_usage();
+    // codegen and testgen only point at `gen` (docs/frontends/cli.md#jazyk-gen).
+    for cmd in COMMANDS
+        .iter()
+        .filter(|c| !matches!(**c, "codegen" | "testgen"))
+    {
+        let listed = COMMAND_GROUPS
+            .iter()
+            .flat_map(|(_, cs)| cs.iter())
+            .any(|(u, _)| u.split(|c: char| c == ' ' || c == '|').any(|w| w == *cmd));
+        assert!(listed, "`jazyk --help` does not list `{cmd}`:\n{usage}");
+    }
+}

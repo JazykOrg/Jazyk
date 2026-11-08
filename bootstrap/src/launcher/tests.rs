@@ -115,7 +115,7 @@ fn the_top_level_help_lists_every_command() {
         let listed = COMMAND_GROUPS
             .iter()
             .flat_map(|(_, cs)| cs.iter())
-            .any(|(u, _)| u.split(|c: char| c == ' ' || c == '|').any(|w| w == *cmd));
+            .any(|(u, _)| u.split([' ', '|']).any(|w| w == *cmd));
         assert!(listed, "`jazyk --help` does not list `{cmd}`:\n{usage}");
     }
 }

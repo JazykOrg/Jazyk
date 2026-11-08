@@ -601,11 +601,18 @@ impl ProseEdit {
                 t.to_string()
             }
         };
+        // A document mixing line endings holds a section in neither uniform form; the
+        // section then locates by its tokens, any whitespace between.
         let window = section_raw
             .map(str::trim)
             .filter(|raw| !raw.is_empty())
-            .map(eol)
-            .and_then(|raw| old_full.find(&raw).map(|b| (b, b + raw.len())));
+            .and_then(|raw| {
+                let uniform = eol(raw);
+                old_full
+                    .find(&uniform)
+                    .map(|b| (b, b + uniform.len()))
+                    .or_else(|| md::locate_bytes(old_full, raw))
+            });
         let doc_new = eol(new_text);
         let full = if old_text.trim().is_empty() {
             let Some((_, end)) = window else {

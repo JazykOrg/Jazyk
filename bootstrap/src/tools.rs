@@ -12513,9 +12513,6 @@ mod tests {
                     .collect(),
             }
         };
-        // report_diagnostic: tools.md and the schema require reasoning, the catalog
-        // and the served prompts leave it optional; an owner decision settles which.
-        let pending: [(&str, &str); 1] = [("report_diagnostic", "reasoning")];
         let mut drift: Vec<String> = Vec::new();
         for mut tool in catalog() {
             // The catalog's done is a worker's; the schema's adds the MCP beginNext.
@@ -12534,12 +12531,7 @@ mod tests {
                 continue;
             };
             for key in ["properties", "required"] {
-                let (want, mut have) = (names(&tool.parameters, key), names(def, key));
-                for (t, field) in pending {
-                    if t == tool.name && key == "required" {
-                        have.remove(field);
-                    }
-                }
+                let (want, have) = (names(&tool.parameters, key), names(def, key));
                 if want != have {
                     drift.push(format!(
                         "{} {}: catalog {:?}, schema {:?}",

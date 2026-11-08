@@ -3041,6 +3041,8 @@ impl Store {
     // and each requirement's content tokens. Computed once per pass and shared by
     // every requirement the pass scores. Mirrors docs/compiler/reconciler.md#pairs.
     pub fn pair_scoring(&self) -> PairScoring {
+        #[cfg(test)]
+        PAIR_SCORINGS.with(|n| n.set(n.get() + 1));
         let mut counts: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
         let mut by_entity: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut tokens: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -7683,6 +7685,12 @@ impl FileLock {
             marker: Some(path),
         }
     }
+}
+
+// How many pair scorings this thread computed: a test's measure of passes.
+#[cfg(test)]
+thread_local! {
+    static PAIR_SCORINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 // How long a reader waits for a consistent read before it reports `store-busy`.
@@ -13569,11 +13577,21 @@ mod tests {
             ));
         }
         let before = s.status.changes.len();
+        // One pass computes the scorer's inputs once for every record; the count is
+        // the deterministic check. The wall clock only catches a pathological pass, so
+        // its bound stays far above any machine under parallel test load.
+        let scorings = PAIR_SCORINGS.with(|n| n.get());
         let started = std::time::Instant::now();
         s.prune_records();
         let took = started.elapsed();
+        assert_eq!(
+            PAIR_SCORINGS.with(|n| n.get()) - scorings,
+            1,
+            "prune_records over {} records scored more than once",
+            before
+        );
         assert!(
-            took < std::time::Duration::from_secs(5),
+            took < std::time::Duration::from_secs(120),
             "prune_records over {} records took {:?}",
             before,
             took

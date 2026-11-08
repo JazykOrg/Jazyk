@@ -4662,13 +4662,12 @@ mod tests {
     }
 
     fn journal_dir() -> std::path::PathBuf {
+        // A counter, not the clock: parallel tests read the same clock value.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "jazyk-flip-test-{}-{}",
             crate::sys::process_id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         crate::vfs::create_dir_all(dir.join("journal")).unwrap();
         dir

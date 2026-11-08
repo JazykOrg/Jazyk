@@ -663,8 +663,17 @@ boundaries still apply.
 
 ## The ledger
 
-`gen/ledger.yaml` in the out directory is the single generation and verification
-metadata file. Two maps:
+The ledger is the generation and verification metadata under `gen/` in the out
+directory, one file per row so two branches that generate or verify different entities
+write different files:
+
+- `gen/ledger.yaml`: the deliverable-wide keys below (`support`, `medium`, `build`,
+  `contradicted`, `tasks`).
+- `gen/entities/<entity slug>.yaml`: one `entities` row, starting with its `id`.
+- `gen/requirements/<requirement file id>.yaml`: one `requirements` row, starting with
+  its `id`. File ids are those of [node files](../compiler/graph.md#node-files).
+
+A load reads all three into one ledger with two maps:
 
 - `entities`: generation state. What was generated for each entity, against which facts.
   Drives incremental regeneration.
@@ -682,12 +691,17 @@ diagnostic ([rows recorded over an open contradiction](#rows-recorded-over-an-op
 and `tasks`, the project tasks a ledger session created
 ([session tasks are swept when unused](#session-tasks-are-swept-when-unused)).
 
-The file is written through a sibling temporary file renamed into place, so a reader
+Each file is written through a sibling temporary file renamed into place, so a reader
 or a crash never sees a half-written ledger, the same way the
-[store](../compiler/graph.md#writes-and-unreadable-files) writes. A ledger that exists
-but does not parse is reported and reads as empty, and every path that would save it
-refuses, so a torn or hand-broken file is never replaced by an empty one. Repair or
-remove the file; `jazyk test --audit` then rebuilds what the artifacts carry.
+[store](../compiler/graph.md#writes-and-unreadable-files) writes. A save writes the
+files whose bytes changed and deletes the files of rows that left the ledger. A ledger
+file that exists but does not parse is reported, the ledger reads as empty, and every
+path that would save it refuses, so a torn or hand-broken file is never replaced by an
+empty one. Repair or remove the file; `jazyk test --audit` then rebuilds what the
+artifacts carry. A ledger written whole into `gen/ledger.yaml` (store version 3) loads
+as it is and is split by its next save.
+
+The example shows the ledger as one document, the form a load assembles:
 
 ```yaml
 support:                                  # deliverable-wide files any session may rewrite

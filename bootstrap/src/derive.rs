@@ -91,6 +91,13 @@ pub fn recompute_relationships(store: &mut Store) {
 
 // Instance -> type, from the instantiation groups.
 pub fn instance_types(store: &Store) -> BTreeMap<String, String> {
+    if let Some(ix) = crate::store::ScopeIndex::of(store) {
+        return ix.instance_types(|| scan_instance_types(store)).clone();
+    }
+    scan_instance_types(store)
+}
+
+fn scan_instance_types(store: &Store) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for rel in store.graph.relationships.values() {
         for c in &rel.contributions {

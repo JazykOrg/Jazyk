@@ -5,6 +5,7 @@ use crate::vfs::VPathExt;
 use crate::md;
 use crate::model::*;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -746,6 +747,113 @@ pub struct Store {
     pub load_errors: Vec<String>,
 }
 
+// The read indices of one derivation (docs/compiler/graph.md#derived-data). While a
+// `ReadScope` borrows a store, nothing can change the store, so the whole-graph scans
+// that a board derivation repeats per goal (`requirements_referencing`,
+// `derive::instance_types`, `board::level_members`) answer from indices built on
+// first use and dropped with the scope. Each index holds what the scan it replaces
+// computes.
+pub struct ReadScope<'a> {
+    prev: Option<std::rc::Rc<ScopeIndex>>,
+    _store: std::marker::PhantomData<&'a Store>,
+}
+
+#[derive(Default)]
+pub(crate) struct ScopeIndex {
+    store: usize,
+    requirements_of: std::cell::OnceCell<BTreeMap<String, Vec<String>>>,
+    instance_types: std::cell::OnceCell<BTreeMap<String, String>>,
+    children: std::cell::OnceCell<BTreeMap<String, Vec<String>>>,
+    scope_roots: std::cell::OnceCell<BTreeMap<String, Vec<String>>>,
+}
+
+thread_local! {
+    static READ_SCOPE: std::cell::RefCell<Option<std::rc::Rc<ScopeIndex>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+impl<'a> ReadScope<'a> {
+    pub fn enter(store: &'a Store) -> ReadScope<'a> {
+        let index = std::rc::Rc::new(ScopeIndex {
+            store: store as *const Store as usize,
+            ..Default::default()
+        });
+        let prev = READ_SCOPE.with(|s| s.borrow_mut().replace(index));
+        ReadScope {
+            prev,
+            _store: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Drop for ReadScope<'_> {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        READ_SCOPE.with(|s| *s.borrow_mut() = prev);
+    }
+}
+
+impl ScopeIndex {
+    // The index of the scope open over this very store, if one is.
+    pub(crate) fn of(store: &Store) -> Option<std::rc::Rc<ScopeIndex>> {
+        READ_SCOPE.with(|s| {
+            s.borrow()
+                .as_ref()
+                .filter(|ix| ix.store == store as *const Store as usize)
+                .cloned()
+        })
+    }
+
+    // Entity id (redirects followed) to the requirements naming it, by id.
+    pub(crate) fn requirements_of(&self, store: &Store) -> &BTreeMap<String, Vec<String>> {
+        self.requirements_of.get_or_init(|| {
+            let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (rid, r) in &store.graph.requirements {
+                for e in &r.entities {
+                    let list = out.entry(store.resolve_id(e).to_string()).or_default();
+                    if list.last() != Some(rid) {
+                        list.push(rid.clone());
+                    }
+                }
+            }
+            out
+        })
+    }
+
+    pub(crate) fn instance_types(
+        &self,
+        compute: impl FnOnce() -> BTreeMap<String, String>,
+    ) -> &BTreeMap<String, String> {
+        self.instance_types.get_or_init(compute)
+    }
+
+    // Parent id to its direct children, by id.
+    pub(crate) fn children(&self, store: &Store) -> &BTreeMap<String, Vec<String>> {
+        self.children.get_or_init(|| {
+            let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (id, e) in &store.graph.entities {
+                if let Some(p) = &e.parent {
+                    out.entry(p.clone()).or_default().push(id.clone());
+                }
+            }
+            out
+        })
+    }
+
+    // Scope to its parentless entities, by id.
+    pub(crate) fn scope_roots(&self, store: &Store) -> &BTreeMap<String, Vec<String>> {
+        self.scope_roots.get_or_init(|| {
+            let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (id, e) in &store.graph.entities {
+                if e.parent.is_none() {
+                    out.entry(e.scope.clone()).or_default().push(id.clone());
+                }
+            }
+            out
+        })
+    }
+}
+
 pub(crate) fn normalize(name: &str) -> String {
     name.split_whitespace()
         .collect::<Vec<_>>()
@@ -1049,7 +1157,7 @@ pub fn node_stem(id: &str) -> (String, bool) {
 }
 
 // The content of one redirect file.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct RedirectFile {
     to: String,
 }
@@ -1176,28 +1284,172 @@ fn node_value<T: Serialize>(id: &str, node: &T, markers: &mut Markers) -> serde_
     serde_norway::Value::Mapping(m)
 }
 
+// The generation markers a node file leaves to `markers.yaml`.
+trait Marked {
+    fn marks(&self) -> (Option<&String>, Option<&String>) {
+        (None, None)
+    }
+}
+
+macro_rules! marked {
+    ($($t:ty),*) => {$(
+        impl Marked for $t {
+            fn marks(&self) -> (Option<&String>, Option<&String>) {
+                (self.created.as_ref(), self.updated.as_ref())
+            }
+        }
+    )*};
+}
+marked!(Entity, Requirement, Criterion, View, Diagnostic);
+impl Marked for Relationship {}
+impl Marked for StateMachine {}
+impl Marked for RedirectFile {}
+
 // Write every node of one kind whose bytes changed; return the files of nodes that
-// left the graph, for the caller to delete after every write landed.
-fn save_values(dir: &Path, nodes: &BTreeMap<String, serde_norway::Value>) -> Vec<PathBuf> {
+// left the graph, for the caller to delete after every write landed. The markers are
+// taken out as `node_value` takes them.
+fn save_kind<'a, T: Serialize + Marked + Clone + 'a>(
+    dir: &Path,
+    nodes: impl Iterator<Item = (&'a String, std::borrow::Cow<'a, T>)>,
+    markers: &mut Markers,
+) -> Vec<PathBuf> {
+    let mut ids: BTreeSet<&String> = BTreeSet::new();
     for (id, node) in nodes {
+        let (created, updated) = node.marks();
+        if created.is_some() || updated.is_some() {
+            markers.insert(id.clone(), (created.cloned(), updated.cloned()));
+        }
         let path = dir.join(format!("{}.yaml", node_stem(id).0));
-        report_write(&path, write_yaml(&path, node));
+        write_tracked(&path, id, node.as_ref(), || {
+            node_value(id, node.as_ref(), &mut Markers::new())
+        });
+        ids.insert(id);
     }
     node_files(dir, &mut Vec::new())
         .into_iter()
-        .filter(|(id, _)| !nodes.contains_key(id))
+        .filter(|(id, _)| !ids.contains(id))
         .map(|(_, path)| path)
         .collect()
 }
 
-// Every node of one kind, as its files hold them.
-fn node_values<'a, T: Serialize + 'a>(
-    nodes: impl Iterator<Item = (&'a String, &'a T)>,
-    markers: &mut Markers,
-) -> BTreeMap<String, serde_norway::Value> {
-    nodes
-        .map(|(id, n)| (id.clone(), node_value(id, n, markers)))
-        .collect()
+fn borrowed<'a, T: Clone>((id, n): (&'a String, &'a T)) -> (&'a String, Cow<'a, T>) {
+    (id, Cow::Borrowed(n))
+}
+
+// Write a node file or doc record through `write_yaml`, unless the file still holds
+// what this process last wrote or verified there from a value with the same
+// fingerprint: then its bytes already equal the serialized value, and the save skips
+// serializing it. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+fn write_tracked<T: Serialize, V: Serialize>(
+    path: &Path,
+    key: &str,
+    source: &T,
+    value: impl FnOnce() -> V,
+) {
+    let fp = written::fingerprint(key, source);
+    if fp.is_some_and(|fp| written::holds(path, fp)) {
+        return;
+    }
+    #[cfg(test)]
+    SERIALIZED.with(|n| n.set(n.get() + 1));
+    let r = write_yaml(path, &value());
+    match (&r, fp) {
+        (Ok(()), Some(fp)) => written::remember(path, fp),
+        _ => written::forget(path),
+    }
+    report_write(path, r);
+}
+
+// The node files and doc records this thread serialized, for the tests to count.
+#[cfg(test)]
+thread_local! {
+    static SERIALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// What this process last wrote to or found in each node file and doc record: the
+// fingerprint of the value the bytes serialize, and the file's identity (length,
+// modification time, inode) then. Any other write to the file replaces its inode or
+// moves its time, so a file whose identity still matches holds those bytes. An
+// in-memory tree keeps none: its reads cost no disk.
+mod written {
+    use serde::Serialize;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{LazyLock, Mutex};
+
+    #[derive(Clone, Copy, PartialEq)]
+    struct Identity {
+        len: u64,
+        modified: std::time::SystemTime,
+        inode: u64,
+    }
+
+    static SEEN: LazyLock<Mutex<HashMap<PathBuf, (u128, Identity)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    fn tracked() -> bool {
+        cfg!(not(target_arch = "wasm32")) && !crate::vfs::is_scoped()
+    }
+
+    fn identity(path: &Path) -> Option<Identity> {
+        let m = std::fs::metadata(path).ok()?;
+        #[cfg(unix)]
+        let inode = std::os::unix::fs::MetadataExt::ino(&m);
+        #[cfg(not(unix))]
+        let inode = 0;
+        Some(Identity {
+            len: m.len(),
+            modified: m.modified().ok()?,
+            inode,
+        })
+    }
+
+    struct HashWriter(siphasher::sip128::SipHasher13);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            std::hash::Hasher::write(&mut self.0, buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // A 128-bit hash of the key and the value's JSON form: equal fingerprints mean
+    // equal values, so equal serialized bytes.
+    pub(super) fn fingerprint<T: Serialize>(key: &str, value: &T) -> Option<u128> {
+        use siphasher::sip128::Hasher128;
+        if !tracked() {
+            return None;
+        }
+        let mut w = HashWriter(siphasher::sip128::SipHasher13::new());
+        std::hash::Hasher::write(&mut w.0, key.as_bytes());
+        std::hash::Hasher::write_u8(&mut w.0, 0);
+        serde_json::to_writer(&mut w, value).ok()?;
+        Some(w.0.finish128().as_u128())
+    }
+
+    pub(super) fn holds(path: &Path, fp: u128) -> bool {
+        let Some(seen) = SEEN.lock().unwrap().get(path).copied() else {
+            return false;
+        };
+        seen.0 == fp && identity(path) == Some(seen.1)
+    }
+
+    pub(super) fn remember(path: &Path, fp: u128) {
+        match identity(path) {
+            Some(id) => {
+                SEEN.lock().unwrap().insert(path.to_path_buf(), (fp, id));
+            }
+            None => forget(path),
+        }
+    }
+
+    pub(super) fn forget(path: &Path) {
+        if tracked() {
+            SEEN.lock().unwrap().remove(path);
+        }
+    }
 }
 
 // The local generation markers: node id to `[created, updated]`.
@@ -2228,54 +2480,67 @@ impl Store {
         // is the source of a requirement naming the entity is derived and comes back at
         // load. Mirrors docs/compiler/graph.md#node-files.
         let by_reference = reference_sources(&self.graph);
-        let entities: BTreeMap<String, serde_norway::Value> = self
+        let entities = self
             .graph
             .entities
             .iter()
-            .map(|(id, e)| {
-                let derived = by_reference.get(id);
-                let mut own = e.clone();
-                if let Some(d) = derived {
+            .map(|(id, e)| match by_reference.get(id) {
+                Some(d) if e.mentions.iter().any(|m| d.contains(m)) => {
+                    let mut own = e.clone();
                     own.mentions.retain(|m| !d.contains(m));
+                    (id, Cow::Owned(own))
                 }
-                (id.clone(), node_value(id, &own, &mut markers))
-            })
-            .collect();
-        let curated = node_values(
-            self.graph.views.iter().filter(|(_, v)| !v.default),
-            &mut markers,
-        );
-        let defaults = node_values(
-            self.graph.views.iter().filter(|(_, v)| v.default),
-            &mut markers,
-        );
+                _ => (id, Cow::Borrowed(e)),
+            });
         let mut gone = Vec::new();
-        gone.extend(save_values(&g.join("entities"), &entities));
-        gone.extend(save_values(
+        gone.extend(save_kind(&g.join("entities"), entities, &mut markers));
+        gone.extend(save_kind(
             &g.join("requirements"),
-            &node_values(self.graph.requirements.iter(), &mut markers),
+            self.graph.requirements.iter().map(borrowed),
+            &mut markers,
         ));
-        gone.extend(save_values(
+        gone.extend(save_kind(
             &g.join("criteria"),
-            &node_values(self.graph.criteria.iter(), &mut markers),
+            self.graph.criteria.iter().map(borrowed),
+            &mut markers,
         ));
-        gone.extend(save_values(&g.join("views"), &curated));
-        gone.extend(save_values(&g.join("default-views"), &defaults));
-        gone.extend(save_values(
+        gone.extend(save_kind(
+            &g.join("views"),
+            self.graph
+                .views
+                .iter()
+                .filter(|(_, v)| !v.default)
+                .map(borrowed),
+            &mut markers,
+        ));
+        gone.extend(save_kind(
+            &g.join("default-views"),
+            self.graph
+                .views
+                .iter()
+                .filter(|(_, v)| v.default)
+                .map(borrowed),
+            &mut markers,
+        ));
+        gone.extend(save_kind(
             &g.join("diagnostics"),
-            &node_values(self.graph.diagnostics.iter(), &mut markers),
+            self.graph.diagnostics.iter().map(borrowed),
+            &mut markers,
         ));
-        gone.extend(save_values(
+        gone.extend(save_kind(
             &g.join("redirects"),
-            &node_values(redirects.iter(), &mut Markers::new()),
+            redirects.iter().map(borrowed),
+            &mut Markers::new(),
         ));
-        gone.extend(save_values(
+        gone.extend(save_kind(
             &g.join("relationships"),
-            &node_values(self.graph.relationships.iter(), &mut Markers::new()),
+            self.graph.relationships.iter().map(borrowed),
+            &mut Markers::new(),
         ));
-        gone.extend(save_values(
+        gone.extend(save_kind(
             &g.join("state-machines"),
-            &node_values(self.graph.state_machines.iter(), &mut Markers::new()),
+            self.graph.state_machines.iter().map(borrowed),
+            &mut Markers::new(),
         ));
         // A derived directory exists once saved, even empty, so a load recomputes the
         // derived kinds only on a checkout that lacks them.
@@ -2284,7 +2549,7 @@ impl Store {
         }
         for (doc, rec) in &self.docs {
             let p = self.out.join("docs").join(format!("{}.yaml", doc));
-            report_write(&p, write_yaml(&p, &doc_record_value(rec)));
+            write_tracked(&p, doc, rec, || doc_record_value(rec));
         }
         for p in gone {
             if let Err(e) = crate::vfs::remove_file(&p) {
@@ -3104,6 +3369,13 @@ impl Store {
     }
 
     pub fn requirements_referencing(&self, entity_id: &str) -> Vec<String> {
+        if let Some(ix) = ScopeIndex::of(self) {
+            return ix
+                .requirements_of(self)
+                .get(entity_id)
+                .cloned()
+                .unwrap_or_default();
+        }
         self.graph
             .requirements
             .iter()
@@ -5018,9 +5290,16 @@ impl Store {
                     // alone for a decree. A create staged under an existing id whose
                     // statement subsumes the incoming one in the same section is the
                     // stage-time resolution of a stale anchor and folds into that id.
+                    // The incoming side normalizes once; a stored requirement only
+                    // when its section or provenance kind already matches.
+                    let incoming_statement = normalize_statement(&requirement.statement);
+                    let incoming_quote = requirement
+                        .source
+                        .as_ref()
+                        .map(|s| normalize_statement(&s.quote));
                     let same_key = |r: &Requirement, incoming: &Requirement| -> bool {
-                        let same_statement = normalize_statement(&r.statement)
-                            == normalize_statement(&incoming.statement);
+                        let same_statement =
+                            || normalize_statement(&r.statement) == incoming_statement;
                         match (
                             &r.source,
                             &incoming.source,
@@ -5030,9 +5309,9 @@ impl Store {
                             (Some(a), Some(b), _, _) => {
                                 a.doc == b.doc
                                     && a.section == b.section
-                                    && (same_statement
-                                        || (normalize_statement(&a.quote)
-                                            == normalize_statement(&b.quote)
+                                    && (same_statement()
+                                        || (incoming_quote.as_deref()
+                                            == Some(normalize_statement(&a.quote).as_str())
                                             && statement_rewords(
                                                 &r.statement,
                                                 &incoming.statement,
@@ -5044,7 +5323,7 @@ impl Store {
                                 Some(Provenance::Derived { from: fa, .. }),
                                 Some(Provenance::Derived { from: fb, .. }),
                             ) => {
-                                same_statement
+                                same_statement()
                                     && fa.iter().collect::<BTreeSet<_>>()
                                         == fb.iter().collect::<BTreeSet<_>>()
                             }
@@ -5053,7 +5332,7 @@ impl Store {
                                 None,
                                 Some(Provenance::Decree { .. }),
                                 Some(Provenance::Decree { .. }),
-                            ) => same_statement,
+                            ) => same_statement(),
                             _ => false,
                         }
                     };
@@ -7458,19 +7737,23 @@ impl Store {
             .values()
             .filter_map(|e| e.parent.as_deref())
             .collect();
-        let orphans: Vec<String> = self
-            .graph
-            .entities
-            .iter()
-            .filter(|(id, e)| {
-                e.mentions.is_empty()
-                    && e.attributes.is_empty()
-                    && e.provenance.is_none()
-                    && !parents.contains(id.as_str())
-                    && self.requirements_referencing(id).is_empty()
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
+        // The requirements naming each entity answer from one index, not a scan per
+        // entity. Mirrors docs/compiler/graph.md#derived-data.
+        let orphans: Vec<String> = {
+            let _scope = ReadScope::enter(self);
+            self.graph
+                .entities
+                .iter()
+                .filter(|(id, e)| {
+                    e.mentions.is_empty()
+                        && e.attributes.is_empty()
+                        && e.provenance.is_none()
+                        && !parents.contains(id.as_str())
+                        && self.requirements_referencing(id).is_empty()
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
         for id in orphans {
             self.graph.entities.remove(&id);
             self.graph.redirects.insert(id.clone(), String::new());
@@ -7487,13 +7770,17 @@ impl Store {
                 *child_counts.entry(p.clone()).or_insert(0) += 1;
             }
         }
-        let under: Vec<String> = self
-            .graph
-            .entities
-            .keys()
-            .filter(|id| child_counts.get(*id).copied().unwrap_or(0) < 2 && self.is_grouping(id))
-            .cloned()
-            .collect();
+        let under: Vec<String> = {
+            let _scope = ReadScope::enter(self);
+            self.graph
+                .entities
+                .keys()
+                .filter(|id| {
+                    child_counts.get(*id).copied().unwrap_or(0) < 2 && self.is_grouping(id)
+                })
+                .cloned()
+                .collect()
+        };
         let mut moves: Vec<(String, Option<String>, Option<String>, usize)> = Vec::new();
         let mut dissolved: Vec<serde_json::Value> = Vec::new();
         for id in under {
@@ -8046,6 +8333,110 @@ mod tests {
         let a = out.join("graph/entities/ent~a.yaml");
         assert_eq!(after[&a], before[&a], "an unchanged node file stays");
         assert_eq!(Store::load(&out).status.generation, 2);
+    }
+
+    // A save serializes only the nodes whose value moved since this process last
+    // wrote or verified their files; a file another writer changed is compared and
+    // rewritten as before. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
+    #[cfg(unix)]
+    #[test]
+    fn a_save_serializes_only_nodes_whose_value_moved() {
+        let out = own_dir("serialized-save");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        let ops: Vec<Op> = (0..20)
+            .map(|i| create(&format!("ent:n{}", i), &format!("N{}", i)))
+            .collect();
+        let r = s.apply(ops, &session());
+        assert_eq!(r.applied, 20, "{:?}", r.skipped);
+        let serialized = |s: &Store| {
+            let before = SERIALIZED.with(|n| n.get());
+            s.save();
+            SERIALIZED.with(|n| n.get()) - before
+        };
+        let again = Store::load(&out);
+        assert_eq!(serialized(&again), 0, "nothing moved, nothing serializes");
+
+        let mut s = Store::load(&out);
+        s.graph.entities.get_mut("ent:n4").unwrap().definition = Some("moved".into());
+        assert_eq!(serialized(&s), 1, "one node moved");
+
+        let shard = out.join("graph/entities/ent~n5.yaml");
+        let canonical = std::fs::read_to_string(&shard).unwrap();
+        std::fs::write(&shard, format!("{}# a hand edit\n", canonical)).unwrap();
+        let again = Store::load(&out);
+        assert_eq!(serialized(&again), 1, "the edited file is compared again");
+        assert_eq!(std::fs::read_to_string(&shard).unwrap(), canonical);
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // Inside a read scope the whole-graph lookups answer from indices, and answer
+    // what the scans answer: redirects followed, each requirement once, by id.
+    // Mirrors docs/compiler/graph.md#derived-data.
+    #[test]
+    fn a_read_scope_answers_what_the_scans_answer() {
+        let mut s = Store::default();
+        for (id, parent, scope) in [
+            ("ent:a", None, "public"),
+            ("ent:b", Some("ent:a"), "public"),
+            ("ent:c", Some("ent:a"), "public"),
+            ("ent:d", None, "internal"),
+            ("ent:e", None, "public"),
+        ] {
+            let mut e = entity(id);
+            e.parent = parent.map(String::from);
+            e.scope = scope.into();
+            s.graph.entities.insert(id.into(), e);
+        }
+        s.graph.redirects.insert("ent:old".into(), "ent:b".into());
+        for (rid, ents) in [
+            ("req:1", vec!["ent:a", "ent:b"]),
+            ("req:2", vec!["ent:old", "ent:b"]),
+            ("req:3", vec!["ent:c", "ent:old", "ent:a"]),
+            ("req:4", vec!["ent:gone"]),
+        ] {
+            s.graph.requirements.insert(
+                rid.into(),
+                Requirement {
+                    statement: rid.into(),
+                    entities: ents.into_iter().map(String::from).collect(),
+                    ..Default::default()
+                },
+            );
+        }
+        let ids = [
+            "ent:a",
+            "ent:b",
+            "ent:c",
+            "ent:d",
+            "ent:e",
+            "ent:old",
+            "ent:gone",
+            "scope:public",
+            "scope:internal",
+            "scope:none",
+        ];
+        let answers = |s: &Store| -> Vec<(Vec<String>, Vec<String>)> {
+            ids.iter()
+                .map(|id| {
+                    (
+                        s.requirements_referencing(id),
+                        crate::board::level_members(s, id),
+                    )
+                })
+                .collect()
+        };
+        let scanned = answers(&s);
+        assert_eq!(scanned[1].0, vec!["req:1", "req:2", "req:3"]);
+        let scope = ReadScope::enter(&s);
+        assert!(ScopeIndex::of(&s).is_some());
+        assert_eq!(answers(&s), scanned);
+        let other = s.clone();
+        assert!(ScopeIndex::of(&other).is_none(), "another store scans");
+        drop(scope);
+        assert!(ScopeIndex::of(&s).is_none());
     }
 
     #[test]

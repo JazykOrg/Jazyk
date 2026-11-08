@@ -260,6 +260,7 @@ mod memory {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, BTreeSet};
     use std::io;
+    use std::ops::Bound;
     use std::path::{Component, Path, PathBuf};
 
     // One tree per tab. The browser runs the backend on a single thread, so a
@@ -478,8 +479,14 @@ mod memory {
             return true;
         }
         // A directory is also implied by any file under it, so a tree seeded as a
-        // flat file list needs no directory records.
-        FILES.with(|f| f.borrow().keys().any(|k| k.starts_with(&p) && k != &p))
+        // flat file list needs no directory records. Paths order by component, so
+        // the files under a directory are one contiguous range after it.
+        FILES.with(|f| {
+            f.borrow()
+                .range::<Path, _>((Bound::Excluded(p.as_path()), Bound::Unbounded))
+                .next()
+                .is_some_and(|(k, _)| k.starts_with(&p))
+        })
     }
 
     pub fn read_dir(p: impl AsRef<Path>) -> io::Result<ReadDir> {
@@ -500,13 +507,22 @@ mod memory {
             let e = seen.entry(child).or_insert(child_is_dir);
             *e = *e || child_is_dir;
         };
+        let under = (Bound::Excluded(dir.as_path()), Bound::Unbounded);
         FILES.with(|f| {
-            for k in f.borrow().keys() {
+            for (k, _) in f
+                .borrow()
+                .range::<Path, _>(under)
+                .take_while(|(k, _)| k.starts_with(&dir))
+            {
                 note(k, false);
             }
         });
         DIRS.with(|d| {
-            for k in d.borrow().iter() {
+            for k in d
+                .borrow()
+                .range::<Path, _>(under)
+                .take_while(|k| k.starts_with(&dir))
+            {
                 note(k, true);
             }
         });
@@ -701,6 +717,50 @@ mod tests {
         ] {
             assert!(super::write(outside, b"escape").is_err(), "{outside}");
         }
+    }
+
+    // A directory implied only by the files under it answers from the files right
+    // after it in path order: a sibling sharing its name as a prefix is not under it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_implied_memory_directory_holds_only_its_own_files() {
+        use std::path::{Path, PathBuf};
+        let _scope = super::Scope::enter(&Default::default());
+        let files: std::collections::BTreeMap<PathBuf, Vec<u8>> = [
+            "/project/a/b c/x.md",
+            "/project/a/bx",
+            "/project/a/b.md",
+            "/project/z/deep/er/f.md",
+        ]
+        .into_iter()
+        .map(|p| (PathBuf::from(p), b"x".to_vec()))
+        .collect();
+        super::memory::replace((files, Default::default()));
+        assert!(super::memory::is_dir(Path::new("/project/a")));
+        assert!(super::memory::is_dir(Path::new("/project/a/b c")));
+        assert!(super::memory::is_dir(Path::new("/project/z/deep")));
+        assert!(!super::memory::is_dir(Path::new("/project/a/b")));
+        assert!(!super::memory::is_dir(Path::new("/project/a/bx")));
+        assert!(!super::memory::is_dir(Path::new("/project/y")));
+        let listed: Vec<(String, bool)> = super::memory::read_dir("/project/a")
+            .unwrap()
+            .flatten()
+            .map(|e| (e.file_name().to_string_lossy().to_string(), e.is_dir()))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("b c".to_string(), true),
+                ("b.md".to_string(), false),
+                ("bx".to_string(), false)
+            ]
+        );
+        let top: Vec<String> = super::memory::read_dir("/project")
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(top, vec!["a", "z"]);
     }
 
     // Every change to the in-memory tree raises its change count, so a load or a

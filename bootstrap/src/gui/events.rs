@@ -312,11 +312,21 @@ pub fn spawn_store_watcher(st: SharedState) {
             };
             previous.retain(|id, _| w.sets.iter().any(|s| &s.id == id));
             for set in &w.sets {
+                // A set's out directory is fixed by its id; its scoped state (project,
+                // settings, model configuration) is resolved only when it moved.
+                let out = w.root.join(".jazyk").join(&set.id);
+                let now = read_generation(&out);
+                let locked = out.join(".lock").vexists();
+                if previous
+                    .get(&set.id)
+                    .is_none_or(|seen| *seen == (now, locked))
+                {
+                    previous.insert(set.id.clone(), (now, locked));
+                    continue;
+                }
                 let Ok(scope) = st.scoped_in(&w, Some(&set.id)) else {
                     continue;
                 };
-                let now = read_generation(&scope.out);
-                let locked = scope.out.join(".lock").vexists();
                 let (last, lock_seen) = previous
                     .insert(set.id.clone(), (now, locked))
                     .unwrap_or((now, locked));

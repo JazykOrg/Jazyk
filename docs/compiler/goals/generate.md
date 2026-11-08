@@ -317,7 +317,10 @@ serves these:
   deliverable directory's name is normalized under the root, here and in
   `read_text_file` and `list_files`, and the reply's `note` says so
   ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)).
-- `list_files({path?})`: the deliverable tree.
+- `list_files({path?})`: the deliverable tree, walked breadth first in name order.
+  A directory reached again through a symlink is walked once. The reply names at most
+  500 files and carries `truncated: true` when the walk stopped there; list a
+  subdirectory with `path` to see more of it.
 - The [task tools](../tools.md#task-runtime-tools) execute saved commands in finite
   isolated runs. The session inspects status, logs, retained changes, and test reports,
   then repairs its source and submits another run when needed. `run_command` is not

@@ -755,6 +755,9 @@ pub const GRAPH_WRITE_TOOLS: [&str; 21] = [
     "update_view",
     "delete_view",
 ];
+// The files one list_files reply names at most.
+// Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+const LIST_FILES_LIMIT: usize = 500;
 // The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
 pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
 // The batch claim of a rejudge-pair session: a goal tool served in that kind's slice
@@ -4559,14 +4562,24 @@ impl ToolSession {
                 } else {
                     self.deliverable_path(&rel)?
                 };
+                // Breadth first in name order, each directory once after its links
+                // resolve, stopping at the listing cap.
+                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
                 let mut out: Vec<String> = Vec::new();
-                let mut stack = vec![root.clone()];
-                while let Some(dir) = stack.pop() {
+                let mut truncated = false;
+                let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+                if let Ok(c) = root.vcanonicalize() {
+                    seen.insert(c);
+                }
+                let mut queue = std::collections::VecDeque::from([root.clone()]);
+                'walk: while let Some(dir) = queue.pop_front() {
                     let Ok(entries) = crate::vfs::read_dir(&dir) else {
                         continue;
                     };
-                    for e in entries.flatten() {
-                        let p = e.path();
+                    let mut paths: Vec<std::path::PathBuf> =
+                        entries.flatten().map(|e| e.path()).collect();
+                    paths.sort();
+                    for p in paths {
                         let Ok(relative) = p.strip_prefix(&base) else {
                             continue;
                         };
@@ -4576,19 +4589,32 @@ impl ToolSession {
                         }
                         // A link pointing out of the deliverable is not listed:
                         // what cannot be read is not offered.
-                        if p.vcanonicalize().is_ok_and(|c| !c.starts_with(&base)) {
+                        let canonical = p.vcanonicalize();
+                        if canonical.as_ref().is_ok_and(|c| !c.starts_with(&base)) {
                             continue;
                         }
                         if p.vis_dir() {
-                            stack.push(p);
-                        } else if let Ok(r) = p.strip_prefix(&base) {
-                            out.push(r.to_string_lossy().replace('\\', "/"));
+                            // A directory reached again through a link is a loop.
+                            if let Ok(c) = canonical {
+                                if !seen.insert(c) {
+                                    continue;
+                                }
+                            }
+                            queue.push_back(p);
+                        } else {
+                            if out.len() >= LIST_FILES_LIMIT {
+                                truncated = true;
+                                break 'walk;
+                            }
+                            out.push(relative);
                         }
                     }
                 }
                 out.sort();
-                out.truncate(500);
                 let mut reply = json!({"files": out});
+                if truncated {
+                    reply["truncated"] = json!(true);
+                }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
                 }
@@ -12885,6 +12911,36 @@ mod tests {
             assert!(err.message.contains(id), "{}", err.message);
         }
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    // list_files walks a directory reached again through a link once, and stops at
+    // the listing cap with truncated set.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    #[cfg(unix)]
+    #[test]
+    fn list_files_survives_symlink_loops_and_stops_at_the_cap() {
+        let base = std::env::temp_dir().join(format!(
+            "jazyk-listing-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        let deliverable = base.join("deliverable");
+        crate::vfs::create_dir_all(deliverable.join("a")).unwrap();
+        crate::vfs::write(deliverable.join("a").join("one.txt"), "1\n").unwrap();
+        std::os::unix::fs::symlink(&deliverable, deliverable.join("a").join("loop")).unwrap();
+        let mut t = session();
+        t.gen.deliverable = deliverable.clone();
+        let v = t.dispatch("list_files", &json!({})).unwrap();
+        assert_eq!(v["files"], json!(["a/one.txt"]), "{}", v);
+        assert!(v.get("truncated").is_none(), "{}", v);
+        crate::vfs::create_dir_all(deliverable.join("b")).unwrap();
+        for i in 0..LIST_FILES_LIMIT + 5 {
+            crate::vfs::write(deliverable.join("b").join(format!("f{:04}.txt", i)), "x").unwrap();
+        }
+        let v = t.dispatch("list_files", &json!({})).unwrap();
+        assert_eq!(v["files"].as_array().unwrap().len(), LIST_FILES_LIMIT, "{}", v["truncated"]);
+        assert_eq!(v["truncated"], true);
+        crate::vfs::remove_dir_all(&base).ok();
     }
 
     // The file tools' sandbox holds after symlinks resolve: a link inside the

@@ -50,7 +50,7 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
     let plain = adapt_component_for_crate(&plain);
     match std::panic::catch_unwind(|| {
-        if crate::vfs::is_scoped() { hosted_svg(&plain) } else { plantuml_little::convert(&plain) }
+        if crate::vfs::is_scoped() { hosted_svg(&plain) } else { pure_svg(&plain) }
     }) {
         Ok(Ok(svg)) => Ok(anchor_entities(&svg, &links)),
         Ok(Err(e)) => Err(RenderError(e.to_string())),
@@ -65,14 +65,21 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     }
 }
 
-// The dependency's convenience converter runs a filesystem preprocessor. Hosted
-// diagrams use its public pure parser/layout/render stages instead. Inline image
-// markup is refused before any layout can invoke the dependency's image loader.
+// The dependency's convenience converter runs a filesystem preprocessor. Every
+// in-process conversion uses its public pure parser/layout/render stages instead: the
+// emitters write no preprocessor syntax, and graph text is inert (see `inert`). Hosted
+// diagrams also refuse inline image markup and directive lines before any layout can
+// invoke the dependency's image loader.
 #[cfg(not(target_arch = "wasm32"))]
 fn hosted_svg(source: &str) -> plantuml_little::Result<String> {
     if source.to_ascii_lowercase().contains("<img") || source.lines().any(|line| line.trim_start().starts_with('!')) {
         return Err(plantuml_little::Error::Render("hosted diagrams do not load external images or preprocessor directives".into()));
     }
+    pure_svg(source)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn pure_svg(source: &str) -> plantuml_little::Result<String> {
     struct Sprites;
     impl Drop for Sprites { fn drop(&mut self) { plantuml_little::render::svg_richtext::clear_sprites(); } }
     plantuml_little::render::svg_richtext::clear_sprites();
@@ -340,15 +347,50 @@ fn state_token(name: &str) -> (Option<String>, String) {
     }
 }
 
+// Graph text is inert. A line that would open a preprocessor directive (`!include`),
+// end the diagram (`@enduml`), or call a builtin (`%getenv`), and inline image markup
+// (`<img:...>`) anywhere, gets a zero-width space after the trigger character, so no
+// renderer reads a file or the environment on a fragment's behalf. The emitters write
+// none of these themselves; a timing view's `@0` time lines keep their digit.
+// Mirrors docs/compiler/diagrams.md#the-emitters.
+const INERT: char = '\u{200B}';
+
+fn inert(line: &str) -> String {
+    let body = line.trim_start();
+    let indent = &line[..line.len() - body.len()];
+    let mut out = String::with_capacity(line.len() + 3);
+    out.push_str(indent);
+    let mut head = body.chars();
+    let directive = match (head.next(), head.next()) {
+        (Some('!'), _) => true,
+        (Some('@'), next) => !next.is_some_and(|n| n.is_ascii_digit() || n == '.'),
+        _ => false,
+    };
+    if directive {
+        out.push(INERT);
+    }
+    let lower = body.to_ascii_lowercase();
+    let bytes = body.as_bytes();
+    for (i, c) in body.char_indices() {
+        out.push(c);
+        if c == '<' && lower[i + 1..].starts_with("img") {
+            out.push(INERT);
+        }
+        if c == '%' && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphabetic() || *b == b'$') {
+            out.push(INERT);
+        }
+    }
+    out
+}
+
 fn document(title: Option<String>, body: Vec<String>) -> String {
     let mut s = String::from("@startuml\n");
     if let Some(t) = title {
-        s.push_str("title ");
-        s.push_str(&t);
+        s.push_str(&inert(&format!("title {}", t)));
         s.push('\n');
     }
     for line in body {
-        s.push_str(&line);
+        s.push_str(&inert(&line));
         s.push('\n');
     }
     s.push_str("@enduml\n");
@@ -2295,6 +2337,45 @@ mod tests {
         assert!(!puml.contains("title "));
     }
 
+    // Graph text never reaches a renderer as a preprocessor directive, a builtin, or
+    // image markup (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn graph_text_cannot_inject_preprocessor_directives() {
+        let mut s = showcase();
+        let attr = |name: &str, ty: Option<&str>| Attribute {
+            name: name.into(),
+            r#type: ty.map(String::from),
+            value: None,
+            provenance: Provenance::Decree { author: "owner".into(), at: "g1".into(), note: None },
+        };
+        let cart = s.graph.entities.get_mut("ent:shopping-cart").unwrap();
+        cart.attributes.push(attr("!include /etc/hosts", None));
+        cart.attributes.push(attr("@enduml", None));
+        cart.attributes.push(attr("home", Some("%getenv(\"HOME\")")));
+        cart.attributes.push(attr("<img:/etc/hosts>", None));
+        // A line that opens with a non-ASCII letter once panicked the crate's
+        // preprocessor; the pure stages draw it.
+        cart.attributes.push(attr("číslo", None));
+        cart.name = "!includeurl http://example.invalid/x".into();
+        let puml = emit_kind(&s, "class", &["ent:customer", "ent:shopping-cart"]);
+        let body: Vec<&str> = puml.lines().skip(1).collect();
+        assert_eq!(body.last(), Some(&"@enduml"), "{}", puml);
+        for line in &body[..body.len() - 1] {
+            let t = line.trim_start();
+            assert!(!t.starts_with('!') && !t.starts_with('@'), "{}", puml);
+        }
+        assert!(!puml.to_ascii_lowercase().contains("<img"), "{}", puml);
+        assert!(!puml.contains("%getenv"), "{}", puml);
+        assert!(puml.contains("include /etc/hosts"), "{}", puml);
+        // The in-process renderer draws it, and the hosted path accepts it too.
+        render_svg(&puml).unwrap();
+        assert!(hosted_svg(&strip_element_links(&puml).0).is_ok(), "{}", puml);
+        // A timing view's time lines keep their `@`.
+        assert_eq!(inert("@0"), "@0");
+        assert_eq!(inert("@.5"), "@.5");
+        assert_eq!(inert("  !include x"), "  \u{200B}!include x");
+    }
+
     #[test]
     fn object_emitter_names_types_and_values() {
         let s = showcase();
@@ -2691,6 +2772,36 @@ mod tests {
         );
     }
 
+    // An association whose ids sort reversed keeps its cardinality at its `b` end
+    // (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn reversed_association_keeps_its_cardinality() {
+        let mut s = tree_store();
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "B holds many A".into(),
+                entities: vec!["ent:b".into(), "ent:a".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:b".into(),
+                    b: "ent:a".into(),
+                    rel_type: Some("association".into()),
+                    cardinality: Some("0..*".into()),
+                }],
+                source: Some(SourceRef { doc: "t.md".into(), section: "/t".into(), quote: "q".into() }),
+                ..Default::default()
+            },
+        );
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        let members = vec!["ent:a".to_string(), "ent:b".to_string()];
+        let st = structure(&s, &members, &BTreeSet::new());
+        assert_eq!(st.arrows.len(), 1);
+        let arrow = &st.arrows[0];
+        assert_eq!((arrow.a.as_str(), arrow.b.as_str()), ("ent:b", "ent:a"));
+        assert_eq!(arrow.cardinality.as_deref(), Some("0..*"));
+    }
+
     #[test]
     fn lifting_and_collapse_aggregate_hidden_edges() {
         let mut s = tree_store();
@@ -2858,36 +2969,6 @@ mod tests {
             svg
         );
         assert!(!svg.contains("[["), "{}", svg);
-    }
-
-    // An association whose ids sort reversed keeps its cardinality at its `b` end
-    // (docs/compiler/diagrams.md#the-emitters).
-    #[test]
-    fn reversed_association_keeps_its_cardinality() {
-        let mut s = tree_store();
-        s.graph.requirements.insert(
-            "req:t-1".into(),
-            Requirement {
-                statement: "B holds many A".into(),
-                entities: vec!["ent:b".into(), "ent:a".into()],
-                edges: vec![ReqEdge {
-                    a: "ent:b".into(),
-                    b: "ent:a".into(),
-                    rel_type: Some("association".into()),
-                    cardinality: Some("0..*".into()),
-                }],
-                source: Some(SourceRef { doc: "t.md".into(), section: "/t".into(), quote: "q".into() }),
-                ..Default::default()
-            },
-        );
-        let mut batch = RecordBatch::new(1);
-        recompute(&mut s, "g1", &mut batch);
-        let members = vec!["ent:a".to_string(), "ent:b".to_string()];
-        let st = structure(&s, &members, &BTreeSet::new());
-        assert_eq!(st.arrows.len(), 1);
-        let arrow = &st.arrows[0];
-        assert_eq!((arrow.a.as_str(), arrow.b.as_str()), ("ent:b", "ent:a"));
-        assert_eq!(arrow.cardinality.as_deref(), Some("0..*"));
     }
 
     #[test]
@@ -3199,22 +3280,6 @@ mod tests {
         let _ = crate::vfs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn render_png_yields_a_png_header() {
-        let s = showcase();
-        let (_, svg) = render_view(&s, "view:state/order").unwrap();
-        let png = render_png(&svg).unwrap();
-        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-    }
-
-    fn tmp(label: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, crate::sys::process_id()));
-        let _ = crate::vfs::remove_dir_all(&dir);
-        crate::vfs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     // A native binary that hangs is killed at the deadline and reads as a renderer
     // error (docs/compiler/diagrams.md#the-renderer).
     #[cfg(unix)]
@@ -3232,6 +3297,22 @@ mod tests {
         assert!(err.0.contains("killed after"), "{}", err);
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
         let _ = crate::vfs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn render_png_yields_a_png_header() {
+        let s = showcase();
+        let (_, svg) = render_view(&s, "view:state/order").unwrap();
+        let png = render_png(&svg).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    fn tmp(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, crate::sys::process_id()));
+        let _ = crate::vfs::remove_dir_all(&dir);
+        crate::vfs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]

@@ -44,6 +44,10 @@ no LLM, no state, no reads outside the snapshot. Rules shared by every emitter:
 - The file opens with `@startuml` and closes with `@enduml`.
 - Display names are entity `name`s. Where PlantUML needs an identifier beside a quoted
   name, the emitter derives an alias from the entity id, stable across builds.
+- Text from the graph is inert. A line that would open a preprocessor directive (`!`)
+  or end the diagram (`@enduml`), a builtin call (`%getenv`), and image markup (`<img`)
+  anywhere get a zero-width space after the trigger character, so no renderer reads a
+  file or the environment on a fragment's behalf.
 - A `stereotype` renders as `<<stereotype>>` on the element that carries it.
 - A `title` line is emitted only when the emitter has something to say beyond the view's
   title: the [over-limit](#over-limit-views) note, or a timing view's governing
@@ -416,7 +420,9 @@ One renderer for the whole catalog, in process.
   crate's own opt-in path: `bootstrap/.cargo/config.toml` sets
   `[env] GRAPHVIZ_ANYWHERE_ALLOW_DOWNLOAD = "1"`, and the crate version pins the download
   to the `v0.2.5` release assets (macOS universal, Linux x86_64 and aarch64, Windows).
-  No Java, no external tool, nothing to install.
+  No Java, no external tool, nothing to install. The conversion runs the crate's
+  parser, layout, and SVG stages directly, never its filesystem preprocessor, so no
+  `!include` or `%load_json` reads a file.
 - `resvg = "0.48"` rasterizes `.svg` to `.png`, with system fonts loaded
   (`fontdb.load_system_fonts()`) so text measures as a viewer would draw it.
 - `plantuml-little` and `graphviz-anywhere` are pinned exactly (`=`); `resvg` is pinned

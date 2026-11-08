@@ -11,7 +11,7 @@ on it is the [control plane's](./control-plane.md).
 
 The loop is level-triggered, not edge-triggered. A document change only produces change
 records. Every derivation reads the current documents, the current graph, the
-[ledger](../consumers/gen.md#the-ledger), and `status.yaml`, so a missed or duplicated
+[ledger](../consumers/gen.md#the-ledger), and the status, so a missed or duplicated
 change notification is harmless, any process computes the same board, and an
 interrupted build resumes from any consumer. Initial compilation is not a special case:
 it is reconciliation against an empty graph. A rebuild with nothing changed derives zero
@@ -61,7 +61,7 @@ writes:
   when that section is gone. `detail` lists the anchored nodes and why each is stale
   (`no-candidate`, `reevaluate`, `quote-missing`).
 - `alignment-pending`: the subject is the document path. `detail` counts the proposals
-  persisted under `alignment` in `status.yaml`
+  persisted under `alignment/`
   ([what applies and what is proposed](./alignment.md#what-applies-and-what-is-proposed)).
 
 Sections whose coverage is still `unprocessed` need no record:
@@ -79,7 +79,8 @@ is derived, never stored. `derive_goals` recomputes it from disk whenever it is
 consulted: at the start of a build, after every commit, on every `goals` call over
 [MCP](../frontends/mcp.md#compilation-over-mcp), and for the
 [GUI board](../frontends/gui.md#board). The inputs are the documents, the graph, the
-ledger, and the change records, parked list, and failed list in `status.yaml`. A
+ledger, and the change records, parked goals, and failed goals of the
+[status](./graph.md#storage-layout). A
 derivation outside a build (`jazyk status`, `preview`, `release`, `monitor`, the GUI
 board, a `goals` call) aligns the documents in memory and derives from that, so the
 board shows the goals the next build will open; it writes nothing. The `edit` and
@@ -152,8 +153,8 @@ tool enqueues work: the model writes graph state, the harness derives the goals.
 ### Change records
 
 Current graph state alone cannot say "revised since last judged"; the change records
-can. Every commit writes the typed dirtiness its mutations caused into `status.yaml`
-`changes` ([change records](./graph.md#change-records)): which sections changed, which
+can. Every commit writes the typed dirtiness its mutations caused into `changes/`
+([change records](./graph.md#change-records)): which sections changed, which
 requirements were created, revised, or deleted, which entities' fact sets changed,
 which thresholds crossed. The writers are the dirty set computation (the `edit` and
 `align` generations), the store at commit (from the changeset's mutations and the
@@ -726,8 +727,8 @@ attempts no model made, 302 in its last minutes.
 
 ## Parked and failed
 
-`status.yaml` carries both lists beside the change records: `parked` (whole goal
-records, each with an optional `reason` beside the goal's fields) and `failed`
+The status carries both beside the change records, one file per goal: `parked/` (whole
+goal records, each with an optional `reason` beside the goal's fields) and `failed/`
 (`{goal, reason}`, `goal` the whole record). Both are read at derivation and stamp the
 goal's `state`. Both keep the goal whole, `change` payload included, so a parked or
 failed goal survives a re-derivation that would otherwise drop it.

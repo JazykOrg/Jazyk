@@ -24,7 +24,7 @@ on the document. The [dirty set](../reconciler.md#dirty-set) computation writes 
 the `align` journal entry when the deterministic pass leaves at least one proposal for
 the document: an anchor whose section was edited, split, merged, or deleted, with
 candidates ranked by similarity, or with no candidate at all (`homeless`). The proposals
-themselves live in `status.yaml` under `alignment`, one block per document; the
+themselves live under `alignment/`, one file per document; the
 record's `detail` counts them, and the goal's `change` is that block.
 
 E.g.:

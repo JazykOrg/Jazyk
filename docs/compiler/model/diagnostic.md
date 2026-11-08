@@ -15,7 +15,7 @@ lands a `derived` or `decree` fact, generation, and decompilation.
 
 ## Fields
 
-- `rule`: the rule that produced it. The id is `diag:<rule>-<n>`. See
+- `rule`: the rule that produced it. The id is `diag:<rule>-<hash>`. See
   [identifiers](../model.md#identifiers).
 - `severity`: `error`, `warning`, `info`, or `none`. `none` is a considered judgment
   recorded but not surfaced. See [judgment](../concepts/judgment.md).

@@ -165,7 +165,8 @@ affected bindings and checks. They never silently preserve a clean verdict.
   removed-sets/                 retained definitions for local recovery
   <set-id>/
     graph/ docs/ journal/ diagrams/ docsgen/ gen/ trace/ sessions/
-    status.yaml control.yaml workers/ leases/ .lock
+    status.yaml changes/ parked/ failed/ alignment/ lookalikes/
+    build.yaml markers.yaml causes.yaml control.yaml workers/ leases/ .lock
 ```
 
 - Each set lives directly at `.jazyk/<set-id>/` and owns the existing store shape
@@ -201,7 +202,8 @@ Track `.jazyk/jazyk.toml`, `.jazyk/.gitignore`, and each set's committed state
 commit then compiles incrementally from the graph that commit carries. Logs and
 rebuildable output stay ignored. Jazyk writes `.jazyk/.gitignore` when it is absent or
 still holds an ignore file an earlier Jazyk generated; a file with any other content is
-the owner's and stays as it is. Setup, configuration saves, and every build write it.
+the owner's and stays as it is. Setup, configuration saves, every build, and every
+store save write it, so a `.jazyk` folder never exists without one.
 The generated file ignores everything, then keeps the committed paths:
 
 ```
@@ -211,6 +213,16 @@ The generated file ignores everything, then keeps the committed paths:
 !/ds_*/
 /ds_*.bak/
 !/ds_*/status.yaml
+!/ds_*/changes/
+!/ds_*/changes/**
+!/ds_*/parked/
+!/ds_*/parked/*.yaml
+!/ds_*/failed/
+!/ds_*/failed/*.yaml
+!/ds_*/alignment/
+!/ds_*/alignment/*.yaml
+!/ds_*/lookalikes/
+!/ds_*/lookalikes/*.yaml
 !/ds_*/docs/
 !/ds_*/docs/**
 !/ds_*/graph/
@@ -232,7 +244,10 @@ The generated file ignores everything, then keeps the committed paths:
 ```
 
 A path the file does not name is local, so a new kind of output never enters a commit
-by accident.
+by accident: the journal, logs, snapshots, diagrams, docsgen, the derived graph kinds
+(`default-views/`, `relationships/`, `state-machines/`), `build.yaml`, `markers.yaml`,
+`causes.yaml`,
+the control plane, and `.bak` archives all stay out.
 
 Existing repository rules that ignore `.jazyk` itself must be removed or narrowed;
 an ignore file inside an ignored parent cannot make config trackable. Setup reports

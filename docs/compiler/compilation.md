@@ -327,7 +327,7 @@ carried, recomputed after every commit, so a project whose deeper link levels de
 their goals only after the roots ingest gets a cap sized for the whole build, not for
 its first board. The bound stays finite: goal ids are finite, and a goal that keeps
 coming back parks on its reopen cycle ([parked and failed](./reconciler.md#parked-and-failed)).
-Work still open when the cap runs out is parked in `status.yaml` and reported as an
+Work still open when the cap runs out is parked under `parked/` and reported as an
 `incomplete-build` diagnostic, and the next build resumes parked goals first
 ([parked and failed](./reconciler.md#parked-and-failed)). A session that exhausts its
 round budget without meeting its gate leaves its goals open, so the verdict counts them;

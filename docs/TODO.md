@@ -136,7 +136,7 @@ LocalRouter; the default local model fails judgment-heavy goals.
   the graph in one changeset without re-dirtying the document; a decree queues a
   ratification proposal, and accepting it flips the fact's provenance to `quote`
   ([edit paths](./compiler/compilation.md#edit-paths)).
-- [ ] The store version on the dogfood: an out directory without `version: 3`
+- [ ] The store version on the dogfood: an out directory without `version: 4`
   archives to `<out>.bak` and the next build reconciles from the empty graph. `f1`
   holds it.
 - [ ] Docs tree and binary agree: no page describes machinery the binary lacks, no

@@ -7,7 +7,7 @@ judgment no command can render. See
 [the ledger's verification statuses](../../consumers/gen.md#status-is-derived-never-stored).
 
 - Class: compile. Mandatory. Readiness tier 3.
-- Unit: one ledger row. Goal id `g:verify:req:<doc-stem>-<n>`.
+- Unit: one ledger row. Goal id `g:verify:req:<stem>-<hash>`.
 - Skill: none.
 
 ## Created when

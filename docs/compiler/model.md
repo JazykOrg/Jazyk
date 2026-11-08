@@ -17,13 +17,13 @@ store on every commit and has no write tool.
 | id | kind | authored or derived | natural key |
 | --- | --- | --- | --- |
 | `ent:<slug>` | [entity](./model/entity.md) | authored | `name` + `scope` (+ `parent` when supplied) |
-| `req:<doc-stem>-<n>` | [requirement](./model/requirement.md) | authored | source section + statement |
-| `crit:<doc-stem>-<n>` | [criterion](./model/criterion.md) | authored | owning requirement + statement |
+| `req:<stem>-<hash>` | [requirement](./model/requirement.md) | authored | source section + statement |
+| `crit:<stem>-<hash>` | [criterion](./model/criterion.md) | authored | owning requirement + statement |
 | `view:<kind>/<slug>` | [view](./model/view.md) | authored (defaults derived) | `kind` + `title` |
 | `rel:<a>~<b>` | [relationship](./model/relationship.md) | derived from requirement `edges` | member pair |
 | `sm:<entity-slug>` | [state machine](./model/state-machine.md) | derived from requirement `transition` | subject entity |
 | `doc.md#/ref` | [section](./model/section.md) | structural | document path + reference |
-| `diag:<rule>-<n>` | [diagnostic](./model/diagnostic.md) | judgment record | `rule` + `subjects` |
+| `diag:<rule>-<hash>` | [diagnostic](./model/diagnostic.md) | judgment record | `rule` + `subjects` |
 
 - Entity: a domain concept with one living `definition`, a free-form `stereotype`, a
   `parent` in one containment tree, and `attributes`.
@@ -141,22 +141,53 @@ change reaches exactly the nodes with a justification path through it. The
 
 - The graph store mints every id at node creation. Ids are immutable. See
   [identity](./concepts/identity.md).
-- Entity: `ent:<slug>`, the slug from the name at creation time, with a numeric suffix on
-  collision. E.g. `ent:shopping-cart`, `ent:shopping-cart-2`. A rename keeps the id, so the
-  slug can go stale. That is expected.
-- Requirement: `req:<doc-stem>-<n>`. E.g. `req:catalog-3`. A derived or decreed
-  requirement has no document behind it: `req:x-<n>`.
-- Criterion: `crit:<doc-stem>-<n>` from its requirement's document, whatever section
-  its own quote sits in, so a requirement's criteria read as one family;
-  `crit:x-<n>` only when the requirement has no document either. E.g. `crit:catalog-2`.
+- An id is built from the node's natural key, never from a counter, so two branches
+  that create different nodes never mint the same id, and two branches that extract the
+  same statement mint the same one.
+- The slug part of an id is the id slug of a text: the text transliterated to ASCII,
+  lowercased, every run of characters other than letters and digits written as one
+  `-`, leading and trailing `-` dropped, and cut to at most 32 characters at the last
+  `-` that fits (a single word longer than 32 is cut at 32). An empty slug is `x`. E.g.:
+
+  ```
+  "aaa       #$%^  bbb"                        → aaa-bbb
+  "Čajovňa U Zlatého"                          → cajovna-u-zlateho
+  "Harbor redevelopment conflict: Characters"  → harbor-redevelopment-conflict
+  ```
+
+- The id hash of a key is the 64-bit FNV-1a hash of its UTF-8 bytes written in
+  lowercase Crockford base 32 (`0123456789abcdefghjkmnpqrstvwxyz`), its first four
+  characters. When the id is already taken by another node, the next longer prefix (six,
+  eight, then all thirteen characters) is used, then `-2`, `-3`, and so on. Statements
+  in keys are punctuation-insensitive, the same normalization as the
+  [natural key](./graph.md#mutations).
+- Entity: `ent:<slug>`, the id slug of the name at creation time. When that id is taken,
+  `ent:<slug>-<hash>`, the hash of name, scope, and parent. E.g. `ent:shopping-cart`,
+  `ent:shopping-cart-4f7a`. A rename keeps the id, so the slug can go stale. That is
+  expected.
+- Requirement: `req:<stem>-<hash>`. The stem is the id slug of the source document's
+  file stem and the last segment of its section reference (the segment dropped when the
+  section is the document's root or preamble). The hash is of the document, the section
+  reference, and the statement. E.g. `req:catalog-search-9k2d` for a statement in
+  `docs/catalog.md#/catalog/search`. A derived or decreed requirement has no document
+  behind it: stem `x`, the hash of the `from` ids (sorted) and the statement.
+- Criterion: `crit:<stem>-<hash>`, the stem of its requirement (whatever section its own
+  quote sits in, so a requirement's criteria read as one family), the hash of the
+  requirement id and the statement. E.g. `crit:catalog-search-m3qa`.
 - View: `view:<kind>/<slug>`, the kind segment being the catalog kind with its hyphens
-  removed (`use-case` → `usecase`) and the slug from the title at creation time. E.g.
+  removed (`use-case` → `usecase`) and the id slug of the title at creation time. When
+  that id is taken, `-<hash>` of kind and title follows. E.g.
   `view:sequence/checkout`, `view:usecase/checkout`.
 - Relationship: `rel:<slug-a>~<slug-b>`, the two member entity slugs in lexical order.
   Derived, recomputed on commit.
 - State machine: `sm:<entity-slug>`, the subject entity's slug. Derived, recomputed on
   commit.
-- Diagnostic: `diag:<rule>-<n>`. E.g. `diag:contradiction-1`.
+- Diagnostic: `diag:<rule>-<hash>`, the hash of the rule and the sorted subjects. E.g.
+  `diag:contradiction-7hq2`.
+- Change record: `c<generation>-<hash>`, the hash of kind and subject. See
+  [change records](./graph.md#change-records).
+- Ids minted before store version 4 (`req:catalog-3`, `diag:contradiction-1`) keep
+  resolving and are never rewritten ([store version](./graph.md#store-version)).
 - Section: a document path plus an internal reference, joined by `#`. E.g.
   `docs/cli.md#/cli/commands`. See [parsing](./parsing.md#references).
 - Goal: `g:<kind>:<target>`, the target a node id, a section reference, a document path,
@@ -175,7 +206,8 @@ reliably than opaque tokens.
   on automatically. Low confidence facts drive review.
 - `reasoning`: the recorded why behind a judgment. See [judgment](./concepts/judgment.md).
 - `created` and `updated`: generation markers set by the store on commit, the generation
-  that created the node and the generation of its last mutation. `jazyk ripple --back`
+  that created the node and the generation of its last mutation. They are local, in
+  `markers.yaml`, never in the node file ([node files](./graph.md#node-files)). `jazyk ripple --back`
   walks `updated` to the edit that started a cascade.
 - `limits`: `{<limit>: n}` on entities and views, a per-node bump above a built-in limit.
   Dismissing a size goal writes this field with decree provenance. The goal derives again

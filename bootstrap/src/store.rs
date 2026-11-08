@@ -4524,7 +4524,9 @@ impl Store {
                             dirt.entities(r.entities.iter(), m);
                             dirt.deleted(&rid, m);
                             // The criteria go with their requirement
-                            // (docs/compiler/graph.md#the-sweep).
+                            // (docs/compiler/graph.md#the-sweep). The requirement's
+                            // delete journals first, at `m`, the index its records
+                            // name; each cascaded criterion delete follows at its own.
                             let gone: Vec<String> = self
                                 .graph
                                 .criteria
@@ -4532,15 +4534,18 @@ impl Store {
                                 .filter(|(_, c)| c.requirement == rid)
                                 .map(|(cid, _)| cid.clone())
                                 .collect();
+                            applied.push(Op::DeleteRequirement {
+                                id: rid.clone(),
+                                reason,
+                            });
                             for cid in gone {
                                 self.graph.criteria.remove(&cid);
-                                dirt.deleted(&cid, m);
+                                dirt.deleted(&cid, applied.len() + 1);
                                 applied.push(Op::DeleteCriterion {
                                     id: cid,
                                     reason: format!("its requirement {} was deleted", rid),
                                 });
                             }
-                            applied.push(Op::DeleteRequirement { id: rid, reason });
                         }
                         None => skipped.push(format!("delete_requirement: unknown id {}", rid)),
                     }
@@ -8539,6 +8544,63 @@ mod tests {
         assert_eq!(moves[0].child, "ent:parcel");
         assert_eq!(moves[0].from.as_deref(), Some("ent:orders"));
         assert_eq!(moves[0].to, None);
+    }
+
+    // A deleted requirement's records name its own journal mutation; each cascaded
+    // criterion delete names its own. Mirrors docs/compiler/graph.md#change-records.
+    #[test]
+    fn a_requirement_delete_names_its_own_mutation() {
+        let mut s = Store {
+            out: own_dir("delete-cascade"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nThe sort utility outputs its lines in ascending order.\n");
+        s.apply(
+            vec![
+                create("ent:sort", "Sort"),
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: Requirement {
+                        statement: "The sort utility outputs its lines in ascending order.".into(),
+                        entities: vec!["ent:sort".into()],
+                        source: Some(mention("t.md", "/t", "outputs its lines in ascending order")),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateCriterion {
+                    id: "crit:new-1".into(),
+                    criterion: Criterion {
+                        requirement: "req:t-1".into(),
+                        statement: "Given one line, the utility outputs that line unchanged.".into(),
+                        kind: "boundary".into(),
+                        provenance: Some(derived(&["req:t-1"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-1".into(),
+                reason: "gone".into(),
+            }],
+            &session(),
+        );
+        let entry = journal_entry(&s, r.generation);
+        let op_at = |m: usize| entry.mutations[m - 1]["op"].as_str().unwrap_or("").to_string();
+        let req = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_REQ_DELETED && c.subject == "req:t-1")
+            .expect("a requirement-deleted record");
+        assert_eq!(op_at(req.mutation), "delete_requirement", "{:?}", entry.mutations);
+        let crit = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_CRIT_DELETED)
+            .expect("a criterion-deleted record");
+        assert_eq!(op_at(crit.mutation), "delete_criterion", "{:?}", entry.mutations);
     }
     // A move alone writes `parent` on the parent left and the one joined and no
     // `fields` record on the child; a move with a definition still reviews the child.

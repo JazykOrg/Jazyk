@@ -19,6 +19,7 @@ concurrency:
 jobs:
   plan:
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -63,6 +64,7 @@ jobs:
   shared-checks:
     needs: plan
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -138,6 +140,7 @@ jobs:
   collect:
     needs: [plan, shared-checks, build]
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

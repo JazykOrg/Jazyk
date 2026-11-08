@@ -605,56 +605,60 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
     let Some(d) = store.graph.diagnostics.get(&rid) else {
         return Err(format!("unknown diagnostic `{}`", rid));
     };
-    let mut s = String::new();
-    s.push_str(&format!(
-        "A human answered a standing question on diagnostic {} ({}, {}).\n\nFinding: {}\n",
-        rid, d.rule, d.severity, d.message
-    ));
+    let line = |name: &str, vars: &[(&str, &str)]| HANDLING.fill(name, vars) + "\n";
+    let mut s = line(
+        "heading",
+        &[("id", &rid), ("rule", &d.rule), ("severity", &d.severity), ("finding", &d.message)],
+    );
     if let Some(p) = &d.prompt {
-        s.push_str(&format!("Question: {}\n", p.question));
+        s.push_str(&line("question", &[("question", &p.question)]));
     }
     if let Some(a) = &d.answer {
-        s.push_str(&format!("The human's answer: \"{}\"\n", a.text));
+        s.push_str(&line("answer", &[("answer", &a.text)]));
     }
-    s.push_str("\nSubjects:\n");
+    s.push('\n');
+    s.push_str(&line("subjects", &[]));
     for sub in &d.subjects {
         let sid = store.resolve_id(sub).to_string();
         if let Some(r) = store.graph.requirements.get(&sid) {
             match r.source.as_ref() {
-                Some(src) => s.push_str(&format!(
-                    "- {}: {} (quoted from {}#{}: \"{}\")\n",
-                    sid, r.statement, src.doc, src.section, src.quote
+                Some(src) => s.push_str(&line(
+                    "subject-quoted",
+                    &[
+                        ("id", &sid),
+                        ("statement", &r.statement),
+                        ("doc", &src.doc),
+                        ("section", &src.section),
+                        ("quote", &src.quote),
+                    ],
                 )),
-                None => s.push_str(&format!(
-                    "- {}: {} ({})\n",
-                    sid,
-                    r.statement,
-                    crate::session::provenance_line(r)
+                None => s.push_str(&line(
+                    "subject-derived",
+                    &[
+                        ("id", &sid),
+                        ("statement", &r.statement),
+                        ("provenance", &crate::session::provenance_line(r)),
+                    ],
                 )),
             }
         } else if let Some(e) = store.graph.entities.get(&sid) {
-            s.push_str(&format!(
-                "- {} ({}): {}\n",
-                sid,
-                e.name,
-                e.definition.as_deref().unwrap_or("")
+            s.push_str(&line(
+                "subject-entity",
+                &[("id", &sid), ("name", &e.name), ("definition", e.definition.as_deref().unwrap_or(""))],
             ));
         } else {
-            s.push_str(&format!("- {}\n", sub));
+            s.push_str(&line("subject", &[("id", sub)]));
         }
     }
-    s.push_str(&format!(
-        "\nAct on the answer with the tools: revise_requirement moves a requirement's prose and graph \
-         form together, update_requirement and update_entity record decisions, update_diagnostic \
-         refines the question when the answer leaves it open. Scope: change only what the answer \
-         names, with the smallest edit that satisfies it. Never rewrite sentences the answer does \
-         not mention, and never fix unrelated problems in passing; they have their own findings. \
-         When the finding is settled, call resolve_diagnostic with id `{}` and a reason. Finish \
-         with a one-line summary.",
-        rid
-    ));
+    s.push('\n');
+    s.push_str(&HANDLING.fill("act", &[("id", &rid)]));
     Ok(s)
 }
+
+// The handling contract for an answer the calling agent applies.
+// Mirrors docs/frontends/acp.md#questions-in-chat.
+pub(crate) const HANDLING: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/answer-handling.md"));
 
 // The standing questions: open, unsuppressed, prompted, unanswered findings,
 // rendered once for chat surfaces (the session-start summary and /questions).

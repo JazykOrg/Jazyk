@@ -162,37 +162,38 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
     instructions_in(modes, write, initialized, cfg!(target_arch = "wasm32"))
 }
 
-// A chat in a tab has no build path of its own: the page's Build button runs builds,
-// so a model asked to build says so instead of asking for prose
-// (docs/frontends/wasm.md#chat).
-const TAB_BUILD_NOTE: &str = "You cannot start a build: the Build button at the top of the page builds the documents into the graph. When asked to build, say so. ";
-const WRITER_BUILD_NOTE: &str = "Use compile_document_sets to compile named set IDs, or omit setIds to compile all dirty sets. ";
+// The serving's own instructions and its longer `next` guidance.
+// Mirrors docs/compiler/sessions.md#payload-files.
+pub(crate) const SERVING: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/serving-instructions.md"
+));
 
-// Capability context only. Shared policy comes from agent_workflows::render.
+// Capability context only. Shared policy comes from agent_workflows::render. A chat
+// in a tab has no build path of its own: the page's Build button runs builds, so a
+// model asked to build says so instead of asking for prose
+// (docs/frontends/wasm.md#chat).
 fn instructions_in(modes: &[String], write: bool, initialized: bool, tab: bool) -> String {
     if modes.len() == 1 && modes[0] == "runtime" {
         return crate::task_runtime::PROMPT.to_owned();
     }
-    let mut s = format!("Served toolsets: {}. The actual tools/list catalog is authoritative. ", modes.join(", "));
-    if initialized {
-        s.push_str("The project is already initialized. There is nothing to scaffold. ");
-    } else {
-        s.push_str("NO PROJECT HERE: there is no jazyk.toml or graph yet. For an authorized setup, use init_project if served, then reopen the conversation. Inspection and workflow skill tools need no graph. ");
-    }
+    let mut parts = vec![SERVING.fill("toolsets", &[("modes", &modes.join(", "))])];
+    parts.push(SERVING.get(if initialized { "initialized" } else { "uninitialized" }).to_string());
     if tab {
-        s.push_str("This serving runs in a browser tab without a shell. Binding, generation, and verification are not served here. ");
-        if modes.iter().any(|m| m == "chat") { s.push_str(WRITER_BUILD_NOTE); }
+        parts.push(SERVING.get("tab").to_string());
+        if modes.iter().any(|m| m == "chat") {
+            parts.push(SERVING.get("writer-build-note").to_string());
+        }
     }
     if modes.iter().any(|m| m == "graph") && write {
-        s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
+        parts.push(SERVING.get("graph-write").to_string());
     }
-    s.push_str("Read list_jazyk_skills and read_jazyk_skill for the requested workflow. Active begin_* packages and tool gates supply specific scope, instructions, and evidence. Use report_feedback for wrong or confusing Jazyk instructions or tools. ");
-    s
+    parts.push(SERVING.get("workflow").to_string());
+    parts.iter().map(|p| format!("{} ", p)).collect()
 }
 
 // Restrictions for a reader profile, following the same main policy.
 pub fn reader_instructions() -> String {
-    format!("This serving can only read the project. No tool here changes documents or the graph. Binding, generation, verification, shell execution, and publication are unavailable. {}", TAB_BUILD_NOTE.trim_end())
+    format!("{} {}", SERVING.get("reader"), SERVING.get("tab-build-note"))
 }
 
 impl McpServer {
@@ -203,12 +204,16 @@ impl McpServer {
         }
         // A project file that does not load still lets the agent connect and repair it
         // (docs/frontends/mcp.md#mcp-into-acp-sessions).
-        let policy = crate::agent_workflows::render(&self.project.root).unwrap_or_else(|e| format!(
-            "The project file `{}` does not load: {}. Tools that need the project refuse until it is repaired; edit the file with your own tools.",
-            crate::document_sets::CONFIG, e));
+        let policy = crate::agent_workflows::render(&self.project.root).unwrap_or_else(|e| {
+            SERVING.fill(
+                "project-unloadable",
+                &[("config", crate::document_sets::CONFIG), ("error", &e.to_string())],
+            )
+        });
         let capabilities = if self.bridge.reader { reader_instructions() }
             else { instructions_for(&self.modes, self.write, initialized) };
-        Ok(format!("{policy}\n\n## Serving capabilities\n\n{capabilities}\n{integration}"))
+        let text = SERVING.fill("initialize", &[("policy", &policy), ("capabilities", &capabilities)]);
+        Ok(format!("{text}\n{integration}"))
     }
 
     // Ledger workers carry the execution contract in their opening prompt. A
@@ -1401,7 +1406,7 @@ impl McpServer {
                 "readTools": crate::tools::READ_TOOLS.to_vec(),
                 "goalTools": crate::tools::GOAL_TOOLS.to_vec(),
                 "finishTool": "done",
-                "next": "load what the goals name, stage findings, then done with a one-line summary and final goals claims ({goal, justification, evidence?}) in the same call",
+                "next": SERVING.get("begin-goals-next"),
             })
         };
         *self.open.lock().unwrap() = Some(OpenBatch {
@@ -1497,27 +1502,18 @@ impl McpServer {
                 // instead of "converged" (docs/frontends/mcp.md#compilation-over-mcp).
                 let failed = s2.status.failed.len();
                 let mut parts: Vec<String> = vec![if failed > 0 {
-                    format!(
-                        "compilation incomplete: {} failed goal(s) stand; a change on a goal's subject or a human retry from the board reopens it, and jazyk explain <goal> shows the reason",
-                        failed
-                    )
+                    SERVING.fill("compile-incomplete", &[("failed", &failed.to_string())])
                 } else {
-                    "compilation converged".to_string()
+                    SERVING.get("compile-converged").to_string()
                 }];
                 if optional_ready > 0 {
-                    parts.push(format!(
-                        "{} optional goal(s) stay claimable; beginNext stops at convergence, so begin_goals takes the next batch when you want it, and stopping here is right when your instruction was to converge (the verdict does not wait for them)",
-                        optional_ready
-                    ));
+                    parts.push(SERVING.fill("optional-ready", &[("count", &optional_ready.to_string())]));
                 }
                 if !generate.is_empty() {
-                    parts.push(format!(
-                        "{} generation goal(s) ready (generation_tasks lists them)",
-                        generate.len()
-                    ));
+                    parts.push(SERVING.fill("generation-ready", &[("count", &generate.len().to_string())]));
                 }
                 if parts.len() == 1 {
-                    parts.push("nothing pending".to_string());
+                    parts.push(SERVING.get("nothing-pending").to_string());
                 }
                 reply["next"] = json!(parts.join("; "));
                 reply["ready"] = json!({"generate": generate});
@@ -1532,11 +1528,11 @@ impl McpServer {
             reply["next"] = match board2.batches.first() {
                 Some(b) => {
                     let mut v = board2.batch_json(b);
-                    v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
+                    v["note"] = json!(SERVING.fill("next-batch", &[("batch", &b.id)]));
                     v
                 }
                 None => {
-                    json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"})
+                    json!({"note": SERVING.get("no-batch-ready")})
                 }
             };
             return reply;
@@ -1549,9 +1545,7 @@ impl McpServer {
                 reply["began"] = began;
                 // A session that reached its own stopping point after the claim
                 // releases the batch untouched (docs/frontends/mcp.md#compilation-over-mcp).
-                reply["beganNote"] = json!(
-                    "the next batch is claimed; if this commit was your last, abandon_goals releases it untouched and leaves no trace"
-                );
+                reply["beganNote"] = json!(SERVING.get("began-note"));
                 return reply;
             }
         }
@@ -1561,11 +1555,11 @@ impl McpServer {
         reply["next"] = match board.batches.first() {
             Some(b) => {
                 let mut v = board.batch_json(b);
-                v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
+                v["note"] = json!(SERVING.fill("next-batch", &[("batch", &b.id)]));
                 v
             }
             None => {
-                json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"})
+                json!({"note": SERVING.get("no-batch-ready")})
             }
         };
         reply
@@ -3153,10 +3147,7 @@ impl McpServer {
                                     )
                             })
                             .count();
-                        (stale > 0).then(|| format!(
-                            "{} row(s) went stale since their last run (a test or implementation file changed); run_tests re-baselines them, and any generation work they hold returns to this list afterwards",
-                            stale
-                        ))
+                        (stale > 0).then(|| SERVING.fill("ledger-stale", &[("count", &stale.to_string())]))
                     } else {
                         None
                     };
@@ -3165,11 +3156,11 @@ impl McpServer {
                         "tasks": rows,
                         "count": rows.len(),
                         "next": if rows.is_empty() {
-                            "nothing owed".to_string()
+                            SERVING.get("ledger-nothing-owed").to_string()
                         } else if rows.iter().all(|r| r["gated"] == json!(true)) {
-                            format!("every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {} claims one", begin)
+                            SERVING.fill("ledger-gated", &[("begin", begin)])
                         } else {
-                            format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
+                            SERVING.fill("ledger-ready", &[("begin", begin)])
                         },
                     });
                     if kind == "generate" {
@@ -3179,7 +3170,7 @@ impl McpServer {
                         && !self.current_gen_settings().configured
                     {
                         reply["prerequisites"]["sourceMapping"] = json!(false);
-                        reply["next"] = json!("The document set has no source mapping. For the requested generation, call list_document_sets, then update_document_set with its hash as baseHash and set {id, source: [narrow implementation, test, and support-file patterns]}. Preserve documents and existing settings. Reload goals to resolve criteria, then generation_tasks. An empty generation list is not a completed deliverable.");
+                        reply["next"] = json!(SERVING.get("source-mapping"));
                     }
                     if let Some(n) = stale_note {
                         reply["staleNote"] = json!(n);

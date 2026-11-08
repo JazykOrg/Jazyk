@@ -1,0 +1,238 @@
+<!-- medium-line-built -->
+{form} produced by a build ({toolchain}). The artifact is `{artifact}`; the files you write are the SOURCE that produces it.
+
+<!-- medium-line-written -->
+{form} written directly ({toolchain}). The files you write ARE the deliverable.
+
+<!-- medium-undecided -->
+not decided; derive it from the requirements
+
+<!-- decide-tree-empty -->
+The deliverable directory is empty: decide from the statements alone.
+
+<!-- decide-tree-existing -->
+The deliverable directory already holds these files:
+{files}
+An existing tree pins the medium: decide the form and toolchain these files already use (their language, build manifest, and test layout), never a different one.
+
+<!-- decide-commands -->
+The ledger already records these test run commands:
+{commands}
+Recorded commands pin the toolchain: decide the toolchain these commands run under, never a different one.
+
+<!-- decide-system -->
+You decide what a deliverable is made of. Answer with one JSON object and nothing else.
+
+<!-- decide-user -->
+These statements are the whole specification of one deliverable.
+
+{statements}
+
+Entities: {entities}
+
+{tree}
+
+Decide the deliverable's medium.
+- `form`: what the deliverable is, in a few words (e.g. `Rust library`, `Microsoft PowerPoint deck`, `printed book`).
+- `produced`: `written` when the files a generator writes ARE the deliverable (source code, a manuscript, a configuration). `built` when the medium is a format a tool must produce (a slide deck, a PDF, an image, a compiled binary): the files are the source, and a command turns them into the artifact.
+- `toolchain`: what writes or builds it (e.g. `rustc and cargo test`, `python3 with python-pptx`). Name a library that can actually emit the format.
+- `artifact`: for `built` only, the file the build produces, relative to the deliverable directory (e.g. `jazyk.pptx`). Empty for `written`.
+
+Reply with exactly: {"form": "...", "produced": "written"|"built", "toolchain": "...", "artifact": "..."}
+
+<!-- decide-retry -->
+{request}
+
+Your previous answer was rejected: {reason}. Reply with the JSON object only.
+
+<!-- directive-built -->
+The deliverable is {form}. You cannot type that format out, so the file you write is the SOURCE THAT PRODUCES IT: real, runnable {toolchain} that contributes this entity's part of `{artifact}`. One entry point, recorded as the build, runs every entity's part and writes the artifact, so write your part as something that entry can include: a function it calls, a module it imports. Do NOT write a document describing the artifact, an outline of it, a placeholder, or a manifest listing what it would contain: prose about a deck is not a deck, and it satisfies nothing. Do NOT write the artifact file itself by hand.
+
+<!-- directive-written -->
+The deliverable is {form}, written directly: the file you write IS the artifact{toolchain}.
+
+<!-- directive-written-toolchain -->
+ ({toolchain})
+
+<!-- directive-undecided -->
+Decide the medium from the requirements above: when they name a format you cannot type out (a slide deck, a PDF, an image, a compiled binary), write the SOURCE that produces it and record its build in the manifest step; otherwise the file you write is the artifact.
+
+<!-- header -->
+The deliverable: {medium}
+{build_error}
+Entity {id} ({name})
+Context:
+{context}
+Changed since last generation: {changed}
+What other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity's component group; never write to a file of an entity outside yours{group}. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {generated}
+Recorded run commands (the established toolchain; reuse it): {commands}
+Recorded build for this deliverable: {build}
+
+<!-- build-broken -->
+THE BUILD IS CURRENTLY BROKEN, so the artifact does not exist. It last failed with:
+{error}
+{whose}Write source that runs against the real library API: import the library the toolchain names, exactly as it is spelled, and call the functions it really has. Do not repeat a call or an import the failure above already rejected.
+
+<!-- build-broken-elsewhere -->
+The failure is not in a file you own here, but do not add another like it.
+
+<!-- build-broken-yours -->
+THE FAILURE IS IN YOUR OWN FILE ({files}). Fixing it is this task's first job.
+
+<!-- header-group -->
+ (your group, whose files you may extend: {group})
+
+<!-- header-commands-none -->
+(none yet; this task establishes them)
+
+<!-- header-build-none -->
+(none yet)
+
+<!-- requirement -->
+- {id} [{test}]: {statement}
+  quote: {quote}
+
+<!-- product-first -->
+{header}
+{directive}
+Write the implementing content for this entity. Choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Write more files the same way when this part needs them (a dependency manifest, an entry point, a second module): another `FILE: <path>` line on its own, then that file. The first file is this entity's part. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {parts}):
+{requirements}
+
+<!-- product-more -->
+{header}
+Requirements (group {group} of {parts}):
+{requirements}
+
+The file `{path}` so far:
+{code}
+Return ONLY additional content to append, no FILE line.
+
+<!-- product-format-retry -->
+{request}
+Your reply was not in the required shape ({error}). This step takes no JSON. Reply exactly like this, the FILE line first and the file after it:
+
+FILE: path/of/your/choice.ext
+<the content>
+
+<!-- owner-retry -->
+{request}
+The path `{path}` already belongs to entity `{owner}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.
+
+<!-- tests -->
+{header}
+Write the tests for the requirements against `{product}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it; more files follow the same way, each after its own `FILE: <path>` line, when the tests need them (a fixture, a conftest). The first file is the tests artifact. If no requirement can be tested programmatically, reply with exactly `NONE`.
+A test must be falsifiable: its assertion has to FAIL when the requirement is violated. Before writing one, ask what change to the artifact would break this requirement, and assert on exactly that. Asserting on unrelated text, on a heading, or on a keyword that is present either way is worse than no test: it reports a pass while the requirement is unmet. If a requirement is about something this artifact does not carry, do NOT invent a stand-in assertion for it. Leave it out of this file; the manifest step declares it `llm` and a human or an agent judges it.
+{artifact_rule}
+Requirements:
+{requirements}
+
+The product file:
+{code}
+
+<!-- tests-built -->
+The artifact is `{artifact}`, produced by the build. Every test opens that file and asserts on what is inside it. A test that reads the source that produces it, or any document beside it, verifies nothing.
+
+<!-- tests-default -->
+When the artifact is produced by a build, the test opens what the build produced, never the source that produces it.
+
+<!-- tests-format-retry -->
+{request}
+Your reply was not in the required shape ({error}). This step is not the manifest step and takes no JSON. Reply exactly like this, the FILE line first and the test file after it:
+
+FILE: tests/test_example.py
+import unittest
+
+class TestExample(unittest.TestCase):
+    def test_name_from_the_list(self):
+        ...
+
+Or reply with exactly NONE when no requirement here can be tested programmatically.
+
+<!-- manifest -->
+Files written so far for entity {id}: {files} under the deliverable directory `{deliverable}`.
+Recorded run commands already in use (reuse this toolchain, never introduce a second test runner): {commands}
+Build already recorded for this deliverable: {build}
+The build's entry point and its current content (rewrite it in supportFiles so it includes your part; empty when there is no build yet): {entry}
+Test names the harness found in the tests file (declare each of these programmatic with its run command; declare a requirement whose name is absent as llm): {names}
+Each programmatic run command must invoke the tests artifact and select only that test: the command text must reference the tests file path or the testName. A command that only runs the product is invalid.
+Return ONLY a JSON object, no prose:
+{"supportFiles": [{"path": "...", "content": "..."}], "build": {"run": "...", "cwd": ".", "produces": ["..."]}, "tests": [{"requirement": "req:...", "kind": "programmatic"|"llm", "label": "your words", "name": "the testName", "run": "exact command executed from the deliverable directory that runs only that test", "cwd": "."}], "choices": [{"choice": "one sentence", "scope": "product"|"behavior"|"detail", "reasoning": "...", "requirements": ["req:..."]}]}
+supportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). choices lists what you had to invent because no statement decides it: the choice in one sentence, its scope (product, behavior, or detail), your reasoning, and the requirements it fills in when any exist; an empty array when you invented nothing. A run command that cannot execute from a fresh checkout of the deliverable is a defect: if it needs a runner or build file no listed file provides (a package.json for npx jest, a Cargo.toml for cargo test), you MUST return that file in supportFiles.
+{build_rule} Every requirement must appear once in tests. Requirements and test names:
+{requirements}
+
+The tests file `{tests}`:
+{tests_code}
+
+<!-- manifest-commands-none -->
+(none yet; this task establishes the toolchain)
+
+<!-- manifest-build-none -->
+(none; record one only if the medium must be built)
+
+<!-- manifest-entry-none -->
+(none yet)
+
+<!-- manifest-entry -->
+`{path}`:
+{content}
+
+<!-- manifest-names-none -->
+(none)
+
+<!-- manifest-build-required -->
+`build` is REQUIRED here and no build is recorded yet: this deliverable is {form}, so return `build` with the exact command that produces `{artifact}`, `cwd` relative to the deliverable, and `produces` listing `{artifact}`. What the build runs must be a NEW support file you return in supportFiles, never the product file above: every later entity adds its own part to the artifact by rewriting that entry, and it cannot rewrite a file you own. So return the entry as a support file that IMPORTS the product file you wrote and calls into it, then writes `{artifact}`. The entry composes parts; it never re-implements one. A manifest without the build is rejected.
+
+<!-- manifest-build-omit -->
+Omit `build` entirely: the files you wrote are themselves the deliverable.
+
+<!-- manifest-build-reuse-built -->
+A build is already recorded; omit `build` and reuse it. Its entry point is shown above with its current content: your part is NOT in the artifact until that entry imports your file and calls into it, so return the entry in supportFiles, rewritten to import your product file the same way it imports the others, still producing `{artifact}`. Keep every part it already composes, and never re-implement a part inside the entry.
+
+<!-- manifest-build-reuse -->
+A build is already recorded for this deliverable; omit `build` and reuse it.
+
+<!-- manifest-requirement -->
+- {id} [{test}]
+
+<!-- manifest-format-retry -->
+{request}
+Your reply was not valid JSON ({error}). Reply again with the same object, valid JSON this time, nothing else: no prose, no trailing commas, every string quoted.
+
+<!-- mismatch-undeclared -->
+- {id} [{test}] is present in the tests file; declare it programmatic with a run command that invokes the tests file and selects this test (reference `{tests}` or the testName in the command)
+
+<!-- mismatch-absent -->
+- {id} is declared programmatic but `{test}` does not appear in the tests file; declare it llm or fix the name
+
+<!-- mismatch-entry -->
+- the build entry `{entry}` does not name these parts, so `{artifact}` will not carry them: {missing}. Return `{entry}` in supportFiles, importing each one and calling into it, and keep everything it already composes; never re-implement a part inside the entry
+
+<!-- mismatch-build -->
+- `build` is missing: this deliverable is {form}, so the manifest must carry the command that produces `{artifact}` (`run`, `cwd`, `produces`)
+
+<!-- manifest-retry -->
+{request}
+Your answer was:
+{answer}
+
+It has these problems:
+{problems}
+Return the corrected, complete JSON manifest object, same schema, no prose. Change only what the problems name; keep every other field exactly as you gave it, supportFiles and build included.
+
+<!-- llm-criteria -->
+---
+requirement: {id}
+hash: {hash}
+---
+
+# Verify {id}
+
+Statement: {statement}
+
+> {quote}
+
+Implementing files (under the deliverable):
+- {files}
+
+Confirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.

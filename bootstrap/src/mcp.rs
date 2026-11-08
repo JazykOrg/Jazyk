@@ -3833,15 +3833,13 @@ impl McpServer {
         if root.join(crate::document_sets::CONFIG).vexists() {
             return json!({"error": {"rule": "already-a-project", "message": "jazyk.toml already exists here"}});
         }
-        if let Err(e) = crate::vfs::write(
-            {
-                let path = root.join(".jazyk/jazyk.toml");
-                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
-                path
-            },
-            crate::cli::INIT_TOML,
-        ) {
-            return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
+        let path = root.join(crate::document_sets::CONFIG);
+        let written = path
+            .parent()
+            .map_or(Ok(()), crate::vfs::create_dir_all)
+            .and_then(|_| crate::vfs::write(&path, crate::cli::INIT_TOML));
+        if let Err(e) = written {
+            return json!({"error": {"rule": "write-failed", "message": format!("{}: {}", path.display(), e)}});
         }
         let made = match crate::cli::init_scaffold(root) {
             Ok(made) => made,
@@ -3898,21 +3896,32 @@ impl McpServer {
 }
 
 // Minimal line edit on a TOML text: set `key = "value"` inside `[section]`, appending
-// the section or the key when missing, touching nothing else.
+// the section or the key when missing, touching nothing else. A text that does not
+// parse, or a section path that names a non-table value, comes back unchanged.
 pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
-    let Ok(mut document) = text.parse::<toml_edit::DocumentMut>() else {
-        return text.to_string();
-    };
-    if section.is_empty() {
-        document[key] = toml_edit::value(value);
-    } else {
-        let mut item = &mut document[section.split('.').next().unwrap()];
-        for part in section.split('.').skip(1) {
-            item = &mut item[part];
-        }
-        item[key] = toml_edit::value(value);
+    try_toml_set(text, section, key, value).unwrap_or_else(|_| text.to_string())
+}
+
+// The same edit, saying why it cannot apply instead of panicking or guessing.
+pub fn try_toml_set(text: &str, section: &str, key: &str, value: &str) -> Result<String, String> {
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("{} does not parse: {}", crate::document_sets::CONFIG, e))?;
+    let mut table: &mut dyn toml_edit::TableLike = document.as_table_mut();
+    let mut path = String::new();
+    for part in section.split('.').filter(|p| !p.is_empty()) {
+        path = if path.is_empty() { part.to_string() } else { format!("{path}.{part}") };
+        table = table
+            .entry(part)
+            .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_like_mut()
+            .ok_or_else(|| format!("`{path}` is not a table in {}", crate::document_sets::CONFIG))?;
     }
-    document.to_string()
+    if table.get(key).is_some_and(|item| item.is_table_like()) {
+        return Err(format!("`{key}` is a table in {}, not a value", crate::document_sets::CONFIG));
+    }
+    table.insert(key, toml_edit::value(value));
+    Ok(document.to_string())
 }
 
 // One edit over the delegation socket: a JSON line out, an acknowledgement line back.
@@ -5983,5 +5992,37 @@ mod tests {
             assert_eq!(version(Value::Null), "2024-11-05");
         }
         crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // toml_set never panics on reachable input: a section path through a value, a key
+    // naming a table, or a file that does not parse comes back unchanged, and a missing
+    // section is appended as a table.
+    #[test]
+    fn toml_set_refuses_non_tables_without_panicking() {
+        let base = "version = 1\nworkflow = \"manual\"\n";
+        assert!(try_toml_set(base, "workflow", "compile", "auto").unwrap_err().contains("not a table"));
+        assert_eq!(toml_set(base, "workflow", "compile", "auto"), base);
+        assert_eq!(toml_set(base, "workflow.inner", "compile", "auto"), base);
+        let nested = "version = 1\n[gen.worker]\nx = 1\n";
+        assert!(try_toml_set(nested, "gen", "worker", "pipeline").unwrap_err().contains("is a table"));
+        assert!(try_toml_set("version = [", "gen", "worker", "pipeline").is_err());
+        let added = toml_set("version = 1\n", "workflow", "compile", "auto");
+        assert!(added.contains("[workflow]\ncompile = \"auto\""), "{added}");
+        let kept = toml_set("version = 1 # keep\n\n[workflow]\ngenerate = \"manual\"\n", "workflow", "compile", "auto");
+        assert!(kept.contains("version = 1 # keep") && kept.contains("generate = \"manual\"") && kept.contains("compile = \"auto\""), "{kept}");
+    }
+
+    // init_project reports a filesystem failure instead of panicking.
+    #[cfg(unix)]
+    #[test]
+    fn init_project_reports_an_unwritable_project_dir() {
+        let base = std::env::temp_dir().join(format!("jazyk-mcp-init-blocked-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&base).ok();
+        crate::vfs::create_dir_all(&base).unwrap();
+        // `.jazyk` exists as a file, so the config directory cannot be created.
+        crate::vfs::write(base.join(".jazyk"), "not a directory").unwrap();
+        let reply = chat_server(&base).init_project();
+        assert_eq!(reply["error"]["rule"], "write-failed", "{reply}");
+        crate::vfs::remove_dir_all(&base).ok();
     }
 }

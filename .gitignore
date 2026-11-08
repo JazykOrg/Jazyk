@@ -24,7 +24,6 @@ Thumbs.db
 # project adds its configuration with `git add -f`.
 **/.jazyk/
 .jazyk.*
-project2/
 .loop-logs/
 
 # Build caches left by checkouts from before the editor moved to jazyk-cloud/web.

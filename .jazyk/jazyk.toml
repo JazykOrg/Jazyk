@@ -10,4 +10,3 @@ id = "ds_main"
 name = "Main"
 docs = ["docs/**/*.md", "!docs/benchmark/cases/**", "!docs/benchmark/replays/**", "!docs/compiler/goals/prompts/**", "!docs/compiler/skills/**"]
 roots = ["docs/main.md"]
-source = ["project2/**"]

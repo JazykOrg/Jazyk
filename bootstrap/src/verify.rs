@@ -1357,6 +1357,7 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
         if path.vis_dir() {
             if !matches!(name.as_str(), "target" | "node_modules" | ".git")
                 && !name.starts_with(".jazyk") && !name.starts_with("jazyk-out")
+                && !crate::vfs::is_symlink(&path)
             {
                 collect_files(&path, v, is_criteria);
             }
@@ -1392,6 +1393,20 @@ pub fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    // A directory link back to an ancestor is skipped, not followed in a loop.
+    #[cfg(unix)]
+    #[test]
+    fn file_walk_skips_symlinked_directories() {
+        let root = std::env::temp_dir().join(format!("jazyk-verify-symlink-{}", crate::sys::process_id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(root.join("tests/a.rs"), "fn a() {}").unwrap();
+        std::os::unix::fs::symlink(&root, root.join("tests/loop")).unwrap();
+        let mut v = Vec::new();
+        super::collect_files(&root, &mut v, false);
+        assert_eq!(v, vec![(root.join("tests/a.rs"), false)]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
     #[test]
     fn suite_failure_summary_counts_unselected_cases_without_inventing_owners() {
         let mut tests = (0..25).map(|n| json!({"identity":format!("OtherSuite::case_{n}"),"status":"failed","report":"reports/other.xml"})).collect::<Vec<_>>();

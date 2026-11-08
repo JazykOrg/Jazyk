@@ -717,7 +717,7 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
             continue;
         }
         if p.vis_dir() {
-            if name == "target" || name == "node_modules" {
+            if name == "target" || name == "node_modules" || crate::vfs::is_symlink(&p) {
                 continue;
             }
             collect_code_files(&p, out_dir, out);
@@ -887,6 +887,21 @@ pub async fn run_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A directory link back to an ancestor is skipped, not followed in a loop.
+    #[cfg(unix)]
+    #[test]
+    fn code_walk_skips_symlinked_directories() {
+        let root = std::env::temp_dir().join(format!("jazyk-bind-symlink-{}", crate::sys::process_id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "fn a() {}").unwrap();
+        std::os::unix::fs::symlink(&root, root.join("src/loop")).unwrap();
+        let mut out = Vec::new();
+        collect_code_files(&root, &root.join(".jazyk"), &mut out);
+        assert_eq!(out, vec![root.join("src/lib.rs")]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn incomplete_binding_keeps_the_budget_reason_and_continues_to_the_next_target() {

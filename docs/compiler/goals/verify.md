@@ -47,9 +47,10 @@ writes when it notices the deliverable or a test changed
 
 ## Readiness
 
-- Tier 3, after binding and generation: ready when no goal of tiers 0 to 2 is open in
-  the requirement's cone and no `bind` or `generate` goal is open on the requirement
-  or its entity ([readiness](../reconciler.md#readiness)).
+- Tier 3, after binding and generation: ready when no goal of tiers 0 to 2 is open or
+  parked anywhere on the board ([tiers](../reconciler.md#tiers)) and no `bind` or
+  `generate` goal is open on the requirement or its entity
+  ([readiness](../reconciler.md#readiness)).
 - Never gated by a release: verification writes nothing into the deliverable.
 - Batches group by run: every ready programmatic row in a burst runs as one
   `run_tests` pass, the build first, once. `llm` rows batch by entity into sessions

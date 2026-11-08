@@ -22,6 +22,10 @@ The service owns project scheduling and snapshot persistence.
 - `compile` and `generate`: `auto` or `manual` (the default). Defaults come from the
   project's [`[workflow]`](./project-settings.md#workflow) section; the file records
   runtime changes (a GUI toggle, a CLI flag) and survives restarts.
+- A `control.yaml` that does not parse reads as the project defaults with no
+  releases, and it is never overwritten: the next write (a release, a mode change)
+  first moves it aside to `control.yaml.bad`, replacing an older one, and warns naming
+  both files, so the human's text survives for repair.
 - `released.compile`: a map of document to the content hash approved for
   reconciliation. `released.generate`: the graph generation number approved for
   generation and [binding](../consumers/bind.md). `released.decompile`: the list of
@@ -113,6 +117,12 @@ Two directories make the actors and their claims visible:
   batch), so a dead agent's claim evaporates instead of wedging the board. The board
   shows `claimedBy` on leased goals and consumers skip them; a goal leased to the
   reading serving itself shows `claimedBy: you`.
+- Taking over an expired lease keeps the one-winner rule. The claimant (or a reader
+  sweeping expired leases) first moves the file aside under a name of its own and
+  checks that it moved the lease it read; a file that changed meanwhile goes back.
+  A refresh replaces the file whole (a temporary file, then a rename), so a reader
+  never sees half a lease. A lease file that does not parse counts as held until it is
+  older than the lease lifetime, then it is swept like an expired one.
 
 The internal loop holds one coarse `build` lease for a whole run instead of per-batch
 leases. Each build attempt has a unique owner token, including consecutive builds

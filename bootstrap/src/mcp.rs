@@ -169,7 +169,11 @@ impl McpServer {
         if self.modes.len() == 1 && self.modes[0] == "runtime" {
             return Ok(format!("{}{}", crate::task_runtime::PROMPT, integration));
         }
-        let policy = crate::agent_workflows::render(&self.project.root).map_err(|e| (-32603, e))?;
+        // A project file that does not load still lets the agent connect and repair it
+        // (docs/frontends/mcp.md#mcp-into-acp-sessions).
+        let policy = crate::agent_workflows::render(&self.project.root).unwrap_or_else(|e| format!(
+            "The project file `{}` does not load: {}. Tools that need the project refuse until it is repaired; edit the file with your own tools.",
+            crate::document_sets::CONFIG, e));
         let capabilities = if self.bridge.reader { reader_instructions() }
             else { instructions_for(&self.modes, self.write, initialized) };
         Ok(format!("{policy}\n\n## Serving capabilities\n\n{capabilities}\n{integration}"))
@@ -2102,8 +2106,22 @@ impl McpServer {
         if self.modes.len() == 1 && self.modes[0] == "runtime" {
             return self.handle_local(method, params);
         }
-        let w =
-            crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
+        let w = match crate::document_sets::Workspace::load(&self.project.root) {
+            Ok(w) => w,
+            // A broken project file refuses tool calls, not the connection: initialize,
+            // ping, and tools/list still answer (docs/frontends/mcp.md#mcp-into-acp-sessions).
+            Err(e) if method == "tools/call" || !matches!(method, "initialize" | "ping" | "tools/list") => return Err((-32602, e.1)),
+            Err(_) if method == "initialize" => {
+                self.watch_edits();
+                if let Some(name) = params["clientInfo"]["name"].as_str() {
+                    *self.client.lock().unwrap() = Some(name.into());
+                }
+                return Ok(json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
+                    "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                    "instructions":self.initialize_instructions(self.initialized())?}));
+            }
+            Err(_) => return self.handle_local(method, params),
+        };
         if method == "initialize" {
             self.watch_edits();
             // Registration belongs to each set-local child, created lazily.
@@ -6245,6 +6263,25 @@ mod tests {
         assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# B\n");
         with_sink("/tmp/jz-sink-nobody-listens.sock".into()).write_edit("docs/a.md", "# B\n", "# C\n", "# C\n").unwrap();
         assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# C\n");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A jazyk.toml that does not load refuses tool calls but not the connection.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    #[test]
+    fn a_broken_project_file_still_connects() {
+        let dir = bare_dir("broken-config");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let scoped = chat_server(&dir);
+        crate::vfs::write(dir.join(crate::document_sets::CONFIG), "version = 1\n[[sets]\n").unwrap();
+        assert!(scoped.handle("initialize", &json!({})).is_ok());
+        assert!(scoped.handle("tools/list", &json!({})).is_ok());
+        let init = serving.handle("initialize", &json!({"protocolVersion":"2025-06-18"})).unwrap();
+        assert!(init["instructions"].as_str().unwrap().contains("does not load"), "{init}");
+        assert_eq!(serving.handle("ping", &json!({})).unwrap(), json!({}));
+        assert!(!serving.handle("tools/list", &json!({})).unwrap()["tools"].as_array().unwrap().is_empty());
+        let call = serving.handle("tools/call", &json!({"name":"search","arguments":{"query":"x"}}));
+        assert!(call.is_err() || call.unwrap()["isError"] == true);
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

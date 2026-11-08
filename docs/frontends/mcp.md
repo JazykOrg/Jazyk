@@ -155,6 +155,10 @@ serving supports it (`2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`), an
 latest supported version otherwise, so a client never reads support for a version the
 serving does not speak. A request without a version gets `2024-11-05`.
 
+A `jazyk.toml` that does not load leaves `initialize`, `ping`, and `tools/list`
+answering, so the agent can still connect and repair the file. The instructions name
+the error, and every tool call that needs the project is refused with it.
+
 The `initialize` reply carries server instructions describing the work loop for the
 toolsets served, so an agent that reads nothing else still knows the entry point, the
 order of calls, and that a tool error names its own repair. They also say that the

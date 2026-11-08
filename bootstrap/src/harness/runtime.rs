@@ -366,21 +366,49 @@ fn preserve_interrupted_turn(state: &mut HarnessState) {
     // GDK applies its conversation effect after tools return. The accepted model
     // receipt and tool receipts can already be checkpointed before that effect.
     let prefix = format!("{}:{}:Inference:", state.run_id, state.transition);
-    let mut receipts = state.model_receipts.iter().filter_map(|(id, value)| {
-        id.strip_prefix(&prefix)?.parse::<u64>().ok().map(|ordinal| (ordinal, id, value))
-    }).collect::<Vec<_>>();
+    let mut receipts = state
+        .model_receipts
+        .iter()
+        .filter_map(|(id, value)| {
+            id.strip_prefix(&prefix)?
+                .parse::<u64>()
+                .ok()
+                .map(|ordinal| (ordinal, id, value))
+        })
+        .collect::<Vec<_>>();
     receipts.sort_by_key(|(ordinal, _, _)| *ordinal);
     for (_, id, value) in receipts {
-        if state.conversation.iter().any(|message|
-            message.metadata.operation_note("jazyk.runtime", "inferenceId").and_then(Value::as_str) == Some(id.as_str())) {
+        if state.conversation.iter().any(|message| {
+            message
+                .metadata
+                .operation_note("jazyk.runtime", "inferenceId")
+                .and_then(Value::as_str)
+                == Some(id.as_str())
+        }) {
             continue;
         }
-        let model = state.model_requests.get(id).and_then(|body| body["model"].as_str()).unwrap_or("recovered");
+        let model = state
+            .model_requests
+            .get(id)
+            .and_then(|body| body["model"].as_str())
+            .unwrap_or("recovered");
         if let Ok((message, _)) = super::provider::response_message(id, value.clone(), model) {
-            let ids = message.content.iter().filter_map(MessageContent::as_tool_request)
-                .map(|request| request.id.as_str()).collect::<Vec<_>>();
-            if !ids.is_empty() && ids.iter().all(|id| state.conversation.iter().flat_map(|message| &message.content)
-                .filter_map(MessageContent::as_tool_request).any(|request| request.id == *id)) {
+            let ids = message
+                .content
+                .iter()
+                .filter_map(MessageContent::as_tool_request)
+                .map(|request| request.id.as_str())
+                .collect::<Vec<_>>();
+            if !ids.is_empty()
+                && ids.iter().all(|id| {
+                    state
+                        .conversation
+                        .iter()
+                        .flat_map(|message| &message.content)
+                        .filter_map(MessageContent::as_tool_request)
+                        .any(|request| request.id == *id)
+                })
+            {
                 continue;
             }
             state.conversation.push(message);
@@ -547,19 +575,29 @@ async fn drive(
         if operation::ends_turn(state.conversation.messages()) {
             let ledger_worker = !args.conversation
                 && args.tools.iter().any(|tool| tool.name == "done")
-                && args.tools.iter().any(|tool| matches!(tool.name.as_str(),
-                    "record_generation" | "record_binding" | "record_verdict"));
+                && args.tools.iter().any(|tool| {
+                    matches!(
+                        tool.name.as_str(),
+                        "record_generation" | "record_binding" | "record_verdict"
+                    )
+                });
             if ledger_worker && !state.ledger_finish_reminded {
                 state.ledger_finish_reminded = true;
-                state.conversation.push(Message::user().with_text(LEDGER_CONTINUATION));
+                state
+                    .conversation
+                    .push(Message::user().with_text(LEDGER_CONTINUATION));
                 advance(state);
-                if let Err(error) = checkpoint(recovery, state, CheckpointPhase::Transition, None).await {
+                if let Err(error) =
+                    checkpoint(recovery, state, CheckpointPhase::Transition, None).await
+                {
                     return Stop::Error(error);
                 }
                 continue;
             }
             if state.model_output_limited {
-                return Stop::Error("The model reached its output token limit before completing the turn".into());
+                return Stop::Error(
+                    "The model reached its output token limit before completing the turn".into(),
+                );
             }
             if args.input_close.as_mut().is_some_and(|close| !close()) {
                 continue;
@@ -624,8 +662,9 @@ async fn drive(
             && state
                 .compacted_at_round
                 .is_none_or(|round| state.rounds > round + 1)
-            && state.compacted_size.is_none_or(|size|
-                estimate >= size.saturating_add(crate::llm::model_input_tokens() / 5));
+            && state.compacted_size.is_none_or(|size| {
+                estimate >= size.saturating_add(crate::llm::model_input_tokens() / 5)
+            });
         let outcome = if compact {
             let provider = Arc::new(ChannelProvider {
                 tx: actions,
@@ -633,10 +672,14 @@ async fn drive(
                 ordinal,
             });
             let model = ProviderModel::new(provider, config.clone());
-            let parts = super::compaction::context(state.conversation.messages(), args.conversation);
-            let mut templates = Templates::default();
-            templates.compaction = COMPACTION_REQUEST.to_string();
-            let future = goose_context_management::summarize(&model, None, &templates, &parts.summary);
+            let parts =
+                super::compaction::context(state.conversation.messages(), args.conversation);
+            let templates = Templates {
+                compaction: COMPACTION_REQUEST.to_string(),
+                ..Default::default()
+            };
+            let future =
+                goose_context_management::summarize(&model, None, &templates, &parts.summary);
             match drive_future(
                 future,
                 &mut requests,
@@ -654,12 +697,17 @@ async fn drive(
                 Ok(summary) => {
                     let mut compacted: Vec<Message> = parts.opening.into_iter().collect();
                     compacted.push(summary.message);
-                    compacted.push(Message::user()
-                        .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)));
+                    compacted.push(
+                        Message::user()
+                            .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)),
+                    );
                     compacted.extend(parts.retained);
                     state.conversation = Conversation::new_unvalidated(compacted);
-                    state.compacted_size = Some(serde_json::to_vec(&state.conversation)
-                        .map(|bytes| bytes.len() / 4).unwrap_or(0));
+                    state.compacted_size = Some(
+                        serde_json::to_vec(&state.conversation)
+                            .map(|bytes| bytes.len() / 4)
+                            .unwrap_or(0),
+                    );
                     record_usage(args, state, summary.usage);
                     state.compacted_at_round = Some(state.rounds);
                     advance(state);
@@ -734,8 +782,12 @@ async fn drive(
 fn advance(state: &mut HarnessState) {
     state.transition += 1;
     let current = format!("{}:{}:", state.run_id, state.transition);
-    state.model_requests.retain(|id, _| id.starts_with(&current));
-    state.model_receipts.retain(|id, _| id.starts_with(&current));
+    state
+        .model_requests
+        .retain(|id, _| id.starts_with(&current));
+    state
+        .model_receipts
+        .retain(|id, _| id.starts_with(&current));
     state.model_deltas.retain(|id, _| id.starts_with(&current));
 }
 
@@ -836,7 +888,10 @@ async fn handle_action(
                 let buffer = pending.clone();
                 let sink: ModelDeltaSink = Arc::new(move |field, text| {
                     if text.is_empty()
-                        || !matches!(field, "content" | "reasoning" | "reasoning_content" | "reasoning_summary")
+                        || !matches!(
+                            field,
+                            "content" | "reasoning" | "reasoning_content" | "reasoning_summary"
+                        )
                     {
                         return;
                     }
@@ -928,7 +983,11 @@ async fn handle_action(
         } => {
             let started = crate::sys::Instant::now();
             if let Some(receipt) = state.tool_receipts.get(&id) {
-                if receipt.args.as_ref().is_some_and(|digest| *digest != super::arguments_digest(&parameters)) {
+                if receipt
+                    .args
+                    .as_ref()
+                    .is_some_and(|digest| *digest != super::arguments_digest(&parameters))
+                {
                     return Err(Stop::Error(format!(
                         "execution-uncertain: Tool call '{id}' replays with arguments that differ from its recorded receipt; reconcile it before resuming"
                     )));
@@ -1128,7 +1187,10 @@ fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
         if !message.is_user_visible() {
             return;
         }
-        let summary = message.metadata.operation_note("jazyk.responses", "output").is_some();
+        let summary = message
+            .metadata
+            .operation_note("jazyk.responses", "output")
+            .is_some();
         for content in message.content {
             match content {
                 MessageContent::Text(text) if message.role == Role::Assistant => {
@@ -1138,9 +1200,20 @@ fn emit_gdk(args: &mut LoopArgs<'_>, event: GdkEvent, live: &mut LiveDeltas) {
                     }
                 }
                 MessageContent::Thinking(thought) => {
-                    let text = LiveDeltas::remainder(if summary { &mut live.summary } else { &mut live.thought }, thought.thinking);
+                    let text = LiveDeltas::remainder(
+                        if summary {
+                            &mut live.summary
+                        } else {
+                            &mut live.thought
+                        },
+                        thought.thinking,
+                    );
                     if !text.is_empty() {
-                        (args.emit)(if summary { AgentEvent::ReasoningSummary(text) } else { AgentEvent::Thought(text) });
+                        (args.emit)(if summary {
+                            AgentEvent::ReasoningSummary(text)
+                        } else {
+                            AgentEvent::Thought(text)
+                        });
                     }
                 }
                 _ => {}

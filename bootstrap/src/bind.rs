@@ -45,25 +45,36 @@ fn bind_reason(
     if !artifact.vexists() {
         return Some("artifact-gone");
     }
-    if row.test.kind == "programmatic"
-        && !crate::verify::artifact_names(&artifact, &row.test.name)
+    if row.test.kind == "programmatic" && !crate::verify::artifact_names(&artifact, &row.test.name)
     {
         return Some("artifact-gone");
     }
-    if row.test.kind == "llm" && crate::gen::validate_criteria_file(store, _rid, None, &artifact).is_err() {
+    if row.test.kind == "llm"
+        && crate::gen::validate_criteria_file(store, _rid, None, &artifact).is_err()
+    {
         return Some("artifact-gone");
     }
     // One test per criterion: a criterion without one, or whose statement moved since
     // its test was written, owes a bind (docs/consumers/bind.md#the-bind-goal).
     for cid in store.criteria_of(_rid) {
-        let Some(c) = store.graph.criteria.get(&cid) else { continue };
+        let Some(c) = store.graph.criteria.get(&cid) else {
+            continue;
+        };
         match row.tests.get(&cid) {
             None => return Some("criterion-unbound"),
             Some(t) => {
                 if t.criterion_hash != hash_hex(&c.statement) {
                     return Some("criterion-changed");
                 }
-                if t.test.kind == "llm" && crate::gen::validate_criteria_file(store, _rid, Some(&cid), &artifact_path(&store.out, gs, &t.test)).is_err() {
+                if t.test.kind == "llm"
+                    && crate::gen::validate_criteria_file(
+                        store,
+                        _rid,
+                        Some(&cid),
+                        &artifact_path(&store.out, gs, &t.test),
+                    )
+                    .is_err()
+                {
                     return Some("artifact-gone");
                 }
                 if !artifact_path(&store.out, gs, &t.test).vexists() {
@@ -104,7 +115,13 @@ pub fn criteria_package(store: &Store, rid: &str) -> Vec<Value> {
 // The deliverable files naming any of the needles, deliverable-relative, capped: the
 // walk skips build and dependency trees and files over 200k characters.
 fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serde_json::Value> {
-    fn walk(dir: &std::path::Path, root: &std::path::Path, needles: &[String], out: &mut Vec<serde_json::Value>, depth: usize) {
+    fn walk(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        needles: &[String],
+        out: &mut Vec<serde_json::Value>,
+        depth: usize,
+    ) {
         if depth > 4 || out.len() >= 10 {
             return;
         }
@@ -116,7 +133,9 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
         for e in entries {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || matches!(name.as_str(), "target" | "node_modules" | "dist" | "build") {
+            if name.starts_with('.')
+                || matches!(name.as_str(), "target" | "node_modules" | "dist" | "build")
+            {
                 continue;
             }
             if p.vis_dir() {
@@ -127,7 +146,9 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
             if meta.len() > 200_000 {
                 continue;
             }
-            let Ok(text) = crate::vfs::read_to_string(&p) else { continue };
+            let Ok(text) = crate::vfs::read_to_string(&p) else {
+                continue;
+            };
             // A needle hits at a word boundary only: crit:x-1 is no part of crit:x-13.
             let bounded = |n: &str| {
                 text.match_indices(n).any(|(i, _)| {
@@ -140,12 +161,17 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
             };
             let hits: Vec<&String> = needles.iter().filter(|n| bounded(n.as_str())).collect();
             if !hits.is_empty() {
-                let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                let rel = p
+                    .strip_prefix(root)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 // A hash needle is eight hex characters; a file that names the id or
                 // slug but no current hash is another statement's test.
                 let is_hash = |n: &str| n.len() == 8 && n.chars().all(|c| c.is_ascii_hexdigit());
                 let current = hits.iter().any(|n| is_hash(n));
-                let mut hit = serde_json::json!({"file": rel, "names": hits, "carriesCurrentHash": current});
+                let mut hit =
+                    serde_json::json!({"file": rel, "names": hits, "carriesCurrentHash": current});
                 if !current {
                     hit["note"] = serde_json::json!("names this id or slug but no current statement hash: the test of an earlier statement under this id, or of another one; rename only when its assertion is this statement's");
                 }
@@ -341,12 +367,19 @@ fn parse_test_ref(
         return Err(format!("{}.kind must be `programmatic` or `llm`", label));
     }
     let (artifact, name, run) = (
-        test["artifact"].as_str().unwrap_or_default().trim().to_string(),
+        test["artifact"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
         test["name"].as_str().unwrap_or_default().trim().to_string(),
         test["run"].as_str().unwrap_or_default().trim().to_string(),
     );
     if artifact.is_empty() || name.is_empty() {
-        return Err(format!("{}.artifact and {}.name are required", label, label));
+        return Err(format!(
+            "{}.artifact and {}.name are required",
+            label, label
+        ));
     }
     if kind == "programmatic" && run.is_empty() {
         return Err(format!(
@@ -407,10 +440,18 @@ pub fn record(
     if let Some(list) = tests.as_array() {
         for (i, entry) in list.iter().enumerate() {
             let cid = entry["criterion"].as_str().unwrap_or_default().to_string();
-            let Some(c) = store.graph.criteria.get(&cid).filter(|c| c.requirement == rid) else {
+            let Some(c) = store
+                .graph
+                .criteria
+                .get(&cid)
+                .filter(|c| c.requirement == rid)
+            else {
                 return Err(format!(
                     "tests[{}].criterion `{}` is not a criterion of {}; its criteria: {}",
-                    i, cid, rid, criteria.join(", ")
+                    i,
+                    cid,
+                    rid,
+                    criteria.join(", ")
                 ));
             };
             let v = entry["verdict"].as_str().unwrap_or_default();
@@ -419,7 +460,9 @@ pub fn record(
             }
             let (tref, path) =
                 parse_test_ref(store, gs, entry, &format!("tests[{}]", i), &mut path_notes)?;
-            if tref.kind == "llm" { crate::gen::validate_criteria_file(store, &rid, Some(&cid), &path)?; }
+            if tref.kind == "llm" {
+                crate::gen::validate_criteria_file(store, &rid, Some(&cid), &path)?;
+            }
             crit_tests.insert(
                 cid,
                 crate::gen::CritTest {
@@ -429,16 +472,30 @@ pub fn record(
                     verdict: v.to_string(),
                     last_run: Some(crate::verify::now_iso()),
                     exit_code: None,
-                    evidence: entry["evidence"].as_str().map(|e| crate::llm::truncate(e, 400).to_string()),
+                    evidence: entry["evidence"]
+                        .as_str()
+                        .map(|e| crate::llm::truncate(e, 400).to_string()),
                 },
             );
         }
     }
-    let missing: Vec<String> = criteria.iter().filter(|c| !crit_tests.contains_key(*c)).cloned().collect();
+    let missing: Vec<String> = criteria
+        .iter()
+        .filter(|c| !crit_tests.contains_key(*c))
+        .cloned()
+        .collect();
     if !missing.is_empty() {
         let names: Vec<String> = missing
             .iter()
-            .filter_map(|cid| store.graph.criteria.get(cid).map(|c| format!("{} ({})", cid, crate::gen::crit_test_name(cid, &c.statement))))
+            .filter_map(|cid| {
+                store.graph.criteria.get(cid).map(|c| {
+                    format!(
+                        "{} ({})",
+                        cid,
+                        crate::gen::crit_test_name(cid, &c.statement)
+                    )
+                })
+            })
             .collect();
         return Err(format!(
             "{} carries criteria without a test: {}; record_binding takes tests: [{{criterion, kind, label, artifact, name, run, cwd?, verdict, evidence?}}], one per criterion",
@@ -451,13 +508,19 @@ pub fn record(
         (test.clone(), verdict.to_string())
     } else if let Some((_, first)) = crit_tests.iter().next() {
         let t = &first.test;
-        let agg = if crit_tests.values().any(|t| t.verdict == "fail") { "fail" } else { "pass" };
+        let agg = if crit_tests.values().any(|t| t.verdict == "fail") {
+            "fail"
+        } else {
+            "pass"
+        };
         (
             json!({"kind": t.kind, "label": t.label, "artifact": t.artifact, "name": t.name, "run": t.run, "cwd": t.cwd}),
             agg.to_string(),
         )
     } else {
-        return Err("test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}".into());
+        return Err(
+            "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}".into(),
+        );
     };
     let verdict = verdict.as_str();
     let test = &test;
@@ -472,7 +535,11 @@ pub fn record(
         return Err("test.kind must be `programmatic` or `llm`".into());
     }
     let (artifact, name, run) = (
-        test["artifact"].as_str().unwrap_or_default().trim().to_string(),
+        test["artifact"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
         test["name"].as_str().unwrap_or_default().trim().to_string(),
         test["run"].as_str().unwrap_or_default().trim().to_string(),
     );
@@ -515,13 +582,17 @@ pub fn record(
             ));
         }
     }
-    if kind == "llm" { crate::gen::validate_criteria_file(store, &rid, None, &path)?; }
+    if kind == "llm" {
+        crate::gen::validate_criteria_file(store, &rid, None, &path)?;
+    }
     // Implementing files must exist: a binding names what carries the requirement, and
     // a path that is not there carries nothing. An empty list is the honest record of
     // an unimplemented requirement.
     let mut files: Vec<String> = Vec::new();
     for f in files_in.iter().filter(|f| !f.trim().is_empty()) {
-        files.push(crate::gen::confine_in(gs, f, &mut path_notes).map_err(|e| format!("files: {}", e))?);
+        files.push(
+            crate::gen::confine_in(gs, f, &mut path_notes).map_err(|e| format!("files: {}", e))?,
+        );
     }
     files.sort();
     files.dedup();
@@ -550,7 +621,8 @@ pub fn record(
     // produces are what the tests inspect, never what implements
     // (docs/consumers/bind.md#binding).
     let outputs = crate::gen::build_outputs(&crate::gen::Ledger::load(&store.out));
-    let not_implementation = |f: &str| test_artifacts.contains(f) || outputs.contains(f.trim_start_matches("./"));
+    let not_implementation =
+        |f: &str| test_artifacts.contains(f) || outputs.contains(f.trim_start_matches("./"));
     let dropped: Vec<String> = files
         .iter()
         .filter(|f| not_implementation(f.as_str()))
@@ -664,7 +736,11 @@ pub fn unclaimed(proj: &crate::project::Project, store: &Store, gs: &GenSettings
     if let Some(b) = &ledger.build {
         claimed.extend(b.produces.iter().cloned());
     }
-    if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built() && !m.artifact.is_empty()) {
+    if let Some(m) = ledger
+        .medium
+        .as_ref()
+        .filter(|m| m.is_built() && !m.artifact.is_empty())
+    {
         claimed.insert(m.artifact.trim_start_matches("./").to_string());
     }
     // Docs are source, never unclaimed implementation.
@@ -712,7 +788,8 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
         let name = e.file_name().to_string_lossy().into_owned();
         if p == out_dir
             || name.starts_with('.')
-            || name.starts_with(".jazyk") || name.starts_with("jazyk-out")
+            || name.starts_with(".jazyk")
+            || name.starts_with("jazyk-out")
             || name == "jazyk.toml"
         {
             continue;
@@ -755,8 +832,9 @@ pub async fn run_all(
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
     use crate::gen::progress::{self, BatchProgress, Progress};
-    let admitted = crate::gen::progress::admitted_settings("bind", &store.out,
-        json!({"targets":targets}),gs).await?;
+    let admitted =
+        crate::gen::progress::admitted_settings("bind", &store.out, json!({"targets":targets}), gs)
+            .await?;
     let signature = json!({"settings":admitted,"targets":targets});
     let key = progress::command_key("bind", &store.out, &signature);
     let mut command = Progress::load(key, signature, || BindCommand {
@@ -845,11 +923,7 @@ pub async fn run_all(
             .clone();
         let gate = gate(store, &gs.current_for_store(store), &rid);
         let failure = gate.as_ref().err().and(report.failed.as_deref());
-        let (next, _) = crate::reconcile::breaker_step(
-            command.data.streak,
-            report.tokens,
-            failure,
-        );
+        let (next, _) = crate::reconcile::breaker_step(command.data.streak, report.tokens, failure);
         command.data.streak = next;
         match gate {
             Ok(()) => command.data.bound += 1,
@@ -859,10 +933,15 @@ pub async fn run_all(
                     trace.line("bind", &format!("{rid} failed: {error}"));
                     command.data.stopped = Some(error);
                 } else {
-                    let reason = report.stopped.as_deref()
+                    let reason = report
+                        .stopped
+                        .as_deref()
                         .unwrap_or("the session ended without recording the binding");
                     let error = format!("Binding {rid} incomplete: {reason}; {gate_error}");
-                    command.data.first_error.get_or_insert_with(|| error.clone());
+                    command
+                        .data
+                        .first_error
+                        .get_or_insert_with(|| error.clone());
                     trace.line("bind", &error);
                 }
             }
@@ -895,7 +974,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn code_walk_skips_symlinked_directories() {
-        let root = std::env::temp_dir().join(format!("jazyk-bind-symlink-{}", crate::sys::process_id()));
+        let root =
+            std::env::temp_dir().join(format!("jazyk-bind-symlink-{}", crate::sys::process_id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/lib.rs"), "fn a() {}").unwrap();
@@ -909,45 +989,132 @@ mod tests {
     #[test]
     fn incomplete_binding_keeps_the_budget_reason_and_continues_to_the_next_target() {
         use crate::runner::{BatchRun, SessionReport, SessionRunner};
-        struct Worker { store:Store, gs:GenSettings, reason:Option<String>, calls:std::cell::RefCell<Vec<String>> }
+        struct Worker {
+            store: Store,
+            gs: GenSettings,
+            reason: Option<String>,
+            calls: std::cell::RefCell<Vec<String>>,
+        }
         impl SessionRunner for Worker {
-            fn agent_name(&self) -> String { "budget-fixture".into() }
+            fn agent_name(&self) -> String {
+                "budget-fixture".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
-            fn run_item(&self, batch:&BatchRun, _: &crate::session::Trace) -> SessionReport {
+            fn run_item(&self, batch: &BatchRun, _: &crate::session::Trace) -> SessionReport {
                 let rid = &batch.goals[0].target;
                 self.calls.borrow_mut().push(rid.clone());
                 if rid == "req:shop-1" {
-                    return SessionReport { applied:0,rounds:24,tokens:240,cached:0,failed:None,resolved:vec![],stopped:self.reason.clone() };
+                    return SessionReport {
+                        applied: 0,
+                        rounds: 24,
+                        tokens: 240,
+                        cached: 0,
+                        failed: None,
+                        resolved: vec![],
+                        stopped: self.reason.clone(),
+                    };
                 }
-                let criteria = crate::gen::criteria_front_matter(rid,None,&self.store.graph.requirements[rid].statement)
+                let criteria = crate::gen::criteria_front_matter(
+                    rid,
+                    None,
+                    &self.store.graph.requirements[rid].statement,
+                )
                     + "\nInspect the other items. PASS when listed. FAIL when absent.\n";
                 crate::vfs::create_dir_all(self.gs.deliverable.join("tests")).unwrap();
-                crate::vfs::write(self.gs.deliverable.join("tests/other.md"),criteria).unwrap();
-                record(&self.store,rid,&[],&json!({"kind":"llm","artifact":"tests/other.md","name":"other","run":"llm"}),
-                    &Value::Null,"fail",Some("No implementation exists."),&self.gs).unwrap();
-                SessionReport { applied:0,rounds:1,tokens:10,cached:0,failed:None,resolved:vec![],stopped:None }
+                crate::vfs::write(self.gs.deliverable.join("tests/other.md"), criteria).unwrap();
+                record(
+                    &self.store,
+                    rid,
+                    &[],
+                    &json!({"kind":"llm","artifact":"tests/other.md","name":"other","run":"llm"}),
+                    &Value::Null,
+                    "fail",
+                    Some("No implementation exists."),
+                    &self.gs,
+                )
+                .unwrap();
+                SessionReport {
+                    applied: 0,
+                    rounds: 1,
+                    tokens: 10,
+                    cached: 0,
+                    failed: None,
+                    resolved: vec![],
+                    stopped: None,
+                }
             }
-            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { unreachable!() }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> { unreachable!() }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                unreachable!()
+            }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
+                unreachable!()
+            }
         }
-        for reason in [Some("the session ran out of rounds after 24".to_string()),None] {
+        for reason in [
+            Some("the session ran out of rounds after 24".to_string()),
+            None,
+        ] {
             let mut store = tmp_store();
-            store.graph.requirements.insert("req:shop-2".into(),crate::model::Requirement {
-                statement:"The shop shall list other items.".into(),entities:vec!["ent:shop".into()],..Default::default()
-            });
-            let gs = GenSettings { configured:true,deliverable:store.out.join("product"),worker:"agentic".into(),code:vec![] };
-            Ledger { medium:Some(crate::gen::Medium {form:"Markdown".into(),produced:"written".into(),toolchain:"text".into(),artifact:String::new()}),..Default::default() }.save(&store.out).unwrap();
-            let runner = Worker {store:store.clone(),gs:gs.clone(),reason:reason.clone(),calls:Default::default()};
-            let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
-            let result = run_all(&store,&runner,&gs,&[],&trace).unwrap();
-            assert_eq!(*runner.calls.borrow(),vec!["req:shop-1","req:shop-2"]);
-            assert_eq!(result["bound"],1);
-            assert_eq!(result["failures"],1);
+            store.graph.requirements.insert(
+                "req:shop-2".into(),
+                crate::model::Requirement {
+                    statement: "The shop shall list other items.".into(),
+                    entities: vec!["ent:shop".into()],
+                    ..Default::default()
+                },
+            );
+            let gs = GenSettings {
+                configured: true,
+                deliverable: store.out.join("product"),
+                worker: "agentic".into(),
+                code: vec![],
+            };
+            Ledger {
+                medium: Some(crate::gen::Medium {
+                    form: "Markdown".into(),
+                    produced: "written".into(),
+                    toolchain: "text".into(),
+                    artifact: String::new(),
+                }),
+                ..Default::default()
+            }
+            .save(&store.out)
+            .unwrap();
+            let runner = Worker {
+                store: store.clone(),
+                gs: gs.clone(),
+                reason: reason.clone(),
+                calls: Default::default(),
+            };
+            let trace = crate::session::Trace::to_sink(
+                crate::session::TraceLevel::Quiet,
+                std::sync::Arc::new(|_| {}),
+                Default::default(),
+            );
+            let result = run_all(&store, &runner, &gs, &[], &trace).unwrap();
+            assert_eq!(*runner.calls.borrow(), vec!["req:shop-1", "req:shop-2"]);
+            assert_eq!(result["bound"], 1);
+            assert_eq!(result["failures"], 1);
             assert!(result["stopped"].is_null());
             let error = result["error"].as_str().unwrap();
-            assert!(error.contains("req:shop-1") && error.contains("no ledger row"),"{result}");
-            assert!(error.contains(reason.as_deref().unwrap_or("the session ended")),"{result}");
-            assert!(Ledger::load(&store.out).requirements.contains_key("req:shop-2"));
+            assert!(
+                error.contains("req:shop-1") && error.contains("no ledger row"),
+                "{result}"
+            );
+            assert!(
+                error.contains(reason.as_deref().unwrap_or("the session ended")),
+                "{result}"
+            );
+            assert!(Ledger::load(&store.out)
+                .requirements
+                .contains_key("req:shop-2"));
             crate::vfs::remove_dir_all(&store.out).unwrap();
         }
     }
@@ -957,8 +1124,8 @@ mod tests {
         let old = json!({"owed":[{"requirement":"req:first"},{"requirement":"req:second"}],
             "cursor":1,"active":null,"bound":0,"failures":1,"streak":0,"stopped":null,"result":null});
         let restored: BindCommand = serde_json::from_value(old).unwrap();
-        assert_eq!(restored.cursor,1);
-        assert_eq!(restored.failures,1);
+        assert_eq!(restored.cursor, 1);
+        assert_eq!(restored.failures, 1);
         assert!(restored.first_error.is_none());
     }
 
@@ -969,41 +1136,90 @@ mod tests {
         use crate::session::Trace;
         struct NoReplay;
         impl SessionRunner for NoReplay {
-            fn agent_name(&self) -> String { "no-replay".into() }
+            fn agent_name(&self) -> String {
+                "no-replay".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
-            fn run_item(&self, _: &BatchRun, _: &Trace) -> SessionReport { panic!("saved report must not run again") }
-            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { panic!("saved active row must not decide a medium again") }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&Trace>) -> Result<String,String> { unreachable!() }
+            fn run_item(&self, _: &BatchRun, _: &Trace) -> SessionReport {
+                panic!("saved report must not run again")
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                panic!("saved active row must not decide a medium again")
+            }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&Trace>,
+            ) -> Result<String, String> {
+                unreachable!()
+            }
         }
         let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
         let _scope = crate::session_recovery::Scope::enter(None);
-        let store = Store { out: "/project/.jazyk/main".into(), ..Default::default() };
+        let store = Store {
+            out: "/project/.jazyk/main".into(),
+            ..Default::default()
+        };
         let gs = GenSettings::from_out(&store.out);
         let signature = json!({"settings":gs,"targets":[]});
         let key = progress::command_key("bind", &store.out, &signature);
         let batch = BatchRun::single(crate::model::Goal {
-            id:"g:bind:req:second".into(), target:"req:second".into(), kind:"bind".into(), ..Default::default()
+            id: "g:bind:req:second".into(),
+            target: "req:second".into(),
+            kind: "bind".into(),
+            ..Default::default()
         });
         let mut active = BatchProgress::new(batch, &store.out);
-        active.report = Some(SessionReport { applied:0, rounds:1,tokens:9,cached:0,
-            failed:Some("ordinary rejected binding".into()),resolved:Vec::new(),stopped:None });
+        active.report = Some(SessionReport {
+            applied: 0,
+            rounds: 1,
+            tokens: 9,
+            cached: 0,
+            failed: Some("ordinary rejected binding".into()),
+            resolved: Vec::new(),
+            stopped: None,
+        });
         let progress = Progress::load(key, signature, || BindCommand {
-            owed:vec![json!({"requirement":"req:first"}),json!({"requirement":"req:second"})],
-            cursor:1,active:Some(active),bound:1,failures:2,streak:1,stopped:None,first_error:None,result:None,
-        }).unwrap();
+            owed: vec![
+                json!({"requirement":"req:first"}),
+                json!({"requirement":"req:second"}),
+            ],
+            cursor: 1,
+            active: Some(active),
+            bound: 1,
+            failures: 2,
+            streak: 1,
+            stopped: None,
+            first_error: None,
+            result: None,
+        })
+        .unwrap();
         progress.save().unwrap();
-        let trace = Trace::to_sink(crate::session::TraceLevel::Normal,std::sync::Arc::new(|_|{}),Default::default());
-        let result = run_all(&store,&NoReplay,&gs,&[],&trace).unwrap();
-        assert_eq!(result["bound"],1);
-        assert_eq!(result["failures"],3);
-        assert_eq!(run_all(&store,&NoReplay,&gs,&[],&trace).unwrap(),result);
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let result = run_all(&store, &NoReplay, &gs, &[], &trace).unwrap();
+        assert_eq!(result["bound"], 1);
+        assert_eq!(result["failures"], 3);
+        assert_eq!(
+            run_all(&store, &NoReplay, &gs, &[], &trace).unwrap(),
+            result
+        );
     }
 
     fn tmp_store() -> Store {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let out =
-            std::env::temp_dir().join(format!("jazyk-bind-test-{}-{}", crate::sys::process_id(), n));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-bind-test-{}-{}",
+            crate::sys::process_id(),
+            n
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = Store {
@@ -1037,19 +1253,39 @@ mod tests {
     #[test]
     fn llm_bindings_require_real_current_criteria_and_invalid_old_rows_reopen() {
         let mut store = tmp_store();
-        let gs = GenSettings { configured: true, deliverable: store.out.join("product"), worker: "agentic".into(), code: vec![] };
+        let gs = GenSettings {
+            configured: true,
+            deliverable: store.out.join("product"),
+            worker: "agentic".into(),
+            code: vec![],
+        };
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         crate::vfs::write(gs.deliverable.join("source.py"), "print('items')").unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/test_items.py"), "def test_items(): assert True").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/test_items.py"),
+            "def test_items(): assert True",
+        )
+        .unwrap();
         let rid = "req:shop-1";
-        let mut test = json!({"kind":"llm","artifact":"tests/test_items.py","name":"theme","run":"llm"});
+        let mut test =
+            json!({"kind":"llm","artifact":"tests/test_items.py","name":"theme","run":"llm"});
         let files = vec!["source.py".into()];
-        let error = record(&store, rid, &files, &test, &Value::Null, "pass", None, &gs).unwrap_err();
+        let error =
+            record(&store, rid, &files, &test, &Value::Null, "pass", None, &gs).unwrap_err();
         assert!(error.contains("separate Markdown"), "{error}");
         assert!(Ledger::load(&store.out).requirements.is_empty());
         test["artifact"] = json!("tests/items.md");
-        let valid = format!("{}\nInspect the product. PASS when items are listed. FAIL when absent.\n", crate::gen::criteria_front_matter(rid, None, &store.graph.requirements[rid].statement));
-        for invalid in ["# Criteria\nPASS or FAIL".to_string(), "---\nrequirement: req:shop-1\nhash: stale\n---\nPASS or FAIL".into(), valid.replace("FAIL", "unknown"), valid.replace("req:shop-1", "req:other"), valid.replace("requirement:", "requirement: req:other\nrequirement:")] {
+        let valid = format!(
+            "{}\nInspect the product. PASS when items are listed. FAIL when absent.\n",
+            crate::gen::criteria_front_matter(rid, None, &store.graph.requirements[rid].statement)
+        );
+        for invalid in [
+            "# Criteria\nPASS or FAIL".to_string(),
+            "---\nrequirement: req:shop-1\nhash: stale\n---\nPASS or FAIL".into(),
+            valid.replace("FAIL", "unknown"),
+            valid.replace("req:shop-1", "req:other"),
+            valid.replace("requirement:", "requirement: req:other\nrequirement:"),
+        ] {
             crate::vfs::write(gs.deliverable.join("tests/items.md"), invalid).unwrap();
             assert!(record(&store, rid, &files, &test, &Value::Null, "pass", None, &gs).is_err());
             assert!(Ledger::load(&store.out).requirements.is_empty());
@@ -1066,13 +1302,46 @@ mod tests {
         ledger.save(&store.out).unwrap();
         assert_eq!(pending(&store, &gs)[0]["reason"], "artifact-gone");
         let cid = "crit:shop-1";
-        store.graph.criteria.insert(cid.into(), crate::model::Criterion { requirement: rid.into(), statement: "Two items show two lines.".into(), ..Default::default() });
-        let mut entry = test.clone(); entry["criterion"] = json!(cid); entry["verdict"] = json!("pass");
+        store.graph.criteria.insert(
+            cid.into(),
+            crate::model::Criterion {
+                requirement: rid.into(),
+                statement: "Two items show two lines.".into(),
+                ..Default::default()
+            },
+        );
+        let mut entry = test.clone();
+        entry["criterion"] = json!(cid);
+        entry["verdict"] = json!("pass");
         // A requirement-level file cannot silently stand for its criterion.
-        assert!(record(&store, rid, &files, &Value::Null, &json!([entry.clone()]), "pass", None, &gs).unwrap_err().contains("criterion must be"));
-        let valid = format!("{}\nOpen the output. PASS for two lines. FAIL otherwise.\n", crate::gen::criteria_front_matter(rid, Some(cid), &store.graph.criteria[cid].statement));
+        assert!(record(
+            &store,
+            rid,
+            &files,
+            &Value::Null,
+            &json!([entry.clone()]),
+            "pass",
+            None,
+            &gs
+        )
+        .unwrap_err()
+        .contains("criterion must be"));
+        let valid = format!(
+            "{}\nOpen the output. PASS for two lines. FAIL otherwise.\n",
+            crate::gen::criteria_front_matter(rid, Some(cid), &store.graph.criteria[cid].statement)
+        );
         crate::vfs::write(gs.deliverable.join("tests/items.md"), &valid).unwrap();
-        record(&store, rid, &files, &Value::Null, &json!([entry]), "pass", None, &gs).unwrap();
+        record(
+            &store,
+            rid,
+            &files,
+            &Value::Null,
+            &json!([entry]),
+            "pass",
+            None,
+            &gs,
+        )
+        .unwrap();
         assert!(pending(&store, &gs).is_empty());
         crate::vfs::remove_dir_all(store.out).ok();
     }
@@ -1098,14 +1367,20 @@ mod tests {
     #[test]
     fn criteria_take_one_test_each_and_rebind_when_they_move() {
         let mut s = tmp_store();
-        for (id, st) in [("crit:shop-1", "Two items listed show two lines."), ("crit:shop-2", "An empty shop shows no line.")] {
+        for (id, st) in [
+            ("crit:shop-1", "Two items listed show two lines."),
+            ("crit:shop-2", "An empty shop shows no line."),
+        ] {
             s.graph.criteria.insert(
                 id.into(),
                 crate::model::Criterion {
                     requirement: "req:shop-1".into(),
                     statement: st.into(),
                     kind: "positive".into(),
-                    provenance: Some(crate::model::Provenance::Derived { from: vec!["req:shop-1".into()], reasoning: "evidence".into() }),
+                    provenance: Some(crate::model::Provenance::Derived {
+                        from: vec!["req:shop-1".into()],
+                        reasoning: "evidence".into(),
+                    }),
                     ..Default::default()
                 },
             );
@@ -1122,10 +1397,28 @@ mod tests {
         let n2 = crate::gen::crit_test_name("crit:shop-2", "An empty shop shows no line.");
         assert!(n1.starts_with("crit_shop_1_"), "{}", n1);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\n# {}\nexit 1\n", n1, n2)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\n# {}\nexit 1\n", n1, n2),
+        )
+        .unwrap();
         let headline = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": n1, "run": "sh tests/shop.sh"});
-        let err = record(&s, "req:shop-1", &[], &headline, &json!([]), "fail", None, &gs).unwrap_err();
-        assert!(err.contains("criteria without a test") && err.contains("crit:shop-1"), "{}", err);
+        let err = record(
+            &s,
+            "req:shop-1",
+            &[],
+            &headline,
+            &json!([]),
+            "fail",
+            None,
+            &gs,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("criteria without a test") && err.contains("crit:shop-1"),
+            "{}",
+            err
+        );
         let tests = json!([
             {"criterion": "crit:shop-1", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n1, "run": "sh tests/shop.sh", "verdict": "fail"},
             {"criterion": "crit:shop-2", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n2, "run": "sh tests/shop.sh", "verdict": "fail"}
@@ -1137,7 +1430,8 @@ mod tests {
         assert_eq!(row.test.name, n1);
         assert!(pending(&s, &gs).is_empty());
         // A criterion moves: the row owes a bind again.
-        s.graph.criteria.get_mut("crit:shop-2").unwrap().statement = "An empty shop prints nothing.".into();
+        s.graph.criteria.get_mut("crit:shop-2").unwrap().statement =
+            "An empty shop prints nothing.".into();
         let p = pending(&s, &gs);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["reason"], "criterion-changed");
@@ -1148,14 +1442,20 @@ mod tests {
     #[test]
     fn split_criterion_tests_read_partial() {
         let mut s = tmp_store();
-        for (id, st) in [("crit:shop-1", "Two items listed show two lines."), ("crit:shop-2", "A nameless item is refused.")] {
+        for (id, st) in [
+            ("crit:shop-1", "Two items listed show two lines."),
+            ("crit:shop-2", "A nameless item is refused."),
+        ] {
             s.graph.criteria.insert(
                 id.into(),
                 crate::model::Criterion {
                     requirement: "req:shop-1".into(),
                     statement: st.into(),
                     kind: "positive".into(),
-                    provenance: Some(crate::model::Provenance::Derived { from: vec!["req:shop-1".into()], reasoning: "evidence".into() }),
+                    provenance: Some(crate::model::Provenance::Derived {
+                        from: vec!["req:shop-1".into()],
+                        reasoning: "evidence".into(),
+                    }),
                     ..Default::default()
                 },
             );
@@ -1171,12 +1471,26 @@ mod tests {
         std::fs::write(gs.deliverable.join("src/shop.rs"), "pub fn list() {}\n").unwrap();
         let n1 = crate::gen::crit_test_name("crit:shop-1", "Two items listed show two lines.");
         let n2 = crate::gen::crit_test_name("crit:shop-2", "A nameless item is refused.");
-        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\n# {}\nexit 0\n", n1, n2)).unwrap();
+        std::fs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\n# {}\nexit 0\n", n1, n2),
+        )
+        .unwrap();
         let tests = json!([
             {"criterion": "crit:shop-1", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n1, "run": "sh tests/shop.sh", "verdict": "pass"},
             {"criterion": "crit:shop-2", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n2, "run": "sh tests/shop.sh", "verdict": "fail"}
         ]);
-        let v = record(&s, "req:shop-1", &["src/shop.rs".into()], &Value::Null, &tests, "", None, &gs).unwrap();
+        let v = record(
+            &s,
+            "req:shop-1",
+            &["src/shop.rs".into()],
+            &Value::Null,
+            &tests,
+            "",
+            None,
+            &gs,
+        )
+        .unwrap();
         assert_eq!(v["status"], "partial", "{}", v);
         assert_eq!(v["reason"], "criteria-failing");
         // The headline is crit:shop-1's test: a pass recorded on the row lands on it.
@@ -1197,11 +1511,22 @@ mod tests {
         std::fs::write(dir.join("tests/a.py"), "# crit:x-13 crit_x_13_0d4edd0c\n").unwrap();
         std::fs::write(dir.join("tests/b.py"), "# crit:x-1 crit_x_1_aaaaaaaa\n").unwrap();
         std::fs::write(dir.join("tests/c.py"), "# crit_x_1_deadbeef\n").unwrap();
-        let hits = existing_tests(&dir, &["crit:x-1".to_string(), "crit_x_1".to_string(), "deadbeef".to_string()]);
+        let hits = existing_tests(
+            &dir,
+            &[
+                "crit:x-1".to_string(),
+                "crit_x_1".to_string(),
+                "deadbeef".to_string(),
+            ],
+        );
         let files: Vec<&str> = hits.iter().map(|h| h["file"].as_str().unwrap()).collect();
         assert_eq!(files, vec!["tests/b.py", "tests/c.py"], "{:?}", hits);
         assert_eq!(hits[0]["carriesCurrentHash"], false);
-        assert!(hits[0]["note"].as_str().unwrap().contains("another"), "{}", hits[0]);
+        assert!(
+            hits[0]["note"].as_str().unwrap().contains("another"),
+            "{}",
+            hits[0]
+        );
         assert_eq!(hits[1]["carriesCurrentHash"], true);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1296,12 +1621,29 @@ mod tests {
         crate::vfs::write(gs.deliverable.join("build.py"), "print('deck')\n").unwrap();
         crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "PK zip bytes").unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 0\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\nexit 0\n", name),
+        )
+        .unwrap();
         let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
-        let v = record(&s, "req:shop-1", &["build.py".into(), "dist/deck.pptx".into()], &test, &json!([]), "pass", Some("built"), &gs).unwrap();
+        let v = record(
+            &s,
+            "req:shop-1",
+            &["build.py".into(), "dist/deck.pptx".into()],
+            &test,
+            &json!([]),
+            "pass",
+            Some("built"),
+            &gs,
+        )
+        .unwrap();
         assert_eq!(v["droppedFiles"], json!(["dist/deck.pptx"]), "{}", v);
         let ledger = crate::gen::Ledger::load(&s.out);
-        assert_eq!(ledger.requirements["req:shop-1"].files, vec!["build.py".to_string()]);
+        assert_eq!(
+            ledger.requirements["req:shop-1"].files,
+            vec!["build.py".to_string()]
+        );
     }
 
     #[test]
@@ -1442,21 +1784,52 @@ mod tests {
         )
         .unwrap();
         let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
-        let err = record(&s, "req:shop-1", &["../outside.sh".into()], &test, &json!([]), "pass", None, &gs)
-            .unwrap_err();
+        let err = record(
+            &s,
+            "req:shop-1",
+            &["../outside.sh".into()],
+            &test,
+            &json!([]),
+            "pass",
+            None,
+            &gs,
+        )
+        .unwrap_err();
         assert!(err.contains("files") && err.contains(".."), "{}", err);
         let climbing = json!({"kind": "programmatic", "artifact": "../outside.sh", "name": "echo", "run": "sh ../outside.sh"});
-        let err = record(&s, "req:shop-1", &[], &climbing, &json!([]), "pass", None, &gs).unwrap_err();
+        let err = record(
+            &s,
+            "req:shop-1",
+            &[],
+            &climbing,
+            &json!([]),
+            "pass",
+            None,
+            &gs,
+        )
+        .unwrap_err();
         assert!(err.contains("test.artifact"), "{}", err);
         let absolute = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh", "cwd": "/tmp"});
-        let err = record(&s, "req:shop-1", &[], &absolute, &json!([]), "pass", None, &gs).unwrap_err();
+        let err = record(
+            &s,
+            "req:shop-1",
+            &[],
+            &absolute,
+            &json!([]),
+            "pass",
+            None,
+            &gs,
+        )
+        .unwrap_err();
         assert!(err.contains("test.cwd"), "{}", err);
         assert!(Ledger::load(&s.out).requirements.is_empty());
         // The clean spelling normalizes.
         let ok = json!({"kind": "programmatic", "artifact": "./tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
         record(&s, "req:shop-1", &[], &ok, &json!([]), "fail", None, &gs).unwrap();
         assert_eq!(
-            Ledger::load(&s.out).requirements["req:shop-1"].test.artifact,
+            Ledger::load(&s.out).requirements["req:shop-1"]
+                .test
+                .artifact,
             "tests/shop.sh"
         );
     }
@@ -1477,7 +1850,11 @@ mod tests {
         assert!(err.contains("record_binding has not landed"), "{}", err);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\nexit 1\n", name),
+        )
+        .unwrap();
         let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
         record(&s, "req:shop-1", &[], &test, &json!([]), "fail", None, &gs).unwrap();
         gate(&s, &gs, "req:shop-1").unwrap();
@@ -1485,13 +1862,28 @@ mod tests {
         crate::vfs::write(gs.deliverable.join("tests/shop.sh"), "# renamed\nexit 1\n").unwrap();
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("does not contain the name"), "{}", err);
-        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\nexit 1\n", name),
+        )
+        .unwrap();
         gate(&s, &gs, "req:shop-1").unwrap();
         // The statement reworded: the row judges a dropped sentence.
-        s.graph.requirements.get_mut("req:shop-1").unwrap().statement = "The shop shall list items, sorted.".into();
+        s.graph
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .statement = "The shop shall list items, sorted.".into();
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
-        assert!(err.contains("statement moved") && err.contains("begin_binding again"), "{}", err);
-        assert_eq!(task(&s, "req:shop-1", &gs).unwrap()["reason"], "requirement-changed");
+        assert!(
+            err.contains("statement moved") && err.contains("begin_binding again"),
+            "{}",
+            err
+        );
+        assert_eq!(
+            task(&s, "req:shop-1", &gs).unwrap()["reason"],
+            "requirement-changed"
+        );
     }
 
     #[test]

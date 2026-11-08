@@ -82,8 +82,9 @@ fn initial_history<'a>(instructions: impl IntoIterator<Item = (&'a str, &'a str)
     history
 }
 
-fn session_tools<'a>(servers: impl IntoIterator<Item = (&'a str, &'a [GenericTool])>)
-    -> Result<Vec<GenericTool>, String> {
+fn session_tools<'a>(
+    servers: impl IntoIterator<Item = (&'a str, &'a [GenericTool])>,
+) -> Result<Vec<GenericTool>, String> {
     let mut names = std::collections::BTreeMap::new();
     let mut tools = Vec::new();
     for (server, definitions) in servers {
@@ -101,21 +102,39 @@ struct ConnectedTools<'a>(&'a mut [McpServerConn], &'a [crate::agent_context::Sk
 impl harness::ToolHost for ConnectedTools<'_> {
     fn catalog(&mut self) -> harness::LocalFuture<'_, Result<Option<Vec<GenericTool>>, String>> {
         Box::pin(async move {
-            for connection in self.0.iter_mut() { connection.refresh_tools()?; }
-            let mut tools = session_tools(self.0.iter().map(|c| (c.name.as_str(), c.tools.as_slice())))?;
-            if !self.1.is_empty() && !tools.iter().any(|t| t.name == crate::agent_context::READ_SKILL) {
+            for connection in self.0.iter_mut() {
+                connection.refresh_tools()?;
+            }
+            let mut tools =
+                session_tools(self.0.iter().map(|c| (c.name.as_str(), c.tools.as_slice())))?;
+            if !self.1.is_empty()
+                && !tools
+                    .iter()
+                    .any(|t| t.name == crate::agent_context::READ_SKILL)
+            {
                 tools.push(crate::agent_context::read_skill_tool());
             }
             Ok(Some(tools))
         })
     }
 
-    fn call<'a>(&'a mut self, name: &'a str, args: &'a Value) -> harness::LocalFuture<'a, Result<String, String>> {
+    fn call<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: &'a Value,
+    ) -> harness::LocalFuture<'a, Result<String, String>> {
         Box::pin(async move {
-            match self.0.iter_mut().find(|c| c.tools.iter().any(|t| t.name == name)) {
+            match self
+                .0
+                .iter_mut()
+                .find(|c| c.tools.iter().any(|t| t.name == name))
+            {
                 Some(connection) => connection.call(name, args),
                 None if name == crate::agent_context::READ_SKILL && !self.1.is_empty() => {
-                    crate::agent_context::read_skill(self.1, args["name"].as_str().unwrap_or_default())
+                    crate::agent_context::read_skill(
+                        self.1,
+                        args["name"].as_str().unwrap_or_default(),
+                    )
                 }
                 None => Err(format!("unknown tool `{name}`")),
             }
@@ -123,10 +142,18 @@ impl harness::ToolHost for ConnectedTools<'_> {
     }
 }
 
-fn connect(name: &str, transport: &crate::agent_context::Transport, cwd: &std::path::Path) -> Result<McpServerConn, String> {
+fn connect(
+    name: &str,
+    transport: &crate::agent_context::Transport,
+    cwd: &std::path::Path,
+) -> Result<McpServerConn, String> {
     match transport {
-        crate::agent_context::Transport::Stdio { command, args, env } => McpServerConn::spawn(name, command, args, env, cwd),
-        crate::agent_context::Transport::Http { url, headers } => McpServerConn::connect_http(name, url, headers),
+        crate::agent_context::Transport::Stdio { command, args, env } => {
+            McpServerConn::spawn(name, command, args, env, cwd)
+        }
+        crate::agent_context::Transport::Http { url, headers } => {
+            McpServerConn::connect_http(name, url, headers)
+        }
     }
 }
 
@@ -141,30 +168,59 @@ struct Opened {
 // connect. Outside worker sessions the project's and the user's agent context joins
 // them, each discovered part skipped with a warning when it cannot be used.
 // Mirrors docs/frontends/acp.md#the-embedded-agent and docs/frontends/agent-context.md.
-fn open_session(servers: &[McpServer], cwd: &std::path::Path, context: Option<crate::agent_context::SessionContext>) -> Result<Opened, String> {
+fn open_session(
+    servers: &[McpServer],
+    cwd: &std::path::Path,
+    context: Option<crate::agent_context::SessionContext>,
+) -> Result<Opened, String> {
     use crate::agent_context::Transport;
     let mut conns: Vec<McpServerConn> = Vec::new();
     let mut client_names = std::collections::BTreeSet::new();
     for server in servers {
         let (name, transport) = match server {
-            McpServer::Stdio(s) => (s.name.clone(), Transport::Stdio {
-                command: s.command.to_string_lossy().to_string(),
-                args: s.args.clone(),
-                env: s.env.iter().map(|e| (e.name.clone(), e.value.clone())).collect(),
-            }),
-            McpServer::Http(h) => (h.name.clone(), Transport::Http {
-                url: h.url.clone(),
-                headers: h.headers.iter().map(|h| (h.name.clone(), h.value.clone())).collect(),
-            }),
+            McpServer::Stdio(s) => (
+                s.name.clone(),
+                Transport::Stdio {
+                    command: s.command.to_string_lossy().to_string(),
+                    args: s.args.clone(),
+                    env: s
+                        .env
+                        .iter()
+                        .map(|e| (e.name.clone(), e.value.clone()))
+                        .collect(),
+                },
+            ),
+            McpServer::Http(h) => (
+                h.name.clone(),
+                Transport::Http {
+                    url: h.url.clone(),
+                    headers: h
+                        .headers
+                        .iter()
+                        .map(|h| (h.name.clone(), h.value.clone()))
+                        .collect(),
+                },
+            ),
             _ => return Err("only stdio and streamable HTTP MCP servers are supported".into()),
         };
-        conns.push(connect(&name, &transport, cwd).map_err(|e| format!("mcp server `{name}`: {e}"))?);
+        conns.push(
+            connect(&name, &transport, cwd).map_err(|e| format!("mcp server `{name}`: {e}"))?,
+        );
         client_names.insert(name);
     }
     let mut tools = session_tools(conns.iter().map(|c| (c.name.as_str(), c.tools.as_slice())))?;
-    let mut history = initial_history(conns.iter().filter_map(|c| c.instructions.as_deref().map(|i| (c.name.as_str(), i))));
+    let mut history = initial_history(
+        conns
+            .iter()
+            .filter_map(|c| c.instructions.as_deref().map(|i| (c.name.as_str(), i))),
+    );
     let Some(context) = context else {
-        return Ok(Opened { conns, tools, history, skills: Vec::new() });
+        return Ok(Opened {
+            conns,
+            tools,
+            history,
+            skills: Vec::new(),
+        });
     };
     let mut warnings = context.warnings;
     for server in context.servers {
@@ -174,37 +230,64 @@ fn open_session(servers: &[McpServer], cwd: &std::path::Path, context: Option<cr
         let conn = match connect(&server.name, &server.transport, cwd) {
             Ok(c) => c,
             Err(e) => {
-                warnings.push(format!("MCP server `{}` ({}) skipped: {e}", server.name, server.source));
+                warnings.push(format!(
+                    "MCP server `{}` ({}) skipped: {e}",
+                    server.name, server.source
+                ));
                 continue;
             }
         };
-        let clash: Vec<String> = conn.tools.iter().map(|t| t.name.clone())
-            .filter(|n| tools.iter().any(|t| &t.name == n) || n == crate::agent_context::READ_SKILL).collect();
+        let clash: Vec<String> = conn
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .filter(|n| tools.iter().any(|t| &t.name == n) || n == crate::agent_context::READ_SKILL)
+            .collect();
         if !clash.is_empty() {
             warnings.push(format!("MCP server `{}` ({}) skipped: its tool names collide with tools already offered ({})", server.name, server.source, clash.join(", ")));
             continue;
         }
         tools.extend(conn.tools.iter().cloned());
         if let Some(i) = conn.instructions.as_deref() {
-            harness::push_user_text(&mut history, &format!("MCP server `{}` instructions:\n{i}", conn.name));
+            harness::push_user_text(
+                &mut history,
+                &format!("MCP server `{}` instructions:\n{i}", conn.name),
+            );
         }
         conns.push(conn);
     }
     let mut skills = context.skills;
-    if !skills.is_empty() && tools.iter().any(|t| t.name == crate::agent_context::READ_SKILL) {
-        warnings.push("skills skipped: a client MCP server already offers a `read_skill` tool".into());
+    if !skills.is_empty()
+        && tools
+            .iter()
+            .any(|t| t.name == crate::agent_context::READ_SKILL)
+    {
+        warnings
+            .push("skills skipped: a client MCP server already offers a `read_skill` tool".into());
         skills.clear();
     }
     if !skills.is_empty() {
         tools.push(crate::agent_context::read_skill_tool());
     }
-    for text in [context.instructions, crate::agent_context::skills_text(&skills), crate::agent_context::warnings_text(&warnings)].into_iter().flatten() {
+    for text in [
+        context.instructions,
+        crate::agent_context::skills_text(&skills),
+        crate::agent_context::warnings_text(&warnings),
+    ]
+    .into_iter()
+    .flatten()
+    {
         harness::push_user_text(&mut history, &text);
     }
     for w in &warnings {
         eprintln!("jazyk agent: {w}");
     }
-    Ok(Opened { conns, tools, history, skills })
+    Ok(Opened {
+        conns,
+        tools,
+        history,
+        skills,
+    })
 }
 
 pub fn run() -> i32 {
@@ -551,16 +634,29 @@ mod tests {
 
     #[test]
     fn duplicate_injected_mcp_tool_names_refuse_the_session() {
-        let tool = GenericTool { name:"read_file".into(),description:"Read a file".into(),parameters:json!({"type":"object"}) };
+        let tool = GenericTool {
+            name: "read_file".into(),
+            description: "Read a file".into(),
+            parameters: json!({"type":"object"}),
+        };
         let first = vec![tool.clone()];
         let second = vec![tool];
-        let error = session_tools([("project",first.as_slice()),("other",second.as_slice())]).unwrap_err();
-        assert!(error.contains("read_file") && error.contains("project") && error.contains("other"));
-        assert_eq!(session_tools([("project",first.as_slice())]).unwrap().len(),1);
+        let error = session_tools([("project", first.as_slice()), ("other", second.as_slice())])
+            .unwrap_err();
+        assert!(
+            error.contains("read_file") && error.contains("project") && error.contains("other")
+        );
+        assert_eq!(
+            session_tools([("project", first.as_slice())])
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     fn fixture(tool: &str, instructions: &str) -> crate::agent_context::Transport {
-        let script = format!(r#"import json,sys
+        let script = format!(
+            r#"import json,sys
 for line in sys.stdin:
  m=json.loads(line)
  if 'id' not in m: continue
@@ -568,12 +664,26 @@ for line in sys.stdin:
  elif m['method']=='tools/list': r={{'tools':[{{'name':'{tool}','inputSchema':{{'type':'object'}}}}]}}
  else: r={{'content':[{{'type':'text','text':'ok'}}]}}
  print(json.dumps({{'jsonrpc':'2.0','id':m['id'],'result':r}}),flush=True)
-"#);
-        crate::agent_context::Transport::Stdio { command: "python3".into(), args: vec!["-c".into(), script], env: vec![] }
+"#
+        );
+        crate::agent_context::Transport::Stdio {
+            command: "python3".into(),
+            args: vec!["-c".into(), script],
+            env: vec![],
+        }
     }
 
-    fn discovered(name: &str, transport: crate::agent_context::Transport) -> crate::agent_context::Server {
-        crate::agent_context::Server { name: name.into(), source: ".mcp.json".into(), transport, project: true, hash: String::new() }
+    fn discovered(
+        name: &str,
+        transport: crate::agent_context::Transport,
+    ) -> crate::agent_context::Server {
+        crate::agent_context::Server {
+            name: name.into(),
+            source: ".mcp.json".into(),
+            transport,
+            project: true,
+            hash: String::new(),
+        }
     }
 
     // Client servers come first and must connect; discovered ones join unless their
@@ -582,18 +692,35 @@ for line in sys.stdin:
     #[test]
     fn sessions_add_discovered_context_without_letting_it_break_the_session() {
         let dir = tempfile::tempdir().unwrap();
-        let crate::agent_context::Transport::Stdio { command, args, .. } = fixture("graph_status", "Client jazyk.") else { unreachable!() };
-        let client = vec![McpServer::Stdio(agent_client_protocol::schema::v1::McpServerStdio::new("jazyk", command).args(args))];
+        let crate::agent_context::Transport::Stdio { command, args, .. } =
+            fixture("graph_status", "Client jazyk.")
+        else {
+            unreachable!()
+        };
+        let client = vec![McpServer::Stdio(
+            agent_client_protocol::schema::v1::McpServerStdio::new("jazyk", command).args(args),
+        )];
         let skill_dir = dir.path().join(".agents/skills/s");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: s\ndescription: d\n---\nDo it.").unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: s\ndescription: d\n---\nDo it.",
+        )
+        .unwrap();
         let (skills, _) = crate::agent_context::skills(dir.path(), None);
         let context = crate::agent_context::SessionContext {
             instructions: Some("PROJECT INSTRUCTIONS: be brief".into()),
             servers: vec![
                 discovered("jazyk", fixture("other", "Shadow.")),
                 discovered("extra", fixture("extra_tool", "Extra server.")),
-                discovered("broken", crate::agent_context::Transport::Stdio { command: "/nonexistent/mcp".into(), args: vec![], env: vec![] }),
+                discovered(
+                    "broken",
+                    crate::agent_context::Transport::Stdio {
+                        command: "/nonexistent/mcp".into(),
+                        args: vec![],
+                        env: vec![],
+                    },
+                ),
                 discovered("clash", fixture("graph_status", "Clash.")),
             ],
             skills,
@@ -603,18 +730,37 @@ for line in sys.stdin:
         let names: Vec<&str> = opened.tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["graph_status", "extra_tool", "read_skill"]);
         let text = opened.history[0]["content"].as_str().unwrap();
-        for part in ["Client jazyk.", "Extra server.", "PROJECT INSTRUCTIONS: be brief", "- s: d", "`broken` (.mcp.json) skipped", "`clash` (.mcp.json) skipped", "graph_status"] {
+        for part in [
+            "Client jazyk.",
+            "Extra server.",
+            "PROJECT INSTRUCTIONS: be brief",
+            "- s: d",
+            "`broken` (.mcp.json) skipped",
+            "`clash` (.mcp.json) skipped",
+            "graph_status",
+        ] {
             assert!(text.contains(part), "{part}: {text}");
         }
-        assert!(!text.contains("Shadow."), "a discovered jazyk never replaces the client's");
+        assert!(
+            !text.contains("Shadow."),
+            "a discovered jazyk never replaces the client's"
+        );
         let mut opened = opened;
         let mut host = ConnectedTools(&mut opened.conns, &opened.skills);
-        let reply = futures::executor::block_on(harness::ToolHost::call(&mut host, "read_skill", &json!({"name": "s"}))).unwrap();
+        let reply = futures::executor::block_on(harness::ToolHost::call(
+            &mut host,
+            "read_skill",
+            &json!({"name": "s"}),
+        ))
+        .unwrap();
         assert!(reply.contains("Do it."));
         // A worker session reads nothing beyond its client servers.
         let worker = open_session(&client, dir.path(), None).unwrap();
         assert_eq!(worker.tools.len(), 1);
-        assert_eq!(worker.history[0]["content"], "MCP server `jazyk` instructions:\nClient jazyk.");
+        assert_eq!(
+            worker.history[0]["content"],
+            "MCP server `jazyk` instructions:\nClient jazyk."
+        );
     }
 
     #[test]
@@ -647,7 +793,9 @@ for line in sys.stdin:
     #[test]
     fn the_model_option_offers_the_endpoint_and_keeps_its_id() {
         // An endpoint that cannot answer leaves exactly one honest choice.
-        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
+        let llm = crate::llm::Llm {
+            api: "chat_completions".into(),
+            reasoning_summary: None,
             base_url: "http://127.0.0.1:1/v1".into(),
             model: "some-model".into(),
             api_key: String::new(),

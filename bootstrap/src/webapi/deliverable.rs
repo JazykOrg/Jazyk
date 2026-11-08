@@ -313,20 +313,46 @@ mod tests {
         let out = root.join(".jazyk/ds_main");
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
         crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Site'\ndocs = ['docs/**']\nsource = ['deliverable/**']\n").unwrap();
-        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+        let project = crate::document_sets::Workspace::load(root)
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap();
         let gs = GenSettings::resolve(&project);
-        for path in ["deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore", "deliverable/.env", "deliverable/.github/.aws/config"] {
+        for path in [
+            "deliverable/.github/workflows/deploy.yml",
+            "deliverable/.gitignore",
+            "deliverable/.env",
+            "deliverable/.github/.aws/config",
+        ] {
             crate::vfs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
             crate::vfs::write(root.join(path), "fixture\n").unwrap();
         }
         let files = deliverable_value(&out, &gs);
-        let paths: Vec<_> = files["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
-        assert_eq!(paths, ["deliverable/.github/workflows/deploy.yml", "deliverable/.gitignore"]);
+        let paths: Vec<_> = files["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "deliverable/.github/workflows/deploy.yml",
+                "deliverable/.gitignore"
+            ]
+        );
         for path in paths {
-            assert_eq!(deliverable_file(&out, &gs, path).unwrap()["text"], "fixture\n");
+            assert_eq!(
+                deliverable_file(&out, &gs, path).unwrap()["text"],
+                "fixture\n"
+            );
             assert_eq!(deliverable_raw(&gs, path).unwrap(), b"fixture\n");
         }
-        for path in ["deliverable/.env", "deliverable/.github/.aws/config", "deliverable/.gitignore/child"] {
+        for path in [
+            "deliverable/.env",
+            "deliverable/.github/.aws/config",
+            "deliverable/.gitignore/child",
+        ] {
             assert_eq!(deliverable_file(&out, &gs, path).unwrap_err().0, 400);
             assert_eq!(deliverable_raw(&gs, path).unwrap_err().0, 400);
         }

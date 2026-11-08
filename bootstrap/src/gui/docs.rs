@@ -3,13 +3,12 @@ use crate::vfs::VPathExt;
 // The write path is the security-sensitive surface; every rule here has a test.
 use super::api::err;
 use super::state::SharedState;
+pub use crate::webapi::docs::safe_doc_path;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-pub use crate::webapi::docs::safe_doc_path;
 use serde::Deserialize;
 use serde_json::json;
-
 
 #[derive(Deserialize)]
 pub struct DocPathQ {
@@ -38,12 +37,17 @@ pub async fn doc_write(
     .expect("document write");
     match written {
         crate::webapi::docs::DocWrite::Written(value) => Json(value).into_response(),
-        crate::webapi::docs::DocWrite::Conflict(value) => (StatusCode::CONFLICT, Json(value)).into_response(),
+        crate::webapi::docs::DocWrite::Conflict(value) => {
+            (StatusCode::CONFLICT, Json(value)).into_response()
+        }
         crate::webapi::docs::DocWrite::Invalid(message) => err(
-            StatusCode::from_u16(crate::webapi::docs::invalid_status(&message)).unwrap_or(StatusCode::BAD_REQUEST),
+            StatusCode::from_u16(crate::webapi::docs::invalid_status(&message))
+                .unwrap_or(StatusCode::BAD_REQUEST),
             message,
         ),
-        crate::webapi::docs::DocWrite::Failed(message) => err(StatusCode::INTERNAL_SERVER_ERROR, message),
+        crate::webapi::docs::DocWrite::Failed(message) => {
+            err(StatusCode::INTERNAL_SERVER_ERROR, message)
+        }
     }
 }
 
@@ -127,15 +131,27 @@ fn delete_sync(st: &SharedState, p: DocPathQ) -> Response {
 // Original bytes, projection and diagnostics share one revision.
 pub async fn binary_read(State(st): State<SharedState>, Query(p): Query<DocPathQ>) -> Response {
     let project = st.proj();
-    match tokio::task::spawn_blocking(move || crate::webapi::binary_documents::read(&project, &p.path)).await {
+    match tokio::task::spawn_blocking(move || {
+        crate::webapi::binary_documents::read(&project, &p.path)
+    })
+    .await
+    {
         Ok(Ok(value)) => Json(value).into_response(),
         Ok(Err(r)) => super::api::refused(r),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
-pub async fn binary_write(State(st): State<SharedState>, Query(p): Query<DocPathQ>, Json(body): Json<serde_json::Value>) -> Response {
+pub async fn binary_write(
+    State(st): State<SharedState>,
+    Query(p): Query<DocPathQ>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
     let project = st.proj();
-    match tokio::task::spawn_blocking(move || crate::webapi::binary_documents::write(&project, &p.path, &body)).await {
+    match tokio::task::spawn_blocking(move || {
+        crate::webapi::binary_documents::write(&project, &p.path, &body)
+    })
+    .await
+    {
         Ok(Ok(value)) => Json(value).into_response(),
         Ok(Err(r)) => super::api::refused(r),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

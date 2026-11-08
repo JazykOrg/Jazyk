@@ -124,7 +124,14 @@ fn reading_order(prose: &[String]) -> (Vec<String>, Option<String>) {
     let index = prose
         .iter()
         .find(|p| {
-            matches!(p.rsplit('/').next().unwrap_or(p).to_ascii_lowercase().as_str(), "readme.md" | "index.md")
+            matches!(
+                p.rsplit('/')
+                    .next()
+                    .unwrap_or(p)
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "readme.md" | "index.md"
+            )
         })
         .cloned();
     let mut rest: Vec<String> = prose
@@ -142,7 +149,7 @@ pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
     let ledger = Ledger::load(&p.out);
     let mut files: Vec<(String, u64)> = Vec::new();
     walk(&gs.deliverable, &gs.deliverable, &mut files);
-    files.retain(|(f,_)|gs.allows_source(f));
+    files.retain(|(f, _)| gs.allows_source(f));
     let sizes: std::collections::HashMap<String, u64> = files.iter().cloned().collect();
     let artifacts: HashSet<&str> = tests_of(&ledger)
         .map(|t| t.artifact.as_str())
@@ -206,7 +213,12 @@ pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
                 order.push(ix.clone());
                 let text = read_text(&gs.deliverable.join(ix)).unwrap_or_default();
                 for l in index_links(&text) {
-                    let l=Path::new(ix).parent().unwrap_or_else(||Path::new("")).join(l).to_string_lossy().replace('\\',"/");
+                    let l = Path::new(ix)
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .join(l)
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     if rest.contains(&l) && !order.contains(&l) {
                         order.push(l);
                     }
@@ -346,7 +358,15 @@ mod tests {
         ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
-        crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, toml).unwrap();
+        crate::vfs::write(
+            {
+                let path = dir.join(".jazyk/jazyk.toml");
+                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+                path
+            },
+            toml,
+        )
+        .unwrap();
         for (rel, bytes) in files {
             let p = dir.join(rel);
             crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -385,7 +405,12 @@ mod tests {
             .collect();
         assert_eq!(
             paths,
-            vec!["product/README.md", "product/b-two.md", "product/a-one.md", "product/c-three.md"]
+            vec![
+                "product/README.md",
+                "product/b-two.md",
+                "product/a-one.md",
+                "product/c-three.md"
+            ]
         );
         crate::vfs::remove_dir_all(&p.root).ok();
     }

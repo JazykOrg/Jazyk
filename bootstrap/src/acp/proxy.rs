@@ -70,15 +70,17 @@ impl ProxyState {
 
     fn down_of(&self, sid: &str) -> Result<ConnectionTo<Agent>, agent_client_protocol::Error> {
         let name = self.agent_of(sid);
-        self.downs.lock().unwrap().get(&name).cloned().ok_or_else(not_initialized)
+        self.downs
+            .lock()
+            .unwrap()
+            .get(&name)
+            .cloned()
+            .ok_or_else(not_initialized)
     }
 
     // The spawn configuration of a named agent (None: the configured one), resolved
     // from the settings as they are on disk now, so `/agent` sees its own write.
-    fn agent_config(
-        &self,
-        name: Option<&str>,
-    ) -> Result<(String, AcpAgentConfig), String> {
+    fn agent_config(&self, name: Option<&str>) -> Result<(String, AcpAgentConfig), String> {
         let proj_acp = self
             .project
             .lock()
@@ -90,7 +92,13 @@ impl ProxyState {
             name,
             &proj_acp,
             &crate::project::load_global_acp(),
-            |n| if name.is_some() { None } else { std::env::var(n).ok() },
+            |n| {
+                if name.is_some() {
+                    None
+                } else {
+                    std::env::var(n).ok()
+                }
+            },
         )?;
         let llm = self.llm.lock().unwrap().clone();
         Ok((agent.name.clone(), spawn_config(&agent, &llm)))
@@ -605,46 +613,53 @@ fn open_session(
     name: String,
     req: NewSessionRequest,
     fence: std::path::PathBuf,
-    responder: agent_client_protocol::Responder<agent_client_protocol::schema::v1::NewSessionResponse>,
+    responder: agent_client_protocol::Responder<
+        agent_client_protocol::schema::v1::NewSessionResponse,
+    >,
 ) -> Result<(), agent_client_protocol::Error> {
     let cwd = req.cwd.clone();
-    down.send_request(req).on_receiving_result(async move |result| {
-        let sid = result.as_ref().ok().map(|r| r.session_id.to_string());
-        if let Some(sid) = &sid {
-            st.session_agents.lock().unwrap().insert(sid.clone(), name.clone());
-            st.runtime_fences.lock().unwrap().insert(sid.clone(), fence.clone());
-            *st.last_session.lock().unwrap() = Some(sid.clone());
-            // A conversation in a project is recorded from its first
-            // moment, so it can be listed and reopened later.
-            // Mirrors docs/frontends/acp.md#session-store.
-            if st.in_project() {
-                crate::acp::sessions::open(&st.out, sid, &cwd, &name);
+    down.send_request(req)
+        .on_receiving_result(async move |result| {
+            let sid = result.as_ref().ok().map(|r| r.session_id.to_string());
+            if let Some(sid) = &sid {
+                st.session_agents
+                    .lock()
+                    .unwrap()
+                    .insert(sid.clone(), name.clone());
+                st.runtime_fences
+                    .lock()
+                    .unwrap()
+                    .insert(sid.clone(), fence.clone());
+                *st.last_session.lock().unwrap() = Some(sid.clone());
+                // A conversation in a project is recorded from its first
+                // moment, so it can be listed and reopened later.
+                // Mirrors docs/frontends/acp.md#session-store.
+                if st.in_project() {
+                    crate::acp::sessions::open(&st.out, sid, &cwd, &name);
+                }
             }
-        }
-        responder.respond_with_result(result)?;
-        // Inside a project, the session advertises the jazyk commands;
-        // outside one it advertises the way in, and nothing else.
-        // Mirrors docs/frontends/acp.md#slash-commands.
-        if let (Some(sid), Some(up)) = (sid, st.up.get()) {
-            advertise_commands(&st, up, &sid);
-            // Opening a project with standing questions re-surfaces
-            // them without any request.
-            // Mirrors docs/frontends/acp.md#questions-in-chat.
-            if let Some(q) = st
-                .in_project()
-                .then(|| crate::answer::questions_summary(&st.out))
-                .flatten()
-            {
-                let _ = up.send_notification(SessionNotification::new(
-                    sid_of(&sid),
-                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                        ContentBlock::from(q),
-                    )),
-                ));
+            responder.respond_with_result(result)?;
+            // Inside a project, the session advertises the jazyk commands;
+            // outside one it advertises the way in, and nothing else.
+            // Mirrors docs/frontends/acp.md#slash-commands.
+            if let (Some(sid), Some(up)) = (sid, st.up.get()) {
+                advertise_commands(&st, up, &sid);
+                // Opening a project with standing questions re-surfaces
+                // them without any request.
+                // Mirrors docs/frontends/acp.md#questions-in-chat.
+                if let Some(q) = st
+                    .in_project()
+                    .then(|| crate::answer::questions_summary(&st.out))
+                    .flatten()
+                {
+                    let _ = up.send_notification(SessionNotification::new(
+                        sid_of(&sid),
+                        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(q))),
+                    ));
+                }
             }
-        }
-        Ok(())
-    })
+            Ok(())
+        })
 }
 
 fn sid_of(s: &str) -> SessionId {
@@ -820,13 +835,20 @@ fn ensure_down(
             agent_client_protocol::on_receive_request!(),
         );
     let down = cx.spawn_connection(backend, AcpAgent::new(config))?;
-    state.downs.lock().unwrap().insert(name.to_string(), down.clone());
+    state
+        .downs
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), down.clone());
     Ok(down)
 }
 
 // How to spawn a resolved agent. The embedded one prompts the configured endpoint,
 // so it inherits the resolved LLM settings.
-fn spawn_config(agent: &crate::acp::config::ResolvedAgent, llm: &crate::llm::Llm) -> AcpAgentConfig {
+fn spawn_config(
+    agent: &crate::acp::config::ResolvedAgent,
+    llm: &crate::llm::Llm,
+) -> AcpAgentConfig {
     let mut config = AcpAgentConfig::new(&agent.command).args(agent.args.clone());
     for (k, v) in &agent.env {
         config = config.env(k, v);
@@ -836,7 +858,9 @@ fn spawn_config(agent: &crate::acp::config::ResolvedAgent, llm: &crate::llm::Llm
             .env("JAZYK_LLM_API", &llm.api)
             .env("JAZYK_LLM_BASE_URL", &llm.base_url)
             .env("JAZYK_MODEL", &llm.model);
-        if let Some(summary) = &llm.reasoning_summary { config = config.env("JAZYK_REASONING_SUMMARY", summary); }
+        if let Some(summary) = &llm.reasoning_summary {
+            config = config.env("JAZYK_REASONING_SUMMARY", summary);
+        }
         if !llm.api_key.is_empty() {
             config = config.env("JAZYK_API_KEY", &llm.api_key);
         }
@@ -874,7 +898,9 @@ fn start_sink(state: &Arc<ProxyState>) {
                 // writes the disk itself; any other failure stays a failure.
                 let reply = match delegate_edit(&st, &v) {
                     Ok(()) => json!({"ok": true}),
-                    Err(DelegateError::Unavailable(e)) => json!({"ok": false, "unavailable": true, "error": e}),
+                    Err(DelegateError::Unavailable(e)) => {
+                        json!({"ok": false, "unavailable": true, "error": e})
+                    }
                     Err(DelegateError::Failed(e)) => json!({"ok": false, "error": e}),
                 };
                 let mut w = &stream;
@@ -894,9 +920,14 @@ enum DelegateError {
 fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), DelegateError> {
     use DelegateError::{Failed, Unavailable};
     if !*st.client_fs_write.lock().unwrap() {
-        return Err(Unavailable("the client has no fs.writeTextFile capability".into()));
+        return Err(Unavailable(
+            "the client has no fs.writeTextFile capability".into(),
+        ));
     }
-    let up = st.up.get().ok_or(Unavailable("no upstream connection".into()))?;
+    let up = st
+        .up
+        .get()
+        .ok_or(Unavailable("no upstream connection".into()))?;
     let sid = st
         .last_session
         .lock()
@@ -904,7 +935,9 @@ fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), Dele
         .clone()
         .ok_or(Unavailable("no open session".into()))?;
     let path = v["path"].as_str().ok_or(Failed("missing path".into()))?;
-    let content = v["content"].as_str().ok_or(Failed("missing content".into()))?;
+    let content = v["content"]
+        .as_str()
+        .ok_or(Failed("missing content".into()))?;
     let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
     up.send_request(WriteTextFileRequest::new(
         sid_of(&sid),

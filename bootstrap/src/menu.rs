@@ -82,7 +82,11 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
         if drawn > 0 {
             let _ = queue!(out, cursor::MoveUp(drawn));
         }
-        let _ = queue!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::FromCursorDown));
+        let _ = queue!(
+            out,
+            cursor::MoveToColumn(0),
+            terminal::Clear(terminal::ClearType::FromCursorDown)
+        );
         for (i, line) in lines.iter().enumerate().skip(top).take(height) {
             match line {
                 Line::Heading(g) => {
@@ -106,7 +110,12 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
                         nw = name_width
                     );
                     if here {
-                        let _ = queue!(out, SetAttribute(Attribute::Reverse), Print(&text), SetAttribute(Attribute::Reset));
+                        let _ = queue!(
+                            out,
+                            SetAttribute(Attribute::Reverse),
+                            Print(&text),
+                            SetAttribute(Attribute::Reset)
+                        );
                     } else {
                         let _ = queue!(out, Print(&text));
                     }
@@ -131,7 +140,13 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
         );
         let _ = out.flush();
         drawn = height as u16;
-        let Ok(Event::Key(KeyEvent { code, modifiers, kind, .. })) = event::read() else {
+        let Ok(Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind,
+            ..
+        })) = event::read()
+        else {
             continue;
         };
         if kind == KeyEventKind::Release {
@@ -150,10 +165,13 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
             // A letter jumps to the next row whose key starts with it.
             KeyCode::Char(c) => {
                 let n = items.len();
-                if let Some(next) = (1..=n).map(|d| (at + d) % n).find(|&j| match lines[items[j]] {
-                    Line::Item(g, r) => groups[g].rows[r].key.starts_with(c),
-                    _ => false,
-                }) {
+                if let Some(next) = (1..=n)
+                    .map(|d| (at + d) % n)
+                    .find(|&j| match lines[items[j]] {
+                        Line::Item(g, r) => groups[g].rows[r].key.starts_with(c),
+                        _ => false,
+                    })
+                {
                     at = next;
                 }
             }
@@ -161,7 +179,13 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
         }
     };
     // Leave the list on screen with the pick marked, and the cursor below it.
-    let _ = execute!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine), Print("\r\n"), cursor::Show);
+    let _ = execute!(
+        out,
+        cursor::MoveToColumn(0),
+        terminal::Clear(terminal::ClearType::CurrentLine),
+        Print("\r\n"),
+        cursor::Show
+    );
     let _ = terminal::disable_raw_mode();
     picked.map(|i| match lines[items[i]] {
         Line::Item(g, r) => (g, r),
@@ -178,7 +202,12 @@ pub fn check(heading: &str, rows: &[Row], enabled: &[bool], initial: &[bool]) ->
     // Cursor 0 is the `All` row; 1.. are the items.
     let mut at = 0usize;
     let n = rows.len() + 1;
-    let name_width = rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(0).max(3);
+    let name_width = rows
+        .iter()
+        .map(|r| r.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(3);
     let mut out = std::io::stdout();
     if terminal::enable_raw_mode().is_err() {
         return None;
@@ -196,8 +225,18 @@ pub fn check(heading: &str, rows: &[Row], enabled: &[bool], initial: &[bool]) ->
         if drawn > 0 {
             let _ = queue!(out, cursor::MoveUp(drawn));
         }
-        let _ = queue!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::FromCursorDown));
-        let _ = queue!(out, SetAttribute(Attribute::Bold), Print(heading), SetAttribute(Attribute::Reset), Print("\r\n"));
+        let _ = queue!(
+            out,
+            cursor::MoveToColumn(0),
+            terminal::Clear(terminal::ClearType::FromCursorDown)
+        );
+        let _ = queue!(
+            out,
+            SetAttribute(Attribute::Bold),
+            Print(heading),
+            SetAttribute(Attribute::Reset),
+            Print("\r\n")
+        );
         for i in top..top + height {
             let here = i == at;
             let (mark, name, note, on) = if i == 0 {
@@ -213,16 +252,38 @@ pub fn check(heading: &str, rows: &[Row], enabled: &[bool], initial: &[bool]) ->
                 };
                 (mark, r.name.as_str(), r.note.as_str(), enabled[i - 1])
             };
-            let text = format!("{} {} {:nw$}", if here { ">" } else { " " }, mark, name, nw = name_width);
+            let text = format!(
+                "{} {} {:nw$}",
+                if here { ">" } else { " " },
+                mark,
+                name,
+                nw = name_width
+            );
             if here {
-                let _ = queue!(out, SetAttribute(Attribute::Reverse), Print(&text), SetAttribute(Attribute::Reset));
+                let _ = queue!(
+                    out,
+                    SetAttribute(Attribute::Reverse),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset)
+                );
             } else if !on {
-                let _ = queue!(out, SetAttribute(Attribute::Dim), Print(&text), SetAttribute(Attribute::Reset));
+                let _ = queue!(
+                    out,
+                    SetAttribute(Attribute::Dim),
+                    Print(&text),
+                    SetAttribute(Attribute::Reset)
+                );
             } else {
                 let _ = queue!(out, Print(&text));
             }
             if !note.is_empty() {
-                let _ = queue!(out, Print("  "), SetAttribute(Attribute::Dim), Print(note), SetAttribute(Attribute::Reset));
+                let _ = queue!(
+                    out,
+                    Print("  "),
+                    SetAttribute(Attribute::Dim),
+                    Print(note),
+                    SetAttribute(Attribute::Reset)
+                );
             }
             let _ = queue!(out, Print("\r\n"));
         }
@@ -234,7 +295,13 @@ pub fn check(heading: &str, rows: &[Row], enabled: &[bool], initial: &[bool]) ->
         );
         let _ = out.flush();
         drawn = height as u16 + 1;
-        let Ok(Event::Key(KeyEvent { code, modifiers, kind, .. })) = event::read() else {
+        let Ok(Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind,
+            ..
+        })) = event::read()
+        else {
             continue;
         };
         if kind == KeyEventKind::Release {
@@ -269,7 +336,13 @@ pub fn check(heading: &str, rows: &[Row], enabled: &[bool], initial: &[bool]) ->
             _ => {}
         }
     };
-    let _ = execute!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine), Print("\r\n"), cursor::Show);
+    let _ = execute!(
+        out,
+        cursor::MoveToColumn(0),
+        terminal::Clear(terminal::ClearType::CurrentLine),
+        Print("\r\n"),
+        cursor::Show
+    );
     let _ = terminal::disable_raw_mode();
     done
 }

@@ -42,7 +42,12 @@ fn waiting(d: &Diagnostic) -> bool {
     d.answer.as_ref().is_none_or(|a| a.status == "failed")
 }
 
-pub fn inbox_value(proj: &Project, gs: &crate::gen::GenSettings, out: &Path, store: &Store) -> Value {
+pub fn inbox_value(
+    proj: &Project,
+    gs: &crate::gen::GenSettings,
+    out: &Path,
+    store: &Store,
+) -> Value {
     let mut questions = 0usize;
     let mut proposals = 0usize;
     let mut handling = 0usize;
@@ -164,13 +169,21 @@ pub fn triage_value(out: &Path, id: &str, body: &Value) -> Result<Value, super::
 // resolves in the reply; any other answer records `handling`, and the transport
 // decides what acts on it (a spawned answer session on a machine, the next build in
 // a tab). Mirrors docs/compiler/model/diagnostic.md#answers.
-pub fn answer_value(proj: &Project, out: &Path, id: &str, body: &Value) -> Result<Value, super::Refusal> {
+pub fn answer_value(
+    proj: &Project,
+    out: &Path,
+    id: &str,
+    body: &Value,
+) -> Result<Value, super::Refusal> {
     let reply = if let Some(i) = body["option"].as_u64() {
         crate::answer::Reply::Choice(i as usize)
     } else if let Some(t) = body["text"].as_str() {
         crate::answer::Reply::Text(t.to_string())
     } else {
-        return Err((400, "pass option (an index) or text (a freeform reply)".to_string()));
+        return Err((
+            400,
+            "pass option (an index) or text (a freeform reply)".to_string(),
+        ));
     };
     crate::answer::answer(proj, out, id, reply, None).map_err(|e| (400, e))
 }
@@ -184,8 +197,11 @@ mod tests {
     // A project with one document and three open diagnostics: a question with an
     // edit option and freeform, a plain problem, and a proposal.
     fn fixture(name: &str) -> (Project, std::path::PathBuf) {
-        let root =
-            std::env::temp_dir().join(format!("jazyk-webapi-inbox-{}-{}", name, crate::sys::process_id()));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-webapi-inbox-{}-{}",
+            name,
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
         crate::vfs::write({ let path = root.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n").unwrap();
@@ -199,7 +215,12 @@ mod tests {
         let (parsed, _) = crate::reconcile::parse_all(&proj);
         let mut s = Store::load(&out);
         s.sync_docs(&parsed);
-        let sec = s.docs["docs/arc.md"].sections.keys().next().unwrap().clone();
+        let sec = s.docs["docs/arc.md"]
+            .sections
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
         let diag = |rule: &str, severity: &str, prompt: Option<DiagnosticPrompt>| Diagnostic {
             rule: rule.into(),
             severity: severity.into(),
@@ -277,12 +298,18 @@ mod tests {
         assert_eq!(v["proposals"], 1);
         assert_eq!(v["problems"]["warning"], 1);
         assert_eq!(v["sections"]["questions"], json!(["diag:contradiction-1"]));
-        assert_eq!(v["sections"]["proposals"], json!(["diag:invented-choice-1"]));
+        assert_eq!(
+            v["sections"]["proposals"],
+            json!(["diag:invented-choice-1"])
+        );
         assert_eq!(v["sections"]["problems"], json!(["diag:gap-1"]));
         assert_eq!(v["sections"]["drafts"], json!([]));
         // Questions and proposals, no pending documents (compile is auto by
         // default), no errors among the problems.
-        assert_eq!(v["total"], 2 + v["pending"]["docs"].as_array().unwrap().len());
+        assert_eq!(
+            v["total"],
+            2 + v["pending"]["docs"].as_array().unwrap().len()
+        );
     }
 
     #[test]
@@ -290,15 +317,28 @@ mod tests {
         let (proj, out) = fixture("triage");
         let v = triage_value(&out, "diag:gap-1", &json!({"triage": "acknowledged"})).unwrap();
         assert_eq!(v["diagnostic"]["triage"], "acknowledged");
-        assert_eq!(rollup(&proj, &out)["sections"]["problems"], json!(["diag:gap-1"]));
+        assert_eq!(
+            rollup(&proj, &out)["sections"]["problems"],
+            json!(["diag:gap-1"])
+        );
         triage_value(&out, "diag:gap-1", &json!({"triage": "suppressed"})).unwrap();
         assert_eq!(rollup(&proj, &out)["sections"]["problems"], json!([]));
         // Undo clears it.
         let v = triage_value(&out, "diag:gap-1", &json!({"triage": null})).unwrap();
         assert!(v["diagnostic"]["triage"].is_null());
         // Refusals name the rule.
-        assert_eq!(triage_value(&out, "diag:gap-1", &json!({"triage": "maybe"})).unwrap_err().0, 400);
-        assert_eq!(triage_value(&out, "diag:nope-1", &json!({"triage": null})).unwrap_err().0, 404);
+        assert_eq!(
+            triage_value(&out, "diag:gap-1", &json!({"triage": "maybe"}))
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            triage_value(&out, "diag:nope-1", &json!({"triage": null}))
+                .unwrap_err()
+                .0,
+            404
+        );
     }
 
     #[test]
@@ -344,8 +384,15 @@ mod tests {
         assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!([]));
         assert_eq!(reread(), before);
         // A human edit after it is pending again, as any edit is.
-        crate::vfs::write(proj.root.join("docs/arc.md"), "# Arc\n\nTheo is an ally now.\n").unwrap();
-        assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!(["docs/arc.md"]));
+        crate::vfs::write(
+            proj.root.join("docs/arc.md"),
+            "# Arc\n\nTheo is an ally now.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            rollup(&proj, &out)["pending"]["docs"],
+            json!(["docs/arc.md"])
+        );
     }
 
     // A document that waited for a release before the write still waits after it.
@@ -359,13 +406,22 @@ mod tests {
         )
         .unwrap();
         answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 0})).unwrap();
-        assert_eq!(rollup(&proj, &out)["pending"]["docs"], json!(["docs/arc.md"]));
+        assert_eq!(
+            rollup(&proj, &out)["pending"]["docs"],
+            json!(["docs/arc.md"])
+        );
     }
 
     #[test]
     fn a_freeform_answer_records_handling_and_stays_listed_uncounted() {
         let (proj, out) = fixture("free");
-        let v = answer_value(&proj, &out, "diag:contradiction-1", &json!({"text": "  keep the rival  "})).unwrap();
+        let v = answer_value(
+            &proj,
+            &out,
+            "diag:contradiction-1",
+            &json!({"text": "  keep the rival  "}),
+        )
+        .unwrap();
         assert_eq!(v["status"], "handling");
         let d = Store::load(&out).graph.diagnostics["diag:contradiction-1"].clone();
         assert_eq!(
@@ -381,13 +437,22 @@ mod tests {
         assert_eq!(r["questions"], 0);
         assert_eq!(r["handling"], 1);
         assert_eq!(r["sections"]["questions"], json!(["diag:contradiction-1"]));
-        assert_eq!(crate::answer::handling_ids(&out), vec!["diag:contradiction-1".to_string()]);
+        assert_eq!(
+            crate::answer::handling_ids(&out),
+            vec!["diag:contradiction-1".to_string()]
+        );
         // A second answer is refused while the first stands.
-        let e = answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 1})).unwrap_err();
+        let e =
+            answer_value(&proj, &out, "diag:contradiction-1", &json!({"option": 1})).unwrap_err();
         assert_eq!(e.0, 400);
         assert!(e.1.contains("already has an answer"), "{}", e.1);
         // Neither an option nor text is refused.
-        assert_eq!(answer_value(&proj, &out, "diag:contradiction-1", &json!({})).unwrap_err().0, 400);
+        assert_eq!(
+            answer_value(&proj, &out, "diag:contradiction-1", &json!({}))
+                .unwrap_err()
+                .0,
+            400
+        );
     }
 
     #[test]

@@ -29,12 +29,27 @@ fn redact_api_keys(text: &str) -> String {
 }
 
 fn product_patterns(root: &Path) -> Vec<String> {
-    crate::task_runtime::load(root).map(|(_, tasks)| tasks.into_iter().flat_map(|t| t.products).collect()).unwrap_or_default()
+    crate::task_runtime::load(root)
+        .map(|(_, tasks)| tasks.into_iter().flat_map(|t| t.products).collect())
+        .unwrap_or_default()
 }
 
-fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::collections::BTreeSet<PathBuf>, products: &[String], product_only: bool) {
-    let Ok(canonical)=dir.vcanonicalize() else {return;};
-    if !canonical.starts_with(base.vcanonicalize().unwrap_or_else(|_|base.into())) || !seen.insert(canonical) {return;}
+fn walk(
+    dir: &Path,
+    base: &Path,
+    acc: &mut Vec<(String, u64)>,
+    seen: &mut std::collections::BTreeSet<PathBuf>,
+    products: &[String],
+    product_only: bool,
+) {
+    let Ok(canonical) = dir.vcanonicalize() else {
+        return;
+    };
+    if !canonical.starts_with(base.vcanonicalize().unwrap_or_else(|_| base.into()))
+        || !seen.insert(canonical)
+    {
+        return;
+    }
     let Ok(rd) = crate::vfs::read_dir(dir) else {
         return;
     };
@@ -54,13 +69,29 @@ fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::c
         }
         if p.vis_dir() {
             let product_only = product_only || SKIP.contains(&name.as_str());
-            let relative = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-            if product_only && !crate::task_runtime::may_contain_product(products, &relative) { continue; }
+            let relative = p
+                .strip_prefix(base)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if product_only && !crate::task_runtime::may_contain_product(products, &relative) {
+                continue;
+            }
             walk(&p, base, acc, seen, products, product_only);
         } else if let Ok(rel) = p.strip_prefix(base) {
-            if !p.vcanonicalize().is_ok_and(|p|p.starts_with(base.vcanonicalize().unwrap_or_else(|_|base.into()))) {continue;}
+            if !p
+                .vcanonicalize()
+                .is_ok_and(|p| p.starts_with(base.vcanonicalize().unwrap_or_else(|_| base.into())))
+            {
+                continue;
+            }
             let relative = rel.to_string_lossy().replace('\\', "/");
-            if product_only && (!crate::task_runtime::matches(products, &relative) || !product_readable(base, &relative, &p)) { continue; }
+            if product_only
+                && (!crate::task_runtime::matches(products, &relative)
+                    || !product_readable(base, &relative, &p))
+            {
+                continue;
+            }
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
             acc.push((rel.to_string_lossy().replace('\\', "/"), size));
         }
@@ -71,7 +102,9 @@ fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>, seen: &mut std::c
 fn rel_dir(root: &Path, dir: &Path) -> Option<String> {
     let root = root.vcanonicalize().unwrap_or_else(|_| root.to_path_buf());
     let dir = dir.vcanonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    dir.strip_prefix(&root).ok().map(|r| r.to_string_lossy().replace('\\', "/"))
+    dir.strip_prefix(&root)
+        .ok()
+        .map(|r| r.to_string_lossy().replace('\\', "/"))
 }
 
 // `GET /api/project/files`: every file under the project directory with its size,
@@ -79,19 +112,32 @@ fn rel_dir(root: &Path, dir: &Path) -> Option<String> {
 pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[String]) -> Value {
     let mut acc = Vec::new();
     let products = product_patterns(root);
-    walk(root, root, &mut acc, &mut Default::default(), &products, false);
-    let workspace=crate::document_sets::Workspace::load(root).ok();
-    let files: Vec<Value> = acc.into_iter().map(|(path, size)| {
-        let memberships=workspace.as_ref().map(|w|w.memberships(&path)).unwrap_or_default();
-        let input = memberships.iter().any(|m| m["role"] == "docs")
-            || crate::document_sets::included(docs_glob, &path);
-        let product = !path.split('/').any(|p| p.starts_with('.'))
-            && path != "jazyk.toml"
-            && !root.join(&path).starts_with(out)
-            && (crate::task_runtime::matches(&products, &path)
-                || (!input && root.join(&path).starts_with(deliverable)));
-        json!({ "path": path, "size": size, "memberships":memberships, "product":product })
-    }).collect();
+    walk(
+        root,
+        root,
+        &mut acc,
+        &mut Default::default(),
+        &products,
+        false,
+    );
+    let workspace = crate::document_sets::Workspace::load(root).ok();
+    let files: Vec<Value> = acc
+        .into_iter()
+        .map(|(path, size)| {
+            let memberships = workspace
+                .as_ref()
+                .map(|w| w.memberships(&path))
+                .unwrap_or_default();
+            let input = memberships.iter().any(|m| m["role"] == "docs")
+                || crate::document_sets::included(docs_glob, &path);
+            let product = !path.split('/').any(|p| p.starts_with('.'))
+                && path != "jazyk.toml"
+                && !root.join(&path).starts_with(out)
+                && (crate::task_runtime::matches(&products, &path)
+                    || (!input && root.join(&path).starts_with(deliverable)));
+            json!({ "path": path, "size": size, "memberships":memberships, "product":product })
+        })
+        .collect();
     json!({
         "files": files,
         "deliverable": rel_dir(root, deliverable),
@@ -104,9 +150,15 @@ pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[S
 // component, no backslash, nothing under a skipped folder, no `.env` file.
 // Dot-named folders (the out directory) are allowed.
 fn product_readable(root: &Path, rel: &str, path: &Path) -> bool {
-    if crate::task_runtime::protected(rel) { return false; }
-    let Ok(base) = root.vcanonicalize() else { return false; };
-    let Ok(canonical) = path.vcanonicalize() else { return false; };
+    if crate::task_runtime::protected(rel) {
+        return false;
+    }
+    let Ok(base) = root.vcanonicalize() else {
+        return false;
+    };
+    let Ok(canonical) = path.vcanonicalize() else {
+        return false;
+    };
     canonical.strip_prefix(base).is_ok_and(|p| {
         let p = p.to_string_lossy().replace('\\', "/");
         !crate::task_runtime::protected(&p) && !p.rsplit('/').next().is_some_and(is_env_file)
@@ -117,7 +169,9 @@ fn rel_ok(root: &Path, rel: &str) -> bool {
     !rel.is_empty()
         && !rel.starts_with('/')
         && !rel.contains('\\')
-        && !rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c == ".git")
+        && !rel
+            .split('/')
+            .any(|c| c.is_empty() || c == "." || c == ".." || c == ".git")
         && !rel.rsplit('/').next().is_some_and(is_env_file)
         && (!rel.split('/').any(|c| SKIP.contains(&c))
             || (crate::task_runtime::matches(&product_patterns(root), rel)
@@ -162,18 +216,30 @@ pub fn project_file(root: &Path, rel: &str) -> Result<Vec<u8>, Refusal> {
 // `node_modules`, `target`, or the out directory, never across a symlink out of the
 // project or into a nested project. Other dot-folders (`.github`) are fine.
 pub fn writable_path(root: &Path, out: &Path, rel: &str) -> Result<PathBuf, Refusal> {
-    let refuse = || (400, format!("cannot write {rel}: choose a path inside the project, outside .git, .jazyk, build, and dependency folders"));
+    let refuse = || {
+        (400, format!("cannot write {rel}: choose a path inside the project, outside .git, .jazyk, build, and dependency folders"))
+    };
     if rel.is_empty() || rel.starts_with('/') || rel.contains(['\\', '\0', ':']) {
         return Err(refuse());
     }
-    if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c == ".jazyk" || c.starts_with("jazyk-out") || SKIP.contains(&c)) {
+    if rel.split('/').any(|c| {
+        c.is_empty()
+            || c == "."
+            || c == ".."
+            || c == ".jazyk"
+            || c.starts_with("jazyk-out")
+            || SKIP.contains(&c)
+    }) {
         return Err(refuse());
     }
     // Secrets stay out of reach: a `.env` file is never served, so never written; a
     // `jazyk.toml` reads with its keys redacted, so a write would lose them.
     let name = rel.rsplit('/').next().unwrap_or(rel);
     if is_env_file(name) || name == "jazyk.toml" {
-        return Err((400, format!("cannot write {rel} here; settings are edited through /api/settings")));
+        return Err((
+            400,
+            format!("cannot write {rel} here; settings are edited through /api/settings"),
+        ));
     }
     let abs = root.join(rel);
     if abs.starts_with(out) {
@@ -181,11 +247,20 @@ pub fn writable_path(root: &Path, out: &Path, rel: &str) -> Result<PathBuf, Refu
     }
     let base = root.vcanonicalize().map_err(|e| (500, e.to_string()))?;
     for ancestor in abs.ancestors().take_while(|p| *p != root) {
-        if ancestor != abs && ancestor.vis_dir() && ancestor.join(crate::document_sets::CONFIG).vexists() {
-            return Err((400, format!("cannot write {rel}: it is inside a nested project")));
+        if ancestor != abs
+            && ancestor.vis_dir()
+            && ancestor.join(crate::document_sets::CONFIG).vexists()
+        {
+            return Err((
+                400,
+                format!("cannot write {rel}: it is inside a nested project"),
+            ));
         }
         if ancestor.vexists() && !ancestor.vcanonicalize().is_ok_and(|p| p.starts_with(&base)) {
-            return Err((400, format!("cannot write {rel}: it leaves the project through a symlink")));
+            return Err((
+                400,
+                format!("cannot write {rel}: it leaves the project through a symlink"),
+            ));
         }
     }
     Ok(abs)
@@ -194,13 +269,20 @@ pub fn writable_path(root: &Path, out: &Path, rel: &str) -> Result<PathBuf, Refu
 // `PUT /api/project/file?path=`: create one new file anywhere under the project
 // directory, inside a document set or not (docs/frontends/gui.md#api). It never
 // overwrites an existing path.
-pub fn create_project_file(root: &Path, out: &Path, rel: &str, body: &serde_json::Value) -> Result<serde_json::Value, Refusal> {
+pub fn create_project_file(
+    root: &Path,
+    out: &Path,
+    rel: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, Refusal> {
     use base64::{engine::general_purpose::STANDARD, Engine};
     let abs = writable_path(root, out, rel)?;
     let bytes = if let Some(text) = body["text"].as_str() {
         text.as_bytes().to_vec()
     } else if let Some(encoded) = body["base64"].as_str() {
-        STANDARD.decode(encoded).map_err(|_| (400, "invalid base64 content".to_string()))?
+        STANDARD
+            .decode(encoded)
+            .map_err(|_| (400, "invalid base64 content".to_string()))?
     } else {
         return Err((400, "text or base64 is required".into()));
     };
@@ -231,14 +313,25 @@ pub fn project_text(root: &Path, rel: &str) -> Result<serde_json::Value, Refusal
 
 // `PUT /api/project/text?path=` with `{text, baseHash}`: replace an existing project
 // file when the hash still names what is on disk. The file keeps its permissions.
-pub fn write_project_text(root: &Path, out: &Path, rel: &str, body: &serde_json::Value) -> Result<serde_json::Value, Refusal> {
+pub fn write_project_text(
+    root: &Path,
+    out: &Path,
+    rel: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, Refusal> {
     let abs = writable_path(root, out, rel)?;
-    let text = body["text"].as_str().ok_or((400, "text is required".to_string()))?;
-    let base = body["baseHash"].as_str().ok_or((400, "baseHash is required; create new files with PUT /api/project/file".to_string()))?;
+    let text = body["text"]
+        .as_str()
+        .ok_or((400, "text is required".to_string()))?;
+    let base = body["baseHash"].as_str().ok_or((
+        400,
+        "baseHash is required; create new files with PUT /api/project/file".to_string(),
+    ))?;
     if !abs.vexists() || abs.vis_dir() {
         return Err((404, format!("no file {rel}")));
     }
-    let current = crate::vfs::read_to_string(&abs).map_err(|_| (415, format!("{rel} is not UTF-8 text")))?;
+    let current =
+        crate::vfs::read_to_string(&abs).map_err(|_| (415, format!("{rel} is not UTF-8 text")))?;
     if crate::model::hash_hex(&current) != base {
         return Err((409, "the file changed on disk since it was read".into()));
     }
@@ -254,45 +347,136 @@ mod tests {
     fn lists_everything_but_the_skipped_folders_and_refuses_leaving() {
         let dir = std::env::temp_dir().join(format!("jz-projfiles-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        for f in ["jazyk.toml", "docs/a.md", ".jazyk/graph/entities.yaml", "src/x.js", "node_modules/m/i.js", ".git/HEAD"] {
+        for f in [
+            "jazyk.toml",
+            "docs/a.md",
+            ".jazyk/graph/entities.yaml",
+            "src/x.js",
+            "node_modules/m/i.js",
+            ".git/HEAD",
+        ] {
             let p = dir.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, "x").unwrap();
         }
-        let v = project_files(&dir, &dir.join("src"), &dir.join(".jazyk"), &["docs/**/*.md".into()]);
-        let paths: Vec<&str> = v["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        let v = project_files(
+            &dir,
+            &dir.join("src"),
+            &dir.join(".jazyk"),
+            &["docs/**/*.md".into()],
+        );
+        let paths: Vec<&str> = v["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap())
+            .collect();
         assert!(paths.contains(&"jazyk.toml"));
         assert!(paths.contains(&".jazyk/graph/entities.yaml"));
         assert!(paths.contains(&"docs/a.md"));
-        assert!(!paths.iter().any(|p| p.starts_with("node_modules") || p.starts_with(".git")));
+        assert!(!paths
+            .iter()
+            .any(|p| p.starts_with("node_modules") || p.starts_with(".git")));
         assert_eq!(v["deliverable"], "src");
         assert_eq!(v["out"], ".jazyk");
         assert_eq!(project_file(&dir, "jazyk.toml").unwrap(), b"x");
-        assert_eq!(project_file(&dir, ".jazyk/graph/entities.yaml").unwrap(), b"x");
+        assert_eq!(
+            project_file(&dir, ".jazyk/graph/entities.yaml").unwrap(),
+            b"x"
+        );
         assert_eq!(project_file(&dir, "../etc/passwd").unwrap_err().0, 400);
         assert_eq!(project_file(&dir, ".git/HEAD").unwrap_err().0, 400);
         assert_eq!(project_file(&dir, "nope.md").unwrap_err().0, 404);
         let out = dir.join(".jazyk");
         let text = serde_json::json!({"text": "hello"});
-        assert_eq!(create_project_file(&dir, &out, "src/new/notes.txt", &text).unwrap()["path"], "src/new/notes.txt");
-        assert_eq!(std::fs::read_to_string(dir.join("src/new/notes.txt")).unwrap(), "hello");
-        assert_eq!(create_project_file(&dir, &out, "src/new/notes.txt", &text).unwrap_err().0, 409);
-        assert_eq!(create_project_file(&dir, &out, ".jazyk/x.md", &text).unwrap_err().0, 400);
-        assert_eq!(create_project_file(&dir, &out, "../x.md", &text).unwrap_err().0, 400);
-        assert_eq!(create_project_file(&dir, &out, "node_modules/x.md", &text).unwrap_err().0, 400);
-        assert_eq!(create_project_file(&dir, &out, "a.bin", &serde_json::json!({"base64": "aGk="})).unwrap()["path"], "a.bin");
+        assert_eq!(
+            create_project_file(&dir, &out, "src/new/notes.txt", &text).unwrap()["path"],
+            "src/new/notes.txt"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("src/new/notes.txt")).unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, "src/new/notes.txt", &text)
+                .unwrap_err()
+                .0,
+            409
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, ".jazyk/x.md", &text)
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, "../x.md", &text)
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, "node_modules/x.md", &text)
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, "a.bin", &serde_json::json!({"base64": "aGk="}))
+                .unwrap()["path"],
+            "a.bin"
+        );
         assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"hi");
-        assert_eq!(create_project_file(&dir, &out, ".github/workflows/ci.yml", &text).unwrap()["path"], ".github/workflows/ci.yml");
-        assert_eq!(create_project_file(&dir, &out, ".git/x", &text).unwrap_err().0, 400);
+        assert_eq!(
+            create_project_file(&dir, &out, ".github/workflows/ci.yml", &text).unwrap()["path"],
+            ".github/workflows/ci.yml"
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, ".git/x", &text)
+                .unwrap_err()
+                .0,
+            400
+        );
         let read = project_text(&dir, "src/new/notes.txt").unwrap();
         let edit = serde_json::json!({"text": "edited", "baseHash": read["hash"]});
-        assert_eq!(write_project_text(&dir, &out, "src/new/notes.txt", &edit).unwrap()["hash"], crate::model::hash_hex("edited"));
-        assert_eq!(std::fs::read_to_string(dir.join("src/new/notes.txt")).unwrap(), "edited");
-        assert_eq!(write_project_text(&dir, &out, "src/new/notes.txt", &edit).unwrap_err().0, 409);
-        assert_eq!(write_project_text(&dir, &out, "src/none.txt", &edit).unwrap_err().0, 404);
-        assert_eq!(write_project_text(&dir, &out, ".jazyk/jazyk.toml", &edit).unwrap_err().0, 400);
-        assert_eq!(create_project_file(&dir, &out, "sub/.env.local", &text).unwrap_err().0, 400);
-        assert_eq!(create_project_file(&dir, &out, "jazyk.toml", &text).unwrap_err().0, 400);
+        assert_eq!(
+            write_project_text(&dir, &out, "src/new/notes.txt", &edit).unwrap()["hash"],
+            crate::model::hash_hex("edited")
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("src/new/notes.txt")).unwrap(),
+            "edited"
+        );
+        assert_eq!(
+            write_project_text(&dir, &out, "src/new/notes.txt", &edit)
+                .unwrap_err()
+                .0,
+            409
+        );
+        assert_eq!(
+            write_project_text(&dir, &out, "src/none.txt", &edit)
+                .unwrap_err()
+                .0,
+            404
+        );
+        assert_eq!(
+            write_project_text(&dir, &out, ".jazyk/jazyk.toml", &edit)
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, "sub/.env.local", &text)
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            create_project_file(&dir, &out, "jazyk.toml", &text)
+                .unwrap_err()
+                .0,
+            400
+        );
         std::fs::write(dir.join("img.bin"), [0xff, 0xfe]).unwrap();
         assert_eq!(project_text(&dir, "img.bin").unwrap_err().0, 415);
         let _ = std::fs::remove_dir_all(&dir);
@@ -302,22 +486,54 @@ mod tests {
     fn retained_build_products_are_listed_and_read_without_exposing_cache_or_secrets() {
         let config = "version=1\n[[tasks]]\nid='build'\nname='Build'\ndescription='Retain products'\ncommand='true'\nproducts=['target/*.txt','**/target/*.pdf']\n";
         let files: std::collections::BTreeMap<String, Vec<u8>> = [
-            (".jazyk/jazyk.toml", config), ("target/book.txt", "product"),
-            ("target/disposable.bin", "cache"), ("nested/target/book.pdf", "pdf"),
-            ("node_modules/dependency.js", "dependency"), ("target/.env.txt", "secret"),
+            (".jazyk/jazyk.toml", config),
+            ("target/book.txt", "product"),
+            ("target/disposable.bin", "cache"),
+            ("nested/target/book.pdf", "pdf"),
+            ("node_modules/dependency.js", "dependency"),
+            ("target/.env.txt", "secret"),
             (".env.local", "secret"),
-        ].into_iter().map(|(p, v)| (p.into(), v.as_bytes().to_vec())).collect();
+        ]
+        .into_iter()
+        .map(|(p, v)| (p.into(), v.as_bytes().to_vec()))
+        .collect();
         let check = |root: &Path| {
             let listing = project_files(root, root, &root.join(".jazyk"), &[]);
-            let paths: Vec<_> = listing["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+            let paths: Vec<_> = listing["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["path"].as_str().unwrap())
+                .collect();
             assert!(paths.contains(&"target/book.txt"));
-            assert!(listing["files"].as_array().unwrap().iter().filter(|f| f["path"].as_str().unwrap().ends_with("book.txt") || f["path"].as_str().unwrap().ends_with("book.pdf")).all(|f| f["product"] == true));
-            assert!(listing["files"].as_array().unwrap().iter().filter(|f| f["path"].as_str().unwrap().starts_with(".jazyk/")).all(|f| f["product"] == false));
+            assert!(listing["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["path"].as_str().unwrap().ends_with("book.txt")
+                    || f["path"].as_str().unwrap().ends_with("book.pdf"))
+                .all(|f| f["product"] == true));
+            assert!(listing["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["path"].as_str().unwrap().starts_with(".jazyk/"))
+                .all(|f| f["product"] == false));
             assert!(paths.contains(&"nested/target/book.pdf"));
-            assert!(!paths.iter().any(|p| p.contains("disposable") || p.contains("dependency") || p.contains(".env") || p.contains("link")));
+            assert!(!paths.iter().any(|p| p.contains("disposable")
+                || p.contains("dependency")
+                || p.contains(".env")
+                || p.contains("link")));
             assert_eq!(project_file(root, "target/book.txt").unwrap(), b"product");
-            assert_eq!(project_file(root, "nested/target/book.pdf").unwrap(), b"pdf");
-            for path in ["target/disposable.bin", "target/.env.txt", "node_modules/dependency.js"] {
+            assert_eq!(
+                project_file(root, "nested/target/book.pdf").unwrap(),
+                b"pdf"
+            );
+            for path in [
+                "target/disposable.bin",
+                "target/.env.txt",
+                "node_modules/dependency.js",
+            ] {
                 assert_eq!(project_file(root, path).unwrap_err().0, 400, "{path}");
             }
             assert!(writable_path(root, &root.join(".jazyk"), "target/book.txt").is_err());
@@ -326,13 +542,15 @@ mod tests {
             let _scope = crate::vfs::Scope::enter(&files);
             check(Path::new("/project"));
         }
-        let root = std::env::temp_dir().join(format!("jazyk-product-tree-{}", crate::sys::now_millis()));
+        let root =
+            std::env::temp_dir().join(format!("jazyk-product-tree-{}", crate::sys::now_millis()));
         for (path, data) in &files {
             let path = root.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, data).unwrap();
         }
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             std::os::unix::fs::symlink("../.env.local", root.join("target/link.txt")).unwrap();
             assert_eq!(project_file(&root, "target/link.txt").unwrap_err().0, 400);
         }
@@ -356,18 +574,41 @@ mod tests {
             std::fs::write(&p, text).unwrap();
         }
         let v = project_files(&dir, &dir, &dir.join(".jazyk"), &[]);
-        let paths: Vec<&str> = v["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        let paths: Vec<&str> = v["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap())
+            .collect();
         assert!(paths.contains(&"docs/a.md"));
         assert!(paths.contains(&".jazyk/jazyk.toml"));
-        assert!(!paths.iter().any(|p| p.rsplit('/').next().unwrap().starts_with(".env")), "{:?}", paths);
+        assert!(
+            !paths
+                .iter()
+                .any(|p| p.rsplit('/').next().unwrap().starts_with(".env")),
+            "{:?}",
+            paths
+        );
         for f in [".env", ".env.local", "sub/.env.production"] {
             assert_eq!(project_file(&dir, f).unwrap_err().0, 400, "{}", f);
         }
         let served = String::from_utf8(project_file(&dir, ".jazyk/jazyk.toml").unwrap()).unwrap();
-        assert!(!served.contains("sk-literal") && !served.contains("sk-inline"), "{}", served);
+        assert!(
+            !served.contains("sk-literal") && !served.contains("sk-inline"),
+            "{}",
+            served
+        );
         assert!(served.contains("api_key = \"<redacted>\""), "{}", served);
-        assert!(served.contains("\"api_key\" = \"<redacted>\""), "{}", served);
-        assert!(served.contains("api_key_env = \"JAZYK_API_KEY\""), "{}", served);
+        assert!(
+            served.contains("\"api_key\" = \"<redacted>\""),
+            "{}",
+            served
+        );
+        assert!(
+            served.contains("api_key_env = \"JAZYK_API_KEY\""),
+            "{}",
+            served
+        );
         assert!(served.contains("model = \"m1\""), "{}", served);
         let _ = std::fs::remove_dir_all(&dir);
     }

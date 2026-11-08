@@ -91,13 +91,19 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(p.root.join("docs/import.docx")).unwrap().permissions().mode();
+            let mode = std::fs::metadata(p.root.join("docs/import.docx"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o644);
         }
         assert_eq!(write(&p, "docs/import.docx", &content).unwrap_err().0, 409);
         // Any project path may hold a DOCX, inside a document set or not.
         write(&p, "outside.docx", &content).unwrap();
-        assert_eq!(write(&p, ".jazyk/escape.docx", &content).unwrap_err().0, 400);
+        assert_eq!(
+            write(&p, ".jazyk/escape.docx", &content).unwrap_err().0,
+            400
+        );
         assert_eq!(write(&p, "../escape.docx", &content).unwrap_err().0, 400);
         assert_eq!(read(&p, "../escape.docx").unwrap_err().0, 400);
         std::fs::write(p.root.join("docs/reference.pdf"), b"original pdf bytes").unwrap();

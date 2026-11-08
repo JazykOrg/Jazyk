@@ -172,9 +172,13 @@ fn vscode_settings(home: &std::path::Path) -> PathBuf {
 // A VS Code-family editor's user settings, by its application folder name.
 fn editor_settings(home: &std::path::Path, app: &str) -> PathBuf {
     if cfg!(target_os = "macos") {
-        home.join("Library/Application Support").join(app).join("User/settings.json")
+        home.join("Library/Application Support")
+            .join(app)
+            .join("User/settings.json")
     } else if cfg!(target_os = "windows") {
-        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join(app).join("User/settings.json")
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+            .join(app)
+            .join("User/settings.json")
     } else {
         home.join(".config").join(app).join("User/settings.json")
     }
@@ -273,18 +277,30 @@ pub fn remove_from(path: &std::path::Path, key: &str, name: &str) -> Result<bool
     };
     let ast = parse_to_ast(
         &text,
-        &CollectOptions { comments: CommentCollectionStrategy::Off, tokens: false },
+        &CollectOptions {
+            comments: CommentCollectionStrategy::Off,
+            tokens: false,
+        },
         &parse_options,
     )
     .map_err(|e| e.to_string())?;
     let Some(JValue::Object(root)) = ast.value.as_ref() else {
         return Err("the file does not hold a JSON object".into());
     };
-    let Some(prop) = root.get(key) else { return Ok(false) };
-    let JValue::Object(map) = &prop.value else { return Ok(false) };
-    let Some(existing) = map.get(name) else { return Ok(false) };
+    let Some(prop) = root.get(key) else {
+        return Ok(false);
+    };
+    let JValue::Object(map) = &prop.value else {
+        return Ok(false);
+    };
+    let Some(existing) = map.get(name) else {
+        return Ok(false);
+    };
     let props = &map.properties;
-    let idx = props.iter().position(|p| std::ptr::eq(p, existing)).unwrap_or(0);
+    let idx = props
+        .iter()
+        .position(|p| std::ptr::eq(p, existing))
+        .unwrap_or(0);
     let (start, end) = if props.len() == 1 {
         (map.range.start + 1, map.range.end - 1)
     } else if idx + 1 < props.len() {
@@ -293,7 +309,9 @@ pub fn remove_from(path: &std::path::Path, key: &str, name: &str) -> Result<bool
         (props[idx - 1].range.end, props[idx].range.end)
     };
     let out = format!("{}{}", &text[..start], &text[end..]);
-    let left = jsonc_parser::parse_to_serde_value(&out, &parse_options).ok().flatten();
+    let left = jsonc_parser::parse_to_serde_value(&out, &parse_options)
+        .ok()
+        .flatten();
     let empty = json!({ key: {} });
     if left.as_ref() == Some(&empty) {
         crate::vfs::remove_file(path).map_err(|e| e.to_string())?;

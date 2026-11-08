@@ -59,7 +59,10 @@ impl InProcessRunner {
 
     fn serving_for(&self, batch: &BatchRun) -> McpServer {
         McpServer::with_bridge(
-            self.project.clone(), self.out.clone(), vec![batch.serving_mode().into()], true,
+            self.project.clone(),
+            self.out.clone(),
+            vec![batch.serving_mode().into()],
+            true,
             crate::mcp::BridgeFlags {
                 ephemeral: true,
                 serve_files: matches!(batch.serving_mode(), "generate" | "verify"),
@@ -133,10 +136,11 @@ impl SessionRunner for InProcessRunner {
         };
 
         let recovery_key = crate::session_recovery::batch_key(&self.out, &batch.id);
-        let mut recovery = match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
-            Ok(recovery) => recovery,
-            Err(error) => return failed(error, 0, 0),
-        };
+        let mut recovery =
+            match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
+                Ok(recovery) => recovery,
+                Err(error) => return failed(error, 0, 0),
+            };
         let opening = if recovery.resumed() {
             String::new()
         } else {
@@ -147,7 +151,10 @@ impl SessionRunner for InProcessRunner {
                 Ok(v) => v,
                 Err(e) => return failed(format!("begin_goals: {}", e.1), 0, 0),
             };
-            claim["content"][0]["text"].as_str().map(str::to_owned).unwrap_or_else(|| claim.to_string())
+            claim["content"][0]["text"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| claim.to_string())
         };
 
         let opening = if batch.is_ledger() {
@@ -191,24 +198,37 @@ impl SessionRunner for InProcessRunner {
             }
             lt.on_event(ev);
         };
-        let mut input_source = || owner.as_deref()
-            .map(crate::conversation::build_inputs).unwrap_or_default();
+        let mut input_source = || {
+            owner
+                .as_deref()
+                .map(crate::conversation::build_inputs)
+                .unwrap_or_default()
+        };
 
         let never_cancelled = || trace.is_cancelled();
-        let stop = harness::run_with_hosts(LoopArgs {
-            llm: &self.llm,
-            history: &mut history,
-            tools: &tools,
-            dispatch: &mut dispatch,
-            emit: &mut emit,
-            cancelled: &never_cancelled,
-            max_rounds: crate::limits::agent_max_rounds(),
-            label: label.clone(),
-            conversation: false,
-        inputs: owner.as_ref().map(|_| &mut input_source as &mut dyn FnMut() -> Vec<Value>),
-        // This is one worker batch, not the whole job's admission lifetime.
-        input_close: None,
-        }, "", &mut model, &mut mcp_tools, &mut recovery).await;
+        let stop = harness::run_with_hosts(
+            LoopArgs {
+                llm: &self.llm,
+                history: &mut history,
+                tools: &tools,
+                dispatch: &mut dispatch,
+                emit: &mut emit,
+                cancelled: &never_cancelled,
+                max_rounds: crate::limits::agent_max_rounds(),
+                label: label.clone(),
+                conversation: false,
+                inputs: owner
+                    .as_ref()
+                    .map(|_| &mut input_source as &mut dyn FnMut() -> Vec<Value>),
+                // This is one worker batch, not the whole job's admission lifetime.
+                input_close: None,
+            },
+            "",
+            &mut model,
+            &mut mcp_tools,
+            &mut recovery,
+        )
+        .await;
         lt.finish();
         let (tokens, cached, rounds) = crate::session_recovery::saved_usage(&recovery_key)
             .unwrap_or((lt.tokens, lt.cached, lt.rounds));
@@ -221,7 +241,9 @@ impl SessionRunner for InProcessRunner {
         let committed = gen_after != gen_before;
         let interruption = match &stop {
             Stop::Suspended => Some("suspended".to_owned()),
-            Stop::Error(error) if crate::session_recovery::is_interruption(error) => Some(error.clone()),
+            Stop::Error(error) if crate::session_recovery::is_interruption(error) => {
+                Some(error.clone())
+            }
             _ => None,
         };
         if trace.is_cancelled() {
@@ -230,7 +252,12 @@ impl SessionRunner for InProcessRunner {
             server.cancel_owned();
         } else if let Some(reason) = interruption {
             return SessionReport {
-                applied, rounds, tokens, cached, failed: None, resolved,
+                applied,
+                rounds,
+                tokens,
+                cached,
+                failed: None,
+                resolved,
                 stopped: Some(reason),
             };
         }
@@ -245,11 +272,18 @@ impl SessionRunner for InProcessRunner {
 
         // Discard any abandoned staged display and publish the actual session base.
         let store = crate::store::Store::load(&self.out);
-        trace.event(TraceEvent::GraphPreview { preview: crate::live_preview::Preview {
-            label: label.clone(), attempt: server.live_preview().map(|p|p.attempt).unwrap_or_default(),
-            revision: preview_revision + 1, phase: "committed".into(),
-            generation: store.status.generation, graph: Some(crate::live_preview::authored(&store.graph)), reason: None,
-        }.bounded() });
+        trace.event(TraceEvent::GraphPreview {
+            preview: crate::live_preview::Preview {
+                label: label.clone(),
+                attempt: server.live_preview().map(|p| p.attempt).unwrap_or_default(),
+                revision: preview_revision + 1,
+                phase: "committed".into(),
+                generation: store.status.generation,
+                graph: Some(crate::live_preview::authored(&store.graph)),
+                reason: None,
+            }
+            .bounded(),
+        });
 
         // Why the session stopped short of a plain end of turn, for a caller judging
         // its own ledger; a batch that did not land fails with the stop in words
@@ -259,7 +293,11 @@ impl SessionRunner for InProcessRunner {
             other => Some(crate::runner::unlanded_reason(other, rounds)),
         };
         if trace.is_cancelled() && !committed {
-            trace.event(TraceEvent::SessionEnded { label: label.clone(), goals: batch.goal_ids(), reason: "the build was cancelled".into() });
+            trace.event(TraceEvent::SessionEnded {
+                label: label.clone(),
+                goals: batch.goal_ids(),
+                reason: "the build was cancelled".into(),
+            });
         }
         if committed {
             // The batch landed: the store's word. A failure's terminal event is the
@@ -294,7 +332,13 @@ impl SessionRunner for InProcessRunner {
         }
     }
 
-    async fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
+    async fn ask(
+        &self,
+        system: &str,
+        user: &str,
+        label: &str,
+        step: &str,
+    ) -> Result<String, String> {
         self.ask_traced(system, user, label, step, None).await
     }
 
@@ -307,178 +351,6 @@ impl SessionRunner for InProcessRunner {
         _trace: Option<&Trace>,
     ) -> Result<String, String> {
         self.llm.chat(system, user, _label, _step).await
-    }
-}
-
-#[cfg(test)]
-mod ledger_failure_tests {
-    use super::*;
-
-    #[test]
-    fn verification_runner_can_read_implementing_files_without_file_or_matcher_writes() {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
-        crate::vfs::create_dir_all("/project/.jazyk").unwrap();
-        crate::vfs::create_dir_all("/project/src").unwrap();
-        crate::vfs::write("/project/.jazyk/jazyk.toml", "version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n").unwrap();
-        crate::vfs::write("/project/src/greeting.txt", "Hello").unwrap();
-        let project = Project::load(Path::new("/project"));
-        let mut store = crate::store::Store::load(&project.out);
-        store.graph.entities.insert("ent:greeter".into(), crate::model::Entity { name:"Greeter".into(), ..Default::default() });
-        store.save_for_test();
-        let llm = Llm { api: "chat_completions".into(), reasoning_summary: None,  base_url:"http://127.0.0.1:1/v1".into(), model:"unused".into(), api_key:String::new(), temperature:None, trace:None };
-        let runner = InProcessRunner::start(&project,&llm,&project.out).unwrap();
-        let batch = BatchRun::single(crate::model::Goal { id:"g:verify:req:greet".into(),kind:"verify".into(),target:"req:greet".into(),..Default::default() });
-        let server = runner.serving_for(&batch);
-        let tools = InProcessRunner::tools_of(&server).unwrap();
-        for name in ["read_text_file","list_files"] { assert!(tools.iter().any(|tool| tool.name == name)); }
-        for name in ["write_text_file","update_document_set","run_command"] { assert!(!tools.iter().any(|tool| tool.name == name)); }
-        let read = server.handle("tools/call",&json!({"name":"read_text_file","arguments":{"path":"src/greeting.txt"}})).unwrap();
-        assert_ne!(read["isError"],true,"{read}");
-        assert!(read["content"][0]["text"].as_str().unwrap().contains("Hello"));
-        assert!(server.handle("tools/call",&json!({"name":"write_text_file","arguments":{"path":"src/greeting.txt","content":"Changed"}})).is_err());
-        assert!(server.handle("tools/call",&json!({"name":"update_document_set","arguments":{}})).is_err());
-        assert_eq!(crate::vfs::read_to_string("/project/src/greeting.txt").unwrap(),"Hello");
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn generation_can_record_after_twenty_four_requests_and_resume_without_readmission() {
-        use std::sync::{Arc, Mutex};
-        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-        use crate::hosted::{Execution, Snapshot, Workspace};
-        let (files, fact_hash, criterion) = {
-            let fs = crate::vfs::Scope::enter(&Snapshot::new());
-            crate::vfs::create_dir_all("/project/.jazyk").unwrap();
-            crate::vfs::write("/project/.jazyk/jazyk.toml",
-                "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nsource = ['src/**', 'tests/**']\n").unwrap();
-            let project = Project::load(Path::new("/project"));
-            let mut store = crate::store::Store::load(&project.out);
-            store.graph.entities.insert("ent:greeter".into(), crate::model::Entity {
-                name: "Greeter".into(), ..Default::default()
-            });
-            store.graph.requirements.insert("req:greet".into(), crate::model::Requirement {
-                statement: "The greeter says hello.".into(), entities: vec!["ent:greeter".into()], ..Default::default()
-            });
-            store.graph.criteria.insert("crit:greet".into(), crate::model::Criterion {
-                requirement: "req:greet".into(), statement: "The greeting says hello.".into(),
-                kind: "positive".into(), ..Default::default()
-            });
-            store.save_for_test();
-            let mut ledger = crate::gen::Ledger::load(&project.out);
-            ledger.medium = Some(crate::gen::Medium {
-                form: "text".into(), produced: "written".into(), toolchain: String::new(), artifact: String::new()
-            });
-            ledger.save(&project.out).unwrap();
-            let mut control = crate::control::Control::load(&project, &project.out);
-            control.generate = "auto".into();
-            control.save(&project.out);
-            let criterion = crate::gen::criteria_front_matter("req:greet", Some("crit:greet"),
-                &store.graph.criteria["crit:greet"].statement)
-                + "\nRead generated/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
-            (fs.snapshot(), crate::gen::fact_hash(&store, "ent:greeter"), criterion)
-        };
-        for interrupt in [false, true] {
-            let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
-            let observed = requests.clone();
-            let fact_hash = fact_hash.clone();
-            let criterion = criterion.clone();
-            let config_hash = crate::model::hash_hex(std::str::from_utf8(&files[".jazyk/jazyk.toml"]).unwrap());
-            let model = Arc::new(move |body: String| {
-                let request: Value = serde_json::from_str(&body).unwrap();
-                assert_eq!(request["_jazyk"]["purpose"], "inference");
-                let mut seen = observed.lock().unwrap();
-                seen.push(request);
-                let round = seen.len();
-                let (name, args) = match round {
-                    1 => ("begin_generation", json!({"entity":"ent:greeter"})),
-                    2 => ("update_document_set", json!({"baseHash":config_hash,"set":{"id":"ds_main","source":["src/**","generated/**","tests/**"]}})),
-                    3..=26 => ("write_text_file", json!({"path":"generated/greeting.txt", "content":format!("Hello\nRevision {round}\n")})),
-                    27 => ("write_text_file", json!({"path":"tests/greeting.md", "content":criterion})),
-                    28 => ("record_generation", json!({"entity":"ent:greeter", "factHash":fact_hash,
-                        "manifest":{"files":["generated/greeting.txt"], "tests":[{
-                            "requirement":"req:greet", "criterion":"crit:greet", "kind":"llm",
-                            "artifact":"tests/greeting.md", "name":"greeting", "run":"llm", "files":["generated/greeting.txt"]
-                        }]}})),
-                    29 => ("done", json!({"summary":"Recorded source and its criterion after incremental edits."})),
-                    _ => panic!("successful ledger done must stop the worker"),
-                };
-                let reply = json!({"choices":[{"message":{"role":"assistant", "content":null,
-                    "tool_calls":[{"id":format!("edit-{round}"),"type":"function",
-                        "function":{"name":name,"arguments":args.to_string()}}]}}],
-                    "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}).to_string();
-                Box::pin(async move { Ok(reply) }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<String,String>> + Send>>
-            });
-            let checkpoint = Arc::new(Mutex::new(None::<(Value, Snapshot)>));
-            let saved = checkpoint.clone();
-            let injected = Arc::new(AtomicBool::new(false));
-            let fail = injected.clone();
-            let rounds = Arc::new(AtomicU32::new(0));
-            let observed_rounds = rounds.clone();
-            let sink = Arc::new(move |mut capsule: Value, files: Snapshot| {
-                let next = capsule["sequence"].as_u64().unwrap() + 1;
-                capsule["sequence"] = json!(next);
-                let frame = capsule["frames"].as_array().and_then(|frames| frames.last());
-                if let Some(rounds) = frame.and_then(|frame| frame["harness"]["rounds"].as_u64()) {
-                    observed_rounds.fetch_max(rounds as u32, Ordering::SeqCst);
-                }
-                let crash = interrupt && frame.is_some_and(|frame|
-                    frame["boundary"]["phase"] == "saved_model" && frame["harness"]["rounds"] == 25)
-                    && !fail.swap(true, Ordering::SeqCst);
-                *saved.lock().unwrap() = Some((capsule, files));
-                Box::pin(async move {
-                    if crash { Err("checkpoint-failed: fixture lost the save acknowledgement".into()) }
-                    else { Ok(next) }
-                }) as std::pin::Pin<Box<dyn std::future::Future<Output=Result<u64,String>> + Send>>
-            });
-            let mut execution = Execution { model:"scripted-generation".into(), transport_async:Some(model),
-                checkpoint:Some(sink), ..Default::default() };
-            let mut workspace = Workspace::new(files.clone()).unwrap();
-            let body = json!({"kind":"gen","entities":["ent:greeter"]}).to_string();
-            let mut result = workspace.request("POST", "/api/jobs", &body, &execution).unwrap();
-            if interrupt {
-                assert!(String::from_utf8_lossy(&result.body).contains("checkpoint-failed:"));
-                assert_eq!(requests.lock().unwrap().len(), 25);
-                let (capsule, protected) = checkpoint.lock().unwrap().clone().unwrap();
-                assert_eq!(capsule["harness"]["rounds"], 25);
-                assert_eq!(capsule["harness"]["model_requests"].as_object().unwrap().len(), 1,
-                    "the capsule keeps only the current transition's request");
-                let id = requests.lock().unwrap()[24]["_jazyk"]["requestId"].as_str().unwrap().to_string();
-                let recorded = &capsule["harness"]["model_requests"][&id];
-                let mut admitted = requests.lock().unwrap()[24].clone();
-                admitted.as_object_mut().unwrap().remove("_jazyk");
-                assert_eq!(recorded, &admitted, "the protected body owns its admitted identity");
-                execution.resume = Some(capsule);
-                workspace = Workspace::new(protected).unwrap();
-                result = workspace.request("POST", "/api/jobs", &body, &execution).unwrap();
-            }
-            assert!(result.status < 400, "{}", String::from_utf8_lossy(&result.body));
-            let result: Value = serde_json::from_slice(&result.body).unwrap();
-            assert_eq!(result["report"]["regenerated"], 1, "{result}");
-            let requests = requests.lock().unwrap();
-            assert_eq!(requests.len(), 29, "a saved response must not repeat a model request");
-            let identities: std::collections::BTreeSet<_> = requests.iter()
-                .map(|request| request["_jazyk"]["requestId"].as_str().unwrap()).collect();
-            assert_eq!(identities.len(), 29);
-            assert_eq!(rounds.load(Ordering::SeqCst), 29, "resume must retain the original request count");
-            let files = workspace.snapshot();
-            assert!(files["generated/greeting.txt"].starts_with(b"Hello\n"));
-            let _fs = crate::vfs::Scope::enter(&files);
-            let project = Project::load(Path::new("/project"));
-            let store = crate::store::Store::load(&project.out);
-            assert!(crate::gen::pending(&store, &crate::gen::GenSettings::resolve(&project)).is_empty());
-            assert_eq!(crate::gen::Ledger::load(&project.out).requirements["req:greet"].tests["crit:greet"].verdict, "none");
-        }
-    }
-
-    #[test]
-    fn only_an_ordinary_runtime_error_is_a_fatal_ledger_failure() {
-        for stop in [Stop::EndTurn, Stop::MaxRounds, Stop::Cancelled, Stop::Suspended,
-            Stop::Error("checkpoint-failed: disk".into()),
-            Stop::Error("execution-uncertain: task".into())] {
-            assert!(ledger_failure(&stop, 3).is_none(), "{stop:?}");
-        }
-        assert_eq!(ledger_failure(&Stop::Error("Local model request failed.".into()), 3),
-            Some("the model call failed: Local model request failed.".into()));
     }
 }
 
@@ -505,7 +377,11 @@ pub async fn run_answers(project: &Project, llm: &Llm, out: &Path, trace: &Trace
             proposals: 0,
         });
         let outcome = run_answer(project, llm, out, &id, &label, trace).await;
-        if outcome.as_ref().err().is_some_and(|error| crate::session_recovery::is_interruption(error)) {
+        if outcome
+            .as_ref()
+            .err()
+            .is_some_and(|error| crate::session_recovery::is_interruption(error))
+        {
             break;
         }
         match &outcome {
@@ -591,25 +467,352 @@ async fn run_answer(
     };
     let mut emit = |ev: AgentEvent| lt.on_event(ev);
     let never_cancelled = || trace.is_cancelled();
-    let stop = harness::run_with_hosts(LoopArgs {
-        llm,
-        history: &mut history,
-        tools: &tools,
-        dispatch: &mut dispatch,
-        emit: &mut emit,
-        cancelled: &never_cancelled,
-        max_rounds: crate::limits::agent_max_rounds(),
-        label: label.to_string(),
-        conversation: false,
-        inputs: None,
-        input_close: None,
-    }, "", &mut model, &mut mcp_tools, &mut recovery).await;
+    let stop = harness::run_with_hosts(
+        LoopArgs {
+            llm,
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut dispatch,
+            emit: &mut emit,
+            cancelled: &never_cancelled,
+            max_rounds: crate::limits::agent_max_rounds(),
+            label: label.to_string(),
+            conversation: false,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut model,
+        &mut mcp_tools,
+        &mut recovery,
+    )
+    .await;
     lt.finish();
-    let rounds = crate::session_recovery::saved_usage(&key).map(|u| u.2).unwrap_or(lt.rounds);
+    let rounds = crate::session_recovery::saved_usage(&key)
+        .map(|u| u.2)
+        .unwrap_or(lt.rounds);
     match stop {
         Stop::EndTurn => Ok(rounds),
         Stop::Suspended => Err("suspended".into()),
         Stop::Error(error) if crate::session_recovery::is_interruption(&error) => Err(error),
         other => Err(crate::runner::unlanded_reason(&other, rounds)),
+    }
+}
+
+#[cfg(test)]
+mod ledger_failure_tests {
+    use super::*;
+
+    #[test]
+    fn verification_runner_can_read_implementing_files_without_file_or_matcher_writes() {
+        let _fs = crate::vfs::Scope::enter(&Default::default());
+        crate::vfs::create_dir_all("/project/.jazyk").unwrap();
+        crate::vfs::create_dir_all("/project/src").unwrap();
+        crate::vfs::write(
+            "/project/.jazyk/jazyk.toml",
+            "version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nsource=['src/**']\n",
+        )
+        .unwrap();
+        crate::vfs::write("/project/src/greeting.txt", "Hello").unwrap();
+        let project = Project::load(Path::new("/project"));
+        let mut store = crate::store::Store::load(&project.out);
+        store.graph.entities.insert(
+            "ent:greeter".into(),
+            crate::model::Entity {
+                name: "Greeter".into(),
+                ..Default::default()
+            },
+        );
+        store.save_for_test();
+        let llm = Llm {
+            api: "chat_completions".into(),
+            reasoning_summary: None,
+            base_url: "http://127.0.0.1:1/v1".into(),
+            model: "unused".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
+        let runner = InProcessRunner::start(&project, &llm, &project.out).unwrap();
+        let batch = BatchRun::single(crate::model::Goal {
+            id: "g:verify:req:greet".into(),
+            kind: "verify".into(),
+            target: "req:greet".into(),
+            ..Default::default()
+        });
+        let server = runner.serving_for(&batch);
+        let tools = InProcessRunner::tools_of(&server).unwrap();
+        for name in ["read_text_file", "list_files"] {
+            assert!(tools.iter().any(|tool| tool.name == name));
+        }
+        for name in ["write_text_file", "update_document_set", "run_command"] {
+            assert!(!tools.iter().any(|tool| tool.name == name));
+        }
+        let read = server
+            .handle(
+                "tools/call",
+                &json!({"name":"read_text_file","arguments":{"path":"src/greeting.txt"}}),
+            )
+            .unwrap();
+        assert_ne!(read["isError"], true, "{read}");
+        assert!(read["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Hello"));
+        assert!(server.handle("tools/call",&json!({"name":"write_text_file","arguments":{"path":"src/greeting.txt","content":"Changed"}})).is_err());
+        assert!(server
+            .handle(
+                "tools/call",
+                &json!({"name":"update_document_set","arguments":{}})
+            )
+            .is_err());
+        assert_eq!(
+            crate::vfs::read_to_string("/project/src/greeting.txt").unwrap(),
+            "Hello"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generation_can_record_after_twenty_four_requests_and_resume_without_readmission() {
+        use crate::hosted::{Execution, Snapshot, Workspace};
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+        let (files, fact_hash, criterion) = {
+            let fs = crate::vfs::Scope::enter(&Snapshot::new());
+            crate::vfs::create_dir_all("/project/.jazyk").unwrap();
+            crate::vfs::write("/project/.jazyk/jazyk.toml",
+                "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nsource = ['src/**', 'tests/**']\n").unwrap();
+            let project = Project::load(Path::new("/project"));
+            let mut store = crate::store::Store::load(&project.out);
+            store.graph.entities.insert(
+                "ent:greeter".into(),
+                crate::model::Entity {
+                    name: "Greeter".into(),
+                    ..Default::default()
+                },
+            );
+            store.graph.requirements.insert(
+                "req:greet".into(),
+                crate::model::Requirement {
+                    statement: "The greeter says hello.".into(),
+                    entities: vec!["ent:greeter".into()],
+                    ..Default::default()
+                },
+            );
+            store.graph.criteria.insert(
+                "crit:greet".into(),
+                crate::model::Criterion {
+                    requirement: "req:greet".into(),
+                    statement: "The greeting says hello.".into(),
+                    kind: "positive".into(),
+                    ..Default::default()
+                },
+            );
+            store.save_for_test();
+            let mut ledger = crate::gen::Ledger::load(&project.out);
+            ledger.medium = Some(crate::gen::Medium {
+                form: "text".into(),
+                produced: "written".into(),
+                toolchain: String::new(),
+                artifact: String::new(),
+            });
+            ledger.save(&project.out).unwrap();
+            let mut control = crate::control::Control::load(&project, &project.out);
+            control.generate = "auto".into();
+            control.save(&project.out);
+            let criterion = crate::gen::criteria_front_matter(
+                "req:greet",
+                Some("crit:greet"),
+                &store.graph.criteria["crit:greet"].statement,
+            )
+                + "\nRead generated/greeting.txt. PASS only when it says Hello. FAIL otherwise.\n";
+            (
+                fs.snapshot(),
+                crate::gen::fact_hash(&store, "ent:greeter"),
+                criterion,
+            )
+        };
+        for interrupt in [false, true] {
+            let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let observed = requests.clone();
+            let fact_hash = fact_hash.clone();
+            let criterion = criterion.clone();
+            let config_hash =
+                crate::model::hash_hex(std::str::from_utf8(&files[".jazyk/jazyk.toml"]).unwrap());
+            let model = Arc::new(move |body: String| {
+                let request: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(request["_jazyk"]["purpose"], "inference");
+                let mut seen = observed.lock().unwrap();
+                seen.push(request);
+                let round = seen.len();
+                let (name, args) = match round {
+                    1 => ("begin_generation", json!({"entity":"ent:greeter"})),
+                    2 => (
+                        "update_document_set",
+                        json!({"baseHash":config_hash,"set":{"id":"ds_main","source":["src/**","generated/**","tests/**"]}}),
+                    ),
+                    3..=26 => (
+                        "write_text_file",
+                        json!({"path":"generated/greeting.txt", "content":format!("Hello\nRevision {round}\n")}),
+                    ),
+                    27 => (
+                        "write_text_file",
+                        json!({"path":"tests/greeting.md", "content":criterion}),
+                    ),
+                    28 => (
+                        "record_generation",
+                        json!({"entity":"ent:greeter", "factHash":fact_hash,
+                        "manifest":{"files":["generated/greeting.txt"], "tests":[{
+                            "requirement":"req:greet", "criterion":"crit:greet", "kind":"llm",
+                            "artifact":"tests/greeting.md", "name":"greeting", "run":"llm", "files":["generated/greeting.txt"]
+                        }]}}),
+                    ),
+                    29 => (
+                        "done",
+                        json!({"summary":"Recorded source and its criterion after incremental edits."}),
+                    ),
+                    _ => panic!("successful ledger done must stop the worker"),
+                };
+                let reply = json!({"choices":[{"message":{"role":"assistant", "content":null,
+                    "tool_calls":[{"id":format!("edit-{round}"),"type":"function",
+                        "function":{"name":name,"arguments":args.to_string()}}]}}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}})
+                .to_string();
+                Box::pin(async move { Ok(reply) })
+                    as std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
+                    >
+            });
+            let checkpoint = Arc::new(Mutex::new(None::<(Value, Snapshot)>));
+            let saved = checkpoint.clone();
+            let injected = Arc::new(AtomicBool::new(false));
+            let fail = injected.clone();
+            let rounds = Arc::new(AtomicU32::new(0));
+            let observed_rounds = rounds.clone();
+            let sink = Arc::new(move |mut capsule: Value, files: Snapshot| {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                capsule["sequence"] = json!(next);
+                let frame = capsule["frames"]
+                    .as_array()
+                    .and_then(|frames| frames.last());
+                if let Some(rounds) = frame.and_then(|frame| frame["harness"]["rounds"].as_u64()) {
+                    observed_rounds.fetch_max(rounds as u32, Ordering::SeqCst);
+                }
+                let crash = interrupt
+                    && frame.is_some_and(|frame| {
+                        frame["boundary"]["phase"] == "saved_model"
+                            && frame["harness"]["rounds"] == 25
+                    })
+                    && !fail.swap(true, Ordering::SeqCst);
+                *saved.lock().unwrap() = Some((capsule, files));
+                Box::pin(async move {
+                    if crash {
+                        Err("checkpoint-failed: fixture lost the save acknowledgement".into())
+                    } else {
+                        Ok(next)
+                    }
+                })
+                    as std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Result<u64, String>> + Send>,
+                    >
+            });
+            let mut execution = Execution {
+                model: "scripted-generation".into(),
+                transport_async: Some(model),
+                checkpoint: Some(sink),
+                ..Default::default()
+            };
+            let mut workspace = Workspace::new(files.clone()).unwrap();
+            let body = json!({"kind":"gen","entities":["ent:greeter"]}).to_string();
+            let mut result = workspace
+                .request("POST", "/api/jobs", &body, &execution)
+                .unwrap();
+            if interrupt {
+                assert!(String::from_utf8_lossy(&result.body).contains("checkpoint-failed:"));
+                assert_eq!(requests.lock().unwrap().len(), 25);
+                let (capsule, protected) = checkpoint.lock().unwrap().clone().unwrap();
+                assert_eq!(capsule["harness"]["rounds"], 25);
+                assert_eq!(
+                    capsule["harness"]["model_requests"]
+                        .as_object()
+                        .unwrap()
+                        .len(),
+                    1,
+                    "the capsule keeps only the current transition's request"
+                );
+                let id = requests.lock().unwrap()[24]["_jazyk"]["requestId"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                let recorded = &capsule["harness"]["model_requests"][&id];
+                let mut admitted = requests.lock().unwrap()[24].clone();
+                admitted.as_object_mut().unwrap().remove("_jazyk");
+                assert_eq!(
+                    recorded, &admitted,
+                    "the protected body owns its admitted identity"
+                );
+                execution.resume = Some(capsule);
+                workspace = Workspace::new(protected).unwrap();
+                result = workspace
+                    .request("POST", "/api/jobs", &body, &execution)
+                    .unwrap();
+            }
+            assert!(
+                result.status < 400,
+                "{}",
+                String::from_utf8_lossy(&result.body)
+            );
+            let result: Value = serde_json::from_slice(&result.body).unwrap();
+            assert_eq!(result["report"]["regenerated"], 1, "{result}");
+            let requests = requests.lock().unwrap();
+            assert_eq!(
+                requests.len(),
+                29,
+                "a saved response must not repeat a model request"
+            );
+            let identities: std::collections::BTreeSet<_> = requests
+                .iter()
+                .map(|request| request["_jazyk"]["requestId"].as_str().unwrap())
+                .collect();
+            assert_eq!(identities.len(), 29);
+            assert_eq!(
+                rounds.load(Ordering::SeqCst),
+                29,
+                "resume must retain the original request count"
+            );
+            let files = workspace.snapshot();
+            assert!(files["generated/greeting.txt"].starts_with(b"Hello\n"));
+            let _fs = crate::vfs::Scope::enter(&files);
+            let project = Project::load(Path::new("/project"));
+            let store = crate::store::Store::load(&project.out);
+            assert!(
+                crate::gen::pending(&store, &crate::gen::GenSettings::resolve(&project)).is_empty()
+            );
+            assert_eq!(
+                crate::gen::Ledger::load(&project.out).requirements["req:greet"].tests
+                    ["crit:greet"]
+                    .verdict,
+                "none"
+            );
+        }
+    }
+
+    #[test]
+    fn only_an_ordinary_runtime_error_is_a_fatal_ledger_failure() {
+        for stop in [
+            Stop::EndTurn,
+            Stop::MaxRounds,
+            Stop::Cancelled,
+            Stop::Suspended,
+            Stop::Error("checkpoint-failed: disk".into()),
+            Stop::Error("execution-uncertain: task".into()),
+        ] {
+            assert!(ledger_failure(&stop, 3).is_none(), "{stop:?}");
+        }
+        assert_eq!(
+            ledger_failure(&Stop::Error("Local model request failed.".into()), 3),
+            Some("the model call failed: Local model request failed.".into())
+        );
     }
 }

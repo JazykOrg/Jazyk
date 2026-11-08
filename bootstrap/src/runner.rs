@@ -98,7 +98,13 @@ pub trait SessionRunner {
     async fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport;
 
     // One prompt, one reply, no tools and no session: the ledger's one-shots.
-    async fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String>;
+    async fn ask(
+        &self,
+        system: &str,
+        user: &str,
+        label: &str,
+        step: &str,
+    ) -> Result<String, String>;
 
     async fn ask_traced(
         &self,
@@ -112,7 +118,11 @@ pub trait SessionRunner {
 
 // The same prompt travels through ACP and the in-process ledger runner. Ledger
 // begin_goals returns an acknowledgement; its caller carries the full contract.
-pub(crate) fn batch_prompt(project: &crate::project::Project, out: &std::path::Path, batch: &BatchRun) -> String {
+pub(crate) fn batch_prompt(
+    project: &crate::project::Project,
+    out: &std::path::Path,
+    batch: &BatchRun,
+) -> String {
     let mut store = crate::store::Store::load(out);
     let (parsed, _) = crate::reconcile::parse_all(project);
     store.sync_docs(&parsed);
@@ -132,8 +142,12 @@ pub(crate) fn batch_prompt(project: &crate::project::Project, out: &std::path::P
 // What the journal says one session landed between two generations: the mutations
 // its entries applied, and the goals they resolved. A runner never reports its own
 // success; it reads it here (docs/compiler/graph.md#journal).
-pub fn journal_diff(out: &std::path::Path, from: u64, to: u64, goal_ids: &[String]) -> (usize, Vec<String>) {
-
+pub fn journal_diff(
+    out: &std::path::Path,
+    from: u64,
+    to: u64,
+    goal_ids: &[String],
+) -> (usize, Vec<String>) {
     let mut applied = 0usize;
     let mut resolved: Vec<String> = Vec::new();
     for g in (from + 1)..=to {
@@ -197,7 +211,8 @@ impl<'a> LoopTrace<'a> {
 
     pub fn finish(&mut self) {
         if !self.text.is_empty() {
-            self.trace.event(crate::session::TraceEvent::ModelText { summary: false,
+            self.trace.event(crate::session::TraceEvent::ModelText {
+                summary: false,
                 label: self.label.clone(),
                 text: std::mem::take(&mut self.text),
                 reply: !self.text_thought,
@@ -222,7 +237,10 @@ impl<'a> LoopTrace<'a> {
             }
             self.text.push(ch);
         }
-        if self.text_flushed.is_none_or(|last| now.duration_since(last).as_millis() >= 250) {
+        if self
+            .text_flushed
+            .is_none_or(|last| now.duration_since(last).as_millis() >= 250)
+        {
             self.finish();
             self.text_flushed = Some(now);
         }
@@ -247,7 +265,12 @@ impl<'a> LoopTrace<'a> {
             }
             AgentEvent::ReasoningSummary(text) => {
                 self.finish();
-                self.trace.event(TraceEvent::ModelText { label: self.label.clone(), text, reply: false, summary: true });
+                self.trace.event(TraceEvent::ModelText {
+                    label: self.label.clone(),
+                    text,
+                    reply: false,
+                    summary: true,
+                });
             }
             AgentEvent::Thought(text) => {
                 self.buffer_text(&text, true, crate::sys::Instant::now());
@@ -278,7 +301,8 @@ impl<'a> LoopTrace<'a> {
                 }
                 let full_out: serde_json::Value = serde_json::from_str(&result)
                     .unwrap_or_else(|_| serde_json::Value::String(result.clone()));
-                let out = full_out["content"][0]["text"].as_str()
+                let out = full_out["content"][0]["text"]
+                    .as_str()
                     .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
                     .unwrap_or_else(|| full_out.clone());
                 self.trace.event(TraceEvent::ToolResult {
@@ -346,7 +370,10 @@ pub fn unlanded_reason(stop: &crate::harness::Stop, rounds: u32) -> String {
     use crate::harness::Stop;
     match stop {
         Stop::EndTurn => "the model ended its turn with the batch still open".to_string(),
-        Stop::MaxRounds => format!("Agent reached the session limit after {} model requests; unfinished work remains open", rounds),
+        Stop::MaxRounds => format!(
+            "Agent reached the session limit after {} model requests; unfinished work remains open",
+            rounds
+        ),
         Stop::Cancelled => "the session was cancelled".to_string(),
         Stop::Suspended => "suspended".to_string(),
         Stop::Error(e) => format!("the model call failed: {}", e),
@@ -394,8 +421,13 @@ mod tests {
         let b = batch();
         trace.event(session_start(&b));
         let mut lt = LoopTrace::new(&trace, &b);
-        lt.on_event(AgentEvent::Usage { tokens: 30, cached: 4 });
-        lt.on_event(AgentEvent::Thought("I should read the section first.".into()));
+        lt.on_event(AgentEvent::Usage {
+            tokens: 30,
+            cached: 4,
+        });
+        lt.on_event(AgentEvent::Thought(
+            "I should read the section first.".into(),
+        ));
         lt.on_event(AgentEvent::ToolCallStart {
             id: "c1".into(),
             name: "read_section".into(),
@@ -422,7 +454,14 @@ mod tests {
 
         let ev = events.lock().unwrap();
         match &ev[0] {
-            TraceEvent::SessionStart { label, doc, sections, task, goals, .. } => {
+            TraceEvent::SessionStart {
+                label,
+                doc,
+                sections,
+                task,
+                goals,
+                ..
+            } => {
                 assert_eq!(label, "b2-1");
                 assert_eq!(doc.as_deref(), Some("docs/README.md"));
                 assert_eq!(sections, &vec!["/hello-world".to_string()]);
@@ -431,20 +470,32 @@ mod tests {
             }
             other => panic!("expected sessionStart, got {:?}", other),
         }
-        assert!(matches!(&ev[1], TraceEvent::ModelText { text, reply: false, .. } if text.contains("read the section")));
+        assert!(
+            matches!(&ev[1], TraceEvent::ModelText { text, reply: false, .. } if text.contains("read the section"))
+        );
         assert!(matches!(&ev[2], TraceEvent::ToolCall { name, .. } if name == "read_section"));
         assert!(matches!(&ev[3], TraceEvent::ToolResult { name, .. } if name == "read_section"));
-        assert!(matches!(&ev[4], TraceEvent::Section { section, doc, .. } if section == "/hello-world" && doc == "docs/README.md"));
-        assert!(matches!(&ev[5], TraceEvent::ToolCall { name, .. } if name == "upsert_requirement"));
+        assert!(
+            matches!(&ev[4], TraceEvent::Section { section, doc, .. } if section == "/hello-world" && doc == "docs/README.md")
+        );
+        assert!(
+            matches!(&ev[5], TraceEvent::ToolCall { name, .. } if name == "upsert_requirement")
+        );
         match &ev[6] {
-            TraceEvent::ToolError { rule, message, label } => {
+            TraceEvent::ToolError {
+                rule,
+                message,
+                label,
+            } => {
                 assert_eq!(label, "b2-1");
                 assert_eq!(rule, "quote-not-found");
                 assert_eq!(message, "the quote is not in the section");
             }
             other => panic!("expected toolError, got {:?}", other),
         }
-        assert!(matches!(&ev[7], TraceEvent::ModelText { text, reply: true, .. } if text == "I cannot find the quote."));
+        assert!(
+            matches!(&ev[7], TraceEvent::ModelText { text, reply: true, .. } if text == "I cannot find the quote.")
+        );
         assert_eq!(ev.len(), 8);
     }
 
@@ -469,10 +520,17 @@ mod tests {
             .collect();
         assert_eq!(
             chunks,
-            vec![("All sentences covered, done", true), ("Nothing new to extract.", false), ("Next.", true)]
+            vec![
+                ("All sentences covered, done", true),
+                ("Nothing new to extract.", false),
+                ("Next.", true)
+            ]
         );
         let json = serde_json::to_value(&ev[0]).unwrap();
-        assert!(json.get("reply").is_none(), "a reasoning chunk omits the flag: {json}");
+        assert!(
+            json.get("reply").is_none(),
+            "a reasoning chunk omits the flag: {json}"
+        );
         assert_eq!(serde_json::to_value(&ev[1]).unwrap()["reply"], true);
     }
 
@@ -582,7 +640,9 @@ mod tests {
         });
         let ev = events.lock().unwrap();
         assert_eq!(ev.len(), 2);
-        assert!(matches!(&ev[1], TraceEvent::ToolError { rule, message, .. } if rule == "load" && message == "unknown tool"));
+        assert!(
+            matches!(&ev[1], TraceEvent::ToolError { rule, message, .. } if rule == "load" && message == "unknown tool")
+        );
     }
 
     // The failure reason names the stop; "nothing committed" alone never says why.
@@ -596,9 +656,16 @@ mod tests {
             unlanded_reason(&Stop::MaxRounds, 40),
             "Agent reached the session limit after 40 model requests; unfinished work remains open"
         );
-        assert!(unlanded_reason(&Stop::Error("HTTP 400: maximum context length".into()), 1)
-            .contains("maximum context length"));
-        for s in [Stop::EndTurn, Stop::MaxRounds, Stop::Cancelled, Stop::Error("x".into())] {
+        assert!(
+            unlanded_reason(&Stop::Error("HTTP 400: maximum context length".into()), 1)
+                .contains("maximum context length")
+        );
+        for s in [
+            Stop::EndTurn,
+            Stop::MaxRounds,
+            Stop::Cancelled,
+            Stop::Error("x".into()),
+        ] {
             assert!(!unlanded_reason(&s, 1).contains("nothing committed"));
         }
     }

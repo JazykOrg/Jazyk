@@ -7,7 +7,8 @@
 use crate::board::Board;
 use crate::gen::GenSettings;
 use crate::limits::{
-    self, LOOKALIKE_DISTINCTIVE_HOLDERS, LOOKALIKE_DOCUMENT_WEIGHT, LOOKALIKE_THRESHOLD, LOOKALIKE_TOKEN_WEIGHT,
+    self, LOOKALIKE_DISTINCTIVE_HOLDERS, LOOKALIKE_DOCUMENT_WEIGHT, LOOKALIKE_THRESHOLD,
+    LOOKALIKE_TOKEN_WEIGHT,
 };
 use crate::model::*;
 use crate::store::{self, Op, Store};
@@ -89,13 +90,16 @@ impl GateContext<'_> {
     // node, or a pair holding it.
     fn owned_elsewhere(&self, node: &str) -> bool {
         let node = self.store.resolve_id(node);
-        self.batch.iter().filter(|g| g.goal != self.goal.goal).any(|g| {
-            let hit = |t: &str| self.store.resolve_id(t) == node;
-            match pair_members(&g.target) {
-                Some((a, b)) => hit(a) || hit(b),
-                None => hit(&g.target),
-            }
-        })
+        self.batch
+            .iter()
+            .filter(|g| g.goal != self.goal.goal)
+            .any(|g| {
+                let hit = |t: &str| self.store.resolve_id(t) == node;
+                match pair_members(&g.target) {
+                    Some((a, b)) => hit(a) || hit(b),
+                    None => hit(&g.target),
+                }
+            })
     }
 }
 
@@ -126,7 +130,9 @@ pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<
         let Some(src) = r.source.as_ref() else {
             continue;
         };
-        if store.quote_locates(&src.doc, &src.section, &src.quote) && !store.status.reevaluate.contains(a) {
+        if store.quote_locates(&src.doc, &src.section, &src.quote)
+            && !store.status.reevaluate.contains(a)
+        {
             continue;
         }
         let addressed = staged.iter().any(|o| match o {
@@ -149,7 +155,12 @@ pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<
 }
 
 // Sections of a reconcile goal with no coverage mark, recorded or staged.
-pub fn unmarked_sections(store: &Store, staged: &[Op], doc: &str, sections: &[String]) -> Vec<String> {
+pub fn unmarked_sections(
+    store: &Store,
+    staged: &[Op],
+    doc: &str,
+    sections: &[String],
+) -> Vec<String> {
     sections
         .iter()
         .filter(|sec| {
@@ -171,7 +182,13 @@ pub fn unmarked_sections(store: &Store, staged: &[Op], doc: &str, sections: &[St
 // section, staged or recorded.
 pub fn dishonest_covered(store: &Store, staged: &[Op]) -> Option<Violation> {
     for op in staged {
-        let Op::SetCoverage { doc, section, state, .. } = op else {
+        let Op::SetCoverage {
+            doc,
+            section,
+            state,
+            ..
+        } = op
+        else {
             continue;
         };
         if state != "covered" {
@@ -185,8 +202,15 @@ pub fn dishonest_covered(store: &Store, staged: &[Op]) -> Option<Violation> {
         }
         // A test-case or examples section is covered by the criterion sourced
         // from it (docs/compiler/goals/reconcile-section.md#gate).
-        let crit_at = |s: &Option<SourceRef>| s.as_ref().is_some_and(|s| s.doc == *doc && s.section == *section);
-        let has_req = store.graph.requirements.values().any(|r| r.anchored_at(doc, section))
+        let crit_at = |s: &Option<SourceRef>| {
+            s.as_ref()
+                .is_some_and(|s| s.doc == *doc && s.section == *section)
+        };
+        let has_req = store
+            .graph
+            .requirements
+            .values()
+            .any(|r| r.anchored_at(doc, section))
             || store.graph.criteria.values().any(|c| crit_at(&c.source))
             || staged.iter().any(|o| match o {
                 Op::CreateRequirement { requirement, .. } => requirement.anchored_at(doc, section),
@@ -211,7 +235,10 @@ pub fn dishonest_covered(store: &Store, staged: &[Op]) -> Option<Violation> {
 // the repair. Mirrors docs/compiler/goals/bind.md#gate, generate.md#gate, verify.md#gate.
 fn ledger_violation(cx: &GateContext, result: Result<(), String>) -> Option<Violation> {
     result.err().map(|message| {
-        Violation::new(&format!("{}-gate", cx.goal.kind), format!("{}: {}", cx.goal.goal, message))
+        Violation::new(
+            &format!("{}-gate", cx.goal.kind),
+            format!("{}: {}", cx.goal.goal, message),
+        )
     })
 }
 
@@ -225,7 +252,15 @@ fn references_after(store: &Store, staged: &[Op]) -> Store {
             Op::CreateEntity { id, entity } => {
                 g.entities.insert(id.clone(), entity.clone());
             }
-            Op::UpdateEntity { id, parent, clear_parent, set_attributes, add_attributes, provenance, .. } => {
+            Op::UpdateEntity {
+                id,
+                parent,
+                clear_parent,
+                set_attributes,
+                add_attributes,
+                provenance,
+                ..
+            } => {
                 if let Some(e) = g.entities.get_mut(id) {
                     if let Some(p) = parent {
                         e.parent = Some(p.clone());
@@ -237,7 +272,8 @@ fn references_after(store: &Store, staged: &[Op]) -> Store {
                         e.attributes = a.clone();
                     }
                     for a in add_attributes {
-                        e.attributes.retain(|x| !x.name.eq_ignore_ascii_case(&a.name));
+                        e.attributes
+                            .retain(|x| !x.name.eq_ignore_ascii_case(&a.name));
                         e.attributes.push(a.clone());
                     }
                     if let Some(p) = provenance {
@@ -255,7 +291,14 @@ fn references_after(store: &Store, staged: &[Op]) -> Store {
             Op::CreateRequirement { id, requirement } => {
                 g.requirements.insert(id.clone(), requirement.clone());
             }
-            Op::UpdateRequirement { id, entities, edges, transition, provenance, .. } => {
+            Op::UpdateRequirement {
+                id,
+                entities,
+                edges,
+                transition,
+                provenance,
+                ..
+            } => {
                 if let Some(r) = g.requirements.get_mut(id) {
                     if let Some(x) = entities {
                         r.entities = x.clone();
@@ -282,7 +325,15 @@ fn references_after(store: &Store, staged: &[Op]) -> Store {
             Op::CreateView { id, view } => {
                 g.views.insert(id.clone(), view.clone());
             }
-            Op::UpdateView { id, members, add_members, remove_members, collapse, exclude, .. } => {
+            Op::UpdateView {
+                id,
+                members,
+                add_members,
+                remove_members,
+                collapse,
+                exclude,
+                ..
+            } => {
                 if let Some(v) = g.views.get_mut(id) {
                     if let Some(ms) = members {
                         v.members = ms.clone();
@@ -574,7 +625,9 @@ pub fn owning_section(store: &Store, doc: &str, sec: &str) -> String {
 }
 
 pub fn section_has_body(sec: &Section) -> bool {
-    if sec.kind == "blob" { return true; }
+    if sec.kind == "blob" {
+        return true;
+    }
     if sec.kind == "code-block" {
         return false;
     }
@@ -961,8 +1014,7 @@ fn doc_hint_lines(
     let subjects: Vec<&(String, String, String)> = linked
         .iter()
         .filter(|(id, name, _)| {
-            root_title.as_deref() == Some(name.to_lowercase().as_str())
-                || names.named_in(id, &text)
+            root_title.as_deref() == Some(name.to_lowercase().as_str()) || names.named_in(id, &text)
         })
         .collect();
     let subjects = match subjects.len() {
@@ -1001,7 +1053,8 @@ fn doc_hint_lines(
         known.push(format!("and {} more", known_count - 8));
     }
     let known = if store.graph.entities.is_empty() {
-        "the graph holds no entity yet: create what the section states, no search can find anything".to_string()
+        "the graph holds no entity yet: create what the section states, no search can find anything"
+            .to_string()
     } else if known_count == 0 {
         format!(
             "no known entity is named in the document; {} in the graph; search before creating",
@@ -1084,7 +1137,9 @@ pub fn linked_subjects_all(store: &Store) -> BTreeMap<String, Vec<(String, Strin
         }
     }
     for r in store.graph.requirements.values() {
-        let Some(src) = r.source.as_ref() else { continue };
+        let Some(src) = r.source.as_ref() else {
+            continue;
+        };
         for l in crate::md::doc_links(&src.quote, &src.doc) {
             if l == src.doc {
                 continue;
@@ -1255,7 +1310,10 @@ fn staged_quotes(v: &Value, doc: &str, section: &str, out: &mut Vec<String>) {
     match v {
         Value::Object(o) => {
             if let Some(q) = o.get("quote").and_then(Value::as_str) {
-                let doc_ok = o.get("doc").and_then(Value::as_str).is_none_or(|d| d == doc);
+                let doc_ok = o
+                    .get("doc")
+                    .and_then(Value::as_str)
+                    .is_none_or(|d| d == doc);
                 let sec_ok = o
                     .get("section")
                     .and_then(Value::as_str)
@@ -1375,7 +1433,11 @@ impl GoalKind for ReconcileSection {
             let sec = owning_section(store, &doc, &sec);
             // A bare heading has nothing to extract and nothing to mark.
             // Mirrors docs/compiler/goals/reconcile-section.md#created-when.
-            if record.sections.get(&sec).is_some_and(|s| !section_has_body(s)) {
+            if record
+                .sections
+                .get(&sec)
+                .is_some_and(|s| !section_has_body(s))
+            {
                 continue;
             }
             if record
@@ -1385,7 +1447,11 @@ impl GoalKind for ReconcileSection {
             {
                 continue;
             }
-            let body = record.sections.get(&sec).map(|s| s.raw.as_str()).unwrap_or("");
+            let body = record
+                .sections
+                .get(&sec)
+                .map(|s| s.raw.as_str())
+                .unwrap_or("");
             let w = work.entry(format!("{}#{}", doc, sec)).or_default();
             w.dirty = Some(fold_dirty_detail(w.dirty.take(), &rec.detail, body));
             w.causes.push(rec.cause());
@@ -1559,7 +1625,13 @@ impl GoalKind for ReconcileSection {
             hints.push(format!("load {}", full));
             if sec.kind == "blob" {
                 hints.push("Whole-file input: envelope metadata is not prose. Never quote it. Reconcile its role against incoming document context; a covered note names linked requirement IDs.".into());
-                hints.push(format!("linked requirements: {}", crate::input::requirement_links(store, &doc).into_iter().collect::<Vec<_>>().join(", ")));
+                hints.push(format!(
+                    "linked requirements: {}",
+                    crate::input::requirement_links(store, &doc)
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
             if sec.kind == "code" {
                 hints.push(format!(
@@ -1589,10 +1661,15 @@ impl GoalKind for ReconcileSection {
         }
         if let Some(section) = board.blob_inputs.get(&doc) {
             for referring in section {
-                if board.goals.iter().any(|g| g.kind == "reconcile-section"
-                    && crate::model::split_section_ref(&g.target).is_some_and(|(d, _)| &d == referring)
-                    && board.open(&g.id)) {
-                    return Ready::Blocked(format!("referring document {referring} reconciles before its whole-file input"));
+                if board.goals.iter().any(|g| {
+                    g.kind == "reconcile-section"
+                        && crate::model::split_section_ref(&g.target)
+                            .is_some_and(|(d, _)| &d == referring)
+                        && board.open(&g.id)
+                }) {
+                    return Ready::Blocked(format!(
+                        "referring document {referring} reconciles before its whole-file input"
+                    ));
                 }
             }
         }
@@ -1670,9 +1747,23 @@ impl GoalKind for ReconcileSection {
                         let linked = crate::input::staged_requirement_links(store, doc, staged);
                         let note = note.as_deref().unwrap_or("");
                         if note.trim().is_empty() {
-                            out.push(Violation::new("note-required", format!("{doc}#{section}: explain the whole-file compilation decision")));
+                            out.push(Violation::new(
+                                "note-required",
+                                format!(
+                                    "{doc}#{section}: explain the whole-file compilation decision"
+                                ),
+                            ));
                         }
-                        if state == "covered" && (linked.is_empty() || !linked.iter().all(|id| note.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '`' | '(' | ')')).any(|word| word.trim_end_matches('.') == id))) {
+                        if state == "covered"
+                            && (linked.is_empty()
+                                || !linked.iter().all(|id| {
+                                    note.split(|c: char| {
+                                        c.is_whitespace()
+                                            || matches!(c, ',' | ';' | '`' | '(' | ')')
+                                    })
+                                    .any(|word| word.trim_end_matches('.') == id)
+                                }))
+                        {
                             out.push(Violation::new("uncovered-claim", format!("{doc}#{section}: name each requirement whose quoted reference selects this input: {linked:?}")));
                         }
                         if state == "non-normative" && !linked.is_empty() {
@@ -1684,7 +1775,8 @@ impl GoalKind for ReconcileSection {
                         // A criterion sourced from the section covers it too
                         // (docs/compiler/goals/reconcile-section.md#gate).
                         let crit_at = |s: &Option<crate::model::SourceRef>| {
-                            s.as_ref().is_some_and(|s| s.doc == *doc && s.section == *section)
+                            s.as_ref()
+                                .is_some_and(|s| s.doc == *doc && s.section == *section)
                         };
                         let sourced = store
                             .graph
@@ -1769,16 +1861,15 @@ impl GoalKind for ReconcileSection {
                     id,
                     source: Some(s),
                     ..
+                } if !store.quote_locates(&s.doc, &s.section, &s.quote) => {
+                    out.push(Violation::new(
+                        "quote-not-found",
+                        format!(
+                            "{}: the quote does not locate in {}#{}",
+                            id, s.doc, s.section
+                        ),
+                    ));
                 }
-                    if !store.quote_locates(&s.doc, &s.section, &s.quote) => {
-                        out.push(Violation::new(
-                            "quote-not-found",
-                            format!(
-                                "{}: the quote does not locate in {}#{}",
-                                id, s.doc, s.section
-                            ),
-                        ));
-                    }
                 _ => {}
             }
         }
@@ -1965,8 +2056,8 @@ pub fn pair_plan(store: &Store) -> PairPlan {
                 // A diagnostic naming both sides is on the pair; one naming one side
                 // is context, and the hint says which.
                 for (id, d) in diags {
-                    let on_pair = d.subjects.iter().any(|s| s == rid)
-                        && d.subjects.iter().any(|s| s == &nbr);
+                    let on_pair =
+                        d.subjects.iter().any(|s| s == rid) && d.subjects.iter().any(|s| s == &nbr);
                     let where_ = if on_pair {
                         "on the pair".to_string()
                     } else if d.subjects.iter().any(|s| s == rid) {
@@ -2002,8 +2093,7 @@ pub fn pair_plan(store: &Store) -> PairPlan {
                 Some(p) => {
                     p.score = p.score.max(score);
                     p.pinned |= pinned;
-                    if (cause.generation, cause.mutation) < (p.cause.generation, p.cause.mutation)
-                    {
+                    if (cause.generation, cause.mutation) < (p.cause.generation, p.cause.mutation) {
                         p.change = change;
                         p.cause = cause;
                         p.hints = hints;
@@ -2153,7 +2243,14 @@ pub fn pair_plan(store: &Store) -> PairPlan {
                 };
                 hints.push(format!("score {}; {}, {}", p.score, side(a), side(b)));
             }
-            build_goal(kind, target, true, p.change.clone(), Some(p.cause.clone()), hints)
+            build_goal(
+                kind,
+                target,
+                true,
+                p.change.clone(),
+                Some(p.cause.clone()),
+                hints,
+            )
         })
         .collect();
     PairPlan { open, waiting }
@@ -2361,7 +2458,10 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
                 .unwrap_or(&r.statement),
         );
         let statement_text = blank_code(&r.statement);
-        if names.iter().any(|n| word_bounded(&quote_text, n) && word_bounded(&statement_text, n)) {
+        if names
+            .iter()
+            .any(|n| word_bounded(&quote_text, n) && word_bounded(&statement_text, n))
+        {
             out.push((rid.clone(), r.statement.clone()));
             if out.len() >= 6 {
                 break;
@@ -2393,7 +2493,10 @@ pub fn unparented_parts(store: &Store, id: &str) -> Vec<(String, String, String)
             let line = match &part.parent {
                 None => format!("{} -> {} (whole -> part)", edge.a, edge.b),
                 Some(p) if p != &edge.a && !store.is_ancestor(&edge.a, &edge.b) => {
-                    format!("{} -> {} (whole -> part; parent now {}, not under the whole)", edge.a, edge.b, p)
+                    format!(
+                        "{} -> {} (whole -> part; parent now {}, not under the whole)",
+                        edge.a, edge.b, p
+                    )
                 }
                 _ => continue,
             };
@@ -2952,8 +3055,16 @@ pub fn declared_attributes(store: &Store, ty: &str) -> BTreeSet<String> {
 // one verdict per `to`. Mirrors docs/compiler/goals/conform-instance.md#gate.
 pub fn instance_links(store: &Store, id: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
-    for c in store.graph.relationships.values().flat_map(|r| r.contributions.iter()) {
-        if c.a == id && c.r#type != INSTANTIATION && !out.iter().any(|(b, t)| b == &c.b && t == &c.r#type) {
+    for c in store
+        .graph
+        .relationships
+        .values()
+        .flat_map(|r| r.contributions.iter())
+    {
+        if c.a == id
+            && c.r#type != INSTANTIATION
+            && !out.iter().any(|(b, t)| b == &c.b && t == &c.r#type)
+        {
             out.push((c.b.clone(), c.r#type.clone()));
         }
     }
@@ -3097,7 +3208,11 @@ impl GoalKind for ConformInstance {
         let ty = cx.goal.change["type"]
             .as_str()
             .map(String::from)
-            .or_else(|| crate::derive::instance_types(cx.store).get(&instance).cloned());
+            .or_else(|| {
+                crate::derive::instance_types(cx.store)
+                    .get(&instance)
+                    .cloned()
+            });
         for op in cx.staged {
             match op {
                 Op::UpdateEntity {
@@ -3126,16 +3241,22 @@ impl GoalKind for ConformInstance {
                         && set_attributes.is_none()
                         && add_attributes.is_empty()
                         && provenance.is_none();
-                    let on_type = ty.as_deref().is_some_and(|t| cx.store.resolve_id(id) == cx.store.resolve_id(t));
+                    let on_type = ty
+                        .as_deref()
+                        .is_some_and(|t| cx.store.resolve_id(id) == cx.store.resolve_id(t));
                     if on_type && !annotation_only && !cx.owned_elsewhere(id) {
                         return Some(Violation::new(
                             "type-edited",
-                            format!("{}: {} is the type; conform the instance, never the type", cx.goal.goal, id),
+                            format!(
+                                "{}: {} is the type; conform the instance, never the type",
+                                cx.goal.goal, id
+                            ),
                         ));
                     }
                 }
                 Op::UpdateRequirement { id, entities, .. } => {
-                    let names_instance = |list: &[String]| list.iter().any(|e| cx.store.resolve_id(e) == instance);
+                    let names_instance =
+                        |list: &[String]| list.iter().any(|e| cx.store.resolve_id(e) == instance);
                     let stored = cx.store.graph.requirements.get(cx.store.resolve_id(id));
                     let named = stored.is_some_and(|r| names_instance(&r.entities))
                         || entities.as_deref().is_some_and(names_instance);
@@ -3236,8 +3357,16 @@ impl GoalKind for DeriveCriteria {
         for (entity, reqs) in criteria_owed(store) {
             let none = reqs.iter().filter(|(_, why)| *why == "none").count();
             let revised = reqs.len() - none;
-            let none_ids: Vec<&str> = reqs.iter().filter(|(_, w)| *w == "none").map(|(r, _)| r.as_str()).collect();
-            let revised_ids: Vec<&str> = reqs.iter().filter(|(_, w)| *w == "revised").map(|(r, _)| r.as_str()).collect();
+            let none_ids: Vec<&str> = reqs
+                .iter()
+                .filter(|(_, w)| *w == "none")
+                .map(|(r, _)| r.as_str())
+                .collect();
+            let revised_ids: Vec<&str> = reqs
+                .iter()
+                .filter(|(_, w)| *w == "revised")
+                .map(|(r, _)| r.as_str())
+                .collect();
             let mut hints = vec![format!(
                 "requirements: {} ({} without criteria, {} revised)",
                 reqs.len(),
@@ -3316,7 +3445,12 @@ impl GoalKind for DeriveCriteria {
                 for r in g.change[key].as_array().into_iter().flatten() {
                     if let Some(id) = r.as_str() {
                         lines.push(format!("- {} full", id));
-                        if let Some(src) = store.graph.requirements.get(id).and_then(|q| q.source.as_ref()) {
+                        if let Some(src) = store
+                            .graph
+                            .requirements
+                            .get(id)
+                            .and_then(|q| q.source.as_ref())
+                        {
                             let sec = format!("{}#{}", src.doc, src.section);
                             if !sections.contains(&sec) {
                                 sections.push(sec);
@@ -3617,7 +3751,10 @@ impl GoalKind for Generate {
         Vec::new()
     }
     fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
-        ledger_violation(cx, crate::gen::gate(cx.store, cx.gen, &cx.goal.target, true).map(|_| ()))
+        ledger_violation(
+            cx,
+            crate::gen::gate(cx.store, cx.gen, &cx.goal.target, true).map(|_| ()),
+        )
     }
     fn prompt(&self) -> &'static str {
         include_str!("../../docs/compiler/goals/prompts/generate.md")
@@ -3643,7 +3780,11 @@ impl GoalKind for Verify {
             .collect();
         crate::verify::pending(store, gen, Some("stale"), None)
             .into_iter()
-            .filter(|p| p["status"] != "unimplemented" && p["status"] != "partial" && p["reason"] != "not-generated")
+            .filter(|p| {
+                p["status"] != "unimplemented"
+                    && p["status"] != "partial"
+                    && p["reason"] != "not-generated"
+            })
             .filter(|p| !bind_reqs.contains(p["requirement"].as_str().unwrap_or_default()))
             .filter_map(|p| {
                 let rid = p["requirement"].as_str()?.to_string();
@@ -4324,8 +4465,16 @@ fn score_pair(
     if shared.is_empty() {
         return None;
     }
-    let weigh = |ts: &[String]| -> f64 { ts.iter().map(|t| weights.get(t).copied().unwrap_or(1.0)).sum() };
-    let sum = |ts: &BTreeSet<String>| -> f64 { ts.iter().map(|t| weights.get(t).copied().unwrap_or(1.0)).sum() };
+    let weigh = |ts: &[String]| -> f64 {
+        ts.iter()
+            .map(|t| weights.get(t).copied().unwrap_or(1.0))
+            .sum()
+    };
+    let sum = |ts: &BTreeSet<String>| -> f64 {
+        ts.iter()
+            .map(|t| weights.get(t).copied().unwrap_or(1.0))
+            .sum()
+    };
     let tokens = 2.0 * weigh(&shared) / (sum(ta) + sum(tb));
     let union = docs_a.union(docs_b).count().max(1);
     let documents = docs_a.intersection(docs_b).count() as f64 / union as f64;
@@ -4398,7 +4547,9 @@ pub(crate) fn lookalike_scores_scan(store: &Store) -> Vec<Lookalike> {
             let docs_a: BTreeSet<String> = ea.mentions.iter().map(|m| m.doc.clone()).collect();
             let docs_b: BTreeSet<String> = eb.mentions.iter().map(|m| m.doc.clone()).collect();
             let (ta, tb) = (name_tokens(ea), name_tokens(eb));
-            out.extend(lookalike_of(store, &tied, &weights, a, &ta, &docs_a, b, &tb, &docs_b));
+            out.extend(lookalike_of(
+                store, &tied, &weights, a, &ta, &docs_a, b, &tb, &docs_b,
+            ));
         }
     }
     out
@@ -5095,14 +5246,13 @@ pub fn cohesion_groups(store: &Store, id: &str) -> Vec<(String, usize, String)> 
     // Function words the pair scorer's stop list keeps (they carry weight between two
     // statements) that name no concept a group could be about.
     const FUNCTION: [&str; 72] = [
-        "every", "from", "must", "may", "can", "will", "does", "did", "has", "have", "had",
-        "into", "than", "more", "most", "one", "any", "some", "their", "they", "them",
-        "after", "before", "about", "over", "under", "other", "same", "also", "via",
-        "whenever", "while", "once", "per", "what", "who", "where", "how", "never", "always",
-        "between", "within", "without", "through", "until", "since", "both", "either",
-        "first", "last", "new", "such", "these", "those", "there", "here", "done", "make",
-        "made", "use", "used", "like", "unless", "because", "would", "should", "could",
-        "being", "been", "was", "were", "whose",
+        "every", "from", "must", "may", "can", "will", "does", "did", "has", "have", "had", "into",
+        "than", "more", "most", "one", "any", "some", "their", "they", "them", "after", "before",
+        "about", "over", "under", "other", "same", "also", "via", "whenever", "while", "once",
+        "per", "what", "who", "where", "how", "never", "always", "between", "within", "without",
+        "through", "until", "since", "both", "either", "first", "last", "new", "such", "these",
+        "those", "there", "here", "done", "make", "made", "use", "used", "like", "unless",
+        "because", "would", "should", "could", "being", "been", "was", "were", "whose",
     ];
     let reqs = store.requirements_referencing(id);
     let mut by_token: BTreeMap<String, Vec<&String>> = BTreeMap::new();
@@ -5217,8 +5367,11 @@ pub fn caps_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Viol
     let hard = rec.detail["hard"].as_u64().unwrap_or(soft);
     // The count is the statements the target leads (first-listed entity), as the
     // threshold counts them (docs/compiler/goals/abstract-entity.md#created-when).
-    let names_target =
-        |entities: &[String]| entities.first().is_some_and(|x| store.resolve_id(x) == target);
+    let names_target = |entities: &[String]| {
+        entities
+            .first()
+            .is_some_and(|x| store.resolve_id(x) == target)
+    };
     let mut referencing: BTreeSet<String> = store
         .requirements_referencing(target)
         .into_iter()
@@ -5550,14 +5703,14 @@ fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -
             more,
             c.weight
         ));
-            if crate::board::scope_target(target).is_some() {
-                // The default scope's top level, not a scope anyone set
-                // (docs/compiler/goals/abstract-entity.md#the-fan-out-variant).
-                hints.push(format!(
+        if crate::board::scope_target(target).is_some() {
+            // The default scope's top level, not a scope anyone set
+            // (docs/compiler/goals/abstract-entity.md#the-fan-out-variant).
+            hints.push(format!(
                     "{} is the top level of the scope: its parentless entities, not a scope you set; a grouping under a documented name gives them a parent",
                     target
                 ));
-            }
+        }
     }
     let members = level_members(store, target);
     // The node's own document: the section that lists a member there is the heading
@@ -6259,15 +6412,16 @@ impl GoalKind for AbstractEntity {
                     }
                 }
                 Op::DeleteEntity { id, .. } | Op::MergeEntities { absorb: id, .. }
-                    if !staged_parents.contains(id) => {
-                        out.push(Violation::new(
-                            "target-removed",
-                            format!(
-                                "{}: an abstraction adds structure; it never deletes or merges",
-                                id
-                            ),
-                        ));
-                    }
+                    if !staged_parents.contains(id) =>
+                {
+                    out.push(Violation::new(
+                        "target-removed",
+                        format!(
+                            "{}: an abstraction adds structure; it never deletes or merges",
+                            id
+                        ),
+                    ));
+                }
                 _ => {}
             }
         }
@@ -6306,9 +6460,20 @@ pub(crate) mod tests {
         })
     }
 
-    fn goal_gate_of(store: &Store, staged: &[Op], goal: &crate::tools::GoalScope, batch: &[crate::tools::GoalScope]) -> Option<Violation> {
+    fn goal_gate_of(
+        store: &Store,
+        staged: &[Op],
+        goal: &crate::tools::GoalScope,
+        batch: &[crate::tools::GoalScope],
+    ) -> Option<Violation> {
         let gen = GenSettings::resolve(&crate::project::Project::default());
-        let cx = GateContext { store, staged, gen: &gen, goal, batch };
+        let cx = GateContext {
+            store,
+            staged,
+            gen: &gen,
+            goal,
+            batch,
+        };
         kind(&goal.kind).unwrap().goal_gate(&cx)
     }
 
@@ -6318,21 +6483,38 @@ pub(crate) mod tests {
     #[test]
     fn retrace_refuses_a_dangling_reference_until_it_is_repaired() {
         let mut s = Store::default();
-        s.graph.requirements.insert("req:holds-1".into(), Requirement { statement: "Holds land.".into(), ..Default::default() });
-        s.graph.views.insert("view:usecase/holds".into(), View {
-            kind: "usecase".into(),
-            title: "Holds".into(),
-            members: vec!["req:holds-1".into(), "req:orders-6".into()],
-            ..Default::default()
-        });
-        let g = scope("retrace", "view:usecase/holds", json!({"deleted": ["req:orders-6"]}));
+        s.graph.requirements.insert(
+            "req:holds-1".into(),
+            Requirement {
+                statement: "Holds land.".into(),
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:usecase/holds".into(),
+            View {
+                kind: "usecase".into(),
+                title: "Holds".into(),
+                members: vec!["req:holds-1".into(), "req:orders-6".into()],
+                ..Default::default()
+            },
+        );
+        let g = scope(
+            "retrace",
+            "view:usecase/holds",
+            json!({"deleted": ["req:orders-6"]}),
+        );
         let batch = vec![g.clone()];
         let v = goal_gate_of(&s, &[], &g, &batch).expect("the dead member dangles");
         assert_eq!(v.rule, "dangling-reference");
         assert!(v.message.contains("req:orders-6"), "{}", v.message);
-        let repaired = [op(json!({"op": "update_view", "id": "view:usecase/holds", "remove_members": ["req:orders-6"]}))];
+        let repaired = [op(
+            json!({"op": "update_view", "id": "view:usecase/holds", "remove_members": ["req:orders-6"]}),
+        )];
         assert_eq!(goal_gate_of(&s, &repaired, &g, &batch), None);
-        let deleted = [op(json!({"op": "delete_view", "id": "view:usecase/holds", "reason": "nothing left to show"}))];
+        let deleted = [op(
+            json!({"op": "delete_view", "id": "view:usecase/holds", "reason": "nothing left to show"}),
+        )];
         assert_eq!(goal_gate_of(&s, &deleted, &g, &batch), None);
     }
 
@@ -6342,22 +6524,66 @@ pub(crate) mod tests {
     fn conform_instance_refuses_type_edits_its_batch_does_not_own() {
         let mut s = Store::default();
         for id in ["ent:ana", "ent:customer", "ent:order"] {
-            s.graph.entities.insert(id.into(), Entity { name: id.into(), ..Default::default() });
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: id.into(),
+                    ..Default::default()
+                },
+            );
         }
-        s.graph.requirements.insert("req:customer-1".into(), Requirement { statement: "A customer has a tier.".into(), entities: vec!["ent:customer".into()], ..Default::default() });
-        s.graph.requirements.insert("req:ana-1".into(), Requirement { statement: "Ana is gold tier.".into(), entities: vec!["ent:ana".into()], ..Default::default() });
-        let g = scope("conform-instance", "ent:ana", json!({"type": "ent:customer"}));
+        s.graph.requirements.insert(
+            "req:customer-1".into(),
+            Requirement {
+                statement: "A customer has a tier.".into(),
+                entities: vec!["ent:customer".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:ana-1".into(),
+            Requirement {
+                statement: "Ana is gold tier.".into(),
+                entities: vec!["ent:ana".into()],
+                ..Default::default()
+            },
+        );
+        let g = scope(
+            "conform-instance",
+            "ent:ana",
+            json!({"type": "ent:customer"}),
+        );
         let alone = vec![g.clone()];
-        let type_edit = [op(json!({"op": "update_entity", "id": "ent:customer", "definition": "A buyer."}))];
-        let type_statement = [op(json!({"op": "update_requirement", "id": "req:customer-1", "statement": "A customer has a tier and a region."}))];
-        let own_statement = [op(json!({"op": "update_requirement", "id": "req:ana-1", "statement": "Ana is gold tier in the EU."}))];
-        let annotation = [op(json!({"op": "update_entity", "id": "ent:customer", "not_about_add": ["req:ana-1"]}))];
-        let other_entity = [op(json!({"op": "update_entity", "id": "ent:order", "definition": "A purchase."}))];
-        assert_eq!(goal_gate_of(&s, &type_edit, &g, &alone).map(|v| v.rule), Some("type-edited".into()));
-        assert_eq!(goal_gate_of(&s, &type_statement, &g, &alone).map(|v| v.rule), Some("type-edited".into()));
+        let type_edit = [op(
+            json!({"op": "update_entity", "id": "ent:customer", "definition": "A buyer."}),
+        )];
+        let type_statement = [op(
+            json!({"op": "update_requirement", "id": "req:customer-1", "statement": "A customer has a tier and a region."}),
+        )];
+        let own_statement = [op(
+            json!({"op": "update_requirement", "id": "req:ana-1", "statement": "Ana is gold tier in the EU."}),
+        )];
+        let annotation = [op(
+            json!({"op": "update_entity", "id": "ent:customer", "not_about_add": ["req:ana-1"]}),
+        )];
+        let other_entity = [op(
+            json!({"op": "update_entity", "id": "ent:order", "definition": "A purchase."}),
+        )];
+        assert_eq!(
+            goal_gate_of(&s, &type_edit, &g, &alone).map(|v| v.rule),
+            Some("type-edited".into())
+        );
+        assert_eq!(
+            goal_gate_of(&s, &type_statement, &g, &alone).map(|v| v.rule),
+            Some("type-edited".into())
+        );
         assert_eq!(goal_gate_of(&s, &own_statement, &g, &alone), None);
         assert_eq!(goal_gate_of(&s, &annotation, &g, &alone), None);
-        assert_eq!(goal_gate_of(&s, &other_entity, &g, &alone), None, "another entity is not this goal's type");
+        assert_eq!(
+            goal_gate_of(&s, &other_entity, &g, &alone),
+            None,
+            "another entity is not this goal's type"
+        );
         // A review of the type in the same batch owns the type's edits.
         let mixed = vec![g.clone(), scope("review-entity", "ent:customer", json!({}))];
         assert_eq!(goal_gate_of(&s, &type_edit, &g, &mixed), None);
@@ -6555,11 +6781,18 @@ pub(crate) mod tests {
             );
         }
         s.status.changes.push(
-            ChangeRecord::new(7, 0, 0, store::CHANGE_THRESHOLD_CROSSED, "ent:svc", "limits")
-                .with_detail(json!({
-                    "limit": "requirements-per-entity", "count": 4, "soft": 2, "hard": 3,
-                    "level": "hard", "goal": "abstract-entity",
-                })),
+            ChangeRecord::new(
+                7,
+                0,
+                0,
+                store::CHANGE_THRESHOLD_CROSSED,
+                "ent:svc",
+                "limits",
+            )
+            .with_detail(json!({
+                "limit": "requirements-per-entity", "count": 4, "soft": 2, "hard": 3,
+                "level": "hard", "goal": "abstract-entity",
+            })),
         );
         s
     }
@@ -6584,7 +6817,9 @@ pub(crate) mod tests {
         let s = caps_store();
         let v = caps_goal_gate(&s, &[], "ent:svc").expect("four over soft two");
         assert_eq!(v.rule, "count-over-limit");
-        assert!(v.message.contains("4 requirements after the changeset, over 2"));
+        assert!(v
+            .message
+            .contains("4 requirements after the changeset, over 2"));
         let one = [repoint("req:svc-1", "ent:data")];
         let v = caps_goal_gate(&s, &one, "ent:svc").expect("three is still over two");
         assert!(v.message.contains("3 requirements"));
@@ -6619,7 +6854,13 @@ pub(crate) mod tests {
         .iter()
         .enumerate()
         {
-            statement(&mut s, &format!("req:svc-{}", i), t, &["ent:svc"], "/svc/data");
+            statement(
+                &mut s,
+                &format!("req:svc-{}", i),
+                t,
+                &["ent:svc"],
+                "/svc/data",
+            );
         }
         let groups = cohesion_groups(&s, "ent:svc");
         let words: Vec<&str> = groups.iter().map(|(w, _, _)| w.as_str()).collect();
@@ -6664,7 +6905,8 @@ pub(crate) mod tests {
         readme.sections.insert("/trellis".into(), root("Trellis"));
         s.docs.insert("README.md".into(), readme);
         let mut api = DocRecord::default();
-        api.sections.insert("/api-server".into(), root("API Server"));
+        api.sections
+            .insert("/api-server".into(), root("API Server"));
         s.docs.insert("api-server.md".into(), api);
         assert_eq!(
             defining_section(&s, "ent:api-server"),
@@ -6972,7 +7214,10 @@ pub(crate) mod tests {
             "{:?}",
             node.hints
         );
-        assert!(!node.hints.iter().any(|h| h.starts_with("namesake ent:cart")));
+        assert!(!node
+            .hints
+            .iter()
+            .any(|h| h.starts_with("namesake ent:cart")));
     }
 
     // Mirrors docs/compiler/goals/derive-criteria.md#created-when: one goal per leading
@@ -6981,10 +7226,26 @@ pub(crate) mod tests {
     #[test]
     fn derive_criteria_goals_follow_the_leading_entity_and_the_deliverable() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:sort".into(), Entity { name: "Sort".into(), ..Default::default() });
-        s.graph.entities.insert("ent:line".into(), Entity { name: "Line".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:sort".into(),
+            Entity {
+                name: "Sort".into(),
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:line".into(),
+            Entity {
+                name: "Line".into(),
+                ..Default::default()
+            },
+        );
         for (id, st, ents) in [
-            ("req:a-1", "The utility sorts its lines.", vec!["ent:sort", "ent:line"]),
+            (
+                "req:a-1",
+                "The utility sorts its lines.",
+                vec!["ent:sort", "ent:line"],
+            ),
             ("req:a-2", "A line is trimmed.", vec!["ent:line"]),
             ("req:a-3", "The utility reads STDIN.", vec!["ent:sort"]),
         ] {
@@ -7003,7 +7264,10 @@ pub(crate) mod tests {
                 requirement: "req:a-3".into(),
                 statement: "Two lines on STDIN are both read.".into(),
                 kind: "positive".into(),
-                provenance: Some(Provenance::Derived { from: vec!["req:a-3".into()], reasoning: "the input".into() }),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["req:a-3".into()],
+                    reasoning: "the input".into(),
+                }),
                 stale: true,
                 ..Default::default()
             },
@@ -7040,19 +7304,30 @@ pub(crate) mod tests {
             .iter()
             .map(|g| g.target.clone())
             .collect();
-        assert_eq!(held, vec!["ent:sort".to_string()], "ent:line waits on its question");
+        assert_eq!(
+            held,
+            vec!["ent:sort".to_string()],
+            "ent:line waits on its question"
+        );
         waiting
             .graph
             .diagnostics
             .get_mut("diag:invented-choice-1")
             .unwrap()
             .lifecycle = "resolved".into();
-        assert_eq!(DeriveCriteria.derive_goals(&waiting, &gen).len(), 2, "the answer reopens it");
+        assert_eq!(
+            DeriveCriteria.derive_goals(&waiting, &gen).len(),
+            2,
+            "the answer reopens it"
+        );
         let sort = goals.iter().find(|g| g.target == "ent:sort").unwrap();
         assert_eq!(sort.change["none"], json!(["req:a-1"]));
         assert_eq!(sort.change["revised"], json!(["req:a-3"]));
         assert!(sort.hints.iter().any(|h| h == "skill criteria"));
-        assert_eq!(skills_for("derive-criteria", &s, "ent:sort"), vec!["criteria"]);
+        assert_eq!(
+            skills_for("derive-criteria", &s, "ent:sort"),
+            vec!["criteria"]
+        );
         assert_eq!(tier("derive-criteria"), Some(3));
     }
 
@@ -7069,7 +7344,10 @@ pub(crate) mod tests {
                 ..Default::default()
             },
         );
-        for (id, st) in [("req:a", "An Order names the Customer who placed it."), ("req:b", "A Customer receives a receipt.")] {
+        for (id, st) in [
+            ("req:a", "An Order names the Customer who placed it."),
+            ("req:b", "A Customer receives a receipt."),
+        ] {
             s.graph.requirements.insert(
                 id.into(),
                 Requirement {
@@ -7079,7 +7357,10 @@ pub(crate) mod tests {
                 },
             );
         }
-        let ids: Vec<String> = unreferenced_statements(&s, "ent:customer").into_iter().map(|(id, _)| id).collect();
+        let ids: Vec<String> = unreferenced_statements(&s, "ent:customer")
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert_eq!(ids, vec!["req:b".to_string()]);
     }
 
@@ -7113,7 +7394,12 @@ pub(crate) mod tests {
         s.status.generation = 1;
         let goals = ReconcileSection.derive_goals(&s, &gen_settings());
         let targets: Vec<&str> = goals.iter().map(|g| g.target.as_str()).collect();
-        assert_eq!(targets, vec!["backend.md#/backend/database"], "{:?}", targets);
+        assert_eq!(
+            targets,
+            vec!["backend.md#/backend/database"],
+            "{:?}",
+            targets
+        );
     }
 
     // Mirrors docs/compiler/compilation.md#coverage: a code block follows its parent's
@@ -7122,9 +7408,15 @@ pub(crate) mod tests {
     fn a_code_block_section_owes_no_coverage_of_its_own() {
         let text = "# Doc\n\nprose\n\n```rust\nfn main() {}\n```\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n";
         let sections = crate::md::parse_sections(text);
-        let block = sections.values().find(|s| s.kind == "code-block").expect("code-block");
+        let block = sections
+            .values()
+            .find(|s| s.kind == "code-block")
+            .expect("code-block");
         assert!(!section_has_body(block));
-        let diagram = sections.values().find(|s| s.kind == "diagram").expect("diagram");
+        let diagram = sections
+            .values()
+            .find(|s| s.kind == "diagram")
+            .expect("diagram");
         assert!(section_has_body(diagram));
         // A preamble's whole text is its body: one line of prose before the first
         // heading owes its mark; a heading alone owes none.
@@ -7545,14 +7837,22 @@ pub(crate) mod tests {
         let plan = pair_plan(&s);
         let open: Vec<&str> = plan.open.iter().map(|g| g.id.as_str()).collect();
         assert_eq!(open.len(), limits::PAIRS_PER_REQUIREMENT_CAP, "{:?}", open);
-        assert_eq!(plan.waiting.len(), 4, "{:?}", plan.waiting.keys().collect::<Vec<_>>());
+        assert_eq!(
+            plan.waiting.len(),
+            4,
+            "{:?}",
+            plan.waiting.keys().collect::<Vec<_>>()
+        );
         // The score-4 pair opens ahead of the score-3 ones whatever its id says.
         assert!(open.contains(&pair_id("req:p12").as_str()), "{:?}", open);
         for p in ["req:p01", "req:p07"] {
             assert!(open.contains(&pair_id(p).as_str()), "{:?}", open);
         }
         for p in ["req:p08", "req:p09", "req:p10", "req:p11"] {
-            let w = plan.waiting.get(&pair_id(p)).unwrap_or_else(|| panic!("{} waits", p));
+            let w = plan
+                .waiting
+                .get(&pair_id(p))
+                .unwrap_or_else(|| panic!("{} waits", p));
             assert_eq!(w.score, 3);
             assert_eq!(w.full, vec!["req:hub".to_string()]);
             assert_eq!(w.cause.generation, 5);
@@ -7560,10 +7860,16 @@ pub(crate) mod tests {
         let degree = plan
             .open
             .iter()
-            .filter(|g| pair_members(&g.target).is_some_and(|(a, b)| a == "req:hub" || b == "req:hub"))
+            .filter(|g| {
+                pair_members(&g.target).is_some_and(|(a, b)| a == "req:hub" || b == "req:hub")
+            })
             .count();
         assert_eq!(degree, limits::PAIRS_PER_REQUIREMENT_CAP);
-        let g = plan.open.iter().find(|g| g.id == pair_id("req:p01")).unwrap();
+        let g = plan
+            .open
+            .iter()
+            .find(|g| g.id == pair_id("req:p01"))
+            .unwrap();
         assert!(
             g.hints
                 .iter()
@@ -7571,8 +7877,16 @@ pub(crate) mod tests {
             "{:?}",
             g.hints
         );
-        let g12 = plan.open.iter().find(|g| g.id == pair_id("req:p12")).unwrap();
-        assert!(g12.hints.iter().any(|h| h.starts_with("score 4;")), "{:?}", g12.hints);
+        let g12 = plan
+            .open
+            .iter()
+            .find(|g| g.id == pair_id("req:p12"))
+            .unwrap();
+        assert!(
+            g12.hints.iter().any(|h| h.starts_with("score 4;")),
+            "{:?}",
+            g12.hints
+        );
         // The board lists the waiting pairs and explains one; none of them is a goal.
         let b = crate::board::Board::derive(
             &s,
@@ -7582,7 +7896,9 @@ pub(crate) mod tests {
         assert_eq!(b.waiting.len(), 4);
         assert!(b.goal(&pair_id("req:p08")).is_none());
         assert!(b.waiting_pair("req:hub~req:p08").is_some());
-        let text = b.explain(&s, &pair_id("req:p08")).expect("explains a waiting pair");
+        let text = b
+            .explain(&s, &pair_id("req:p08"))
+            .expect("explains a waiting pair");
         assert!(text.contains("waiting under the cap"), "{}", text);
         assert!(text.contains("req:hub hold(s) 8 open pairs"), "{}", text);
         assert!(b.summary_line().contains("4 pair(s) waiting under the cap"));
@@ -7636,8 +7952,17 @@ pub(crate) mod tests {
         let plan = pair_plan(&s);
         let open: Vec<&str> = plan.open.iter().map(|g| g.id.as_str()).collect();
         assert!(open.contains(&pair_id("req:p08").as_str()), "{:?}", open);
-        assert_eq!(open.len(), limits::PAIRS_PER_REQUIREMENT_CAP + 1, "{:?}", open);
-        assert!(plan.waiting.contains_key(&pair_id("req:p07")), "{:?}", plan.waiting.keys());
+        assert_eq!(
+            open.len(),
+            limits::PAIRS_PER_REQUIREMENT_CAP + 1,
+            "{:?}",
+            open
+        );
+        assert!(
+            plan.waiting.contains_key(&pair_id("req:p07")),
+            "{:?}",
+            plan.waiting.keys()
+        );
     }
 
     // (e) A judged partner derives no pair from the record that lists it; a new
@@ -7646,7 +7971,12 @@ pub(crate) mod tests {
     #[test]
     fn a_re_revised_requirement_starts_with_an_empty_judged_list() {
         let mut s = fanned_store();
-        for c in s.status.changes.iter_mut().filter(|c| c.subject == "req:p01") {
+        for c in s
+            .status
+            .changes
+            .iter_mut()
+            .filter(|c| c.subject == "req:p01")
+        {
             c.add_judged("req:hub");
             c.add_judged("req:hub");
             assert_eq!(c.judged(), vec!["req:hub".to_string()]);
@@ -7659,7 +7989,13 @@ pub(crate) mod tests {
         // Revised again: the new record supersedes nothing of the created kind but
         // carries an empty list, and the pair derives from it with the new cause.
         let mut batch = store::RecordBatch::new(6);
-        batch.push(0, store::CHANGE_REQ_REVISED, "req:p01", "fields", Value::Null);
+        batch.push(
+            0,
+            store::CHANGE_REQ_REVISED,
+            "req:p01",
+            "fields",
+            Value::Null,
+        );
         for r in batch.records() {
             s.status.record_change(r.clone());
         }
@@ -7679,11 +8015,22 @@ pub(crate) mod tests {
         assert_eq!(g.cause.as_ref().map(|c| c.generation), Some(6));
         assert_eq!(g.change["revised"], "req:p01");
         // A second revision supersedes the first record; its list is empty again.
-        for c in s.status.changes.iter_mut().filter(|c| c.subject == "req:p01") {
+        for c in s
+            .status
+            .changes
+            .iter_mut()
+            .filter(|c| c.subject == "req:p01")
+        {
             c.add_judged("req:hub");
         }
         let mut batch = store::RecordBatch::new(7);
-        batch.push(0, store::CHANGE_REQ_REVISED, "req:p01", "fields", Value::Null);
+        batch.push(
+            0,
+            store::CHANGE_REQ_REVISED,
+            "req:p01",
+            "fields",
+            Value::Null,
+        );
         for r in batch.records() {
             s.status.record_change(r.clone());
         }
@@ -7718,29 +8065,73 @@ pub(crate) mod tests {
             ..Default::default()
         };
         let services = [
-            "Auth", "Catalog", "Search", "Cart", "Checkout", "Pricing", "Promotion", "Review", "Billing",
-            "Inventory", "Shipping", "Notification", "Analytics", "Reporting", "Support", "Fraud",
+            "Auth",
+            "Catalog",
+            "Search",
+            "Cart",
+            "Checkout",
+            "Pricing",
+            "Promotion",
+            "Review",
+            "Billing",
+            "Inventory",
+            "Shipping",
+            "Notification",
+            "Analytics",
+            "Reporting",
+            "Support",
+            "Fraud",
         ];
         for name in services {
             let id = format!("ent:{}-service", name.to_lowercase());
-            s.graph.entities.insert(id, ent(&format!("{} Service", name), &["services.md", "storage.md"]));
+            s.graph.entities.insert(
+                id,
+                ent(&format!("{} Service", name), &["services.md", "storage.md"]),
+            );
         }
-        for name in ["Platform", "Data Layer", "User Store", "Product Store", "Order Store", "Payment Store", "Session Cache"] {
-            s.graph.entities.insert(format!("ent:{}", crate::md::slug(name)), ent(name, &["storage.md"]));
+        for name in [
+            "Platform",
+            "Data Layer",
+            "User Store",
+            "Product Store",
+            "Order Store",
+            "Payment Store",
+            "Session Cache",
+        ] {
+            s.graph.entities.insert(
+                format!("ent:{}", crate::md::slug(name)),
+                ent(name, &["storage.md"]),
+            );
         }
-        s.graph.entities.insert("ent:audit-log".into(), ent("Audit Log", &["services.md", "storage.md"]));
-        s.graph.entities.insert("ent:audit-trail".into(), ent("Audit Trail", &["services.md"]));
+        s.graph.entities.insert(
+            "ent:audit-log".into(),
+            ent("Audit Log", &["services.md", "storage.md"]),
+        );
+        s.graph.entities.insert(
+            "ent:audit-trail".into(),
+            ent("Audit Trail", &["services.md"]),
+        );
         assert_eq!(s.graph.entities.len(), 25);
         // The weights: full up to three holders, falling from there.
         assert_eq!(token_weight(25, 1), 1.0);
         assert_eq!(token_weight(25, 2), 1.0);
         assert_eq!(token_weight(25, 3), 1.0);
-        assert!((token_weight(25, 16) - 0.42).abs() < 0.01, "{}", token_weight(25, 16));
+        assert!(
+            (token_weight(25, 16) - 0.42).abs() < 0.01,
+            "{}",
+            token_weight(25, 16)
+        );
         assert_eq!(token_weight(2, 2), 1.0);
         let scores = lookalike_scores(&s);
-        let ids: Vec<(&str, &str)> = scores.iter().map(|l| (l.a.as_str(), l.b.as_str())).collect();
+        let ids: Vec<(&str, &str)> = scores
+            .iter()
+            .map(|l| (l.a.as_str(), l.b.as_str()))
+            .collect();
         assert_eq!(ids, vec![("ent:audit-log", "ent:audit-trail")], "{:?}", ids);
-        assert_eq!((scores[0].tokens, scores[0].documents, scores[0].score), (0.5, 0.5, 0.5));
+        assert_eq!(
+            (scores[0].tokens, scores[0].documents, scores[0].score),
+            (0.5, 0.5, 0.5)
+        );
         // The same two services alone in a graph: `service` is distinctive and they pair.
         let mut two = Store::default();
         for name in ["Auth", "Billing"] {
@@ -7751,7 +8142,10 @@ pub(crate) mod tests {
         }
         let scores = lookalike_scores(&two);
         assert_eq!(scores.len(), 1);
-        assert_eq!((scores[0].tokens, scores[0].documents, scores[0].score), (0.5, 1.0, 0.63));
+        assert_eq!(
+            (scores[0].tokens, scores[0].documents, scores[0].score),
+            (0.5, 1.0, 0.63)
+        );
         assert_eq!(lookalike_scores(&s), lookalike_scores_scan(&s));
         assert_eq!(lookalike_scores(&two), lookalike_scores_scan(&two));
     }
@@ -7761,7 +8155,11 @@ pub(crate) mod tests {
     // A store on disk holding "backend" (api.md) and "backend system" (deploy.md): a
     // lookalike pair at the threshold.
     fn lookalike_store(label: &str) -> Store {
-        let out = std::env::temp_dir().join(format!("jazyk-lookalikes-{}-{}", label, crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-lookalikes-{}-{}",
+            label,
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = Store {
@@ -7770,8 +8168,14 @@ pub(crate) mod tests {
         };
         // Each mention is backed by its document, so the sweep keeps the entities.
         for (doc, text) in [
-            ("api.md", "# X\n\nThe backend serves requests. The backend system is deployed nightly.\n"),
-            ("deploy.md", "# X\n\nThe backend system is deployed nightly.\n"),
+            (
+                "api.md",
+                "# X\n\nThe backend serves requests. The backend system is deployed nightly.\n",
+            ),
+            (
+                "deploy.md",
+                "# X\n\nThe backend system is deployed nightly.\n",
+            ),
         ] {
             s.docs.insert(
                 doc.to_string(),
@@ -7794,8 +8198,13 @@ pub(crate) mod tests {
                 .collect(),
             ..Default::default()
         };
-        s.graph.entities.insert("ent:backend".into(), ent("backend", &["api.md"]));
-        s.graph.entities.insert("ent:backend-system".into(), ent("backend system", &["deploy.md"]));
+        s.graph
+            .entities
+            .insert("ent:backend".into(), ent("backend", &["api.md"]));
+        s.graph.entities.insert(
+            "ent:backend-system".into(),
+            ent("backend system", &["deploy.md"]),
+        );
         s
     }
 
@@ -7824,7 +8233,12 @@ pub(crate) mod tests {
     fn a_separate_dedupe_verdict_is_remembered_and_the_pair_is_not_asked_again() {
         let mut s = lookalike_store("dedupe");
         s.apply(vec![], &store::Commit::store("edit"));
-        let record = s.status.changes.iter().find(|c| c.kind == CHANGE_LOOKALIKE).expect("a lookalike record");
+        let record = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_LOOKALIKE)
+            .expect("a lookalike record");
         assert_eq!((record.subject.as_str(), record.generation), (PAIR, 1));
         assert_eq!(record.detail["score"], 0.5);
         let goals = DedupeCandidates.derive_goals(&s, &gen_settings());
@@ -7843,16 +8257,23 @@ pub(crate) mod tests {
             }]
         );
         assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
-        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        assert!(DedupeCandidates
+            .derive_goals(&s, &gen_settings())
+            .is_empty());
         // A later commit writes no record and derives nothing; the list persists.
         s.apply(vec![], &store::Commit::store("edit"));
         assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
         let loaded = Store::load(&s.out);
         assert_eq!(loaded.status.lookalikes, s.status.lookalikes);
-        assert!(DedupeCandidates.derive_goals(&loaded, &gen_settings()).is_empty());
+        assert!(DedupeCandidates
+            .derive_goals(&loaded, &gen_settings())
+            .is_empty());
         // The `{verdict}` shape counts too.
         let mut t = lookalike_store("dedupe-shape");
-        t.apply(vec![], &session_resolving(DEDUPE, json!({"verdict": "separate"})));
+        t.apply(
+            vec![],
+            &session_resolving(DEDUPE, json!({"verdict": "separate"})),
+        );
         assert_eq!(t.status.lookalikes.len(), 1);
         crate::vfs::remove_dir_all(&s.out).ok();
         crate::vfs::remove_dir_all(&t.out).ok();
@@ -7871,14 +8292,28 @@ pub(crate) mod tests {
                 {"id": "ent:backend-system", "verdict": "separate", "reason": "a deployment unit"},
             ],
         });
-        s.apply(vec![], &session_resolving("g:review-entity:ent:backend", evidence));
+        s.apply(
+            vec![],
+            &session_resolving("g:review-entity:ent:backend", evidence),
+        );
         assert_eq!(s.status.lookalikes.len(), 1, "{:?}", s.status.lookalikes);
-        assert_eq!((s.status.lookalikes[0].pair.as_str(), s.status.lookalikes[0].score), (PAIR, 0.5));
+        assert_eq!(
+            (
+                s.status.lookalikes[0].pair.as_str(),
+                s.status.lookalikes[0].score
+            ),
+            (PAIR, 0.5)
+        );
         assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
-        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        assert!(DedupeCandidates
+            .derive_goals(&s, &gen_settings())
+            .is_empty());
         let mut t = lookalike_store("review-merged");
         let evidence = json!({"definition": "current", "lookalikes": [{"id": "ent:backend-system", "verdict": "merged"}]});
-        t.apply(vec![], &session_resolving("g:review-entity:ent:backend", evidence));
+        t.apply(
+            vec![],
+            &session_resolving("g:review-entity:ent:backend", evidence),
+        );
         assert!(t.status.lookalikes.is_empty());
         crate::vfs::remove_dir_all(&s.out).ok();
         crate::vfs::remove_dir_all(&t.out).ok();
@@ -7895,15 +8330,27 @@ pub(crate) mod tests {
         // The same evidence again: nothing moves.
         s.apply(vec![], &store::Commit::store("edit"));
         assert_eq!(s.status.lookalikes.len(), 1);
-        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
-        s.graph.entities.get_mut("ent:backend-system").unwrap().mentions.push(SourceRef {
-            doc: "api.md".into(),
-            section: "/x".into(),
-            quote: "backend system".into(),
-        });
+        assert!(DedupeCandidates
+            .derive_goals(&s, &gen_settings())
+            .is_empty());
+        s.graph
+            .entities
+            .get_mut("ent:backend-system")
+            .unwrap()
+            .mentions
+            .push(SourceRef {
+                doc: "api.md".into(),
+                section: "/x".into(),
+                quote: "backend system".into(),
+            });
         s.apply(vec![], &store::Commit::store("edit"));
         assert!(s.status.lookalikes.is_empty(), "{:?}", s.status.lookalikes);
-        let record = s.status.changes.iter().find(|c| c.kind == CHANGE_LOOKALIKE).expect("a fresh record");
+        let record = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_LOOKALIKE)
+            .expect("a fresh record");
         assert_eq!((record.subject.as_str(), record.generation), (PAIR, 3));
         assert_eq!(record.detail["documents"], 0.5);
         let goals = DedupeCandidates.derive_goals(&s, &gen_settings());
@@ -7929,7 +8376,9 @@ pub(crate) mod tests {
         assert_eq!(report.applied, 1, "{:?}", report.skipped);
         assert!(s.status.lookalikes.is_empty(), "{:?}", s.status.lookalikes);
         assert!(!s.status.changes.iter().any(|c| c.kind == CHANGE_LOOKALIKE));
-        assert!(DedupeCandidates.derive_goals(&s, &gen_settings()).is_empty());
+        assert!(DedupeCandidates
+            .derive_goals(&s, &gen_settings())
+            .is_empty());
         // A record with no verdict drops the same way.
         let mut t = lookalike_store("merge-record");
         t.apply(vec![], &store::Commit::store("edit"));
@@ -7960,11 +8409,24 @@ pub(crate) mod tests {
                 .collect(),
             ..Default::default()
         };
-        s.graph.entities.insert("ent:backend".into(), ent("backend", &["api.md"]));
-        s.graph.entities.insert("ent:backend-system".into(), ent("backend system", &["deploy.md"]));
-        s.graph.entities.insert("ent:backend-host".into(), ent("backend host", &["api.md", "deploy.md"]));
-        s.graph.entities.insert("ent:order".into(), ent("Order", &["api.md"]));
-        s.graph.entities.insert("ent:reorder-point".into(), ent("Reorder point", &["deploy.md"]));
+        s.graph
+            .entities
+            .insert("ent:backend".into(), ent("backend", &["api.md"]));
+        s.graph.entities.insert(
+            "ent:backend-system".into(),
+            ent("backend system", &["deploy.md"]),
+        );
+        s.graph.entities.insert(
+            "ent:backend-host".into(),
+            ent("backend host", &["api.md", "deploy.md"]),
+        );
+        s.graph
+            .entities
+            .insert("ent:order".into(), ent("Order", &["api.md"]));
+        s.graph.entities.insert(
+            "ent:reorder-point".into(),
+            ent("Reorder point", &["deploy.md"]),
+        );
         for s in [crate::board::tests::settled_store(), synthetic, s] {
             let indexed = lookalike_scores(&s);
             assert_eq!(indexed, lookalike_scores_scan(&s));
@@ -7993,17 +8455,32 @@ pub(crate) mod tests {
         // both, Stock names nothing it links, Ledger is linked only through a quote.
         s.graph.entities.insert(
             "ent:order".into(),
-            ent("Order", &[("a.md", "An [Order](orders.md) is placed."), ("b.md", "The [Order](orders.md) again.")]),
+            ent(
+                "Order",
+                &[
+                    ("a.md", "An [Order](orders.md) is placed."),
+                    ("b.md", "The [Order](orders.md) again."),
+                ],
+            ),
         );
         s.graph.entities.insert(
             "ent:cart".into(),
-            ent("Cart", &[("a.md", "The [Cart](cart.md) feeds the [order flow](orders.md).")]),
+            ent(
+                "Cart",
+                &[(
+                    "a.md",
+                    "The [Cart](cart.md) feeds the [order flow](orders.md).",
+                )],
+            ),
         );
         s.graph.entities.insert(
             "ent:stock".into(),
             ent("Stock", &[("a.md", "See [inventory](stock.md).")]),
         );
-        s.graph.entities.insert("ent:ledger".into(), ent("Ledger", &[("orders.md", "Ledger")]));
+        s.graph.entities.insert(
+            "ent:ledger".into(),
+            ent("Ledger", &[("orders.md", "Ledger")]),
+        );
         s.graph.requirements.insert(
             "req:a-1".into(),
             Requirement {
@@ -8030,13 +8507,27 @@ pub(crate) mod tests {
                 ..Default::default()
             },
         );
-        for st in [s, crate::board::tests::settled_store(), crate::derive::tests::synthetic_store(120, 300)] {
+        for st in [
+            s,
+            crate::board::tests::settled_store(),
+            crate::derive::tests::synthetic_store(120, 300),
+        ] {
             let all = linked_subjects_all(&st);
             let mut docs: BTreeSet<String> = st.docs.keys().cloned().collect();
             docs.extend(all.keys().cloned());
-            docs.extend(["orders.md".to_string(), "cart.md".to_string(), "stock.md".to_string(), "nope.md".to_string()]);
+            docs.extend([
+                "orders.md".to_string(),
+                "cart.md".to_string(),
+                "stock.md".to_string(),
+                "nope.md".to_string(),
+            ]);
             for d in docs {
-                assert_eq!(linked_subjects(&st, &d), linked_subjects_scan(&st, &d), "{}", d);
+                assert_eq!(
+                    linked_subjects(&st, &d),
+                    linked_subjects_scan(&st, &d),
+                    "{}",
+                    d
+                );
             }
         }
         let st = Store::default();

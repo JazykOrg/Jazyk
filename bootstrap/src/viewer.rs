@@ -259,8 +259,9 @@ fn level_views(store: &Store, walk: &Walk, target: &str) -> Vec<String> {
 // the children first, then the outside entities the lifted edges bring in, and only
 // the children are members of the section.
 fn level_children(store: &Store, target: &str) -> Vec<String> {
-    let direct: std::collections::BTreeSet<String> =
-        crate::board::level_members(store, target).into_iter().collect();
+    let direct: std::collections::BTreeSet<String> = crate::board::level_members(store, target)
+        .into_iter()
+        .collect();
     crate::derive::level_view_members(store, target)
         .into_iter()
         .filter(|m| direct.contains(m))
@@ -339,9 +340,11 @@ fn svg_rules() -> &'static SvgRules {
     RULES.get_or_init(|| SvgRules {
         size_attr: Regex::new(r#"\s+(?:width|height)\s*=\s*"[^"]*""#).unwrap(),
         width_attr: Regex::new(r#"\swidth\s*=\s*"\s*([0-9.]+)\s*(?:px)?\s*""#).unwrap(),
-        view_box: Regex::new(r#"\sviewBox\s*=\s*"\s*[0-9.-]+[\s,]+[0-9.-]+[\s,]+([0-9.]+)"#).unwrap(),
+        view_box: Regex::new(r#"\sviewBox\s*=\s*"\s*[0-9.-]+[\s,]+[0-9.-]+[\s,]+([0-9.]+)"#)
+            .unwrap(),
         style_attr: Regex::new(r#"\sstyle\s*=\s*"([^"]*)""#).unwrap(),
-        card_href: Regex::new(r#"((?:xlink:)?href)="\.\./\.\./docsgen/entities/([^"/]+)\.md""#).unwrap(),
+        card_href: Regex::new(r#"((?:xlink:)?href)="\.\./\.\./docsgen/entities/([^"/]+)\.md""#)
+            .unwrap(),
         diagram_href: Regex::new(r#"((?:xlink:)?href)="\.\./([^"/]+)/([^"/]+)\.svg""#).unwrap(),
     })
 }
@@ -399,42 +402,171 @@ fn inline_svg(raw: &str) -> Option<InlineSvg> {
 // `iframe`, the animation elements that can rewrite an attribute) is dropped with its
 // whole subtree.
 const SVG_ELEMENTS: &[&str] = &[
-    "svg", "g", "defs", "a", "title", "desc", "symbol", "use", "switch",
-    "rect", "circle", "ellipse", "line", "polyline", "polygon", "path",
-    "text", "tspan", "textPath", "marker", "clipPath", "mask", "pattern",
-    "linearGradient", "radialGradient", "stop", "filter", "feBlend", "feColorMatrix",
-    "feComposite", "feDropShadow", "feFlood", "feGaussianBlur", "feMerge", "feMergeNode",
-    "feMorphology", "feOffset",
+    "svg",
+    "g",
+    "defs",
+    "a",
+    "title",
+    "desc",
+    "symbol",
+    "use",
+    "switch",
+    "rect",
+    "circle",
+    "ellipse",
+    "line",
+    "polyline",
+    "polygon",
+    "path",
+    "text",
+    "tspan",
+    "textPath",
+    "marker",
+    "clipPath",
+    "mask",
+    "pattern",
+    "linearGradient",
+    "radialGradient",
+    "stop",
+    "filter",
+    "feBlend",
+    "feColorMatrix",
+    "feComposite",
+    "feDropShadow",
+    "feFlood",
+    "feGaussianBlur",
+    "feMerge",
+    "feMergeNode",
+    "feMorphology",
+    "feOffset",
 ];
 
 // The attributes a kept element may carry: geometry, presentation, text layout,
 // identity, and `data-*`. Event handlers and every other name are dropped.
 const SVG_ATTRIBUTES: &[&str] = &[
-    "xmlns", "xmlns:xlink", "version", "id", "class", "style", "viewBox",
-    "preserveAspectRatio", "contentStyleType", "zoomAndPan", "width", "height",
-    "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "dx", "dy",
-    "d", "points", "transform", "pathLength", "fill", "fill-opacity", "fill-rule",
-    "stroke", "stroke-width", "stroke-opacity", "stroke-dasharray", "stroke-dashoffset",
-    "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "opacity", "color",
-    "visibility", "display", "clip-path", "clip-rule", "mask", "filter", "marker-start",
-    "marker-mid", "marker-end", "font-family", "font-size", "font-style", "font-weight",
-    "font-variant", "text-anchor", "text-decoration", "dominant-baseline",
-    "alignment-baseline", "baseline-shift", "letter-spacing", "word-spacing",
-    "textLength", "lengthAdjust", "writing-mode", "xml:space", "offset", "stop-color",
-    "stop-opacity", "gradientUnits", "gradientTransform", "spreadMethod", "fx", "fy",
-    "fr", "patternUnits", "patternContentUnits", "patternTransform", "clipPathUnits",
-    "maskUnits", "maskContentUnits", "markerWidth", "markerHeight", "markerUnits",
-    "refX", "refY", "orient", "filterUnits", "primitiveUnits", "in", "in2", "result",
-    "stdDeviation", "mode", "operator", "k1", "k2", "k3", "k4", "values", "type",
-    "flood-color", "flood-opacity", "radius", "codeLine", "target",
-    "href", "xlink:href", "xlink:title", "xlink:type", "xlink:actuate", "xlink:show",
+    "xmlns",
+    "xmlns:xlink",
+    "version",
+    "id",
+    "class",
+    "style",
+    "viewBox",
+    "preserveAspectRatio",
+    "contentStyleType",
+    "zoomAndPan",
+    "width",
+    "height",
+    "x",
+    "y",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "cx",
+    "cy",
+    "r",
+    "rx",
+    "ry",
+    "dx",
+    "dy",
+    "d",
+    "points",
+    "transform",
+    "pathLength",
+    "fill",
+    "fill-opacity",
+    "fill-rule",
+    "stroke",
+    "stroke-width",
+    "stroke-opacity",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "opacity",
+    "color",
+    "visibility",
+    "display",
+    "clip-path",
+    "clip-rule",
+    "mask",
+    "filter",
+    "marker-start",
+    "marker-mid",
+    "marker-end",
+    "font-family",
+    "font-size",
+    "font-style",
+    "font-weight",
+    "font-variant",
+    "text-anchor",
+    "text-decoration",
+    "dominant-baseline",
+    "alignment-baseline",
+    "baseline-shift",
+    "letter-spacing",
+    "word-spacing",
+    "textLength",
+    "lengthAdjust",
+    "writing-mode",
+    "xml:space",
+    "offset",
+    "stop-color",
+    "stop-opacity",
+    "gradientUnits",
+    "gradientTransform",
+    "spreadMethod",
+    "fx",
+    "fy",
+    "fr",
+    "patternUnits",
+    "patternContentUnits",
+    "patternTransform",
+    "clipPathUnits",
+    "maskUnits",
+    "maskContentUnits",
+    "markerWidth",
+    "markerHeight",
+    "markerUnits",
+    "refX",
+    "refY",
+    "orient",
+    "filterUnits",
+    "primitiveUnits",
+    "in",
+    "in2",
+    "result",
+    "stdDeviation",
+    "mode",
+    "operator",
+    "k1",
+    "k2",
+    "k3",
+    "k4",
+    "values",
+    "type",
+    "flood-color",
+    "flood-opacity",
+    "radius",
+    "codeLine",
+    "target",
+    "href",
+    "xlink:href",
+    "xlink:title",
+    "xlink:type",
+    "xlink:actuate",
+    "xlink:show",
 ];
 
 // A link stays only when it names a place in this page or a relative file: a
 // fragment or a scheme-less path, judged on the decoded value so an entity-encoded
 // `javascript:` is caught like a plain one.
 fn safe_link(value: &str) -> bool {
-    let v: String = value.chars().filter(|c| !c.is_whitespace() && !c.is_control()).collect();
+    let v: String = value
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
     let head = v.split(['/', '?', '#']).next().unwrap_or("");
     !head.contains(':')
 }
@@ -442,15 +574,26 @@ fn safe_link(value: &str) -> bool {
 // A style declaration list stays when it loads nothing: no `url(`, `@import`,
 // `expression(`, or `javascript:`.
 fn safe_style(value: &str) -> bool {
-    let v: String = value.chars().filter(|c| !c.is_whitespace() && *c != '\\').collect::<String>().to_ascii_lowercase();
-    !["url(", "@import", "expression(", "javascript:"].iter().any(|bad| v.contains(bad))
+    let v: String = value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\\')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    !["url(", "@import", "expression(", "javascript:"]
+        .iter()
+        .any(|bad| v.contains(bad))
 }
 
 // A paint or filter reference (`fill="url(#g)"`) stays when every `url(` points into
 // this document.
 fn fragment_urls_only(value: &str) -> bool {
-    let v: String = value.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
-    v.match_indices("url(").all(|(i, _)| v[i + 4..].trim_start_matches(['"', '\'']).starts_with('#'))
+    let v: String = value
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    v.match_indices("url(")
+        .all(|(i, _)| v[i + 4..].trim_start_matches(['"', '\'']).starts_with('#'))
 }
 
 // An allowlist sanitizer over a real XML parse (quick-xml): only listed elements and
@@ -477,11 +620,16 @@ fn sanitize_svg(raw: &str) -> Option<String> {
         for attr in e.attributes().flatten() {
             let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
             let listed = SVG_ATTRIBUTES.contains(&key.as_str())
-                || (key.starts_with("data-") && key[5..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+                || (key.starts_with("data-")
+                    && key[5..]
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-'));
             if !listed {
                 continue;
             }
-            let Ok(value) = attr.unescape_value() else { continue };
+            let Ok(value) = attr.unescape_value() else {
+                continue;
+            };
             if (key == "href" || key.ends_with(":href")) && !safe_link(&value) {
                 continue;
             }
@@ -523,11 +671,16 @@ fn sanitize_svg(raw: &str) -> Option<String> {
                 }
             }
             Event::Text(t) if dropped == 0 => out.push_str(&escape(t.decode().ok()?.as_ref())),
-            Event::CData(t) if dropped == 0 => out.push_str(&escape(String::from_utf8_lossy(&t).as_ref())),
+            Event::CData(t) if dropped == 0 => {
+                out.push_str(&escape(String::from_utf8_lossy(&t).as_ref()))
+            }
             Event::GeneralRef(r) if dropped == 0 => {
                 let name = String::from_utf8_lossy(&r).into_owned();
                 let numeric = name.strip_prefix('#').is_some_and(|n| {
-                    n.strip_prefix('x').map_or(n.chars().all(|c| c.is_ascii_digit()), |h| h.chars().all(|c| c.is_ascii_hexdigit()))
+                    n.strip_prefix('x')
+                        .map_or(n.chars().all(|c| c.is_ascii_digit()), |h| {
+                            h.chars().all(|c| c.is_ascii_hexdigit())
+                        })
                 });
                 if numeric || matches!(name.as_str(), "amp" | "lt" | "gt" | "quot" | "apos") {
                     out.push('&');
@@ -564,7 +717,10 @@ fn figure(store: &Store, view_id: &str) -> Option<String> {
         .width
         .map(|w| format!(" style=\"max-width:{}px\"", w))
         .unwrap_or_default();
-    Some(format!("<figure class=\"dia\"{}>{}</figure>", cap, svg.markup))
+    Some(format!(
+        "<figure class=\"dia\"{}>{}</figure>",
+        cap, svg.markup
+    ))
 }
 
 // The containment tree the `parent` field makes, one root per scope printed as
@@ -933,7 +1089,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 Some(line)
             })
             .collect();
-        let _ = write!(body, "<p><span class=\"k\">members</span></p>{}", list(&members));
+        let _ = write!(
+            body,
+            "<p><span class=\"k\">members</span></p>{}",
+            list(&members)
+        );
         let mut s: Vec<&str> = vec![target, &name];
         let member_names: Vec<&str> = children
             .iter()
@@ -1006,7 +1166,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 Some(v) => view_link(store, v),
                 None => "<span class=\"k\">no level view: the level above holds this entity alone</span>".to_string(),
             };
-            let _ = write!(body, "<p><span class=\"k\">in context</span> {}</p>", context);
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">in context</span> {}</p>",
+                context
+            );
             match c.inside.as_deref().filter(|v| g.views.contains_key(*v)) {
                 Some(v) => {
                     let mut inside = view_link(store, v);
@@ -1016,7 +1180,9 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                     }
                     let _ = write!(body, "<p><span class=\"k\">inside</span> {}</p>", inside);
                 }
-                None => body.push_str("<p><span class=\"k\">inside</span> <span class=\"k\">a leaf</span></p>"),
+                None => body.push_str(
+                    "<p><span class=\"k\">inside</span> <span class=\"k\">a leaf</span></p>",
+                ),
             }
             let rels: Vec<String> = c
                 .relationships
@@ -1041,7 +1207,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                     )
                 })
                 .collect();
-            let _ = write!(body, "<p><span class=\"k\">relationships</span> {}</p>", list(&rels));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">relationships</span> {}</p>",
+                list(&rels)
+            );
             let _ = write!(
                 body,
                 "<p><span class=\"k\">flows</span> {}</p>",
@@ -1050,15 +1220,27 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             let kin = |k: &crate::card::Kin| {
                 let mut line = name_link(store, &k.id);
                 if k.child_count >= 2 {
-                    let _ = write!(line, " <span class=\"k\">({} children)</span>", k.child_count);
+                    let _ = write!(
+                        line,
+                        " <span class=\"k\">({} children)</span>",
+                        k.child_count
+                    );
                 }
                 line
             };
             let siblings: Vec<String> = c.siblings.iter().map(kin).collect();
-            let _ = write!(body, "<p><span class=\"k\">siblings</span> {}</p>", list(&siblings));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">siblings</span> {}</p>",
+                list(&siblings)
+            );
             if !c.children.is_empty() {
                 let children: Vec<String> = c.children.iter().map(kin).collect();
-                let _ = write!(body, "<p><span class=\"k\">children</span> {}</p>", list(&children));
+                let _ = write!(
+                    body,
+                    "<p><span class=\"k\">children</span> {}</p>",
+                    list(&children)
+                );
             }
             let mut levels: Vec<String> = Vec::new();
             if let Some(parent) = c.breadcrumb.iter().rev().nth(1) {
@@ -1329,7 +1511,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                     line
                 })
                 .collect();
-            let _ = write!(body, "<p><span class=\"k\">drawn</span> {}</p>", list(&drawn));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">drawn</span> {}</p>",
+                list(&drawn)
+            );
             if crate::derive::FLOW_KINDS.contains(&p.kind.as_str()) {
                 let steps: Vec<String> = p
                     .steps
@@ -1344,7 +1530,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                         )
                     })
                     .collect();
-                let _ = write!(body, "<p><span class=\"k\">steps</span> {}</p>", list(&steps));
+                let _ = write!(
+                    body,
+                    "<p><span class=\"k\">steps</span> {}</p>",
+                    list(&steps)
+                );
             }
             let views = |ids: &[String]| -> String {
                 ids.iter()
@@ -1362,7 +1552,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             if !p.around.below.is_empty() {
                 around.push(format!("below: {}", views(&p.around.below)));
             }
-            let _ = write!(body, "<p><span class=\"k\">around</span> {}</p>", list(&around));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">around</span> {}</p>",
+                list(&around)
+            );
         }
         let mut s: Vec<&str> = vec![id, &v.kind, &v.title];
         s.extend(drawn_names.iter().map(String::as_str));
@@ -1455,7 +1649,8 @@ mod tests {
 
     #[test]
     fn renders_and_escapes() {
-        let out = std::env::temp_dir().join(format!("jazyk-viewer-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-viewer-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(out.join("diagrams/class")).unwrap();
         crate::vfs::write(out.join("diagrams/class/public.svg"), "<svg/>").unwrap();
@@ -1848,11 +2043,22 @@ mod tests {
         for case in cases {
             // Markup that does not parse as XML drops the whole rendering.
             let out = clean(case).unwrap_or_default().to_ascii_lowercase();
-            assert!(!out.contains("javascript") && !out.contains("<script") && !out.contains("onload")
-                && !out.contains("onclick") && !out.contains("data:") && !out.contains("evil")
-                && !out.contains("<set") && !out.contains("<animate") && !out.contains("<style")
-                && !out.contains("<image") && !out.contains("<iframe") && !out.contains("<foreignobject")
-                && !out.contains("<div"), "{case} => {out}");
+            assert!(
+                !out.contains("javascript")
+                    && !out.contains("<script")
+                    && !out.contains("onload")
+                    && !out.contains("onclick")
+                    && !out.contains("data:")
+                    && !out.contains("evil")
+                    && !out.contains("<set")
+                    && !out.contains("<animate")
+                    && !out.contains("<style")
+                    && !out.contains("<image")
+                    && !out.contains("<iframe")
+                    && !out.contains("<foreignobject")
+                    && !out.contains("<div"),
+                "{case} => {out}"
+            );
         }
         // The drawing itself survives byte for byte where it is plain.
         let kept = clean("<g class=\"entity\" data-qualified-name=\"a\"><rect width=\"80\" fill=\"url(#grad)\"/><text x=\"1\">A &amp; B</text><a href=\"#n-ent:a\" xlink:href=\"../class/x.svg\"><path d=\"M0 0\"/></a></g>").unwrap();
@@ -1861,18 +2067,26 @@ mod tests {
         // A real rendering keeps every element it draws.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let svg = crate::render::render_svg("@startuml\nclass A {\n  x : int\n}\nclass B\nA --> B : uses\n@enduml\n").unwrap();
+            let svg = crate::render::render_svg(
+                "@startuml\nclass A {\n  x : int\n}\nclass B\nA --> B : uses\n@enduml\n",
+            )
+            .unwrap();
             let raw = &svg[svg.find("<svg").unwrap()..];
             let out = sanitize_svg(raw).unwrap();
             for tag in ["<text", "<rect", "<path", "<g"] {
-                assert_eq!(raw.matches(tag).count(), out.matches(tag).count(), "{tag}: {out}");
+                assert_eq!(
+                    raw.matches(tag).count(),
+                    out.matches(tag).count(),
+                    "{tag}: {out}"
+                );
             }
         }
     }
 
     #[test]
     fn walk_runs_inside_the_file_with_the_rendering_inline() {
-        let out = std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(out.join("diagrams/component")).unwrap();
         crate::vfs::write(
@@ -1907,21 +2121,42 @@ mod tests {
             &html[start..end]
         };
         let shop_view = card("id=\"n-view:component/shop\"");
-        assert!(shop_view.contains("<figure class=\"dia\" style=\"max-width:300px\"><svg "), "{}", shop_view);
-        assert!(shop_view.contains("viewBox=\"0 0 300 120\""));
-        assert!(!shop_view.contains("width=\"300px\"") && !shop_view.contains("height=\"120px\""), "{}", shop_view);
-        assert!(shop_view.contains("style=\"background:#FFFFFF;\""), "{}", shop_view);
-        // A nested element keeps its own size.
-        assert!(shop_view.contains("<rect width=\"80\" height=\"30\"/>"));
-        assert!(!shop_view.contains("<script") && !shop_view.contains("alert("), "{}", shop_view);
-        assert!(!shop_view.to_lowercase().contains("onclick") && !shop_view.to_lowercase().contains("onload"));
-        assert!(!shop_view.contains("<?") && !shop_view.contains("foreignObject"));
         assert!(
-            shop_view.contains("<a href=\"#n-ent:order-service\" xlink:href=\"#n-ent:order-service\">"),
+            shop_view.contains("<figure class=\"dia\" style=\"max-width:300px\"><svg "),
             "{}",
             shop_view
         );
-        assert!(shop_view.contains("<a href=\"#n-view:class/leaves\" xlink:href=\"#n-view:class/leaves\">"));
+        assert!(shop_view.contains("viewBox=\"0 0 300 120\""));
+        assert!(
+            !shop_view.contains("width=\"300px\"") && !shop_view.contains("height=\"120px\""),
+            "{}",
+            shop_view
+        );
+        assert!(
+            shop_view.contains("style=\"background:#FFFFFF;\""),
+            "{}",
+            shop_view
+        );
+        // A nested element keeps its own size.
+        assert!(shop_view.contains("<rect width=\"80\" height=\"30\"/>"));
+        assert!(
+            !shop_view.contains("<script") && !shop_view.contains("alert("),
+            "{}",
+            shop_view
+        );
+        assert!(
+            !shop_view.to_lowercase().contains("onclick")
+                && !shop_view.to_lowercase().contains("onload")
+        );
+        assert!(!shop_view.contains("<?") && !shop_view.contains("foreignObject"));
+        assert!(
+            shop_view
+                .contains("<a href=\"#n-ent:order-service\" xlink:href=\"#n-ent:order-service\">"),
+            "{}",
+            shop_view
+        );
+        assert!(shop_view
+            .contains("<a href=\"#n-view:class/leaves\" xlink:href=\"#n-view:class/leaves\">"));
         assert!(shop_view.contains("href=\"diagrams/component/shop.svg\">svg</a>"));
         // The level breadcrumb, the legend with the level below, the views around.
         assert!(shop_view.contains("<span class=\"k\">level</span> <a class=\"n\" href=\"#l-scope:public\">Public</a> › <a class=\"n\" href=\"#n-ent:shop\">Shop</a> · level: <a class=\"n\" href=\"#l-ent:shop\">Shop</a>"), "{}", shop_view);
@@ -1931,12 +2166,22 @@ mod tests {
             "{}",
             shop_view
         );
-        assert!(shop_view.contains("above: <a class=\"n\" href=\"#n-view:component/public\">"), "{}", shop_view);
-        assert!(shop_view.contains("below: <a class=\"n\" href=\"#n-view:component/order-service\">"));
+        assert!(
+            shop_view.contains("above: <a class=\"n\" href=\"#n-view:component/public\">"),
+            "{}",
+            shop_view
+        );
+        assert!(
+            shop_view.contains("below: <a class=\"n\" href=\"#n-view:component/order-service\">")
+        );
         assert!(!shop_view.contains("<span class=\"k\">steps</span>"));
         // A view whose .svg is missing keeps the card without the image or the link.
         let os_view = card("id=\"n-view:component/order-service\"");
-        assert!(!os_view.contains("<figure") && !os_view.contains(".svg\">svg</a>"), "{}", os_view);
+        assert!(
+            !os_view.contains("<figure") && !os_view.contains(".svg\">svg</a>"),
+            "{}",
+            os_view
+        );
         // A flow view lists its steps as drawn, each end a card link.
         let seq = card("id=\"n-view:sequence/shop-shop\"");
         assert!(seq.contains("<span class=\"k\">steps</span> <ul class=\"w\"><li><a class=\"id\" href=\"#n-req:shop-1\">"), "{}", seq);
@@ -1952,31 +2197,74 @@ mod tests {
         assert!(os.contains("<span class=\"k\">in context</span> <a class=\"n\" href=\"#n-view:component/shop\">"), "{}", os);
         assert!(os.contains("<span class=\"k\">inside</span> <a class=\"n\" href=\"#n-view:component/order-service\">"), "{}", os);
         assert!(os.contains("dependency → <a class=\"n\" href=\"#n-ent:inventory-service\">Inventory Service</a>"), "{}", os);
-        assert!(os.contains("<span class=\"k\">flows</span> <ul class=\"w\"><li>"), "{}", os);
+        assert!(
+            os.contains("<span class=\"k\">flows</span> <ul class=\"w\"><li>"),
+            "{}",
+            os
+        );
         assert!(os.contains("<a class=\"n\" href=\"#n-view:usecase/shop-shop\">use case</a> · <a class=\"n\" href=\"#n-view:sequence/shop-shop\">sequence</a>"), "{}", os);
         assert!(os.contains("<span class=\"k\">siblings</span> <ul class=\"w\"><li><a class=\"n\" href=\"#n-ent:inventory-service\">"), "{}", os);
-        assert!(os.contains("<span class=\"k\">children</span> <ul class=\"w\">") && os.contains("href=\"#n-ent:order\">Order</a>"), "{}", os);
+        assert!(
+            os.contains("<span class=\"k\">children</span> <ul class=\"w\">")
+                && os.contains("href=\"#n-ent:order\">Order</a>"),
+            "{}",
+            os
+        );
         assert!(os.contains("<span class=\"k\">levels</span> level of <a class=\"n\" href=\"#l-ent:shop\">Shop</a> · own level <a class=\"n\" href=\"#l-ent:order-service\">Order Service</a>"), "{}", os);
         let leaf = card("id=\"n-ent:order-item\"");
-        assert!(leaf.contains("<span class=\"k\">inside</span> <span class=\"k\">a leaf</span>"), "{}", leaf);
+        assert!(
+            leaf.contains("<span class=\"k\">inside</span> <span class=\"k\">a leaf</span>"),
+            "{}",
+            leaf
+        );
         assert!(!leaf.contains("<span class=\"k\">children</span>"));
 
         // The level section: the breadcrumb up (an ancestor to its level section), the
         // views as links, the members down with their level sections.
         let shop_level = card("id=\"l-ent:shop\"");
-        assert!(shop_level.contains("<p class=\"crumbs\"><a class=\"n\" href=\"#l-scope:public\">Public</a> › Shop</p>"), "{}", shop_level);
-        assert!(shop_level.contains("«system»") && shop_level.contains("· <a class=\"n\" href=\"#n-ent:shop\">Shop</a>"), "{}", shop_level);
-        assert!(shop_level.contains("<span class=\"k\">diagrams</span> <a class=\"n\" href=\"#n-view:component/shop\">"), "{}", shop_level);
-        assert!(shop_level.contains("href=\"#n-view:usecase/shop-shop\">") && shop_level.contains("href=\"#n-view:sequence/shop-shop\">"), "{}", shop_level);
+        assert!(
+            shop_level.contains(
+                "<p class=\"crumbs\"><a class=\"n\" href=\"#l-scope:public\">Public</a> › Shop</p>"
+            ),
+            "{}",
+            shop_level
+        );
+        assert!(
+            shop_level.contains("«system»")
+                && shop_level.contains("· <a class=\"n\" href=\"#n-ent:shop\">Shop</a>"),
+            "{}",
+            shop_level
+        );
+        assert!(
+            shop_level.contains(
+                "<span class=\"k\">diagrams</span> <a class=\"n\" href=\"#n-view:component/shop\">"
+            ),
+            "{}",
+            shop_level
+        );
+        assert!(
+            shop_level.contains("href=\"#n-view:usecase/shop-shop\">")
+                && shop_level.contains("href=\"#n-view:sequence/shop-shop\">"),
+            "{}",
+            shop_level
+        );
         assert!(
             shop_level.contains("<li><a class=\"n\" href=\"#n-ent:order-service\">Order Service</a> «service»") && shop_level.contains("· <a class=\"n\" href=\"#l-ent:order-service\">level</a> <span class=\"k\">(4 children)</span>"),
             "{}",
             shop_level
         );
         // The customer sits outside the level through a lifted edge: drawn, not a member.
-        assert!(!shop_level.contains("href=\"#n-ent:customer\""), "{}", shop_level);
+        assert!(
+            !shop_level.contains("href=\"#n-ent:customer\""),
+            "{}",
+            shop_level
+        );
         // The tree's child count links to the level section.
-        assert!(html.contains("<a class=\"k\" href=\"#l-ent:shop\">2 children</a>"), "{}", html);
+        assert!(
+            html.contains("<a class=\"k\" href=\"#l-ent:shop\">2 children</a>"),
+            "{}",
+            html
+        );
         // Nothing inside the file points outside it but the svg file link.
         assert!(!html.contains("docsgen/entities/"), "{}", html);
         crate::vfs::remove_dir_all(&out).ok();

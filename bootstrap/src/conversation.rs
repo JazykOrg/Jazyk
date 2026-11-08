@@ -29,7 +29,12 @@ struct Chat {
     // are taken out for the length of a turn.
     history: Vec<Value>,
     #[serde(skip)]
-    serving: Option<(McpServer, Vec<GenericTool>, String, crate::agent_context::Extras)>,
+    serving: Option<(
+        McpServer,
+        Vec<GenericTool>,
+        String,
+        crate::agent_context::Extras,
+    )>,
     // A reader conversation, for a model of the `reader` tier: the `graph` serving
     // with the read tools alone (docs/frontends/wasm.md#chat).
     reader: bool,
@@ -66,7 +71,9 @@ impl BuildScope {
             _ => return Err((400, "conversationId must name a conversation".into())),
         };
         if let Some(id) = &owner {
-            let job = body["jobId"].as_u64().filter(|id| *id > 0)
+            let job = body["jobId"]
+                .as_u64()
+                .filter(|id| *id > 0)
                 .ok_or_else(|| (400, "an owned job requires a positive numeric jobId".into()))?;
             let after = body["afterN"].as_u64();
             if after.is_some_and(|n| n > (1u64 << 53) - 10_000) {
@@ -74,20 +81,28 @@ impl BuildScope {
             }
             let existing = BOOK.with(|b| {
                 let mut book = b.borrow_mut();
-                let chat = book.chats.get_mut(id).ok_or_else(|| (404, "unknown conversation".into()))?;
+                let chat = book
+                    .chats
+                    .get_mut(id)
+                    .ok_or_else(|| (404, "unknown conversation".into()))?;
                 if chat.state == "running" {
                     return Err((409, "the conversation already has a running turn".into()));
                 }
                 if let Some(after) = after {
                     chat.next_n = chat.next_n.max(after + 1);
                 }
-                Ok(chat.updates.iter().any(|(_, u)| u["sessionUpdate"] == "workflow" && u["jobId"] == job))
+                Ok(chat
+                    .updates
+                    .iter()
+                    .any(|(_, u)| u["sessionUpdate"] == "workflow" && u["jobId"] == job))
             })?;
             if !existing {
                 append(id, json!({"sessionUpdate":"workflow","jobId":job}));
             }
         }
-        Ok(Self(BUILD_CONVERSATION.with(|current| current.replace(owner))))
+        Ok(Self(
+            BUILD_CONVERSATION.with(|current| current.replace(owner)),
+        ))
     }
 }
 
@@ -103,23 +118,40 @@ pub(crate) fn build_conversation() -> Option<String> {
 
 pub(crate) fn build_inputs(id: &str) -> Vec<Value> {
     let mut seen = std::collections::BTreeSet::new();
-    crate::portable::take_inputs(id).into_iter().filter(|input| {
-        input["messageId"].as_str().is_some_and(|mid| {
-            seen.insert(mid.to_owned()) && BOOK.with(|b| {
-                b.borrow().chats.get(id).is_some_and(|c| !c.inputs.contains_key(mid))
+    crate::portable::take_inputs(id)
+        .into_iter()
+        .filter(|input| {
+            input["messageId"].as_str().is_some_and(|mid| {
+                seen.insert(mid.to_owned())
+                    && BOOK.with(|b| {
+                        b.borrow()
+                            .chats
+                            .get(id)
+                            .is_some_and(|c| !c.inputs.contains_key(mid))
+                    })
             })
         })
-    }).map(|mut input| { input["sessionId"] = json!(id); input }).collect()
+        .map(|mut input| {
+            input["sessionId"] = json!(id);
+            input
+        })
+        .collect()
 }
 
 pub(crate) fn build_input_delivered(id: &str, input: Value) {
     BOOK.with(|b| {
         if let Some(chat) = b.borrow_mut().chats.get_mut(id) {
-            crate::harness::push_user_text(&mut chat.history, input["text"].as_str().unwrap_or_default());
+            crate::harness::push_user_text(
+                &mut chat.history,
+                input["text"].as_str().unwrap_or_default(),
+            );
         }
     });
-    append(id, json!({"sessionUpdate":"user_message","text":input["text"],
-        "messageId":input["messageId"],"turnId":input["turnId"]}));
+    append(
+        id,
+        json!({"sessionUpdate":"user_message","text":input["text"],
+        "messageId":input["messageId"],"turnId":input["turnId"]}),
+    );
     delivered(id, input);
 }
 
@@ -147,13 +179,23 @@ fn turn_effects(id: &str, message_id: &str) -> Value {
     fn read(tool: &str) -> bool {
         crate::tools::toolset("mcp-read").contains(&tool)
             || matches!(tool, "read_text_file" | "list_files" | "list_document_sets")
-            || matches!(tool, "binding_tasks" | "generation_tasks" | "verification_tasks")
+            || matches!(
+                tool,
+                "binding_tasks" | "generation_tasks" | "verification_tasks"
+            )
             || tool.starts_with("begin_")
     }
     BOOK.with(|b| {
         let b = b.borrow();
-        let Some(c) = b.chats.get(id) else { return json!([]) };
-        let start = c.updates.iter().rposition(|(_, u)| u["sessionUpdate"] == "user_message" && u["messageId"] == message_id)
+        let Some(c) = b.chats.get(id) else {
+            return json!([]);
+        };
+        let start = c
+            .updates
+            .iter()
+            .rposition(|(_, u)| {
+                u["sessionUpdate"] == "user_message" && u["messageId"] == message_id
+            })
             .unwrap_or(c.updates.len());
         let mut effects: Vec<Value> = Vec::new();
         let mut calls: Vec<(String, usize)> = Vec::new();
@@ -161,22 +203,44 @@ fn turn_effects(id: &str, message_id: &str) -> Value {
             match u["sessionUpdate"].as_str() {
                 Some("tool_call") => {
                     let tool = u["title"].as_str().unwrap_or_default();
-                    if read(tool) { continue; }
+                    if read(tool) {
+                        continue;
+                    }
                     let mut effect = json!({"tool": tool, "ok": false});
-                    if let Some(target) = ["requirement", "entity", "criterion", "id", "task_id", "run_id", "path", "goal", "view"]
-                        .iter().find_map(|key| u["rawInput"][*key].as_str()) {
+                    if let Some(target) = [
+                        "requirement",
+                        "entity",
+                        "criterion",
+                        "id",
+                        "task_id",
+                        "run_id",
+                        "path",
+                        "goal",
+                        "view",
+                    ]
+                    .iter()
+                    .find_map(|key| u["rawInput"][*key].as_str())
+                    {
                         effect["target"] = json!(target);
                     }
-                    calls.push((u["toolCallId"].as_str().unwrap_or_default().to_owned(), effects.len()));
+                    calls.push((
+                        u["toolCallId"].as_str().unwrap_or_default().to_owned(),
+                        effects.len(),
+                    ));
                     effects.push(effect);
                 }
                 Some("tool_call_update") => {
                     let call = u["toolCallId"].as_str().unwrap_or_default();
-                    let Some(&(_, i)) = calls.iter().find(|(c, _)| c == call) else { continue };
+                    let Some(&(_, i)) = calls.iter().find(|(c, _)| c == call) else {
+                        continue;
+                    };
                     let ok = u["status"] == "completed";
                     effects[i]["ok"] = json!(ok);
                     if !ok {
-                        let text = match &u["rawOutput"] { Value::String(t) => t.clone(), other => other.to_string() };
+                        let text = match &u["rawOutput"] {
+                            Value::String(t) => t.clone(),
+                            other => other.to_string(),
+                        };
                         effects[i]["error"] = json!(text.lines().next().unwrap_or_default());
                     }
                 }
@@ -196,7 +260,11 @@ fn append(id: &str, update: Value) {
     let n = BOOK.with(|b| {
         let mut b = b.borrow_mut();
         let c = b.chats.get_mut(id)?;
-        if update["sessionUpdate"] == "turn_end" && c.updates.last().is_some_and(|(_,previous)| previous == &update) {
+        if update["sessionUpdate"] == "turn_end"
+            && c.updates
+                .last()
+                .is_some_and(|(_, previous)| previous == &update)
+        {
             return None;
         }
         let n = c.next_n;
@@ -222,20 +290,35 @@ fn set_state(id: &str, state: &str) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn replay_updates(events: &[Value]) -> Result<(),String> {
+pub(crate) fn replay_updates(events: &[Value]) -> Result<(), String> {
     for event in events {
-        if event["type"] != "chat.update" { continue; }
-        let (Some(id),Some(n)) = (event["sessionId"].as_str(),event["n"].as_u64()) else { continue; };
-        let needed = BOOK.with(|b| b.borrow().chats.get(id).is_some_and(|chat| n >= chat.next_n));
-        if !needed { continue; }
+        if event["type"] != "chat.update" {
+            continue;
+        }
+        let (Some(id), Some(n)) = (event["sessionId"].as_str(), event["n"].as_u64()) else {
+            continue;
+        };
+        let needed = BOOK.with(|b| {
+            b.borrow()
+                .chats
+                .get(id)
+                .is_some_and(|chat| n >= chat.next_n)
+        });
+        if !needed {
+            continue;
+        }
         let update = &event["update"];
         let field = update["sessionUpdate"].as_str().unwrap_or_default();
-        if matches!(field,"agent_message_chunk" | "agent_thought_chunk") {
-            crate::session_recovery::replay_delta(id,field,update["content"]["text"].as_str().unwrap_or_default())?;
+        if matches!(field, "agent_message_chunk" | "agent_thought_chunk") {
+            crate::session_recovery::replay_delta(
+                id,
+                field,
+                update["content"]["text"].as_str().unwrap_or_default(),
+            )?;
         }
         BOOK.with(|b| {
             if let Some(chat) = b.borrow_mut().chats.get_mut(id) {
-                chat.updates.push((n,update.clone()));
+                chat.updates.push((n, update.clone()));
                 chat.next_n = n + 1;
             }
         });
@@ -313,7 +396,17 @@ pub fn remove(id: &str) -> bool {
 // with read tools, deferred workflow skills, and explicit read-only capabilities.
 // Both profiles use the same main policy. Answers the serving, its tools in the shape the loop
 // hands the model, and its instructions.
-fn open_serving(reader: bool) -> Result<(McpServer, Vec<GenericTool>, String, crate::agent_context::Extras), String> {
+fn open_serving(
+    reader: bool,
+) -> Result<
+    (
+        McpServer,
+        Vec<GenericTool>,
+        String,
+        crate::agent_context::Extras,
+    ),
+    String,
+> {
     let project = crate::document_sets::Workspace::load(&crate::portable::root())
         .map_err(|e| e.1)?
         .files_project();
@@ -359,7 +452,8 @@ fn open_serving(reader: bool) -> Result<(McpServer, Vec<GenericTool>, String, cr
     } else {
         let taken = tools.iter().map(|t| t.name.clone()).collect();
         let host = crate::portable::host_context();
-        match crate::agent_context::conversation(&crate::portable::root(), host.as_deref(), &taken) {
+        match crate::agent_context::conversation(&crate::portable::root(), host.as_deref(), &taken)
+        {
             (Some(extra), extras) => (format!("{instructions}\n\n{extra}"), extras),
             (None, extras) => (instructions, extras),
         }
@@ -496,13 +590,23 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let recovery_key = format!("chat:{id}:{turn_id}");
     let saved_turn = match crate::session_recovery::parent(&recovery_key) {
         Ok(value) => value,
-        Err(error) => return (202, json!({"ok":false,"stop":"suspended","state":"running","error":error})),
+        Err(error) => {
+            return (
+                202,
+                json!({"ok":false,"stop":"suspended","state":"running","error":error}),
+            )
+        }
     };
     if let Some(saved) = &saved_turn {
         if saved["messageId"] != message_id || saved["textHash"] != crate::model::hash_hex(&text) {
-            return (409, json!({"error":"checkpoint-incompatible: accepted chat input changed"}));
+            return (
+                409,
+                json!({"error":"checkpoint-incompatible: accepted chat input changed"}),
+            );
         }
-        if let Some(result) = saved.get("result") { return (202, result.clone()); }
+        if let Some(result) = saved.get("result") {
+            return (202, result.clone());
+        }
     }
     let resuming = saved_turn.is_some();
     let prior = BOOK.with(|b| b.borrow().chats[id].inputs.get(&message_id).cloned());
@@ -541,7 +645,10 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     }
     BOOK.with(|b| b.borrow_mut().chats.get_mut(id).unwrap().turn_id = Some(turn_id.clone()));
     if !resuming {
-        append(id, json!({"sessionUpdate":"user_message","text":text,"messageId":message_id,"turnId":turn_id}));
+        append(
+            id,
+            json!({"sessionUpdate":"user_message","text":text,"messageId":message_id,"turnId":turn_id}),
+        );
     }
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
@@ -586,10 +693,16 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             }
         },
     };
-    let mut recovery = match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
-        Ok(recovery) => recovery,
-        Err(error) => return (202, json!({"ok":false,"stop":"suspended","state":"running","error":error})),
-    };
+    let mut recovery =
+        match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
+            Ok(recovery) => recovery,
+            Err(error) => {
+                return (
+                    202,
+                    json!({"ok":false,"stop":"suspended","state":"running","error":error}),
+                )
+            }
+        };
     let model_llm = crate::portable::llm();
     let mut model = harness::provider::DefaultModelHost::new(&model_llm);
     let mut mcp_tools = crate::session_recovery::McpTools(&server, &extras);
@@ -628,9 +741,15 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             }
         });
         push_user(&mut history, text.clone());
-        delivered(id, json!({"messageId":message_id,"text":text,"turnId":turn_id}));
+        delivered(
+            id,
+            json!({"messageId":message_id,"text":text,"turnId":turn_id}),
+        );
     }
-    crate::session_recovery::set_parent(&recovery_key, json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text)}));
+    crate::session_recovery::set_parent(
+        &recovery_key,
+        json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text)}),
+    );
 
     let generations = || {
         crate::document_sets::Workspace::load(&crate::portable::root())
@@ -752,8 +871,12 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             inputs: Some(&mut input_source),
             input_close: Some(&mut close_inputs),
         },
-        &context, &mut model, &mut mcp_tools, &mut recovery,
-    ).await;
+        &context,
+        &mut model,
+        &mut mcp_tools,
+        &mut recovery,
+    )
+    .await;
     drop(recovery);
 
     BOOK.with(|b| {
@@ -764,12 +887,17 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     });
     let interruption = match &stop {
         Stop::Suspended => Some("suspended".to_owned()),
-        Stop::Error(error) if crate::session_recovery::is_interruption(error) => Some(error.clone()),
+        Stop::Error(error) if crate::session_recovery::is_interruption(error) => {
+            Some(error.clone())
+        }
         _ => None,
     };
     if let Some(error) = interruption {
         set_state(id, "running");
-        return (202, json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":"suspended","state":"running","error":error}));
+        return (
+            202,
+            json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":"suspended","state":"running","error":error}),
+        );
     }
     let (update, state) = match stop {
         Stop::Suspended => unreachable!("suspension returned above"),
@@ -809,10 +937,17 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let stop_reason = update["stop"].clone();
     append(id, update);
     set_state(id, state);
-    let result = json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":stop_reason,"state":state});
-    crate::session_recovery::set_parent(&recovery_key, json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text),"result":result}));
+    let result =
+        json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":stop_reason,"state":state});
+    crate::session_recovery::set_parent(
+        &recovery_key,
+        json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text),"result":result}),
+    );
     if let Err(error) = crate::session_recovery::checkpoint_parent().await {
-        return (202, json!({"ok":false,"stop":"suspended","state":"running","error":format!("checkpoint-failed: {error}")}));
+        return (
+            202,
+            json!({"ok":false,"stop":"suspended","state":"running","error":format!("checkpoint-failed: {error}")}),
+        );
     }
     (202, result)
 }
@@ -850,17 +985,33 @@ pub fn export_history() -> Value {
 pub(crate) fn restore_input_outcomes(mut inputs: Vec<Value>) {
     inputs.sort_by_key(|input| input["sequence"].as_u64().unwrap_or(0));
     for input in inputs {
-        let (Some(id),Some(mid)) = (input["sessionId"].as_str(),input["messageId"].as_str()) else { continue; };
-        let missing = BOOK.with(|b| b.borrow().chats.get(id).is_some_and(|chat|
-            chat.inputs.get(mid).is_none_or(|saved| !matches!(saved["state"].as_str(),Some("delivered"|"failed")))));
-        if !missing { continue; }
-        let recorded = BOOK.with(|b| b.borrow().chats[id].updates.iter().any(|(_,update)|
-            update["sessionUpdate"] == "user_message" && update["messageId"] == mid));
+        let (Some(id), Some(mid)) = (input["sessionId"].as_str(), input["messageId"].as_str())
+        else {
+            continue;
+        };
+        let missing = BOOK.with(|b| {
+            b.borrow().chats.get(id).is_some_and(|chat| {
+                chat.inputs.get(mid).is_none_or(|saved| {
+                    !matches!(saved["state"].as_str(), Some("delivered" | "failed"))
+                })
+            })
+        });
+        if !missing {
+            continue;
+        }
+        let recorded = BOOK.with(|b| {
+            b.borrow().chats[id].updates.iter().any(|(_, update)| {
+                update["sessionUpdate"] == "user_message" && update["messageId"] == mid
+            })
+        });
         if !recorded {
             let text = input.get("displayText").unwrap_or(&input["text"]);
-            append(id,json!({"sessionUpdate":"user_message","text":text,"messageId":mid,"turnId":input["turnId"]}));
+            append(
+                id,
+                json!({"sessionUpdate":"user_message","text":text,"messageId":mid,"turnId":input["turnId"]}),
+            );
         }
-        delivered(id,input.clone());
+        delivered(id, input.clone());
     }
 }
 
@@ -868,8 +1019,12 @@ pub(crate) fn restore_input_outcomes(mut inputs: Vec<Value>) {
 pub(crate) fn restore_stopped_history(key: &str, history: Vec<Value>) {
     BOOK.with(|book| {
         for chat in book.borrow_mut().chats.values_mut() {
-            if chat.state == "running" && chat.turn_id.as_ref().is_some_and(|turn|
-                key == format!("chat:{}:{turn}", chat.id)) {
+            if chat.state == "running"
+                && chat
+                    .turn_id
+                    .as_ref()
+                    .is_some_and(|turn| key == format!("chat:{}:{turn}", chat.id))
+            {
                 chat.history = history;
                 break;
             }
@@ -879,8 +1034,14 @@ pub(crate) fn restore_stopped_history(key: &str, history: Vec<Value>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stop_recovered() {
-    let running = BOOK.with(|b| b.borrow().chats.values()
-        .filter(|chat| chat.state == "running").map(|chat| chat.id.clone()).collect::<Vec<_>>());
+    let running = BOOK.with(|b| {
+        b.borrow()
+            .chats
+            .values()
+            .filter(|chat| chat.state == "running")
+            .map(|chat| chat.id.clone())
+            .collect::<Vec<_>>()
+    });
     for id in running {
         append(&id, json!({"sessionUpdate":"turn_end","stop":"cancelled"}));
         set_state(&id, "idle");
@@ -950,22 +1111,36 @@ mod context_tests {
         reset();
         BOOK.with(|book| {
             let mut book = book.borrow_mut();
-            for (id, turn, text) in [("chat-1", "accepted-turn", "old context"),
-                ("chat-2", "other-turn", "other conversation")] {
-                book.chats.insert(id.into(), serde_json::from_value(json!({"id":id,"title":id,
+            for (id, turn, text) in [
+                ("chat-1", "accepted-turn", "old context"),
+                ("chat-2", "other-turn", "other conversation"),
+            ] {
+                book.chats.insert(
+                    id.into(),
+                    serde_json::from_value(json!({"id":id,"title":id,
                     "titled":true,"state":"running","updates":[],"next_n":0,"reader":false,
-                    "turn_id":turn,"history":[{"role":"user","content":text}]})).unwrap());
+                    "turn_id":turn,"history":[{"role":"user","content":text}]}))
+                    .unwrap(),
+                );
             }
         });
         let history = vec![json!({"role":"user","content":"accepted context"})];
         restore_stopped_history("chat:chat-1:wrong-turn", history.clone());
         restore_stopped_history("chat:chat-2:accepted-turn", history.clone());
-        BOOK.with(|book| assert_eq!(book.borrow().chats["chat-1"].history[0]["content"], "old context"));
+        BOOK.with(|book| {
+            assert_eq!(
+                book.borrow().chats["chat-1"].history[0]["content"],
+                "old context"
+            )
+        });
         restore_stopped_history("chat:chat-1:accepted-turn", history.clone());
         BOOK.with(|book| {
             let book = book.borrow();
             assert_eq!(book.chats["chat-1"].history, history);
-            assert_eq!(book.chats["chat-2"].history[0]["content"], "other conversation");
+            assert_eq!(
+                book.chats["chat-2"].history[0]["content"],
+                "other conversation"
+            );
         });
         BOOK.with(|book| book.borrow_mut().chats.get_mut("chat-1").unwrap().state = "idle".into());
         restore_stopped_history("chat:chat-1:accepted-turn", Vec::new());
@@ -980,23 +1155,41 @@ mod context_tests {
         let done = |n: &str, ok: bool, out: &str| json!({"sessionUpdate":"tool_call_update","toolCallId":n,"status":if ok {"completed"} else {"failed"},"rawOutput":out});
         let updates = vec![
             json!({"sessionUpdate":"user_message","messageId":"m1"}),
-            call("a", "record_binding", json!({"requirement":"req:old"})), done("a", true, "{}"),
+            call("a", "record_binding", json!({"requirement":"req:old"})),
+            done("a", true, "{}"),
             json!({"sessionUpdate":"user_message","messageId":"m2"}),
-            call("b", "begin_binding", json!({"requirement":"req:footer-1"})), done("b", true, "{}"),
-            call("c", "record_binding", json!({"requirement":"req:footer-1","setId":"ds"})), done("c", true, "{}"),
-            call("d", "search", json!({"query":"x"})), done("d", true, "{}"),
-            call("e", "update_tasks", json!({"tasks":[]})), done("e", false, "Task settings changed.\nReload."),
-            call("f", "record_binding", json!({"requirement":"req:landing-6"})),
+            call("b", "begin_binding", json!({"requirement":"req:footer-1"})),
+            done("b", true, "{}"),
+            call(
+                "c",
+                "record_binding",
+                json!({"requirement":"req:footer-1","setId":"ds"}),
+            ),
+            done("c", true, "{}"),
+            call("d", "search", json!({"query":"x"})),
+            done("d", true, "{}"),
+            call("e", "update_tasks", json!({"tasks":[]})),
+            done("e", false, "Task settings changed.\nReload."),
+            call(
+                "f",
+                "record_binding",
+                json!({"requirement":"req:landing-6"}),
+            ),
         ];
-        let chat: Chat = serde_json::from_value(json!({"id":"t","title":"t","titled":true,"state":"running",
+        let chat: Chat =
+            serde_json::from_value(json!({"id":"t","title":"t","titled":true,"state":"running",
             "updates":updates.into_iter().enumerate().map(|(n,u)| json!([n,u])).collect::<Vec<_>>(),
-            "next_n":20,"history":[],"reader":false})).unwrap();
+            "next_n":20,"history":[],"reader":false}))
+            .unwrap();
         BOOK.with(|b| b.borrow_mut().chats.insert("t".into(), chat));
-        assert_eq!(turn_effects("t", "m2"), json!([
-            {"tool":"record_binding","target":"req:footer-1","ok":true},
-            {"tool":"update_tasks","ok":false,"error":"Task settings changed."},
-            {"tool":"record_binding","target":"req:landing-6","ok":false},
-        ]));
+        assert_eq!(
+            turn_effects("t", "m2"),
+            json!([
+                {"tool":"record_binding","target":"req:footer-1","ok":true},
+                {"tool":"update_tasks","ok":false,"error":"Task settings changed."},
+                {"tool":"record_binding","target":"req:landing-6","ok":false},
+            ])
+        );
         BOOK.with(|b| b.borrow_mut().chats.remove("t"));
     }
 

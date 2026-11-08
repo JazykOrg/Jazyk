@@ -32,10 +32,15 @@ pub struct Lsp {
 
 // How `jazyk.compile` runs: over stdio in a thread under the build lease, with the
 // LLM options `jazyk lsp` resolved; inside the GUI server as a GUI job.
+// One per server, so the unboxed options cost nothing worth boxing.
+#[allow(clippy::large_enum_variant)]
 pub enum Compiler {
     Stdio {
         opts: crate::cli::Options,
-        running: Option<(std::thread::JoinHandle<()>, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+        running: Option<(
+            std::thread::JoinHandle<()>,
+            std::sync::Arc<std::sync::atomic::AtomicBool>,
+        )>,
     },
     // Submits one set's compile (set id, configuration hash) and answers the job.
     Submit(Box<dyn Fn(String, String) -> Value + Send>),
@@ -58,15 +63,25 @@ impl Compiler {
 pub(crate) fn compile_target(root: &Path, arg: &Value) -> Result<(String, String), String> {
     let w = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
     if let Some(id) = arg["setId"].as_str() {
-        return w.select(id).map(|s| (s.id.clone(), w.hash.clone())).map_err(|e| e.1);
+        return w
+            .select(id)
+            .map(|s| (s.id.clone(), w.hash.clone()))
+            .map_err(|e| e.1);
     }
     match w.sets.len() {
-        0 => Err("this project has no document set yet; add one with `jazyk sets add NAME --docs PATH`".into()),
+        0 => Err(
+            "this project has no document set yet; add one with `jazyk sets add NAME --docs PATH`"
+                .into(),
+        ),
         1 => Ok((w.sets[0].id.clone(), w.hash.clone())),
         n => Err(format!(
             "choose a document set: this project has {} ({}); pass setId",
             n,
-            w.sets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+            w.sets
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
@@ -85,19 +100,28 @@ impl Lsp {
             gen,
             overlay: HashMap::new(),
             next_srv_id: 1,
-            compiler: Compiler::Stdio { opts: Default::default(), running: None },
+            compiler: Compiler::Stdio {
+                opts: Default::default(),
+                running: None,
+            },
         }
     }
 
     // The options `jazyk lsp` was started with: a stdio compile resolves its LLM from
     // them like any CLI build.
     pub fn with_cli_options(mut self, opts: crate::cli::Options) -> Lsp {
-        self.compiler = Compiler::Stdio { opts, running: None };
+        self.compiler = Compiler::Stdio {
+            opts,
+            running: None,
+        };
         self
     }
 
     // Inside the GUI server a compile is a GUI job.
-    pub fn with_job_submitter(mut self, submit: Box<dyn Fn(String, String) -> Value + Send>) -> Lsp {
+    pub fn with_job_submitter(
+        mut self,
+        submit: Box<dyn Fn(String, String) -> Value + Send>,
+    ) -> Lsp {
         self.compiler = Compiler::Submit(submit);
         self
     }
@@ -161,12 +185,22 @@ impl Lsp {
         match method.as_str() {
             "initialize" => reply(out, id, self.capabilities()),
             "jazyk/document" => {
-                let result = params["uri"].as_str().and_then(|uri| self.uri_to_doc(uri))
+                let result = params["uri"]
+                    .as_str()
+                    .and_then(|uri| self.uri_to_doc(uri))
                     .ok_or((400, "expected a document URI inside this project".into()))
-                    .and_then(|doc| crate::webapi::binary_documents::read(&crate::project::Project::load(&self.root), &doc));
+                    .and_then(|doc| {
+                        crate::webapi::binary_documents::read(
+                            &crate::project::Project::load(&self.root),
+                            &doc,
+                        )
+                    });
                 match result {
                     Ok(value) => reply(out, id, value),
-                    Err((code, message)) => write_message(out, &json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602, "message":message, "data":{"status":code}}})),
+                    Err((code, message)) => write_message(
+                        out,
+                        &json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602, "message":message, "data":{"status":code}}}),
+                    ),
                 }
             }
             "initialized" => {}
@@ -385,7 +419,8 @@ impl Lsp {
         if md::supported_format(Path::new(doc)) {
             for link in md::missing_document_links(&self.root, doc, &self.doc_text(doc)) {
                 let stored = self.store.graph.diagnostics.iter().find(|(_, d)| {
-                    d.rule == "broken-link" && d.subjects.first().is_some_and(|s| s == doc)
+                    d.rule == "broken-link"
+                        && d.subjects.first().is_some_and(|s| s == doc)
                         && (d.subjects.len() == 1 || d.subjects.get(1) == Some(&link.target))
                         && d.lifecycle == "open"
                 });
@@ -393,7 +428,9 @@ impl Lsp {
                     continue;
                 }
                 let mut data = json!({ "target": link.target });
-                if let Some((id, _)) = stored { data["jazykDiag"] = json!(id); }
+                if let Some((id, _)) = stored {
+                    data["jazykDiag"] = json!(id);
+                }
                 items.push(json!({
                     "range": link.range, "severity": 2, "source": "jazyk",
                     "code": link.rule, "message": link.message, "data": data,
@@ -424,9 +461,18 @@ impl Lsp {
             };
             let mut ranges = BTreeSet::new();
             for location in crate::diagnostic_locations::document_locations(&self.store, d) {
-                if location.path != doc { continue; }
-                let range = self.anchor(doc, location.quote.as_deref().unwrap_or(""), "", location.section.as_deref());
-                if !ranges.insert(range) { continue; }
+                if location.path != doc {
+                    continue;
+                }
+                let range = self.anchor(
+                    doc,
+                    location.quote.as_deref().unwrap_or(""),
+                    "",
+                    location.section.as_deref(),
+                );
+                if !ranges.insert(range) {
+                    continue;
+                }
                 items.push(json!({
                     "range": self.range(range), "severity": severity,
                     "source": diagnostic_source(&self.root,did), "code": d.rule, "message": message,
@@ -458,10 +504,13 @@ impl Lsp {
             names.extend(e.aliases.iter().cloned());
             for n in names {
                 for (l, c, len) in occurrences(&text, &n) {
-                    if l == line && character >= c && character < c + len
-                        && best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
-                            best = Some((len, id.clone()));
-                        }
+                    if l == line
+                        && character >= c
+                        && character < c + len
+                        && best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true)
+                    {
+                        best = Some((len, id.clone()));
+                    }
                 }
             }
         }
@@ -765,10 +814,20 @@ impl Lsp {
     // as `?req=` for clients that route to the node itself.
     // Mirrors docs/frontends/lsp.md#capabilities.
     fn requirement_card(&self, rid: &str, r: &crate::model::Requirement) -> String {
-        if let (Some(id),local)=crate::webapi::sets::unqualify(rid) {
-            if let Ok(p)=crate::project::Project::load_set(&self.root,&id) {
-                let scoped=Self::new(p.root.clone(),p.out.clone(),crate::gen::GenSettings::resolve(&p));
-                if let Some(r)=scoped.store.graph.requirements.get(&local) {return format!("**{}**\n\n{}",p.set_name.unwrap_or(id),scoped.requirement_card(&local,r));}
+        if let (Some(id), local) = crate::webapi::sets::unqualify(rid) {
+            if let Ok(p) = crate::project::Project::load_set(&self.root, &id) {
+                let scoped = Self::new(
+                    p.root.clone(),
+                    p.out.clone(),
+                    crate::gen::GenSettings::resolve(&p),
+                );
+                if let Some(r) = scoped.store.graph.requirements.get(&local) {
+                    return format!(
+                        "**{}**\n\n{}",
+                        p.set_name.unwrap_or(id),
+                        scoped.requirement_card(&local, r)
+                    );
+                }
             }
         }
         let ledger = crate::gen::Ledger::load(&self.out);
@@ -1073,7 +1132,9 @@ impl Lsp {
         let end = params["range"]["end"]["line"].as_u64().unwrap_or(u64::MAX) as usize;
         let mut actions: Vec<Value> = Vec::new();
         for (did, d) in &self.store.graph.diagnostics {
-            if !crate::diagnostic_locations::visible(d) { continue; }
+            if !crate::diagnostic_locations::visible(d) {
+                continue;
+            }
             let Some(p) = &d.prompt else { continue };
             if d.answer
                 .as_ref()
@@ -1084,8 +1145,16 @@ impl Lsp {
             }
             let in_range = |r: (usize, usize, usize, usize)| r.0 <= end && r.2 >= start;
             let intersects = crate::diagnostic_locations::document_locations(&self.store, d)
-                .into_iter().filter(|l| l.path == doc)
-                .any(|l| in_range(self.anchor(&doc, l.quote.as_deref().unwrap_or(""), "", l.section.as_deref())));
+                .into_iter()
+                .filter(|l| l.path == doc)
+                .any(|l| {
+                    in_range(self.anchor(
+                        &doc,
+                        l.quote.as_deref().unwrap_or(""),
+                        "",
+                        l.section.as_deref(),
+                    ))
+                });
             if !intersects {
                 continue;
             }
@@ -1126,7 +1195,12 @@ impl Lsp {
         } else {
             return json!({"error": "pass option (an index into the prompt's options) or text (a freeform reply)"});
         };
-        let mut project = self.out.file_name().and_then(|s|s.to_str()).and_then(|id|crate::project::Project::load_set(&self.root,id).ok()).unwrap_or_else(||crate::project::Project::load(&self.root));
+        let mut project = self
+            .out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|id| crate::project::Project::load_set(&self.root, id).ok())
+            .unwrap_or_else(|| crate::project::Project::load(&self.root));
         project.out = self.out.clone();
         match crate::answer::answer(&project, &self.out, did, reply, None) {
             Ok(v) => {
@@ -1157,12 +1231,18 @@ impl Lsp {
                     Ok(p) => p,
                     Err(e) => return json!({"error": e.1}),
                 };
-                let llm = crate::cli::resolve_llm(opts, &p.llm, &crate::project::load_global_llm(), |n| std::env::var(n).ok());
+                let llm = crate::cli::resolve_llm(
+                    opts,
+                    &p.llm,
+                    &crate::project::load_global_llm(),
+                    |n| std::env::var(n).ok(),
+                );
                 let trace = crate::session::Trace::stderr(crate::session::TraceLevel::Normal);
                 let cancel = trace.cancel_flag();
                 let handle = std::thread::spawn(move || {
                     // The configuration the caller saw is the one built.
-                    if crate::document_sets::Workspace::load(&p.root).is_ok_and(|w| w.hash == hash) {
+                    if crate::document_sets::Workspace::load(&p.root).is_ok_and(|w| w.hash == hash)
+                    {
                         crate::reconcile::compile(&p, &llm, &p.out, &trace);
                     }
                 });
@@ -1174,25 +1254,51 @@ impl Lsp {
 
     fn on_execute_command<W: Write>(&mut self, params: &Value, out: &mut W) -> Value {
         let cmd = params.get("command").and_then(|c| c.as_str()).unwrap_or("");
-        if cmd=="jazyk.documentSets" {
-            return crate::document_sets::Workspace::load(&self.root).map(|w|w.summary()).unwrap_or_else(|e|json!({"error":e.1}));
+        if cmd == "jazyk.documentSets" {
+            return crate::document_sets::Workspace::load(&self.root)
+                .map(|w| w.summary())
+                .unwrap_or_else(|e| json!({"error":e.1}));
         }
-        if matches!(cmd,"jazyk.previewDocumentSet"|"jazyk.saveDocumentSet") {
-            return crate::document_sets::edit(&self.root,&params["arguments"][0],cmd=="jazyk.previewDocumentSet").unwrap_or_else(|e|json!({"error":e.1}));
+        if matches!(cmd, "jazyk.previewDocumentSet" | "jazyk.saveDocumentSet") {
+            return crate::document_sets::edit(
+                &self.root,
+                &params["arguments"][0],
+                cmd == "jazyk.previewDocumentSet",
+            )
+            .unwrap_or_else(|e| json!({"error":e.1}));
         }
-        if cmd=="jazyk.compile" {
+        if cmd == "jazyk.compile" {
             return self.on_compile(&params["arguments"][0]);
         }
-        if !self.out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {
-            let routed=match crate::webapi::sets::route("/",params.clone()) {Ok(r)=>r,Err(e)=>return json!({"error":e.1})};
-            if let Some(id)=routed.selector {
-                let p=match crate::project::Project::load_set(&self.root,&id) {Ok(p)=>p,Err(e)=>return json!({"error":e.1})};
-                let mut local=Self::new(p.root.clone(),p.out.clone(),crate::gen::GenSettings::resolve(&p));
-                local.overlay=self.overlay.clone();local.next_srv_id=self.next_srv_id;
-                let value=local.on_execute_command(&routed.body,out);self.next_srv_id=local.next_srv_id;
-                return crate::webapi::sets::qualify_value(value,&id);
+        if !self
+            .out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(crate::document_sets::valid_id)
+        {
+            let routed = match crate::webapi::sets::route("/", params.clone()) {
+                Ok(r) => r,
+                Err(e) => return json!({"error":e.1}),
+            };
+            if let Some(id) = routed.selector {
+                let p = match crate::project::Project::load_set(&self.root, &id) {
+                    Ok(p) => p,
+                    Err(e) => return json!({"error":e.1}),
+                };
+                let mut local = Self::new(
+                    p.root.clone(),
+                    p.out.clone(),
+                    crate::gen::GenSettings::resolve(&p),
+                );
+                local.overlay = self.overlay.clone();
+                local.next_srv_id = self.next_srv_id;
+                let value = local.on_execute_command(&routed.body, out);
+                self.next_srv_id = local.next_srv_id;
+                return crate::webapi::sets::qualify_value(value, &id);
             }
-            if cmd=="jazyk.answerDiagnostic" {return json!({"error":"use the qualified diagnostic ID from diagnostics"});}
+            if cmd == "jazyk.answerDiagnostic" {
+                return json!({"error":"use the qualified diagnostic ID from diagnostics"});
+            }
         }
         if cmd == "jazyk.answerDiagnostic" {
             return self.on_answer_diagnostic(params, out);
@@ -1303,7 +1409,9 @@ fn path_to_uri(path: &Path) -> String {
 fn occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
     let mut out = Vec::new();
     for (line, col, len) in char_occurrences(text, needle) {
-        let Some(chars) = text.lines().nth(line) else { continue };
+        let Some(chars) = text.lines().nth(line) else {
+            continue;
+        };
         let units = |n: usize| chars.chars().take(n).map(char::len_utf16).sum::<usize>();
         let start = units(col);
         out.push((line, start, units(col + len) - start));
@@ -1337,7 +1445,11 @@ fn char_occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
             let abs = start + byte_idx;
             let col = origin[abs];
             let end = abs + nlow.len();
-            let after_idx = if end < origin.len() { origin[end] } else { chars.len() };
+            let after_idx = if end < origin.len() {
+                origin[end]
+            } else {
+                chars.len()
+            };
             let before_ok = col == 0 || !chars[col - 1].is_alphanumeric();
             let after_ok = after_idx >= chars.len() || !chars[after_idx].is_alphanumeric();
             if before_ok && after_ok && after_idx > col {
@@ -1383,8 +1495,10 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
             }
             let gen_now = store_fingerprint(&root, &out);
             if gen_now != last_gen {
-                last_gen=gen_now;
-                if tx.send(Event::StoreChanged).is_err() {return;}
+                last_gen = gen_now;
+                if tx.send(Event::StoreChanged).is_err() {
+                    return;
+                }
             }
         }
     });
@@ -1395,7 +1509,11 @@ fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<
 // Mirrors docs/frontends/lsp.md#rebuilds-and-refresh.
 fn store_fingerprint(root: &Path, out: &Path) -> String {
     let own = || crate::store::read_generation(out).to_string();
-    if out.file_name().and_then(|s| s.to_str()).is_some_and(crate::document_sets::valid_id) {
+    if out
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(crate::document_sets::valid_id)
+    {
         return own();
     }
     let Ok(w) = crate::document_sets::Workspace::load(root) else {
@@ -1407,7 +1525,11 @@ fn store_fingerprint(root: &Path, out: &Path) -> String {
     let mut v = w.hash.clone();
     for set in &w.sets {
         if let Ok(p) = w.resolve(Some(&set.id)) {
-            v.push_str(&format!("{}:{};", set.id, crate::store::read_generation(&p.out)));
+            v.push_str(&format!(
+                "{}:{};",
+                set.id,
+                crate::store::read_generation(&p.out)
+            ));
         }
     }
     v
@@ -1415,26 +1537,58 @@ fn store_fingerprint(root: &Path, out: &Path) -> String {
 
 // An in-memory projection only. It is never saved or passed to a graph mutator.
 fn read_project_store(root: &Path, out: &Path) -> Store {
-    if out.file_name().and_then(|s|s.to_str()).is_some_and(crate::document_sets::valid_id) {return Store::load(out);}
-    let Ok(w)=crate::document_sets::Workspace::load(root) else {return Store::load(out);};
-    if !w.exists {return Store::load(out);}
-    let mut combined=Store{out:out.into(),..Default::default()};
-    let mut graph=serde_json::to_value(&combined.graph).unwrap();let mut version=w.hash.clone();
-    for set in &w.sets {
-        let p=w.resolve(Some(&set.id)).unwrap();let store=Store::load(&p.out);
-        version.push_str(&format!("{}:{};",set.id,store.status.generation));
-        let value=crate::webapi::sets::qualify_value(serde_json::to_value(&store.graph).unwrap(),&set.id);
-        for (kind,map) in value.as_object().unwrap() {
-            if let (Some(to),Some(from))=(graph[kind].as_object_mut(),map.as_object()) {to.extend(from.clone());}
-        }
-        for (path,doc) in store.docs {combined.docs.entry(path).or_insert(doc);}
+    if out
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(crate::document_sets::valid_id)
+    {
+        return Store::load(out);
     }
-    combined.graph=serde_json::from_value(graph).unwrap_or_default();
-    combined.status.generation=u64::from_str_radix(&crate::model::hash_hex(&version)[..16],16).unwrap_or(0);
+    let Ok(w) = crate::document_sets::Workspace::load(root) else {
+        return Store::load(out);
+    };
+    if !w.exists {
+        return Store::load(out);
+    }
+    let mut combined = Store {
+        out: out.into(),
+        ..Default::default()
+    };
+    let mut graph = serde_json::to_value(&combined.graph).unwrap();
+    let mut version = w.hash.clone();
+    for set in &w.sets {
+        let p = w.resolve(Some(&set.id)).unwrap();
+        let store = Store::load(&p.out);
+        version.push_str(&format!("{}:{};", set.id, store.status.generation));
+        let value = crate::webapi::sets::qualify_value(
+            serde_json::to_value(&store.graph).unwrap(),
+            &set.id,
+        );
+        for (kind, map) in value.as_object().unwrap() {
+            if let (Some(to), Some(from)) = (graph[kind].as_object_mut(), map.as_object()) {
+                to.extend(from.clone());
+            }
+        }
+        for (path, doc) in store.docs {
+            combined.docs.entry(path).or_insert(doc);
+        }
+    }
+    combined.graph = serde_json::from_value(graph).unwrap_or_default();
+    combined.status.generation =
+        u64::from_str_radix(&crate::model::hash_hex(&version)[..16], 16).unwrap_or(0);
     combined
 }
 fn diagnostic_source(root: &Path, id: &str) -> String {
-    crate::webapi::sets::unqualify(id).0.and_then(|id|crate::document_sets::Workspace::load(root).ok()?.select(&id).ok().map(|s|format!("jazyk · {}",s.name))).unwrap_or_else(||"jazyk".into())
+    crate::webapi::sets::unqualify(id)
+        .0
+        .and_then(|id| {
+            crate::document_sets::Workspace::load(root)
+                .ok()?
+                .select(&id)
+                .ok()
+                .map(|s| format!("jazyk · {}", s.name))
+        })
+        .unwrap_or_else(|| "jazyk".into())
 }
 
 #[cfg(test)]
@@ -1483,7 +1637,11 @@ mod tests {
         assert_ne!(lsp.generation, loaded);
         assert_eq!(lsp.fingerprint, second);
         // The configuration moves without any generation: a reload too.
-        std::fs::write(tmp.join(".jazyk/jazyk.toml"), config("\n[llm]\nmodel = \"m\"\n")).unwrap();
+        std::fs::write(
+            tmp.join(".jazyk/jazyk.toml"),
+            config("\n[llm]\nmodel = \"m\"\n"),
+        )
+        .unwrap();
         assert_ne!(second, super::store_fingerprint(&tmp, &out));
         // A set's own out directory keys on its generation alone.
         assert_eq!(super::store_fingerprint(&tmp, &out.join("ds_b")), "2");
@@ -1494,7 +1652,10 @@ mod tests {
     fn occurrences_report_columns_on_the_original_text() {
         // Columns are UTF-16 units: an emoji counts two.
         assert_eq!(super::occurrences("😀 order", "order"), vec![(0, 3, 5)]);
-        assert_eq!(super::occurrences("a\n𝔸 Order 😀x", "order"), vec![(1, 3, 5)]);
+        assert_eq!(
+            super::occurrences("a\n𝔸 Order 😀x", "order"),
+            vec![(1, 3, 5)]
+        );
         let hits = super::occurrences("İstanbul order Order", "order");
         assert_eq!(hits, vec![(0, 9, 5), (0, 15, 5)]);
         let hits = super::occurrences("orders order", "order");
@@ -1527,33 +1688,60 @@ mod tests {
         add("ds_one");
         let submitted: Arc<Mutex<Vec<(String, String)>>> = Default::default();
         let sink = submitted.clone();
-        let mut lsp = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&crate::project::Project::load(&root)))
-            .with_job_submitter(Box::new(move |id, hash| {
-                sink.lock().unwrap().push((id.clone(), hash));
-                json!({"started": [id], "jobId": 7})
-            }));
+        let mut lsp = Lsp::new(
+            root.clone(),
+            root.join(".jazyk"),
+            GenSettings::resolve(&crate::project::Project::load(&root)),
+        )
+        .with_job_submitter(Box::new(move |id, hash| {
+            sink.lock().unwrap().push((id.clone(), hash));
+            json!({"started": [id], "jobId": 7})
+        }));
         let call = |lsp: &mut Lsp, args: Value| {
             let mut out = Vec::new();
-            lsp.on_execute_command(&json!({"command": "jazyk.compile", "arguments": [args]}), &mut out)
+            lsp.on_execute_command(
+                &json!({"command": "jazyk.compile", "arguments": [args]}),
+                &mut out,
+            )
         };
         let reply = call(&mut lsp, json!({}));
         assert_eq!(reply["started"], json!(["ds_one"]));
         assert_eq!(reply["jobId"], 7);
         add("ds_two");
         let reply = call(&mut lsp, json!({}));
-        assert!(reply["error"].as_str().unwrap().starts_with("choose a document set"), "{}", reply);
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("choose a document set"),
+            "{}",
+            reply
+        );
         let reply = call(&mut lsp, json!({"setId": "ds_two"}));
         assert_eq!(reply["started"], json!(["ds_two"]));
         let calls = submitted.lock().unwrap().clone();
-        assert_eq!(calls.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["ds_one", "ds_two"]);
-        assert_eq!(calls[1].1, crate::document_sets::Workspace::load(&root).unwrap().hash);
+        assert_eq!(
+            calls.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+            vec!["ds_one", "ds_two"]
+        );
+        assert_eq!(
+            calls[1].1,
+            crate::document_sets::Workspace::load(&root).unwrap().hash
+        );
         // Over stdio the build runs in a thread the server waits for on exit.
-        let mut stdio = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&crate::project::Project::load(&root)));
+        let mut stdio = Lsp::new(
+            root.clone(),
+            root.join(".jazyk"),
+            GenSettings::resolve(&crate::project::Project::load(&root)),
+        );
         assert!(call(&mut stdio, json!({})).get("error").is_some());
         let reply = call(&mut stdio, json!({"setId": "ds_one"}));
         assert_eq!(reply["started"], json!(["ds_one"]));
         stdio.compiler.finish();
-        assert!(matches!(&stdio.compiler, Compiler::Stdio { running: None, .. }));
+        assert!(matches!(
+            &stdio.compiler,
+            Compiler::Stdio { running: None, .. }
+        ));
     }
 
     #[test]
@@ -1573,18 +1761,35 @@ mod tests {
     #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
     #[test]
     fn docx_warning_publishes_against_the_native_projection() {
-        let root = std::env::temp_dir().join(format!("jazyk-lsp-docx-{}", crate::sys::process_id()));
+        let root =
+            std::env::temp_dir().join(format!("jazyk-lsp-docx-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&root).unwrap();
-        crate::vfs::write(root.join("contract.docx"), include_bytes!("../tests/fixtures/document-proof/contract.docx")).unwrap();
+        crate::vfs::write(
+            root.join("contract.docx"),
+            include_bytes!("../tests/fixtures/document-proof/contract.docx"),
+        )
+        .unwrap();
         let project = crate::project::Project::load(&root);
-        let mut lsp = Lsp::new(root.clone(), root.join(".jazyk"), GenSettings::resolve(&project));
+        let mut lsp = Lsp::new(
+            root.clone(),
+            root.join(".jazyk"),
+            GenSettings::resolve(&project),
+        );
         let mut bytes = Vec::new();
         lsp.publish(&mut bytes, "contract.docx");
         let msg = read_message(&mut std::io::BufReader::new(bytes.as_slice())).unwrap();
         assert_eq!(msg["method"], "textDocument/publishDiagnostics");
-        let warning = msg["params"]["diagnostics"].as_array().unwrap().iter().find(|d| d["code"] == "broken-link").unwrap();
+        let warning = msg["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["code"] == "broken-link")
+            .unwrap();
         let text = lsp.doc_text("contract.docx");
-        let line = text.lines().nth(warning["range"]["start"]["line"].as_u64().unwrap() as usize).unwrap();
+        let line = text
+            .lines()
+            .nth(warning["range"]["start"]["line"].as_u64().unwrap() as usize)
+            .unwrap();
         assert_eq!(line, "Reference: [contract](missing.md)");
         assert_eq!(warning["range"]["start"]["character"], 11);
         let mut response = Vec::new();
@@ -1592,7 +1797,10 @@ mod tests {
         let msg = read_message(&mut std::io::BufReader::new(response.as_slice())).unwrap();
         assert_eq!(msg["result"]["format"], "docx");
         assert_eq!(msg["result"]["projection"]["text"], text);
-        assert!(!msg["result"]["diagnostics"][0]["locations"].as_array().unwrap().is_empty());
+        assert!(!msg["result"]["diagnostics"][0]["locations"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         crate::vfs::remove_dir_all(&root).unwrap();
     }
 
@@ -1693,7 +1901,10 @@ mod tests {
             },
             overlay: HashMap::new(),
             next_srv_id: 1,
-            compiler: Compiler::Stdio { opts: Default::default(), running: None },
+            compiler: Compiler::Stdio {
+                opts: Default::default(),
+                running: None,
+            },
         };
         let card = lsp.requirement_card("req:shop-1", &r);
 
@@ -1731,7 +1942,8 @@ mod tests {
     // No ledger row: the requirement still shows, the other two parts say so.
     #[test]
     fn requirement_card_without_a_ledger_row() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", crate::sys::process_id()));
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -1759,7 +1971,10 @@ mod tests {
             },
             overlay: HashMap::new(),
             next_srv_id: 1,
-            compiler: Compiler::Stdio { opts: Default::default(), running: None },
+            compiler: Compiler::Stdio {
+                opts: Default::default(),
+                running: None,
+            },
         };
         let card = lsp.requirement_card("req:shop-1", &r);
         assert!(card.contains("– missing"), "{}", card);
@@ -1775,7 +1990,8 @@ mod tests {
     fn prompted_diagnostic_publishes_offers_actions_and_applies() {
         use crate::model::{Diagnostic, DiagnosticPrompt, PromptOption, SuggestedEdit};
         use crate::store::Op;
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", crate::sys::process_id()));
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
@@ -1906,9 +2122,15 @@ mod tests {
         store.graph.requirements.insert("req:one".into(), serde_json::from_value(json!({"statement":"Rule", "entities":[], "source":{"doc":"rules.md","section":"/rules","quote":"Orders complete."}})).unwrap());
         store.graph.criteria.insert("crit:one".into(), serde_json::from_value(json!({"requirement":"req:one", "statement":"Example", "source":{"doc":"examples.md","section":"/examples","quote":"Returns 200."}})).unwrap());
         store.graph.diagnostics.insert("diag:one".into(), serde_json::from_value(json!({"rule":"contradiction","severity":"error","subjects":["crit:one","req:one"],"message":"Conflict"})).unwrap());
-        let mut lsp = lsp_at(std::env::temp_dir(), std::env::temp_dir().join("diagnostic-lsp"), store);
-        lsp.overlay.insert("rules.md".into(), "# Rules\n\nOrders complete.\n".into());
-        lsp.overlay.insert("examples.md".into(), "# Examples\n\nReturns 200.\n".into());
+        let mut lsp = lsp_at(
+            std::env::temp_dir(),
+            std::env::temp_dir().join("diagnostic-lsp"),
+            store,
+        );
+        lsp.overlay
+            .insert("rules.md".into(), "# Rules\n\nOrders complete.\n".into());
+        lsp.overlay
+            .insert("examples.md".into(), "# Examples\n\nReturns 200.\n".into());
         lsp.store.graph.diagnostics.get_mut("diag:one").unwrap().prompt = Some(serde_json::from_value(json!({
             "question":"Which is correct?", "options":[{"label":"Explain", "answer":"Explain"}], "freeform":true
         })).unwrap());
@@ -1921,7 +2143,12 @@ mod tests {
                 "range":{"start":{"line":2,"character":0},"end":{"line":2,"character":4}}}));
             assert_eq!(actions.as_array().unwrap().len(), 1, "{doc}");
         }
-        lsp.store.graph.diagnostics.get_mut("diag:one").unwrap().triage = Some("suppressed".into());
+        lsp.store
+            .graph
+            .diagnostics
+            .get_mut("diag:one")
+            .unwrap()
+            .triage = Some("suppressed".into());
         assert!(lsp.document_diagnostics("rules.md").is_empty());
     }
 
@@ -1942,7 +2169,10 @@ mod tests {
             },
             overlay: HashMap::new(),
             next_srv_id: 1,
-            compiler: Compiler::Stdio { opts: Default::default(), running: None },
+            compiler: Compiler::Stdio {
+                opts: Default::default(),
+                running: None,
+            },
         }
     }
 
@@ -2006,7 +2236,10 @@ mod tests {
         let root = lsp.entity_card_short("ent:shop").unwrap();
         assert!(root.contains("Sits in: Public › **Shop**"), "{}", root);
         assert!(
-            root.contains(&format!("[level: Public]({}/docsgen/levels/scope-public.md)", o)),
+            root.contains(&format!(
+                "[level: Public]({}/docsgen/levels/scope-public.md)",
+                o
+            )),
             "{}",
             root
         );
@@ -2069,7 +2302,8 @@ mod tests {
     #[test]
     fn entity_hover_on_a_derived_grouping_names_its_proposal() {
         use crate::model::{Diagnostic, Entity, Provenance};
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", crate::sys::process_id()));
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -2134,13 +2368,17 @@ mod tests {
     // defining mention. Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn type_definition_opens_the_card() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", crate::sys::process_id()));
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join(".jazyk");
         crate::vfs::create_dir_all(&out).unwrap();
         let mut lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
         let mut wire: Vec<u8> = Vec::new();
-        lsp.handle(json!({"id": 1, "method": "initialize", "params": {}}), &mut wire);
+        lsp.handle(
+            json!({"id": 1, "method": "initialize", "params": {}}),
+            &mut wire,
+        );
         let init = String::from_utf8_lossy(&wire).to_string();
         assert!(init.contains("\"typeDefinitionProvider\":true"), "{}", init);
 
@@ -2166,7 +2404,11 @@ mod tests {
             "{}",
             td
         );
-        assert!(td.contains("\"start\":{\"line\":0,\"character\":0}"), "{}", td);
+        assert!(
+            td.contains("\"start\":{\"line\":0,\"character\":0}"),
+            "{}",
+            td
+        );
 
         let mut wire: Vec<u8> = Vec::new();
         lsp.handle(
@@ -2174,8 +2416,16 @@ mod tests {
             &mut wire,
         );
         let hover = String::from_utf8_lossy(&wire).to_string();
-        assert!(hover.contains("Sits in: Public › Shop › **Order Service**"), "{}", hover);
-        assert!(hover.contains("docsgen/entities/order-service.md"), "{}", hover);
+        assert!(
+            hover.contains("Sits in: Public › Shop › **Order Service**"),
+            "{}",
+            hover
+        );
+        assert!(
+            hover.contains("docsgen/entities/order-service.md"),
+            "{}",
+            hover
+        );
 
         // Nothing under the cursor: no type definition.
         let mut wire: Vec<u8> = Vec::new();

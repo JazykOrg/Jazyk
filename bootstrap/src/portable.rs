@@ -13,9 +13,9 @@ pub fn cancel_requested() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::hosted::{take_inputs, close_inputs};
+pub use crate::hosted::{close_inputs, take_inputs};
 #[cfg(target_arch = "wasm32")]
-pub use crate::wasm::llm_bridge::{take_inputs, close_inputs};
+pub use crate::wasm::llm_bridge::{close_inputs, take_inputs};
 
 // The host's global agent context; a browser tab has none.
 #[cfg(not(target_arch = "wasm32"))]

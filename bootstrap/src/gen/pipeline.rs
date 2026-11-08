@@ -122,9 +122,16 @@ pub(super) struct Outcome {
 impl Outcome {
     fn from_requests(result: Result<usize, String>, requests: &BTreeMap<String, Request>) -> Self {
         let failed = if result.is_err() {
-            requests.values().find_map(|request|
-                request.reply.as_ref().and_then(|reply| reply.as_ref().err()).cloned())
-        } else { None };
+            requests.values().find_map(|request| {
+                request
+                    .reply
+                    .as_ref()
+                    .and_then(|reply| reply.as_ref().err())
+                    .cloned()
+            })
+        } else {
+            None
+        };
         Self { result, failed }
     }
 }
@@ -162,7 +169,10 @@ pub(super) async fn run_report(
         .err()
         .is_some_and(|reason| crate::session_recovery::is_interruption(reason))
     {
-        return Ok(Outcome { result, failed: None });
+        return Ok(Outcome {
+            result,
+            failed: None,
+        });
     }
     runner.progress.borrow_mut().data.result = Some(result.clone());
     runner.progress.borrow().save().await?;

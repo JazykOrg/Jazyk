@@ -125,7 +125,9 @@ impl EventHub {
 }
 
 fn to_sse(hub: &EventHub, ev: &Value) -> SseEvent {
-    SseEvent::default().id(hub.event_id(ev)).data(ev.to_string())
+    SseEvent::default()
+        .id(hub.event_id(ev))
+        .data(ev.to_string())
 }
 
 fn resync_event() -> SseEvent {
@@ -464,7 +466,8 @@ pub fn spawn_docs_watcher(st: SharedState) {
             );
             return;
         }
-        let relevant = |paths: &[std::path::PathBuf]| paths.iter().any(|p| watched_path(&st.root, p));
+        let relevant =
+            |paths: &[std::path::PathBuf]| paths.iter().any(|p| watched_path(&st.root, p));
         while let Ok(paths) = rx.recv() {
             // Build caches and dot-folders never hold a document: their churn (a
             // `cargo build`, an `npm install`) costs no fingerprint pass.
@@ -579,7 +582,15 @@ mod tests {
     fn the_docs_watcher_skips_build_caches_and_dot_folders() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        for d in ["docs", "src", "target", "node_modules", ".git", ".github", ".jazyk"] {
+        for d in [
+            "docs",
+            "src",
+            "target",
+            "node_modules",
+            ".git",
+            ".github",
+            ".jazyk",
+        ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         let names: Vec<String> = top_level_watch_dirs(root)
@@ -590,10 +601,16 @@ mod tests {
         assert!(watched_path(root, &root.join("docs/a.md")));
         assert!(watched_path(root, &root.join(crate::document_sets::CONFIG)));
         assert!(!watched_path(root, &root.join("target/debug/x.o")));
-        assert!(!watched_path(root, &root.join("bootstrap/target/debug/x.o")));
+        assert!(!watched_path(
+            root,
+            &root.join("bootstrap/target/debug/x.o")
+        ));
         assert!(!watched_path(root, &root.join("web/node_modules/a/b.js")));
         assert!(!watched_path(root, &root.join(".git/index")));
-        assert!(!watched_path(root, &root.join(".jazyk/ds_main/graph/x.yaml")));
+        assert!(!watched_path(
+            root,
+            &root.join(".jazyk/ds_main/graph/x.yaml")
+        ));
     }
 
     // A Last-Event-ID resumes only against the process that issued it: an id from a
@@ -605,11 +622,21 @@ mod tests {
         for _ in 0..3 {
             hub.emit("x", json!({}));
         }
-        let ring: Vec<Value> = hub.inner.ring.lock().unwrap().iter().map(|e| (**e).clone()).collect();
+        let ring: Vec<Value> = hub
+            .inner
+            .ring
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| (**e).clone())
+            .collect();
         let first = hub.event_id(&ring[0]);
         let missed = hub.replay_after_id(&first).unwrap();
         assert_eq!(missed.len(), 2);
-        assert!(hub.replay_after_id(&hub.event_id(&ring[2])).unwrap().is_empty());
+        assert!(hub
+            .replay_after_id(&hub.event_id(&ring[2]))
+            .unwrap()
+            .is_empty());
         let boot = hub.inner.boot;
         assert!(hub.replay_after_id(&format!("{}-1", boot + 1)).is_none());
         assert!(hub.replay_after_id(&format!("{}-99", boot)).is_none());

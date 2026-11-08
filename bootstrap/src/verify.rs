@@ -14,19 +14,26 @@ use std::path::PathBuf;
 // What a judge reads: the criterion or the row's criteria, the context, and the
 // implementing files. One builder for every llm verdict.
 // Mirrors docs/compiler/sessions.md#payload-files.
-pub(crate) const JUDGE: crate::payload::Fragments =
-    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/judge-input.md"));
+pub(crate) const JUDGE: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/judge-input.md"
+));
 
 // The implementing files as the judge sees them: each readable file under the
 // deliverable, truncated, under its own `=== path ===` line.
-pub(crate) fn judge_files<'a>(gs: &GenSettings, paths: impl IntoIterator<Item = &'a str>) -> String {
+pub(crate) fn judge_files<'a>(
+    gs: &GenSettings,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> String {
     let mut files = String::new();
     for path in paths {
         if let Ok(text) = crate::vfs::read_to_string(gs.deliverable.join(path)) {
             files.push('\n');
             files.push_str(&JUDGE.fill(
                 "file",
-                &[("path", path), ("text", &crate::llm::truncate(&text, 12_000))],
+                &[
+                    ("path", path),
+                    ("text", &crate::llm::truncate(&text, 12_000)),
+                ],
             ));
         }
     }
@@ -35,13 +42,25 @@ pub(crate) fn judge_files<'a>(gs: &GenSettings, paths: impl IntoIterator<Item = 
 
 // The judge's input. `statement` names one criterion when the judge decides one;
 // `ask` is the closing instruction, filled.
-pub(crate) fn judge_input(statement: Option<&str>, criteria: &str, context: &str, files: &str, ask: &str) -> String {
+pub(crate) fn judge_input(
+    statement: Option<&str>,
+    criteria: &str,
+    context: &str,
+    files: &str,
+    ask: &str,
+) -> String {
     let criterion = statement
         .map(|s| JUDGE.fill("criterion", &[("statement", s)]) + "\n")
         .unwrap_or_default();
     JUDGE.fill(
         "input",
-        &[("criterion", &criterion), ("criteria", criteria), ("context", context), ("files", files), ("ask", ask)],
+        &[
+            ("criterion", &criterion),
+            ("criteria", criteria),
+            ("context", context),
+            ("files", files),
+            ("ask", ask),
+        ],
     )
 }
 
@@ -53,7 +72,13 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
 
 // `status_of` against a ledger already loaded: the loops over many rows load it once,
 // not once per row.
-pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, ledger: &Ledger) -> (String, String) {
+pub fn status_with(
+    store: &Store,
+    rid: &str,
+    row: &ReqRow,
+    gs: &GenSettings,
+    ledger: &Ledger,
+) -> (String, String) {
     let live = store.graph.requirements.get(store.resolve_id(rid));
     let Some(r) = live else {
         return ("missing".into(), "requirement-gone".into());
@@ -77,7 +102,10 @@ pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, led
     if hash_file(&artifact) != row.hashes.test {
         return ("stale-test".into(), "test-changed".into());
     }
-    if row.test.kind == "llm" && crate::gen::validate_criteria_file(store, store.resolve_id(rid), None, &artifact).is_err() {
+    if row.test.kind == "llm"
+        && crate::gen::validate_criteria_file(store, store.resolve_id(rid), None, &artifact)
+            .is_err()
+    {
         return ("missing".into(), "artifact-gone".into());
     }
     // Implementing files alone: a rebuilt artifact among the files is not a code change
@@ -86,7 +114,9 @@ pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, led
         return ("stale-code".into(), "code-changed".into());
     }
     for cid in store.criteria_of(rid) {
-        let Some(test)=row.tests.get(&cid) else{return ("unverified".into(),"criterion-unbound".into())};
+        let Some(test) = row.tests.get(&cid) else {
+            return ("unverified".into(), "criterion-unbound".into());
+        };
         // A legacy criterion command renamed or deleted by hand judges nothing, like
         // the headline's: bind work, never a verdict read from an empty run. A task
         // report reads a missing case as unverified on its own.
@@ -96,9 +126,28 @@ pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, led
                 return ("missing".into(), "artifact-gone".into());
             }
         }
-        if store.graph.criteria.get(&cid).is_some_and(|c|hash_hex(&c.statement)!=test.criterion_hash) {return ("stale-requirement".into(),"criterion-changed".into());}
-        if test.test.kind == "llm" && crate::gen::validate_criteria_file(store, store.resolve_id(rid), Some(&cid), &artifact_path(&store.out, gs, &test.test)).is_err() {return ("missing".into(), "artifact-gone".into());}
-        if hash_file(&artifact_path(&store.out,gs,&test.test))!=test.test_hash {return ("stale-test".into(),"criterion-test-changed".into());}
+        if store
+            .graph
+            .criteria
+            .get(&cid)
+            .is_some_and(|c| hash_hex(&c.statement) != test.criterion_hash)
+        {
+            return ("stale-requirement".into(), "criterion-changed".into());
+        }
+        if test.test.kind == "llm"
+            && crate::gen::validate_criteria_file(
+                store,
+                store.resolve_id(rid),
+                Some(&cid),
+                &artifact_path(&store.out, gs, &test.test),
+            )
+            .is_err()
+        {
+            return ("missing".into(), "artifact-gone".into());
+        }
+        if hash_file(&artifact_path(&store.out, gs, &test.test)) != test.test_hash {
+            return ("stale-test".into(), "criterion-test-changed".into());
+        }
     }
     // Criteria judged one by one: files present with some criterion tests green and
     // some red is a partly implemented requirement, generation work like an
@@ -115,8 +164,10 @@ pub fn status_with(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings, led
         ledger
             .entities
             .get(&crate::gen::slug_of(&row.entity))
-            .map(|e| e.fact_hash == crate::gen::fact_hash(store, &row.entity)
-                && !crate::gen::implementation_outside_source(gs, &ledger, &e.files))
+            .map(|e| {
+                e.fact_hash == crate::gen::fact_hash(store, &row.entity)
+                    && !crate::gen::implementation_outside_source(gs, &ledger, &e.files)
+            })
             .unwrap_or(false)
     };
     if (crit_fail > 0 || row.verdict == "fail") && generated_here() {
@@ -151,7 +202,12 @@ pub(crate) fn artifact_names(artifact: &std::path::Path, name: &str) -> bool {
     !name.trim().is_empty()
         && !name.ends_with("::")
         && crate::vfs::read_to_string(artifact)
-            .map(|c| c.contains(name) || name.rsplit_once("::").is_some_and(|(_,case)| !case.trim().is_empty() && c.contains(case)))
+            .map(|c| {
+                c.contains(name)
+                    || name
+                        .rsplit_once("::")
+                        .is_some_and(|(_, case)| !case.trim().is_empty() && c.contains(case))
+            })
             .unwrap_or(false)
 }
 
@@ -267,7 +323,12 @@ pub fn pending(
             // acceptance gate (docs/consumers/bind.md#what-the-verdict-means); a
             // failing row is a finding for the author, re-verified only when its
             // test or files change (docs/compiler/goals/verify.md#created-when).
-            _ => status != "verified" && status != "unimplemented" && status != "partial" && status != "failing",
+            _ => {
+                status != "verified"
+                    && status != "unimplemented"
+                    && status != "partial"
+                    && status != "failing"
+            }
         };
         if !actionable {
             continue;
@@ -319,8 +380,15 @@ pub fn pending(
 pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap<String, Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = std::collections::BTreeMap::new();
-    let project_root=crate::project::find_root(&store.out);
-    let project_path=|test:&crate::gen::TestRef| project_root.as_ref().and_then(|root| artifact_path(&store.out,gs,test).strip_prefix(root).ok().map(|path|path.to_string_lossy().replace('\\',"/")));
+    let project_root = crate::project::find_root(&store.out);
+    let project_path = |test: &crate::gen::TestRef| {
+        project_root.as_ref().and_then(|root| {
+            artifact_path(&store.out, gs, test)
+                .strip_prefix(root)
+                .ok()
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+        })
+    };
     for rid in store.graph.requirements.keys() {
         let entry = match ledger.requirements.get(rid) {
             Some(row) => {
@@ -413,7 +481,9 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     };
     if row.test.kind != "llm" && row.tests.values().any(|test| test.test.kind == "llm") {
         instructions.push('\n');
-        instructions.push_str(include_str!("../../docs/compiler/goals/prompts/verify-llm-contract.md"));
+        instructions.push_str(include_str!(
+            "../../docs/compiler/goals/prompts/verify-llm-contract.md"
+        ));
     }
     Ok(json!({
         "requirement": rid,
@@ -691,7 +761,11 @@ pub struct ProgRun {
 pub(crate) fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
     if let Some(task) = t.run.strip_prefix("task:") {
         let root = crate::task_runtime::project_root(&gs.deliverable)?;
-        let (id, result) = crate::task_runtime::execute_with_key(&root, task, &format!("test:{}:{}",t.name,t.run))?;
+        let (id, result) = crate::task_runtime::execute_with_key(
+            &root,
+            task,
+            &format!("test:{}:{}", t.name, t.run),
+        )?;
         return task_case_outcome(&result, &t.name, &id);
     }
     let cwd = gs.deliverable.join(&t.cwd);
@@ -720,7 +794,9 @@ pub(crate) fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<
 
 fn task_case_outcome(result: &Value, name: &str, run_id: &str) -> Result<ProgRun, String> {
     if result["complete"] != true {
-        return Err(format!("run {run_id}: incomplete collection; no test verdict"));
+        return Err(format!(
+            "run {run_id}: incomplete collection; no test verdict"
+        ));
     }
     let (verdict, observed) = crate::task_runtime::case_verdict(result, name);
     if verdict == "none" {
@@ -749,9 +825,9 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
     if let Err(reason) = ensure_current_source(store, gs, row) {
         return vec![json!({"requirement":rid,"note":reason})];
     }
-    if row.tests.values().any(|t|t.test.kind=="programmatic") {
-        let files=crate::gen::hash_implementing(&store.out,gs,&row.files);
-        rebaseline_files(row,files);
+    if row.tests.values().any(|t| t.test.kind == "programmatic") {
+        let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
+        rebaseline_files(row, files);
     }
     let headline_run = row.test.run.clone();
     let headline_name = row.test.name.clone();
@@ -766,7 +842,12 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
             let evidence = row.evidence.clone().unwrap_or_default();
             runs.insert(
                 (row.test.run.clone(), row.test.cwd.clone()),
-                Ok(ProgRun { pass: row.verdict == "pass", code, tail: evidence.clone(), evidence }),
+                Ok(ProgRun {
+                    pass: row.verdict == "pass",
+                    code,
+                    tail: evidence.clone(),
+                    evidence,
+                }),
             );
         }
     }
@@ -795,13 +876,19 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
         // exits 0 and would read as a pass.
         let artifact = artifact_path(&store.out, gs, &t.test);
         if !artifact_names(&artifact, &t.test.name) {
-            let reason = format!("test `{}` not found in {}; artifact-gone, nothing executed", t.test.name, artifact.display());
+            let reason = format!(
+                "test `{}` not found in {}; artifact-gone, nothing executed",
+                t.test.name,
+                artifact.display()
+            );
             t.verdict = "none".into();
             t.exit_code = None;
             t.last_run = Some(now_iso());
             t.evidence = Some(crate::llm::truncate(&reason, 400).to_string());
             t.test_hash = hash_file(&artifact);
-            lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": reason}));
+            lines.push(
+                json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": reason}),
+            );
             continue;
         }
         let outcome = runs
@@ -832,26 +919,35 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
                 t.last_run = Some(now_iso());
                 t.evidence = Some(crate::llm::truncate(&e, 400).to_string());
                 t.test_hash = hash_file(&artifact_path(&store.out, gs, &t.test));
-                lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": e}));
+                lines.push(
+                    json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": e}),
+                );
             }
         }
     }
     let observed = row.tests.clone();
     let landed = Ledger::update(&store.out, |fresh| {
         let Some(row) = fresh.requirements.get_mut(&rid) else {
-            return Err(format!("the ledger row for `{rid}` left while its criterion tests ran"));
+            return Err(format!(
+                "the ledger row for `{rid}` left while its criterion tests ran"
+            ));
         };
         let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
         rebaseline_files(row, files);
         for line in &lines {
-            let Some(cid) = line["criterion"].as_str() else { continue };
+            let Some(cid) = line["criterion"].as_str() else {
+                continue;
+            };
             if line.get("note").is_some() || line["source"] == "task report" {
                 continue;
             }
-            let (Some(seen), Some(t)) = (observed.get(cid), row.tests.get_mut(cid)) else { continue };
+            let (Some(seen), Some(t)) = (observed.get(cid), row.tests.get_mut(cid)) else {
+                continue;
+            };
             // A test re-bound while the command ran is not the test that ran.
             let same = |a: &crate::gen::TestRef, b: &crate::gen::TestRef| {
-                (&a.kind, &a.artifact, &a.name, &a.run, &a.cwd) == (&b.kind, &b.artifact, &b.name, &b.run, &b.cwd)
+                (&a.kind, &a.artifact, &a.name, &a.run, &a.cwd)
+                    == (&b.kind, &b.artifact, &b.name, &b.run, &b.cwd)
             };
             if !same(&seen.test, &t.test) {
                 continue;
@@ -909,15 +1005,14 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
         return run_test_ref(gs, &row.test);
     }
     let cwd = gs.deliverable.join(&row.test.cwd);
-    let out = crate::sys::run_shell(&row.test.run, &cwd)
-        .map_err(|e| {
-            format!(
-                "failed to run `{}` in {}: {}",
-                row.test.run,
-                cwd.display(),
-                e
-            )
-        })?;
+    let out = crate::sys::run_shell(&row.test.run, &cwd).map_err(|e| {
+        format!(
+            "failed to run `{}` in {}: {}",
+            row.test.run,
+            cwd.display(),
+            e
+        )
+    })?;
     let pass = out.success;
     let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
     evidence.push_str(&String::from_utf8_lossy(&out.stderr));
@@ -1010,7 +1105,11 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
     run_selected_after_build(store, gs, targets)
 }
 
-pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
+pub(crate) fn run_selected_after_build(
+    store: &Store,
+    gs: &GenSettings,
+    targets: &[String],
+) -> Result<Value, String> {
     let ledger = Ledger::load(&store.out);
     // Explicit targets (requirement or entity ids), or every non-verified row, the
     // failing ones included: an explicit run is a rerun a worker asked for.
@@ -1027,7 +1126,10 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
                 v.push(id);
             } else {
                 for (rid, requirement) in &store.graph.requirements {
-                    if requirement.entities.iter().any(|entity| store.resolve_id(entity) == id)
+                    if requirement
+                        .entities
+                        .iter()
+                        .any(|entity| store.resolve_id(entity) == id)
                         && !v.contains(rid)
                     {
                         v.push(rid.clone());
@@ -1044,12 +1146,18 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
     };
     let mut tasks = std::collections::BTreeSet::new();
     for rid in &selected {
-        let Some(row) = ledger.requirements.get(rid) else { continue; };
+        let Some(row) = ledger.requirements.get(rid) else {
+            continue;
+        };
         let (status, _) = status_of(store, rid, row, gs);
-        if status == "missing" || status == "stale-requirement" { continue; }
+        if status == "missing" || status == "stale-requirement" {
+            continue;
+        }
         for test in std::iter::once(&row.test).chain(row.tests.values().map(|t| &t.test)) {
             if test.kind == "programmatic" {
-                if let Some(id) = test.run.strip_prefix("task:") { tasks.insert(id.to_owned()); }
+                if let Some(id) = test.run.strip_prefix("task:") {
+                    tasks.insert(id.to_owned());
+                }
             }
         }
     }
@@ -1057,8 +1165,14 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
     if !tasks.is_empty() {
         let root = crate::task_runtime::project_root(&store.out)?;
         for id in tasks {
-            let (run_id, result) = crate::task_runtime::execute_with_key(&root, &id, &format!("verify:{}",store.out.display()))?;
-            runs.push(json!({"id":run_id,"task":id,"state":result["status"],"tests":result["tests"]}));
+            let (run_id, result) = crate::task_runtime::execute_with_key(
+                &root,
+                &id,
+                &format!("verify:{}", store.out.display()),
+            )?;
+            runs.push(
+                json!({"id":run_id,"task":id,"state":result["status"],"tests":result["tests"]}),
+            );
         }
     }
     // Runs import independent case evidence. Reload before observing their rows.
@@ -1082,11 +1196,18 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             // all the same, or three checks vanish behind a green reply
             // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
             let crit_rows = run_criterion_tests(store, rid, gs);
-            let ran: Vec<&Value> = crit_rows.iter().filter(|c| c.get("note").is_none()).collect();
+            let ran: Vec<&Value> = crit_rows
+                .iter()
+                .filter(|c| c.get("note").is_none())
+                .collect();
             if !ran.is_empty() {
                 let crit_failed = ran.iter().any(|c| c["verdict"] == "fail");
                 let crit_unknown = ran.iter().any(|c| c["verdict"] == "none");
-                if crit_failed { failed += 1 } else if !crit_unknown { passed += 1 }
+                if crit_failed {
+                    failed += 1
+                } else if !crit_unknown {
+                    passed += 1
+                }
                 rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else if crit_unknown { "none" } else { "pass" }, "note": "the headline is an llm test (judge it with record_verdict); its programmatic criterion tests ran", "criteria": crit_rows}));
             } else {
                 skipped.push(
@@ -1114,8 +1235,14 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             let current = Ledger::load(&store.out);
             let (status, reason) = status_of(store, rid, &current.requirements[rid], gs);
             let verdict = match status.as_str() {
-                "verified" => { passed += 1; "pass" }
-                "failing" | "partial" | "unimplemented" => { failed += 1; "fail" }
+                "verified" => {
+                    passed += 1;
+                    "pass"
+                }
+                "failing" | "partial" | "unimplemented" => {
+                    failed += 1;
+                    "fail"
+                }
                 _ => "none",
             };
             rows.push(json!({"requirement":rid,"verdict":verdict,"status":status,"reason":reason,"criteria":criteria}));
@@ -1130,7 +1257,15 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             Ok(r) if r.pass => {
                 // A verdict that did not land is not a pass: the reply says what the
                 // ledger holds, never what the run hoped to record.
-                if let Err(e) = mark(store, rid, "pass", None, Some(&r.evidence), Some(r.code), gs) {
+                if let Err(e) = mark(
+                    store,
+                    rid,
+                    "pass",
+                    None,
+                    Some(&r.evidence),
+                    Some(r.code),
+                    gs,
+                ) {
                     skipped.push(json!({"requirement": rid, "reason": format!("the test passed but its verdict was not recorded: {e}"), "exitCode": r.code}));
                     continue;
                 }
@@ -1168,7 +1303,15 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
             rows.push(json!({"requirement": rid, "verdict": "none", "reason": "runner-failed", "exitCode": r.code, "evidence": r.tail}));
             continue;
         }
-        if let Err(e) = mark(store, &rid, "fail", None, Some(&r.evidence), Some(r.code), gs) {
+        if let Err(e) = mark(
+            store,
+            &rid,
+            "fail",
+            None,
+            Some(&r.evidence),
+            Some(r.code),
+            gs,
+        ) {
             skipped.push(json!({"requirement": rid, "reason": format!("the test failed but its verdict was not recorded: {e}"), "exitCode": r.code, "evidence": r.tail}));
             continue;
         }
@@ -1204,7 +1347,9 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
     // Use the current landed ledger after all verdict imports/legacy marks.
     // This changes guidance, not derived statuses or goal scheduling.
     let current = Ledger::load(&store.out);
-    let generated_candidate_failure = rows.iter().filter(|row| row["verdict"] == "fail")
+    let generated_candidate_failure = rows
+        .iter()
+        .filter(|row| row["verdict"] == "fail")
         .filter_map(|row| row["requirement"].as_str())
         .filter_map(|rid| current.requirements.get(rid).map(|row| (rid, row)))
         .any(|(rid, row)| status_of(store, rid, row, gs).1 == "criteria-failing-after-generation");
@@ -1218,14 +1363,20 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
         "skipped": skipped,
         "next": verification_next(failed, runner_failed, &rows, &skipped, !doc_diags.is_empty(), generated_candidate_failure)
     });
-    if !rows.is_empty() && skipped.is_empty() && rows.iter().all(|row| row["verdict"] == "pass")
-        && (reply["suite"]["failedCases"].as_u64().unwrap_or(0) > 0 || reply["suite"]["unsuccessfulRuns"].as_u64().unwrap_or(0) > 0)
+    if !rows.is_empty()
+        && skipped.is_empty()
+        && rows.iter().all(|row| row["verdict"] == "pass")
+        && (reply["suite"]["failedCases"].as_u64().unwrap_or(0) > 0
+            || reply["suite"]["unsuccessfulRuns"].as_u64().unwrap_or(0) > 0)
     {
         reply["next"] = json!("all selected rows pass, but the executed suite has failed cases or an unsuccessful run; inspect suite.failures and run evidence before claiming whole-suite success. No owner is inferred for an unbound case");
     }
     if skipped.iter().any(|r| r["pendingCi"] == true) {
         reply["pendingCi"] = json!(true);
-        reply["pending"] = json!(skipped.iter().filter(|r| r["pendingCi"] == true).collect::<Vec<_>>());
+        reply["pending"] = json!(skipped
+            .iter()
+            .filter(|r| r["pendingCi"] == true)
+            .collect::<Vec<_>>());
     }
     if !doc_diags.is_empty() {
         reply["openDiagnosticsOnFailingRows"] = json!(doc_diags);
@@ -1236,7 +1387,12 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
 // Record a run that judged nothing: the exit code and the output stay, the verdict does
 // not move. A row with an exit code and no verdict reads as `runner-failed`
 // (docs/consumers/gen.md#status-is-derived-never-stored).
-pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str) -> Result<(), String> {
+pub fn record_runner_failure(
+    store: &Store,
+    rid: &str,
+    code: i32,
+    evidence: &str,
+) -> Result<(), String> {
     let rid = store.resolve_id(rid).to_string();
     let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
@@ -1250,9 +1406,15 @@ pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str
         // A criterion entry that is the headline's test, by name or by its shared
         // command, learned nothing either: its previous verdict clears too
         // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
-        let (name, run, cwd) = (row.test.name.clone(), row.test.run.clone(), row.test.cwd.clone());
+        let (name, run, cwd) = (
+            row.test.name.clone(),
+            row.test.run.clone(),
+            row.test.cwd.clone(),
+        );
         for t in row.tests.values_mut() {
-            if t.test.kind == "programmatic" && (t.test.name == name || (t.test.run == run && t.test.cwd == cwd)) {
+            if t.test.kind == "programmatic"
+                && (t.test.name == name || (t.test.run == run && t.test.cwd == cwd))
+            {
                 t.verdict = "none".into();
                 t.exit_code = Some(code);
                 t.evidence = row.evidence.clone();
@@ -1304,7 +1466,11 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         if !artifact_stands_for(&content, &rid, &r.statement) {
             continue;
         }
-        if row.test.kind == "llm" && crate::gen::validate_criteria_file(store, &rid, None, &artifact).is_err() { continue; }
+        if row.test.kind == "llm"
+            && crate::gen::validate_criteria_file(store, &rid, None, &artifact).is_err()
+        {
+            continue;
+        }
         let hashes = crate::gen::RowHashes {
             requirement: row.hashes.requirement.clone(),
             test: hash_file(&artifact),
@@ -1371,7 +1537,9 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 }));
                 break;
             }
-            if crate::gen::validate_criteria_file(store, rid, None, path).is_err() { continue; }
+            if crate::gen::validate_criteria_file(store, rid, None, path).is_err() {
+                continue;
+            }
             let artifact_rel = path
                 .strip_prefix(store.out.join("gen"))
                 .unwrap_or(path)
@@ -1455,16 +1623,13 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
         let name = e.file_name().to_string_lossy().to_string();
         if path.vis_dir() {
             if !matches!(name.as_str(), "target" | "node_modules" | ".git")
-                && !name.starts_with(".jazyk") && !name.starts_with("jazyk-out")
+                && !name.starts_with(".jazyk")
+                && !name.starts_with("jazyk-out")
                 && !crate::vfs::is_symlink(&path)
             {
                 collect_files(&path, v, is_criteria);
             }
-        } else if e
-            .metadata()
-            .map(|m| m.len() <= 512 * 1024)
-            .unwrap_or(false)
-        {
+        } else if e.metadata().map(|m| m.len() <= 512 * 1024).unwrap_or(false) {
             v.push((path, is_criteria));
         }
     }
@@ -1496,7 +1661,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn file_walk_skips_symlinked_directories() {
-        let root = std::env::temp_dir().join(format!("jazyk-verify-symlink-{}", crate::sys::process_id()));
+        let root =
+            std::env::temp_dir().join(format!("jazyk-verify-symlink-{}", crate::sys::process_id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("tests")).unwrap();
         std::fs::write(root.join("tests/a.rs"), "fn a() {}").unwrap();
@@ -1511,7 +1677,9 @@ mod tests {
         let mut tests = (0..25).map(|n| json!({"identity":format!("OtherSuite::case_{n}"),"status":"failed","report":"reports/other.xml"})).collect::<Vec<_>>();
         tests.push(json!({"identity":"selected","status":"passed"}));
         tests.push(json!({"identity":"skipped","status":"skipped"}));
-        let summary = suite_summary(&[json!({"id":"run-1","task":"shared-suite","state":"failed","tests":tests})]);
+        let summary = suite_summary(&[
+            json!({"id":"run-1","task":"shared-suite","state":"failed","tests":tests}),
+        ]);
         assert_eq!(summary["passedCases"], 1);
         assert_eq!(summary["failedCases"], 25);
         assert_eq!(summary["skippedCases"], 1);
@@ -1525,10 +1693,12 @@ mod tests {
 
     #[test]
     fn suite_failure_summary_keeps_atomic_identities_and_counts_oversized_entries() {
-        let summary = suite_summary(&[json!({"id":"run-1","task":"shared-suite","state":"failed","tests":[
-            {"identity":"x".repeat(40_000),"status":"failed","report":"reports/a.xml"},
-            {"identity":"Exact::case","status":"failed","report":"reports/b.xml"}
-        ]})]);
+        let summary = suite_summary(&[
+            json!({"id":"run-1","task":"shared-suite","state":"failed","tests":[
+                {"identity":"x".repeat(40_000),"status":"failed","report":"reports/a.xml"},
+                {"identity":"Exact::case","status":"failed","report":"reports/b.xml"}
+            ]}),
+        ]);
         assert_eq!(summary["failedCases"], 2);
         assert_eq!(summary["omittedFailures"], 1);
         assert_eq!(summary["failures"].as_array().unwrap().len(), 1);
@@ -1584,8 +1754,14 @@ mod tests {
         ledger.requirements.get_mut("req:shop-1").unwrap().test.run = "task:check".into();
         ledger.save(out).unwrap();
         let package = task(&store, "req:shop-1", &gs).unwrap();
-        assert!(package["instructions"].as_str().unwrap().contains("run_tests"));
-        assert!(!package["instructions"].as_str().unwrap().contains("Exit code 0 is a pass"));
+        assert!(package["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("run_tests"));
+        assert!(!package["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("Exit code 0 is a pass"));
     }
 
     #[test]
@@ -1595,8 +1771,16 @@ mod tests {
             {"identity":"B::same","status":"failed"},
             {"identity":"A::skipped","status":"skipped"}
         ]});
-        assert!(super::task_case_outcome(&result, "A::same", "r1").unwrap().pass);
-        assert!(!super::task_case_outcome(&result, "B::same", "r1").unwrap().pass);
+        assert!(
+            super::task_case_outcome(&result, "A::same", "r1")
+                .unwrap()
+                .pass
+        );
+        assert!(
+            !super::task_case_outcome(&result, "B::same", "r1")
+                .unwrap()
+                .pass
+        );
         for selector in ["same", "A::skipped", "missing"] {
             assert!(super::task_case_outcome(&result, selector, "r1").is_err());
         }
@@ -1883,7 +2067,8 @@ mod tests {
             .all(|t| t.verdict == "fail"));
         let split = criterion_judgments(&store, ["pass", "fail"]);
         assert_eq!(
-            mark_llm(&store, "req:shop-1", "fail", None, None, Some(&split), &gs).unwrap()["status"],
+            mark_llm(&store, "req:shop-1", "fail", None, None, Some(&split), &gs).unwrap()
+                ["status"],
             "failing"
         );
         let split_row = Ledger::load(out).requirements["req:shop-1"].clone();
@@ -1891,7 +2076,8 @@ mod tests {
         assert_eq!(split_row.tests["crit:second"].verdict, "fail");
         let green = criterion_judgments(&store, ["pass", "pass"]);
         assert_eq!(
-            mark_llm(&store, "req:shop-1", "pass", None, None, Some(&green), &gs).unwrap()["status"],
+            mark_llm(&store, "req:shop-1", "pass", None, None, Some(&green), &gs).unwrap()
+                ["status"],
             "verified"
         );
     }
@@ -1975,14 +2161,32 @@ mod tests {
         ledger.save(out).unwrap();
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed source").unwrap();
         let judgments = json!([criterion_judgments(&store, ["pass", "pass"])[0]]);
-        mark_llm(&store, "req:shop-1", "pass", None, None, Some(&judgments), &gs).unwrap();
+        mark_llm(
+            &store,
+            "req:shop-1",
+            "pass",
+            None,
+            None,
+            Some(&judgments),
+            &gs,
+        )
+        .unwrap();
         let row = Ledger::load(out).requirements["req:shop-1"].clone();
         assert_eq!(row.verdict, "none");
         assert_eq!(row.tests["crit:first"].verdict, "pass");
         assert_eq!(row.tests["crit:second"].verdict, "none");
         assert_eq!(status_of(&store, "req:shop-1", &row, &gs).0, "unverified");
-        let task = serde_json::from_value(json!({"id":"check","name":"Check","description":"Run cases","command":"pytest"})).unwrap();
-        crate::task_runtime::import_evidence(&store, &gs, &task, &json!({"exit_code":0,"tests":[{"identity":"Suite::case","status":"passed"}]}), "fresh");
+        let task = serde_json::from_value(
+            json!({"id":"check","name":"Check","description":"Run cases","command":"pytest"}),
+        )
+        .unwrap();
+        crate::task_runtime::import_evidence(
+            &store,
+            &gs,
+            &task,
+            &json!({"exit_code":0,"tests":[{"identity":"Suite::case","status":"passed"}]}),
+            "fresh",
+        );
         let row = Ledger::load(out).requirements["req:shop-1"].clone();
         assert_eq!(status_of(&store, "req:shop-1", &row, &gs).0, "verified");
     }
@@ -2045,7 +2249,10 @@ mod tests {
         // A lost command reply reuses its completed result and counters. No
         // criterion judgment is admitted a second time under the same execution.
         let no_calls = Answers(RefCell::new(Default::default()));
-        assert_eq!(run_all(&store,&no_calls,&gs,&[],Some("llm"),true,&trace).unwrap(),report);
+        assert_eq!(
+            run_all(&store, &no_calls, &gs, &[], Some("llm"), true, &trace).unwrap(),
+            report
+        );
         let _next_command = crate::session_recovery::Scope::enter(None);
         let runner = Answers(RefCell::new(["No judgment available".into()].into()));
         run_all(&store, &runner, &gs, &[], Some("llm"), true, &trace).unwrap();
@@ -2059,12 +2266,29 @@ mod tests {
     fn a_review_transport_error_stops_before_the_next_criterion() {
         struct Broken(std::cell::Cell<usize>);
         impl crate::runner::SessionRunner for Broken {
-            fn agent_name(&self) -> String { "broken".into() }
+            fn agent_name(&self) -> String {
+                "broken".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
-            fn run_item(&self, _: &crate::runner::BatchRun, _: &crate::session::Trace) -> crate::runner::SessionReport { unreachable!() }
-            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { unreachable!() }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> {
-                self.0.set(self.0.get()+1);
+            fn run_item(
+                &self,
+                _: &crate::runner::BatchRun,
+                _: &crate::session::Trace,
+            ) -> crate::runner::SessionReport {
+                unreachable!()
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                unreachable!()
+            }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
+                self.0.set(self.0.get() + 1);
                 Err("Review model transport closed.".into())
             }
         }
@@ -2073,14 +2297,21 @@ mod tests {
         let (store, gs) = multi_llm_fixture(out);
         let before = Ledger::load(out);
         let runner = Broken(std::cell::Cell::new(0));
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
-            std::sync::Arc::new(|_|{}),Default::default());
-        let error = run_without_build(&store,&runner,&gs,&[],Some("llm"),true,&trace,false).unwrap_err();
-        assert_eq!(error,"Review model transport closed.");
-        assert_eq!(runner.0.get(),1);
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let error = run_without_build(&store, &runner, &gs, &[], Some("llm"), true, &trace, false)
+            .unwrap_err();
+        assert_eq!(error, "Review model transport closed.");
+        assert_eq!(runner.0.get(), 1);
         let after = Ledger::load(out);
-        for (id,test) in &before.requirements["req:shop-1"].tests {
-            assert_eq!(after.requirements["req:shop-1"].tests[id].verdict,test.verdict);
+        for (id, test) in &before.requirements["req:shop-1"].tests {
+            assert_eq!(
+                after.requirements["req:shop-1"].tests[id].verdict,
+                test.verdict
+            );
         }
     }
 
@@ -2113,20 +2344,35 @@ mod tests {
         let out = std::path::Path::new("/project/.jazyk");
         let (store, gs) = fixture(out);
         let before = Ledger::load(out);
-        let result = run_selected(&store,&gs,&[]).unwrap();
-        assert_eq!(result["pendingCi"],true);
-        assert_eq!(result["passed"],0);
-        assert_eq!(result["failed"],0);
-        assert_eq!(serde_json::to_value(Ledger::load(out)).unwrap(),serde_json::to_value(before).unwrap());
+        let result = run_selected(&store, &gs, &[]).unwrap();
+        assert_eq!(result["pendingCi"], true);
+        assert_eq!(result["passed"], 0);
+        assert_eq!(result["failed"], 0);
+        assert_eq!(
+            serde_json::to_value(Ledger::load(out)).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
         let project = crate::project::Project::load(std::path::Path::new("/project"));
-        let llm = crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None, base_url:"must-not-connect".into(),model:"unused".into(),api_key:String::new(),temperature:None,trace:None};
-        let runner = crate::inprocess::InProcessRunner::start(&project,&llm,out).unwrap();
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
-        let report = run_all(&store,&runner,&gs,&[],None,false,&trace).unwrap();
-        assert_eq!(report["verified"],0);
-        assert_eq!(report["failing"],0);
-        assert_eq!(report["pendingCi"].as_array().unwrap().len(),1);
-        assert_eq!(Ledger::load(out).requirements["req:shop-1"].verdict,"none");
+        let llm = crate::llm::Llm {
+            api: "chat_completions".into(),
+            reasoning_summary: None,
+            base_url: "must-not-connect".into(),
+            model: "unused".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
+        let runner = crate::inprocess::InProcessRunner::start(&project, &llm, out).unwrap();
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Quiet,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let report = run_all(&store, &runner, &gs, &[], None, false, &trace).unwrap();
+        assert_eq!(report["verified"], 0);
+        assert_eq!(report["failing"], 0);
+        assert_eq!(report["pendingCi"].as_array().unwrap().len(), 1);
+        assert_eq!(Ledger::load(out).requirements["req:shop-1"].verdict, "none");
     }
 
     // A row whose requirement left the graph is not actionable work: the queue
@@ -2134,7 +2380,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
     #[test]
     fn requirement_gone_rows_are_not_actionable() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-gone-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-verify-gone-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // The row exists; then the requirement is deleted from the graph.
@@ -2152,7 +2399,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     #[test]
     fn a_runner_failure_is_not_a_failing_requirement() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-runner-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-verify-runner-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
 
@@ -2219,20 +2467,34 @@ mod tests {
     // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
     #[test]
     fn headline_runner_failure_clears_its_criterion_entry() {
-        let out = std::env::temp_dir().join(format!("jazyk-headline-runner-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-headline-runner-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut store, gs) = fixture(&out);
-        store.graph.criteria.insert("c:check".into(), Criterion {
-            requirement: "req:shop-1".into(), statement: "Check items".into(),
-            ..Default::default()
-        });
+        store.graph.criteria.insert(
+            "c:check".into(),
+            Criterion {
+                requirement: "req:shop-1".into(),
+                statement: "Check items".into(),
+                ..Default::default()
+            },
+        );
         let mut ledger = Ledger::load(&out);
         let row = ledger.requirements.get_mut("req:shop-1").unwrap();
-        row.tests.insert("c:check".into(), crate::gen::CritTest {
-            test: row.test.clone(), criterion_hash: hash_hex("Check items"),
-            test_hash: row.hashes.test.clone(), verdict: "fail".into(),
-            last_run: None, exit_code: Some(1), evidence: Some("earlier fail".into()),
-        });
+        row.tests.insert(
+            "c:check".into(),
+            crate::gen::CritTest {
+                test: row.test.clone(),
+                criterion_hash: hash_hex("Check items"),
+                test_hash: row.hashes.test.clone(),
+                verdict: "fail".into(),
+                last_run: None,
+                exit_code: Some(1),
+                evidence: Some("earlier fail".into()),
+            },
+        );
         ledger.save(&out).unwrap();
         record_runner_failure(&store, "req:shop-1", 127, "sh: not found").unwrap();
         let ledger = Ledger::load(&out);
@@ -2247,13 +2509,18 @@ mod tests {
     // its verdict (docs/consumers/gen.md#test-artifact-selection).
     #[test]
     fn criterion_sharing_the_headline_command_gets_a_verdict() {
-        let out = std::env::temp_dir().join(format!("jazyk-shared-command-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-shared-command-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut store, gs) = fixture(&out);
-        store.graph.criteria.insert("c:other".into(), Criterion {
-            requirement: "req:shop-1".into(), statement: "Other check".into(),
-            ..Default::default()
-        });
+        store.graph.criteria.insert(
+            "c:other".into(),
+            Criterion {
+                requirement: "req:shop-1".into(),
+                statement: "Other check".into(),
+                ..Default::default()
+            },
+        );
         let artifact = gs.deliverable.join("tests/cart.rs");
         let text = crate::vfs::read_to_string(&artifact).unwrap();
         crate::vfs::write(&artifact, format!("{text}fn criterion_other() {{}}\n")).unwrap();
@@ -2263,11 +2530,18 @@ mod tests {
         row.test.run = run.into();
         let mut test = row.test.clone();
         test.name = "criterion_other".into();
-        row.tests.insert("c:other".into(), crate::gen::CritTest {
-            test, criterion_hash: hash_hex("Other check"),
-            test_hash: String::new(), verdict: "none".into(),
-            last_run: None, exit_code: None, evidence: None,
-        });
+        row.tests.insert(
+            "c:other".into(),
+            crate::gen::CritTest {
+                test,
+                criterion_hash: hash_hex("Other check"),
+                test_hash: String::new(),
+                verdict: "none".into(),
+                last_run: None,
+                exit_code: None,
+                evidence: None,
+            },
+        );
         ledger.save(&out).unwrap();
         let reply = run_selected(&store, &gs, &[]).unwrap();
         assert_eq!(reply["passed"], 1, "{reply}");
@@ -2283,7 +2557,8 @@ mod tests {
     // A run whose verdict cannot be recorded is not counted as a pass.
     #[test]
     fn an_unrecorded_verdict_is_not_reported_as_passed() {
-        let out = std::env::temp_dir().join(format!("jazyk-unrecorded-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-unrecorded-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (store, gs) = fixture(&out);
         let mut ledger = Ledger::load(&out);
@@ -2299,13 +2574,20 @@ mod tests {
 
     #[test]
     fn criterion_runner_failures_clear_previous_passing_evidence() {
-        let out = std::env::temp_dir().join(format!("jazyk-criterion-runner-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-criterion-runner-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut store, gs) = fixture(&out);
-        store.graph.criteria.insert("c:check".into(), Criterion {
-            requirement: "req:shop-1".into(), statement: "Check items".into(),
-            ..Default::default()
-        });
+        store.graph.criteria.insert(
+            "c:check".into(),
+            Criterion {
+                requirement: "req:shop-1".into(),
+                statement: "Check items".into(),
+                ..Default::default()
+            },
+        );
         for (command, cwd, exit_code) in [
             ("jazyk-absent-criterion-runner", ".", Some(127)),
             ("printf checked", "missing-directory", None),
@@ -2316,11 +2598,18 @@ mod tests {
             let mut test = row.test.clone();
             test.run = command.into();
             test.cwd = cwd.into();
-            row.tests.insert("c:check".into(), crate::gen::CritTest {
-                test, criterion_hash: hash_hex("Check items"),
-                test_hash: row.hashes.test.clone(), verdict: "pass".into(),
-                last_run: None, exit_code: Some(0), evidence: Some("earlier pass".into()),
-            });
+            row.tests.insert(
+                "c:check".into(),
+                crate::gen::CritTest {
+                    test,
+                    criterion_hash: hash_hex("Check items"),
+                    test_hash: row.hashes.test.clone(),
+                    verdict: "pass".into(),
+                    last_run: None,
+                    exit_code: Some(0),
+                    evidence: Some("earlier pass".into()),
+                },
+            );
             assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
             ledger.save(&out).unwrap();
             let reply = run_criterion_tests(&store, "req:shop-1", &gs);
@@ -2342,13 +2631,20 @@ mod tests {
     // (docs/consumers/gen.md#status-is-derived-never-stored).
     #[test]
     fn renamed_criterion_test_reads_artifact_gone() {
-        let out = std::env::temp_dir().join(format!("jazyk-criterion-renamed-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-criterion-renamed-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut store, gs) = fixture(&out);
-        store.graph.criteria.insert("c:check".into(), Criterion {
-            requirement: "req:shop-1".into(), statement: "Check items".into(),
-            ..Default::default()
-        });
+        store.graph.criteria.insert(
+            "c:check".into(),
+            Criterion {
+                requirement: "req:shop-1".into(),
+                statement: "Check items".into(),
+                ..Default::default()
+            },
+        );
         let mut ledger = Ledger::load(&out);
         let row = ledger.requirements.get_mut("req:shop-1").unwrap();
         row.verdict = "pass".into();
@@ -2356,12 +2652,22 @@ mod tests {
         test.name = "criterion_case_renamed_away".into();
         test.run = "exit 0".into();
         test.label = "criterion".into();
-        row.tests.insert("c:check".into(), crate::gen::CritTest {
-            test, criterion_hash: hash_hex("Check items"),
-            test_hash: row.hashes.test.clone(), verdict: "pass".into(),
-            last_run: None, exit_code: Some(0), evidence: Some("earlier pass".into()),
-        });
-        assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "artifact-gone".into()));
+        row.tests.insert(
+            "c:check".into(),
+            crate::gen::CritTest {
+                test,
+                criterion_hash: hash_hex("Check items"),
+                test_hash: row.hashes.test.clone(),
+                verdict: "pass".into(),
+                last_run: None,
+                exit_code: Some(0),
+                evidence: Some("earlier pass".into()),
+            },
+        );
+        assert_eq!(
+            status_of(&store, "req:shop-1", row, &gs),
+            ("missing".into(), "artifact-gone".into())
+        );
         ledger.save(&out).unwrap();
         let reply = run_criterion_tests(&store, "req:shop-1", &gs);
         let line = reply.iter().find(|l| l["criterion"] == "c:check").unwrap();
@@ -2369,13 +2675,17 @@ mod tests {
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.tests["c:check"].verdict, "none");
-        assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "artifact-gone".into()));
+        assert_eq!(
+            status_of(&store, "req:shop-1", row, &gs),
+            ("missing".into(), "artifact-gone".into())
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
     fn status_matrix_and_cascade() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-verify-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
 
@@ -2430,10 +2740,7 @@ mod tests {
         assert!(pending(&s, &gs, None, None).is_empty());
         let runnable = pending(&s, &gs, Some("runnable"), None);
         assert_eq!(runnable[0]["status"], "failing");
-        assert!(runnable[0]["repair"]
-            .as_str()
-            .unwrap()
-            .contains("finding"));
+        assert!(runnable[0]["repair"].as_str().unwrap().contains("finding"));
         assert_eq!(select_rows(&s, &gs, &[], None, false).len(), 1);
 
         // Programmatic run: `true` exits 0.
@@ -2457,7 +2764,9 @@ mod tests {
     }
 
     fn scoped_mapping(extra_docs: &[&str]) {
-        let docs: Vec<_> = std::iter::once("docs/**").chain(extra_docs.iter().copied()).collect();
+        let docs: Vec<_> = std::iter::once("docs/**")
+            .chain(extra_docs.iter().copied())
+            .collect();
         crate::vfs::write("/project/.jazyk/jazyk.toml", format!(
             "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = {}\nsource = ['src/**', 'tests/**']\n",
             serde_json::to_string(&docs).unwrap()
@@ -2476,41 +2785,116 @@ mod tests {
         scoped_mapping(&["src/cart.rs"]);
         let ledger = Ledger::load(&store.out);
         let row = &ledger.requirements["req:shop-1"];
-        assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "source-selection-changed".into()));
-        assert_eq!(crate::bind::pending(&store, &gs)[0]["reason"], "source-selection-changed");
-        assert_eq!(crate::gen::pending(&store, &gs)[0]["reason"], "source-selection-changed");
-        assert!(crate::bind::gate(&store, &gs, "req:shop-1").unwrap_err().contains("current Source"));
+        assert_eq!(
+            status_of(&store, "req:shop-1", row, &gs),
+            ("missing".into(), "source-selection-changed".into())
+        );
+        assert_eq!(
+            crate::bind::pending(&store, &gs)[0]["reason"],
+            "source-selection-changed"
+        );
+        assert_eq!(
+            crate::gen::pending(&store, &gs)[0]["reason"],
+            "source-selection-changed"
+        );
+        assert!(crate::bind::gate(&store, &gs, "req:shop-1")
+            .unwrap_err()
+            .contains("current Source"));
         assert!(gate(&store, &gs, "req:shop-1").is_err());
-        assert!(crate::gen::gate(&store, &gs, "ent:cart", false).unwrap_err().contains("current Source"));
-        assert!(task(&store, "req:shop-1", &gs).unwrap_err().contains("source-selection-changed"));
-        assert!(mark(&store, "req:shop-1", "pass", None, None, Some(0), &gs).unwrap_err().contains("source-selection-changed"));
-        assert!(run_programmatic(&store, "req:shop-1", &gs).err().unwrap().contains("source-selection-changed"));
-        assert!(run_criterion_tests(&store, "req:shop-1", &gs)[0]["note"].as_str().unwrap().contains("source-selection-changed"));
+        assert!(crate::gen::gate(&store, &gs, "ent:cart", false)
+            .unwrap_err()
+            .contains("current Source"));
+        assert!(task(&store, "req:shop-1", &gs)
+            .unwrap_err()
+            .contains("source-selection-changed"));
+        assert!(mark(&store, "req:shop-1", "pass", None, None, Some(0), &gs)
+            .unwrap_err()
+            .contains("source-selection-changed"));
+        assert!(run_programmatic(&store, "req:shop-1", &gs)
+            .err()
+            .unwrap()
+            .contains("source-selection-changed"));
+        assert!(run_criterion_tests(&store, "req:shop-1", &gs)[0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("source-selection-changed"));
         let test = json!({"kind":"programmatic","artifact":row.test.artifact,"name":row.test.name,"run":"true"});
-        assert!(crate::bind::record(&store, "req:shop-1", &["src/cart.rs".into()], &test, &Value::Null, "pass", None, &gs).is_err());
+        assert!(crate::bind::record(
+            &store,
+            "req:shop-1",
+            &["src/cart.rs".into()],
+            &test,
+            &Value::Null,
+            "pass",
+            None,
+            &gs
+        )
+        .is_err());
         let stale_manifest = json!({"files":["src/cart.rs"],"tests":[]});
         assert!(gen_mark(&store, "ent:cart", None, &stale_manifest, &gs).is_err());
         assert!(crate::gen::confine_in(&gs, "src/cart.rs", &mut Vec::new()).is_err());
-        assert_eq!(crate::vfs::read(store.out.join("gen/ledger.yaml")).unwrap(), before);
-        assert_eq!(crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(), content);
+        assert_eq!(
+            crate::vfs::read(store.out.join("gen/ledger.yaml")).unwrap(),
+            before
+        );
+        assert_eq!(
+            crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(),
+            content
+        );
         // Binding honestly records no implementation, then generation writes inside
         // Source. The file assigned to Docs is preserved through that repair.
-        crate::bind::record(&store, "req:shop-1", &[], &test, &Value::Null, "fail", None, &gs).unwrap();
+        crate::bind::record(
+            &store,
+            "req:shop-1",
+            &[],
+            &test,
+            &Value::Null,
+            "fail",
+            None,
+            &gs,
+        )
+        .unwrap();
         let ledger = Ledger::load(&store.out);
         assert!(ledger.requirements["req:shop-1"].files.is_empty());
-        assert_eq!(status_of(&store, "req:shop-1", &ledger.requirements["req:shop-1"], &gs).0, "unimplemented");
+        assert_eq!(
+            status_of(
+                &store,
+                "req:shop-1",
+                &ledger.requirements["req:shop-1"],
+                &gs
+            )
+            .0,
+            "unimplemented"
+        );
         assert!(crate::bind::pending(&store, &gs).is_empty());
         assert!(!crate::gen::pending(&store, &gs).is_empty());
-        assert_eq!(crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(), content);
-        crate::vfs::write(gs.deliverable.join("src/cart-new.rs"), "// replacement product").unwrap();
-        gen_mark(&store, "ent:cart", None, &json!({
-            "files":["src/cart-new.rs"], "tests":[{
-                "requirement":"req:shop-1", "kind":"programmatic", "artifact":row.test.artifact,
-                "name":row.test.name, "run":"true", "files":["src/cart-new.rs"]
-            }]
-        }), &gs).unwrap();
+        assert_eq!(
+            crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(),
+            content
+        );
+        crate::vfs::write(
+            gs.deliverable.join("src/cart-new.rs"),
+            "// replacement product",
+        )
+        .unwrap();
+        gen_mark(
+            &store,
+            "ent:cart",
+            None,
+            &json!({
+                "files":["src/cart-new.rs"], "tests":[{
+                    "requirement":"req:shop-1", "kind":"programmatic", "artifact":row.test.artifact,
+                    "name":row.test.name, "run":"true", "files":["src/cart-new.rs"]
+                }]
+            }),
+            &gs,
+        )
+        .unwrap();
         assert!(crate::gen::pending(&store, &gs).is_empty());
-        assert_eq!(crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(), content);
+        assert_eq!(
+            crate::vfs::read(gs.deliverable.join("src/cart.rs")).unwrap(),
+            content
+        );
     }
 
     #[test]
@@ -2520,13 +2904,19 @@ mod tests {
         scoped_mapping(&["tests/cart.rs"]);
         let ledger = Ledger::load(&store.out);
         let row = &ledger.requirements["req:shop-1"];
-        assert_eq!(status_of(&store, "req:shop-1", row, &gs).1, "source-selection-changed");
+        assert_eq!(
+            status_of(&store, "req:shop-1", row, &gs).1,
+            "source-selection-changed"
+        );
         assert_eq!(crate::bind::pending(&store, &gs).len(), 1);
         // Development can repair the missing current test binding. Its implementing
         // file remains Source, so this is incomplete coverage rather than lost code.
-        assert_eq!(crate::gen::pending(&store, &gs), vec![json!({
-            "entity":"ent:cart", "reason":"incomplete-bindings", "changed":["req:shop-1"]
-        })]);
+        assert_eq!(
+            crate::gen::pending(&store, &gs),
+            vec![json!({
+                "entity":"ent:cart", "reason":"incomplete-bindings", "changed":["req:shop-1"]
+            })]
+        );
         assert_eq!(row.files, ["src/cart.rs"]);
         scoped_mapping(&[]);
         assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
@@ -2538,20 +2928,37 @@ mod tests {
         internal.test.artifact = "criteria/cart.md".into();
         crate::vfs::create_dir_all(store.out.join("gen/criteria")).unwrap();
         crate::vfs::write(store.out.join("gen/criteria/cart.md"), "metadata").unwrap();
-        assert!(crate::gen::binding_source_current(&store.out, &gs, &ledger, &internal));
-        internal.tests.insert("crit:cart-1".into(), crate::gen::CritTest {
-            test: crate::gen::TestRef { artifact: "docs/test.rs".into(), ..row.test.clone() },
-            criterion_hash: String::new(), test_hash: String::new(), verdict: "none".into(),
-            last_run: None, exit_code: None, evidence: None,
-        });
-        assert!(!crate::gen::binding_source_current(&store.out, &gs, &ledger, &internal));
+        assert!(crate::gen::binding_source_current(
+            &store.out, &gs, &ledger, &internal
+        ));
+        internal.tests.insert(
+            "crit:cart-1".into(),
+            crate::gen::CritTest {
+                test: crate::gen::TestRef {
+                    artifact: "docs/test.rs".into(),
+                    ..row.test.clone()
+                },
+                criterion_hash: String::new(),
+                test_hash: String::new(),
+                verdict: "none".into(),
+                last_run: None,
+                exit_code: None,
+                evidence: None,
+            },
+        );
+        assert!(!crate::gen::binding_source_current(
+            &store.out, &gs, &ledger, &internal
+        ));
     }
 
     // A rebuilt artifact among a row's files is not a code change: the stale-code hash
     // covers implementing files alone. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
     #[test]
     fn a_rebuilt_artifact_never_reopens_the_row() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-artifact-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-verify-artifact-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let mut ledger = crate::gen::Ledger::load(&out);
@@ -2561,15 +2968,28 @@ mod tests {
             toolchain: "python3".into(),
             artifact: "dist/deck.pptx".into(),
         });
-        ledger.requirements.get_mut("req:shop-1").unwrap().files.push("dist/deck.pptx".into());
+        ledger
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .files
+            .push("dist/deck.pptx".into());
         ledger.save(&out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("dist")).unwrap();
         crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "zip v1").unwrap();
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
         assert!(pending(&s, &gs, None, None).is_empty());
         // The build rewrites the artifact with fresh bytes: nothing reopens.
-        crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "zip v2 fresh timestamps").unwrap();
-        assert!(pending(&s, &gs, None, None).is_empty(), "{:?}", pending(&s, &gs, None, None));
+        crate::vfs::write(
+            gs.deliverable.join("dist/deck.pptx"),
+            "zip v2 fresh timestamps",
+        )
+        .unwrap();
+        assert!(
+            pending(&s, &gs, None, None).is_empty(),
+            "{:?}",
+            pending(&s, &gs, None, None)
+        );
         // An implementing file edit still does.
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// edited").unwrap();
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-code");
@@ -2578,7 +2998,8 @@ mod tests {
 
     #[test]
     fn audit_never_launders_stale_requirement() {
-        let out = std::env::temp_dir().join(format!("jazyk-audit-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-audit-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
@@ -2608,7 +3029,8 @@ mod tests {
     // name is not in it. Mirrors docs/consumers/gen.md#runners.
     #[test]
     fn missing_rows_surface_and_audit_rebuilds() {
-        let out = std::env::temp_dir().join(format!("jazyk-rebuild-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-rebuild-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // Wipe the ledger: the row must surface as missing/not-generated with a repair.
@@ -2619,7 +3041,10 @@ mod tests {
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["status"], "missing");
         assert_eq!(p[0]["reason"], "not-generated");
-        assert!(p[0]["repair"].as_str().unwrap().contains("jazyk gen ent:cart"));
+        assert!(p[0]["repair"]
+            .as_str()
+            .unwrap()
+            .contains("jazyk gen ent:cart"));
         // Audit finds the programmatic test (tests/cart.rs carries the name) but
         // records no row for it: binding records the command.
         let r = audit(&s, &gs);
@@ -2652,7 +3077,12 @@ mod tests {
         )
         .unwrap();
         let r = audit(&s, &gs);
-        assert_eq!(r["rebuilt"].as_array().unwrap(), &vec![json!("req:shop-2")], "{}", r);
+        assert_eq!(
+            r["rebuilt"].as_array().unwrap(),
+            &vec![json!("req:shop-2")],
+            "{}",
+            r
+        );
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-2"];
         assert_eq!(row.test.kind, "llm");
@@ -2669,7 +3099,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#runners.
     #[test]
     fn audit_drops_a_verdict_whose_bytes_moved() {
-        let out = std::env::temp_dir().join(format!("jazyk-audit-reset-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-audit-reset-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
@@ -2694,7 +3125,8 @@ mod tests {
     // rerun could not resolve. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
     #[test]
     fn a_renamed_test_is_bind_work_not_a_rerun() {
-        let out = std::env::temp_dir().join(format!("jazyk-name-lost-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-name-lost-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
@@ -2715,7 +3147,11 @@ mod tests {
             Ok(_) => panic!("a renamed test must not execute"),
             Err(e) => e,
         };
-        assert!(err.contains("artifact-gone") && err.contains("jazyk gen ent:cart"), "{}", err);
+        assert!(
+            err.contains("artifact-gone") && err.contains("jazyk gen ent:cart"),
+            "{}",
+            err
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -2723,11 +3159,16 @@ mod tests {
     // other state names the call that lands it. Mirrors docs/compiler/goals/verify.md#gate.
     #[test]
     fn the_verify_gate_reads_the_landed_verdict() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-gate-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-verify-gate-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
-        assert!(err.contains("no verdict") && err.contains("run_tests"), "{}", err);
+        assert!(
+            err.contains("no verdict") && err.contains("run_tests"),
+            "{}",
+            err
+        );
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
         gate(&s, &gs, "req:shop-1").unwrap();
         mark(&s, "req:shop-1", "fail", None, Some("boom"), Some(1), &gs).unwrap();
@@ -2736,9 +3177,17 @@ mod tests {
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("stale-code"), "{}", err);
         mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
-        s.graph.requirements.get_mut("req:shop-1").unwrap().statement = "Reworded.".into();
+        s.graph
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .statement = "Reworded.".into();
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
-        assert!(err.contains("moved since") && err.contains("jazyk gen"), "{}", err);
+        assert!(
+            err.contains("moved since") && err.contains("jazyk gen"),
+            "{}",
+            err
+        );
         assert!(gate(&s, &gs, "req:none").unwrap_err().contains("bind work"));
         crate::vfs::remove_dir_all(&out).ok();
     }
@@ -2783,8 +3232,13 @@ pub fn select_rows(
             })
         })
         .filter(|r| match kind {
-            Some(k) => r["test"]["kind"].as_str() == Some(k) || r["requirement"].as_str()
-                .and_then(|id|ledger.requirements.get(id)).is_some_and(|row|row.tests.values().any(|t|t.test.kind==k)),
+            Some(k) => {
+                r["test"]["kind"].as_str() == Some(k)
+                    || r["requirement"]
+                        .as_str()
+                        .and_then(|id| ledger.requirements.get(id))
+                        .is_some_and(|row| row.tests.values().any(|t| t.test.kind == k))
+            }
             None => true,
         })
         .collect()
@@ -2806,7 +3260,11 @@ async fn judge_llm_criteria(
     let package = task(store, rid, gs).map_err(JudgmentError::Invalid)?;
     let files = judge_files(
         gs,
-        package["files"].as_array().into_iter().flatten().filter_map(Value::as_str),
+        package["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str),
     );
     let mut results = Vec::new();
     for test in package["criterionTests"]
@@ -2835,9 +3293,12 @@ async fn judge_llm_criteria(
                 ),
                 "judge",
                 Some(trace),
-            ).await
+            )
+            .await
             .map_err(JudgmentError::Model)?;
-        let pass = parse_verdict(&reply).ok_or_else(|| JudgmentError::Invalid("Model returned no conclusive criterion verdict".into()))?;
+        let pass = parse_verdict(&reply).ok_or_else(|| {
+            JudgmentError::Invalid("Model returned no conclusive criterion verdict".into())
+        })?;
         results.push(json!({"criterion":test["criterion"],"factHash":test["factHash"],"verdict":if pass{"pass"}else{"fail"},"evidence":crate::llm::truncate(reply.trim(),300)}));
     }
     let verdict = if results.iter().all(|r| r["verdict"] == "pass") {
@@ -2853,7 +3314,8 @@ async fn judge_llm_criteria(
         Some("Each LLM criterion was inspected separately."),
         Some(&json!(results)),
         gs,
-    ).map_err(JudgmentError::Invalid)
+    )
+    .map_err(JudgmentError::Invalid)
 }
 
 fn record_llm_failure(store: &Store, rid: &str, error: &str) -> Result<(), String> {
@@ -2910,25 +3372,52 @@ struct VerifyProgress {
 
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 pub(crate) async fn run_without_build(
-    store: &Store, runner: &dyn crate::runner::SessionRunner, gs: &GenSettings,
-    targets: &[String], kind: Option<&str>, force: bool, trace: &crate::session::Trace,
+    store: &Store,
+    runner: &dyn crate::runner::SessionRunner,
+    gs: &GenSettings,
+    targets: &[String],
+    kind: Option<&str>,
+    force: bool,
+    trace: &crate::session::Trace,
     build_product: bool,
 ) -> Result<Value, String> {
     use crate::session::TraceEvent;
     // Every prompt this run sends reports under the requirement it is judging.
 
-    let signature = json!({"targets":targets,"kind":kind,"force":force,"settings":gs,"build":build_product});
+    let signature =
+        json!({"targets":targets,"kind":kind,"force":force,"settings":gs,"build":build_product});
     let key = crate::gen::progress::command_key("verify", &store.out, &signature);
     let mut progress = crate::gen::progress::Progress::load(key, signature, || {
         let selected = select_rows(store, gs, targets, kind, force);
         let ledger = Ledger::load(&store.out);
-        let task_rows = selected.iter().filter_map(|r| r["requirement"].as_str())
-            .filter(|rid| ledger.requirements.get(*rid).is_some_and(|row| row.test.run.starts_with("task:") || row.tests.values().any(|t| t.test.run.starts_with("task:"))))
-            .map(str::to_owned).collect();
-        VerifyProgress { selected,task_rows,build_done:false,tasks_done:false,next:0,
-            verified:0,failing:0,stale:0,skipped:0,held:Vec::new(),result:None }
+        let task_rows = selected
+            .iter()
+            .filter_map(|r| r["requirement"].as_str())
+            .filter(|rid| {
+                ledger.requirements.get(*rid).is_some_and(|row| {
+                    row.test.run.starts_with("task:")
+                        || row.tests.values().any(|t| t.test.run.starts_with("task:"))
+                })
+            })
+            .map(str::to_owned)
+            .collect();
+        VerifyProgress {
+            selected,
+            task_rows,
+            build_done: false,
+            tasks_done: false,
+            next: 0,
+            verified: 0,
+            failing: 0,
+            stale: 0,
+            skipped: 0,
+            held: Vec::new(),
+            result: None,
+        }
     })?;
-    if let Some(result) = &progress.data.result { return Ok(result.clone()); }
+    if let Some(result) = &progress.data.result {
+        return Ok(result.clone());
+    }
     let selected = progress.data.selected.clone();
     progress.save().await?;
     if !targets.is_empty() && selected.is_empty() {
@@ -2942,180 +3431,235 @@ pub(crate) async fn run_without_build(
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
     if build_product && !progress.data.build_done {
-        crate::gen::run_build(&store.out, gs, trace, "verify").map_err(|e|
-            if crate::session_recovery::is_interruption(&e) { e } else { format!("{e}; nothing was verified") })?;
+        crate::gen::run_build(&store.out, gs, trace, "verify").map_err(|e| {
+            if crate::session_recovery::is_interruption(&e) {
+                e
+            } else {
+                format!("{e}; nothing was verified")
+            }
+        })?;
         progress.data.build_done = true;
         progress.save().await?;
     }
     let task_rows = progress.data.task_rows.clone();
     if !progress.data.tasks_done {
-        if !task_rows.is_empty() && kind != Some("llm") { run_selected_after_build(store,gs,&task_rows)?; }
+        if !task_rows.is_empty() && kind != Some("llm") {
+            run_selected_after_build(store, gs, &task_rows)?;
+        }
         progress.data.tasks_done = true;
         progress.save().await?;
     }
-    let (mut verified,mut failing,mut stale,mut skipped) =
-        (progress.data.verified,progress.data.failing,progress.data.stale,progress.data.skipped);
+    let (mut verified, mut failing, mut stale, mut skipped) = (
+        progress.data.verified,
+        progress.data.failing,
+        progress.data.stale,
+        progress.data.skipped,
+    );
     let mut held = progress.data.held.clone();
-    for (index,r) in selected.iter().enumerate().skip(progress.data.next) {
+    for (index, r) in selected.iter().enumerate().skip(progress.data.next) {
         if trace.is_cancelled() {
             break;
         }
-        if crate::session_recovery::suspension_requested() { return Err("suspended".into()); }
+        if crate::session_recovery::suspension_requested() {
+            return Err("suspended".into());
+        }
         'row: {
-        let rid = r["requirement"].as_str().unwrap_or_default().to_string();
-        let status = r["status"].as_str().unwrap_or_default();
-        if status == "stale-requirement" || status == "missing" {
-            trace.event(TraceEvent::VerifyRowStale {
-                requirement: rid.clone(),
-                entity: r["entity"].as_str().unwrap_or("").to_string(),
-                status: status.to_string(),
-                reason: r["reason"].as_str().unwrap_or("").to_string(),
+            let rid = r["requirement"].as_str().unwrap_or_default().to_string();
+            let status = r["status"].as_str().unwrap_or_default();
+            if status == "stale-requirement" || status == "missing" {
+                trace.event(TraceEvent::VerifyRowStale {
+                    requirement: rid.clone(),
+                    entity: r["entity"].as_str().unwrap_or("").to_string(),
+                    status: status.to_string(),
+                    reason: r["reason"].as_str().unwrap_or("").to_string(),
+                });
+                stale += 1;
+                break 'row;
+            }
+            let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
+            let current = Ledger::load(&store.out);
+            let has_llm_criteria = current
+                .requirements
+                .get(&rid)
+                .is_some_and(|row| row.tests.values().any(|t| t.test.kind == "llm"));
+            let has_programmatic = current.requirements.get(&rid).is_some_and(|row| {
+                row.test.kind == "programmatic"
+                    || row.tests.values().any(|t| t.test.kind == "programmatic")
             });
-            stale += 1;
-            break 'row;
-        }
-        let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
-        let current=Ledger::load(&store.out);
-        let has_llm_criteria=current.requirements.get(&rid).is_some_and(|row|row.tests.values().any(|t|t.test.kind=="llm"));
-        let has_programmatic=current.requirements.get(&rid).is_some_and(|row|row.test.kind=="programmatic" || row.tests.values().any(|t|t.test.kind=="programmatic"));
-        if has_llm_criteria && kind!=Some("programmatic") {
-            if !task_rows.contains(&rid) && has_programmatic && kind!=Some("llm") {
-                run_selected_after_build(store,gs,std::slice::from_ref(&rid))?;
-            }
-            match judge_llm_criteria(store,runner,&rid,gs,trace).await {
-                Ok(result)=> {
-                    match result["status"].as_str(){Some("verified")=>verified+=1,Some("failing"|"partial")=>failing+=1,_=>skipped+=1}
-                    trace.event(TraceEvent::VerifyRowDone {requirement:rid.clone(),verdict:result["verdict"].as_str().unwrap_or("none").into(),run:"llm".into(),evidence:"Each bound LLM criterion received a separate judgment.".into()});
+            if has_llm_criteria && kind != Some("programmatic") {
+                if !task_rows.contains(&rid) && has_programmatic && kind != Some("llm") {
+                    run_selected_after_build(store, gs, std::slice::from_ref(&rid))?;
                 }
-                Err(JudgmentError::Model(error)) => {
-                    if !crate::session_recovery::is_interruption(&error) {
-                        trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: error.clone() });
+                match judge_llm_criteria(store, runner, &rid, gs, trace).await {
+                    Ok(result) => {
+                        match result["status"].as_str() {
+                            Some("verified") => verified += 1,
+                            Some("failing" | "partial") => failing += 1,
+                            _ => skipped += 1,
+                        }
+                        trace.event(TraceEvent::VerifyRowDone {
+                            requirement: rid.clone(),
+                            verdict: result["verdict"].as_str().unwrap_or("none").into(),
+                            run: "llm".into(),
+                            evidence: "Each bound LLM criterion received a separate judgment."
+                                .into(),
+                        });
                     }
-                    return Err(error);
-                }
-                Err(JudgmentError::Invalid(error))=> {
-                    record_llm_failure(store,&rid,&error)?;skipped+=1;
-                    trace.event(TraceEvent::VerifyRowError {requirement:rid.clone(),message:error});
-                }
-            }
-            break 'row;
-        }
-        if row_kind=="llm" && kind==Some("programmatic") {
-            if !task_rows.contains(&rid) {run_selected_after_build(store,gs,std::slice::from_ref(&rid))?;}
-            let ledger=Ledger::load(&store.out);
-            let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);
-            match status.as_str(){"verified"=>verified+=1,"failing"|"partial"=>failing+=1,_=>skipped+=1}
-            break 'row;
-        }
-        if row_kind!="llm" && task_rows.contains(&rid) {
-            let ledger=Ledger::load(&store.out);
-            let (status,_)=status_of(store,&rid,&ledger.requirements[&rid],gs);
-            match status.as_str(){"verified"=>verified+=1,"failing"|"partial"=>failing+=1,_=>skipped+=1}
-            break 'row;
-        }
-        if crate::vfs::is_scoped() && row_kind != "llm" {
-            skipped += 1;
-            break 'row;
-        }
-        trace.event(TraceEvent::VerifyRowStart {
-            requirement: rid.clone(),
-            test: row_kind.to_string(),
-        });
-        let verdict = if row_kind == "llm" {
-            match task(store, &rid, gs) {
-                Ok(task_pkg) => {
-                    let evidence_input = judge_files(
-                        gs,
-                        task_pkg["files"].as_array().into_iter().flatten().filter_map(Value::as_str),
-                    );
-                    let user = judge_input(
-                        None,
-                        task_pkg["criteria"].as_str().unwrap_or_default(),
-                        task_pkg["context"].as_str().unwrap_or_default(),
-                        &evidence_input,
-                        JUDGE.get("ask-row"),
-                    );
-                    match runner.ask_traced(
-                        task_pkg["instructions"].as_str().unwrap_or_default(),
-                        &user,
-                        &format!("verify {}", rid),
-                        "judge",
-                        Some(trace),
-                    ).await {
-                        Ok(reply) => match parse_verdict(&reply) {
-                            Some(pass) => Some((
-                                pass,
-                                crate::llm::truncate(reply.trim(), 300).to_string(),
-                                None,
-                            )),
-                            None => {
-                                trace.event(TraceEvent::VerifyRowError {
-                                    requirement: rid.clone(),
-                                    message: " verdict unparseable (no PASS or FAIL in reply)"
-                                        .into(),
-                                });
-                                None
-                            }
-                        },
-                        Err(e) if crate::session_recovery::is_interruption(&e) => return Err(e),
-                        Err(e) => {
+                    Err(JudgmentError::Model(error)) => {
+                        if !crate::session_recovery::is_interruption(&error) {
                             trace.event(TraceEvent::VerifyRowError {
                                 requirement: rid.clone(),
-                                message: format!(" llm run failed: {}", e),
+                                message: error.clone(),
                             });
-                            return Err(e);
                         }
+                        return Err(error);
+                    }
+                    Err(JudgmentError::Invalid(error)) => {
+                        record_llm_failure(store, &rid, &error)?;
+                        skipped += 1;
+                        trace.event(TraceEvent::VerifyRowError {
+                            requirement: rid.clone(),
+                            message: error,
+                        });
                     }
                 }
-                Err(e) => {
-                    trace.event(TraceEvent::VerifyRowError {
+                break 'row;
+            }
+            if row_kind == "llm" && kind == Some("programmatic") {
+                if !task_rows.contains(&rid) {
+                    run_selected_after_build(store, gs, std::slice::from_ref(&rid))?;
+                }
+                let ledger = Ledger::load(&store.out);
+                let (status, _) = status_of(store, &rid, &ledger.requirements[&rid], gs);
+                match status.as_str() {
+                    "verified" => verified += 1,
+                    "failing" | "partial" => failing += 1,
+                    _ => skipped += 1,
+                }
+                break 'row;
+            }
+            if row_kind != "llm" && task_rows.contains(&rid) {
+                let ledger = Ledger::load(&store.out);
+                let (status, _) = status_of(store, &rid, &ledger.requirements[&rid], gs);
+                match status.as_str() {
+                    "verified" => verified += 1,
+                    "failing" | "partial" => failing += 1,
+                    _ => skipped += 1,
+                }
+                break 'row;
+            }
+            if crate::vfs::is_scoped() && row_kind != "llm" {
+                skipped += 1;
+                break 'row;
+            }
+            trace.event(TraceEvent::VerifyRowStart {
+                requirement: rid.clone(),
+                test: row_kind.to_string(),
+            });
+            let verdict = if row_kind == "llm" {
+                match task(store, &rid, gs) {
+                    Ok(task_pkg) => {
+                        let evidence_input = judge_files(
+                            gs,
+                            task_pkg["files"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(Value::as_str),
+                        );
+                        let user = judge_input(
+                            None,
+                            task_pkg["criteria"].as_str().unwrap_or_default(),
+                            task_pkg["context"].as_str().unwrap_or_default(),
+                            &evidence_input,
+                            JUDGE.get("ask-row"),
+                        );
+                        match runner
+                            .ask_traced(
+                                task_pkg["instructions"].as_str().unwrap_or_default(),
+                                &user,
+                                &format!("verify {}", rid),
+                                "judge",
+                                Some(trace),
+                            )
+                            .await
+                        {
+                            Ok(reply) => match parse_verdict(&reply) {
+                                Some(pass) => Some((
+                                    pass,
+                                    crate::llm::truncate(reply.trim(), 300).to_string(),
+                                    None,
+                                )),
+                                None => {
+                                    trace.event(TraceEvent::VerifyRowError {
+                                        requirement: rid.clone(),
+                                        message: " verdict unparseable (no PASS or FAIL in reply)"
+                                            .into(),
+                                    });
+                                    None
+                                }
+                            },
+                            Err(e) if crate::session_recovery::is_interruption(&e) => {
+                                return Err(e)
+                            }
+                            Err(e) => {
+                                trace.event(TraceEvent::VerifyRowError {
+                                    requirement: rid.clone(),
+                                    message: format!(" llm run failed: {}", e),
+                                });
+                                return Err(e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        trace.event(TraceEvent::VerifyRowError {
+                            requirement: rid.clone(),
+                            message: format!(": {}", e),
+                        });
+                        None
+                    }
+                }
+            } else {
+                match run_programmatic(store, &rid, gs) {
+                    Ok(run) if run.pass => Some((true, run.evidence, Some(run.code))),
+                    // A failure waits: whether it is the deliverable's or the machine's is
+                    // decided once, when the run knows how the other rows went
+                    // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+                    Ok(run) => {
+                        held.push((
+                            rid.clone(),
+                            run,
+                            r["test"]["run"].as_str().unwrap_or("").to_string(),
+                        ));
+                        None
+                    }
+                    Err(e) => {
+                        trace.event(TraceEvent::VerifyRowError {
+                            requirement: rid.clone(),
+                            message: format!(": {}", e),
+                        });
+                        None
+                    }
+                }
+            };
+            match verdict {
+                Some((pass, evidence, code)) => {
+                    let v = if pass { "pass" } else { "fail" };
+                    mark(store, &rid, v, None, Some(&evidence), code, gs).ok();
+                    trace.event(TraceEvent::VerifyRowDone {
                         requirement: rid.clone(),
-                        message: format!(": {}", e),
+                        verdict: v.to_string(),
+                        run: r["test"]["run"].as_str().unwrap_or("").to_string(),
+                        evidence,
                     });
-                    None
+                    if pass {
+                        verified += 1;
+                    } else {
+                        failing += 1;
+                    }
                 }
+                None => skipped += 1,
             }
-        } else {
-            match run_programmatic(store, &rid, gs) {
-                Ok(run) if run.pass => Some((true, run.evidence, Some(run.code))),
-                // A failure waits: whether it is the deliverable's or the machine's is
-                // decided once, when the run knows how the other rows went
-                // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
-                Ok(run) => {
-                    held.push((
-                        rid.clone(),
-                        run,
-                        r["test"]["run"].as_str().unwrap_or("").to_string(),
-                    ));
-                    None
-                }
-                Err(e) => {
-                    trace.event(TraceEvent::VerifyRowError {
-                        requirement: rid.clone(),
-                        message: format!(": {}", e),
-                    });
-                    None
-                }
-            }
-        };
-        match verdict {
-            Some((pass, evidence, code)) => {
-                let v = if pass { "pass" } else { "fail" };
-                mark(store, &rid, v, None, Some(&evidence), code, gs).ok();
-                trace.event(TraceEvent::VerifyRowDone {
-                    requirement: rid.clone(),
-                    verdict: v.to_string(),
-                    run: r["test"]["run"].as_str().unwrap_or("").to_string(),
-                    evidence,
-                });
-                if pass {
-                    verified += 1;
-                } else {
-                    failing += 1;
-                }
-            }
-            None => skipped += 1,
-        }
         }
         progress.data.next = index + 1;
         progress.data.verified = verified;

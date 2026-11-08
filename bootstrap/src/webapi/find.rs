@@ -14,7 +14,14 @@ const TEXT_BUDGET: u64 = 16 * 1024 * 1024;
 const DETAIL: usize = 120;
 
 // The order kinds list in, for equal ranks.
-const KINDS: [&str; 6] = ["file", "section", "entity", "requirement", "criterion", "view"];
+const KINDS: [&str; 6] = [
+    "file",
+    "section",
+    "entity",
+    "requirement",
+    "criterion",
+    "view",
+];
 
 struct Hit {
     rank: u8,
@@ -38,7 +45,10 @@ fn matches(text: &str, words: &[String]) -> bool {
 fn detail(text: &str, words: &[String]) -> String {
     let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let lower = line.to_lowercase();
-    let at = words.first().and_then(|w| lower.find(w.as_str())).unwrap_or(0);
+    let at = words
+        .first()
+        .and_then(|w| lower.find(w.as_str()))
+        .unwrap_or(0);
     let chars: Vec<(usize, char)> = line.char_indices().collect();
     let at = chars.iter().position(|(i, _)| *i >= at).unwrap_or(0);
     let start = at.saturating_sub(DETAIL / 3);
@@ -60,7 +70,13 @@ fn matching_line<'a>(text: &'a str, words: &[String]) -> Option<(usize, &'a str)
     lines
         .iter()
         .position(|l| matches(l, words))
-        .or_else(|| lines.iter().position(|l| words.first().is_some_and(|w| l.to_lowercase().contains(w.as_str()))))
+        .or_else(|| {
+            lines.iter().position(|l| {
+                words
+                    .first()
+                    .is_some_and(|w| l.to_lowercase().contains(w.as_str()))
+            })
+        })
         .map(|i| (i, lines[i]))
 }
 
@@ -79,14 +95,22 @@ pub fn find(store: &Store, root: &Path, files: &[(String, u64)], query: &str) ->
     for (path, size) in files {
         // The compiled state under `.jazyk/` is searched through its nodes; only the
         // project's own files there are files to find.
-        if path.strip_prefix(".jazyk/").is_some_and(|rest| rest.contains('/')) {
+        if path
+            .strip_prefix(".jazyk/")
+            .is_some_and(|rest| rest.contains('/'))
+        {
             continue;
         }
         let size = *size;
         let name = path.rsplit('/').next().unwrap_or(path);
         if matches(path, &words) {
             let rank = if matches(name, &words) { 0 } else { 1 };
-            hits.push(Hit { rank, kind: "file", key: path.clone(), value: json!({ "kind": "file", "path": path, "title": name, "detail": path }) });
+            hits.push(Hit {
+                rank,
+                kind: "file",
+                key: path.clone(),
+                value: json!({ "kind": "file", "path": path, "title": name, "detail": path }),
+            });
             continue;
         }
         if store.docs.contains_key(path.as_str()) {
@@ -100,8 +124,12 @@ pub fn find(store: &Store, root: &Path, files: &[(String, u64)], query: &str) ->
             continue;
         }
         budget -= size;
-        let Ok(Value::Object(text)) = super::projfiles::project_text(root, path) else { continue };
-        let Some(text) = text.get("text").and_then(Value::as_str) else { continue };
+        let Ok(Value::Object(text)) = super::projfiles::project_text(root, path) else {
+            continue;
+        };
+        let Some(text) = text.get("text").and_then(Value::as_str) else {
+            continue;
+        };
         if !matches(text, &words) {
             continue;
         }
@@ -127,7 +155,11 @@ pub fn find(store: &Store, root: &Path, files: &[(String, u64)], query: &str) ->
             } else {
                 matching_line(&section.raw, &words).unwrap_or((0, ""))
             };
-            let title = if section.title.is_empty() { path.rsplit('/').next().unwrap_or(path).to_string() } else { section.title.clone() };
+            let title = if section.title.is_empty() {
+                path.rsplit('/').next().unwrap_or(path).to_string()
+            } else {
+                section.title.clone()
+            };
             hits.push(Hit {
                 rank: if by_title { 0 } else { 2 },
                 kind: "section",
@@ -167,12 +199,19 @@ pub fn find(store: &Store, root: &Path, files: &[(String, u64)], query: &str) ->
     // Views: by title.
     for (id, v) in &store.graph.views {
         if matches(&v.title, &words) {
-            hits.push(Hit { rank: 0, kind: "view", key: id.clone(), value: json!({ "kind": "view", "id": id, "title": v.title, "detail": v.kind }) });
+            hits.push(Hit {
+                rank: 0,
+                kind: "view",
+                key: id.clone(),
+                value: json!({ "kind": "view", "id": id, "title": v.title, "detail": v.kind }),
+            });
         }
     }
 
     let kind_order = |k: &str| KINDS.iter().position(|x| *x == k).unwrap_or(KINDS.len());
-    hits.sort_by(|a, b| (a.rank, kind_order(a.kind), &a.key).cmp(&(b.rank, kind_order(b.kind), &b.key)));
+    hits.sort_by(|a, b| {
+        (a.rank, kind_order(a.kind), &a.key).cmp(&(b.rank, kind_order(b.kind), &b.key))
+    });
     let mut kept: Vec<Value> = Vec::new();
     let mut more: Vec<&str> = Vec::new();
     for kind in KINDS {
@@ -196,7 +235,17 @@ pub fn find(store: &Store, root: &Path, files: &[(String, u64)], query: &str) ->
 pub fn file_paths(listing: &Value) -> Vec<(String, u64)> {
     listing["files"]
         .as_array()
-        .map(|files| files.iter().filter_map(|f| Some((f["path"].as_str()?.to_string(), f["size"].as_u64().unwrap_or(0)))).collect())
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|f| {
+                    Some((
+                        f["path"].as_str()?.to_string(),
+                        f["size"].as_u64().unwrap_or(0),
+                    ))
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -232,37 +281,111 @@ mod tests {
         let root = dir.path();
         std::fs::create_dir_all(root.join("code")).unwrap();
         std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(root.join("code/order.js"), "// totals\nfunction receipt() { return 'order receipt' }\n").unwrap();
+        std::fs::write(
+            root.join("code/order.js"),
+            "// totals\nfunction receipt() { return 'order receipt' }\n",
+        )
+        .unwrap();
         std::fs::write(root.join("code/receipt.js"), "export {}\n").unwrap();
-        std::fs::write(root.join("docs/shop.md"), "# Shop\n\nEvery order gets a receipt.\n").unwrap();
+        std::fs::write(
+            root.join("docs/shop.md"),
+            "# Shop\n\nEvery order gets a receipt.\n",
+        )
+        .unwrap();
         let mut s = Store::default();
-        let section = |title: &str, raw: &str, start: usize| Section { title: title.into(), kind: "heading".into(), order: 0, parent: None, raw: raw.into(), hash: String::new(), lines: [start, start + raw.lines().count()] };
-        let mut doc = DocRecord { content_hash: String::new(), sections: Default::default(), coverage: Default::default() };
-        doc.sections.insert("/shop".into(), section("Shop", "# Shop\n\nEvery order gets a receipt.", 0));
-        doc.sections.insert("/shop/receipts".into(), section("Receipts", "## Receipts\nPrinted.", 3));
+        let section = |title: &str, raw: &str, start: usize| Section {
+            title: title.into(),
+            kind: "heading".into(),
+            order: 0,
+            parent: None,
+            raw: raw.into(),
+            hash: String::new(),
+            lines: [start, start + raw.lines().count()],
+        };
+        let mut doc = DocRecord {
+            content_hash: String::new(),
+            sections: Default::default(),
+            coverage: Default::default(),
+        };
+        doc.sections.insert(
+            "/shop".into(),
+            section("Shop", "# Shop\n\nEvery order gets a receipt.", 0),
+        );
+        doc.sections.insert(
+            "/shop/receipts".into(),
+            section("Receipts", "## Receipts\nPrinted.", 3),
+        );
         s.docs.insert("docs/shop.md".into(), doc);
-        s.graph.entities.insert("ent:receipt".into(), Entity { name: "Receipt".into(), ..Default::default() });
-        s.graph.entities.insert("ent:order".into(), Entity { name: "Order".into(), definition: Some("What a customer buys; it ends with a receipt.".into()), ..Default::default() });
-        s.graph.requirements.insert("req:1".into(), Requirement { statement: "A customer must receive an order receipt.".into(), ..Default::default() });
-        s.graph.criteria.insert("crit:1".into(), Criterion { requirement: "req:1".into(), statement: "Given an order, a receipt is printed.".into(), ..Default::default() });
-        s.graph.views.insert("view:receipts".into(), View { kind: "class".into(), title: "Receipts".into(), ..Default::default() });
-        let files = vec![("code/order.js".to_string(), 60), ("code/receipt.js".to_string(), 10), ("docs/shop.md".to_string(), 40)];
+        s.graph.entities.insert(
+            "ent:receipt".into(),
+            Entity {
+                name: "Receipt".into(),
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:order".into(),
+            Entity {
+                name: "Order".into(),
+                definition: Some("What a customer buys; it ends with a receipt.".into()),
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:1".into(),
+            Requirement {
+                statement: "A customer must receive an order receipt.".into(),
+                ..Default::default()
+            },
+        );
+        s.graph.criteria.insert(
+            "crit:1".into(),
+            Criterion {
+                requirement: "req:1".into(),
+                statement: "Given an order, a receipt is printed.".into(),
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:receipts".into(),
+            View {
+                kind: "class".into(),
+                title: "Receipts".into(),
+                ..Default::default()
+            },
+        );
+        let files = vec![
+            ("code/order.js".to_string(), 60),
+            ("code/receipt.js".to_string(), 10),
+            ("docs/shop.md".to_string(), 40),
+        ];
         let v = find(&s, root, &files, "RECEIPT");
-        let hits: Vec<(String, String)> = v["hits"].as_array().unwrap().iter()
-            .map(|h| (h["kind"].as_str().unwrap().to_string(), h["path"].as_str().or(h["id"].as_str()).unwrap().to_string()))
+        let hits: Vec<(String, String)> = v["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| {
+                (
+                    h["kind"].as_str().unwrap().to_string(),
+                    h["path"].as_str().or(h["id"].as_str()).unwrap().to_string(),
+                )
+            })
             .collect();
         let pair = |k: &str, p: &str| (k.to_string(), p.to_string());
-        assert_eq!(hits, vec![
-            pair("file", "code/receipt.js"),
-            pair("section", "docs/shop.md"),
-            pair("entity", "ent:receipt"),
-            pair("view", "view:receipts"),
-            pair("file", "code/order.js"),
-            pair("section", "docs/shop.md"),
-            pair("entity", "ent:order"),
-            pair("requirement", "req:1"),
-            pair("criterion", "crit:1"),
-        ]);
+        assert_eq!(
+            hits,
+            vec![
+                pair("file", "code/receipt.js"),
+                pair("section", "docs/shop.md"),
+                pair("entity", "ent:receipt"),
+                pair("view", "view:receipts"),
+                pair("file", "code/order.js"),
+                pair("section", "docs/shop.md"),
+                pair("entity", "ent:order"),
+                pair("requirement", "req:1"),
+                pair("criterion", "crit:1"),
+            ]
+        );
         let text_hit = &v["hits"][4];
         assert_eq!(text_hit["line"], 2);
         assert!(text_hit["detail"].as_str().unwrap().contains("receipt"));
@@ -274,13 +397,22 @@ mod tests {
         assert_eq!(v["truncated"], false);
         assert_eq!(find(&s, root, &files, "  ")["hits"], json!([]));
         // Every word must occur.
-        assert!(find(&s, root, &files, "receipt nowhere")["hits"].as_array().unwrap().is_empty());
+        assert!(find(&s, root, &files, "receipt nowhere")["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn matching_line_prefers_a_line_with_every_word() {
         let text = "one main\nmain and sort here\nsort";
-        assert_eq!(matching_line(text, &words("main sort")), Some((1, "main and sort here")));
-        assert_eq!(matching_line("only main\nnothing", &words("main sort")), Some((0, "only main")));
+        assert_eq!(
+            matching_line(text, &words("main sort")),
+            Some((1, "main and sort here"))
+        );
+        assert_eq!(
+            matching_line("only main\nnothing", &words("main sort")),
+            Some((0, "only main"))
+        );
     }
 }

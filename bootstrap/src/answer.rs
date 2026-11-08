@@ -392,7 +392,12 @@ fn occurrences(hay: &[Word], needle: &[Word]) -> Vec<usize> {
         return Vec::new();
     }
     (0..=hay.len() - needle.len())
-        .filter(|&p| hay[p..p + needle.len()].iter().zip(needle).all(|(x, y)| x.text == y.text))
+        .filter(|&p| {
+            hay[p..p + needle.len()]
+                .iter()
+                .zip(needle)
+                .all(|(x, y)| x.text == y.text)
+        })
         .collect()
 }
 
@@ -416,7 +421,10 @@ pub(crate) fn follow_transition(old: &str, new: &str, t: &Transition) -> Follow 
     let runs = replaced_runs(&a, &b);
     let new_text = |r: &Range<usize>| new[b[r.start].at.start..b[r.end - 1].at.end].to_string();
     let spans = |w: &[Word]| -> Vec<Range<usize>> {
-        occurrences(&a, w).into_iter().map(|p| p..p + w.len()).collect()
+        occurrences(&a, w)
+            .into_iter()
+            .map(|p| p..p + w.len())
+            .collect()
     };
     let mut next = t.clone();
     let mut moved = false;
@@ -608,7 +616,12 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
     let line = |name: &str, vars: &[(&str, &str)]| HANDLING.fill(name, vars) + "\n";
     let mut s = line(
         "heading",
-        &[("id", &rid), ("rule", &d.rule), ("severity", &d.severity), ("finding", &d.message)],
+        &[
+            ("id", &rid),
+            ("rule", &d.rule),
+            ("severity", &d.severity),
+            ("finding", &d.message),
+        ],
     );
     if let Some(p) = &d.prompt {
         s.push_str(&line("question", &[("question", &p.question)]));
@@ -644,7 +657,11 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
         } else if let Some(e) = store.graph.entities.get(&sid) {
             s.push_str(&line(
                 "subject-entity",
-                &[("id", &sid), ("name", &e.name), ("definition", e.definition.as_deref().unwrap_or(""))],
+                &[
+                    ("id", &sid),
+                    ("name", &e.name),
+                    ("definition", e.definition.as_deref().unwrap_or("")),
+                ],
             ));
         } else {
             s.push_str(&line("subject", &[("id", sub)]));
@@ -657,8 +674,9 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
 
 // The handling contract for an answer the calling agent applies.
 // Mirrors docs/frontends/acp.md#questions-in-chat.
-pub(crate) const HANDLING: crate::payload::Fragments =
-    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/answer-handling.md"));
+pub(crate) const HANDLING: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/answer-handling.md"
+));
 
 // The standing questions: open, unsuppressed, prompted, unanswered findings,
 // rendered once for chat surfaces (the session-start summary and /questions).
@@ -755,7 +773,9 @@ pub fn record_outcome(out: &Path, id: &str, outcome: &Result<(), String>) {
 // every frontend shows the same progress from the store.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_handler(project: Project, out: PathBuf, id: String) {
-    if crate::vfs::is_scoped() { return; }
+    if crate::vfs::is_scoped() {
+        return;
+    }
     std::thread::spawn(move || {
         let _ = run_handler(&project, &out, &id);
     });
@@ -799,8 +819,11 @@ mod tests {
     // A project whose one quoted requirement was decreed over (the way edit_fact
     // stages it), with the ratification proposal the decree filed.
     fn seed_decree(label: &str) -> (Project, PathBuf, String) {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-{}-{}", label, crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-answer-{}-{}",
+            label,
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -1096,7 +1119,8 @@ mod tests {
     // applied, and the diagnostic resolves in the same changeset.
     #[test]
     fn edit_answer_is_a_dual_write_that_resolves() {
-        let dir = std::env::temp_dir().join(format!("jazyk-answer-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-answer-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -1216,8 +1240,10 @@ mod tests {
     // scoped to the option's own section.
     #[test]
     fn edit_answer_lands_in_its_own_section() {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-scope-test-{}", crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-answer-scope-test-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -1298,8 +1324,10 @@ mod tests {
     // Mirrors docs/compiler/model/diagnostic.md#answers.
     #[test]
     fn edit_answer_judges_the_pair_it_concerned() {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-pair-test-{}", crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-answer-pair-test-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -1322,7 +1350,12 @@ mod tests {
         let (parsed, _) = crate::reconcile::parse_all(&project);
         let mut s = Store::load(&out);
         s.sync_docs(&parsed);
-        let sec = s.docs["docs/pay.md"].sections.keys().next().unwrap().clone();
+        let sec = s.docs["docs/pay.md"]
+            .sections
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
         let mut ops = vec![Op::CreateEntity {
             id: "ent:order".into(),
             entity: crate::model::Entity {
@@ -1395,7 +1428,9 @@ mod tests {
 
         answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
         let s = Store::load(&out);
-        assert!(s.graph.requirements["req:pay-1"].statement.contains("within 21 days"));
+        assert!(s.graph.requirements["req:pay-1"]
+            .statement
+            .contains("within 21 days"));
         // Both others are computed neighbors of the revised requirement.
         let nbrs: Vec<String> = s
             .requirement_neighbors_scored("req:pay-1")
@@ -1411,14 +1446,15 @@ mod tests {
             .find(|c| c.kind == crate::store::CHANGE_REQ_REVISED && c.subject == "req:pay-1")
             .expect("the rewrite revised req:pay-1");
         assert_eq!(revised.judged(), vec!["req:pay-2".to_string()]);
-        let board =
-            crate::board::Board::derive(&s, &project, &crate::board::tests::control_auto());
+        let board = crate::board::Board::derive(&s, &project, &crate::board::tests::control_auto());
         let pair = |a: &str, b: &str| crate::goals::pair_target(a, b);
         let ids: Vec<&str> = board.goals.iter().map(|g| g.id.as_str()).collect();
         let judged = format!("g:rejudge-pair:{}", pair("req:pay-1", "req:pay-2"));
         let other = format!("g:rejudge-pair:{}", pair("req:pay-1", "req:pay-3"));
         assert!(board.goal(&judged).is_none(), "{:?}", ids);
-        assert!(board.waiting_pair(&pair("req:pay-1", "req:pay-2")).is_none());
+        assert!(board
+            .waiting_pair(&pair("req:pay-1", "req:pay-2"))
+            .is_none());
         assert!(board.goal(&other).is_some(), "{:?}", ids);
         crate::vfs::remove_dir_all(&dir).ok();
     }
@@ -1438,22 +1474,40 @@ mod tests {
     // wider than a state is ambiguous. Mirrors docs/compiler/model/diagnostic.md#answers.
     #[test]
     fn a_rewrite_follows_onto_a_transition_only_when_one_to_one() {
-        let t = arc("acquaintance", "ally", "Ines confronts Theo about the survey");
-        let old = "When\nInes confronts Theo about the survey, Theo moves from acquaintance to ally.";
-        let new = "When\nInes confronts Theo about the survey, Theo moves from acquaintance to rival.";
+        let t = arc(
+            "acquaintance",
+            "ally",
+            "Ines confronts Theo about the survey",
+        );
+        let old =
+            "When\nInes confronts Theo about the survey, Theo moves from acquaintance to ally.";
+        let new =
+            "When\nInes confronts Theo about the survey, Theo moves from acquaintance to rival.";
         assert_eq!(
             follow_transition(old, new, &t),
-            Follow::Moves(arc("acquaintance", "rival", "Ines confronts Theo about the survey"))
+            Follow::Moves(arc(
+                "acquaintance",
+                "rival",
+                "Ines confronts Theo about the survey"
+            ))
         );
         // A table row: the pipes are not words.
-        let row = arc("acquaintance", "rival", "Ines confronts Theo about the survey");
+        let row = arc(
+            "acquaintance",
+            "rival",
+            "Ines confronts Theo about the survey",
+        );
         assert_eq!(
             follow_transition(
                 "| acquaintance | rival | Ines confronts Theo about the survey |",
                 "| acquaintance | ally | Ines confronts Theo about the survey |",
                 &row
             ),
-            Follow::Moves(arc("acquaintance", "ally", "Ines confronts Theo about the survey"))
+            Follow::Moves(arc(
+                "acquaintance",
+                "ally",
+                "Ines confronts Theo about the survey"
+            ))
         );
         // Both states replaced one to one.
         assert_eq!(
@@ -1462,12 +1516,20 @@ mod tests {
                 "Theo moves from stranger to rival.",
                 &t
             ),
-            Follow::Moves(arc("stranger", "rival", "Ines confronts Theo about the survey"))
+            Follow::Moves(arc(
+                "stranger",
+                "rival",
+                "Ines confronts Theo about the survey"
+            ))
         );
         // A run inside the trigger splices into it.
         assert_eq!(
             follow_transition(old, &old.replace("the survey", "the ledger"), &t),
-            Follow::Moves(arc("acquaintance", "ally", "Ines confronts Theo about the ledger"))
+            Follow::Moves(arc(
+                "acquaintance",
+                "ally",
+                "Ines confronts Theo about the ledger"
+            ))
         );
         // A rewrite that touches neither state nor trigger leaves it.
         assert_eq!(
@@ -1496,7 +1558,11 @@ mod tests {
 
     // A project with one quoted transition requirement and a contradiction whose one
     // edit option rewrites its sentence to `new_text`, carrying `facts`.
-    fn seed_arc(label: &str, new_text: &str, facts: Vec<crate::model::FactChange>) -> (Project, PathBuf, String) {
+    fn seed_arc(
+        label: &str,
+        new_text: &str,
+        facts: Vec<crate::model::FactChange>,
+    ) -> (Project, PathBuf, String) {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-answer-arc-{}-{}",
             label,
@@ -1505,7 +1571,8 @@ mod tests {
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write({ let path = dir.join(".jazyk/jazyk.toml"); crate::vfs::create_dir_all(path.parent().unwrap()).unwrap(); path }, "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n").unwrap();
-        let quote = "When Ines confronts Theo about the survey, Theo moves from acquaintance to ally.";
+        let quote =
+            "When Ines confronts Theo about the survey, Theo moves from acquaintance to ally.";
         crate::vfs::write(
             dir.join("docs/arcs.md"),
             format!("# Arcs\n\n## The midpoint\n\n{}\n", quote),
@@ -1528,8 +1595,14 @@ mod tests {
         };
         let report = s.apply(
             vec![
-                Op::CreateEntity { id: "ent:ines".into(), entity: entity("Ines") },
-                Op::CreateEntity { id: "ent:theo".into(), entity: entity("Theo") },
+                Op::CreateEntity {
+                    id: "ent:ines".into(),
+                    entity: entity("Ines"),
+                },
+                Op::CreateEntity {
+                    id: "ent:theo".into(),
+                    entity: entity("Theo"),
+                },
                 Op::CreateRequirement {
                     id: "req:arcs-29".into(),
                     requirement: crate::model::Requirement {
@@ -1590,7 +1663,11 @@ mod tests {
     // same changeset as the prose. Mirrors docs/compiler/model/diagnostic.md#answers.
     #[test]
     fn an_answer_moves_the_transition_its_rewrite_changes() {
-        let (project, out, did) = seed_arc("follow", "Theo moves from acquaintance to rival.", Vec::new());
+        let (project, out, did) = seed_arc(
+            "follow",
+            "Theo moves from acquaintance to rival.",
+            Vec::new(),
+        );
         let before = Store::load(&out).status.generation;
         let v = answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
         assert_eq!(v["followed"][0]["id"], "req:arcs-29", "{}", v);
@@ -1600,7 +1677,11 @@ mod tests {
         assert!(r.statement.ends_with("to rival."), "{}", r.statement);
         assert_eq!(
             r.transition,
-            Some(arc("acquaintance", "rival", "Ines confronts Theo about the survey"))
+            Some(arc(
+                "acquaintance",
+                "rival",
+                "Ines confronts Theo about the survey"
+            ))
         );
         assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
         crate::vfs::remove_dir_all(&project.root).ok();
@@ -1623,7 +1704,8 @@ mod tests {
                 value: json!([{"facet": "behavior", "reasoning": "a stance change on a plot event"}]),
             },
         ];
-        let (project, out, did) = seed_arc("facts", "Theo moves from acquaintance to rival.", facts);
+        let (project, out, did) =
+            seed_arc("facts", "Theo moves from acquaintance to rival.", facts);
         let before = Store::load(&out).status.generation;
         let v = answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
         assert_eq!(v["followed"], json!([]), "{}", v);
@@ -1632,7 +1714,11 @@ mod tests {
         let r = &s.graph.requirements["req:arcs-29"];
         assert_eq!(
             r.transition,
-            Some(arc("acquaintance", "rival", "Ines confronts Theo about the stolen survey"))
+            Some(arc(
+                "acquaintance",
+                "rival",
+                "Ines confronts Theo about the stolen survey"
+            ))
         );
         assert_eq!(r.facets.len(), 1);
         assert_eq!(r.facets[0].facet, "behavior");
@@ -1651,10 +1737,15 @@ mod tests {
             field: "transition".into(),
             value: json!({"subject": "ent:survey", "from": "hidden", "to": "found"}),
         }];
-        let (project, out, did) = seed_arc("refused", "Theo moves from acquaintance to rival.", facts);
+        let (project, out, did) =
+            seed_arc("refused", "Theo moves from acquaintance to rival.", facts);
         let before = Store::load(&out).status.generation;
         let err = answer(&project, &out, &did, Reply::Choice(0), None).unwrap_err();
-        assert!(err.contains("refused") && err.contains("ent:survey"), "{}", err);
+        assert!(
+            err.contains("refused") && err.contains("ent:survey"),
+            "{}",
+            err
+        );
         let text = crate::vfs::read_to_string(project.root.join("docs/arcs.md")).unwrap();
         assert!(text.contains("to ally."), "{}", text);
         let s = Store::load(&out);
@@ -1662,7 +1753,14 @@ mod tests {
         let d = &s.graph.diagnostics[&did];
         assert_eq!(d.lifecycle, "open");
         assert!(d.answer.is_none());
-        assert_eq!(s.graph.requirements["req:arcs-29"].transition.as_ref().unwrap().to, "ally");
+        assert_eq!(
+            s.graph.requirements["req:arcs-29"]
+                .transition
+                .as_ref()
+                .unwrap()
+                .to,
+            "ally"
+        );
         crate::vfs::remove_dir_all(&project.root).ok();
     }
 
@@ -1676,12 +1774,22 @@ mod tests {
         assert_eq!(v["followed"], json!([]), "{}", v);
         let s = Store::load(&out);
         let r = &s.graph.requirements["req:arcs-29"];
-        assert!(r.statement.ends_with("Theo turns against her."), "{}", r.statement);
+        assert!(
+            r.statement.ends_with("Theo turns against her."),
+            "{}",
+            r.statement
+        );
         assert_eq!(
             r.transition,
-            Some(arc("acquaintance", "ally", "Ines confronts Theo about the survey"))
+            Some(arc(
+                "acquaintance",
+                "ally",
+                "Ines confronts Theo about the survey"
+            ))
         );
-        assert!(s.status.has_change(crate::store::CHANGE_REQ_REVISED, "req:arcs-29"));
+        assert!(s
+            .status
+            .has_change(crate::store::CHANGE_REQ_REVISED, "req:arcs-29"));
         crate::vfs::remove_dir_all(&project.root).ok();
     }
 }

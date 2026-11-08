@@ -157,7 +157,9 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
 // sees.
 pub fn doc_baseline(store: &Store, rel: &str) -> Option<Value> {
     let rec = store.docs.get(rel)?;
-    if rec.sections.values().any(|s| s.kind == "blob") { return None; }
+    if rec.sections.values().any(|s| s.kind == "blob") {
+        return None;
+    }
     let mut secs: Vec<_> = rec.sections.values().collect();
     secs.sort_by_key(|s| s.lines[0]);
     let mut parts: Vec<&str> = Vec::new();
@@ -182,8 +184,11 @@ pub enum DocWrite {
 // The write is conditional on the hash the client read, so two editors on one
 // document never silently overwrite each other.
 pub fn doc_write(proj: &Project, rel: &str, text: &str, base_hash: Option<&str>) -> DocWrite {
-    if Path::new(rel).extension().and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf")) {
+    if Path::new(rel)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf"))
+    {
         return DocWrite::Invalid("binary documents require a format-specific editor".into());
     }
     let abs = match safe_doc_path_why(proj, rel) {
@@ -269,13 +274,25 @@ mod tests {
 
     #[test]
     fn text_writes_never_replace_binary_documents() {
-        let dir = std::env::temp_dir().join(format!("jazyk-binary-write-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-binary-write-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();
         let p = proj(&dir);
-        for name in ["contract.docx", "contract.DOCX", "contract.pdf", "contract.PDF"] {
+        for name in [
+            "contract.docx",
+            "contract.DOCX",
+            "contract.pdf",
+            "contract.PDF",
+        ] {
             crate::vfs::write(dir.join(name), b"original binary bytes").unwrap();
-            assert!(matches!(doc_write(&p, name, "replacement prose", None), DocWrite::Invalid(_)));
-            assert_eq!(crate::vfs::read(dir.join(name)).unwrap(), b"original binary bytes");
+            assert!(matches!(
+                doc_write(&p, name, "replacement prose", None),
+                DocWrite::Invalid(_)
+            ));
+            assert_eq!(
+                crate::vfs::read(dir.join(name)).unwrap(),
+                b"original binary bytes"
+            );
         }
         crate::vfs::remove_dir_all(&dir).unwrap();
     }

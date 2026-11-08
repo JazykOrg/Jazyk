@@ -86,7 +86,6 @@ pub fn views_value(store: &Store) -> Value {
     json!({ "views": views })
 }
 
-
 // The entity members hidden by the collapse set: strict descendants of a collapsed
 // node. The collapsed node itself stays shown.
 fn hidden_by_collapse(
@@ -380,8 +379,6 @@ fn children_value(store: &Store, view_id: &str) -> Vec<Value> {
         .collect()
 }
 
-
-
 // The direct children of a level target, the level view's member order first (the
 // children lead its members, in document order), the rest by id.
 fn ordered_children(store: &Store, target: &str, ids: &[String]) -> Vec<String> {
@@ -476,7 +473,6 @@ pub fn tree_value(store: &Store) -> Value {
     json!({ "generation": store.status.generation, "roots": roots })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,7 +539,9 @@ mod tests {
         assert_eq!(stock["parent"], "ent:inventory-service");
         assert_eq!(stock["detail"], 1);
         assert_eq!(stock["hidden"], false);
-        assert!(members.iter().any(|m| m["id"] == "ent:order-item" && m["detail"] == 1));
+        assert!(members
+            .iter()
+            .any(|m| m["id"] == "ent:order-item" && m["detail"] == 1));
         let arrows = one["arrows"].as_array().unwrap();
         let direct = arrows
             .iter()
@@ -554,9 +552,9 @@ mod tests {
         assert!(!arrows
             .iter()
             .any(|a| a["a"] == "ent:order-service" && a["b"] == "ent:inventory-service"));
-        assert!(arrows
-            .iter()
-            .any(|a| a["a"] == "ent:shopping-cart" && a["b"] == "ent:order-item" && a["type"] == "composition"));
+        assert!(arrows.iter().any(|a| a["a"] == "ent:shopping-cart"
+            && a["b"] == "ent:order-item"
+            && a["type"] == "composition"));
         // Asking for more than the tree holds applies what exists.
         let deep = view_value(&s, "view:component/shop", 5).unwrap();
         assert_eq!(deep["detail"], 1);

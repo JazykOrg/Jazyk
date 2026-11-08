@@ -20,8 +20,6 @@ pub fn board_value(proj: &Project, out: &Path) -> Value {
     v
 }
 
-
-
 // The next session's prompt exactly as the model receives it, plus the batch's
 // toolset and the executor it resolves to. With ?goal=, the batch that goal would
 // join. Mirrors docs/frontends/gui.md#preview and docs/compiler/sessions.md#preview.
@@ -124,7 +122,9 @@ fn find_batch<'a>(board: &'a crate::board::Board, target: &str) -> Option<&'a cr
 // The browser backend has exactly one executor, itself.
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_executor_name(proj: &Project, goals: &[crate::model::Goal]) -> Result<String, String> {
-    if crate::vfs::is_scoped() { return Ok("host-injected".into()); }
+    if crate::vfs::is_scoped() {
+        return Ok("host-injected".into());
+    }
     let Some(g) = goals.first() else {
         return Err("empty batch".into());
     };
@@ -177,18 +177,16 @@ fn resolve_executor_name(_proj: &Project, _goals: &[crate::model::Goal]) -> Resu
     Ok("in-page".to_string())
 }
 
-
-
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
-        let root =
-            std::env::temp_dir().join(format!("jazyk-gui-board-{}-{}", name, crate::sys::process_id()));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-gui-board-{}-{}",
+            name,
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
         crate::vfs::write(
@@ -243,7 +241,10 @@ mod tests {
         control.save(&out);
         let v = preview_value(&proj, &out, "");
         assert_eq!(v["gated"], json!(true));
-        assert!(v["batch"]["id"].as_str().unwrap_or_default().starts_with('b'));
+        assert!(v["batch"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with('b'));
         assert!(v["prompt"].as_str().expect("a prompt").contains("## Goals"));
         assert!(v["note"].as_str().unwrap().contains("awaiting release"));
         crate::vfs::remove_dir_all(&proj.root).ok();

@@ -120,11 +120,20 @@ mod tests {
         assert_eq!(slug(""), "x");
         // A word ending exactly at the limit stays whole.
         let exact = format!("{} {}", "a".repeat(10), "b".repeat(21));
-        assert_eq!(slug(&format!("{} more", exact)), format!("{}-{}", "a".repeat(10), "b".repeat(21)));
-        for s in ["Order Service API", "Ines's stance — four", "日本語のテキスト"] {
+        assert_eq!(
+            slug(&format!("{} more", exact)),
+            format!("{}-{}", "a".repeat(10), "b".repeat(21))
+        );
+        for s in [
+            "Order Service API",
+            "Ines's stance — four",
+            "日本語のテキスト",
+        ] {
             let out = slug(s);
             assert!(out.len() <= SLUG_MAX);
-            assert!(out.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
+            assert!(out
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'));
             assert!(!out.contains("--") && !out.starts_with('-') && !out.ends_with('-'));
         }
     }
@@ -144,6 +153,9 @@ mod tests {
         let last = unique("req:a", "k", |id| !id.ends_with("-2"));
         assert!(last.ends_with("-2"));
         assert_eq!(plain_or_unique("ent:order", "k", |_| false), "ent:order");
-        assert_ne!(plain_or_unique("ent:order", "k", |id| id == "ent:order"), "ent:order");
+        assert_ne!(
+            plain_or_unique("ent:order", "k", |id| id == "ent:order"),
+            "ent:order"
+        );
     }
 }

@@ -627,7 +627,14 @@ pub struct DiagnosticAnswer {
 }
 
 // The section kinds parsing produces. Mirrors docs/compiler/model/section.md#fields.
-pub const SECTION_KINDS: [&str; 6] = ["preamble", "root", "heading", "code-block", "diagram", "blob"];
+pub const SECTION_KINDS: [&str; 6] = [
+    "preamble",
+    "root",
+    "heading",
+    "code-block",
+    "diagram",
+    "blob",
+];
 
 // The coverage states a section carries; `set_coverage` sets the last two.
 // Mirrors docs/compiler/model/section.md#coverage.
@@ -667,7 +674,11 @@ pub struct Coverage {
 pub struct DocRecord {
     // Local: build.yaml carries it, a version 3 record still does.
     // Mirrors docs/compiler/graph.md#storage-layout.
-    #[serde(rename = "contentHash", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "contentHash",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub content_hash: String,
     #[serde(default)]
     pub sections: BTreeMap<String, Section>,
@@ -1162,11 +1173,19 @@ pub struct JournalEntry {
     // The input tokens among `tokens` the endpoint served from its prompt cache. Absent
     // when the endpoint reported none and on entries older than the field
     // (docs/compiler/sessions.md#budgets).
-    #[serde(rename = "cachedTokens", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "cachedTokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub cached_tokens: Option<u64>,
     // `agent` when an external agent reported its own bill (report_spend, jazyk spend);
     // absent when the harness measured it (docs/compiler/graph.md#journal).
-    #[serde(rename = "tokensSource", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "tokensSource",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub tokens_source: Option<String>,
 }
 
@@ -1404,7 +1423,10 @@ impl Status {
 
     // The parked goal for a wave-loop item, if any.
     pub fn parked_items(&self) -> Vec<WorkItem> {
-        self.parked.iter().map(|p| WorkItem::from_goal(&p.goal)).collect()
+        self.parked
+            .iter()
+            .map(|p| WorkItem::from_goal(&p.goal))
+            .collect()
     }
 }
 
@@ -1803,7 +1825,10 @@ mod tests {
             "section",
         ));
         assert_eq!(s.changes.len(), 2);
-        assert_eq!(s.changes[0].id, format!("c4-{}", crate::ids::hash("entity-changed\nent:a")));
+        assert_eq!(
+            s.changes[0].id,
+            format!("c4-{}", crate::ids::hash("entity-changed\nent:a"))
+        );
         assert_eq!(
             s.changed_subjects(&["entity-changed"]),
             vec!["ent:a".to_string()]
@@ -1852,7 +1877,12 @@ mod tests {
         assert_eq!(as_goal, goal, "a parked entry reads as the goal it holds");
         assert_eq!(json["reason"], "the build cap ran out");
         assert_eq!(
-            serde_json::to_value(&goal).unwrap().as_object().unwrap().len() + 1,
+            serde_json::to_value(&goal)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .len()
+                + 1,
             json.as_object().unwrap().len(),
             "the record is the goal's fields plus reason"
         );
@@ -1874,10 +1904,16 @@ mod tests {
                 on: "human: unstable-derivation ruling on ent:x".into()
             }
         );
-        assert_eq!(old.parked[1].goal.hints, vec!["parked by flip detection".to_string()]);
+        assert_eq!(
+            old.parked[1].goal.hints,
+            vec!["parked by flip detection".to_string()]
+        );
         assert_eq!(old.parked[0].goal.id, "g:bind:req:a-1");
         assert_eq!(old.parked[0].goal.change["row"], "stale");
-        assert_eq!(old.parked[0].goal.cause.as_ref().map(|c| c.generation), Some(8));
+        assert_eq!(
+            old.parked[0].goal.cause.as_ref().map(|c| c.generation),
+            Some(8)
+        );
         assert_eq!(old.parked[0].reason, None);
 
         let mut s = Status::default();
@@ -1894,7 +1930,11 @@ mod tests {
             "the build cap of 11 sessions ran out",
         ));
         let text = serde_norway::to_string(&s).unwrap();
-        assert!(text.contains("reason: the build cap of 11 sessions ran out"), "{}", text);
+        assert!(
+            text.contains("reason: the build cap of 11 sessions ran out"),
+            "{}",
+            text
+        );
         assert!(text.contains("id: g:bind:req:a-1"), "{}", text);
         let back: Status = serde_norway::from_str(&text).unwrap();
         assert_eq!(back.parked, s.parked);

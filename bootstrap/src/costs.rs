@@ -30,7 +30,10 @@ impl Line {
     fn to_json(&self) -> Value {
         // A line with no measured goal has an unknown spend, never a zero one.
         let (tokens, cached) = if self.measured() > 0 {
-            (json!(self.tokens.round() as u64), json!(self.cached.round() as u64))
+            (
+                json!(self.tokens.round() as u64),
+                json!(self.cached.round() as u64),
+            )
         } else {
             (Value::Null, Value::Null)
         };
@@ -72,12 +75,14 @@ pub fn report(entries: &[JournalEntry], graph: &Graph) -> Value {
         // A session that names no goal still spent: it lands under its own kind.
         let goals = if goals.is_empty() { vec![""] } else { goals };
         let n_goals = goals.len() as f64;
-        let share = e
-            .tokens
-            .map(|t| (t as f64 / n_goals, e.cached_tokens.unwrap_or(0) as f64 / n_goals));
+        let share = e.tokens.map(|t| {
+            (
+                t as f64 / n_goals,
+                e.cached_tokens.unwrap_or(0) as f64 / n_goals,
+            )
+        });
         for goal in goals {
-            let (kind, target) =
-                crate::goals::parse_goal_id(goal).unwrap_or(("(no goal)", ""));
+            let (kind, target) = crate::goals::parse_goal_id(goal).unwrap_or(("(no goal)", ""));
             charge(by_kind.entry(kind.to_string()).or_default(), share, 1.0);
             let docs = documents_of(target, graph);
             let n = docs.len() as f64;
@@ -168,7 +173,9 @@ fn documents_of(target: &str, graph: &Graph) -> Vec<String> {
 }
 
 fn is_path(target: &str) -> bool {
-    target.contains('#') || (target.contains('/') && !target.contains(':')) || crate::md::is_document_target(target)
+    target.contains('#')
+        || (target.contains('/') && !target.contains(':'))
+        || crate::md::is_document_target(target)
 }
 
 fn quoted(p: &Option<Provenance>, source: &Option<SourceRef>) -> Option<String> {
@@ -243,13 +250,32 @@ pub fn render(r: &Value) -> String {
         Some(t) => out.push_str(&format!("{}, {} tokens\n", head, t)),
         None => out.push_str(&format!("{}, spend unknown\n", head)),
     }
-    let num = |v: &Value| v.as_u64().map(|n| n.to_string()).unwrap_or_else(|| "-".into());
-    let cached_col = |l: &Value| if show_cached { format!("{:>9}", num(&l["cached"])) } else { String::new() };
-    let cached_head = if show_cached { format!("{:>9}", "cached") } else { String::new() };
+    let num = |v: &Value| {
+        v.as_u64()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "-".into())
+    };
+    let cached_col = |l: &Value| {
+        if show_cached {
+            format!("{:>9}", num(&l["cached"]))
+        } else {
+            String::new()
+        }
+    };
+    let cached_head = if show_cached {
+        format!("{:>9}", "cached")
+    } else {
+        String::new()
+    };
     let width = |key: &str| {
         r[key]
             .as_array()
-            .map(|a| a.iter().map(|l| l["name"].as_str().unwrap_or("").len()).max().unwrap_or(0))
+            .map(|a| {
+                a.iter()
+                    .map(|l| l["name"].as_str().unwrap_or("").len())
+                    .max()
+                    .unwrap_or(0)
+            })
             .unwrap_or(0)
             .max(20)
     };
@@ -268,9 +294,9 @@ pub fn render(r: &Value) -> String {
         let goals = l["goals"].as_u64().unwrap_or(0);
         let unmeasured = l["unmeasured"].as_u64().unwrap_or(0);
         let per_goal = match l["tokens"].as_u64() {
-            Some(t) if goals > unmeasured => (t as f64 / (goals - unmeasured) as f64)
-                .round()
-                .to_string(),
+            Some(t) if goals > unmeasured => {
+                (t as f64 / (goals - unmeasured) as f64).round().to_string()
+            }
             _ => "-".into(),
         };
         out.push_str(&format!(
@@ -359,10 +385,8 @@ mod tests {
 
     #[test]
     fn the_report_splits_spend_by_kind_and_document_and_keeps_unmeasured_apart() {
-        let out = std::env::temp_dir().join(format!(
-            "jazyk-costs-test-{}",
-            crate::sys::process_id()
-        ));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-costs-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let mut store = Store {
             out: out.clone(),
@@ -377,7 +401,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        for (id, doc) in [("req:orders-1", "docs/orders.md"), ("req:pay-1", "docs/pay.md")] {
+        for (id, doc) in [
+            ("req:orders-1", "docs/orders.md"),
+            ("req:pay-1", "docs/pay.md"),
+        ] {
             g.requirements.insert(
                 id.into(),
                 Requirement {
@@ -397,7 +424,8 @@ mod tests {
             },
         );
         // A merged requirement resolves to its survivor's document.
-        g.redirects.insert("req:orders-9".into(), "req:orders-1".into());
+        g.redirects
+            .insert("req:orders-9".into(), "req:orders-1".into());
         store.save_for_test();
         let mut entries = vec![
             JournalEntry {
@@ -418,11 +446,18 @@ mod tests {
             // 600 over a pair across two documents and an entity review.
             session(
                 3,
-                &["g:rejudge-pair:req:orders-9~req:pay-1", "g:review-entity:ent:order"],
+                &[
+                    "g:rejudge-pair:req:orders-9~req:pay-1",
+                    "g:review-entity:ent:order",
+                ],
                 Some(600),
             ),
             // An external agent's session: counted, never priced.
-            session(4, &["g:derive-criteria:crit:pay-1", "g:curate-view:view:x"], None),
+            session(
+                4,
+                &["g:derive-criteria:crit:pay-1", "g:curate-view:view:x"],
+                None,
+            ),
             session(5, &["g:curate-view:view:x"], Some(100)),
         ];
         // Two entries carry a cached input figure; the rest predate the field or
@@ -455,7 +490,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {} line {}", key, name))
         };
         let k = line("by_kind", "reconcile-section");
-        assert_eq!((k["goals"].clone(), k["tokens"].clone(), k["unmeasured"].clone()), (json!(2), json!(1000), json!(0)));
+        assert_eq!(
+            (
+                k["goals"].clone(),
+                k["tokens"].clone(),
+                k["unmeasured"].clone()
+            ),
+            (json!(2), json!(1000), json!(0))
+        );
         assert_eq!(line("by_kind", "rejudge-pair")["tokens"], 300);
         assert_eq!(line("by_kind", "review-entity")["tokens"], 300);
         // Cached input follows the same split: 400 over two reconcile goals, none on
@@ -465,19 +507,54 @@ mod tests {
         assert_eq!(line("by_kind", "curate-view")["cached"], 50);
         assert_eq!(line("by_kind", "derive-criteria")["cached"], Value::Null);
         let dc = line("by_kind", "derive-criteria");
-        assert_eq!((dc["goals"].clone(), dc["tokens"].clone(), dc["unmeasured"].clone()), (json!(1), Value::Null, json!(1)));
+        assert_eq!(
+            (
+                dc["goals"].clone(),
+                dc["tokens"].clone(),
+                dc["unmeasured"].clone()
+            ),
+            (json!(1), Value::Null, json!(1))
+        );
         let cv = line("by_kind", "curate-view");
-        assert_eq!((cv["goals"].clone(), cv["tokens"].clone(), cv["unmeasured"].clone()), (json!(2), json!(100), json!(1)));
+        assert_eq!(
+            (
+                cv["goals"].clone(),
+                cv["tokens"].clone(),
+                cv["unmeasured"].clone()
+            ),
+            (json!(2), json!(100), json!(1))
+        );
         // The heaviest kind leads.
         assert_eq!(r["by_kind"][0]["name"], "reconcile-section");
         // orders.md: 500 + 150 (its side of the pair) + 300 (the entity review).
         let o = line("by_document", "docs/orders.md");
-        assert_eq!((o["goals"].clone(), o["tokens"].clone(), o["unmeasured"].clone()), (json!(3), json!(950), json!(0)));
+        assert_eq!(
+            (
+                o["goals"].clone(),
+                o["tokens"].clone(),
+                o["unmeasured"].clone()
+            ),
+            (json!(3), json!(950), json!(0))
+        );
         // pay.md: 500 + 150, and the unmeasured criterion goal through its requirement.
         let p = line("by_document", "docs/pay.md");
-        assert_eq!((p["goals"].clone(), p["tokens"].clone(), p["unmeasured"].clone()), (json!(3), json!(650), json!(1)));
+        assert_eq!(
+            (
+                p["goals"].clone(),
+                p["tokens"].clone(),
+                p["unmeasured"].clone()
+            ),
+            (json!(3), json!(650), json!(1))
+        );
         let n = line("by_document", NO_DOCUMENT);
-        assert_eq!((n["goals"].clone(), n["tokens"].clone(), n["unmeasured"].clone()), (json!(2), json!(100), json!(1)));
+        assert_eq!(
+            (
+                n["goals"].clone(),
+                n["tokens"].clone(),
+                n["unmeasured"].clone()
+            ),
+            (json!(2), json!(100), json!(1))
+        );
         assert_eq!(r["requirements"], 2);
         assert_eq!(r["criteria"], 1);
         assert_eq!(r["per_requirement"], 850);
@@ -488,25 +565,51 @@ mod tests {
             "{}",
             text
         );
-        let kline = text.lines().find(|l| l.trim_start().starts_with("reconcile-section")).unwrap();
-        assert_eq!(kline.split_whitespace().collect::<Vec<_>>(), ["reconcile-section", "2", "1000", "400", "500", "0"]);
-        assert!(text.contains("per requirement: 850 tokens (2 requirements)"), "{}", text);
-        let oline = text.lines().find(|l| l.trim_start().starts_with("docs/orders.md")).unwrap();
-        assert_eq!(oline.split_whitespace().collect::<Vec<_>>(), ["docs/orders.md", "3", "950", "200", "0"]);
+        let kline = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("reconcile-section"))
+            .unwrap();
+        assert_eq!(
+            kline.split_whitespace().collect::<Vec<_>>(),
+            ["reconcile-section", "2", "1000", "400", "500", "0"]
+        );
+        assert!(
+            text.contains("per requirement: 850 tokens (2 requirements)"),
+            "{}",
+            text
+        );
+        let oline = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("docs/orders.md"))
+            .unwrap();
+        assert_eq!(
+            oline.split_whitespace().collect::<Vec<_>>(),
+            ["docs/orders.md", "3", "950", "200", "0"]
+        );
         // A kind no session measured prints no number, not a zero.
-        let dline = text.lines().find(|l| l.trim_start().starts_with("derive-criteria")).unwrap();
+        let dline = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("derive-criteria"))
+            .unwrap();
         assert!(dline.contains(" - "), "{}", dline);
         crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
     fn a_journal_with_no_measured_session_says_its_spend_is_unknown() {
-        let r = report(&[session(2, &["g:reconcile-section:docs/a.md#/a"], None)], &Graph::default());
+        let r = report(
+            &[session(2, &["g:reconcile-section:docs/a.md#/a"], None)],
+            &Graph::default(),
+        );
         assert_eq!(r["tokens"], Value::Null);
         assert_eq!(r["per_requirement"], Value::Null);
         let text = render(&r);
         assert!(text.contains("spend unknown"), "{}", text);
-        assert!(text.contains("unknown, no session was measured"), "{}", text);
+        assert!(
+            text.contains("unknown, no session was measured"),
+            "{}",
+            text
+        );
         assert_eq!(r["cached"], Value::Null);
     }
 
@@ -525,10 +628,20 @@ mod tests {
         assert_eq!(r["cached"], 0);
         assert_eq!(r["by_kind"][0]["cached"], 0);
         let text = render(&r);
-        assert!(text.starts_with("cost: g2..g3, 2 sessions (1 measured, 1 unmeasured), 1000 tokens\n"), "{}", text);
+        assert!(
+            text.starts_with("cost: g2..g3, 2 sessions (1 measured, 1 unmeasured), 1000 tokens\n"),
+            "{}",
+            text
+        );
         assert!(!text.contains("cached"), "{}", text);
-        let kline = text.lines().find(|l| l.trim_start().starts_with("reconcile-section")).unwrap();
-        assert_eq!(kline.split_whitespace().collect::<Vec<_>>(), ["reconcile-section", "1", "1000", "1000", "0"]);
+        let kline = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("reconcile-section"))
+            .unwrap();
+        assert_eq!(
+            kline.split_whitespace().collect::<Vec<_>>(),
+            ["reconcile-section", "1", "1000", "1000", "0"]
+        );
     }
 
     // A session the agent priced itself (tokensSource: agent) counts in the tokens like

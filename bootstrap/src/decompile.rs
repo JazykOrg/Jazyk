@@ -19,8 +19,9 @@ pub fn instructions() -> String {
 
 // The internal worker's role line around the contract, its scope request, and its
 // retry. Mirrors docs/consumers/decompile.md#draft-goals.
-pub(crate) const WORKER: crate::payload::Fragments =
-    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/decompile-worker.md"));
+pub(crate) const WORKER: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/decompile-worker.md"
+));
 
 // ---------------------------------------------------------------------------
 // drafts.yaml: each submitted draft's path and content hash, what ratification reads.
@@ -282,7 +283,13 @@ fn h1_count(content: &str) -> usize {
     let mut count = 0;
     for line in content.lines() {
         let t = line.trim_start();
-        let marker = if t.starts_with("```") { Some("```") } else if t.starts_with("~~~") { Some("~~~") } else { None };
+        let marker = if t.starts_with("```") {
+            Some("```")
+        } else if t.starts_with("~~~") {
+            Some("~~~")
+        } else {
+            None
+        };
         match (fence, marker) {
             (None, Some(m)) => fence = Some(m),
             (Some(open), Some(m)) if open == m => fence = None,
@@ -344,13 +351,16 @@ pub async fn run_all(
             } else {
                 WORKER.fill("retry", &[("request", &user), ("reason", &last_err)])
             };
-            let reply = match runner.ask_traced(
-                &system,
-                &prompt,
-                &format!("decompile {}", scope),
-                if attempt == 0 { "draft" } else { "draft retry" },
-                Some(trace),
-            ).await {
+            let reply = match runner
+                .ask_traced(
+                    &system,
+                    &prompt,
+                    &format!("decompile {}", scope),
+                    if attempt == 0 { "draft" } else { "draft retry" },
+                    Some(trace),
+                )
+                .await
+            {
                 Ok(r) => r,
                 // A suspension or checkpoint failure stops the job; it is not a
                 // rejected draft to retry or a failed scope to count.
@@ -399,8 +409,11 @@ mod tests {
     fn tmp() -> (Project, Store, GenSettings) {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let root =
-            std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", crate::sys::process_id(), n));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-decompile-test-{}-{}",
+            crate::sys::process_id(),
+            n
+        ));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(&root).unwrap();
         let proj = Project {
@@ -476,9 +489,19 @@ mod tests {
     #[test]
     fn a_draft_needs_exactly_one_h1() {
         let (proj, store, _gs) = tmp();
-        let err = submit(&proj, &store.out, "docs/x.md", "# X\n\nBody.\n\n# Y\n\nMore.", None)
-            .unwrap_err();
-        assert!(err.contains("exactly one H1") && err.contains("2"), "{}", err);
+        let err = submit(
+            &proj,
+            &store.out,
+            "docs/x.md",
+            "# X\n\nBody.\n\n# Y\n\nMore.",
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("exactly one H1") && err.contains("2"),
+            "{}",
+            err
+        );
         assert!(submit(&proj, &store.out, "docs/x.md", "## X\n\nBody.", None).is_err());
     }
 
@@ -497,11 +520,24 @@ mod tests {
         use crate::runner::{BatchRun, SessionReport, SessionRunner};
         struct Suspended(std::cell::Cell<u32>);
         impl SessionRunner for Suspended {
-            fn agent_name(&self) -> String { "suspended-fixture".into() }
+            fn agent_name(&self) -> String {
+                "suspended-fixture".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
-            fn run_item(&self, _: &BatchRun, _: &crate::session::Trace) -> SessionReport { unreachable!() }
-            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> { unreachable!() }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String, String> {
+            fn run_item(&self, _: &BatchRun, _: &crate::session::Trace) -> SessionReport {
+                unreachable!()
+            }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                unreachable!()
+            }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
                 self.0.set(self.0.get() + 1);
                 Err("suspended".into())
             }
@@ -511,8 +547,15 @@ mod tests {
         crate::vfs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
         crate::control::release_decompile(&proj, &store.out, &["src".into()]);
         let runner = Suspended(std::cell::Cell::new(0));
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet, std::sync::Arc::new(|_| {}), Default::default());
-        assert_eq!(run_all(&proj, &store, &runner, &gs, &[], &trace).unwrap_err(), "suspended");
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Quiet,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        assert_eq!(
+            run_all(&proj, &store, &runner, &gs, &[], &trace).unwrap_err(),
+            "suspended"
+        );
         assert_eq!(runner.0.get(), 1);
     }
 
@@ -530,14 +573,39 @@ mod tests {
             "# Src\n\nWritten by hand.\n"
         );
         // A draft of its own may be drafted again.
-        submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nFirst draft.", None).unwrap();
-        submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nSecond draft.", None).unwrap();
+        submit(
+            &proj,
+            &store.out,
+            "docs/lib.md",
+            "# Lib\n\nFirst draft.",
+            None,
+        )
+        .unwrap();
+        submit(
+            &proj,
+            &store.out,
+            "docs/lib.md",
+            "# Lib\n\nSecond draft.",
+            None,
+        )
+        .unwrap();
         assert!(crate::vfs::read_to_string(proj.root.join("docs/lib.md"))
             .unwrap()
             .contains("Second"));
         // Once a person edits it, the draft is theirs.
-        crate::vfs::write(proj.root.join("docs/lib.md"), "# Lib\n\nSecond draft, reviewed.\n").unwrap();
-        assert!(submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nThird draft.", None).is_err());
+        crate::vfs::write(
+            proj.root.join("docs/lib.md"),
+            "# Lib\n\nSecond draft, reviewed.\n",
+        )
+        .unwrap();
+        assert!(submit(
+            &proj,
+            &store.out,
+            "docs/lib.md",
+            "# Lib\n\nThird draft.",
+            None
+        )
+        .is_err());
     }
 
     #[test]

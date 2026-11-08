@@ -2,7 +2,9 @@
 // Mirrors docs/frontends/gui.md#api (the project files).
 use super::api::refused;
 use super::state::SharedState;
-use crate::webapi::projfiles::{create_project_file, project_file, project_files, project_text, write_project_text};
+use crate::webapi::projfiles::{
+    create_project_file, project_file, project_files, project_text, write_project_text,
+};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -39,10 +41,16 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
 }
 
 // Create one new file anywhere under the project directory; never an overwrite.
-pub async fn create(State(st): State<SharedState>, Query(p): Query<FileQ>, Json(body): Json<serde_json::Value>) -> Response {
+pub async fn create(
+    State(st): State<SharedState>,
+    Query(p): Query<FileQ>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
     let root = st.root.clone();
     let out = st.out.clone();
-    match tokio::task::spawn_blocking(move || create_project_file(&root, &out, &p.path, &body)).await {
+    match tokio::task::spawn_blocking(move || create_project_file(&root, &out, &p.path, &body))
+        .await
+    {
         Ok(Ok(value)) => Json(value).into_response(),
         Ok(Err(r)) => refused(r),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -60,10 +68,15 @@ pub async fn text(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
 }
 
 // Replace an existing project file when its hash still matches.
-pub async fn write_text(State(st): State<SharedState>, Query(p): Query<FileQ>, Json(body): Json<serde_json::Value>) -> Response {
+pub async fn write_text(
+    State(st): State<SharedState>,
+    Query(p): Query<FileQ>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
     let root = st.root.clone();
     let out = st.out.clone();
-    match tokio::task::spawn_blocking(move || write_project_text(&root, &out, &p.path, &body)).await {
+    match tokio::task::spawn_blocking(move || write_project_text(&root, &out, &p.path, &body)).await
+    {
         Ok(Ok(value)) => Json(value).into_response(),
         Ok(Err(r)) => refused(r),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

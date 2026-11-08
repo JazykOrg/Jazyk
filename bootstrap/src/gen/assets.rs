@@ -340,7 +340,12 @@ impl AssetScan {
                     })
                     .collect::<BTreeSet<_>>();
                 let outputs = output_paths(store, &project);
-                Some(ScanContext { project, selected_docs, outputs, documents: Default::default() })
+                Some(ScanContext {
+                    project,
+                    selected_docs,
+                    outputs,
+                    documents: Default::default(),
+                })
             })
             .as_ref()
     }
@@ -351,7 +356,12 @@ pub fn referenced_assets(store: &Store, id: &str, rids: &[String]) -> Vec<Refere
 }
 
 // `referenced_assets` within a scan of many entities, reading the project once.
-pub fn referenced_assets_in(scan: &AssetScan, store: &Store, id: &str, rids: &[String]) -> Vec<ReferencedAsset> {
+pub fn referenced_assets_in(
+    scan: &AssetScan,
+    store: &Store,
+    id: &str,
+    rids: &[String],
+) -> Vec<ReferencedAsset> {
     let quotes = quotes(store, id, rids);
     // Local Markdown links and images require a bracket. Most authored facts have
     // none, so they keep the old cheap fingerprint without loading project files.
@@ -361,7 +371,8 @@ pub fn referenced_assets_in(scan: &AssetScan, store: &Store, id: &str, rids: &[S
     let Some(context) = scan.context(store) else {
         return vec![];
     };
-    let (project, selected_docs, outputs) = (&context.project, &context.selected_docs, &context.outputs);
+    let (project, selected_docs, outputs) =
+        (&context.project, &context.selected_docs, &context.outputs);
     let mut documents = context.documents.borrow_mut();
     let mut assets = BTreeMap::<String, ReferencedAsset>::new();
     for (fact, source) in quotes {

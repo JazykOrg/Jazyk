@@ -180,12 +180,28 @@ mod tests {
         std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        for args in [vec!["init".to_string()], vec!["config".into(), "core.fsmonitor".into(), hook.display().to_string()]] {
-            assert!(std::process::Command::new("git").arg("-C").arg(dir.path()).args(&args)
-                .output().unwrap().status.success());
+        for args in [
+            vec!["init".to_string()],
+            vec![
+                "config".into(),
+                "core.fsmonitor".into(),
+                hook.display().to_string(),
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(&args)
+                .output()
+                .unwrap()
+                .status
+                .success());
         }
         local(dir.path()).unwrap();
-        assert!(!marker.exists(), "a metadata read executed the repository's fsmonitor");
+        assert!(
+            !marker.exists(),
+            "a metadata read executed the repository's fsmonitor"
+        );
     }
 
     #[test]
@@ -194,11 +210,17 @@ mod tests {
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "sleep 5; echo late"]);
         let started = std::time::Instant::now();
-        assert_eq!(output_within(command, std::time::Duration::from_millis(100)), None);
+        assert_eq!(
+            output_within(command, std::time::Duration::from_millis(100)),
+            None
+        );
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "echo ok"]);
-        assert_eq!(output_within(command, std::time::Duration::from_secs(5)).as_deref(), Some("ok"));
+        assert_eq!(
+            output_within(command, std::time::Duration::from_secs(5)).as_deref(),
+            Some("ok")
+        );
     }
 
     #[test]

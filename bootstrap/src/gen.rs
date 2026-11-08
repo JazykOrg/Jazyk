@@ -1,11 +1,11 @@
 use crate::vfs::VPathExt;
-pub(crate) mod progress;
-mod pipeline;
+#[cfg(test)]
+mod asset_workflow_tests;
 pub(crate) mod assets;
 #[cfg(test)]
 mod matcher_recovery_tests;
-#[cfg(test)]
-mod asset_workflow_tests;
+mod pipeline;
+pub(crate) mod progress;
 // Generation: the shared contract between every generation worker, the built-in
 // `jazyk gen` and external MCP agents alike. One task per entity produces the entity's
 // part of the deliverable and the tests for its requirements; the ledger binds them to
@@ -40,17 +40,32 @@ pub struct GenSettings {
 
 impl GenSettings {
     pub(crate) fn current_for_store(&self, store: &Store) -> Self {
-        let Some(root) = crate::project::find_root(&store.out) else { return self.clone() };
+        let Some(root) = crate::project::find_root(&store.out) else {
+            return self.clone();
+        };
         let workspace = match crate::document_sets::Workspace::load(&root) {
             Ok(workspace) if workspace.exists => workspace,
             Ok(_) => return self.clone(),
-            Err(_) => return Self { configured:false, code:vec![], ..self.clone() },
+            Err(_) => {
+                return Self {
+                    configured: false,
+                    code: vec![],
+                    ..self.clone()
+                }
+            }
         };
         // Match the selected store, never the project-wide union of Source roles.
-        workspace.sets.iter().filter_map(|set| workspace.resolve(Some(&set.id)).ok())
+        workspace
+            .sets
+            .iter()
+            .filter_map(|set| workspace.resolve(Some(&set.id)).ok())
             .find(|project| project.out == store.out)
             .map(|project| Self::resolve(&project))
-            .unwrap_or_else(|| Self { configured:false, code:vec![], ..self.clone() })
+            .unwrap_or_else(|| Self {
+                configured: false,
+                code: vec![],
+                ..self.clone()
+            })
     }
     pub fn resolve(proj: &crate::project::Project) -> GenSettings {
         let deliverable = match &proj.gen_deliverable {
@@ -70,11 +85,19 @@ impl GenSettings {
     // Placeholder for sessions with no project (benchmark cases). Gen tools are absent
     // from those toolsets, so the path is never read.
     pub fn allows_source(&self, relative: &str) -> bool {
-        let Ok(w)=crate::document_sets::Workspace::load(&self.deliverable) else {return false;};
-        if !w.exists {return true;}
-        self.configured && crate::document_sets::safe_relative(&self.deliverable,relative)
-            && crate::document_sets::included(&self.code,relative)
-            && !w.sets.iter().any(|s|crate::document_sets::included(&s.docs,relative))
+        let Ok(w) = crate::document_sets::Workspace::load(&self.deliverable) else {
+            return false;
+        };
+        if !w.exists {
+            return true;
+        }
+        self.configured
+            && crate::document_sets::safe_relative(&self.deliverable, relative)
+            && crate::document_sets::included(&self.code, relative)
+            && !w
+                .sets
+                .iter()
+                .any(|s| crate::document_sets::included(&s.docs, relative))
     }
     pub fn from_out(out: &Path) -> GenSettings {
         GenSettings {
@@ -295,10 +318,17 @@ impl Medium {
         if self.is_built() {
             STEPS.fill(
                 "medium-line-built",
-                &[("form", &self.form), ("toolchain", &self.toolchain), ("artifact", &self.artifact)],
+                &[
+                    ("form", &self.form),
+                    ("toolchain", &self.toolchain),
+                    ("artifact", &self.artifact),
+                ],
             )
         } else {
-            STEPS.fill("medium-line-written", &[("form", &self.form), ("toolchain", &self.toolchain)])
+            STEPS.fill(
+                "medium-line-written",
+                &[("form", &self.form), ("toolchain", &self.toolchain)],
+            )
         }
     }
 }
@@ -338,8 +368,13 @@ pub struct BuildRun {
 // Run the deliverable's build once and record what happened. Ok(()) when there is no
 // build to run or it produced everything it promised; the error is what a reader
 // needs to see. Mirrors docs/consumers/gen.md#the-build.
-pub fn run_build(out: &Path, gs: &GenSettings, trace: &crate::session::Trace, label: &str) -> Result<(),String> {
-    run_build_receipt(out,gs,trace,label).map(|_|())
+pub fn run_build(
+    out: &Path,
+    gs: &GenSettings,
+    trace: &crate::session::Trace,
+    label: &str,
+) -> Result<(), String> {
+    run_build_receipt(out, gs, trace, label).map(|_| ())
 }
 
 pub(crate) fn run_build_receipt(
@@ -347,38 +382,51 @@ pub(crate) fn run_build_receipt(
     gs: &GenSettings,
     trace: &crate::session::Trace,
     label: &str,
-) -> Result<Option<(String,String,Value)>, String> {
+) -> Result<Option<(String, String, Value)>, String> {
     let Some(b) = Ledger::load(out).build.clone() else {
         return Ok(None);
     };
     if let Some(id) = b.run.strip_prefix("task:") {
         let root = crate::task_runtime::project_root(out)?;
         let ledger = Ledger::load(out);
-        let files: Vec<String> = ledger.entities.values().flat_map(|row| row.files.iter().cloned())
-            .chain(ledger.support.iter().cloned()).collect();
-        let inputs = hash_hex(&json!({"run":b.run,"cwd":b.cwd,"produces":b.produces,
-            "sources":hash_files(gs,&files)}).to_string());
-        let (run_id, result) = crate::task_runtime::execute_with_key(&root, id,
-            &format!("build:{label}:{}:{inputs}", out.display()))?;
+        let files: Vec<String> = ledger
+            .entities
+            .values()
+            .flat_map(|row| row.files.iter().cloned())
+            .chain(ledger.support.iter().cloned())
+            .collect();
+        let inputs = hash_hex(
+            &json!({"run":b.run,"cwd":b.cwd,"produces":b.produces,
+            "sources":hash_files(gs,&files)})
+            .to_string(),
+        );
+        let (run_id, result) = crate::task_runtime::execute_with_key(
+            &root,
+            id,
+            &format!("build:{label}:{}:{inputs}", out.display()),
+        )?;
         let success = result["status"] == "succeeded" && result["complete"] == true;
         if !success {
-            record_build_run(out, false, result["log"].as_str().unwrap_or("No log output"));
+            record_build_run(
+                out,
+                false,
+                result["log"].as_str().unwrap_or("No log output"),
+            );
             return Err("Build task did not complete successfully. Inspect its run log.".into());
         }
         check_build_products(out, gs, &b)?;
-        return Ok(Some((id.to_owned(),run_id,result)));
+        return Ok(Some((id.to_owned(), run_id, result)));
     }
     let cwd = gs.deliverable.join(&b.cwd);
     trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
-    let done = crate::sys::run_shell(&b.run, &cwd)
-        .map_err(|e| {
-            format!(
-                "build `{}` could not start in {}: {}",
-                b.run,
-                cwd.display(),
-                e
-            )
-        })?;
+    let done = crate::sys::run_shell(&b.run, &cwd).map_err(|e| {
+        format!(
+            "build `{}` could not start in {}: {}",
+            b.run,
+            cwd.display(),
+            e
+        )
+    })?;
     if !done.success {
         let mut evidence = String::from_utf8_lossy(&done.stdout).to_string();
         evidence.push_str(&String::from_utf8_lossy(&done.stderr));
@@ -461,7 +509,9 @@ pub struct EntityGen {
     pub record_sequence: u64,
 }
 
-fn record_sequence_is_zero(sequence: &u64) -> bool { *sequence == 0 }
+fn record_sequence_is_zero(sequence: &u64) -> bool {
+    *sequence == 0
+}
 
 // Generated mass attached to no requirement: owned files no row names, significant
 // lines outside every site's run, and their share of the entity's significant lines.
@@ -539,8 +589,7 @@ pub struct TestRef {
 }
 
 fn same_test_ref(a: &TestRef, b: &TestRef) -> bool {
-    same_test_artifact(a, b)
-        && a.run == b.run && a.cwd == b.cwd
+    same_test_artifact(a, b) && a.run == b.run && a.cwd == b.cwd
 }
 
 fn same_test_artifact(a: &TestRef, b: &TestRef) -> bool {
@@ -586,8 +635,10 @@ pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
 fn strip_markers_in(text: &str, set_id: Option<&str>) -> (String, Vec<RawSite>) {
     // `(?:req:)+` folds a doubled prefix (`req:req:orders-1`, a model pasting the
     // full id after a template's literal `req:`) into one clean site.
-    let re = regex::Regex::new(r"(?:req:)+((?:ds_[A-Za-z0-9_-]+::)?[A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})")
-        .unwrap();
+    let re = regex::Regex::new(
+        r"(?:req:)+((?:ds_[A-Za-z0-9_-]+::)?[A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})",
+    )
+    .unwrap();
     let mut clean: Vec<&str> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
     let mut sites: Vec<RawSite> = Vec::new();
@@ -693,7 +744,8 @@ impl Ledger {
     // cache is keyed on the paths and the texts, so any write reads fresh.
     pub fn load(out: &Path) -> Ledger {
         use std::hash::{Hash, Hasher};
-        static CACHE: std::sync::Mutex<Option<(PathBuf, u64, Ledger)>> = std::sync::Mutex::new(None);
+        static CACHE: std::sync::Mutex<Option<(PathBuf, u64, Ledger)>> =
+            std::sync::Mutex::new(None);
         let path = Self::path(out);
         let texts: Vec<(PathBuf, String)> = Self::files(out)
             .into_iter()
@@ -735,7 +787,9 @@ impl Ledger {
                     Err(e) => return unreadable(format!("{}: {}", p.display(), e)),
                 };
                 let id = match &mut v {
-                    serde_norway::Value::Mapping(m) => m.remove("id").and_then(|i| i.as_str().map(String::from)),
+                    serde_norway::Value::Mapping(m) => {
+                        m.remove("id").and_then(|i| i.as_str().map(String::from))
+                    }
                     _ => None,
                 };
                 let Some(id) = id else {
@@ -782,7 +836,11 @@ impl Ledger {
     pub fn save(&self, out: &Path) -> Result<(), String> {
         let path = Self::path(out);
         if let Some(why) = &self.unreadable {
-            let e = format!("refusing to write {}: the ledger did not load: {}", path.display(), why);
+            let e = format!(
+                "refusing to write {}: the ledger did not load: {}",
+                path.display(),
+                why
+            );
             eprintln!("[jazyk] error: {}", e);
             return Err(e);
         }
@@ -792,7 +850,9 @@ impl Ledger {
                 return;
             }
             if let Err(e) = crate::store::write_atomic(p, text.as_bytes()) {
-                errors.borrow_mut().push(format!("cannot write {}: {}", p.display(), e));
+                errors
+                    .borrow_mut()
+                    .push(format!("cannot write {}: {}", p.display(), e));
             }
         };
         let row = |id: &str, value: serde_norway::Result<serde_norway::Value>| -> Option<String> {
@@ -825,7 +885,11 @@ impl Ledger {
         }
         match serde_norway::to_string(&wide) {
             Ok(t) => write(&path, &t),
-            Err(e) => errors.borrow_mut().push(format!("cannot serialize {}: {}", path.display(), e)),
+            Err(e) => {
+                errors
+                    .borrow_mut()
+                    .push(format!("cannot serialize {}: {}", path.display(), e))
+            }
         }
         for kind in ["entities", "requirements"] {
             for p in Self::row_files(out, kind) {
@@ -871,14 +935,24 @@ impl Ledger {
                     let mut warned = false;
                     while fs2::FileExt::try_lock_exclusive(&file).is_err() {
                         if !warned && started.elapsed() >= std::time::Duration::from_secs(10) {
-                            eprintln!("[jazyk] waiting for the ledger writer holding {}", path.display());
+                            eprintln!(
+                                "[jazyk] waiting for the ledger writer holding {}",
+                                path.display()
+                            );
                             warned = true;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    return LedgerLock { path, file: Some(file) };
+                    return LedgerLock {
+                        path,
+                        file: Some(file),
+                    };
                 }
-                Err(e) => eprintln!("[jazyk] warning: cannot open {}: {}; writing the ledger without the lock", path.display(), e),
+                Err(e) => eprintln!(
+                    "[jazyk] warning: cannot open {}: {}; writing the ledger without the lock",
+                    path.display(),
+                    e
+                ),
             }
         }
         let _ = nested;
@@ -891,7 +965,10 @@ impl Ledger {
 
     // Load, change, and save under the ledger lock. The change's error, or a failed
     // save, is the result; nothing is reported as recorded that did not land.
-    pub fn update<R>(out: &Path, change: impl FnOnce(&mut Ledger) -> Result<R, String>) -> Result<R, String> {
+    pub fn update<R>(
+        out: &Path,
+        change: impl FnOnce(&mut Ledger) -> Result<R, String>,
+    ) -> Result<R, String> {
         let _lock = Self::lock(out);
         let mut ledger = Self::load(out);
         let r = change(&mut ledger)?;
@@ -955,21 +1032,47 @@ pub(crate) fn criteria_front_matter(rid: &str, criterion: Option<&str>, statemen
     let mut fields = serde_json::Map::new();
     fields.insert("requirement".into(), json!(rid));
     fields.insert("hash".into(), json!(hash_hex(statement)));
-    if let Some(cid) = criterion { fields.insert("criterion".into(), json!(cid)); }
-    format!("---\n{}---\n", serde_norway::to_string(&fields).expect("criteria metadata serializes"))
+    if let Some(cid) = criterion {
+        fields.insert("criterion".into(), json!(cid));
+    }
+    format!(
+        "---\n{}---\n",
+        serde_norway::to_string(&fields).expect("criteria metadata serializes")
+    )
 }
 
-pub(crate) fn validate_criteria_file(store: &Store, rid: &str, criterion: Option<&str>, path: &Path) -> Result<(), String> {
+pub(crate) fn validate_criteria_file(
+    store: &Store,
+    rid: &str,
+    criterion: Option<&str>,
+    path: &Path,
+) -> Result<(), String> {
     use pulldown_cmark::{Event, MetadataBlockKind, Options, Parser, Tag, TagEnd};
     #[derive(Deserialize)]
-    struct Header { requirement: String, hash: String, #[serde(default)] criterion: Option<String> }
+    struct Header {
+        requirement: String,
+        hash: String,
+        #[serde(default)]
+        criterion: Option<String>,
+    }
     let check = || -> Result<(), String> {
-        if !path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e, "md" | "markdown")) {
+        if !path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e, "md" | "markdown"))
+        {
             return Err("use a separate Markdown criteria file, not executable test source".into());
         }
         let content = crate::vfs::read_to_string(path).map_err(|e| e.to_string())?;
-        let mut parser = Parser::new_ext(&content, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS).into_offset_iter();
-        if !matches!(parser.next(), Some((Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle)), _))) {
+        let mut parser = Parser::new_ext(&content, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
+            .into_offset_iter();
+        if !matches!(
+            parser.next(),
+            Some((
+                Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle)),
+                _
+            ))
+        ) {
             return Err("YAML front matter is required".into());
         }
         let mut yaml = String::new();
@@ -977,34 +1080,67 @@ pub(crate) fn validate_criteria_file(store: &Store, rid: &str, criterion: Option
         for (event, range) in parser {
             match event {
                 Event::Text(text) => yaml.push_str(&text),
-                Event::End(TagEnd::MetadataBlock(_)) => { end = Some(range.end); break; }
+                Event::End(TagEnd::MetadataBlock(_)) => {
+                    end = Some(range.end);
+                    break;
+                }
                 _ => {}
             }
         }
-        let header: Header = serde_norway::from_str(&yaml).map_err(|e| format!("invalid criteria metadata: {e}"))?;
+        let header: Header =
+            serde_norway::from_str(&yaml).map_err(|e| format!("invalid criteria metadata: {e}"))?;
         let local_id = |id: &str| -> Result<String, String> {
             let (set, local) = crate::webapi::sets::unqualify(id);
-            if set.as_deref().is_some_and(|set| Some(set) != store.out.file_name().and_then(|s| s.to_str())) {
-                return Err("criteria IDs belong to a different document set; copy criteriaFrontMatter".into());
+            if set
+                .as_deref()
+                .is_some_and(|set| Some(set) != store.out.file_name().and_then(|s| s.to_str()))
+            {
+                return Err(
+                    "criteria IDs belong to a different document set; copy criteriaFrontMatter"
+                        .into(),
+                );
             }
             Ok(store.resolve_id(&local).to_string())
         };
-        if local_id(&header.requirement)? != rid { return Err(format!("requirement must be {rid}")); }
+        if local_id(&header.requirement)? != rid {
+            return Err(format!("requirement must be {rid}"));
+        }
         let cid = header.criterion.as_deref().map(local_id).transpose()?;
-        if criterion.is_some() && cid.as_deref() != criterion {
-            return Err(format!("criterion must be {}", criterion.unwrap()));
+        if let Some(c) = criterion.filter(|c| cid.as_deref() != Some(*c)) {
+            return Err(format!("criterion must be {}", c));
         }
         let statement = if let Some(cid) = cid.as_deref() {
-            &store.graph.criteria.get(cid).filter(|c| c.requirement == rid)
-                .ok_or("criterion is not owned by this requirement")?.statement
+            &store
+                .graph
+                .criteria
+                .get(cid)
+                .filter(|c| c.requirement == rid)
+                .ok_or("criterion is not owned by this requirement")?
+                .statement
         } else {
-            &store.graph.requirements.get(rid).ok_or("unknown requirement")?.statement
+            &store
+                .graph
+                .requirements
+                .get(rid)
+                .ok_or("unknown requirement")?
+                .statement
         };
-        if header.hash != hash_hex(statement) { return Err("hash must match the current statement; copy criteriaFrontMatter".into()); }
-        let body = content.get(end.ok_or("unclosed criteria front matter")?..).unwrap_or_default().trim();
+        if header.hash != hash_hex(statement) {
+            return Err("hash must match the current statement; copy criteriaFrontMatter".into());
+        }
+        let body = content
+            .get(end.ok_or("unclosed criteria front matter")?..)
+            .unwrap_or_default()
+            .trim();
         let words: Vec<_> = body.split(|c: char| !c.is_alphabetic()).collect();
-        if body.is_empty() || !["PASS", "FAIL"].iter().all(|expected| words.iter().any(|word| word.eq_ignore_ascii_case(expected))) {
-            return Err("the body must contain inspection steps and explicit PASS and FAIL outcomes".into());
+        if body.is_empty()
+            || !["PASS", "FAIL"]
+                .iter()
+                .all(|expected| words.iter().any(|word| word.eq_ignore_ascii_case(expected)))
+        {
+            return Err(
+                "the body must contain inspection steps and explicit PASS and FAIL outcomes".into(),
+            );
         }
         Ok(())
     };
@@ -1067,21 +1203,32 @@ pub fn hash_implementing(out: &Path, gs: &GenSettings, files: &[String]) -> Stri
 
 // Scope is independent of byte freshness. Test artifacts and build outputs never
 // count as implementation, including legacy manifests that named them in files.
-pub(crate) fn implementation_outside_source(gs: &GenSettings, ledger: &Ledger, files: &[String]) -> bool {
+pub(crate) fn implementation_outside_source(
+    gs: &GenSettings,
+    ledger: &Ledger,
+    files: &[String],
+) -> bool {
     let artifacts = test_artifacts(ledger);
-    implementing_files(ledger, files).iter().any(|file| {
-        !artifacts.contains(file) && !gs.allows_source(file)
-    })
+    implementing_files(ledger, files)
+        .iter()
+        .any(|file| !artifacts.contains(file) && !gs.allows_source(file))
 }
 
 // A recorded binding must still describe this set's current deliverable. Internal
 // LLM criteria remain metadata; external criteria and programmatic tests are Source.
-pub(crate) fn binding_source_current(out: &Path, gs: &GenSettings, ledger: &Ledger, row: &ReqRow) -> bool {
+pub(crate) fn binding_source_current(
+    out: &Path,
+    gs: &GenSettings,
+    ledger: &Ledger,
+    row: &ReqRow,
+) -> bool {
     !implementation_outside_source(gs, ledger, &row.files)
-        && std::iter::once(&row.test).chain(row.tests.values().map(|test| &test.test)).all(|test| {
-            (test.kind == "llm" && artifact_path(out, gs, test).starts_with(out.join("gen")))
-                || gs.allows_source(&test.artifact)
-        })
+        && std::iter::once(&row.test)
+            .chain(row.tests.values().map(|test| &test.test))
+            .all(|test| {
+                (test.kind == "llm" && artifact_path(out, gs, test).starts_with(out.join("gen")))
+                    || gs.allows_source(&test.artifact)
+            })
 }
 
 // A deliverable-relative path as the ledger records it: forward slashes, no leading
@@ -1109,9 +1256,9 @@ pub fn confine_rel(path: &str) -> Result<String, String> {
             "" | "." => continue,
             ".." => {
                 return Err(format!(
-                    "`{}` climbs out of the deliverable with `..`; every recorded path stays under it",
-                    path.trim()
-                ))
+                "`{}` climbs out of the deliverable with `..`; every recorded path stays under it",
+                path.trim()
+            ))
             }
             s => parts.push(s),
         }
@@ -1132,7 +1279,11 @@ pub fn unroot(deliverable: &Path, rel: &str) -> Option<String> {
         .vcanonicalize()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .or_else(|| deliverable.file_name().map(|n| n.to_string_lossy().to_string()))?;
+        .or_else(|| {
+            deliverable
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+        })?;
     if name.is_empty() {
         return None;
     }
@@ -1162,20 +1313,31 @@ pub fn unroot_note(from: &str, to: &str) -> String {
 // stripped and noted.
 pub fn confine_in(gs: &GenSettings, path: &str, notes: &mut Vec<String>) -> Result<String, String> {
     let rel = confine_rel(path)?;
-    let relative=match unroot(&gs.deliverable, &rel) {
+    let relative = match unroot(&gs.deliverable, &rel) {
         Some(under) if !under.is_empty() => {
             let note = unroot_note(&rel, &under);
-            if !notes.contains(&note) {notes.push(note);}
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
             under
         }
         _ => rel,
     };
-    if !gs.allows_source(&relative) {return Err(format!("{} is outside this document set's source selection or belongs to documents",relative));}
+    if !gs.allows_source(&relative) {
+        return Err(format!(
+            "{} is outside this document set's source selection or belongs to documents",
+            relative
+        ));
+    }
     Ok(relative)
 }
 
 // A working directory the same way; the restated root alone is the deliverable.
-pub fn confine_cwd_in(gs: &GenSettings, cwd: &str, notes: &mut Vec<String>) -> Result<String, String> {
+pub fn confine_cwd_in(
+    gs: &GenSettings,
+    cwd: &str,
+    notes: &mut Vec<String>,
+) -> Result<String, String> {
     let c = confine_cwd(cwd)?;
     if c == "." {
         return Ok(c);
@@ -1264,7 +1426,6 @@ pub fn confine_cwd(cwd: &str) -> Result<String, String> {
     }
     confine_rel(c)
 }
-
 
 fn dedup_keep_order(files: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
@@ -1362,7 +1523,10 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
 
 // `fact_hash` with the entity's sorted requirement ids already in hand.
 pub fn fact_hash_over(store: &Store, id: &str, rids: &[String]) -> String {
-    assets::fingerprint(&fact_hash_base(store, id, rids), &assets::referenced_assets(store, id, rids))
+    assets::fingerprint(
+        &fact_hash_base(store, id, rids),
+        &assets::referenced_assets(store, id, rids),
+    )
 }
 
 fn fact_hash_base(store: &Store, id: &str, rids: &[String]) -> String {
@@ -1494,18 +1658,29 @@ pub async fn decide_medium(
     commands.dedup();
     if !commands.is_empty() {
         tree.push_str("\n\n");
-        tree.push_str(&STEPS.fill(
-            "decide-commands",
-            &[(
-                "commands",
-                &commands.iter().take(10).map(|c| format!("- {}", c)).collect::<Vec<_>>().join("\n"),
-            )],
-        ));
+        tree.push_str(
+            &STEPS.fill(
+                "decide-commands",
+                &[(
+                    "commands",
+                    &commands
+                        .iter()
+                        .take(10)
+                        .map(|c| format!("- {}", c))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )],
+            ),
+        );
     }
     let system = STEPS.get("decide-system");
     let user = STEPS.fill(
         "decide-user",
-        &[("statements", &body), ("entities", &entities.join(", ")), ("tree", &tree)],
+        &[
+            ("statements", &body),
+            ("entities", &entities.join(", ")),
+            ("tree", &tree),
+        ],
     );
     let mut last = String::new();
     for attempt in 0..2 {
@@ -1514,16 +1689,18 @@ pub async fn decide_medium(
         } else {
             STEPS.fill("decide-retry", &[("request", &user), ("reason", &last)])
         };
-        let reply = runner.ask(
-            system,
-            &ask,
-            "gen medium",
-            if attempt == 0 {
-                "decide"
-            } else {
-                "decide retry"
-            },
-        ).await?;
+        let reply = runner
+            .ask(
+                system,
+                &ask,
+                "gen medium",
+                if attempt == 0 {
+                    "decide"
+                } else {
+                    "decide retry"
+                },
+            )
+            .await?;
         // A rate limit relayed as a reply is the endpoint's answer, not a decision:
         // say so instead of blaming an empty field (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
         if crate::reconcile::rate_limited(&reply) {
@@ -1635,7 +1812,9 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
     let binding_owed: std::collections::BTreeSet<String> = crate::bind::pending(store, gs)
-        .iter().filter_map(|row| row["requirement"].as_str().map(String::from)).collect();
+        .iter()
+        .filter_map(|row| row["requirement"].as_str().map(String::from))
+        .collect();
     let by_entity = ReqsByEntity::build(store);
     let scan = assets::AssetScan::default();
     let mut out = Vec::new();
@@ -1647,14 +1826,24 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         let slug = slug_of(id);
         let referenced_assets = assets::referenced_assets_in(&scan, store, id, rids);
         let hash = assets::fingerprint(&fact_hash_base(store, id, rids), &referenced_assets);
-        let incomplete: Vec<&String> = rids.iter().filter(|rid| binding_owed.contains(*rid)).collect();
+        let incomplete: Vec<&String> = rids
+            .iter()
+            .filter(|rid| binding_owed.contains(*rid))
+            .collect();
         let unimplemented: Vec<&String> = rids
             .iter()
             .filter(|rid| {
                 ledger
                     .requirements
                     .get(*rid)
-                    .map(|row| matches!(crate::verify::status_with(store, rid, row, gs, &ledger).0.as_str(), "unimplemented" | "partial"))
+                    .map(|row| {
+                        matches!(
+                            crate::verify::status_with(store, rid, row, gs, &ledger)
+                                .0
+                                .as_str(),
+                            "unimplemented" | "partial"
+                        )
+                    })
                     .unwrap_or(false)
             })
             .collect();
@@ -1690,10 +1879,14 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             None if !incomplete.is_empty() => {
                 ("incomplete-bindings".to_string(), json!(incomplete))
             }
-            None if referenced_assets.iter().any(|asset| asset.is_input()) => {
-                ("referenced-inputs".to_string(), json!(referenced_assets.iter()
-                    .filter(|asset| asset.is_input()).map(|asset| &asset.path).collect::<Vec<_>>()))
-            }
+            None if referenced_assets.iter().any(|asset| asset.is_input()) => (
+                "referenced-inputs".to_string(),
+                json!(referenced_assets
+                    .iter()
+                    .filter(|asset| asset.is_input())
+                    .map(|asset| &asset.path)
+                    .collect::<Vec<_>>()),
+            ),
             None => continue,
         };
         out.push(json!({
@@ -1713,9 +1906,16 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
 pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Result<usize, String> {
     let id = store.resolve_id(id).to_string();
     if !store.graph.entities.contains_key(&id) {
-        return Err(format!("`{}` is not in the graph; nothing generates it", id));
+        return Err(format!(
+            "`{}` is not in the graph; nothing generates it",
+            id
+        ));
     }
-    assets::ensure_available(&assets::referenced_assets(store, &id, &reqs_of_sorted(store, &id)))?;
+    assets::ensure_available(&assets::referenced_assets(
+        store,
+        &id,
+        &reqs_of_sorted(store, &id),
+    ))?;
     let ledger = Ledger::load(&store.out);
     let Some(e) = ledger.entities.get(&slug_of(&id)) else {
         return Err(format!(
@@ -1755,7 +1955,10 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     let artifacts = test_artifacts(&ledger);
     let outputs = build_outputs(&ledger);
     let implementing = |f: &String| {
-        !artifacts.contains(f) && !outputs.contains(f) && gs.allows_source(f) && gs.deliverable.join(f).vis_file()
+        !artifacts.contains(f)
+            && !outputs.contains(f)
+            && gs.allows_source(f)
+            && gs.deliverable.join(f).vis_file()
     };
     if !e.files.iter().any(&implementing) {
         let missing: Vec<String> = reqs_of_sorted(store, &id)
@@ -1775,8 +1978,10 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
             ));
         }
     }
-    let missing_tests: Vec<String> = reqs_of_sorted(store, &id).into_iter()
-        .filter(|rid| crate::bind::gate(store, gs, rid).is_err()).collect();
+    let missing_tests: Vec<String> = reqs_of_sorted(store, &id)
+        .into_iter()
+        .filter(|rid| crate::bind::gate(store, gs, rid).is_err())
+        .collect();
     if !missing_tests.is_empty() {
         return Err(format!(
             "required test bindings are missing or stale for {}; record_generation with each current requirement and criterion test",
@@ -1794,8 +1999,10 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
                         (row.test.kind == "programmatic"
                             && crate::verify::status_with(store, rid, row, gs, &ledger)
                                 == ("unverified".to_string(), "never-run".to_string()))
-                            || row.tests.values().any(|test| test.test.kind == "programmatic"
-                                && (test.verdict == "none" || test.last_run.is_none()))
+                            || row.tests.values().any(|test| {
+                                test.test.kind == "programmatic"
+                                    && (test.verdict == "none" || test.last_run.is_none())
+                            })
                     })
                     .unwrap_or(false)
             })
@@ -1815,7 +2022,10 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
 // Mirrors docs/consumers/gen.md#incremental-regeneration.
 pub fn skip_reason(store: &Store, gs: &GenSettings, id: &str) -> String {
     if let Some(row) = pending(store, gs).iter().find(|row| row["entity"] == id) {
-        return format!("generation work remains ({})", row["reason"].as_str().unwrap_or("incomplete"));
+        return format!(
+            "generation work remains ({})",
+            row["reason"].as_str().unwrap_or("incomplete")
+        );
     }
     let ledger = Ledger::load(&store.out);
     if ledger.entities.contains_key(&slug_of(id)) {
@@ -2147,11 +2357,18 @@ pub fn mark(
     let support: Vec<String> =
         confine_list_in(gs, &str_list(&manifest["supportFiles"]), &mut path_notes)
             .map_err(|e| format!("supportFiles: {}", e))?;
-    let build_produces: Vec<String> =
-        confine_list_in(gs, &str_list(&manifest["build"]["produces"]), &mut path_notes)
-            .map_err(|e| format!("build.produces: {}", e))?;
-    let build_cwd = confine_cwd_in(gs, manifest["build"]["cwd"].as_str().unwrap_or("."), &mut path_notes)
-        .map_err(|e| format!("build.cwd: {}", e))?;
+    let build_produces: Vec<String> = confine_list_in(
+        gs,
+        &str_list(&manifest["build"]["produces"]),
+        &mut path_notes,
+    )
+    .map_err(|e| format!("build.produces: {}", e))?;
+    let build_cwd = confine_cwd_in(
+        gs,
+        manifest["build"]["cwd"].as_str().unwrap_or("."),
+        &mut path_notes,
+    )
+    .map_err(|e| format!("build.cwd: {}", e))?;
 
     // Validate the invented choices before any side effect: the scope grades the
     // severity, and the tool layer stages one invented-choice diagnostic per entry
@@ -2189,17 +2406,37 @@ pub fn mark(
             let Some(r) = store.graph.requirements.get(&rid) else {
                 return Err(format!("unknown requirement `{}` in manifest", rid));
             };
-            let criterion = t["criterion"].as_str().filter(|id| !id.is_empty())
+            let criterion = t["criterion"]
+                .as_str()
+                .filter(|id| !id.is_empty())
                 .map(|id| store.resolve_id(id).to_string());
             if let Some(cid) = &criterion {
-                if !store.graph.criteria.get(cid).is_some_and(|criterion| criterion.requirement == rid) {
+                if !store
+                    .graph
+                    .criteria
+                    .get(cid)
+                    .is_some_and(|criterion| criterion.requirement == rid)
+                {
                     return Err(format!("criterion `{cid}` is not a criterion of `{rid}`"));
                 }
             }
-            if rows.iter().any(|(previous, cid, _, _)| previous == &rid && cid == &criterion) {
-                return Err(format!("duplicate test declaration for `{rid}`{}", criterion.as_deref().map(|cid| format!(" criterion `{cid}`")).unwrap_or_default()));
+            if rows
+                .iter()
+                .any(|(previous, cid, _, _)| previous == &rid && cid == &criterion)
+            {
+                return Err(format!(
+                    "duplicate test declaration for `{rid}`{}",
+                    criterion
+                        .as_deref()
+                        .map(|cid| format!(" criterion `{cid}`"))
+                        .unwrap_or_default()
+                ));
             }
-            let kind = t["kind"].as_str().unwrap_or("programmatic").trim().to_string();
+            let kind = t["kind"]
+                .as_str()
+                .unwrap_or("programmatic")
+                .trim()
+                .to_string();
             if kind != "programmatic" && kind != "llm" {
                 return Err(format!(
                     "test row for {} has kind `{}`; a test is `programmatic` (a command runs it) or `llm` (a judgment with a criteria file)",
@@ -2252,15 +2489,15 @@ pub fn mark(
                     if kind == "llm" { " or the out directory's gen/" } else { "" }
                 ));
             }
-            if kind == "programmatic"
-                && !crate::verify::artifact_names(&path, &test.name)
-            {
+            if kind == "programmatic" && !crate::verify::artifact_names(&path, &test.name) {
                 return Err(format!(
                     "test row for {} declares test `{}` but `{}` does not contain that name; artifact must name the test source, not the generated JUnit report; match name to the test in that source and the emitted report case",
                     rid, test.name, test.artifact
                 ));
             }
-            if kind == "llm" { validate_criteria_file(store, &rid, criterion.as_deref(), &path)?; }
+            if kind == "llm" {
+                validate_criteria_file(store, &rid, criterion.as_deref(), &path)?;
+            }
             // The row's own `files`; an empty list takes the default below.
             let row_files: Vec<String> =
                 confine_list_in(gs, &str_list(&t["files"]), &mut path_notes)
@@ -2272,27 +2509,40 @@ pub fn mark(
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     let _lock = Ledger::lock(&store.out);
     let pre = Ledger::load(&store.out);
-    let record_sequence = pre.entities.get(&slug).map(|row| row.record_sequence).unwrap_or(0)
-        .checked_add(1).ok_or("The entity generation record sequence is exhausted; no record was changed.")?;
+    let record_sequence = pre
+        .entities
+        .get(&slug)
+        .map(|row| row.record_sequence)
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or("The entity generation record sequence is exhausted; no record was changed.")?;
     for (rid, criterion, test, _) in &rows {
         let Some(cid) = criterion else {
             if let Some(row) = pre.requirements.get(rid) {
                 let path = artifact_path(&store.out, gs, &row.test);
                 if row.hashes.requirement == hash_hex(&store.graph.requirements[rid].statement)
-                    && row.hashes.test == hash_file(&path) && path.vis_file()
-                    && ((row.test.kind == "llm" && path.starts_with(store.out.join("gen"))) || gs.allows_source(&row.test.artifact))
-                    && !same_test_artifact(&row.test, test) {
+                    && row.hashes.test == hash_file(&path)
+                    && path.vis_file()
+                    && ((row.test.kind == "llm" && path.starts_with(store.out.join("gen")))
+                        || gs.allows_source(&row.test.artifact))
+                    && !same_test_artifact(&row.test, test)
+                {
                     return Err(format!("requirement `{rid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge"));
                 }
             }
             continue;
         };
-        let Some(prior) = pre.requirements.get(rid).and_then(|row| row.tests.get(cid)) else { continue };
+        let Some(prior) = pre.requirements.get(rid).and_then(|row| row.tests.get(cid)) else {
+            continue;
+        };
         let path = artifact_path(&store.out, gs, &prior.test);
         let current = prior.criterion_hash == hash_hex(&store.graph.criteria[cid].statement)
-            && prior.test_hash == hash_file(&path) && path.vis_file()
-            && ((prior.test.kind == "llm" && path.starts_with(store.out.join("gen"))) || gs.allows_source(&prior.test.artifact))
-            && (prior.test.kind != "programmatic" || crate::verify::artifact_names(&path, &prior.test.name));
+            && prior.test_hash == hash_file(&path)
+            && path.vis_file()
+            && ((prior.test.kind == "llm" && path.starts_with(store.out.join("gen")))
+                || gs.allows_source(&prior.test.artifact))
+            && (prior.test.kind != "programmatic"
+                || crate::verify::artifact_names(&path, &prior.test.name));
         if current && !same_test_artifact(&prior.test, test) {
             return Err(format!("criterion `{cid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge"));
         }
@@ -2379,7 +2629,9 @@ pub fn mark(
     // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
     // Every rejection runs before the strip below rewrites files: a rejected record
     // leaves the markers in place for the retry.
-    let manifest_build = manifest["build"]["run"].as_str().is_some_and(|r| !r.trim().is_empty());
+    let manifest_build = manifest["build"]["run"]
+        .as_str()
+        .is_some_and(|r| !r.trim().is_empty());
     if pre.build.is_none() && !manifest_build {
         if let Some(m) = pre.medium.as_ref().filter(|m| m.is_built()) {
             return Err(format!(
@@ -2397,8 +2649,10 @@ pub fn mark(
     // mangled id) stays in the file and anchors nothing; name each one, so the row
     // never reads green over a broken wire format.
     // Mirrors docs/consumers/gen.md#traceability.
-    let malformed_re =
-        regex::Regex::new(r"req:(?:ds_[A-Za-z0-9_-]+::)?[A-Za-z0-9][A-Za-z0-9_-]*\s+hash:[0-9a-fA-F]{4,}").unwrap();
+    let malformed_re = regex::Regex::new(
+        r"req:(?:ds_[A-Za-z0-9_-]+::)?[A-Za-z0-9][A-Za-z0-9_-]*\s+hash:[0-9a-fA-F]{4,}",
+    )
+    .unwrap();
     let mut marker_warnings: Vec<String> = Vec::new();
     for f in &files {
         let path = gs.deliverable.join(f);
@@ -2444,33 +2698,30 @@ pub fn mark(
     // One build per deliverable: the first task that needs one establishes it, later
     // tasks receive it in their package and reuse it.
     // Mirrors docs/consumers/gen.md#the-build.
+    // A built medium without a build was rejected before the strip.
     if ledger.build.is_none() {
-        match manifest["build"]["run"]
+        if let Some(run) = manifest["build"]["run"]
             .as_str()
             .map(str::trim)
             .filter(|r| !r.is_empty())
         {
-            Some(run) => {
-                let mut produces = build_produces.clone();
-                // A built medium names its artifact; a build that forgets to list it
-                // would pass its own check while producing nothing.
-                if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
-                    if !produces
-                        .iter()
-                        .any(|p| p.trim_start_matches("./") == m.artifact)
-                    {
-                        produces.push(m.artifact.clone());
-                    }
+            let mut produces = build_produces.clone();
+            // A built medium names its artifact; a build that forgets to list it
+            // would pass its own check while producing nothing.
+            if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
+                if !produces
+                    .iter()
+                    .any(|p| p.trim_start_matches("./") == m.artifact)
+                {
+                    produces.push(m.artifact.clone());
                 }
-                ledger.build = Some(Build {
-                    run: run.to_string(),
-                    cwd: build_cwd.clone(),
-                    produces,
-                    last_run: None,
-                });
             }
-            // A built medium without a build was rejected before the strip.
-            None => {}
+            ledger.build = Some(Build {
+                run: run.to_string(),
+                cwd: build_cwd.clone(),
+                produces,
+                last_run: None,
+            });
         }
     }
     for path in &support {
@@ -2499,9 +2750,13 @@ pub fn mark(
             record_sequence,
         },
     );
-    let mut grouped: BTreeMap<String, Vec<(Option<String>, TestRef, Vec<String>)>> = BTreeMap::new();
+    let mut grouped: BTreeMap<String, Vec<(Option<String>, TestRef, Vec<String>)>> =
+        BTreeMap::new();
     for (rid, criterion, test, row_files) in rows {
-        grouped.entry(rid).or_default().push((criterion, test, row_files));
+        grouped
+            .entry(rid)
+            .or_default()
+            .push((criterion, test, row_files));
     }
     let mut seeded = 0;
     // Rows landing over an open error diagnostic: named in the reply and kept in
@@ -2512,29 +2767,49 @@ pub fn mark(
         for (rid, declarations) in grouped {
             let r = &store.graph.requirements[&rid];
             let previous = ledger.requirements.get(&rid).cloned();
-            let mut tests = previous.as_ref().map(|row| row.tests.clone()).unwrap_or_default();
-            tests.retain(|cid, _| store.graph.criteria.get(cid).is_some_and(|criterion| criterion.requirement == rid));
+            let mut tests = previous
+                .as_ref()
+                .map(|row| row.tests.clone())
+                .unwrap_or_default();
+            tests.retain(|cid, _| {
+                store
+                    .graph
+                    .criteria
+                    .get(cid)
+                    .is_some_and(|criterion| criterion.requirement == rid)
+            });
             let mut headline = None;
             let mut row_files = Vec::new();
             for (criterion, test, files) in declarations {
                 for file in files {
-                    if !row_files.contains(&file) { row_files.push(file); }
+                    if !row_files.contains(&file) {
+                        row_files.push(file);
+                    }
                 }
                 if let Some(cid) = criterion {
                     let criterion_hash = hash_hex(&store.graph.criteria[&cid].statement);
                     let test_hash = hash_file(&artifact_path(&store.out, gs, &test));
-                    let existing = tests.get(&cid).filter(|old| old.criterion_hash == criterion_hash
-                        && old.test_hash == test_hash && same_test_ref(&old.test, &test));
+                    let existing = tests.get(&cid).filter(|old| {
+                        old.criterion_hash == criterion_hash
+                            && old.test_hash == test_hash
+                            && same_test_ref(&old.test, &test)
+                    });
                     let value = existing.cloned().unwrap_or_else(|| CritTest {
-                        test, criterion_hash, test_hash, verdict:"none".into(), last_run:None,
-                        exit_code:None, evidence:None,
+                        test,
+                        criterion_hash,
+                        test_hash,
+                        verdict: "none".into(),
+                        last_run: None,
+                        exit_code: None,
+                        evidence: None,
                     });
                     tests.insert(cid, value);
                 } else {
                     headline = Some(test);
                 }
             }
-            let test = headline.or_else(|| tests.values().next().map(|test| test.test.clone()))
+            let test = headline
+                .or_else(|| tests.values().next().map(|test| test.test.clone()))
                 .expect("each grouped row contains a test declaration");
             let hashes = RowHashes {
                 requirement: hash_hex(&r.statement),
@@ -2549,7 +2824,8 @@ pub fn mark(
             // A re-record that changes nothing keeps its verdict: the hashes say the
             // requirement, the test, and the files are the very state the last run
             // judged, and discarding that judgment would punish an idempotent call.
-            let prior = previous.as_ref()
+            let prior = previous
+                .as_ref()
                 .filter(|row| row.hashes == hashes && same_test_ref(&row.test, &test));
             let (verdict, last_run, exit_code, evidence) = match prior {
                 Some(row) => (
@@ -2562,8 +2838,9 @@ pub fn mark(
             };
             // A declaration cannot carry an old verdict onto different source or
             // requirement bytes. The next execution or judgment supplies evidence.
-            if previous.as_ref().is_some_and(|row| row.hashes.files != hashes.files
-                || row.hashes.requirement != hashes.requirement) {
+            if previous.as_ref().is_some_and(|row| {
+                row.hashes.files != hashes.files || row.hashes.requirement != hashes.requirement
+            }) {
                 for test in tests.values_mut() {
                     test.verdict = "none".into();
                     test.last_run = None;
@@ -2578,7 +2855,8 @@ pub fn mark(
                     entity: owner,
                     files: row_files,
                     // An unchanged support promotion has no markers left to strip.
-                    sites: sites_by_rid.remove(&rid)
+                    sites: sites_by_rid
+                        .remove(&rid)
                         .unwrap_or_else(|| prior.map(|row| row.sites.clone()).unwrap_or_default()),
                     test,
                     hashes,
@@ -2731,7 +3009,8 @@ pub fn measure_unattached(ledger: &Ledger, gs: &GenSettings, slug: &str) -> Unat
     } else {
         ((lines as f64 / significant as f64) * 100.0).round() / 100.0
     };
-    let markerless = significant > 0 && e.files.iter().all(|f| !first_site.contains_key(f.as_str()));
+    let markerless =
+        significant > 0 && e.files.iter().all(|f| !first_site.contains_key(f.as_str()));
     Unattached {
         files,
         lines,
@@ -3139,7 +3418,10 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
         );
     }
     for p in crate::verify::pending(store, gs, Some("stale"), None) {
-        if p["status"] == "unimplemented" || p["status"] == "partial" || p["reason"] == "not-generated" {
+        if p["status"] == "unimplemented"
+            || p["status"] == "partial"
+            || p["reason"] == "not-generated"
+        {
             continue;
         }
         if bind_owed.contains(p["requirement"].as_str().unwrap_or_default()) {
@@ -3164,12 +3446,18 @@ mod tests {
         let _scope = crate::vfs::Scope::enter(&Default::default());
         let out = Path::new("/project/.jazyk");
         let (_, gs) = fixture(out);
-        let build = Build { run: "task:build".into(), cwd: ".".into(),
-            produces: vec!["product.txt".into()], last_run: None };
+        let build = Build {
+            run: "task:build".into(),
+            cwd: ".".into(),
+            produces: vec!["product.txt".into()],
+            last_run: None,
+        };
         let mut ledger = Ledger::load(out);
         ledger.build = Some(build.clone());
         ledger.save(out).unwrap();
-        assert!(check_build_products(out, &gs, &build).unwrap_err().contains("did not produce product.txt"));
+        assert!(check_build_products(out, &gs, &build)
+            .unwrap_err()
+            .contains("did not produce product.txt"));
         assert!(!Ledger::load(out).build.unwrap().last_run.unwrap().ok);
         crate::vfs::write(gs.deliverable.join("product.txt"), "ready").unwrap();
         check_build_products(out, &gs, &build).unwrap();
@@ -3198,30 +3486,41 @@ mod tests {
             assert!(index.of("ent:nope").is_empty());
             for id in s.graph.entities.keys() {
                 assert_eq!(index.of(id), reqs_of_sorted(&s, id).as_slice(), "{}", id);
-                assert_eq!(fact_hash_over(&s, id, index.of(id)), fact_hash(&s, id), "{}", id);
+                assert_eq!(
+                    fact_hash_over(&s, id, index.of(id)),
+                    fact_hash(&s, id),
+                    "{}",
+                    id
+                );
             }
         }
     }
 
     #[test]
     fn an_unparseable_ledger_reads_empty_and_refuses_to_save() {
-        let out = std::env::temp_dir().join(format!(
-            "jazyk-gen-unreadable-{}",
-            crate::sys::process_id()
-        ));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-unreadable-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let path = Ledger::path(&out);
         let mut l = Ledger::default();
         l.support.push("package.json".to_string());
         l.save(&out).unwrap();
-        assert!(Ledger::load(&out).support.contains(&"package.json".to_string()));
+        assert!(Ledger::load(&out)
+            .support
+            .contains(&"package.json".to_string()));
         let broken = "support: [unterminated\n";
         crate::vfs::write(&path, broken).unwrap();
         let mut bad = Ledger::load(&out);
-        assert!(bad.unreadable.as_deref().is_some_and(|w| w.contains("ledger.yaml")));
+        assert!(bad
+            .unreadable
+            .as_deref()
+            .is_some_and(|w| w.contains("ledger.yaml")));
         assert!(bad.support.is_empty());
         bad.support.push("other".to_string());
-        assert!(bad.save(&out).is_err(), "an unreadable ledger refuses to save");
+        assert!(
+            bad.save(&out).is_err(),
+            "an unreadable ledger refuses to save"
+        );
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), broken);
         let leftover: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -3248,45 +3547,113 @@ mod tests {
             "stub".into()
         }
         fn set_build_token(&self, _token: Option<String>) {}
-        fn run_item(&self, _batch: &crate::runner::BatchRun, _trace: &crate::session::Trace) -> crate::runner::SessionReport {
+        fn run_item(
+            &self,
+            _batch: &crate::runner::BatchRun,
+            _trace: &crate::session::Trace,
+        ) -> crate::runner::SessionReport {
             if self.record {
                 crate::vfs::write(self.gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
                 crate::vfs::create_dir_all(self.gs.deliverable.join("tests")).unwrap();
-                crate::vfs::write(self.gs.deliverable.join("tests/cart.rs"), "fn cart_test() {}\n").unwrap();
-                mark(&self.store, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": [{
-                    "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs",
-                    "name":"cart_test","run":"cargo test cart_test"
-                }]}), &self.gs).unwrap();
+                crate::vfs::write(
+                    self.gs.deliverable.join("tests/cart.rs"),
+                    "fn cart_test() {}\n",
+                )
+                .unwrap();
+                mark(
+                    &self.store,
+                    "ent:cart",
+                    None,
+                    &json!({"files": ["cart.rs"], "tests": [{
+                        "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs",
+                        "name":"cart_test","run":"cargo test cart_test"
+                    }]}),
+                    &self.gs,
+                )
+                .unwrap();
             }
-            crate::runner::SessionReport { applied: 0, rounds: 1, tokens: 0, cached: 0, failed: self.failed.clone(), resolved: Vec::new(), stopped: self.stopped.clone() }
+            crate::runner::SessionReport {
+                applied: 0,
+                rounds: 1,
+                tokens: 0,
+                cached: 0,
+                failed: self.failed.clone(),
+                resolved: Vec::new(),
+                stopped: self.stopped.clone(),
+            }
         }
         fn ask(&self, _s: &str, _u: &str, _l: &str, _st: &str) -> Result<String, String> {
             Err("stub".into())
         }
-        fn ask_traced(&self, _s: &str, _u: &str, _l: &str, _st: &str, _t: Option<&crate::session::Trace>) -> Result<String, String> {
+        fn ask_traced(
+            &self,
+            _s: &str,
+            _u: &str,
+            _l: &str,
+            _st: &str,
+            _t: Option<&crate::session::Trace>,
+        ) -> Result<String, String> {
             Err("stub".into())
         }
     }
 
     #[test]
     fn a_session_that_recorded_nothing_is_no_generation() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-landed-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-landed-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(&gs.deliverable).unwrap();
         // A record from an earlier run stands in the ledger.
         crate::vfs::write(gs.deliverable.join("cart.rs"), "fn old() {}\n").unwrap();
-        mark(&s, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": []}), &gs).unwrap();
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal, std::sync::Arc::new(|_| {}), Default::default());
+        mark(
+            &s,
+            "ent:cart",
+            None,
+            &json!({"files": ["cart.rs"], "tests": []}),
+            &gs,
+        )
+        .unwrap();
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
         let ids = vec!["ent:cart".to_string()];
-        let idle = StubRunner { failed: None, record: false, stopped: Some("http error: HTTP 429 :: rate limit".into()), store: s.clone(), gs: gs.clone() };
+        let idle = StubRunner {
+            failed: None,
+            record: false,
+            stopped: Some("http error: HTTP 429 :: rate limit".into()),
+            store: s.clone(),
+            gs: gs.clone(),
+        };
         let r = gen_session(&s, &idle, &gs, "ent:cart", &ids, &trace);
         let err = r.results[0].1.as_ref().unwrap_err();
         assert!(err.contains("429"), "{}", err);
-        let quiet = StubRunner { failed: None, record: false, stopped: None, store: s.clone(), gs: gs.clone() };
+        let quiet = StubRunner {
+            failed: None,
+            record: false,
+            stopped: None,
+            store: s.clone(),
+            gs: gs.clone(),
+        };
         let r = gen_session(&s, &quiet, &gs, "ent:cart", &ids, &trace);
-        assert!(r.results[0].1.as_ref().unwrap_err().contains("before recording completion"), "{:?}", r.results[0].1);
-        let writer = StubRunner { failed: None, record: true, stopped: None, store: s.clone(), gs: gs.clone() };
+        assert!(
+            r.results[0]
+                .1
+                .as_ref()
+                .unwrap_err()
+                .contains("before recording completion"),
+            "{:?}",
+            r.results[0].1
+        );
+        let writer = StubRunner {
+            failed: None,
+            record: true,
+            stopped: None,
+            store: s.clone(),
+            gs: gs.clone(),
+        };
         let r = gen_session(&s, &writer, &gs, "ent:cart", &ids, &trace);
         assert_eq!(r.results[0].1.as_ref().unwrap(), &1, "{:?}", r.results[0].1);
         assert!(Ledger::load(&out).entities["cart"].recorded_at.is_some());
@@ -3298,10 +3665,23 @@ mod tests {
         let _scope = crate::vfs::Scope::enter(&BTreeMap::new());
         let out = Path::new("/project/.jazyk/same-second");
         let (store, gs) = fixture(out);
-        let writer = StubRunner { record:true, failed:None, stopped:None, store:store.clone(), gs:gs.clone() };
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
-            std::sync::Arc::new(|_| {}), Default::default());
-        let batch = crate::runner::BatchRun { id:"same-second".into(), goals:vec![], executor:None };
+        let writer = StubRunner {
+            record: true,
+            failed: None,
+            stopped: None,
+            store: store.clone(),
+            gs: gs.clone(),
+        };
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let batch = crate::runner::BatchRun {
+            id: "same-second".into(),
+            goals: vec![],
+            executor: None,
+        };
         writer.run_item(&batch, &trace);
         let timestamp = "2026-10-30T12:00:00Z";
         let mut ledger = Ledger::load(out);
@@ -3311,29 +3691,61 @@ mod tests {
 
         struct SameSecondRunner(StubRunner);
         impl crate::runner::SessionRunner for SameSecondRunner {
-            fn agent_name(&self) -> String { self.0.agent_name() }
-            fn set_build_token(&self, token: Option<String>) { self.0.set_build_token(token); }
-            fn run_item(&self, batch: &crate::runner::BatchRun, trace: &crate::session::Trace) -> crate::runner::SessionReport {
+            fn agent_name(&self) -> String {
+                self.0.agent_name()
+            }
+            fn set_build_token(&self, token: Option<String>) {
+                self.0.set_build_token(token);
+            }
+            fn run_item(
+                &self,
+                batch: &crate::runner::BatchRun,
+                trace: &crate::session::Trace,
+            ) -> crate::runner::SessionReport {
                 let report = self.0.run_item(batch, trace);
                 // Pin the display time after a real successful mark. The two
                 // records deterministically share a second without sleeping.
                 let mut ledger = Ledger::load(&self.0.store.out);
-                ledger.entities.get_mut("cart").unwrap().recorded_at = Some("2026-10-30T12:00:00Z".into());
+                ledger.entities.get_mut("cart").unwrap().recorded_at =
+                    Some("2026-10-30T12:00:00Z".into());
                 ledger.save(&self.0.store.out).unwrap();
                 report
             }
-            fn ask(&self, system: &str, user: &str, label: &str, stage: &str) -> Result<String, String> {
+            fn ask(
+                &self,
+                system: &str,
+                user: &str,
+                label: &str,
+                stage: &str,
+            ) -> Result<String, String> {
                 self.0.ask(system, user, label, stage)
             }
-            fn ask_traced(&self, system: &str, user: &str, label: &str, stage: &str, trace: Option<&crate::session::Trace>) -> Result<String, String> {
+            fn ask_traced(
+                &self,
+                system: &str,
+                user: &str,
+                label: &str,
+                stage: &str,
+                trace: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
                 self.0.ask_traced(system, user, label, stage, trace)
             }
         }
-        let result = gen_session(&store, &SameSecondRunner(writer), &gs, "ent:cart", &["ent:cart".into()], &trace);
+        let result = gen_session(
+            &store,
+            &SameSecondRunner(writer),
+            &gs,
+            "ent:cart",
+            &["ent:cart".into()],
+            &trace,
+        );
         assert!(result.results[0].1.is_ok(), "{:?}", result.results);
         let after = Ledger::load(out);
         assert_eq!(after.entities["cart"].record_sequence, 2);
-        assert_eq!(after.entities["cart"].recorded_at.as_deref(), Some(timestamp));
+        assert_eq!(
+            after.entities["cart"].recorded_at.as_deref(),
+            Some(timestamp)
+        );
     }
 
     #[test]
@@ -3347,15 +3759,25 @@ mod tests {
         assert_eq!(serde_json::to_value(&state).unwrap(), old);
         let mut row: EntityGen = serde_json::from_value(json!({
             "factHash":"old", "recordedAt":"2026-10-30T12:00:00Z"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(row.record_sequence, 0);
-        assert!(serde_json::to_value(&row).unwrap().get("recordSequence").is_none());
+        assert!(serde_json::to_value(&row)
+            .unwrap()
+            .get("recordSequence")
+            .is_none());
         row.record_sequence = 1;
-        assert!(!state.recorded(0, Some(&row)), "old sessions still compare their admitted timestamps");
+        assert!(
+            !state.recorded(0, Some(&row)),
+            "old sessions still compare their admitted timestamps"
+        );
         row.recorded_at = Some("2026-10-30T12:00:01Z".into());
         assert!(state.recorded(0, Some(&row)));
         state.before_sequences = Some(vec![Some(1)]);
-        assert!(!state.recorded(0, Some(&row)), "new sessions ignore display time changes");
+        assert!(
+            !state.recorded(0, Some(&row)),
+            "new sessions ignore display time changes"
+        );
         row.record_sequence = 2;
         assert!(state.recorded(0, Some(&row)));
     }
@@ -3375,7 +3797,9 @@ mod tests {
         let before = crate::vfs::read(Ledger::path(out)).unwrap();
         let source = "// req:shop-1 hash:abcdef12\nfn cart() {}\n";
         crate::vfs::write(&file, source).unwrap();
-        assert!(mark(&store, "ent:cart", None, &manifest, &gs).unwrap_err().contains("sequence is exhausted"));
+        assert!(mark(&store, "ent:cart", None, &manifest, &gs)
+            .unwrap_err()
+            .contains("sequence is exhausted"));
         assert_eq!(crate::vfs::read_to_string(&file).unwrap(), source);
         assert_eq!(crate::vfs::read(Ledger::path(out)).unwrap(), before);
     }
@@ -3385,21 +3809,55 @@ mod tests {
         let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
         let out = std::path::Path::new("/project/.jazyk/post-record");
         let (mut store, gs) = fixture(out);
-        store.graph.entities.insert("ent:other".into(), Entity { name:"Other".into(), ..Default::default() });
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
-            std::sync::Arc::new(|_| {}), Default::default());
-        let writer = StubRunner { record:true, failed:Some("the model call failed: connection closed".into()),
-            stopped:Some("the model call failed: connection closed".into()), store:store.clone(), gs:gs.clone() };
-        let result = gen_session(&store, &writer, &gs, "ent:cart", &["ent:cart".into()], &trace);
+        store.graph.entities.insert(
+            "ent:other".into(),
+            Entity {
+                name: "Other".into(),
+                ..Default::default()
+            },
+        );
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let writer = StubRunner {
+            record: true,
+            failed: Some("the model call failed: connection closed".into()),
+            stopped: Some("the model call failed: connection closed".into()),
+            store: store.clone(),
+            gs: gs.clone(),
+        };
+        let result = gen_session(
+            &store,
+            &writer,
+            &gs,
+            "ent:cart",
+            &["ent:cart".into()],
+            &trace,
+        );
         assert!(result.results[0].1.is_ok());
         assert!(result.failed.is_none());
         let mut ledger = Ledger::load(out);
         ledger.entities.get_mut("cart").unwrap().recorded_at = Some("before-partial".into());
         ledger.save(out).unwrap();
-        let result = gen_session(&store, &writer, &gs, "ent:cart", &["ent:cart".into(), "ent:other".into()], &trace);
+        let result = gen_session(
+            &store,
+            &writer,
+            &gs,
+            "ent:cart",
+            &["ent:cart".into(), "ent:other".into()],
+            &trace,
+        );
         assert!(result.results[0].1.is_ok());
-        assert_eq!(result.results[1].1.as_ref().unwrap_err(), "the model call failed: connection closed");
-        assert_eq!(result.failed.as_deref(), Some("the model call failed: connection closed"));
+        assert_eq!(
+            result.results[1].1.as_ref().unwrap_err(),
+            "the model call failed: connection closed"
+        );
+        assert_eq!(
+            result.failed.as_deref(),
+            Some("the model call failed: connection closed")
+        );
     }
 
     #[test]
@@ -3407,41 +3865,86 @@ mod tests {
         use crate::runner::{BatchRun, SessionReport, SessionRunner};
         struct Broken(std::cell::Cell<usize>);
         impl SessionRunner for Broken {
-            fn agent_name(&self) -> String { "broken".into() }
+            fn agent_name(&self) -> String {
+                "broken".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
             fn run_item(&self, _: &BatchRun, _: &crate::session::Trace) -> SessionReport {
                 self.0.set(self.0.get() + 1);
-                SessionReport { applied:0,rounds:1,tokens:7,cached:0,failed:Some("the model call failed: disconnected".into()),resolved:Vec::new(),stopped:Some("the model call failed: disconnected".into()) }
+                SessionReport {
+                    applied: 0,
+                    rounds: 1,
+                    tokens: 7,
+                    cached: 0,
+                    failed: Some("the model call failed: disconnected".into()),
+                    resolved: Vec::new(),
+                    stopped: Some("the model call failed: disconnected".into()),
+                }
             }
-            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> {
-                self.0.set(self.0.get()+1);
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                self.0.set(self.0.get() + 1);
                 Err("the model call failed: disconnected".into())
             }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> { unreachable!() }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
+                unreachable!()
+            }
         }
         for worker in ["agentic", "pipeline"] {
-        let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
-        let out = std::path::Path::new("/project/.jazyk/generation-fatal");
-        let (mut store, mut gs) = fixture(out);
-        gs.worker = worker.into();
-        store.graph.entities.insert("ent:other".into(), Entity { name:"Other".into(), ..Default::default() });
-        store.graph.requirements.insert("req:other-1".into(), Requirement {
-            statement:"Other holds items.".into(),entities:vec!["ent:other".into()],..Default::default()
-        });
-        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
-        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn previous() {}\n").unwrap();
-        mark(&store,"ent:cart",None,&json!({"files":["cart.rs"],"tests":[]}),&gs).unwrap();
-        let mut ledger = Ledger::load(out);
-        ledger.medium=Some(Medium { form:"Rust source".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new() });
-        ledger.save(out).unwrap();
-        let runner = Broken(std::cell::Cell::new(0));
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
-            std::sync::Arc::new(|_|{}),Default::default());
-        let result = run_selected(&store,&runner,&gs,&[],true,&trace,false).unwrap();
-        assert_eq!(runner.0.get(),1);
-        assert_eq!(result["failures"],1);
-        assert_eq!(result["stopped"],"the model call failed: disconnected");
-        assert!(!Ledger::load(out).entities.contains_key("other"));
+            let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
+            let out = std::path::Path::new("/project/.jazyk/generation-fatal");
+            let (mut store, mut gs) = fixture(out);
+            gs.worker = worker.into();
+            store.graph.entities.insert(
+                "ent:other".into(),
+                Entity {
+                    name: "Other".into(),
+                    ..Default::default()
+                },
+            );
+            store.graph.requirements.insert(
+                "req:other-1".into(),
+                Requirement {
+                    statement: "Other holds items.".into(),
+                    entities: vec!["ent:other".into()],
+                    ..Default::default()
+                },
+            );
+            crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+            crate::vfs::write(gs.deliverable.join("cart.rs"), "fn previous() {}\n").unwrap();
+            mark(
+                &store,
+                "ent:cart",
+                None,
+                &json!({"files":["cart.rs"],"tests":[]}),
+                &gs,
+            )
+            .unwrap();
+            let mut ledger = Ledger::load(out);
+            ledger.medium = Some(Medium {
+                form: "Rust source".into(),
+                produced: "written".into(),
+                toolchain: "rustc".into(),
+                artifact: String::new(),
+            });
+            ledger.save(out).unwrap();
+            let runner = Broken(std::cell::Cell::new(0));
+            let trace = crate::session::Trace::to_sink(
+                crate::session::TraceLevel::Normal,
+                std::sync::Arc::new(|_| {}),
+                Default::default(),
+            );
+            let result = run_selected(&store, &runner, &gs, &[], true, &trace, false).unwrap();
+            assert_eq!(runner.0.get(), 1);
+            assert_eq!(result["failures"], 1);
+            assert_eq!(result["stopped"], "the model call failed: disconnected");
+            assert!(!Ledger::load(out).entities.contains_key("other"));
         }
     }
 
@@ -3453,59 +3956,145 @@ mod tests {
             stopped: Option<String>,
         }
         impl crate::runner::SessionRunner for Partial {
-            fn agent_name(&self) -> String { "partial".into() }
+            fn agent_name(&self) -> String {
+                "partial".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
-            fn run_item(&self, batch: &crate::runner::BatchRun, trace: &crate::session::Trace) -> crate::runner::SessionReport {
+            fn run_item(
+                &self,
+                batch: &crate::runner::BatchRun,
+                trace: &crate::session::Trace,
+            ) -> crate::runner::SessionReport {
                 self.calls.set(self.calls.get() + 1);
                 match batch.goals[0].target.as_str() {
                     "ent:cart" => self.writer.run_item(batch, trace),
                     "ent:middle" => {
-                        crate::vfs::write(self.writer.gs.deliverable.join("index.html"), "<html>partial shared page").unwrap();
+                        crate::vfs::write(
+                            self.writer.gs.deliverable.join("index.html"),
+                            "<html>partial shared page",
+                        )
+                        .unwrap();
                         let mut ledger = Ledger::load(&self.writer.store.out);
                         ledger.support.push("index.html".into());
-                        ledger.build = Some(Build { run:"printf built > build-was-run.txt".into(),
-                            cwd:".".into(), produces:vec!["build-was-run.txt".into()], last_run:None });
+                        ledger.build = Some(Build {
+                            run: "printf built > build-was-run.txt".into(),
+                            cwd: ".".into(),
+                            produces: vec!["build-was-run.txt".into()],
+                            last_run: None,
+                        });
                         ledger.save(&self.writer.store.out).unwrap();
-                        crate::runner::SessionReport { applied:0,rounds:24,tokens:20,cached:0,
-                            failed:None,resolved:vec![],stopped:self.stopped.clone() }
+                        crate::runner::SessionReport {
+                            applied: 0,
+                            rounds: 24,
+                            tokens: 20,
+                            cached: 0,
+                            failed: None,
+                            resolved: vec![],
+                            stopped: self.stopped.clone(),
+                        }
                     }
                     other => panic!("later group {other} consumed a partial shared page"),
                 }
             }
-            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String,String> { panic!("no new model request") }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&crate::session::Trace>) -> Result<String,String> { panic!("no new model request") }
+            fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+                panic!("no new model request")
+            }
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&crate::session::Trace>,
+            ) -> Result<String, String> {
+                panic!("no new model request")
+            }
         }
-        for (case, (later, stopped)) in [(false,None),(true,None),
-            (false,Some("the session ran out of rounds after 24".into())),
-            (true,Some("the session ran out of rounds after 24".into()))].into_iter().enumerate() {
+        for (case, (later, stopped)) in [
+            (false, None),
+            (true, None),
+            (false, Some("the session ran out of rounds after 24".into())),
+            (true, Some("the session ran out of rounds after 24".into())),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let _scope = crate::session_recovery::Scope::enter(None);
-            let out = std::env::temp_dir().join(format!("jazyk-gen-partial-stop-{}-{case}", crate::sys::process_id()));
+            let out = std::env::temp_dir().join(format!(
+                "jazyk-gen-partial-stop-{}-{case}",
+                crate::sys::process_id()
+            ));
             crate::vfs::remove_dir_all(&out).ok();
             let (mut store, gs) = fixture(&out);
             for (id, name) in [("middle", "Middle"), ("z-last", "Last")] {
-                if id == "z-last" && !later { continue; }
-                store.graph.entities.insert(format!("ent:{id}"), Entity { name:name.into(), ..Default::default() });
-                store.graph.requirements.insert(format!("req:{id}"), Requirement {
-                    statement:format!("{name} has content."), entities:vec![format!("ent:{id}")], ..Default::default() });
+                if id == "z-last" && !later {
+                    continue;
+                }
+                store.graph.entities.insert(
+                    format!("ent:{id}"),
+                    Entity {
+                        name: name.into(),
+                        ..Default::default()
+                    },
+                );
+                store.graph.requirements.insert(
+                    format!("req:{id}"),
+                    Requirement {
+                        statement: format!("{name} has content."),
+                        entities: vec![format!("ent:{id}")],
+                        ..Default::default()
+                    },
+                );
             }
             let mut ledger = Ledger::load(&out);
-            ledger.medium = Some(Medium { form:"Rust source".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new() });
+            ledger.medium = Some(Medium {
+                form: "Rust source".into(),
+                produced: "written".into(),
+                toolchain: "rustc".into(),
+                artifact: String::new(),
+            });
             ledger.save(&out).unwrap();
-            let runner = Partial { writer:StubRunner { record:true,failed:None,stopped:None,
-                store:store.clone(),gs:gs.clone() }, calls:std::cell::Cell::new(0), stopped:stopped.clone() };
-            let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet, std::sync::Arc::new(|_|{}), Default::default());
+            let runner = Partial {
+                writer: StubRunner {
+                    record: true,
+                    failed: None,
+                    stopped: None,
+                    store: store.clone(),
+                    gs: gs.clone(),
+                },
+                calls: std::cell::Cell::new(0),
+                stopped: stopped.clone(),
+            };
+            let trace = crate::session::Trace::to_sink(
+                crate::session::TraceLevel::Quiet,
+                std::sync::Arc::new(|_| {}),
+                Default::default(),
+            );
             let result = run_selected(&store, &runner, &gs, &[], true, &trace, true).unwrap();
             assert_eq!(runner.calls.get(), 2, "{result}");
             assert_eq!(result["regenerated"], 1);
             assert_eq!(result["failures"], 1);
             assert_eq!(result["build"]["state"], "not-run");
             let error = result["error"].as_str().unwrap();
-            assert!(error.contains("group Middle") && error.contains("Still owed: Middle"), "{error}");
-            assert!(error.contains(stopped.as_deref().unwrap_or("before recording completion")), "{error}");
+            assert!(
+                error.contains("group Middle") && error.contains("Still owed: Middle"),
+                "{error}"
+            );
+            assert!(
+                error.contains(stopped.as_deref().unwrap_or("before recording completion")),
+                "{error}"
+            );
             let ledger = Ledger::load(&out);
-            assert!(ledger.entities.contains_key("cart") && !ledger.entities.contains_key("middle"));
-            assert!(crate::vfs::read_to_string(gs.deliverable.join("cart.rs")).unwrap().contains("fn cart"));
-            assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("index.html")).unwrap(), "<html>partial shared page");
+            assert!(
+                ledger.entities.contains_key("cart") && !ledger.entities.contains_key("middle")
+            );
+            assert!(crate::vfs::read_to_string(gs.deliverable.join("cart.rs"))
+                .unwrap()
+                .contains("fn cart"));
+            assert_eq!(
+                crate::vfs::read_to_string(gs.deliverable.join("index.html")).unwrap(),
+                "<html>partial shared page"
+            );
             assert!(!gs.deliverable.join("build-was-run.txt").exists());
             assert!(ledger.build.unwrap().last_run.is_none());
             crate::vfs::remove_dir_all(&out).ok();
@@ -3517,8 +4106,8 @@ mod tests {
         let old = json!({"root":"ent:cart","ready":["ent:cart","ent:other"],
             "pipeline_cursor":1,"pipeline_task":null,"pipeline_results":[["ent:cart",{"Ok":1}]]});
         let restored: GenGroup = serde_json::from_value(old).unwrap();
-        assert_eq!(restored.pipeline_cursor,1);
-        assert_eq!(restored.pipeline_results,vec![("ent:cart".into(),Ok(1))]);
+        assert_eq!(restored.pipeline_cursor, 1);
+        assert_eq!(restored.pipeline_results, vec![("ent:cart".into(), Ok(1))]);
         assert!(restored.pipeline_failed.is_none());
     }
 
@@ -3526,24 +4115,52 @@ mod tests {
     fn incomplete_generation_exposes_its_group_and_round_limit_and_stops() {
         let _vfs = crate::vfs::Scope::enter(&BTreeMap::new());
         let out = std::path::Path::new("/project/.jazyk/generation-budget");
-        let (store,gs) = fixture(out);
+        let (store, gs) = fixture(out);
         crate::vfs::create_dir_all(&gs.deliverable).unwrap();
-        crate::vfs::write(gs.deliverable.join("cart.rs"),"fn prior() {}\n").unwrap();
-        mark(&store,"ent:cart",None,&json!({"files":["cart.rs"],"tests":[]}),&gs).unwrap();
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn prior() {}\n").unwrap();
+        mark(
+            &store,
+            "ent:cart",
+            None,
+            &json!({"files":["cart.rs"],"tests":[]}),
+            &gs,
+        )
+        .unwrap();
         let mut ledger = Ledger::load(out);
-        ledger.medium=Some(Medium {form:"Rust".into(),produced:"written".into(),toolchain:"rustc".into(),artifact:String::new()});
+        ledger.medium = Some(Medium {
+            form: "Rust".into(),
+            produced: "written".into(),
+            toolchain: "rustc".into(),
+            artifact: String::new(),
+        });
         ledger.save(out).unwrap();
-        let runner = StubRunner { record:false,failed:None,stopped:Some("the session ran out of rounds after 24".into()),store:store.clone(),gs:gs.clone() };
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
-        let result = run_selected(&store,&runner,&gs,&[],true,&trace,false).unwrap();
-        assert_eq!(result["failures"],1);
+        let runner = StubRunner {
+            record: false,
+            failed: None,
+            stopped: Some("the session ran out of rounds after 24".into()),
+            store: store.clone(),
+            gs: gs.clone(),
+        };
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Quiet,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let result = run_selected(&store, &runner, &gs, &[], true, &trace, false).unwrap();
+        assert_eq!(result["failures"], 1);
         assert_eq!(result["stopped"], result["error"]);
         let error = result["error"].as_str().unwrap();
-        assert!(error.contains("Cart was not completed") && error.contains("24"), "{result}");
-        assert!(!error.contains("ent:cart") && !error.contains("record_generation"), "{result}");
+        assert!(
+            error.contains("Cart was not completed") && error.contains("24"),
+            "{result}"
+        );
+        assert!(
+            !error.contains("ent:cart") && !error.contains("record_generation"),
+            "{result}"
+        );
         let mut old = serde_json::to_value(GenCommand::default()).unwrap();
         old.as_object_mut().unwrap().remove("first_error");
-        let restored:GenCommand = serde_json::from_value(old).unwrap();
+        let restored: GenCommand = serde_json::from_value(old).unwrap();
         assert!(restored.first_error.is_none());
     }
 
@@ -3555,24 +4172,52 @@ mod tests {
         let (store, gs) = fixture(out);
         crate::vfs::create_dir_all(&gs.deliverable).unwrap();
         crate::vfs::write(gs.deliverable.join("cart.rs"), "fn previous() {}\n").unwrap();
-        mark(&store, "ent:cart", None, &json!({"files":["cart.rs"],"tests":[]}), &gs).unwrap();
+        mark(
+            &store,
+            "ent:cart",
+            None,
+            &json!({"files":["cart.rs"],"tests":[]}),
+            &gs,
+        )
+        .unwrap();
         let mut ledger = Ledger::load(out);
         ledger.entities.get_mut("cart").unwrap().recorded_at = Some("before-command".into());
-        ledger.medium = Some(Medium { form: "Rust source".into(), produced: "written".into(),
-            toolchain: "rustc".into(), artifact: String::new() });
+        ledger.medium = Some(Medium {
+            form: "Rust source".into(),
+            produced: "written".into(),
+            toolchain: "rustc".into(),
+            artifact: String::new(),
+        });
         ledger.save(out).unwrap();
-        let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Normal,
-            std::sync::Arc::new(|_| {}), Default::default());
-        let paused = StubRunner { failed: None, record: false, stopped: Some("checkpoint-failed: test storage outage".into()),
-            store: store.clone(), gs: gs.clone() };
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let paused = StubRunner {
+            failed: None,
+            record: false,
+            stopped: Some("checkpoint-failed: test storage outage".into()),
+            store: store.clone(),
+            gs: gs.clone(),
+        };
         let error = run_selected(&store, &paused, &gs, &[], true, &trace, false).unwrap_err();
         assert!(error.starts_with("checkpoint-failed:"));
-        let writer = StubRunner { failed: None, record: true, stopped: None, store: store.clone(), gs: gs.clone() };
+        let writer = StubRunner {
+            failed: None,
+            record: true,
+            stopped: None,
+            store: store.clone(),
+            gs: gs.clone(),
+        };
         let result = run_selected(&store, &writer, &gs, &[], true, &trace, false).unwrap();
         assert_eq!(result["regenerated"], 1);
         assert_eq!(result["failures"], 0);
         // A worker that would interrupt cannot be reached after the result receipt.
-        assert_eq!(run_selected(&store, &paused, &gs, &[], true, &trace, false).unwrap(), result);
+        assert_eq!(
+            run_selected(&store, &paused, &gs, &[], true, &trace, false).unwrap(),
+            result
+        );
     }
 
     fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
@@ -3616,220 +4261,476 @@ mod tests {
         let root = Path::new("/project");
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
         crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Site'\ndocs = ['**', '!deliverable/**']\nsource = ['deliverable/**']\n").unwrap();
-        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+        let project = crate::document_sets::Workspace::load(root)
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap();
         let (store, _) = fixture(&project.out);
         let gs = GenSettings::resolve(&project);
-        let mut tools = crate::tools::ToolSession::new(store.clone(), crate::tools::WorkScope::serving("generate"), 64, 24_000);
+        let mut tools = crate::tools::ToolSession::new(
+            store.clone(),
+            crate::tools::WorkScope::serving("generate"),
+            64,
+            24_000,
+        );
         tools.gen = gs.clone();
         let workflow = "deliverable/.github/workflows/deploy.yml";
         let ignore = "deliverable/.gitignore";
         let artifact = "deliverable/tests/hosting.py";
         for (path, content) in [
-            (workflow, "name: Deploy\non:\n  push:\n    branches: [master]\njobs: {}\n"),
+            (
+                workflow,
+                "name: Deploy\non:\n  push:\n    branches: [master]\njobs: {}\n",
+            ),
             (ignore, "build/\n"),
             (artifact, "def test_workflow():\n    pass\n"),
         ] {
-            tools.dispatch("write_text_file", &json!({"path":path,"content":content})).unwrap();
-            assert_eq!(tools.dispatch("read_text_file", &json!({"path":path})).unwrap()["content"], content);
+            tools
+                .dispatch("write_text_file", &json!({"path":path,"content":content}))
+                .unwrap();
+            assert_eq!(
+                tools
+                    .dispatch("read_text_file", &json!({"path":path}))
+                    .unwrap()["content"],
+                content
+            );
         }
         let files = tools.dispatch("list_files", &json!({})).unwrap();
-        assert!(files["files"].as_array().unwrap().contains(&json!(workflow)));
+        assert!(files["files"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(workflow)));
         assert!(files["files"].as_array().unwrap().contains(&json!(ignore)));
-        assert!(list_existing_files(&root.join("deliverable")).contains(&".github/workflows/deploy.yml".into()));
+        assert!(list_existing_files(&root.join("deliverable"))
+            .contains(&".github/workflows/deploy.yml".into()));
         assert!(list_existing_files(&root.join("deliverable")).contains(&".gitignore".into()));
-        assert!(crate::document_sets::Workspace::load(root).unwrap().files().contains(&workflow.to_string()));
+        assert!(crate::document_sets::Workspace::load(root)
+            .unwrap()
+            .files()
+            .contains(&workflow.to_string()));
         let test = json!({"kind":"programmatic","artifact":artifact,"name":"test_workflow","run":"task:check"});
-        crate::bind::record(&store, "req:shop-1", &[workflow.into()], &test, &json!([]), "fail", Some("Static fixture, no deployment executed."), &gs).unwrap();
+        crate::bind::record(
+            &store,
+            "req:shop-1",
+            &[workflow.into()],
+            &test,
+            &json!([]),
+            "fail",
+            Some("Static fixture, no deployment executed."),
+            &gs,
+        )
+        .unwrap();
         crate::bind::gate(&store, &gs, "req:shop-1").unwrap();
         mark(&store, "ent:cart", None, &json!({"files":[workflow],"supportFiles":[ignore],"tests":[{"requirement":"req:shop-1","kind":"programmatic","artifact":artifact,"name":"test_workflow","run":"task:check"}]}), &gs).unwrap();
         assert_eq!(gate(&store, &gs, "ent:cart", false).unwrap(), 1);
         let ledger = Ledger::load(&store.out);
         assert_eq!(ledger.entities["cart"].files, [workflow]);
         assert!(ledger.support.contains(&ignore.to_string()));
-        assert!(!implementation_outside_source(&gs, &ledger, &ledger.entities["cart"].files));
-        for path in ["deliverable/.env", "deliverable/.github/.env", "deliverable/.ssh/config", "deliverable/.aws/config", "deliverable/.git/config", "deliverable/.jazyk/config"] {
-            let err = tools.dispatch("write_text_file", &json!({"path":path,"content":"must not land"})).unwrap_err();
+        assert!(!implementation_outside_source(
+            &gs,
+            &ledger,
+            &ledger.entities["cart"].files
+        ));
+        for path in [
+            "deliverable/.env",
+            "deliverable/.github/.env",
+            "deliverable/.ssh/config",
+            "deliverable/.aws/config",
+            "deliverable/.git/config",
+            "deliverable/.jazyk/config",
+        ] {
+            let err = tools
+                .dispatch(
+                    "write_text_file",
+                    &json!({"path":path,"content":"must not land"}),
+                )
+                .unwrap_err();
             assert_eq!(err.rule, "source-selection", "{path}");
             assert!(!root.join(path).vexists(), "{path}");
         }
         crate::vfs::create_dir_all(root.join("deliverable/nested/.jazyk")).unwrap();
-        crate::vfs::write(root.join("deliverable/nested/.jazyk/jazyk.toml"), "version = 1\n").unwrap();
+        crate::vfs::write(
+            root.join("deliverable/nested/.jazyk/jazyk.toml"),
+            "version = 1\n",
+        )
+        .unwrap();
         crate::vfs::create_dir_all(root.join("deliverable/nested/.github/workflows")).unwrap();
-        crate::vfs::write(root.join("deliverable/nested/.github/workflows/own.yml"), "nested project\n").unwrap();
+        crate::vfs::write(
+            root.join("deliverable/nested/.github/workflows/own.yml"),
+            "nested project\n",
+        )
+        .unwrap();
         let err = tools.dispatch("write_text_file", &json!({"path":"deliverable/nested/.github/workflows/new.yml","content":"must not land"})).unwrap_err();
         assert_eq!(err.rule, "source-selection");
-        let files = tools.dispatch("list_files", &json!({"path":"deliverable"})).unwrap();
-        assert!(!files["files"].as_array().unwrap().iter().any(|path|path.as_str().unwrap().contains("nested/")));
+        let files = tools
+            .dispatch("list_files", &json!({"path":"deliverable"}))
+            .unwrap();
+        assert!(!files["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path.as_str().unwrap().contains("nested/")));
     }
 
     #[test]
     fn fresh_generation_records_criterion_tests_without_binding_and_keeps_them_unjudged() {
-        let out = std::env::temp_dir().join(format!("jazyk-adaptive-criteria-{}",crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-adaptive-criteria-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut store, gs) = fixture(&out);
-        for (id, statement) in [("crit:items","Two items are retained."),("crit:empty","An empty cart has no items.")] {
-            store.graph.criteria.insert(id.into(), crate::model::Criterion {
-                requirement:"req:shop-1".into(),statement:statement.into(),kind:"positive".into(),..Default::default()
-            });
+        for (id, statement) in [
+            ("crit:items", "Two items are retained."),
+            ("crit:empty", "An empty cart has no items."),
+        ] {
+            store.graph.criteria.insert(
+                id.into(),
+                crate::model::Criterion {
+                    requirement: "req:shop-1".into(),
+                    statement: statement.into(),
+                    kind: "positive".into(),
+                    ..Default::default()
+                },
+            );
         }
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
-        crate::vfs::write(gs.deliverable.join("cart.rs"),"pub fn count() -> usize { 2 }\n").unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"),"fn items() {}\nfn empty() {}\nfn replacement() {}\n").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("cart.rs"),
+            "pub fn count() -> usize { 2 }\n",
+        )
+        .unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "fn items() {}\nfn empty() {}\nfn replacement() {}\n",
+        )
+        .unwrap();
         assert!(Ledger::load(&out).requirements.is_empty());
-        assert_eq!(pending(&store,&gs)[0]["reason"],"incomplete-bindings");
-        let declaration = |criterion:&str,name:&str| json!({"requirement":"req:shop-1","criterion":criterion,
-            "kind":"programmatic","artifact":"tests/cart.rs","name":name,"run":"task:old-check"});
-        let mut manifest=json!({"files":["cart.rs","tests/cart.rs"],"tests":[declaration("crit:items","items")]});
-        mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
-        assert!(gate(&store,&gs,"ent:cart",false).unwrap_err().contains("test bindings"));
-        manifest["tests"]=json!([declaration("crit:items","items"),declaration("crit:empty","empty")]);
-        mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
-        let ledger=Ledger::load(&out);
-        let row=&ledger.requirements["req:shop-1"];
-        assert_eq!(row.tests.len(),2);
-        assert!(row.tests.values().all(|test|test.verdict=="none"&&test.last_run.is_none()));
-        assert_eq!(gate(&store,&gs,"ent:cart",false).unwrap(),2);
-        assert!(gate(&store,&gs,"ent:cart",true).unwrap_err().contains("run_tests"));
+        assert_eq!(pending(&store, &gs)[0]["reason"], "incomplete-bindings");
+        let declaration = |criterion: &str, name: &str| {
+            json!({"requirement":"req:shop-1","criterion":criterion,
+            "kind":"programmatic","artifact":"tests/cart.rs","name":name,"run":"task:old-check"})
+        };
+        let mut manifest = json!({"files":["cart.rs","tests/cart.rs"],"tests":[declaration("crit:items","items")]});
+        mark(&store, "ent:cart", None, &manifest, &gs).unwrap();
+        assert!(gate(&store, &gs, "ent:cart", false)
+            .unwrap_err()
+            .contains("test bindings"));
+        manifest["tests"] = json!([
+            declaration("crit:items", "items"),
+            declaration("crit:empty", "empty")
+        ]);
+        mark(&store, "ent:cart", None, &manifest, &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.tests.len(), 2);
+        assert!(row
+            .tests
+            .values()
+            .all(|test| test.verdict == "none" && test.last_run.is_none()));
+        assert_eq!(gate(&store, &gs, "ent:cart", false).unwrap(), 2);
+        assert!(gate(&store, &gs, "ent:cart", true)
+            .unwrap_err()
+            .contains("run_tests"));
         // A replacement judge is refused before changing files or the ledger.
-        let before=serde_json::to_value(&ledger).unwrap();
-        let mut replaced=manifest.clone();replaced["tests"][0]["name"]=json!("replacement");
-        assert!(mark(&store,"ent:cart",None,&replaced,&gs).unwrap_err().contains("replacing the judge"));
-        assert_eq!(serde_json::to_value(Ledger::load(&out)).unwrap(),before);
+        let before = serde_json::to_value(&ledger).unwrap();
+        let mut replaced = manifest.clone();
+        replaced["tests"][0]["name"] = json!("replacement");
+        assert!(mark(&store, "ent:cart", None, &replaced, &gs)
+            .unwrap_err()
+            .contains("replacing the judge"));
+        assert_eq!(serde_json::to_value(Ledger::load(&out)).unwrap(), before);
         // Consolidating execution does not replace the judge, but loses old evidence.
-        let mut ledger=Ledger::load(&out);
-        let row=ledger.requirements.get_mut("req:shop-1").unwrap();
-        row.verdict="pass".into();row.last_run=Some("previous".into());
-        for test in row.tests.values_mut(){test.verdict="pass".into();test.last_run=Some("previous".into());}
+        let mut ledger = Ledger::load(&out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        row.verdict = "pass".into();
+        row.last_run = Some("previous".into());
+        for test in row.tests.values_mut() {
+            test.verdict = "pass".into();
+            test.last_run = Some("previous".into());
+        }
         ledger.save(&out).unwrap();
-        for declaration in manifest["tests"].as_array_mut().unwrap(){declaration["run"]=json!("task:shared-suite");}
-        mark(&store,"ent:cart",None,&manifest,&gs).unwrap();
-        let ledger=Ledger::load(&out);let row=&ledger.requirements["req:shop-1"];
-        assert_eq!(row.verdict,"none");
-        assert!(row.tests.values().all(|test|test.test.run=="task:shared-suite"&&test.verdict=="none"&&test.last_run.is_none()));
-        assert!(gate(&store,&gs,"ent:cart",true).is_err());
+        for declaration in manifest["tests"].as_array_mut().unwrap() {
+            declaration["run"] = json!("task:shared-suite");
+        }
+        mark(&store, "ent:cart", None, &manifest, &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.verdict, "none");
+        assert!(row
+            .tests
+            .values()
+            .all(|test| test.test.run == "task:shared-suite"
+                && test.verdict == "none"
+                && test.last_run.is_none()));
+        assert!(gate(&store, &gs, "ent:cart", true).is_err());
         crate::vfs::remove_dir_all(&out).unwrap();
     }
 
     #[test]
     fn generated_llm_criterion_waits_for_review_without_blocking_generation() {
-        let out=std::env::temp_dir().join(format!("jazyk-adaptive-llm-{}",crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-adaptive-llm-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
-        let(mut store,gs)=fixture(&out);
-        store.graph.criteria.insert("crit:items".into(),crate::model::Criterion {
-            requirement:"req:shop-1".into(),statement:"The cart clearly shows its items.".into(),kind:"positive".into(),..Default::default()
-        });
+        let (mut store, gs) = fixture(&out);
+        store.graph.criteria.insert(
+            "crit:items".into(),
+            crate::model::Criterion {
+                requirement: "req:shop-1".into(),
+                statement: "The cart clearly shows its items.".into(),
+                kind: "positive".into(),
+                ..Default::default()
+            },
+        );
         crate::vfs::create_dir_all(gs.deliverable.join("criteria")).unwrap();
-        crate::vfs::write(gs.deliverable.join("cart.md"),"The visible cart contains its selected items.\n").unwrap();
-        let criteria=criteria_front_matter("req:shop-1",Some("crit:items"),&store.graph.criteria["crit:items"].statement)
-            +"\nInspect cart.md. PASS when its items are clear. FAIL otherwise.\n";
-        crate::vfs::write(gs.deliverable.join("criteria/cart.md"),criteria).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("cart.md"),
+            "The visible cart contains its selected items.\n",
+        )
+        .unwrap();
+        let criteria = criteria_front_matter(
+            "req:shop-1",
+            Some("crit:items"),
+            &store.graph.criteria["crit:items"].statement,
+        ) + "\nInspect cart.md. PASS when its items are clear. FAIL otherwise.\n";
+        crate::vfs::write(gs.deliverable.join("criteria/cart.md"), criteria).unwrap();
         mark(&store,"ent:cart",None,&json!({"files":["cart.md"],"tests":[{
             "requirement":"req:shop-1","criterion":"crit:items","kind":"llm","artifact":"criteria/cart.md","name":"clarity","run":"llm"
         }]}),&gs).unwrap();
-        assert!(gate(&store,&gs,"ent:cart",true).is_ok());
-        let row=&Ledger::load(&out).requirements["req:shop-1"];
-        assert_eq!(row.verdict,"none");assert_eq!(row.tests["crit:items"].verdict,"none");
-        assert_ne!(crate::verify::status_of(&store,"req:shop-1",row,&gs).0,"verified");
+        assert!(gate(&store, &gs, "ent:cart", true).is_ok());
+        let row = &Ledger::load(&out).requirements["req:shop-1"];
+        assert_eq!(row.verdict, "none");
+        assert_eq!(row.tests["crit:items"].verdict, "none");
+        assert_ne!(
+            crate::verify::status_of(&store, "req:shop-1", row, &gs).0,
+            "verified"
+        );
         crate::vfs::remove_dir_all(&out).unwrap();
     }
 
     #[test]
     fn gdk_develops_fresh_source_and_tests_before_execution() {
         use crate::harness::{self, GenericTool, LoopArgs, ModelHost, ModelRequest, ModelResponse};
-        struct Script { replies:std::collections::VecDeque<Value>, calls:usize }
+        struct Script {
+            replies: std::collections::VecDeque<Value>,
+            calls: usize,
+        }
         impl ModelHost for Script {
-            fn infer<'a>(&'a mut self, request:ModelRequest)->harness::LocalFuture<'a,Result<ModelResponse,String>> {
+            fn infer<'a>(
+                &'a mut self,
+                request: ModelRequest,
+            ) -> harness::LocalFuture<'a, Result<ModelResponse, String>> {
                 Box::pin(async move {
-                    assert!(matches!(request.purpose,harness::ModelPurpose::Inference));
-                    self.calls+=1;
-                    Ok(ModelResponse { body:self.replies.pop_front().expect("no additional model call is needed") })
+                    assert!(matches!(request.purpose, harness::ModelPurpose::Inference));
+                    self.calls += 1;
+                    Ok(ModelResponse {
+                        body: self
+                            .replies
+                            .pop_front()
+                            .expect("no additional model call is needed"),
+                    })
                 })
             }
         }
-        let out=std::env::temp_dir().join(format!("jazyk-gdk-code-first-{}",crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gdk-code-first-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
-        let(mut store,gs)=fixture(&out);
-        for(id,statement)in[("crit:items","Two items remain in the cart."),("crit:empty","An empty cart contains zero items.")] {
-            store.graph.criteria.insert(id.into(),crate::model::Criterion {
-                requirement:"req:shop-1".into(),statement:statement.into(),kind:"positive".into(),..Default::default()
-            });
+        let (mut store, gs) = fixture(&out);
+        for (id, statement) in [
+            ("crit:items", "Two items remain in the cart."),
+            ("crit:empty", "An empty cart contains zero items."),
+        ] {
+            store.graph.criteria.insert(
+                id.into(),
+                crate::model::Criterion {
+                    requirement: "req:shop-1".into(),
+                    statement: statement.into(),
+                    kind: "positive".into(),
+                    ..Default::default()
+                },
+            );
         }
         assert!(Ledger::load(&out).requirements.is_empty());
-        assert_eq!(pending(&store,&gs)[0]["reason"],"incomplete-bindings");
-        let goal=crate::model::Goal {id:"g:generate:ent:cart".into(),kind:"generate".into(),target:"ent:cart".into(),
-            mandatory:true,class:"compile".into(),..Default::default()};
-        let scope=crate::tools::WorkScope::for_batch(&goal.id,std::slice::from_ref(&goal));
+        assert_eq!(pending(&store, &gs)[0]["reason"], "incomplete-bindings");
+        let goal = crate::model::Goal {
+            id: "g:generate:ent:cart".into(),
+            kind: "generate".into(),
+            target: "ent:cart".into(),
+            mandatory: true,
+            class: "compile".into(),
+            ..Default::default()
+        };
+        let scope = crate::tools::WorkScope::for_batch(&goal.id, std::slice::from_ref(&goal));
         crate::vfs::create_dir_all(&gs.deliverable).unwrap();
-        let mut session=crate::tools::ToolSession::new(store.clone(),scope,50,32000);
-        session.gen=gs.clone();
+        let mut session = crate::tools::ToolSession::new(store.clone(), scope, 50, 32000);
+        session.gen = gs.clone();
         let source="class Cart:\n    def __init__(self, items):\n        self.items = list(items)\n    def count(self):\n        return len(self.items)\n";
         let tests="import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parents[1]))\nfrom cart import Cart\ndef items():\n    assert Cart(['a', 'b']).count() == 2\ndef empty():\n    assert Cart([]).count() == 0\nglobals()[sys.argv[1]]()\n";
-        let manifest=json!({"files":["cart.py","tests/check.py"],"tests":[
+        let manifest = json!({"files":["cart.py","tests/check.py"],"tests":[
             {"requirement":"req:shop-1","criterion":"crit:items","kind":"programmatic","artifact":"tests/check.py","name":"items","run":"python3 tests/check.py items"},
             {"requirement":"req:shop-1","criterion":"crit:empty","kind":"programmatic","artifact":"tests/check.py","name":"empty","run":"python3 tests/check.py empty"}
         ]});
-        let actions=[
-            ("write_text_file",json!({"path":"cart.py","content":source})),
-            ("write_text_file",json!({"path":"tests/check.py","content":tests})),
-            ("record_generation",json!({"entity":"ent:cart","factHash":fact_hash(&store,"ent:cart"),"manifest":manifest})),
-            ("run_tests",json!({"requirements":["req:shop-1"]})),
-            ("mark_goal_done",json!({"goal":goal.id,"justification":"The implementation retains items and both criterion tests passed against it."})),
-            ("done",json!({"summary":"Implemented the cart and executed its criterion tests."})),
+        let actions = [
+            (
+                "write_text_file",
+                json!({"path":"cart.py","content":source}),
+            ),
+            (
+                "write_text_file",
+                json!({"path":"tests/check.py","content":tests}),
+            ),
+            (
+                "record_generation",
+                json!({"entity":"ent:cart","factHash":fact_hash(&store,"ent:cart"),"manifest":manifest}),
+            ),
+            ("run_tests", json!({"requirements":["req:shop-1"]})),
+            (
+                "mark_goal_done",
+                json!({"goal":goal.id,"justification":"The implementation retains items and both criterion tests passed against it."}),
+            ),
+            (
+                "done",
+                json!({"summary":"Implemented the cart and executed its criterion tests."}),
+            ),
         ];
         let replies=actions.iter().enumerate().map(|(i,(name,args))|json!({
             "choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{
                 "id":format!("adaptive-{i}"),"type":"function","function":{"name":name,"arguments":args.to_string()}
             }]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}
         })).collect();
-        let mut model=Script {replies,calls:0};
-        let names:std::collections::BTreeSet<_>=actions.iter().map(|(name,_)|*name).collect();
-        let tools:Vec<_>=crate::tools::catalog().into_iter().filter(|tool|names.contains(tool.name)).map(|tool|GenericTool {
-            name:tool.name.into(),description:tool.description.into(),parameters:tool.parameters,
-        }).collect();
-        let llm=crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None, base_url:"http://127.0.0.1:1/v1".into(),model:"scripted-native-gdk".into(),
-            api_key:String::new(),temperature:None,trace:None};
-        let mut history=vec![json!({"role":"user","content":"Develop the cart source and its criterion tests together."})];
-        let mut observed=Vec::new();
-        let mut dispatch=|name:&str,args:&Value| {
-            if name=="run_tests" {
-                assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("cart.py")).unwrap(),source);
+        let mut model = Script { replies, calls: 0 };
+        let names: std::collections::BTreeSet<_> = actions.iter().map(|(name, _)| *name).collect();
+        let tools: Vec<_> = crate::tools::catalog()
+            .into_iter()
+            .filter(|tool| names.contains(tool.name))
+            .map(|tool| GenericTool {
+                name: tool.name.into(),
+                description: tool.description.into(),
+                parameters: tool.parameters,
+            })
+            .collect();
+        let llm = crate::llm::Llm {
+            api: "chat_completions".into(),
+            reasoning_summary: None,
+            base_url: "http://127.0.0.1:1/v1".into(),
+            model: "scripted-native-gdk".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
+        let mut history = vec![
+            json!({"role":"user","content":"Develop the cart source and its criterion tests together."}),
+        ];
+        let mut observed = Vec::new();
+        let mut dispatch = |name: &str, args: &Value| {
+            if name == "run_tests" {
+                assert_eq!(
+                    crate::vfs::read_to_string(gs.deliverable.join("cart.py")).unwrap(),
+                    source
+                );
                 assert!(gs.deliverable.join("tests/check.py").vis_file());
-                assert!(gate(&store,&gs,"ent:cart",true).is_err(),"declarations cannot claim execution");
+                assert!(
+                    gate(&store, &gs, "ent:cart", true).is_err(),
+                    "declarations cannot claim execution"
+                );
             }
             observed.push(name.to_string());
-            let value=session.dispatch(name,args).unwrap_or_else(|error|panic!("fixture {name}: {}",error.message));
+            let value = session
+                .dispatch(name, args)
+                .unwrap_or_else(|error| panic!("fixture {name}: {}", error.message));
             Ok(value.to_string())
         };
-        let stopped=harness::run_with_host(LoopArgs {llm:&llm,history:&mut history,tools:&tools,dispatch:&mut dispatch,
-            emit:&mut |_|{},cancelled:&||false,max_rounds:8,label:"code-first".into(),conversation:false,inputs:None,input_close:None},
-            &instructions(),&mut model,&mut harness::MemoryRecovery);
-        assert_eq!(stopped,harness::Stop::EndTurn);
-        assert_eq!(observed,actions.iter().map(|(name,_)|name.to_string()).collect::<Vec<_>>());
-        assert_eq!(model.calls,6,"successful completion needs no extra inference");
-        assert!(gate(&store,&gs,"ent:cart",true).is_ok());
-        let row=&Ledger::load(&out).requirements["req:shop-1"];
-        assert_eq!(row.verdict,"pass");
-        assert!(row.tests.values().all(|test|test.verdict=="pass"&&test.last_run.is_some()));
-        assert_eq!(crate::verify::status_of(&store,"req:shop-1",row,&gs).0,"verified");
-        assert!(!observed.iter().any(|name|name=="record_binding"||name=="begin_binding"));
+        let stopped = harness::run_with_host(
+            LoopArgs {
+                llm: &llm,
+                history: &mut history,
+                tools: &tools,
+                dispatch: &mut dispatch,
+                emit: &mut |_| {},
+                cancelled: &|| false,
+                max_rounds: 8,
+                label: "code-first".into(),
+                conversation: false,
+                inputs: None,
+                input_close: None,
+            },
+            &instructions(),
+            &mut model,
+            &mut harness::MemoryRecovery,
+        );
+        assert_eq!(stopped, harness::Stop::EndTurn);
+        assert_eq!(
+            observed,
+            actions
+                .iter()
+                .map(|(name, _)| name.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            model.calls, 6,
+            "successful completion needs no extra inference"
+        );
+        assert!(gate(&store, &gs, "ent:cart", true).is_ok());
+        let row = &Ledger::load(&out).requirements["req:shop-1"];
+        assert_eq!(row.verdict, "pass");
+        assert!(row
+            .tests
+            .values()
+            .all(|test| test.verdict == "pass" && test.last_run.is_some()));
+        assert_eq!(
+            crate::verify::status_of(&store, "req:shop-1", row, &gs).0,
+            "verified"
+        );
+        assert!(!observed
+            .iter()
+            .any(|name| name == "record_binding" || name == "begin_binding"));
         crate::vfs::remove_dir_all(&out).unwrap();
     }
 
     #[test]
     fn recorded_medium_is_not_decided_again_before_the_first_entity_generation() {
-        let out=std::env::temp_dir().join(format!("jazyk-medium-once-{}",crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-medium-once-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
-        let(store,gs)=fixture(&out);
-        Ledger { medium:Some(Medium {form:"Rust crate".into(),produced:"written".into(),
-            toolchain:"cargo".into(),artifact:String::new()}),..Default::default() }.save(&out).unwrap();
+        let (store, gs) = fixture(&out);
+        Ledger {
+            medium: Some(Medium {
+                form: "Rust crate".into(),
+                produced: "written".into(),
+                toolchain: "cargo".into(),
+                artifact: String::new(),
+            }),
+            ..Default::default()
+        }
+        .save(&out)
+        .unwrap();
         assert!(Ledger::load(&out).entities.is_empty());
-        let runner=StubRunner {record:true,failed:None,stopped:None,store:store.clone(),gs:gs.clone()};
-        let trace=crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
+        let runner = StubRunner {
+            record: true,
+            failed: None,
+            stopped: None,
+            store: store.clone(),
+            gs: gs.clone(),
+        };
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Quiet,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
         // StubRunner refuses every ask: deciding again would fail this run.
-        let result=run_selected(&store,&runner,&gs,&["ent:cart".into()],false,&trace,false).unwrap();
-        assert_eq!(result["regenerated"],1,"{result}");
-        assert_eq!(result["failures"],0,"{result}");
-        assert_eq!(Ledger::load(&out).medium.unwrap().form,"Rust crate");
+        let result = run_selected(
+            &store,
+            &runner,
+            &gs,
+            &["ent:cart".into()],
+            false,
+            &trace,
+            false,
+        )
+        .unwrap();
+        assert_eq!(result["regenerated"], 1, "{result}");
+        assert_eq!(result["failures"], 0, "{result}");
+        assert_eq!(Ledger::load(&out).medium.unwrap().form, "Rust crate");
         crate::vfs::remove_dir_all(&out).unwrap();
     }
 
@@ -3868,7 +4769,11 @@ mod tests {
         crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         crate::vfs::write(&path, "// req:ds_main::shop-1 hash:deadbeef\nfn cart() {}\n// req:ds_other::shop-1 hash:deadbeef\nfn other() {}\n").unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn checks_cart() {}\n").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "fn checks_cart() {}\n",
+        )
+        .unwrap();
         mark(&store, "ent:cart", None, &serde_json::json!({"files":["src/cart.rs"],"tests":[{
             "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs","name":"checks_cart","run":"true"
         }]}), &gs).unwrap();
@@ -3884,7 +4789,8 @@ mod tests {
 
     #[test]
     fn mark_strips_markers_into_sites() {
-        let out = std::env::temp_dir().join(format!("jazyk-sites-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-sites-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -3928,7 +4834,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
     #[test]
     fn a_row_over_an_open_error_diagnostic_is_flagged_contradicted() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-contra-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-contra-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let diag = |severity: &str, lifecycle: &str| Diagnostic {
@@ -4057,7 +4964,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
     #[test]
     fn mark_warns_when_run_commands_diverge_from_the_medium() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-diverge-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-diverge-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(&out).ok();
@@ -4106,7 +5014,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-build.
     #[test]
     fn build_is_recorded_once_and_carried_into_later_packages() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-build-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-build-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         assert!(task_package(&s, "ent:cart", &gs).unwrap()["build"].is_null());
@@ -4185,7 +5094,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn extra_files_are_classified_by_the_manifest() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-extra-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-extra-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -4230,7 +5140,11 @@ mod tests {
         ledger.save(out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         crate::vfs::write(gs.deliverable.join("hello.sh"), "printf 'hello\\n'\n").unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/hello.sh"), "# checks_hello\nsh hello.sh\n").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/hello.sh"),
+            "# checks_hello\nsh hello.sh\n",
+        )
+        .unwrap();
         mark(&store, "ent:cart", None, &serde_json::json!({
             "files": ["hello.sh"],
             "tests": [{"requirement": "req:shop-1", "kind": "programmatic",
@@ -4239,16 +5153,23 @@ mod tests {
         let ledger = Ledger::load(out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.files, vec!["hello.sh"]);
-        assert_eq!(crate::verify::status_of(&store, "req:shop-1", row, &gs).0, "unverified");
+        assert_eq!(
+            crate::verify::status_of(&store, "req:shop-1", row, &gs).0,
+            "unverified"
+        );
         crate::vfs::write(gs.deliverable.join("hello.sh"), "printf 'changed\\n'\n").unwrap();
-        assert_eq!(crate::verify::status_of(&store, "req:shop-1", row, &gs).0, "stale-code");
+        assert_eq!(
+            crate::verify::status_of(&store, "req:shop-1", row, &gs).0,
+            "stale-code"
+        );
     }
 
     // Two writers at once never lose each other's change: every load, modify, and save
     // runs under the ledger lock (docs/consumers/gen.md#the-ledger).
     #[test]
     fn concurrent_ledger_updates_keep_both_changes() {
-        let out = std::env::temp_dir().join(format!("jazyk-ledger-lock-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-ledger-lock-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         Ledger::default().save(&out).unwrap();
         let writers: Vec<_> = ["a.css", "b.css", "c.css"]
@@ -4279,7 +5200,8 @@ mod tests {
 
     #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-medium-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let mut ledger = Ledger::load(&out);
@@ -4303,7 +5225,10 @@ mod tests {
         let no_build = serde_json::json!({"files": ["src/cart.rs"], "tests": []});
         let err = mark(&s, "ent:cart", None, &no_build, &gs).unwrap_err();
         assert!(err.contains("no build is recorded"), "{}", err);
-        assert_eq!(crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap(), marked);
+        assert_eq!(
+            crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap(),
+            marked
+        );
 
         // A build that forgets the artifact still produces it: the decision fills it in.
         mark(
@@ -4351,9 +5276,21 @@ mod tests {
 
         // Binding that found the code verified: adopted, nothing to generate.
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
-        crate::bind::record(&s, "req:shop-1", &["src/cart.rs".into()], &bound, &json!([]), "pass", None, &gs)
-            .unwrap();
-        assert!(pending(&s, &gs).is_empty(), "adopted code is not generation work");
+        crate::bind::record(
+            &s,
+            "req:shop-1",
+            &["src/cart.rs".into()],
+            &bound,
+            &json!([]),
+            "pass",
+            None,
+            &gs,
+        )
+        .unwrap();
+        assert!(
+            pending(&s, &gs).is_empty(),
+            "adopted code is not generation work"
+        );
         assert!(skip_reason(&s, &gs, "ent:cart").contains("no ledger entry"));
         crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
 
@@ -4382,8 +5319,12 @@ mod tests {
         // work: generation had its turn (docs/consumers/gen.md#status-is-derived-never-stored).
         crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
         let ledger = Ledger::load(&out);
-        let (st, why) = crate::verify::status_of(&s, "req:shop-1", &ledger.requirements["req:shop-1"], &gs);
-        assert_eq!((st.as_str(), why.as_str()), ("failing", "criteria-failing-after-generation"));
+        let (st, why) =
+            crate::verify::status_of(&s, "req:shop-1", &ledger.requirements["req:shop-1"], &gs);
+        assert_eq!(
+            (st.as_str(), why.as_str()),
+            ("failing", "criteria-failing-after-generation")
+        );
         assert!(pending(&s, &gs).is_empty(), "generation had its turn");
 
         // A recorded file deleted by hand is generation work under its own name.
@@ -4431,7 +5372,8 @@ mod tests {
     // Any record buries them. Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
     #[test]
     fn mark_prunes_rows_whose_requirement_left_the_graph() {
-        let out = std::env::temp_dir().join(format!("jazyk-prune-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-prune-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
@@ -4484,19 +5426,31 @@ mod tests {
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .unwrap();
         let manifest = json!({"files": ["src/cart.rs", "tests/cart.rs"], "tests": [{
             "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
             "artifact": "tests/cart.rs", "name": name, "run": "true", "files": ["src/cart.rs"]}]});
         mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
         assert_eq!(gate(&s, &gs, "ent:cart", false).unwrap(), 2);
         let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
-        assert!(err.contains("run_tests has not run") && err.contains("req:shop-1"), "{}", err);
+        assert!(
+            err.contains("run_tests has not run") && err.contains("req:shop-1"),
+            "{}",
+            err
+        );
         crate::verify::run_selected(&s, &gs, &[]).unwrap();
         gate(&s, &gs, "ent:cart", true).unwrap();
         crate::vfs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
         let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
-        assert!(err.contains("do not exist") && err.contains("src/cart.rs"), "{}", err);
+        assert!(
+            err.contains("do not exist") && err.contains("src/cart.rs"),
+            "{}",
+            err
+        );
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
         s.graph.entities.get_mut("ent:cart").unwrap().definition = Some("moved".into());
         let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
@@ -4510,38 +5464,78 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn manifest_paths_are_confined_to_the_deliverable() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-confine-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-confine-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         // A file beside the deliverable that a climbing path could reach.
-        crate::vfs::write(out.join("secret.txt"), "// req:shop-1 hash:deadbeef\nkeep\n").unwrap();
-        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// req:shop-1 hash:deadbeef\nfn a() {}\n").unwrap();
+        crate::vfs::write(
+            out.join("secret.txt"),
+            "// req:shop-1 hash:deadbeef\nkeep\n",
+        )
+        .unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("src/cart.rs"),
+            "// req:shop-1 hash:deadbeef\nfn a() {}\n",
+        )
+        .unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .unwrap();
         let row = json!({
             "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
             "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
         });
         for (bad, field) in [
-            (json!({"files": ["src/cart.rs", "../secret.txt"], "tests": [row.clone()]}), "files"),
-            (json!({"files": ["/etc/passwd"], "tests": [row.clone()]}), "files"),
-            (json!({"files": ["src/cart.rs"], "supportFiles": ["../../x"], "tests": [row.clone()]}), "supportFiles"),
-            (json!({"files": ["src/cart.rs"], "tests": [{"requirement": "req:shop-1", "kind": "programmatic", "artifact": "../secret.txt", "name": name, "run": "x"}]}), "artifact"),
-            (json!({"files": ["src/cart.rs"], "tests": [row.clone()], "build": {"run": "make", "cwd": "..", "produces": []}}), "build.cwd"),
+            (
+                json!({"files": ["src/cart.rs", "../secret.txt"], "tests": [row.clone()]}),
+                "files",
+            ),
+            (
+                json!({"files": ["/etc/passwd"], "tests": [row.clone()]}),
+                "files",
+            ),
+            (
+                json!({"files": ["src/cart.rs"], "supportFiles": ["../../x"], "tests": [row.clone()]}),
+                "supportFiles",
+            ),
+            (
+                json!({"files": ["src/cart.rs"], "tests": [{"requirement": "req:shop-1", "kind": "programmatic", "artifact": "../secret.txt", "name": name, "run": "x"}]}),
+                "artifact",
+            ),
+            (
+                json!({"files": ["src/cart.rs"], "tests": [row.clone()], "build": {"run": "make", "cwd": "..", "produces": []}}),
+                "build.cwd",
+            ),
         ] {
             let err = mark(&s, "ent:cart", None, &bad, &gs).unwrap_err();
             assert!(err.contains(field), "{}: {}", field, err);
-            assert!(!Ledger::path(&out).vexists(), "a rejected record writes no ledger");
+            assert!(
+                !Ledger::path(&out).vexists(),
+                "a rejected record writes no ledger"
+            );
         }
         // No side effect reached either file: the markers are still there.
-        assert!(crate::vfs::read_to_string(out.join("secret.txt")).unwrap().contains("hash:"));
-        assert!(crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap().contains("hash:"));
+        assert!(crate::vfs::read_to_string(out.join("secret.txt"))
+            .unwrap()
+            .contains("hash:"));
+        assert!(
+            crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs"))
+                .unwrap()
+                .contains("hash:")
+        );
         // The clean spellings are normalized on record.
         let ok = json!({"files": ["./src/cart.rs", "src//cart.rs"], "tests": [row]});
         mark(&s, "ent:cart", None, &ok, &gs).unwrap();
-        assert_eq!(Ledger::load(&out).entities["cart"].files, vec!["src/cart.rs".to_string()]);
+        assert_eq!(
+            Ledger::load(&out).entities["cart"].files,
+            vec!["src/cart.rs".to_string()]
+        );
         assert_eq!(confine_rel("a\\b\\c.py").unwrap(), "a/b/c.py");
         assert!(confine_rel("C:/x").is_err());
         assert!(confine_rel(".").is_err());
@@ -4554,18 +5548,27 @@ mod tests {
     // rejected naming the row and the fix. Mirrors docs/compiler/goals/generate.md#gate.
     #[test]
     fn record_generation_rejects_a_test_its_artifact_does_not_carry() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-artgate-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-artgate-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         crate::vfs::write(gs.deliverable.join("cart.rs"), "fn a() {}\n").unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn something_else() {}\n").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "fn something_else() {}\n",
+        )
+        .unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
         let absent = json!({"files": ["cart.rs"], "tests": [{
             "requirement": "req:shop-1", "kind": "programmatic", "artifact": "tests/cart.rs",
             "name": name, "run": format!("cargo test {}", name)}]});
         let err = mark(&s, "ent:cart", None, &absent, &gs).unwrap_err();
-        assert!(err.contains("does not contain that name") && err.contains(&name), "{}", err);
+        assert!(
+            err.contains("does not contain that name") && err.contains(&name),
+            "{}",
+            err
+        );
         let gone = json!({"files": ["cart.rs"], "tests": [{
             "requirement": "req:shop-1", "kind": "programmatic", "artifact": "tests/nope.rs",
             "name": name, "run": format!("cargo test {}", name)}]});
@@ -4586,19 +5589,37 @@ mod tests {
             .contains("`programmatic`"));
         // The criteria file under the out directory satisfies an llm row.
         crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
-        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter("req:shop-1", None, &s.graph.requirements["req:shop-1"].statement))).unwrap();
+        crate::vfs::write(
+            out.join("gen/criteria/req-shop-1.md"),
+            format!(
+                "{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n",
+                criteria_front_matter(
+                    "req:shop-1",
+                    None,
+                    &s.graph.requirements["req:shop-1"].statement
+                )
+            ),
+        )
+        .unwrap();
         mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap();
         crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
     fn qualified_report_selectors_record_and_stay_bound() {
-        let out = std::env::temp_dir().join(format!("jazyk-qualified-report-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-qualified-report-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         let (store, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         crate::vfs::write(gs.deliverable.join("cart.rs"), "fn cart() {}\n").unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn qualified_case() {}\n").unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "fn qualified_case() {}\n",
+        )
+        .unwrap();
         let mut manifest = json!({"files":["cart.rs"],"tests":[{
             "requirement":"req:shop-1","kind":"programmatic","artifact":"tests/cart.rs",
             "name":"Suite::qualified_case","run":"task:check"
@@ -4607,8 +5628,15 @@ mod tests {
         assert!(crate::bind::pending(&store, &gs).is_empty());
         manifest["tests"][0]["name"] = json!("Suite::");
         assert!(mark(&store, "ent:cart", None, &manifest, &gs).is_err());
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn renamed_case() {}\n").unwrap();
-        assert_eq!(crate::bind::pending(&store, &gs)[0]["reason"], "artifact-gone");
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "fn renamed_case() {}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            crate::bind::pending(&store, &gs)[0]["reason"],
+            "artifact-gone"
+        );
         crate::vfs::remove_dir_all(out).ok();
     }
 
@@ -4618,28 +5646,63 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn a_path_restating_the_deliverable_name_lands_under_the_root() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-unroot-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-unroot-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
-        assert_eq!(unroot(&gs.deliverable, "product/src/cart.rs").as_deref(), Some("src/cart.rs"));
-        assert_eq!(unroot(&gs.deliverable, "./product/src/cart.rs").as_deref(), Some("src/cart.rs"));
+        assert_eq!(
+            unroot(&gs.deliverable, "product/src/cart.rs").as_deref(),
+            Some("src/cart.rs")
+        );
+        assert_eq!(
+            unroot(&gs.deliverable, "./product/src/cart.rs").as_deref(),
+            Some("src/cart.rs")
+        );
         assert_eq!(unroot(&gs.deliverable, "product").as_deref(), Some(""));
         assert_eq!(unroot(&gs.deliverable, "src/cart.rs"), None);
         assert_eq!(unroot(&gs.deliverable, "products/cart.rs"), None);
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").unwrap();
         crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
-        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter("req:shop-1", None, &s.graph.requirements["req:shop-1"].statement))).unwrap();
-        let r = mark(&s, "ent:cart", None, &json!({
-            "files": ["product/src/cart.rs"],
-            "tests": [{"requirement": "req:shop-1", "kind": "llm", "label": "judged",
-                       "artifact": "criteria/req-shop-1.md", "name": "req_shop_1", "run": "llm",
-                       "files": ["product/src/cart.rs"]}],
-        }), &gs).unwrap();
-        assert!(r["pathNote"][0].as_str().unwrap().contains("`src/cart.rs`"), "{}", r);
+        crate::vfs::write(
+            out.join("gen/criteria/req-shop-1.md"),
+            format!(
+                "{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n",
+                criteria_front_matter(
+                    "req:shop-1",
+                    None,
+                    &s.graph.requirements["req:shop-1"].statement
+                )
+            ),
+        )
+        .unwrap();
+        let r = mark(
+            &s,
+            "ent:cart",
+            None,
+            &json!({
+                "files": ["product/src/cart.rs"],
+                "tests": [{"requirement": "req:shop-1", "kind": "llm", "label": "judged",
+                           "artifact": "criteria/req-shop-1.md", "name": "req_shop_1", "run": "llm",
+                           "files": ["product/src/cart.rs"]}],
+            }),
+            &gs,
+        )
+        .unwrap();
+        assert!(
+            r["pathNote"][0].as_str().unwrap().contains("`src/cart.rs`"),
+            "{}",
+            r
+        );
         let ledger = Ledger::load(&out);
-        assert_eq!(ledger.entities["cart"].files, vec!["src/cart.rs".to_string()]);
-        assert_eq!(ledger.requirements["req:shop-1"].files, vec!["src/cart.rs".to_string()]);
+        assert_eq!(
+            ledger.entities["cart"].files,
+            vec!["src/cart.rs".to_string()]
+        );
+        assert_eq!(
+            ledger.requirements["req:shop-1"].files,
+            vec!["src/cart.rs".to_string()]
+        );
         // A deliverable that really holds `product/` keeps the path as given.
         crate::vfs::create_dir_all(gs.deliverable.join("product")).unwrap();
         assert_eq!(unroot(&gs.deliverable, "product/src/cart.rs"), None);
@@ -4651,7 +5714,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn members_of_one_group_share_a_page_and_another_group_is_refused() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-group-own-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-group-own-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let ent = |name: &str, parent: Option<&str>| Entity {
@@ -4660,17 +5724,32 @@ mod tests {
             ..Default::default()
         };
         s.graph.entities.insert("ent:org".into(), ent("Org", None));
-        s.graph.entities.insert("ent:operations".into(), ent("Operations", Some("ent:org")));
-        s.graph.entities.insert("ent:store-manager".into(), ent("Store Manager", Some("ent:operations")));
-        s.graph.entities.insert("ent:sales".into(), ent("Sales", Some("ent:org")));
+        s.graph
+            .entities
+            .insert("ent:operations".into(), ent("Operations", Some("ent:org")));
+        s.graph.entities.insert(
+            "ent:store-manager".into(),
+            ent("Store Manager", Some("ent:operations")),
+        );
+        s.graph
+            .entities
+            .insert("ent:sales".into(), ent("Sales", Some("ent:org")));
         for (rid, stmt, e) in [
             ("req:d-1", "Operations moves shipments.", "ent:operations"),
-            ("req:d-2", "Operations has Store Manager as a role.", "ent:store-manager"),
+            (
+                "req:d-2",
+                "Operations has Store Manager as a role.",
+                "ent:store-manager",
+            ),
             ("req:d-3", "Sales sells to wholesale accounts.", "ent:sales"),
         ] {
             s.graph.requirements.insert(
                 rid.into(),
-                Requirement { statement: stmt.into(), entities: vec![e.into()], ..Default::default() },
+                Requirement {
+                    statement: stmt.into(),
+                    entities: vec![e.into()],
+                    ..Default::default()
+                },
             );
         }
         crate::vfs::create_dir_all(gs.deliverable.clone()).unwrap();
@@ -4678,32 +5757,73 @@ mod tests {
         crate::vfs::write(gs.deliverable.join("departments.md"), "# Departments\n").unwrap();
         let row = |rid: &str| {
             let f = format!("criteria/{}.md", rid.replace(':', "-"));
-            crate::vfs::write(out.join("gen").join(&f), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter(rid, None, &s.graph.requirements[rid].statement))).unwrap();
+            crate::vfs::write(
+                out.join("gen").join(&f),
+                format!(
+                    "{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n",
+                    criteria_front_matter(rid, None, &s.graph.requirements[rid].statement)
+                ),
+            )
+            .unwrap();
             json!({"requirement": rid, "kind": "llm", "label": "judged", "artifact": f,
                    "name": rid.replace([':', '-'], "_"), "run": "llm"})
         };
         assert!(file_owner(&s, &Ledger::load(&out), "ent:sales", "departments.md").is_none());
-        mark(&s, "ent:operations", None, &json!({"files": ["departments.md"], "tests": [row("req:d-1")]}), &gs)
-            .unwrap();
+        mark(
+            &s,
+            "ent:operations",
+            None,
+            &json!({"files": ["departments.md"], "tests": [row("req:d-1")]}),
+            &gs,
+        )
+        .unwrap();
         // The same group: shared, never refused.
-        mark(&s, "ent:store-manager", None, &json!({"files": ["departments.md"], "tests": [row("req:d-2")]}), &gs)
-            .unwrap();
+        mark(
+            &s,
+            "ent:store-manager",
+            None,
+            &json!({"files": ["departments.md"], "tests": [row("req:d-2")]}),
+            &gs,
+        )
+        .unwrap();
         let ledger = Ledger::load(&out);
-        assert_eq!(ledger.entities["operations"].files, vec!["departments.md".to_string()]);
-        assert_eq!(ledger.entities["store-manager"].files, vec!["departments.md".to_string()]);
+        assert_eq!(
+            ledger.entities["operations"].files,
+            vec!["departments.md".to_string()]
+        );
+        assert_eq!(
+            ledger.entities["store-manager"].files,
+            vec!["departments.md".to_string()]
+        );
         assert!(file_owner(&s, &ledger, "ent:store-manager", "departments.md").is_none());
         assert!(file_owner(&s, &ledger, "ent:operations", "departments.md").is_none());
         // Another group: refused, the owner named.
-        assert_eq!(file_owner(&s, &ledger, "ent:sales", "departments.md").as_deref(), Some("operations"));
-        let err = mark(&s, "ent:sales", None, &json!({"files": ["departments.md"], "tests": [row("req:d-3")]}), &gs)
-            .unwrap_err();
-        assert!(err.contains("`departments.md` belongs to entity `operations`"), "{}", err);
+        assert_eq!(
+            file_owner(&s, &ledger, "ent:sales", "departments.md").as_deref(),
+            Some("operations")
+        );
+        let err = mark(
+            &s,
+            "ent:sales",
+            None,
+            &json!({"files": ["departments.md"], "tests": [row("req:d-3")]}),
+            &gs,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("`departments.md` belongs to entity `operations`"),
+            "{}",
+            err
+        );
         assert!(err.contains("component group"), "{}", err);
         // The system generates alone: the group's page is not its own either, and a
         // requirement target (a bind goal) owns nothing.
         assert!(file_owner(&s, &ledger, "ent:org", "departments.md").is_some());
         assert!(file_owner(&s, &ledger, "req:d-1", "departments.md").is_some());
-        assert_eq!(shared_with(&s, "ent:operations"), vec!["ent:store-manager".to_string()]);
+        assert_eq!(
+            shared_with(&s, "ent:operations"),
+            vec!["ent:store-manager".to_string()]
+        );
         assert!(shared_with(&s, "ent:org").is_empty());
         crate::vfs::remove_dir_all(&out).ok();
     }
@@ -4714,20 +5834,52 @@ mod tests {
         let root = Path::new("/project");
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
         crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Site'\ndocs = ['docs/**']\nsource = ['deliverable/**']\n").unwrap();
-        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_main")).unwrap();
+        let project = crate::document_sets::Workspace::load(root)
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap();
         let gs = GenSettings::resolve(&project);
-        let mut store = Store { out: project.out.clone(), ..Default::default() };
+        let mut store = Store {
+            out: project.out.clone(),
+            ..Default::default()
+        };
         for (id, name, rid, statement) in [
-            ("ent:footer", "Footer", "req:footer", "The page displays the footer."),
-            ("ent:top-menu", "Top Menu", "req:top-menu", "The page displays the menu."),
+            (
+                "ent:footer",
+                "Footer",
+                "req:footer",
+                "The page displays the footer.",
+            ),
+            (
+                "ent:top-menu",
+                "Top Menu",
+                "req:top-menu",
+                "The page displays the menu.",
+            ),
         ] {
-            store.graph.entities.insert(id.into(), Entity { name: name.into(), ..Default::default() });
-            store.graph.requirements.insert(rid.into(), Requirement {
-                statement: statement.into(), entities: vec![id.into()], ..Default::default()
-            });
-            store.graph.criteria.insert(format!("crit:{}", id.trim_start_matches("ent:")), Criterion {
-                requirement: rid.into(), statement: statement.into(), ..Default::default()
-            });
+            store.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: name.into(),
+                    ..Default::default()
+                },
+            );
+            store.graph.requirements.insert(
+                rid.into(),
+                Requirement {
+                    statement: statement.into(),
+                    entities: vec![id.into()],
+                    ..Default::default()
+                },
+            );
+            store.graph.criteria.insert(
+                format!("crit:{}", id.trim_start_matches("ent:")),
+                Criterion {
+                    requirement: rid.into(),
+                    statement: statement.into(),
+                    ..Default::default()
+                },
+            );
         }
         store.save_for_test();
         let page = "deliverable/page.html";
@@ -4736,11 +5888,17 @@ mod tests {
         crate::vfs::create_dir_all(root.join("deliverable/tests")).unwrap();
         crate::vfs::write(root.join(page), "<html><body>\n<!-- req:footer hash:12345678 -->\n<footer>Existing footer</footer>\n</body></html>\n").unwrap();
         crate::vfs::write(root.join(exclusive), "footer { color: navy; }\n").unwrap();
-        crate::vfs::write(root.join(artifact), "def checks_footer():\n    pass\ndef checks_menu():\n    pass\n").unwrap();
+        crate::vfs::write(
+            root.join(artifact),
+            "def checks_footer():\n    pass\ndef checks_menu():\n    pass\n",
+        )
+        .unwrap();
         let mut ledger = Ledger::load(&store.out);
         ledger.medium = Some(Medium {
-            form: "Static HTML page".into(), produced: "written".into(),
-            toolchain: "HTML".into(), artifact: page.into(),
+            form: "Static HTML page".into(),
+            produced: "written".into(),
+            toolchain: "HTML".into(),
+            artifact: page.into(),
         });
         ledger.save(&store.out).unwrap();
         let footer_test = json!({"requirement":"req:footer","criterion":"crit:footer","kind":"programmatic",
@@ -4758,56 +5916,118 @@ mod tests {
         }
         ledger.save(&store.out).unwrap();
         let prior_row = serde_json::to_value(&ledger.requirements["req:footer"]).unwrap();
-        assert_eq!(crate::verify::status_of(&store, "req:footer", &ledger.requirements["req:footer"], &gs).0, "verified");
+        assert_eq!(
+            crate::verify::status_of(
+                &store,
+                "req:footer",
+                &ledger.requirements["req:footer"],
+                &gs
+            )
+            .0,
+            "verified"
+        );
         assert!(shared_with(&store, "ent:top-menu").is_empty());
 
         // This is the same target fence as a Top Menu-only in-process worker.
-        let server = crate::mcp::McpServer::with_bridge(project.clone(), store.out.clone(),
-            vec!["generate".into()], true, crate::mcp::BridgeFlags {
-                ephemeral: true, serve_files: true,
+        let server = crate::mcp::McpServer::with_bridge(
+            project.clone(),
+            store.out.clone(),
+            vec!["generate".into()],
+            true,
+            crate::mcp::BridgeFlags {
+                ephemeral: true,
+                serve_files: true,
                 only: Some("g:generate:ent:top-menu".into()),
-                build_token: Some("shared-page-fixture".into()), ..Default::default()
-            });
-        let call = |name: &str, args: Value| server.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+                build_token: Some("shared-page-fixture".into()),
+                ..Default::default()
+            },
+        );
+        let call = |name: &str, args: Value| {
+            server
+                .handle("tools/call", &json!({"name":name,"arguments":args}))
+                .unwrap()
+        };
         let successful = |reply: Value| -> Value {
             assert!(!reply["isError"].as_bool().unwrap_or(false), "{reply}");
             serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap()
         };
-        let refused = call("write_text_file", json!({"path":page,"content":"must not replace footer"}));
+        let refused = call(
+            "write_text_file",
+            json!({"path":page,"content":"must not replace footer"}),
+        );
         assert!(refused.to_string().contains("file-owned"), "{refused}");
-        assert_eq!(crate::vfs::read_to_string(root.join(page)).unwrap(), original);
+        assert_eq!(
+            crate::vfs::read_to_string(root.join(page)).unwrap(),
+            original
+        );
 
         // Reopen the recorded owner, preserve its bytes and complete manifest,
         // and explicitly add the real shared composition page to support.
         let owner = successful(call("begin_generation", json!({"entity":"ent:footer"})));
         footer_manifest["supportFiles"] = json!([page]);
-        successful(call("record_generation", json!({"entity":"ent:footer",
-            "factHash":owner["factHash"],"manifest":footer_manifest})));
+        successful(call(
+            "record_generation",
+            json!({"entity":"ent:footer",
+            "factHash":owner["factHash"],"manifest":footer_manifest}),
+        ));
         let promoted = Ledger::load(&store.out);
         assert_eq!(promoted.support, [page]);
-        assert_eq!(crate::vfs::read_to_string(root.join(page)).unwrap(), original);
-        assert_eq!(serde_json::to_value(&promoted.requirements["req:footer"]).unwrap(), prior_row);
+        assert_eq!(
+            crate::vfs::read_to_string(root.join(page)).unwrap(),
+            original
+        );
+        assert_eq!(
+            serde_json::to_value(&promoted.requirements["req:footer"]).unwrap(),
+            prior_row
+        );
         assert!(file_owner(&store, &promoted, "ent:top-menu", page).is_none());
 
         let package = successful(call("begin_generation", json!({"entity":"ent:top-menu"})));
         assert_eq!(package["sharedWith"], json!([]));
         assert_eq!(package["supportFiles"], json!([page]));
-        let next = original.replace("<html><body>\n", "<html><body>\n<!-- req:top-menu hash:12345678 -->\n<nav>New menu</nav>\n");
+        let next = original.replace(
+            "<html><body>\n",
+            "<html><body>\n<!-- req:top-menu hash:12345678 -->\n<nav>New menu</nav>\n",
+        );
         successful(call("write_text_file", json!({"path":page,"content":next})));
-        let exclusive_refusal = call("write_text_file", json!({"path":exclusive,"content":"must not replace exclusive module"}));
-        assert!(exclusive_refusal.to_string().contains("file-owned"), "{exclusive_refusal}");
-        assert_eq!(crate::vfs::read_to_string(root.join(exclusive)).unwrap(), "footer { color: navy; }\n");
-        let outside = call("write_text_file", json!({"path":"private/page.html","content":"outside Source"}));
-        assert!(outside.to_string().contains("source-selection"), "{outside}");
-        let bad_promotion = call("record_generation", json!({"entity":"ent:top-menu",
-            "factHash":package["factHash"],"manifest":{"files":[page],"supportFiles":["private/page.html"]}}));
-        assert!(bad_promotion.to_string().contains("source selection"), "{bad_promotion}");
+        let exclusive_refusal = call(
+            "write_text_file",
+            json!({"path":exclusive,"content":"must not replace exclusive module"}),
+        );
+        assert!(
+            exclusive_refusal.to_string().contains("file-owned"),
+            "{exclusive_refusal}"
+        );
+        assert_eq!(
+            crate::vfs::read_to_string(root.join(exclusive)).unwrap(),
+            "footer { color: navy; }\n"
+        );
+        let outside = call(
+            "write_text_file",
+            json!({"path":"private/page.html","content":"outside Source"}),
+        );
+        assert!(
+            outside.to_string().contains("source-selection"),
+            "{outside}"
+        );
+        let bad_promotion = call(
+            "record_generation",
+            json!({"entity":"ent:top-menu",
+            "factHash":package["factHash"],"manifest":{"files":[page],"supportFiles":["private/page.html"]}}),
+        );
+        assert!(
+            bad_promotion.to_string().contains("source selection"),
+            "{bad_promotion}"
+        );
         assert_eq!(Ledger::load(&store.out).support, [page]);
-        successful(call("record_generation", json!({"entity":"ent:top-menu",
+        successful(call(
+            "record_generation",
+            json!({"entity":"ent:top-menu",
             "factHash":package["factHash"],"manifest":{"files":[page],"supportFiles":[page],"tests":[{
                 "requirement":"req:top-menu","criterion":"crit:top-menu","kind":"programmatic","artifact":artifact,
                 "name":"checks_menu","run":"task:site","files":[page]
-            }]}})));
+            }]}}),
+        ));
 
         let ledger = Ledger::load(&store.out);
         let content = crate::vfs::read_to_string(root.join(page)).unwrap();
@@ -4819,12 +6039,21 @@ mod tests {
         let menu = &ledger.requirements["req:top-menu"];
         assert_eq!(menu.files, [page]);
         assert_eq!(menu.sites[0].head, "<nav>New menu</nav>");
-        assert_eq!(menu.hashes.files, hash_implementing(&store.out, &gs, &menu.files));
-        assert_eq!(crate::verify::status_of(&store, "req:top-menu", menu, &gs).0, "unverified");
+        assert_eq!(
+            menu.hashes.files,
+            hash_implementing(&store.out, &gs, &menu.files)
+        );
+        assert_eq!(
+            crate::verify::status_of(&store, "req:top-menu", menu, &gs).0,
+            "unverified"
+        );
         let footer = &ledger.requirements["req:footer"];
         assert_eq!(footer.sites[0].head, "<footer>Existing footer</footer>");
         assert!(locate_head(&content, &footer.sites[0].head, footer.sites[0].line).is_some());
-        assert_eq!(crate::verify::status_of(&store, "req:footer", footer, &gs).0, "stale-code");
+        assert_eq!(
+            crate::verify::status_of(&store, "req:footer", footer, &gs).0,
+            "stale-code"
+        );
         assert!(file_owner(&store, &ledger, "ent:top-menu", exclusive).is_some());
         assert!(!root.join("private/page.html").vexists());
     }
@@ -4836,25 +6065,52 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn a_record_with_no_implementing_file_is_refused_unless_carried() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-no-impl-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-no-impl-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
-        s.graph.entities.insert("ent:buyer".into(), Entity { name: "Buyer".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:buyer".into(),
+            Entity {
+                name: "Buyer".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.get_mut("req:shop-1").unwrap().entities =
             vec!["ent:cart".into(), "ent:buyer".into()];
         crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests/criteria")).unwrap();
-        crate::vfs::write(gs.deliverable.join("tests/criteria/req-shop-1.md"), format!("{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n", criteria_front_matter("req:shop-1", None, &s.graph.requirements["req:shop-1"].statement))).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/criteria/req-shop-1.md"),
+            format!(
+                "{}\nInspect the product. PASS when satisfied. FAIL otherwise.\n",
+                criteria_front_matter(
+                    "req:shop-1",
+                    None,
+                    &s.graph.requirements["req:shop-1"].statement
+                )
+            ),
+        )
+        .unwrap();
         let row = json!({"requirement": "req:shop-1", "kind": "llm", "label": "judged",
                          "artifact": "tests/criteria/req-shop-1.md", "name": "req_shop_1", "run": "llm"});
         // Nothing but the criteria file: refused, the requirement named.
         for files in [json!([]), json!(["tests/criteria/req-shop-1.md"])] {
-            let err = mark(&s, "ent:cart", None, &json!({"files": files, "tests": [row.clone()]}), &gs)
-                .unwrap_err();
+            let err = mark(
+                &s,
+                "ent:cart",
+                None,
+                &json!({"files": files, "tests": [row.clone()]}),
+                &gs,
+            )
+            .unwrap_err();
             assert!(err.contains("req:shop-1"), "{}", err);
             assert!(err.contains("not implementation"), "{}", err);
         }
-        assert!(Ledger::load(&out).entities.is_empty(), "a refusal records nothing");
+        assert!(
+            Ledger::load(&out).entities.is_empty(),
+            "a refusal records nothing"
+        );
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "pub struct Cart;\n").unwrap();
         mark(&s, "ent:cart", None, &json!({"files": ["src/cart.rs", "tests/criteria/req-shop-1.md"], "tests": [row.clone()]}), &gs)
             .unwrap();
@@ -4865,10 +6121,20 @@ mod tests {
         );
         // The buyer's one requirement is carried by the cart's file: files: [] stands,
         // and listing the shared row unchanged keeps the file that carries it.
-        mark(&s, "ent:buyer", None, &json!({"files": [], "tests": [row]}), &gs).unwrap();
+        mark(
+            &s,
+            "ent:buyer",
+            None,
+            &json!({"files": [], "tests": [row]}),
+            &gs,
+        )
+        .unwrap();
         let ledger = Ledger::load(&out);
         assert!(ledger.entities["buyer"].files.is_empty());
-        assert_eq!(ledger.requirements["req:shop-1"].files, vec!["src/cart.rs".to_string()]);
+        assert_eq!(
+            ledger.requirements["req:shop-1"].files,
+            vec!["src/cart.rs".to_string()]
+        );
         assert!(gate(&s, &gs, "ent:buyer", false).is_ok());
         crate::vfs::remove_dir_all(&out).ok();
     }
@@ -4880,45 +6146,101 @@ mod tests {
     // Mirrors docs/consumers/gen.md#incremental-regeneration.
     #[test]
     fn a_record_removes_the_files_its_manifest_omits() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-remove-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-gen-remove-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // Shelf is part of Cart, one component group under the Shop system, so the
         // two share their files.
-        s.graph.entities.insert("ent:shop".into(), Entity { name: "Shop".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:shop".into(),
+            Entity {
+                name: "Shop".into(),
+                ..Default::default()
+            },
+        );
         s.graph.entities.get_mut("ent:cart").unwrap().parent = Some("ent:shop".into());
         s.graph.entities.insert(
             "ent:shelf".into(),
-            Entity { name: "Shelf".into(), parent: Some("ent:cart".into()), ..Default::default() },
+            Entity {
+                name: "Shelf".into(),
+                parent: Some("ent:cart".into()),
+                ..Default::default()
+            },
         );
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
-        for f in ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "Cargo.toml", "src/cart_v2.rs"] {
+        for f in [
+            "src/cart.rs",
+            "src/cart_old.rs",
+            "src/shared.rs",
+            "Cargo.toml",
+            "src/cart_v2.rs",
+        ] {
             crate::vfs::write(gs.deliverable.join(f), format!("// {}\n", f)).unwrap();
         }
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .unwrap();
         let row = json!({
             "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
             "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
         });
-        mark(&s, "ent:shelf", None, &json!({"files": ["src/shared.rs"], "tests": []}), &gs).unwrap();
-        mark(&s, "ent:cart", None, &json!({
-            "files": ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "tests/cart.rs"],
-            "supportFiles": ["Cargo.toml"], "tests": [row.clone()],
-        }), &gs).unwrap();
+        mark(
+            &s,
+            "ent:shelf",
+            None,
+            &json!({"files": ["src/shared.rs"], "tests": []}),
+            &gs,
+        )
+        .unwrap();
+        mark(
+            &s,
+            "ent:cart",
+            None,
+            &json!({
+                "files": ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "tests/cart.rs"],
+                "supportFiles": ["Cargo.toml"], "tests": [row.clone()],
+            }),
+            &gs,
+        )
+        .unwrap();
         // The second record drops cart_old, shared (the other entity's too), and the
         // support file from its list.
-        let r = mark(&s, "ent:cart", None, &json!({
-            "files": ["src/cart_v2.rs", "tests/cart.rs"], "tests": [row],
-        }), &gs).unwrap();
-        assert_eq!(r["removed"], json!(["src/cart.rs", "src/cart_old.rs"]), "{}", r);
+        let r = mark(
+            &s,
+            "ent:cart",
+            None,
+            &json!({
+                "files": ["src/cart_v2.rs", "tests/cart.rs"], "tests": [row],
+            }),
+            &gs,
+        )
+        .unwrap();
+        assert_eq!(
+            r["removed"],
+            json!(["src/cart.rs", "src/cart_old.rs"]),
+            "{}",
+            r
+        );
         assert!(!gs.deliverable.join("src/cart_old.rs").vexists());
         assert!(!gs.deliverable.join("src/cart.rs").vexists());
-        assert!(gs.deliverable.join("src/shared.rs").vexists(), "another entity records it");
-        assert!(gs.deliverable.join("Cargo.toml").vexists(), "support files are the deliverable's");
+        assert!(
+            gs.deliverable.join("src/shared.rs").vexists(),
+            "another entity records it"
+        );
+        assert!(
+            gs.deliverable.join("Cargo.toml").vexists(),
+            "support files are the deliverable's"
+        );
         assert!(gs.deliverable.join("tests/cart.rs").vexists());
-        assert!(out.join("deliverable-baseline/src/cart_old.rs").vexists(), "snapshotted before removal");
+        assert!(
+            out.join("deliverable-baseline/src/cart_old.rs").vexists(),
+            "snapshotted before removal"
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -4988,7 +6310,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-ledger.
     #[test]
     fn fact_hash_flips_on_stereotype_attributes_and_edges() {
-        let out = std::env::temp_dir().join(format!("jazyk-facthash-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-facthash-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, _gs) = fixture(&out);
         let h0 = fact_hash(&s, "ent:cart");
@@ -5033,7 +6356,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#invented-choices.
     #[test]
     fn invented_choices_stage_one_graded_diagnostic_per_scope() {
-        let out = std::env::temp_dir().join(format!("jazyk-choice-test-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-choice-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         s.docs.insert(
@@ -5146,7 +6470,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-unattached-remainder.
     #[test]
     fn unattached_remainder_counts_unnamed_files_and_lines_outside_site_runs() {
-        let out = std::env::temp_dir().join(format!("jazyk-unattached-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-unattached-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -5196,7 +6521,8 @@ mod tests {
     // Mirrors docs/compiler/goals/bind.md#created-when.
     #[test]
     fn an_unbound_requirement_yields_a_ledger_stale_record() {
-        let out = std::env::temp_dir().join(format!("jazyk-stale-rec-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-stale-rec-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let records = ledger_stale_records(&s, &gs);
@@ -5209,13 +6535,20 @@ mod tests {
         assert_eq!(bind.via, "ledger");
         assert_eq!(bind.detail["reason"], "unbound");
         assert!(bind.id.starts_with('c'), "{}", bind.id);
-        let generation = records.iter().find(|record| record.detail["goal"] == "generate").unwrap();
+        let generation = records
+            .iter()
+            .find(|record| record.detail["goal"] == "generate")
+            .unwrap();
         assert_eq!(generation.subject, "ent:cart");
         assert_eq!(generation.detail["reason"], "incomplete-bindings");
         // Bound and unimplemented: the entity is generation work under that reason.
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}", name)).ok();
+        crate::vfs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}", name),
+        )
+        .ok();
         let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
         crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
         let records = ledger_stale_records(&s, &gs);
@@ -5288,8 +6621,13 @@ pub(crate) async fn run_selected(
     build_product: bool,
 ) -> Result<Value, String> {
     use crate::session::TraceEvent;
-    let admitted = progress::admitted_settings("generate", &store.out,
-        json!({"entities":entities,"force":force,"buildProduct":build_product}),gs).await?;
+    let admitted = progress::admitted_settings(
+        "generate",
+        &store.out,
+        json!({"entities":entities,"force":force,"buildProduct":build_product}),
+        gs,
+    )
+    .await?;
     let signature = json!({"settings": admitted, "entities": entities, "force": force, "buildProduct": build_product});
     let key = progress::command_key("generate", &store.out, &signature);
     let mut command = progress::Progress::load(key, signature, GenCommand::default)?;
@@ -5393,8 +6731,22 @@ pub(crate) async fn run_selected(
         }
         let outcome = if gs.worker == "pipeline" {
             while command.data.active.as_ref().unwrap().pipeline_cursor < ready.len()
-                && command.data.active.as_ref().unwrap().pipeline_failed.is_none()
-                && !command.data.active.as_ref().unwrap().pipeline_results.iter().any(|(_, result)| result.is_err()) {
+                && command
+                    .data
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .pipeline_failed
+                    .is_none()
+                && !command
+                    .data
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .pipeline_results
+                    .iter()
+                    .any(|(_, result)| result.is_err())
+            {
                 let cursor = command.data.active.as_ref().unwrap().pipeline_cursor;
                 let id = &ready[cursor];
                 if trace.is_cancelled() {
@@ -5458,7 +6810,13 @@ pub(crate) async fn run_selected(
                     .pipeline_results
                     .clone(),
                 tokens: 0,
-                failed: command.data.active.as_ref().unwrap().pipeline_failed.clone(),
+                failed: command
+                    .data
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .pipeline_failed
+                    .clone(),
             }
         } else {
             gen_session(store, runner, &admitted, &root, &ready, trace).await
@@ -5476,14 +6834,26 @@ pub(crate) async fn run_selected(
             outcome.failed.as_deref(),
         );
         command.data.streak = next;
-        let incomplete: Vec<_> = ready.iter().filter_map(|id| {
-            match outcome.results.iter().find(|(target, _)| target == id).map(|(_, result)| result) {
-                Some(Ok(_)) => None,
-                Some(Err(error)) => Some((id.clone(), error.clone())),
-                None => Some((id.clone(), outcome.failed.clone().unwrap_or_else(||
-                    "The group ended before completing this target".into()))),
-            }
-        }).collect();
+        let incomplete: Vec<_> = ready
+            .iter()
+            .filter_map(|id| {
+                match outcome
+                    .results
+                    .iter()
+                    .find(|(target, _)| target == id)
+                    .map(|(_, result)| result)
+                {
+                    Some(Ok(_)) => None,
+                    Some(Err(error)) => Some((id.clone(), error.clone())),
+                    None => Some((
+                        id.clone(),
+                        outcome.failed.clone().unwrap_or_else(|| {
+                            "The group ended before completing this target".into()
+                        }),
+                    )),
+                }
+            })
+            .collect();
         for (id, result) in outcome.results {
             match result {
                 Ok(files) => {
@@ -5492,10 +6862,18 @@ pub(crate) async fn run_selected(
                 }
                 Err(error) => {
                     if outcome.failed.is_none() {
-                        command.data.first_error.get_or_insert_with(||
-                            format!("{} was not completed: {error}", store.graph.entities.get(&id)
-                                .map(|entity| entity.name.as_str()).filter(|name| !name.is_empty())
-                                .unwrap_or("This part of the project")));
+                        command.data.first_error.get_or_insert_with(|| {
+                            format!(
+                                "{} was not completed: {error}",
+                                store
+                                    .graph
+                                    .entities
+                                    .get(&id)
+                                    .map(|entity| entity.name.as_str())
+                                    .filter(|name| !name.is_empty())
+                                    .unwrap_or("This part of the project")
+                            )
+                        });
                     }
                     trace.event(TraceEvent::GenEntityFailed {
                         entity: id,
@@ -5513,11 +6891,30 @@ pub(crate) async fn run_selected(
             &format!("g:generate:{root}"),
         ));
         if !incomplete.is_empty() {
-            let name = |id: &str| store.graph.entities.get(id).map(|entity| entity.name.as_str())
-                .filter(|name| !name.is_empty()).unwrap_or(id).to_owned();
-            let owed = incomplete.iter().map(|(id, _)| name(id)).collect::<Vec<_>>().join(", ");
-            let reason = format!("Generation group {} is incomplete. Still owed: {owed}. {}",
-                name(&root), command.data.first_error.as_deref().unwrap_or(&incomplete[0].1));
+            let name = |id: &str| {
+                store
+                    .graph
+                    .entities
+                    .get(id)
+                    .map(|entity| entity.name.as_str())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id)
+                    .to_owned()
+            };
+            let owed = incomplete
+                .iter()
+                .map(|(id, _)| name(id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let reason = format!(
+                "Generation group {} is incomplete. Still owed: {owed}. {}",
+                name(&root),
+                command
+                    .data
+                    .first_error
+                    .as_deref()
+                    .unwrap_or(&incomplete[0].1)
+            );
             command.data.first_error = Some(reason.clone());
             command.data.stopped = Some(outcome.failed.unwrap_or(reason));
         } else if outcome.failed.is_some() {
@@ -5591,7 +6988,9 @@ struct GenSessionState {
 
 impl GenSessionState {
     fn recorded(&self, index: usize, row: Option<&EntityGen>) -> bool {
-        if self.completed.contains(&index) { return true; }
+        if self.completed.contains(&index) {
+            return true;
+        }
         match &self.before_sequences {
             Some(sequences) => sequences.get(index).is_some_and(|before| {
                 row.is_some_and(|row| row.record_sequence > before.unwrap_or(0))
@@ -5651,8 +7050,16 @@ async fn gen_session(
                         .and_then(|row| row.recorded_at.clone())
                 })
                 .collect(),
-            before_sequences: Some(ids.iter().map(|id| ledger.entities.get(&slug_of(id))
-                .map(|row| row.record_sequence)).collect()),
+            before_sequences: Some(
+                ids.iter()
+                    .map(|id| {
+                        ledger
+                            .entities
+                            .get(&slug_of(id))
+                            .map(|row| row.record_sequence)
+                    })
+                    .collect(),
+            ),
             completed: Default::default(),
             prior_tokens: 0,
             result: None,
@@ -5690,8 +7097,13 @@ async fn gen_session(
             .enumerate()
             .map(|(index, (id, _))| {
                 let result = if !saved.data.recorded(index, after.entities.get(&slug_of(id))) {
-                    Err(report.failed.clone().or_else(|| report.stopped.clone()).unwrap_or_else(||
-                        "The agent ended its session before recording completion".into()))
+                    Err(report
+                        .failed
+                        .clone()
+                        .or_else(|| report.stopped.clone())
+                        .unwrap_or_else(|| {
+                            "The agent ended its session before recording completion".into()
+                        }))
                 } else {
                     gate(store, &current_settings, id, false)
                         .map_err(|error| report.failed.clone().unwrap_or(error))
@@ -5703,38 +7115,81 @@ async fn gen_session(
         // Its receipt survives, but its old base hash cannot prove the supplied input
         // was used. Continue only those newly stale members in a fresh current batch.
         // Save the transition before admitting any replacement tool/model operation.
-        if saved.data.before_sequences.is_none() && report.failed.is_none() && report.stopped.is_none() {
-            let failed: Vec<usize> = results.iter().enumerate()
-                .filter_map(|(index,(_, result))| result.is_err().then_some(index)).collect();
-            let refresh: Vec<usize> = failed.iter().copied().filter(|index| {
-                let id = &ids[*index];
-                let rids = reqs_of_sorted(store,id);
-                let base = fact_hash_base(store,id,&rids);
-                after.entities.get(&slug_of(id)).is_some_and(|row| row.fact_hash == base)
-                    && assets::referenced_assets(store,id,&rids).iter().any(|asset| asset.is_input())
-                    && fact_hash(store,id) != base
-            }).collect();
+        if saved.data.before_sequences.is_none()
+            && report.failed.is_none()
+            && report.stopped.is_none()
+        {
+            let failed: Vec<usize> = results
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (_, result))| result.is_err().then_some(index))
+                .collect();
+            let refresh: Vec<usize> = failed
+                .iter()
+                .copied()
+                .filter(|index| {
+                    let id = &ids[*index];
+                    let rids = reqs_of_sorted(store, id);
+                    let base = fact_hash_base(store, id, &rids);
+                    after
+                        .entities
+                        .get(&slug_of(id))
+                        .is_some_and(|row| row.fact_hash == base)
+                        && assets::referenced_assets(store, id, &rids)
+                            .iter()
+                            .any(|asset| asset.is_input())
+                        && fact_hash(store, id) != base
+                })
+                .collect();
             if !refresh.is_empty() && refresh.len() == failed.len() {
-                saved.data.completed.extend(results.iter().enumerate()
-                    .filter_map(|(index,(_,result))| result.is_ok().then_some(index)));
-                let targets: std::collections::BTreeSet<&str> = refresh.iter().map(|index| ids[*index].as_str()).collect();
+                saved.data.completed.extend(
+                    results
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, (_, result))| result.is_ok().then_some(index)),
+                );
+                let targets: std::collections::BTreeSet<&str> =
+                    refresh.iter().map(|index| ids[*index].as_str()).collect();
                 let mut batch = saved.data.session.batch.clone();
-                batch.goals.retain(|goal| targets.contains(goal.target.as_str()));
-                saved.data.before = ids.iter().map(|id| after.entities.get(&slug_of(id))
-                    .and_then(|row| row.recorded_at.clone())).collect();
-                saved.data.before_sequences = Some(ids.iter().map(|id| after.entities.get(&slug_of(id))
-                    .map(|row| row.record_sequence)).collect());
+                batch
+                    .goals
+                    .retain(|goal| targets.contains(goal.target.as_str()));
+                saved.data.before = ids
+                    .iter()
+                    .map(|id| {
+                        after
+                            .entities
+                            .get(&slug_of(id))
+                            .and_then(|row| row.recorded_at.clone())
+                    })
+                    .collect();
+                saved.data.before_sequences = Some(
+                    ids.iter()
+                        .map(|id| {
+                            after
+                                .entities
+                                .get(&slug_of(id))
+                                .map(|row| row.record_sequence)
+                        })
+                        .collect(),
+                );
                 saved.data.prior_tokens = saved.data.prior_tokens.saturating_add(report.tokens);
-                saved.data.session = progress::BatchProgress::new(batch,&store.out);
+                saved.data.session = progress::BatchProgress::new(batch, &store.out);
                 crate::session_recovery::remove_frame(&crate::session_recovery::batch_key(
-                    &store.out,&saved.data.session.batch.id));
-                if let Err(reason) = saved.save().await { return error(reason); }
+                    &store.out,
+                    &saved.data.session.batch.id,
+                ));
+                if let Err(reason) = saved.save().await {
+                    return error(reason);
+                }
                 continue;
             }
         }
         let failed = if results.iter().any(|(_, result)| result.is_err()) {
             report.failed
-        } else { None };
+        } else {
+            None
+        };
         let outcome = GenSessionOutcome {
             results,
             tokens: saved.data.prior_tokens.saturating_add(report.tokens),
@@ -5863,10 +7318,18 @@ fn snapshot_baseline(
     }
 }
 
-fn snapshot_pipeline_baseline(out: &Path, gs: &GenSettings, rel: &str,
-    seen: &mut std::collections::HashSet<String>, key: &str) -> Result<(), String> {
-    if pipeline::first_baseline(key, rel)? { snapshot_baseline(out, gs, rel, seen); }
-    else { seen.insert(rel.into()); }
+fn snapshot_pipeline_baseline(
+    out: &Path,
+    gs: &GenSettings,
+    rel: &str,
+    seen: &mut std::collections::HashSet<String>,
+    key: &str,
+) -> Result<(), String> {
+    if pipeline::first_baseline(key, rel)? {
+        snapshot_baseline(out, gs, rel, seen);
+    } else {
+        seen.insert(rel.into());
+    }
     Ok(())
 }
 
@@ -5878,7 +7341,14 @@ fn medium_directive(medium: &Option<Medium>) -> String {
             "directive-built",
             &[
                 ("form", &m.form),
-                ("toolchain", if m.toolchain.is_empty() { "source" } else { &m.toolchain }),
+                (
+                    "toolchain",
+                    if m.toolchain.is_empty() {
+                        "source"
+                    } else {
+                        &m.toolchain
+                    },
+                ),
                 ("artifact", &m.artifact),
             ],
         ),
@@ -5886,9 +7356,15 @@ fn medium_directive(medium: &Option<Medium>) -> String {
             let toolchain = if m.toolchain.is_empty() {
                 String::new()
             } else {
-                STEPS.fill("directive-written-toolchain", &[("toolchain", &m.toolchain)])
+                STEPS.fill(
+                    "directive-written-toolchain",
+                    &[("toolchain", &m.toolchain)],
+                )
             };
-            STEPS.fill("directive-written", &[("form", &m.form), ("toolchain", &toolchain)])
+            STEPS.fill(
+                "directive-written",
+                &[("form", &m.form), ("toolchain", &toolchain)],
+            )
         }
         // No decision on record (an external worker's package): fall back to deriving it.
         None => STEPS.get("directive-undecided").to_string(),
@@ -5940,7 +7416,10 @@ async fn gen_one_inner(
     let build_error = match &task["buildError"] {
         serde_json::Value::Null => String::new(),
         e => {
-            let yours: Vec<&str> = e["yours"].as_array().map(|a| a.iter().filter_map(|f| f.as_str()).collect()).unwrap_or_default();
+            let yours: Vec<&str> = e["yours"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|f| f.as_str()).collect())
+                .unwrap_or_default();
             let whose = if yours.is_empty() {
                 STEPS.get("build-broken-elsewhere").to_string()
             } else {
@@ -5950,7 +7429,10 @@ async fn gen_one_inner(
                 "\n{}\n",
                 STEPS.fill(
                     "build-broken",
-                    &[("error", e["error"].as_str().unwrap_or_default()), ("whose", &(whose + " "))],
+                    &[
+                        ("error", e["error"].as_str().unwrap_or_default()),
+                        ("whose", &(whose + " "))
+                    ],
                 )
             )
         }
@@ -5963,24 +7445,51 @@ async fn gen_one_inner(
             ("id", id),
             ("name", task["name"].as_str().unwrap_or_default()),
             ("context", task["context"].as_str().unwrap_or_default()),
-            ("changed", &task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()),
-            ("group", &match shared_with(store, id) {
-                v if v.is_empty() => String::new(),
-                v => STEPS.fill("header-group", &[("group", &v.join(", "))]),
-            }),
-            ("generated", &serde_json::to_string(&task["generatedFiles"]).unwrap_or_default()),
-            ("commands", if run_commands.is_empty() { STEPS.get("header-commands-none") } else { &run_commands }),
-            ("build", &match &task["build"] {
-                serde_json::Value::Null => STEPS.get("header-build-none").to_string(),
-                b => b.to_string(),
-            }),
+            (
+                "changed",
+                &task["changed"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default(),
+            ),
+            (
+                "group",
+                &match shared_with(store, id) {
+                    v if v.is_empty() => String::new(),
+                    v => STEPS.fill("header-group", &[("group", &v.join(", "))]),
+                },
+            ),
+            (
+                "generated",
+                &serde_json::to_string(&task["generatedFiles"]).unwrap_or_default(),
+            ),
+            (
+                "commands",
+                if run_commands.is_empty() {
+                    STEPS.get("header-commands-none")
+                } else {
+                    &run_commands
+                },
+            ),
+            (
+                "build",
+                &match &task["build"] {
+                    serde_json::Value::Null => STEPS.get("header-build-none").to_string(),
+                    b => b.to_string(),
+                },
+            ),
         ],
     ) + "\n";
     // File ownership: a path recorded for an entity outside this one's component
     // group is off limits. One corrective retry, then the task fails.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     let ledger = ledger_snapshot;
-    let owner_of = |path: &str| -> Option<String> { file_owner(store, &ledger, id, path) };
+    let owner_of = |path: &str| -> Option<String> { file_owner(store, ledger, id, path) };
     let groups = task["requirementGroups"]
         .as_array()
         .cloned()
@@ -6039,7 +7548,8 @@ async fn gen_one_inner(
                 &user,
                 &format!("gen {}", id),
                 &format!("product {}/{}", k + 1, parts),
-            ).await
+            )
+            .await
             .map_err(|e| pipeline::step_error(format!("product part {}/{}", k + 1, parts), e))?;
         if k == 0 {
             // Shape gets one corrective round here too: the product step is where a
@@ -6058,7 +7568,8 @@ async fn gen_one_inner(
                             &retry,
                             &format!("gen {}", id),
                             "product format retry",
-                        ).await
+                        )
+                        .await
                         .map_err(|e| pipeline::step_error("product format retry".into(), e))?;
                     parse_file_replies(&again)?
                 }
@@ -6092,7 +7603,8 @@ async fn gen_one_inner(
                         &retry,
                         &format!("gen {}", id),
                         "product retry",
-                    ).await
+                    )
+                    .await
                     .map_err(|e| pipeline::step_error("product retry".into(), e))?;
                 let (p, b) = parse_file_reply(&reply2)?;
                 if let Some(o) = owner_of(&p) {
@@ -6130,16 +7642,22 @@ async fn gen_one_inner(
         &[
             ("header", &header),
             ("product", &product_rel),
-            ("artifact_rule", &match &medium {
-                Some(m) if m.is_built() => STEPS.fill("tests-built", &[("artifact", &m.artifact)]),
-                _ => STEPS.get("tests-default").to_string(),
-            }),
+            (
+                "artifact_rule",
+                &match &medium {
+                    Some(m) if m.is_built() => {
+                        STEPS.fill("tests-built", &[("artifact", &m.artifact)])
+                    }
+                    _ => STEPS.get("tests-default").to_string(),
+                },
+            ),
             ("requirements", &req_lines.join("\n")),
             ("code", &crate::llm::truncate(&code, 16_000)),
         ],
     ) + "\n";
     let tests_reply = runner
-        .ask(instructions, &tests_user, &format!("gen {}", id), "tests").await
+        .ask(instructions, &tests_user, &format!("gen {}", id), "tests")
+        .await
         .map_err(|e| pipeline::step_error("tests file".into(), e))?;
     let mut files = vec![product_rel.clone()];
     // Files the manifest declares as the deliverable's, filled in once it is parsed
@@ -6181,7 +7699,8 @@ async fn gen_one_inner(
                         &retry,
                         &format!("gen {}", id),
                         "tests format retry",
-                    ).await
+                    )
+                    .await
                     .map_err(|e| pipeline::step_error("tests format retry".into(), e))?;
                 if again.trim() == "NONE" {
                     None
@@ -6197,7 +7716,8 @@ async fn gen_one_inner(
                     &[("request", &tests_user), ("path", &path), ("owner", &owner)],
                 );
                 let reply2 = runner
-                    .ask(instructions, &retry, &format!("gen {}", id), "tests retry").await
+                    .ask(instructions, &retry, &format!("gen {}", id), "tests retry")
+                    .await
                     .map_err(|e| pipeline::step_error("tests retry".into(), e))?;
                 let (p, b) =
                     parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
@@ -6244,38 +7764,79 @@ async fn gen_one_inner(
         &[
             ("id", id),
             ("files", &format!("{:?}", files)),
-            ("deliverable", task["deliverable"].as_str().unwrap_or_default()),
-            ("commands", if run_commands.is_empty() { STEPS.get("manifest-commands-none") } else { &run_commands }),
-            ("build", &match &task["build"] {
-                serde_json::Value::Null => STEPS.get("manifest-build-none").to_string(),
-                b => b.to_string(),
-            }),
-            ("entry", &match &task["buildEntry"] {
-                serde_json::Value::Null => STEPS.get("manifest-entry-none").to_string(),
-                e => STEPS.fill(
-                    "manifest-entry",
-                    &[
-                        ("path", e["path"].as_str().unwrap_or_default()),
-                        ("content", e["content"].as_str().unwrap_or_default()),
-                    ],
-                ),
-            }),
-            ("names", &if found_names.is_empty() { STEPS.get("manifest-names-none").to_string() } else { found_names.join(", ") }),
+            (
+                "deliverable",
+                task["deliverable"].as_str().unwrap_or_default(),
+            ),
+            (
+                "commands",
+                if run_commands.is_empty() {
+                    STEPS.get("manifest-commands-none")
+                } else {
+                    &run_commands
+                },
+            ),
+            (
+                "build",
+                &match &task["build"] {
+                    serde_json::Value::Null => STEPS.get("manifest-build-none").to_string(),
+                    b => b.to_string(),
+                },
+            ),
+            (
+                "entry",
+                &match &task["buildEntry"] {
+                    serde_json::Value::Null => STEPS.get("manifest-entry-none").to_string(),
+                    e => STEPS.fill(
+                        "manifest-entry",
+                        &[
+                            ("path", e["path"].as_str().unwrap_or_default()),
+                            ("content", e["content"].as_str().unwrap_or_default()),
+                        ],
+                    ),
+                },
+            ),
+            (
+                "names",
+                &if found_names.is_empty() {
+                    STEPS.get("manifest-names-none").to_string()
+                } else {
+                    found_names.join(", ")
+                },
+            ),
             // The medium is already decided, so the build is an obligation or a
             // non-question; it is never the worker's call
             // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-            ("build_rule", &match (&medium, &task["build"]) {
-                (Some(m), serde_json::Value::Null) if m.is_built() => STEPS.fill(
-                    "manifest-build-required",
-                    &[("form", &m.form), ("artifact", &m.artifact)],
-                ),
-                (_, serde_json::Value::Null) => STEPS.get("manifest-build-omit").to_string(),
-                (Some(m), _) if m.is_built() => {
-                    STEPS.fill("manifest-build-reuse-built", &[("artifact", &m.artifact)])
-                }
-                _ => STEPS.get("manifest-build-reuse").to_string(),
-            }),
-            ("requirements", &all_reqs.iter().map(|r| STEPS.fill("manifest-requirement", &[("id", r["id"].as_str().unwrap_or("")), ("test", r["testName"].as_str().unwrap_or(""))])).collect::<Vec<_>>().join("\n")),
+            (
+                "build_rule",
+                &match (&medium, &task["build"]) {
+                    (Some(m), serde_json::Value::Null) if m.is_built() => STEPS.fill(
+                        "manifest-build-required",
+                        &[("form", &m.form), ("artifact", &m.artifact)],
+                    ),
+                    (_, serde_json::Value::Null) => STEPS.get("manifest-build-omit").to_string(),
+                    (Some(m), _) if m.is_built() => {
+                        STEPS.fill("manifest-build-reuse-built", &[("artifact", &m.artifact)])
+                    }
+                    _ => STEPS.get("manifest-build-reuse").to_string(),
+                },
+            ),
+            (
+                "requirements",
+                &all_reqs
+                    .iter()
+                    .map(|r| {
+                        STEPS.fill(
+                            "manifest-requirement",
+                            &[
+                                ("id", r["id"].as_str().unwrap_or("")),
+                                ("test", r["testName"].as_str().unwrap_or("")),
+                            ],
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
             ("tests", &tests_rel),
             ("tests_code", &crate::llm::truncate(&tests_code, 12_000)),
         ],
@@ -6286,7 +7847,8 @@ async fn gen_one_inner(
             &manifest_user,
             &format!("gen {}", id),
             "manifest",
-        ).await
+        )
+        .await
         .map_err(|e| pipeline::step_error("manifest".into(), e))?;
     let parse_manifest = |reply: &str| -> Result<serde_json::Value, String> {
         let text = strip_fences(reply);
@@ -6309,7 +7871,8 @@ async fn gen_one_inner(
                     &retry,
                     &format!("gen {}", id),
                     "manifest format retry",
-                ).await
+                )
+                .await
                 .map_err(|e| pipeline::step_error("manifest format retry".into(), e))?;
             parse_manifest(&again).map_err(|e| format!("manifest JSON: {}", e))?
         }
@@ -6322,18 +7885,37 @@ async fn gen_one_inner(
         .filter_map(|r| {
             let rid = r["id"].as_str().unwrap_or_default();
             let name = r["testName"].as_str().unwrap_or_default();
-            let row = manifest_json["tests"]
-                .as_array()
-                .and_then(|a| a.iter().find(|t| t["requirement"].as_str() == Some(rid)).cloned());
+            let row = manifest_json["tests"].as_array().and_then(|a| {
+                a.iter()
+                    .find(|t| t["requirement"].as_str() == Some(rid))
+                    .cloned()
+            });
             // The suggested name is a suggestion: a test the generator named its own
             // way still counts, as long as the name it declared is in the artifact
             // (docs/consumers/gen.md#file-ownership-and-conventions).
-            let declared_name = row.as_ref().and_then(|t| t["name"].as_str()).unwrap_or("").trim().to_string();
+            let declared_name = row
+                .as_ref()
+                .and_then(|t| t["name"].as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let present = (!name.is_empty() && tests_code.contains(name))
                 || (!declared_name.is_empty() && tests_code.contains(&declared_name));
-            let programmatic = row.as_ref().map(|t| t["kind"].as_str() == Some("programmatic")).unwrap_or(false);
-            let run = row.as_ref().and_then(|t| t["run"].as_str()).unwrap_or("").trim().to_string();
-            let selector = if !declared_name.is_empty() && tests_code.contains(&declared_name) { &declared_name } else { name };
+            let programmatic = row
+                .as_ref()
+                .map(|t| t["kind"].as_str() == Some("programmatic"))
+                .unwrap_or(false);
+            let run = row
+                .as_ref()
+                .and_then(|t| t["run"].as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let selector = if !declared_name.is_empty() && tests_code.contains(&declared_name) {
+                &declared_name
+            } else {
+                name
+            };
             let has_run = !run.is_empty() && runs_the_test(&run, selector);
             if present && !(programmatic && has_run) {
                 Some(STEPS.fill(
@@ -6404,7 +7986,11 @@ async fn gen_one_inner(
             if !missing.is_empty() {
                 mismatches.push(STEPS.fill(
                     "mismatch-entry",
-                    &[("entry", entry), ("artifact", &m.artifact), ("missing", &missing.join(", "))],
+                    &[
+                        ("entry", entry),
+                        ("artifact", &m.artifact),
+                        ("missing", &missing.join(", ")),
+                    ],
                 ));
             }
         }
@@ -6435,13 +8021,25 @@ async fn gen_one_inner(
             "manifest-retry",
             &[
                 ("request", &manifest_user),
-                ("answer", &serde_json::to_string_pretty(&manifest_json).unwrap_or_default()),
+                (
+                    "answer",
+                    &serde_json::to_string_pretty(&manifest_json).unwrap_or_default(),
+                ),
                 ("problems", &mismatches.join("\n")),
             ],
         );
-        let retry_reply = runner.ask(instructions, &retry, &format!("gen {}", id), "manifest retry").await;
+        let retry_reply = runner
+            .ask(
+                instructions,
+                &retry,
+                &format!("gen {}", id),
+                "manifest retry",
+            )
+            .await;
         if let Err(reason) = &retry_reply {
-            if crate::session_recovery::is_interruption(reason) { return Err(reason.clone()); }
+            if crate::session_recovery::is_interruption(reason) {
+                return Err(reason.clone());
+            }
         }
         if let Ok(reply2) = retry_reply {
             if let Ok(mut v) = parse_manifest(&reply2) {
@@ -6473,7 +8071,10 @@ async fn gen_one_inner(
             // not land on a file some entity owns: this task's own product and tests
             // included. Ownership is what stops one file from eating another
             // (docs/consumers/gen.md#file-ownership-and-conventions).
-            let owned = ledger.entities.values().any(|e| e.files.iter().any(|f| f == path));
+            let owned = ledger
+                .entities
+                .values()
+                .any(|e| e.files.iter().any(|f| f == path));
             if owned || path == product_rel || path == tests_rel {
                 continue;
             }
@@ -6576,8 +8177,8 @@ async fn gen_one_inner(
         });
     for p in extra_written {
         let n = norm_rel(&p);
-        let deliverable_wide = declared_support.contains(&n)
-            || build_entry_path.as_deref() == Some(n.as_str());
+        let deliverable_wide =
+            declared_support.contains(&n) || build_entry_path.as_deref() == Some(n.as_str());
         if deliverable_wide {
             support_files.push(p);
         } else if !files.contains(&p) {

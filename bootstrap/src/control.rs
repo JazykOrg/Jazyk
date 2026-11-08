@@ -133,7 +133,9 @@ pub fn carry_release(out: &Path, doc: &str, before: &str, after: &str) {
     if c.released.compile.get(doc) != Some(&old) {
         return;
     }
-    c.released.compile.insert(doc.to_string(), crate::model::hash_hex(after));
+    c.released
+        .compile
+        .insert(doc.to_string(), crate::model::hash_hex(after));
     c.save(out);
 }
 
@@ -158,9 +160,17 @@ pub fn consume_decompile(proj: &Project, out: &Path, scope: &str) {
 
 // Current whole-file revisions, including opaque inputs and unreadable markers.
 pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
-    crate::input::scan(proj).into_iter().map(|(path, input)| {
-        (path, input.map(|(hash, _)| hash).unwrap_or_else(|_| "unreadable".into()))
-    }).collect()
+    crate::input::scan(proj)
+        .into_iter()
+        .map(|(path, input)| {
+            (
+                path,
+                input
+                    .map(|(hash, _)| hash)
+                    .unwrap_or_else(|_| "unreadable".into()),
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +253,8 @@ impl WorkerHandle {
 
 impl Drop for WorkerHandle {
     fn drop(&mut self) {
-        crate::vfs::remove_file(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id))).ok();
+        crate::vfs::remove_file(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id)))
+            .ok();
     }
 }
 
@@ -338,16 +349,27 @@ pub(crate) struct OwnedLease {
 
 pub(crate) fn owned_lease(out: &Path, task: &str, worker: &str) -> Option<OwnedLease> {
     if crate::vfs::is_scoped() && crate::session_recovery::active() {
-        return crate::session_recovery::owned_claim(out, task).filter(|claim| claim.lease.worker == worker);
+        return crate::session_recovery::owned_claim(out, task)
+            .filter(|claim| claim.lease.worker == worker);
     }
     let lease = read_lease(&lease_file(out, task))?;
-    (lease.task == task && lease.worker == worker).then(|| OwnedLease { out: out.into(), lease })
+    (lease.task == task && lease.worker == worker).then(|| OwnedLease {
+        out: out.into(),
+        lease,
+    })
 }
 
 /// A restored session may claim only a slot released by its protected receipts.
-pub(crate) fn claim_restored(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
+pub(crate) fn claim_restored(
+    out: &Path,
+    task: &str,
+    worker: &str,
+    goals: &[String],
+) -> Result<(), String> {
     if crate::vfs::is_scoped() {
-        if let Some(current) = read_lease(&lease_file(out, task)) { return Err(current.worker); }
+        if let Some(current) = read_lease(&lease_file(out, task)) {
+            return Err(current.worker);
+        }
     }
     claim_goals(out, task, worker, goals)
 }
@@ -355,7 +377,9 @@ pub(crate) fn claim_restored(out: &Path, task: &str, worker: &str, goals: &[Stri
 /// Stop never sweeps leases or removes a replacement owner's claim.
 pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let path = lease_file(&saved.out, &saved.lease.task);
-    let Some(current) = read_lease(&path) else { return Ok(false); };
+    let Some(current) = read_lease(&path) else {
+        return Ok(false);
+    };
     if !same_claim(&saved.lease, &current) {
         return Ok(false);
     }
@@ -365,17 +389,28 @@ pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
 }
 
 fn same_claim(saved: &Lease, current: &Lease) -> bool {
-    !saved.claim_id.is_empty() && current.claim_id == saved.claim_id
-        && current.task == saved.task && current.worker == saved.worker
-        && current.claimed_at == saved.claimed_at && current.goals == saved.goals
+    !saved.claim_id.is_empty()
+        && current.claim_id == saved.claim_id
+        && current.task == saved.task
+        && current.worker == saved.worker
+        && current.claimed_at == saved.claimed_at
+        && current.goals == saved.goals
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn refresh_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
     let path = lease_file(&saved.out, &saved.lease.task);
-    let Some(mut current) = read_lease(&path) else { return Ok(false) };
-    if !same_claim(&saved.lease, &current) { return Ok(false); }
+    let Some(mut current) = read_lease(&path) else {
+        return Ok(false);
+    };
+    if !same_claim(&saved.lease, &current) {
+        return Ok(false);
+    }
     current.expires_at = now() + LEASE_TTL_SECS;
-    write_lease_whole(&path, &serde_norway::to_string(&current).map_err(|e| e.to_string())?)?;
+    write_lease_whole(
+        &path,
+        &serde_norway::to_string(&current).map_err(|e| e.to_string())?,
+    )?;
     Ok(true)
 }
 
@@ -443,7 +478,8 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
 // claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
     let mut nonce = [0u8; 16];
-    getrandom::fill(&mut nonce).map_err(|error| format!("Cannot mint control claim identity: {error}"))?;
+    getrandom::fill(&mut nonce)
+        .map_err(|error| format!("Cannot mint control claim identity: {error}"))?;
     let claim_id = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
     crate::vfs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
@@ -474,9 +510,12 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
     let text = serde_norway::to_string(&lease).map_err(|e| e.to_string())?;
     match crate::vfs::create_new(&path, &text) {
         Ok(()) => {
-            crate::session_recovery::claimed(OwnedLease { out: out.into(), lease });
+            crate::session_recovery::claimed(OwnedLease {
+                out: out.into(),
+                lease,
+            });
             Ok(())
-        },
+        }
         // Lost the race to another claimant between the check and the create.
         Err(_) => Err(read_lease(&path)
             .map(|l| l.worker)
@@ -556,11 +595,15 @@ pub struct BuildGuard {
 }
 
 impl BuildGuard {
-    pub fn token(&self) -> &str { &self.claim.lease.worker }
+    pub fn token(&self) -> &str {
+        &self.claim.lease.worker
+    }
 }
 
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
-    if let Some(error) = &proj.config_error { return Err(error.clone()); }
+    if let Some(error) = &proj.config_error {
+        return Err(error.clone());
+    }
     // The project's file view spans every set and owns no graph: a build on it
     // would write the shared `.jazyk/`. Graph operations address one set
     // (docs/frontends/cli.md).
@@ -568,8 +611,13 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
         return Err("choose a document set: a build works on one set, never on the project's shared .jazyk/".into());
     }
     let project_lock = if proj.set_id.is_some() {
-        Some(crate::document_sets::ProjectLock::acquire(&proj.root, "project.lock").map_err(|e| e.1)?)
-    } else { None };
+        Some(
+            crate::document_sets::ProjectLock::acquire(&proj.root, "project.lock")
+                .map_err(|e| e.1)?,
+        )
+    } else {
+        None
+    };
     let held = task_leases(out);
     if let Some((task, l)) = held.iter().next() {
         return Err(format!(
@@ -577,10 +625,15 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
             l.worker, task
         ));
     }
-    let token = format!("internal-{}-{}", crate::sys::process_id(), crate::document_sets::mint_id());
+    let token = format!(
+        "internal-{}-{}",
+        crate::sys::process_id(),
+        crate::document_sets::mint_id()
+    );
     claim(out, BUILD_LEASE, &token)
-    .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
-    let claim = owned_lease(out, BUILD_LEASE, &token).ok_or("the build lease lost its ownership receipt")?;
+        .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
+    let claim = owned_lease(out, BUILD_LEASE, &token)
+        .ok_or("the build lease lost its ownership receipt")?;
     release(proj, out, Some(stage));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (heartbeat_claim, stop2) = (claim.clone(), stop.clone());
@@ -590,15 +643,19 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
     #[cfg(target_arch = "wasm32")]
     let _ = (&heartbeat_claim, &stop2);
     #[cfg(not(target_arch = "wasm32"))]
-    if !crate::vfs::is_scoped() { std::thread::spawn(move || {
-        while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            if stop2.load(std::sync::atomic::Ordering::Relaxed) {
-                break;
+    if !crate::vfs::is_scoped() {
+        std::thread::spawn(move || {
+            while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                if stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if !refresh_owned_lease(&heartbeat_claim).unwrap_or(false) {
+                    break;
+                }
             }
-            if !refresh_owned_lease(&heartbeat_claim).unwrap_or(false) { break; }
-        }
-    }); }
+        });
+    }
     Ok(BuildGuard {
         _project_lock: project_lock,
         claim,
@@ -627,61 +684,120 @@ mod tests {
     #[test]
     fn document_hash_inventory_includes_opaque_inputs() {
         let _fs = crate::vfs::Scope::enter(&BTreeMap::from([
-            (".jazyk/jazyk.toml".into(), b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['**']\n".to_vec()),
+            (
+                ".jazyk/jazyk.toml".into(),
+                b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['**']\n".to_vec(),
+            ),
             ("main.md".into(), b"# Site\n\nA site.\n".to_vec()),
             ("notes.MARKDOWN".into(), b"# Notes\n\nDetails.\n".to_vec()),
-            ("example.txt".into(), br#"{"name":"supported text document"}"#.to_vec()),
-            ("example.json".into(), br#"{"name":"unsupported asset"}"#.to_vec()),
-            ("logo.svg".into(), br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec()),
+            (
+                "example.txt".into(),
+                br#"{"name":"supported text document"}"#.to_vec(),
+            ),
+            (
+                "example.json".into(),
+                br#"{"name":"unsupported asset"}"#.to_vec(),
+            ),
+            (
+                "logo.svg".into(),
+                br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec(),
+            ),
         ]));
         let project = crate::document_sets::Workspace::load(Path::new("/project"))
-            .unwrap().resolve(None).unwrap();
+            .unwrap()
+            .resolve(None)
+            .unwrap();
         let hashes = current_doc_hashes(&project);
         let (parsed, _) = crate::reconcile::parse_all(&project);
-        let parsed_hashes: BTreeMap<_, _> = parsed.into_iter()
-            .map(|(path, (hash, _))| (path, hash)).collect();
+        let parsed_hashes: BTreeMap<_, _> = parsed
+            .into_iter()
+            .map(|(path, (hash, _))| (path, hash))
+            .collect();
         assert_eq!(hashes, parsed_hashes);
-        assert_eq!(hashes.keys().map(String::as_str).collect::<Vec<_>>(),
-            vec!["example.json", "example.txt", "logo.svg", "main.md", "notes.MARKDOWN"]);
+        assert_eq!(
+            hashes.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec![
+                "example.json",
+                "example.txt",
+                "logo.svg",
+                "main.md",
+                "notes.MARKDOWN"
+            ]
+        );
         release(&project, &project.out, Some("compile"));
-        assert_eq!(Control::load(&project, &project.out).released.compile, hashes);
+        assert_eq!(
+            Control::load(&project, &project.out).released.compile,
+            hashes
+        );
         let findings = crate::reconcile::checks(&crate::store::Store::default(), &project);
-        assert!(!findings.iter().any(|finding| finding.0 == "unsupported-format"));
+        assert!(!findings
+            .iter()
+            .any(|finding| finding.0 == "unsupported-format"));
     }
 
     #[test]
     fn document_hash_inventory_keeps_new_and_stored_unreadable_inputs() {
         let _fs = crate::vfs::Scope::enter(&BTreeMap::from([
-            (".jazyk/jazyk.toml".into(), b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\n".to_vec()),
+            (
+                ".jazyk/jazyk.toml".into(),
+                b"version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\n"
+                    .to_vec(),
+            ),
             ("docs/main.md".into(), b"# Site\n\nA site.\n".to_vec()),
         ]));
         let mut project = crate::document_sets::Workspace::load(Path::new("/project"))
-            .unwrap().resolve(None).unwrap();
-        let mut store = crate::store::Store { out: project.out.clone(), ..Default::default() };
+            .unwrap()
+            .resolve(None)
+            .unwrap();
+        let mut store = crate::store::Store {
+            out: project.out.clone(),
+            ..Default::default()
+        };
         store.sync_docs(&crate::reconcile::parse_all(&project).0);
         store.save_for_test();
         let before = current_doc_hashes(&project);
         crate::vfs::write(project.root.join("docs/main.md"), [0xff, 0xfe]).unwrap();
         crate::vfs::write(project.root.join("docs/new.txt"), [0xff]).unwrap();
-        project.explicit_files = Some(vec![project.root.join("docs/main.md"),
-            project.root.join("docs/new.txt"), project.root.join("docs/missing.md")]);
+        project.explicit_files = Some(vec![
+            project.root.join("docs/main.md"),
+            project.root.join("docs/new.txt"),
+            project.root.join("docs/missing.md"),
+        ]);
         let hashes = current_doc_hashes(&project);
-        assert_eq!(hashes.len(), 3, "A failed read must not disappear from freshness checks");
+        assert_eq!(
+            hashes.len(),
+            3,
+            "A failed read must not disappear from freshness checks"
+        );
         assert_ne!(hashes["docs/main.md"], before["docs/main.md"]);
-        assert!(hashes.values().all(|hash| hash.chars().any(|c| !c.is_ascii_hexdigit())),
-            "Unreadable markers cannot equal any actual content hash");
+        assert!(
+            hashes
+                .values()
+                .all(|hash| hash.chars().any(|c| !c.is_ascii_hexdigit())),
+            "Unreadable markers cannot equal any actual content hash"
+        );
         let parsed = crate::reconcile::parse_all(&project).0;
-        assert_eq!(parsed.len(), 1, "Parsing must preserve the previous tree only");
+        assert_eq!(
+            parsed.len(),
+            1,
+            "Parsing must preserve the previous tree only"
+        );
         assert_eq!(parsed["docs/main.md"].0, before["docs/main.md"]);
         let findings = crate::reconcile::checks(&store, &project);
         for path in hashes.keys() {
-            assert!(findings.iter().any(|finding| finding.0 == "parse-error"
-                && finding.2 == "error" && finding.1 == [path.as_str()]), "{path}");
+            assert!(
+                findings.iter().any(|finding| finding.0 == "parse-error"
+                    && finding.2 == "error"
+                    && finding.1 == [path.as_str()]),
+                "{path}"
+            );
         }
         release(&project, &project.out, Some("compile"));
-        assert_ne!(Control::load(&project, &project.out).released.compile["docs/main.md"],
+        assert_ne!(
+            Control::load(&project, &project.out).released.compile["docs/main.md"],
             store.docs["docs/main.md"].content_hash,
-            "A release must not approve an unreadable file's retained content");
+            "A release must not approve an unreadable file's retained content"
+        );
     }
 
     // The project's file view (every set, no graph) never takes a build: it would
@@ -689,9 +805,14 @@ mod tests {
     #[test]
     fn a_build_on_the_set_less_file_view_is_refused() {
         let _fs = crate::vfs::Scope::enter(&Default::default());
-        let project = Project { set_docs: Some(vec![vec!["a.md".into()], vec!["b.md".into()]]), ..Project::default() };
+        let project = Project {
+            set_docs: Some(vec![vec!["a.md".into()], vec!["b.md".into()]]),
+            ..Project::default()
+        };
         let out = Path::new("/project/.jazyk");
-        let error = begin_internal_build(&project, out, "compile").err().unwrap();
+        let error = begin_internal_build(&project, out, "compile")
+            .err()
+            .unwrap();
         assert!(error.starts_with("choose a document set"), "{}", error);
         assert!(build_lease(out).is_none());
     }
@@ -747,15 +868,21 @@ mod tests {
         assert_eq!(crate::vfs::read(&path).unwrap(), before);
         let current = owned_lease(out, "batch", "internal-1").unwrap();
         refresh_lease(out, "batch");
-        assert!(release_owned_lease(&current).unwrap(), "Expiry refresh does not replace ownership");
+        assert!(
+            release_owned_lease(&current).unwrap(),
+            "Expiry refresh does not replace ownership"
+        );
         claim_goals(out, "batch", "internal-1", &goals).unwrap();
         let mut replacement = read_lease(&path).unwrap();
         replacement.claim_id.push('f');
         let foreign = serde_norway::to_string(&replacement).unwrap();
         crate::vfs::write(&path, &foreign).unwrap();
         release_lease(out, "batch");
-        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), foreign,
-            "Active cancellation must use its recorded receipt, not the current same-worker claim");
+        assert_eq!(
+            crate::vfs::read_to_string(&path).unwrap(),
+            foreign,
+            "Active cancellation must use its recorded receipt, not the current same-worker claim"
+        );
     }
 
     // A takeover moves aside only the lease it read: a fresh lease another claimant
@@ -780,7 +907,11 @@ mod tests {
         // The slot holds w1's fresh lease, but a late claimant read the expired one.
         crate::vfs::write(&path, &fresh).unwrap();
         assert!(!take_aside(&path, &expired));
-        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), fresh, "the fresh lease goes back");
+        assert_eq!(
+            crate::vfs::read_to_string(&path).unwrap(),
+            fresh,
+            "the fresh lease goes back"
+        );
         assert_eq!(claim(&out, "batch", "w2"), Err("w1".to_string()));
         // The expired lease itself is taken over.
         crate::vfs::write(&path, &expired).unwrap();
@@ -797,7 +928,10 @@ mod tests {
         crate::vfs::write(&path, "task: [half").unwrap();
         assert!(leases(&out).is_empty());
         assert!(crate::vfs::exists(&path), "a fresh unparseable lease stays");
-        assert_eq!(claim(&out, "batch", "w3"), Err("another worker".to_string()));
+        assert_eq!(
+            claim(&out, "batch", "w3"),
+            Err("another worker".to_string())
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -809,12 +943,18 @@ mod tests {
         let out = tmp();
         let broken = "compile: [auto\n";
         crate::vfs::write(Control::path(&out), broken).unwrap();
-        let proj = Project { workflow: Default::default(), ..Default::default() };
+        let proj = Project {
+            workflow: Default::default(),
+            ..Default::default()
+        };
         let mut c = Control::load(&proj, &out);
         assert_eq!(c.compile, proj.workflow.compile);
         c.compile = "auto".into();
         c.save(&out);
-        assert_eq!(crate::vfs::read_to_string(out.join("control.yaml.bad")).unwrap(), broken);
+        assert_eq!(
+            crate::vfs::read_to_string(out.join("control.yaml.bad")).unwrap(),
+            broken
+        );
         assert_eq!(Control::load(&proj, &out).compile, "auto");
         crate::vfs::remove_dir_all(&out).ok();
     }

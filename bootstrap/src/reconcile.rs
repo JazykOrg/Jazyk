@@ -43,12 +43,34 @@ pub struct BuildReport {
     // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired_tasks: Vec<String>,
+    // Why the verdict write was refused: the verdict and the parked goals never reached
+    // disk. Mirrors docs/compiler/graph.md#concurrency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsaved: Option<String>,
 }
 
 impl BuildReport {
+    // A build whose verdict was not saved never counts as converged.
+    // Mirrors docs/compiler/compilation.md#convergence.
     pub fn converged(&self) -> bool {
-        self.verdict.starts_with("converged")
+        self.unsaved.is_none() && self.verdict.starts_with("converged")
     }
+
+    // The printed verdict, naming a refused verdict write.
+    pub fn verdict_line(&self) -> String {
+        match &self.unsaved {
+            Some(why) => format!("{} (not saved: {})", self.verdict, why),
+            None => self.verdict.clone(),
+        }
+    }
+}
+
+// A status write the build loop makes, its refusal traced (the store already reports it
+// on stderr). Returns the refusal. Mirrors docs/compiler/graph.md#concurrency.
+fn write_status_traced(s: &Store, what: &str, trace: &Trace) -> Option<String> {
+    let why = s.write_status(what).err()?;
+    trace.line("build", &format!("{} not saved: {}", what, why));
+    Some(why)
 }
 
 // One deterministic finding: rule, subjects, severity, message, and the question the
@@ -110,7 +132,12 @@ fn format_checks(proj: &Project) -> Vec<Finding> {
     let mut f = Vec::new();
     for (rel, input) in crate::input::scan(proj) {
         if let Err(e) = input {
-            f.push(finding("parse-error", &rel, "error", format!("{} cannot be parsed: {}", rel, e)));
+            f.push(finding(
+                "parse-error",
+                &rel,
+                "error",
+                format!("{} cannot be parsed: {}", rel, e),
+            ));
         }
     }
     f
@@ -472,13 +499,23 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     // Link diagnostics describe the current source, including uncompiled docs.
     // One stable source-target pair keeps its identity when the link moves.
     for path in proj.doc_files() {
-        if !md::supported_format(&path) { continue; }
-        let Ok(text) = md::read_doc(&path) else { continue };
+        if !md::supported_format(&path) {
+            continue;
+        }
+        let Ok(text) = md::read_doc(&path) else {
+            continue;
+        };
         let doc = doc_path(proj, &path);
         let mut reported = BTreeSet::new();
         for link in md::missing_document_links(&proj.root, &doc, &text) {
             if reported.insert(link.target.clone()) {
-                f.push((link.rule.into(), vec![doc.clone(), link.target], link.severity.into(), link.message, None));
+                f.push((
+                    link.rule.into(),
+                    vec![doc.clone(), link.target],
+                    link.severity.into(),
+                    link.message,
+                    None,
+                ));
             }
         }
     }
@@ -512,7 +549,11 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     "warning",
                     format!("section {}#{} is unprocessed after the build", doc, r),
                 )),
-                Some(c) if c.state == "non-normative" && sec.kind != "blob" && looks_normative(&sec.raw) => {
+                Some(c)
+                    if c.state == "non-normative"
+                        && sec.kind != "blob"
+                        && looks_normative(&sec.raw) =>
+                {
                     f.push(finding(
                         "suspicious-non-normative",
                         &format!("{}#{}", doc, r),
@@ -617,11 +658,20 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     // with different outcomes (then): the contradiction written into the evidence.
     // Mirrors docs/compiler/compilation.md#checks.
     {
-        let norm = |s: &Option<String>| s.as_deref().map(crate::store::normalize_statement).filter(|x| !x.is_empty());
+        let norm = |s: &Option<String>| {
+            s.as_deref()
+                .map(crate::store::normalize_statement)
+                .filter(|x| !x.is_empty())
+        };
         let mut by_entity: BTreeMap<String, Vec<&String>> = BTreeMap::new();
         for (cid, c) in &store.graph.criteria {
             let ents = if c.entities.is_empty() {
-                store.graph.requirements.get(&c.requirement).map(|r| r.entities.clone()).unwrap_or_default()
+                store
+                    .graph
+                    .requirements
+                    .get(&c.requirement)
+                    .map(|r| r.entities.clone())
+                    .unwrap_or_default()
             } else {
                 c.entities.clone()
             };
@@ -634,16 +684,24 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             for (i, a) in cids.iter().enumerate() {
                 for b in &cids[i + 1..] {
                     let (ca, cb) = (&store.graph.criteria[*a], &store.graph.criteria[*b]);
-                    let (Some(ga), Some(wa), Some(ta)) = (norm(&ca.given), norm(&ca.when), norm(&ca.then)) else {
+                    let (Some(ga), Some(wa), Some(ta)) =
+                        (norm(&ca.given), norm(&ca.when), norm(&ca.then))
+                    else {
                         continue;
                     };
-                    let (Some(gb), Some(wb), Some(tb)) = (norm(&cb.given), norm(&cb.when), norm(&cb.then)) else {
+                    let (Some(gb), Some(wb), Some(tb)) =
+                        (norm(&cb.given), norm(&cb.when), norm(&cb.then))
+                    else {
                         continue;
                     };
                     if ga != gb || wa != wb || ta == tb {
                         continue;
                     }
-                    let key = if a < b { ((*a).clone(), (*b).clone()) } else { ((*b).clone(), (*a).clone()) };
+                    let key = if a < b {
+                        ((*a).clone(), (*b).clone())
+                    } else {
+                        ((*b).clone(), (*a).clone())
+                    };
                     if !seen.insert(key.clone()) {
                         continue;
                     }
@@ -681,12 +739,18 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         let mut neighbors: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
         for rel in store.graph.relationships.values() {
             for m in &rel.members {
-                neighbors.entry(m.as_str()).or_default().extend(rel.members.iter());
+                neighbors
+                    .entry(m.as_str())
+                    .or_default()
+                    .extend(rel.members.iter());
             }
         }
         for r in store.graph.requirements.values() {
             for m in &r.entities {
-                neighbors.entry(m.as_str()).or_default().extend(r.entities.iter());
+                neighbors
+                    .entry(m.as_str())
+                    .or_default()
+                    .extend(r.entities.iter());
             }
         }
         let mut reach = root_entities.clone();
@@ -1144,7 +1208,12 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     // Goals parked when a budget ran out. A pair parked by flip detection waits on
     // its unstable-derivation ruling, which is its finding already.
     // Mirrors docs/compiler/compilation.md#checks.
-    for p in store.status.parked.iter().filter(|p| crate::board::flip_subject(&p.goal).is_none()) {
+    for p in store
+        .status
+        .parked
+        .iter()
+        .filter(|p| crate::board::flip_subject(&p.goal).is_none())
+    {
         let why = p
             .reason
             .as_deref()
@@ -2077,15 +2146,18 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
     if !board.lapsed.is_empty() {
         store.clear_changes(&board.lapsed);
     }
-    if !board.reopened.is_empty() || !board.dropped_parked.is_empty() || !board.dropped_failed.is_empty() {
-        store
-            .status
-            .failed
-            .retain(|f| !board.reopened.contains(&f.goal.id) && !board.dropped_failed.contains(&f.goal.id));
+    if !board.reopened.is_empty()
+        || !board.dropped_parked.is_empty()
+        || !board.dropped_failed.is_empty()
+    {
+        store.status.failed.retain(|f| {
+            !board.reopened.contains(&f.goal.id) && !board.dropped_failed.contains(&f.goal.id)
+        });
         store
             .status
             .parked
             .retain(|p| !board.dropped_parked.contains(&p.goal.id));
+        // A refusal is reported on stderr; the next derivation lapses the same goals.
         store.write_status("absorb derivation").ok();
     }
 }
@@ -2137,11 +2209,7 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
     }
 }
 
-fn reload(
-    store: &mut Store,
-    out: &Path,
-    parsed: &ParsedDocs,
-) {
+fn reload(store: &mut Store, out: &Path, parsed: &ParsedDocs) {
     *store = Store::load(out);
     store.sync_docs(parsed);
 }
@@ -2182,12 +2250,22 @@ pub async fn compile_with(
     // (docs/frontends/wasm.md#sessions).
     #[cfg(not(target_arch = "wasm32"))]
     let runner: Box<dyn crate::runner::SessionRunner> = if crate::vfs::is_scoped() {
-        match crate::inprocess::InProcessRunner::start(proj, llm, out) { Ok(r) => Box::new(r), Err(e) => return refused(e) }
+        match crate::inprocess::InProcessRunner::start(proj, llm, out) {
+            Ok(r) => Box::new(r),
+            Err(e) => return refused(e),
+        }
     } else {
-        match crate::acp::runner::AcpRunner::start(proj, llm, out) { Ok(r) => Box::new(r), Err(e) => return refused(e) }
+        match crate::acp::runner::AcpRunner::start(proj, llm, out) {
+            Ok(r) => Box::new(r),
+            Err(e) => return refused(e),
+        }
     };
     #[cfg(target_arch = "wasm32")]
-    let runner: Box<dyn crate::runner::SessionRunner> = match crate::inprocess::InProcessRunner::start(proj,llm,out) { Ok(r) => Box::new(r), Err(e) => return refused(e) };
+    let runner: Box<dyn crate::runner::SessionRunner> =
+        match crate::inprocess::InProcessRunner::start(proj, llm, out) {
+            Ok(r) => Box::new(r),
+            Err(e) => return refused(e),
+        };
     compile_under(proj, out, trace, max_sessions, runner.as_ref(), _build).await
 }
 
@@ -2223,7 +2301,7 @@ pub(crate) async fn compile_under(
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();
-        store.write_status("build opening").ok();
+        write_status_traced(&store, "build opening", trace);
     }
     let (parsed, _links) = parse_all(proj);
     if !resuming {
@@ -2239,7 +2317,7 @@ pub(crate) async fn compile_under(
             .filter(|d| proj.is_root_file(d))
             .cloned()
             .collect();
-        store.write_status("build roots").ok();
+        write_status_traced(&store, "build roots", trace);
         sweep(&mut store, trace);
     }
     // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):
@@ -2449,9 +2527,13 @@ pub(crate) async fn run_sessions(
             saved.endpoint_error = endpoint_error.clone();
             saved.active = active.clone();
             #[cfg(not(target_arch = "wasm32"))]
-            { saved.save(&command_key) }
+            {
+                saved.save(&command_key)
+            }
             #[cfg(target_arch = "wasm32")]
-            { saved.save(&command_key).await }
+            {
+                saved.save(&command_key).await
+            }
         }};
     }
     loop {
@@ -2467,14 +2549,15 @@ pub(crate) async fn run_sessions(
             let cap = cap_for(derived_ids.len());
             // Goals parked this build take no batch; their neighbors still run.
             board.withhold(&parked_ids, store, proj);
-            let runnable = |b: &crate::board::Batch| {
-                !crate::workflow::graph_only()
-                    || b.goals.iter().all(|id| {
-                        board.goals.iter().find(|g| &g.id == id).is_some_and(|g| {
-                            !crate::board::LEDGER_KINDS.contains(&g.kind.as_str())
+            let runnable =
+                |b: &crate::board::Batch| {
+                    !crate::workflow::graph_only()
+                        || b.goals.iter().all(|id| {
+                            board.goals.iter().find(|g| &g.id == id).is_some_and(|g| {
+                                !crate::board::LEDGER_KINDS.contains(&g.kind.as_str())
+                            })
                         })
-                    })
-            };
+                };
             let compile_batches: Vec<crate::board::Batch> = board
                 .batches
                 .iter()
@@ -2944,9 +3027,10 @@ pub fn finalize(
         s.status.verdict.state = "incomplete".into();
         s.status.costs = costs.clone();
         s.status.spent.tokens += crate::llm::take_tokens_delta();
-        s.write_status("stopped build").ok();
+        let unsaved = write_status_traced(s, "stopped build", trace);
         trace.line("build", "stopped; completed commits retained");
         return BuildReport {
+            unsaved,
             verdict: s.status.verdict.to_string(),
             tokens: costs.tokens,
             failed: s.status.verdict.failed as usize,
@@ -3052,7 +3136,7 @@ pub fn finalize(
     });
     wrote |= s.status.changes.len() != before;
     if wrote {
-        s.write_status("flow placement records").ok();
+        write_status_traced(s, "flow placement records", trace);
     }
 
     // The verdict: the board after the checks, blocked and optional riding as counts.
@@ -3101,7 +3185,7 @@ pub fn finalize(
     // assignment would clobber the spend of builds this process did not run.
     s.status.spent.tokens += crate::llm::take_tokens_delta();
     s.status.diagnostics = s.open_diag_counts();
-    s.write_status("verdict").ok();
+    let unsaved = write_status_traced(s, "verdict", trace);
     trace.line("build", &s.status.verdict.to_string());
 
     let (mut errors, mut warnings) = (0usize, 0usize);
@@ -3145,6 +3229,7 @@ pub fn finalize(
         tokens: s.status.costs.tokens,
         suspend_reason: None,
         retired_tasks: Vec::new(),
+        unsaved,
     }
 }
 
@@ -3619,11 +3704,30 @@ mod tests {
     #[test]
     fn a_rate_limit_trips_the_breaker_and_spends_no_attempt() {
         let b = crate::limits::ENDPOINT_BREAKER;
-        assert_eq!(breaker_step(0, 0, Some("http error: HTTP 429 :: {\"error\":\"Rate limit exceeded\"}")), (b, true));
-        assert_eq!(breaker_step(0, 0, Some("You've hit your usage limit.")), (b, true));
-        assert_eq!(breaker_step(0, 0, Some("The input is too large.")), (b, true));
-        assert_eq!(breaker_step(2, 0, Some("transport: connection refused")), (3, true));
-        assert_eq!(breaker_step(3, 1200, Some("the session left the batch open")), (0, false));
+        assert_eq!(
+            breaker_step(
+                0,
+                0,
+                Some("http error: HTTP 429 :: {\"error\":\"Rate limit exceeded\"}")
+            ),
+            (b, true)
+        );
+        assert_eq!(
+            breaker_step(0, 0, Some("You've hit your usage limit.")),
+            (b, true)
+        );
+        assert_eq!(
+            breaker_step(0, 0, Some("The input is too large.")),
+            (b, true)
+        );
+        assert_eq!(
+            breaker_step(2, 0, Some("transport: connection refused")),
+            (3, true)
+        );
+        assert_eq!(
+            breaker_step(3, 1200, Some("the session left the batch open")),
+            (0, false)
+        );
         assert_eq!(breaker_step(3, 0, None), (0, false));
         assert!(!rate_limited("the batch failed its gate"));
     }
@@ -3678,7 +3782,8 @@ mod tests {
     #[test]
     fn drift_check_flags_missing_literals_with_a_question() {
         use crate::gen::{Ledger, ReqRow, RowHashes, TestRef};
-        let dir = std::env::temp_dir().join(format!("jazyk-drift-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-drift-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("product")).unwrap();
         crate::vfs::write(
@@ -3811,9 +3916,7 @@ mod tests {
             name: n.to_string(),
             ..Default::default()
         };
-        s.graph
-            .entities
-            .insert("ent:cart-2".into(), named("Cart"));
+        s.graph.entities.insert("ent:cart-2".into(), named("Cart"));
         s.graph
             .entities
             .insert("ent:basket-2".into(), named("Basket"));
@@ -3841,11 +3944,21 @@ mod tests {
             class: "compile".into(),
             mandatory: true,
             target: id.trim_start_matches("g:review-entity:").into(),
-            cause: Some(Cause { generation: 4, mutation: 0, via: via.into() }),
+            cause: Some(Cause {
+                generation: 4,
+                mutation: 0,
+                via: via.into(),
+            }),
             ..Default::default()
         };
-        s.status.parked.push(ParkedGoal::new(goal("g:review-entity:ent:cart", "entities"), "the build cap of 64 sessions ran out"));
-        s.status.parked.push(ParkedGoal::new(goal("g:review-entity:ent:order", "flip-detection"), "cross-class flip: `order`"));
+        s.status.parked.push(ParkedGoal::new(
+            goal("g:review-entity:ent:cart", "entities"),
+            "the build cap of 64 sessions ran out",
+        ));
+        s.status.parked.push(ParkedGoal::new(
+            goal("g:review-entity:ent:order", "flip-detection"),
+            "cross-class flip: `order`",
+        ));
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "incomplete-build");
         assert_eq!(hits.len(), 1, "{:?}", hits);
@@ -3875,7 +3988,11 @@ mod tests {
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].1, ["cart.md"]);
         // One edit is a ratification.
-        seed_doc(&mut s, "cart.md", "# Cart\nThe Cart holds items a Customer picked.\n");
+        seed_doc(
+            &mut s,
+            "cart.md",
+            "# Cart\nThe Cart holds items a Customer picked.\n",
+        );
         let after = checks(&s, &Project::default());
         assert!(rules_for(&after, "unratified").is_empty());
         crate::vfs::remove_dir_all(&dir).ok();
@@ -3942,7 +4059,10 @@ mod tests {
     #[test]
     fn document_size_checks_flag_a_long_section_and_a_wide_document() {
         let mut s = Store::default();
-        let long = format!("# Big\n{}\n", "The system shall respond quickly. ".repeat(400));
+        let long = format!(
+            "# Big\n{}\n",
+            "The system shall respond quickly. ".repeat(400)
+        );
         seed_doc(&mut s, "big.md", &long);
         let mut wide = String::from("# Wide\n");
         for i in 0..crate::limits::MAX_DOC_SECTIONS + 2 {
@@ -4025,7 +4145,10 @@ mod tests {
     // the sweep never collects its facts. Mirrors docs/compiler/parsing.md#format-handlers.
     #[test]
     fn an_unreadable_document_keeps_its_stored_record() {
-        let dir = std::env::temp_dir().join(format!("jazyk-unreadable-doc-test-{}", crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-unreadable-doc-test-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(dir.join("docs/a.md"), "# A\nThe system shall respond.\n").unwrap();
@@ -4061,10 +4184,15 @@ mod tests {
     // Opaque inputs compile, while known-format read failures remain actionable.
     #[test]
     fn opaque_inputs_compile_and_parse_errors_resolve() {
-        let dir = std::env::temp_dir().join(format!("jazyk-format-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-format-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
-        crate::vfs::write(dir.join("docs/good.md"), "# Good\nThe system shall respond.\n").unwrap();
+        crate::vfs::write(
+            dir.join("docs/good.md"),
+            "# Good\nThe system shall respond.\n",
+        )
+        .unwrap();
         crate::vfs::write(dir.join("docs/notes.rst"), "plain notes\n").unwrap();
         crate::vfs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
         let proj = Project {
@@ -4074,7 +4202,10 @@ mod tests {
             ..Default::default()
         };
         let (parsed, _) = parse_all(&proj);
-        assert_eq!(parsed.keys().collect::<Vec<_>>(), vec!["docs/good.md", "docs/notes.rst"]);
+        assert_eq!(
+            parsed.keys().collect::<Vec<_>>(),
+            vec!["docs/good.md", "docs/notes.rst"]
+        );
         let f = checks(&Store::default(), &proj);
         let unsupported = rules_for(&f, "unsupported-format");
         assert!(unsupported.is_empty(), "{:?}", unsupported);
@@ -4108,19 +4239,32 @@ mod tests {
         s.reconcile_check_diags(checks(&s, &proj));
         assert_eq!(open(&s, "unsupported-format"), 0);
         assert_eq!(open(&s, "parse-error"), 0);
-        assert!(s.graph.diagnostics.values().all(|d| d.lifecycle == "resolved"));
+        assert!(s
+            .graph
+            .diagnostics
+            .values()
+            .all(|d| d.lifecycle == "resolved"));
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn broken_links_use_current_files_and_resolve_without_model_calls() {
-        let dir = std::env::temp_dir().join(format!("jazyk-broken-links-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-broken-links-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("slides")).unwrap();
         let source = "# Slides\nSee [Intro](slide-intro.md) and [again](slide-intro.md).\nSee [other](other.md).\n";
         crate::vfs::write(dir.join("slides/main.md"), source).unwrap();
-        let proj = Project { root: dir.clone(), out: dir.join(".jazyk"), docs_glob: vec!["**/*.md".into()], ..Default::default() };
-        let mut store = Store { out: proj.out.clone(), ..Default::default() };
+        let proj = Project {
+            root: dir.clone(),
+            out: dir.join(".jazyk"),
+            docs_glob: vec!["**/*.md".into()],
+            ..Default::default()
+        };
+        let mut store = Store {
+            out: proj.out.clone(),
+            ..Default::default()
+        };
         // The source was never compiled. A stale target record does not count
         // as an existing file, and two missing targets need different identities.
         seed_doc(&mut store, "slides/slide-intro.md", "# Deleted\n");
@@ -4131,17 +4275,40 @@ mod tests {
         assert!(links[0].3.contains("slides/main.md:2:5"));
         assert!(links[0].3.contains("Create the document or fix the link"));
         store.reconcile_check_diags(findings);
-        let id = store.graph.diagnostics.iter().find(|(_, d)| d.rule == "broken-link" && d.subjects[1] == "slides/slide-intro.md").unwrap().0.clone();
+        let id = store
+            .graph
+            .diagnostics
+            .iter()
+            .find(|(_, d)| d.rule == "broken-link" && d.subjects[1] == "slides/slide-intro.md")
+            .unwrap()
+            .0
+            .clone();
         let generation = store.status.generation;
         store.reconcile_check_diags(checks(&store, &proj));
-        assert_eq!(store.status.generation, generation, "no-op check must not journal again");
+        assert_eq!(
+            store.status.generation, generation,
+            "no-op check must not journal again"
+        );
         crate::vfs::write(dir.join("slides/slide-intro.md"), "# Intro\n").unwrap();
         store.reconcile_check_diags(checks(&store, &proj));
         assert_eq!(store.graph.diagnostics[&id].lifecycle, "resolved");
-        assert_eq!(store.graph.diagnostics.values().filter(|d| d.rule == "broken-link" && d.lifecycle == "open").count(), 1);
+        assert_eq!(
+            store
+                .graph
+                .diagnostics
+                .values()
+                .filter(|d| d.rule == "broken-link" && d.lifecycle == "open")
+                .count(),
+            1
+        );
         crate::vfs::write(dir.join("slides/main.md"), "# Slides\nNo links.\n").unwrap();
         store.reconcile_check_diags(checks(&store, &proj));
-        assert!(store.graph.diagnostics.values().filter(|d| d.rule == "broken-link").all(|d| d.lifecycle == "resolved"));
+        assert!(store
+            .graph
+            .diagnostics
+            .values()
+            .filter(|d| d.rule == "broken-link")
+            .all(|d| d.lifecycle == "resolved"));
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -4251,7 +4418,13 @@ mod tests {
     #[test]
     fn criterion_checks_follow_the_deliverable() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:one".into(), crate::model::Entity { name: "One".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:one".into(),
+            crate::model::Entity {
+                name: "One".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.insert(
             "req:a-1".into(),
             Requirement {
@@ -4297,11 +4470,21 @@ mod tests {
     #[test]
     fn criteria_with_one_situation_and_two_outcomes_conflict() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:sort".into(), Entity { name: "Sort".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:sort".into(),
+            Entity {
+                name: "Sort".into(),
+                ..Default::default()
+            },
+        );
         for rid in ["req:a-1", "req:t-1"] {
             s.graph.requirements.insert(
                 rid.into(),
-                Requirement { statement: format!("{} holds.", rid), entities: vec!["ent:sort".into()], ..Default::default() },
+                Requirement {
+                    statement: format!("{} holds.", rid),
+                    entities: vec!["ent:sort".into()],
+                    ..Default::default()
+                },
             );
         }
         let crit = |req: &str, given: &str, when: &str, then: &str| crate::model::Criterion {
@@ -4313,23 +4496,60 @@ mod tests {
             kind: "positive".into(),
             ..Default::default()
         };
-        s.graph.criteria.insert("crit:a-1".into(), crit("req:a-1", "the lines `321`, `654`, `453`", "the utility sorts", "it prints `321`, `453`, `654`"));
-        s.graph.criteria.insert("crit:t-1".into(), crit("req:t-1", "The lines `321`, `654`, `453`.", "The utility sorts.", "it prints `321`, `654`, `453`"));
-        s.graph.criteria.insert("crit:a-2".into(), crit("req:a-1", "the lines `321`, `654`, `453`", "the utility sorts with `-r`", "it prints `654`, `453`, `321`"));
+        s.graph.criteria.insert(
+            "crit:a-1".into(),
+            crit(
+                "req:a-1",
+                "the lines `321`, `654`, `453`",
+                "the utility sorts",
+                "it prints `321`, `453`, `654`",
+            ),
+        );
+        s.graph.criteria.insert(
+            "crit:t-1".into(),
+            crit(
+                "req:t-1",
+                "The lines `321`, `654`, `453`.",
+                "The utility sorts.",
+                "it prints `321`, `654`, `453`",
+            ),
+        );
+        s.graph.criteria.insert(
+            "crit:a-2".into(),
+            crit(
+                "req:a-1",
+                "the lines `321`, `654`, `453`",
+                "the utility sorts with `-r`",
+                "it prints `654`, `453`, `321`",
+            ),
+        );
         let f = checks(&s, &Project::default());
         let conflicts = rules_for(&f, "criteria-conflict");
         assert_eq!(conflicts.len(), 1, "{:?}", conflicts);
-        assert_eq!(conflicts[0].1, vec!["crit:a-1".to_string(), "crit:t-1".to_string()]);
+        assert_eq!(
+            conflicts[0].1,
+            vec!["crit:a-1".to_string(), "crit:t-1".to_string()]
+        );
         assert_eq!(conflicts[0].2, "warning");
     }
 
     #[test]
     fn criteria_with_opposite_bounds_do_not_conflict() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:pay".into(), Entity { name: "Payment".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:pay".into(),
+            Entity {
+                name: "Payment".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.insert(
             "req:p-1".into(),
-            Requirement { statement: "Payments over 100 need a review.".into(), entities: vec!["ent:pay".into()], ..Default::default() },
+            Requirement {
+                statement: "Payments over 100 need a review.".into(),
+                entities: vec!["ent:pay".into()],
+                ..Default::default()
+            },
         );
         let crit = |id: &str, given: &str, then: &str| {
             (
@@ -4345,11 +4565,18 @@ mod tests {
                 },
             )
         };
-        for (id, c) in [crit("crit:p-1", "an amount > 100", "it waits for a review"), crit("crit:p-2", "an amount < 100", "it goes through")] {
+        for (id, c) in [
+            crit("crit:p-1", "an amount > 100", "it waits for a review"),
+            crit("crit:p-2", "an amount < 100", "it goes through"),
+        ] {
             s.graph.criteria.insert(id, c);
         }
         let f = checks(&s, &Project::default());
-        assert!(rules_for(&f, "criteria-conflict").is_empty(), "{:?}", rules_for(&f, "criteria-conflict"));
+        assert!(
+            rules_for(&f, "criteria-conflict").is_empty(),
+            "{:?}",
+            rules_for(&f, "criteria-conflict")
+        );
     }
 
     #[test]
@@ -4756,7 +4983,14 @@ mod tests {
         );
         // Blocked on the ruling, so no batch takes them (a parked goal resumes first).
         assert!(parked.iter().all(|g| matches!(&g.goal.state, GoalState::Blocked { on } if on.contains("unstable-derivation ruling"))), "{:?}", parked);
-        assert!(parked.iter().all(|g| g.reason.as_deref().is_some_and(|r| r.starts_with("cross-class flip"))), "{:?}", parked);
+        assert!(
+            parked.iter().all(|g| g
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.starts_with("cross-class flip"))),
+            "{:?}",
+            parked
+        );
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -5048,9 +5282,20 @@ mod tests {
         assert!(p.question.contains("`Backend`"), "{}", p.question);
         assert_eq!(parked.len(), 1);
         assert_eq!(parked[0].goal.id, "g:review-entity:ent:storage");
-        assert!(matches!(&parked[0].goal.state, GoalState::Blocked { on } if on.contains("ent:database")), "{:?}", parked[0].goal.state);
+        assert!(
+            matches!(&parked[0].goal.state, GoalState::Blocked { on } if on.contains("ent:database")),
+            "{:?}",
+            parked[0].goal.state
+        );
         assert_eq!(parked[0].goal.change["reparent"], "ent:database");
-        assert!(parked[0].reason.as_deref().is_some_and(|r| r.starts_with("reparent flip")), "{:?}", parked[0].reason);
+        assert!(
+            parked[0]
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.starts_with("reparent flip")),
+            "{:?}",
+            parked[0].reason
+        );
 
         // A later regroup under a re-minted id is the same flip on the same natural
         // key; the newest move is the one parked.
@@ -5201,7 +5446,9 @@ mod tests {
         );
         // The one-goal shape is unchanged: kind, target, generation, justification.
         assert!(
-            text.contains("reconcile-section docs/orders.md#/orders/holds g88: req:orders-6 revised"),
+            text.contains(
+                "reconcile-section docs/orders.md#/orders/holds g88: req:orders-6 revised"
+            ),
             "{}",
             text
         );
@@ -5286,8 +5533,10 @@ mod tests {
         use crate::store::{Commit, Op, CHANGE_THRESHOLD_CROSSED};
         use crate::tools::{ToolSession, WorkScope};
 
-        let out =
-            std::env::temp_dir().join(format!("jazyk-levels-loop-test-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-levels-loop-test-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).ok();
         let mut s = Store {
@@ -5925,7 +6174,9 @@ mod tests {
         let report = s.apply(ops, &Commit::session(Vec::new(), 1, None));
         assert!(report.skipped.is_empty(), "{:?}", report.skipped);
         assert!(s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:backend"));
-        assert!(s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:frontend"));
+        assert!(s
+            .status
+            .has_change(CHANGE_THRESHOLD_CROSSED, "ent:frontend"));
         // No model ingests here: only the fan-out records stand.
         let ingest: Vec<String> = s
             .status
@@ -5941,7 +6192,13 @@ mod tests {
         let trace = Trace::to_sink(
             crate::session::TraceLevel::Normal,
             Arc::new(move |ev: &TraceEvent| {
-                if let TraceEvent::Goal { goal, event, reason, .. } = ev {
+                if let TraceEvent::Goal {
+                    goal,
+                    event,
+                    reason,
+                    ..
+                } = ev
+                {
                     sink.lock().unwrap().push((
                         goal.clone(),
                         event.clone(),
@@ -5955,7 +6212,9 @@ mod tests {
         let control = control_auto();
         let runner = DoneRunner { out: out.clone() };
         let parsed = BTreeMap::new();
-        let run = run_sessions(&proj, &out, &trace, None, &runner, &mut s, &parsed, &control);
+        let run = run_sessions(
+            &proj, &out, &trace, None, &runner, &mut s, &parsed, &control,
+        );
 
         // Both goals derived; the cap would allow 3 x 2 + 8 sessions. The loop ran
         // backend, frontend, backend, frontend and stopped: the backend's goal parked
@@ -5970,9 +6229,16 @@ mod tests {
         let backend = "g:abstract-entity:ent:backend";
         let parked: Vec<&ParkedGoal> = run.parked.iter().filter(|g| g.goal.id == backend).collect();
         assert_eq!(parked.len(), 1, "{:?}", run.parked);
-        assert!(run.parked.iter().all(|g| g.goal.id == backend), "{:?}", run.parked);
         assert!(
-            parked[0].reason.as_deref().is_some_and(|r| r.starts_with("reopened-after-resolve")),
+            run.parked.iter().all(|g| g.goal.id == backend),
+            "{:?}",
+            run.parked
+        );
+        assert!(
+            parked[0]
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.starts_with("reopened-after-resolve")),
             "{:?}",
             parked[0].reason
         );
@@ -5982,7 +6248,11 @@ mod tests {
             .find(|(g, e, _)| g == backend && e == "parked")
             .expect("a parked event for the backend's goal");
         assert!(park.2.starts_with("reopened-after-resolve"), "{}", park.2);
-        assert!(park.2.contains(&format!("{} times", REOPEN_CYCLES)), "{}", park.2);
+        assert!(
+            park.2.contains(&format!("{} times", REOPEN_CYCLES)),
+            "{}",
+            park.2
+        );
         let reopened = ev
             .iter()
             .filter(|(g, e, _)| g == backend && e == "reopened")
@@ -6005,7 +6275,10 @@ mod tests {
             .find(|p| p.goal.id == backend)
             .unwrap_or_else(|| panic!("{:?}", status.parked));
         assert!(
-            entry.reason.as_deref().is_some_and(|r| r.starts_with("reopened-after-resolve")),
+            entry
+                .reason
+                .as_deref()
+                .is_some_and(|r| r.starts_with("reopened-after-resolve")),
             "{:?}",
             entry.reason
         );
@@ -6014,8 +6287,14 @@ mod tests {
         assert!(text.contains("parked"), "{}", text);
         assert!(text.contains("parked: reopened-after-resolve"), "{}", text);
         // The whole-build report names the reason beside the parked goal.
-        let report = render_ripple(&ripple(&s, &format!("g{}", s.status.generation), false).expect("ripple"));
-        assert!(report.contains(&format!("parked: {} (reopened-after-resolve", backend)), "{}", report);
+        let report = render_ripple(
+            &ripple(&s, &format!("g{}", s.status.generation), false).expect("ripple"),
+        );
+        assert!(
+            report.contains(&format!("parked: {} (reopened-after-resolve", backend)),
+            "{}",
+            report
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -6023,40 +6302,79 @@ mod tests {
     fn an_unfinished_goal_gets_four_fresh_sessions_before_parking() {
         use crate::board::tests::{control_auto, project_for};
         use crate::runner::{BatchRun, SessionReport, SessionRunner};
-        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
 
         struct Unfinished(AtomicUsize);
         impl SessionRunner for Unfinished {
-            fn agent_name(&self) -> String { "unfinished-stub".into() }
+            fn agent_name(&self) -> String {
+                "unfinished-stub".into()
+            }
             fn set_build_token(&self, _: Option<String>) {}
             fn run_item(&self, _: &BatchRun, _: &Trace) -> SessionReport {
                 self.0.fetch_add(1, Ordering::SeqCst);
-                SessionReport { applied: 0, rounds: 1, tokens: 10, cached: 0,
-                    failed: None, resolved: Vec::new(), stopped: None }
+                SessionReport {
+                    applied: 0,
+                    rounds: 1,
+                    tokens: 10,
+                    cached: 0,
+                    failed: None,
+                    resolved: Vec::new(),
+                    stopped: None,
+                }
             }
             fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
                 Err("stub".into())
             }
-            fn ask_traced(&self, _: &str, _: &str, _: &str, _: &str, _: Option<&Trace>) -> Result<String, String> {
+            fn ask_traced(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: Option<&Trace>,
+            ) -> Result<String, String> {
                 Err("stub".into())
             }
         }
-        let out = std::env::temp_dir().join(format!("jazyk-attempt-tolerance-{}", crate::sys::process_id()));
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-attempt-tolerance-{}",
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let text = "# Main\n\nThe system accepts an order.\n";
-        let parsed: ParsedDocs = [("docs/main.md".into(), (hash_hex(text), crate::md::parse_sections(text)))].into();
-        let mut store = Store { out: out.clone(), ..Default::default() };
+        let parsed: ParsedDocs = [(
+            "docs/main.md".into(),
+            (hash_hex(text), crate::md::parse_sections(text)),
+        )]
+        .into();
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
         store.sync_docs(&parsed);
         let project = project_for(&store);
         let control = control_auto();
-        let trace = Trace::to_sink(crate::session::TraceLevel::Normal, Arc::new(|_: &TraceEvent| {}), Default::default());
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            Arc::new(|_: &TraceEvent| {}),
+            Default::default(),
+        );
         let runner = Unfinished(AtomicUsize::new(0));
-        let run = run_sessions(&project, &out, &trace, None, &runner, &mut store, &parsed, &control);
+        let run = run_sessions(
+            &project, &out, &trace, None, &runner, &mut store, &parsed, &control,
+        );
         assert_eq!(runner.0.load(Ordering::SeqCst), 4);
         assert_eq!(run.sessions, 4);
         assert_eq!(run.parked.len(), 1);
-        assert!(run.parked[0].reason.as_deref().unwrap().contains("after 4 attempts"));
+        assert!(run.parked[0]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("after 4 attempts"));
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -6065,16 +6383,28 @@ mod tests {
     #[test]
     fn a_cancelled_build_keeps_the_goals_it_parked() {
         use std::sync::Arc;
-        let out = std::env::temp_dir().join(format!("jazyk-cancel-parks-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-cancel-parks-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let text = "# Main\n\nThe system accepts an order.\n";
-        let parsed: ParsedDocs = [("docs/main.md".into(), (hash_hex(text), crate::md::parse_sections(text)))].into();
-        let mut store = Store { out: out.clone(), ..Default::default() };
+        let parsed: ParsedDocs = [(
+            "docs/main.md".into(),
+            (hash_hex(text), crate::md::parse_sections(text)),
+        )]
+        .into();
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
         store.sync_docs(&parsed);
         let project = crate::board::tests::project_for(&store);
         let cancel: Arc<std::sync::atomic::AtomicBool> = Default::default();
-        let trace = Trace::to_sink(crate::session::TraceLevel::Normal, Arc::new(|_: &TraceEvent| {}), cancel.clone());
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            Arc::new(|_: &TraceEvent| {}),
+            cancel.clone(),
+        );
         cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         let goal = Goal {
             id: "g:reconcile-section:docs/main.md#/main".into(),
@@ -6084,12 +6414,88 @@ mod tests {
             target: "docs/main.md#/main".into(),
             ..Default::default()
         };
-        let parked = vec![ParkedGoal::new(goal.clone(), "left open after 4 attempts in session b1-1")];
+        let parked = vec![ParkedGoal::new(
+            goal.clone(),
+            "left open after 4 attempts in session b1-1",
+        )];
         let report = finalize(&mut store, &project, parked, &Costs::default(), &trace);
-        assert!(report.verdict.starts_with("incomplete"), "{}", report.verdict);
-        assert!(store.status.parked.iter().any(|p| p.goal.id == goal.id), "{:?}", store.status.parked);
+        assert!(
+            report.verdict.starts_with("incomplete"),
+            "{}",
+            report.verdict
+        );
+        assert!(
+            store.status.parked.iter().any(|p| p.goal.id == goal.id),
+            "{:?}",
+            store.status.parked
+        );
         let reloaded = Store::load(&out);
-        assert!(reloaded.status.parked.iter().any(|p| p.goal.id == goal.id), "the entry is on disk");
+        assert!(
+            reloaded.status.parked.iter().any(|p| p.goal.id == goal.id),
+            "the entry is on disk"
+        );
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A verdict write refused because another writer landed first is reported: the
+    // report carries the refusal, the verdict line names it, and the build does not
+    // count as converged. Mirrors docs/compiler/graph.md#concurrency.
+    #[test]
+    fn a_refused_verdict_write_is_reported() {
+        use std::sync::{Arc, Mutex};
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-refused-verdict-{}",
+            crate::sys::process_id()
+        ));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let text = "# Main\n\nThe system accepts an order.\n";
+        let parsed: ParsedDocs = [(
+            "docs/main.md".into(),
+            (hash_hex(text), crate::md::parse_sections(text)),
+        )]
+        .into();
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        store.sync_docs(&parsed);
+        store.save_for_test();
+        // Another writer commits a generation this store has not seen.
+        let mut other = Store::load(&out);
+        other.status.generation = store.status.generation + 1;
+        other.save_for_test();
+        let project = crate::board::tests::project_for(&store);
+        let lines: Arc<Mutex<Vec<String>>> = Default::default();
+        let sink = lines.clone();
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            Arc::new(move |e: &TraceEvent| {
+                sink.lock().unwrap().push(serde_json::to_string(e).unwrap())
+            }),
+            Default::default(),
+        );
+        let report = finalize(&mut store, &project, Vec::new(), &Costs::default(), &trace);
+        let why = report
+            .unsaved
+            .clone()
+            .expect("the refusal rides in the report");
+        assert!(why.starts_with("store-moved"), "{}", why);
+        assert!(!report.converged());
+        assert!(
+            report.verdict_line().contains("(not saved: store-moved"),
+            "{}",
+            report.verdict_line()
+        );
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("verdict not saved")),
+            "{:?}",
+            lines.lock().unwrap()
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -6175,13 +6581,19 @@ mod tests {
         // goals the first board never saw.
         const LATER: usize = BUILD_SESSION_FACTOR + BUILD_SESSION_FLOOR;
         let doc_text = |i: usize, version: usize| {
-            let links: Vec<String> = (1..=LATER).map(|j| format!("[d{}](./d{}.md)", j, j)).collect();
+            let links: Vec<String> = (1..=LATER)
+                .map(|j| format!("[d{}](./d{}.md)", j, j))
+                .collect();
             format!(
                 "# Document {}\n\nThe document {} states its rule, version {}.{}\n",
                 i,
                 i,
                 version,
-                if i == 0 { format!(" See {}.", links.join(", ")) } else { String::new() }
+                if i == 0 {
+                    format!(" See {}.", links.join(", "))
+                } else {
+                    String::new()
+                }
             )
         };
         let parsed_with = |version_of: &dyn Fn(usize) -> usize| -> ParsedDocs {
@@ -6240,7 +6652,11 @@ mod tests {
         let control = control_auto();
         let first_board = Board::derive(&s, &proj, &control);
         assert_eq!(
-            first_board.open_goals().iter().map(|g| g.id.clone()).collect::<Vec<_>>(),
+            first_board
+                .open_goals()
+                .iter()
+                .map(|g| g.id.clone())
+                .collect::<Vec<_>>(),
             vec!["g:reconcile-section:docs/d0.md#/document-0".to_string()]
         );
         let runner = CoveringRunner { out: out.clone() };
@@ -6255,11 +6671,9 @@ mod tests {
         let reasons: Vec<Option<String>> = run.parked.iter().map(|g| g.reason.clone()).collect();
         assert_eq!(run.derived, goals, "{:?}", reasons);
         assert_eq!(
-            run.sessions as usize,
-            goals,
+            run.sessions as usize, goals,
             "against a first-board cap of {}; parked {:?}",
-            first_board_cap,
-            reasons
+            first_board_cap, reasons
         );
         assert!(run.sessions as usize > first_board_cap);
         assert!((run.sessions as usize) < grown_cap);

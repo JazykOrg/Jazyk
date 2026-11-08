@@ -4854,6 +4854,9 @@ fn result_value(value: Value) -> Value {
 }
 
 #[cfg(test)]
+mod dispatch_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

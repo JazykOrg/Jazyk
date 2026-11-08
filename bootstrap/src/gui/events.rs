@@ -654,3 +654,6 @@ mod tests {
         assert!(hub.replay_after_id("").is_none());
     }
 }
+
+#[cfg(test)]
+mod replay_tests;

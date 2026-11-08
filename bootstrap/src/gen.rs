@@ -3,6 +3,8 @@ use crate::vfs::VPathExt;
 mod asset_workflow_tests;
 pub(crate) mod assets;
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
 mod matcher_recovery_tests;
 mod pipeline;
 pub(crate) mod progress;

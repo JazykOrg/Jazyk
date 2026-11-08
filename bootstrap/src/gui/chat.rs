@@ -1107,3 +1107,6 @@ mod steering_tests {
         .is_err());
     }
 }
+
+#[cfg(test)]
+mod tests;

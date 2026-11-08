@@ -1045,3 +1045,6 @@ pub fn run() {
     };
     std::process::exit(code);
 }
+
+#[cfg(test)]
+mod tests;

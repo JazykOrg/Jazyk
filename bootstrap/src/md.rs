@@ -545,6 +545,9 @@ pub fn resolve_rel(from_doc: &str, target: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod crlf_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn locate_wrapped_quote() {

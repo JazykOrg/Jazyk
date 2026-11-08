@@ -1322,6 +1322,9 @@ pub(crate) fn contained_relative_with_policy(
 }
 
 #[cfg(test)]
+mod symlink_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

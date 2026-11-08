@@ -50,12 +50,36 @@ fn rel(root: &Path, path: &Path) -> String {
 // ---------------------------------------------------------------------------
 // Instructions
 
+// Where an import may read: the layer's real directory, and whether `~/` names it.
+struct Layer<'a> {
+    scope: PathBuf,
+    home: Option<&'a Path>,
+}
+
+impl<'a> Layer<'a> {
+    fn project(root: &Path) -> Layer<'a> {
+        Layer { scope: identity(root), home: None }
+    }
+    fn global(home: &'a Path) -> Layer<'a> {
+        Layer { scope: identity(home), home: Some(home) }
+    }
+    // The import's real file, when it stays inside the layer.
+    fn resolve(&self, dir: &Path, token: &str) -> Option<PathBuf> {
+        let target = match token.strip_prefix("~/") {
+            Some(rest) => self.home?.join(rest),
+            None if Path::new(token).is_absolute() || token.starts_with('/') || token.starts_with('\\') => return None,
+            None => crate::agents_md::normalize(&dir.join(token)),
+        };
+        let real = target.vcanonicalize().ok()?;
+        real.starts_with(&self.scope).then_some(real)
+    }
+}
+
 // Expand `@path` imports outside code. Mirrors docs/frontends/agent-context.md#instructions.
 fn expand(
     text: &str,
     dir: &Path,
-    root: &Path,
-    home: Option<&Path>,
+    layer: &Layer,
     depth: usize,
     seen: &mut BTreeSet<PathBuf>,
 ) -> String {
@@ -84,16 +108,7 @@ fn expand(
         }
         let mut replaced = line.to_string();
         for token in crate::agents_md::import_tokens(line) {
-            let target = match token.strip_prefix("~/") {
-                Some(rest) => match home {
-                    Some(h) => h.join(rest),
-                    None => continue,
-                },
-                None => crate::agents_md::normalize(&dir.join(token)),
-            };
-            if home.is_none() && !target.starts_with(root) {
-                continue;
-            }
+            let Some(target) = layer.resolve(dir, token) else { continue };
             let Some(content) = read(&target) else { continue };
             if !seen.insert(identity(&target)) {
                 replaced = replaced.replacen(&format!("@{token}"), "", 1);
@@ -101,9 +116,8 @@ fn expand(
             }
             let inner = expand(
                 &crate::agents_md::strip(&content),
-                target.parent().unwrap_or(root),
-                root,
-                home,
+                target.parent().unwrap_or(&layer.scope),
+                layer,
                 depth + 1,
                 seen,
             );
@@ -135,7 +149,7 @@ pub fn instructions(root: &Path, cwd: &Path, home: Option<&Path>) -> Option<Stri
         let global = h.join(".jazyk/AGENTS.md");
         if let Some(text) = read(&global) {
             seen.insert(identity(&global));
-            parts.push(("~/.jazyk/AGENTS.md".into(), expand(&text, global.parent().unwrap(), root, home, 0, &mut seen)));
+            parts.push(("~/.jazyk/AGENTS.md".into(), expand(&text, global.parent().unwrap(), &Layer::global(h), 0, &mut seen)));
         }
     }
     for dir in chain(root, cwd) {
@@ -147,7 +161,7 @@ pub fn instructions(root: &Path, cwd: &Path, home: Option<&Path>) -> Option<Stri
             }
             let text = crate::agents_md::strip(&text);
             let base = path.parent().unwrap_or(&dir).to_path_buf();
-            parts.push((rel(root, &path), expand(&text, &base, root, home, 0, &mut seen)));
+            parts.push((rel(root, &path), expand(&text, &base, &Layer::project(root), 0, &mut seen)));
         }
     }
     let parts: Vec<(String, String)> = parts.into_iter().filter(|(_, t)| !t.trim().is_empty()).collect();
@@ -886,6 +900,39 @@ mod tests {
         std::fs::write(root.join("AGENTS.md"), "@../outside.md").unwrap();
         std::fs::write(root.parent().unwrap().join("outside.md"), "secret").ok();
         assert!(!instructions(root, root, None).unwrap_or_default().contains("secret"));
+    }
+
+    // Imports stay inside their layer on the real path: a project file never reads
+    // an absolute path, the home directory, or a link out of the root; the global file
+    // reads from home. Mirrors docs/frontends/agent-context.md#instructions.
+    #[cfg(unix)]
+    #[test]
+    fn imports_stay_inside_their_layer() {
+        let dir = project();
+        let root = dir.path();
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.md");
+        std::fs::write(&secret, "outside secret").unwrap();
+        std::fs::write(home.path().join("notes.md"), "home notes").unwrap();
+        std::fs::create_dir_all(home.path().join(".jazyk")).unwrap();
+        std::fs::write(home.path().join(".jazyk/AGENTS.md"), "Global. @~/notes.md @../notes.md").unwrap();
+        std::os::unix::fs::symlink(&secret, root.join("linked.md")).unwrap();
+        std::fs::write(root.join("inside.md"), "inside rule").unwrap();
+        std::fs::write(
+            root.join("AGENTS.md"),
+            format!("Project. @inside.md @{} @~/notes.md @linked.md", secret.display()),
+        )
+        .unwrap();
+        let text = instructions(root, root, Some(home.path())).unwrap();
+        assert!(text.contains("Project. inside rule"), "{text}");
+        assert!(!text.contains("outside secret"), "absolute paths and links out of the root stay unread: {text}");
+        assert!(text.contains(&format!("@{}", secret.display())), "{text}");
+        assert!(text.contains("@~/notes.md @linked.md"), "{text}");
+        assert_eq!(text.matches("home notes").count(), 1, "the global file reads home once: {text}");
+        std::fs::write(home.path().join(".jazyk/AGENTS.md"), format!("Global. @{}", secret.display())).unwrap();
+        let text = instructions(root, root, Some(home.path())).unwrap();
+        assert!(!text.contains("outside secret"), "{text}");
     }
 
     #[cfg(unix)]

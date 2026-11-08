@@ -253,6 +253,30 @@ fn saved_tool_receipt_is_reused_after_restart() {
 }
 
 #[test]
+fn a_tool_receipt_replayed_with_other_arguments_is_refused() {
+    let mut host = Host::new(vec![call(), response("finished")]);
+    let mut store = Store {
+        fail: Some(CheckpointPhase::AfterTool),
+        ..Default::default()
+    };
+    let mut history = vec![json!({"role":"user","content":"Run the fixture"})];
+    let mut calls = 0;
+    let mut dispatch = |_: &str, _: &Value| {
+        calls += 1;
+        Ok("result".into())
+    };
+    assert!(matches!(run(&mut host, &mut store, &mut history, &mut dispatch, &mut |_| {}), Stop::Error(_)));
+    let saved = store.saved.as_mut().unwrap();
+    assert_eq!(saved.tool_receipts.len(), 1);
+    let receipt = saved.tool_receipts.values_mut().next().unwrap();
+    assert!(receipt.args.is_some(), "a receipt records its argument digest");
+    receipt.args = Some(super::arguments_digest(&json!({"other":"arguments"})));
+    let stop = run(&mut host, &mut store, &mut history, &mut dispatch, &mut |_| {});
+    assert!(matches!(stop, Stop::Error(ref error) if error.starts_with("execution-uncertain:")), "{stop:?}");
+    assert_eq!(calls, 1, "a refused replay never executes the call again");
+}
+
+#[test]
 fn unfinished_tool_intention_requires_reconciliation() {
     let mut host = Host::new(vec![call(), response("finished")]);
     let mut store = Store {
@@ -1466,6 +1490,21 @@ fn truncated_reasoning_is_not_reported_as_a_completed_normal_turn() {
 }
 
 #[test]
+fn a_responses_reply_cut_at_its_output_limit_reports_the_limit() {
+    let limited = json!({"id":"response-cut","object":"response","model":"fixture","status":"incomplete",
+        "incomplete_details":{"reason":"max_output_tokens"},"_jazykResponseRoute":"fixture-route",
+        "output":[{"id":"message-cut","type":"message","role":"assistant","status":"incomplete",
+            "content":[{"type":"output_text","text":"Partial plan","annotations":[]}]}],
+        "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}});
+    let mut host = Host::new(vec![limited.clone(), limited]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Generate"})];
+    let stop = ledger_completion_run(false, &mut host, &mut store, &mut history,
+        &mut |_, _| panic!("no tools requested"));
+    assert!(matches!(stop, Stop::Error(ref error) if error.contains("output token limit")), "{stop:?}");
+}
+
+#[test]
 fn ledger_finish_reminder_is_bounded_and_survives_recovery() {
     let mut host = Host::new(vec![response("Thinking"), response("Cannot continue")]);
     let mut store = Store::default();
@@ -1804,8 +1843,16 @@ fn restored_model_intention_keeps_original_body_when_catalog_and_prompt_change()
         };
         assert!(matches!(run(&wide, "Original prompt", &mut host, &mut store), Stop::Error(_)));
         let saved = store.saved.as_ref().unwrap();
-        let (id, body) = saved.model_requests.iter().next().unwrap();
-        let (id, body) = (id.clone(), body.clone());
+        let (id, body) = match saved.model_requests.iter().next() {
+            Some((id, body)) => (id.clone(), body.clone()),
+            None => {
+                // Past the transition its request answered, the request left the
+                // checkpoint; the replay below must still not repeat it.
+                assert_eq!(phase, CheckpointPhase::AfterTool);
+                let first = &host.requests.borrow()[0];
+                (first.attempt_id.clone(), first.body.clone())
+            }
+        };
         assert_eq!(body["tools"].as_array().unwrap().len(), 2);
         assert_eq!(run(&[tool()], "Updated prompt", &mut host, &mut store), Stop::EndTurn, "{phase:?}");
         drop(run);
@@ -1926,7 +1973,8 @@ fn protected_stop_keeps_compacted_history_without_reexpanding_old_receipts() {
     assert!(store.phases.contains(&CheckpointPhase::Compacted));
     let compacted = store.saved.as_ref().unwrap();
     assert!(compacted.compacted_at_round.is_some());
-    assert_eq!(compacted.model_receipts.len(), 3, "Compaction must leave old receipts available to exercise the boundary");
+    assert!(compacted.model_receipts.is_empty() && compacted.model_requests.is_empty(),
+        "An ended transition's requests and receipts leave the checkpoint");
     let before = history.clone();
     let text = serde_json::to_string(&before).unwrap();
     assert!(!text.contains("obsolete-call") && !text.contains("OBSOLETE_RECEIPT"));
@@ -1962,7 +2010,7 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
                     "content":[{"type":"output_text","text":answer,"annotations":[]}]}],
                 "usage":{"input_tokens":10,"output_tokens":3,"total_tokens":13}})
         } else { response(&answer) };
-        let mut host = Host::new(vec![reply]);
+        let mut host = Host::new(vec![reply.clone()]);
         let mut store = Store::default();
         let mut history = vec![json!({"role":"user","content":"Finish the requested work."})];
         assert_eq!(run(&mut host, &mut store, &mut history,
@@ -1970,7 +2018,10 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
         assert_eq!(host.requests.borrow().len(), 1, "{api}");
         assert_eq!(store.phases.last(), Some(&CheckpointPhase::Finished), "{api}");
         let saved = store.saved.as_mut().unwrap();
-        assert_eq!(saved.model_receipts.len(), 1, "{api}");
+        assert!(saved.model_receipts.is_empty(), "{api}: the answered transition left the checkpoint");
+        // A legacy capsule still carries the answered receipt beside its conversation.
+        let legacy = format!("{}:{}:Inference:0", saved.run_id, saved.transition - 1);
+        saved.model_receipts.insert(legacy, reply.clone());
         let mut stripped = 0;
         for message in saved.conversation.messages_mut() {
             if let Some(notes) = message.metadata.operations.as_mut() {

@@ -189,7 +189,7 @@ fn node_document_at(id: &str, graph: &Graph, depth: usize) -> Option<String> {
         return None;
     }
     let mut cur = id;
-    for _ in 0..8 {
+    for _ in 0..graph.redirects.len() {
         match graph.redirects.get(cur) {
             Some(next) if !next.is_empty() => cur = next,
             _ => break,

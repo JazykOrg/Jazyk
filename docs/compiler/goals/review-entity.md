@@ -31,10 +31,10 @@ on the entity. A commit or the sweep writes one when the entity's fact set chang
   and re-reviewing every entity of the statement for it made a quarter of a run's
   batches empty re-reviews.
 - `fields`: the entity's own `definition`, `aliases`, `stereotype`, `scope`, or
-  `attributes` changed, or the entity was created. A move alone (`parent` and nothing
-  else) is the parents' business: it writes `parent` on the parent it leaves and the
-  one it joins and never `fields` on the child, so a grouping of twelve children opens
-  one review, the grouping's own, not thirteen.
+  `attributes` changed, or the entity was created. A move alone (`parent` or
+  `remove_parent`, and nothing else) is the parents' business: it writes `parent` on the
+  parent it leaves and on the one it joins, if any, and never `fields` on the child, so
+  a grouping of twelve children opens one review, the grouping's own, not thirteen.
 - `mentions`: a mention was added or pruned.
 - `merge`: another entity was merged into it; its requirements, aliases, attributes,
   children, and edges arrived.

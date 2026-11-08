@@ -94,7 +94,9 @@ Each section carries:
   kinds repeat text their parent already holds.
 - `hash`: a content hash of `raw`, used for [diffing](#section-diffing) and
   [alignment](./alignment.md).
-- `lines`: the line range in the source file, for editor integration.
+- `lines`: the line range in the source file, for editor integration. A stored record
+  omits it; a load recomputes it from the `raw` texts in document order
+  ([storage layout](./graph.md#storage-layout)).
 
 ## References
 
@@ -106,7 +108,9 @@ Each section carries:
 - A block's internal reference is its parent's reference followed by `/<kind>-<n>`,
   `n` counting the parent's blocks of that kind in order from 1. E.g.
   `/cli/commands/diagram-1`, `/cli/commands/code-block-2`; a block in the preamble is
-  `/code-block-1`.
+  `/code-block-1`. A block reference a heading already holds (a `Diagram 1` heading
+  beside the parent's first diagram) takes the next numeric suffix, as a repeated slug
+  does (`/cli/commands/diagram-1-2`), so neither section hides the other.
 - The full reference joins the document path and the internal reference with `#`.
   E.g. `docs/cli.md#/cli/commands/compile`.
 - Links between documents in the source (relative markdown links) are recorded and feed
